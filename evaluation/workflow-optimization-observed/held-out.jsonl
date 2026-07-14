@@ -1,0 +1,8 @@
+{"id":"held-out-control-role","input":"An O3 cleanup considers deleting a control-role prompt segment that still constrains model behavior.","expected":"preserved"}
+{"id":"held-out-dependency-token","input":"An upstream token is needed to make a downstream node runnable, but it must not be rendered as user-authored prompt text.","expected":"dependency-only"}
+{"id":"held-out-context-limit","input":"A tool response is admitted only up to the segment allowance reserved by the shared context plan.","expected":"bounded"}
+{"id":"held-out-production-dspy","input":"Production compilation requests DSPy prompt search even though no completed production backend contract is available.","expected":"rejected"}
+{"id":"held-out-authorized-ready","input":"All typed data dependencies are complete, the selected grant is active, required approval is verified, and effect order is clear.","expected":"ready"}
+{"id":"held-out-approval-pending","input":"Data dependencies are complete, but a required human approval has not been recorded.","expected":"deferred"}
+{"id":"held-out-durable-effect","input":"Server loads a durable AHI v2 effect record, revalidates its prepare, commit, receipt binding, enrolled key, and Ed25519 signature.","expected":"replayable"}
+{"id":"held-out-link-v1-effect","input":"A prior mutating host capability call has only Link v1 completion data and no durable verified AHI v2 evidence.","expected":"non-replayable"}

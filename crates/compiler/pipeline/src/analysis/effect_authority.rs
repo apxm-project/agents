@@ -97,7 +97,6 @@ pub(super) fn summarize(node: &Node) -> EffectAuthoritySummary {
         }
         AISOperationType::FlowCall
         | AISOperationType::WorkflowSpawn
-        | AISOperationType::CallSkill
         | AISOperationType::Delegate
         | AISOperationType::SpawnAgent
         | AISOperationType::Autonomous => {

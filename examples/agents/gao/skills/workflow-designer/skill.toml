@@ -1,4 +1,0 @@
-id = "workflow-designer"
-description = "Turn operator goals into structured APXM workflow plans before any authoring write."
-compiled = false
-capabilities = ["plan_workflow", "compose_workflow"]

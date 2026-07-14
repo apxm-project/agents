@@ -362,24 +362,6 @@ export const WORKFLOW_SPAWN: OpSpec = {
   exampleJson: "{\"id\": 5, \"op\": \"WORKFLOW_SPAWN\", \"attributes\": {\"target_kind\": \"workflow_path\", \"target\": \"workflows/review.apxmw\", \"args\": {\"topic\": \"{topic}\"}, \"input_names\": [\"topic\"], \"await_result\": true}}",
 } as const;
 
-export const CALL_SKILL: OpSpec = {
-  op: "CALL_SKILL",
-  name: "CallSkill",
-  category: "control_flow" as OpCategory,
-  description: "Call another skill by manifest identity (id or id@version)",
-  longDescription: "Invokes another skill resolved by manifest identity through the live SkillLibrary, rather than by raw artifact path. Resolution is lazy: the runtime parses `<skill_id>[@<version>]`, looks up the matching .apxmobj, admits the child's required capabilities against the parent's grant, dispatches the child entry DAG, and records the resolved (skill_id, version, artifact_hash) triple in the parent's provenance. Failure modes are typed: InvalidSkillId, SkillNotFound, SkillVersionNotFound, CapabilityWiden, CallSkillDepthExceeded, ChildExecutionFailed.",
-  latency: "high",
-  fields: [
-    { name: "skill_id", description: "Skill identifier: \"id\" (latest) or \"id@version\" (pinned)", required: true, refType: null },
-    { name: "args", description: "Positional arguments forwarded to the child's entry-flow input vector", required: false, refType: null },
-    { name: "input_names", description: "Optional name vector mapping parent outputs onto the child's positional args", required: false, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: true,
-  minInputs: 0,
-  exampleJson: "{\"id\": 6, \"op\": \"CALL_SKILL\", \"attributes\": {\"skill_id\": \"apxm-orient@0.2.0\", \"args\": [\"context\"], \"input_names\": [\"context\"]}}",
-} as const;
-
 export const MERGE: OpSpec = {
   op: "MERGE",
   name: "Merge",
@@ -759,7 +741,6 @@ export const ALL_OPERATIONS: readonly OpSpec[] = [
   SWITCH,
   FLOW_CALL,
   WORKFLOW_SPAWN,
-  CALL_SKILL,
   MERGE,
   FENCE,
   WAIT_ALL,
@@ -905,7 +886,6 @@ export const ATTR = {
   TASK_SPEC: "task_spec",
   TARGET_AGENT: "target_agent",
   ARGS: "args",
-  SKILL_ID: "skill_id",
   SESSION_ROOT: "session_root",
   HANDOFF: "handoff",
   HANDOFF_FROM: "handoff_from",

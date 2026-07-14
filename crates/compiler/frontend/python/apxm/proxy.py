@@ -1129,55 +1129,6 @@ class GraphRecorder:
 
         return node
 
-    def call_skill(
-        self,
-        skill_id: str,
-        *,
-        name: str | None = None,
-        args: dict[str, Any] | None = None,
-        version: str | None = None,
-        node_policy: NodePolicy | dict[str, Any] | None = None,
-        **attributes: Any,
-    ) -> NodeRef:
-        """Invoke an installed skill by id (CALL_SKILL).
-
-        Resolves ``skill_id`` through the runtime SkillLibrary, hash-verifies
-        the child artifact, and dispatches it as a child execution. Args follow
-        the same convention as :meth:`call`: NodeRef values auto-wire as Data
-        edges (referenced as ``{param}`` in the serialized args dict) and
-        literals are serialized inline.
-
-        Args:
-            skill_id: Installed skill identifier (optionally ``id@version``).
-            args: Arguments for the skill's parameters (NodeRef or literal).
-            version: Optional version, folded into ``skill_id`` as ``id@version``.
-        """
-        if not skill_id:
-            raise ValueError("call_skill() missing required argument: skill_id")
-        if name is None:
-            name = self._auto_name(graph_keys.OP_CALL_SKILL)
-        resolved_id = (
-            f"{skill_id}@{version}"
-            if version is not None and "@" not in skill_id
-            else skill_id
-        )
-        attrs: dict[str, Any] = {graph_keys.SKILL_ID: resolved_id}
-        if args is not None:
-            literal_args, node_ref_args = self._split_invocation_args(args.items())
-            attrs[graph_keys.ARGS] = _normalize_value(literal_args)
-            if node_ref_args:
-                attrs[graph_keys.INPUT_NAMES] = [pn for pn, _ in node_ref_args]
-        else:
-            node_ref_args = []
-        if node_policy is not None:
-            attrs = self._apply_policy(attrs, {"node_policy": node_policy, **attributes})
-        else:
-            attrs = self._apply_policy(attrs, attributes)
-        node = self._add_node(name, graph_keys.OP_CALL_SKILL, attrs)
-        for _pn, ref in node_ref_args:
-            self.add_edge(ref, node)
-        return node
-
     def embed(
         self,
         flow: Any,

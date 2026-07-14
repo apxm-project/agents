@@ -2,7 +2,6 @@
 
 pub mod autonomous;
 pub mod branch;
-pub mod call_skill;
 pub mod checkpoint;
 pub mod communicate;
 pub mod const_str;

@@ -1730,8 +1730,8 @@ mod tests {
         use crate::scheduler::park_registry::{self, ParkWaker, RearmSpec};
         use apxm_core::types::operations::AISOperationType;
 
-        // The recv anchor (id 1, output token 10) carries the loop attrs the
-        // ConversationalAgent builder stamps.
+        // The recv anchor (id 1, output token 10) carries generic loop attrs
+        // authored by explicit agent source.
         let mut recv = make_node(1, vec![], vec![10]);
         recv.op_type = AISOperationType::Autonomous;
         for (k, v) in [

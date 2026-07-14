@@ -67,6 +67,13 @@ A claim-bearing observed run still needs the owning backend's recorded or
 signed execution evidence and its owner gates. Those backend attestation
 surfaces are outside this local fixture.
 
+The live execution counterpart is the preregistered bundle in
+[`../workflow-optimization-observed/`](../workflow-optimization-observed/).
+It runs through
+[`tools/scripts/observed_prompt_evaluation.py`](../../tools/scripts/observed_prompt_evaluation.py),
+which emits the request, provider response, recorded execution document, and
+receipt required by the observed evidence contract.
+
 ## Claim boundary
 
 The fixture is a regression test for integrity, portability, and decision

@@ -93,11 +93,6 @@
       "bytes": 195
     },
     {
-      "op": "CALL_SKILL",
-      "example_json": "{\"id\": 6, \"op\": \"CALL_SKILL\", \"attributes\": {\"skill_id\": \"apxm-orient@0.2.0\", \"args\": [\"context\"], \"input_names\": [\"context\"]}}",
-      "bytes": 127
-    },
-    {
       "op": "MERGE",
       "example_json": "{\"id\": 6, \"op\": \"MERGE\", \"attributes\": {}}",
       "bytes": 42

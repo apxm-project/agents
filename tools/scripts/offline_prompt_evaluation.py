@@ -20,8 +20,9 @@ from typing import Any
 from apxm.contract import build_layout
 
 
-EVIDENCE_SCHEMA_VERSION = 3
-OBSERVED_BACKEND_RECEIPT_SCHEMA_VERSION = 1
+EVIDENCE_SCHEMA_VERSION = 4
+OBSERVED_BACKEND_RECEIPT_SCHEMA_VERSION = 2
+OBSERVED_BACKEND_EXECUTION_SCHEMA_VERSION = 1
 SUPPORTED_METRICS = frozenset({"exact_match", "contains", "token_overlap"})
 SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -58,6 +59,16 @@ def sha256_file(path: Path) -> str:
 
 def sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def sha256_json(value: Any) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return sha256_bytes(encoded)
 
 
 def git_output(root: Path, *args: str) -> bytes:
@@ -250,6 +261,12 @@ def require_non_negative_int(value: Any, name: str) -> int:
     return value
 
 
+def require_bool(value: Any, name: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{name} must be a boolean")
+    return value
+
+
 def require_identifier(value: Any, name: str) -> str:
     identifier = require_non_empty_string(value, name)
     if not SAFE_IDENTIFIER_RE.fullmatch(identifier):
@@ -302,19 +319,77 @@ def validate_evidence_reference(value: Any, name: str) -> dict[str, str]:
     }
 
 
+def validate_backend_capabilities(value: Any) -> dict[str, Any]:
+    capabilities = require_mapping(value, "preregistration backend_evidence.capabilities")
+    require_exact_keys(
+        capabilities,
+        "preregistration backend_evidence.capabilities",
+        {
+            "protocol",
+            "model",
+            "context_window",
+            "supports_functions",
+            "supports_vision",
+            "supports_thinking",
+            "supports_structured_outputs",
+            "source",
+        },
+    )
+    source = require_identifier(
+        capabilities.get("source"), "preregistration backend_evidence.capabilities.source"
+    )
+    if source != "registered-backend":
+        raise ValueError(
+            "preregistration backend_evidence.capabilities.source must be 'registered-backend'"
+        )
+    return {
+        "protocol": require_identifier(
+            capabilities.get("protocol"),
+            "preregistration backend_evidence.capabilities.protocol",
+        ),
+        "model": require_identifier(
+            capabilities.get("model"), "preregistration backend_evidence.capabilities.model"
+        ),
+        "context_window": require_non_negative_int(
+            capabilities.get("context_window"),
+            "preregistration backend_evidence.capabilities.context_window",
+        ),
+        "supports_functions": require_bool(
+            capabilities.get("supports_functions"),
+            "preregistration backend_evidence.capabilities.supports_functions",
+        ),
+        "supports_vision": require_bool(
+            capabilities.get("supports_vision"),
+            "preregistration backend_evidence.capabilities.supports_vision",
+        ),
+        "supports_thinking": require_bool(
+            capabilities.get("supports_thinking"),
+            "preregistration backend_evidence.capabilities.supports_thinking",
+        ),
+        "supports_structured_outputs": require_bool(
+            capabilities.get("supports_structured_outputs"),
+            "preregistration backend_evidence.capabilities.supports_structured_outputs",
+        ),
+        "source": source,
+    }
+
+
 def validate_backend_evidence(value: Any) -> dict[str, Any]:
     backend_evidence = require_mapping(value, "preregistration backend_evidence")
-    require_exact_keys(
-        backend_evidence,
-        "preregistration backend_evidence",
-        {"kind", "backend", "measurement_source"},
-    )
     kind = backend_evidence.get("kind")
     if kind not in BACKEND_MEASUREMENT_SOURCES:
         raise ValueError(
             "preregistration backend_evidence.kind must be one of "
             + ", ".join(sorted(BACKEND_MEASUREMENT_SOURCES))
         )
+    expected_keys = {"kind", "backend", "measurement_source"}
+    if kind == "observed-backend-run":
+        expected_keys.add("capabilities")
+    require_exact_keys(
+        backend_evidence,
+        "preregistration backend_evidence",
+        expected_keys,
+    )
     measurement_source = backend_evidence.get("measurement_source")
     expected_measurement_source = BACKEND_MEASUREMENT_SOURCES[kind]
     if measurement_source != expected_measurement_source:
@@ -330,7 +405,7 @@ def validate_backend_evidence(value: Any) -> dict[str, Any]:
         "preregistration backend_evidence.backend",
         {"id", "revision"},
     )
-    return {
+    validated = {
         "kind": kind,
         "backend": {
             "id": require_identifier(
@@ -342,6 +417,11 @@ def validate_backend_evidence(value: Any) -> dict[str, Any]:
         },
         "measurement_source": measurement_source,
     }
+    if kind == "observed-backend-run":
+        validated["capabilities"] = validate_backend_capabilities(
+            backend_evidence.get("capabilities")
+        )
+    return validated
 
 
 def validate_provenance(value: Any) -> dict[str, str]:
@@ -456,10 +536,118 @@ def load_evidence_receipt(
     return load_json(path)
 
 
+def require_utc_timestamp(value: Any, name: str) -> str:
+    timestamp = require_non_empty_string(value, name)
+    if not timestamp.endswith("Z"):
+        raise ValueError(f"{name} must be a UTC timestamp ending in Z")
+    try:
+        dt.datetime.fromisoformat(timestamp[:-1] + "+00:00")
+    except ValueError as error:
+        raise ValueError(f"{name} must be an ISO-8601 UTC timestamp") from error
+    return timestamp
+
+
+def validate_observed_backend_execution(
+    value: Any,
+    bundle_root: Path,
+    backend_evidence: dict[str, Any],
+    case_id: str,
+    arm_id: str,
+    receipt: dict[str, Any],
+    label: str,
+) -> dict[str, str]:
+    reference = validate_evidence_reference(
+        value, f"{label} execution evidence for {case_id!r}"
+    )
+    execution = load_evidence_receipt(
+        reference,
+        bundle_root,
+        f"{label} execution evidence for {case_id!r}",
+    )
+    require_exact_keys(
+        execution,
+        f"{label} execution evidence for {case_id!r}",
+        {
+            "schema_version",
+            "kind",
+            "backend",
+            "capabilities_sha256",
+            "case_id",
+            "arm_id",
+            "request",
+            "response",
+            "provider_response_id",
+            "provider_model",
+            "output_sha256",
+            "token_count",
+            "latency_ms",
+            "observed_at_utc",
+        },
+    )
+    if execution.get("schema_version") != OBSERVED_BACKEND_EXECUTION_SCHEMA_VERSION:
+        raise ValueError(
+            f"{label} execution evidence for {case_id!r} schema_version must be "
+            f"{OBSERVED_BACKEND_EXECUTION_SCHEMA_VERSION}"
+        )
+    if execution.get("kind") != "recorded-backend-execution":
+        raise ValueError(
+            f"{label} execution evidence for {case_id!r} kind must be recorded-backend-execution"
+        )
+    if execution.get("backend") != backend_evidence["backend"]:
+        raise ValueError(
+            f"{label} execution evidence for {case_id!r} does not match preregistered backend"
+        )
+    if require_sha256(
+        execution.get("capabilities_sha256"),
+        f"{label} execution evidence for {case_id!r}.capabilities_sha256",
+    ) != sha256_json(backend_evidence["capabilities"]):
+        raise ValueError(
+            f"{label} execution evidence for {case_id!r} does not match backend capabilities"
+        )
+    if execution.get("case_id") != case_id or execution.get("arm_id") != arm_id:
+        raise ValueError(
+            f"{label} execution evidence for {case_id!r} does not match case or arm identity"
+        )
+    request_reference = validate_evidence_reference(
+        execution.get("request"), f"{label} request evidence for {case_id!r}"
+    )
+    response_reference = validate_evidence_reference(
+        execution.get("response"), f"{label} response evidence for {case_id!r}"
+    )
+    load_evidence_receipt(
+        request_reference, bundle_root, f"{label} request evidence for {case_id!r}"
+    )
+    load_evidence_receipt(
+        response_reference, bundle_root, f"{label} response evidence for {case_id!r}"
+    )
+    if request_reference["sha256"] != receipt["request_sha256"]:
+        raise ValueError(
+            f"{label} execution evidence for {case_id!r} does not match the receipt request"
+        )
+    for field in ("output_sha256", "token_count", "latency_ms"):
+        if execution.get(field) != receipt[field]:
+            raise ValueError(
+                f"{label} execution evidence for {case_id!r} does not match receipt {field}"
+            )
+    require_identifier(
+        execution.get("provider_response_id"),
+        f"{label} execution evidence for {case_id!r}.provider_response_id",
+    )
+    require_identifier(
+        execution.get("provider_model"),
+        f"{label} execution evidence for {case_id!r}.provider_model",
+    )
+    require_utc_timestamp(
+        execution.get("observed_at_utc"),
+        f"{label} execution evidence for {case_id!r}.observed_at_utc",
+    )
+    return reference
+
+
 def validate_observed_backend_receipt(
     value: Any,
     bundle_root: Path,
-    backend: dict[str, str],
+    backend_evidence: dict[str, Any],
     case_id: str,
     arm_id: str,
     row: dict[str, Any],
@@ -476,9 +664,11 @@ def validate_observed_backend_receipt(
             "backend",
             "case_id",
             "arm_id",
+            "request_sha256",
             "output_sha256",
             "token_count",
             "latency_ms",
+            "execution_evidence",
         },
     )
     if receipt.get("schema_version") != OBSERVED_BACKEND_RECEIPT_SCHEMA_VERSION:
@@ -504,12 +694,16 @@ def validate_observed_backend_receipt(
             receipt_backend.get("revision"),
             f"{label} evidence receipt for {case_id!r}.backend.revision",
         ),
-    } != backend:
+    } != backend_evidence["backend"]:
         raise ValueError(f"{label} evidence receipt for {case_id!r} does not match preregistered backend")
     if receipt.get("case_id") != case_id:
         raise ValueError(f"{label} evidence receipt for {case_id!r} does not match case_id")
     if receipt.get("arm_id") != arm_id:
         raise ValueError(f"{label} evidence receipt for {case_id!r} does not match arm_id")
+    require_sha256(
+        receipt.get("request_sha256"),
+        f"{label} evidence receipt for {case_id!r}.request_sha256",
+    )
     if require_sha256(
         receipt.get("output_sha256"), f"{label} evidence receipt for {case_id!r}.output_sha256"
     ) != sha256_text(row["output"]):
@@ -525,6 +719,15 @@ def validate_observed_backend_receipt(
         math.inf,
     ) != float(row["latency_ms"]):
         raise ValueError(f"{label} evidence receipt for {case_id!r} does not match latency_ms")
+    validate_observed_backend_execution(
+        receipt.get("execution_evidence"),
+        bundle_root,
+        backend_evidence,
+        case_id,
+        arm_id,
+        receipt,
+        label,
+    )
     return reference
 
 
@@ -552,7 +755,7 @@ def validate_output_rows(
             evidence_references[case_id] = validate_observed_backend_receipt(
                 row.get("evidence"),
                 bundle_root,
-                backend_evidence["backend"],
+                backend_evidence,
                 case_id,
                 arm_id,
                 row,

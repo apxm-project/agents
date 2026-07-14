@@ -12,9 +12,7 @@ use apxm_core::constants::env as apxm_env;
 #[cfg(feature = "driver")]
 use apxm_core::constants::extensions;
 #[cfg(feature = "driver")]
-use apxm_core::types::{
-    ApxmPathFormat, HANDLER_MANIFEST_AIR_SIDECAR_PREFIX, HandlerDescriptor, HandlerManifest,
-};
+use apxm_core::types::{ApxmPathFormat, HANDLER_MANIFEST_AIR_SIDECAR_PREFIX, HandlerManifest};
 #[cfg(feature = "driver")]
 use apxm_driver::compiler::Compiler;
 #[cfg(feature = "driver")]
@@ -307,17 +305,6 @@ fn parse_compile_service_options_json(json: &str) -> Result<CompileServiceOption
 }
 
 #[cfg(feature = "driver")]
-fn effective_system_prompt<'a>(
-    options: &'a CompileServiceOptions,
-    persona: &'a str,
-) -> Option<&'a str> {
-    options.system_prompt.as_deref().or_else(|| {
-        let trimmed = persona.trim();
-        (!trimmed.is_empty()).then_some(trimmed)
-    })
-}
-
-#[cfg(feature = "driver")]
 fn read_compile_service_options_from_stdin() -> Result<CompileServiceOptions> {
     use std::io::Read;
 
@@ -328,55 +315,7 @@ fn read_compile_service_options_from_stdin() -> Result<CompileServiceOptions> {
     parse_compile_service_options_json(&stdin)
 }
 
-#[cfg(feature = "driver")]
-fn insert_optional_route_attr(
-    attrs: &mut std::collections::HashMap<String, apxm_core::types::Value>,
-    key: &str,
-    value: Option<&str>,
-) {
-    let Some(value) = value else {
-        return;
-    };
-    attrs.insert(
-        key.to_string(),
-        apxm_core::types::Value::String(value.to_string()),
-    );
-}
-
-#[cfg(feature = "driver")]
-fn insert_effort_attr(
-    attrs: &mut std::collections::HashMap<String, apxm_core::types::Value>,
-    effort: Option<&str>,
-) {
-    let Some(effort) = effort else {
-        return;
-    };
-    if effort == "off" {
-        return;
-    }
-    attrs.insert(
-        apxm_ais::attrs::EFFORT.to_string(),
-        apxm_core::types::Value::String(effort.to_string()),
-    );
-}
-
-#[cfg(feature = "driver")]
-fn insert_optional_token_budget_attr(
-    attrs: &mut std::collections::HashMap<String, apxm_core::types::Value>,
-    max_output_tokens: Option<usize>,
-) {
-    let Some(max_output_tokens) = max_output_tokens else {
-        return;
-    };
-    attrs.insert(
-        apxm_ais::attrs::TOKEN_BUDGET.to_string(),
-        apxm_core::types::Value::Number(apxm_core::types::values::Number::Integer(
-            max_output_tokens as i64,
-        )),
-    );
-}
-
-/// Compile a bundled conversational agent into canonical AIR text.
+/// Compile a package-declared frontend entry into canonical AIR text.
 ///
 /// # Cross-repo I/O contract
 ///
@@ -385,8 +324,8 @@ fn insert_optional_token_budget_attr(
 /// subprocess instead of duplicating a private path dependency on this repo's
 /// Python frontend:
 ///
-/// - **Input**: a single positional argument, the agent directory
-///   (containing `agent.toml`, generated `integrity.toml`, and `capabilities/`).
+/// - **Input**: a single positional argument, the agent directory containing
+///   `agent.toml` with `[compile].entry` and `[compile].frontend`.
 ///   `--options-stdin` is required, and stdin must contain exactly one JSON
 ///   object matching the typed compile-service options contract.
 /// - **stdout**: on success, ONLY emitted AIR text. No other text is ever
@@ -426,112 +365,33 @@ pub(crate) fn emit_air_from_agent(
     options
         .validate()
         .context("compile-service options validation failed")?;
+    let entry = declared_agent_package_entry(agent_dir)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "{} must declare [compile].entry and [compile].frontend; implicit graph synthesis is no longer supported",
+            agent_dir.join("agent.toml").display()
+        )
+    })?;
     super::agent::verify_agent_integrity(agent_dir)?;
 
-    emit_air_from_declarative_agent(agent_dir, options)
-}
-
-#[cfg(feature = "driver")]
-#[derive(Debug, Deserialize)]
-struct DeclarativeHookToml {
-    event: String,
-    #[serde(rename = "match")]
-    hook_match: Option<String>,
-    mode: String,
-    handler: String,
-}
-
-#[cfg(feature = "driver")]
-#[derive(Debug, Deserialize, Default)]
-struct DeclarativeRuntimeToml {
-    #[serde(default, rename = "loop")]
-    runtime_loop: Option<toml::Value>,
-    /// `[runtime] compaction_policy = '{"keep_recent":...}'` — the runtime
-    /// declarative-package compaction dial
-    /// (`RUNTIME_EXTRA_COMPACTION_POLICY_KEY` in
-    /// `apxm_core::types::agent_definition`): a JSON string stamped into the
-    /// same open `extra` bag every other `[runtime]` knob uses. Absent
-    /// entirely is the opt-out dial — no attributes are stamped on the
-    /// marked conversational-turn ASK, so `ConversationMemoryMiddleware`
-    /// never starts measuring.
-    #[serde(default)]
-    compaction_policy: Option<String>,
-}
-
-/// Parsed `[runtime] compaction_policy` JSON shape
-/// (`{"keep_recent","compact_at_tokens","strategy","summary_key"}`) — the
-/// same fields `conversational.py::CompactionPolicy` round-trips through the
-/// `extra` bag (`agent_definition.rs`'s
-/// `runtime_extra_round_trips_compaction_policy_knob` test).
-#[cfg(feature = "driver")]
-#[derive(Debug, Deserialize)]
-struct DeclarativeCompactionPolicy {
-    compact_at_tokens: i64,
-    #[serde(default)]
-    keep_recent: Option<i64>,
-    #[serde(default)]
-    summary_key: Option<String>,
-}
-
-/// Node attribute keys `ConversationMemoryMiddleware`
-/// (`crates/runtime/engine/src/executor/middlewares/conversation_memory.rs`)
-/// reads off the marked conversational-turn ASK. Duplicated string literals
-/// here match the existing cross-frontend precedent (the Python frontend's
-/// `conversational.py` independently duplicates the same four literals
-/// rather than importing them from the runtime crate) — every producer
-/// agrees on the wire string, not a shared Rust constant.
-#[cfg(feature = "driver")]
-mod compaction_attrs {
-    pub const AT_TOKENS: &str = "compaction_at_tokens";
-    pub const KEEP_RECENT: &str = "compaction_keep_recent";
-    pub const SUMMARY_KEY: &str = "compaction_summary_key";
-    pub const OVERRIDE_PRESENT: &str = "compaction_override_present";
-}
-
-/// Parse `[runtime] compaction_policy` (if present) into the node attributes
-/// `ConversationMemoryMiddleware` reads. Returns `None` for the opt-out
-/// dial (key absent) or a malformed value (fail-loud: `Err`), never a
-/// silent partial policy.
-#[cfg(feature = "driver")]
-fn declarative_compaction_policy(
-    agent: &DeclarativeAgentToml,
-) -> Result<Option<DeclarativeCompactionPolicy>> {
-    let Some(runtime) = agent.runtime.as_ref() else {
-        return Ok(None);
+    let (air_path, _tmp, handler_manifest) = prepare_graph_input(&entry, None)?;
+    let air = std::fs::read_to_string(&air_path)
+        .with_context(|| format!("Failed to read emitted AIR from {}", air_path.display()))?;
+    let Some(handler_manifest) = handler_manifest else {
+        return Ok(air);
     };
-    let Some(raw) = runtime.compaction_policy.as_ref() else {
-        return Ok(None);
-    };
-    let policy: DeclarativeCompactionPolicy = serde_json::from_str(raw)
-        .with_context(|| format!("Failed to parse [runtime] compaction_policy as JSON: {raw:?}"))?;
-    Ok(Some(policy))
-}
-
-/// Fail-closed precedence: an author-declared `post_turn`
-/// hook already owns compaction, so the runtime default must never
-/// double-compact. Declarative packages express hooks via `[[hooks]]`, so
-/// this is a scan for `event = "post_turn"`, not a Python-only signal.
-#[cfg(feature = "driver")]
-fn declarative_compaction_override_present(agent: &DeclarativeAgentToml) -> bool {
-    agent.hooks.iter().any(|hook| hook.event == "post_turn")
-}
-
-#[cfg(feature = "driver")]
-#[derive(Debug, Deserialize)]
-struct DeclarativeAgentToml {
-    #[serde(default)]
-    hooks: Vec<DeclarativeHookToml>,
-    #[serde(default)]
-    runtime: Option<DeclarativeRuntimeToml>,
-    #[serde(default)]
-    prompts: std::collections::BTreeMap<String, String>,
+    let manifest = HandlerManifest::from_json_slice(&handler_manifest)
+        .context("Failed to parse frontend handler manifest")?;
+    manifest
+        .validate()
+        .context("Invalid frontend handler manifest")?;
+    append_handler_manifest_sidecar(air, &manifest)
 }
 
 /// The only package-level source declaration accepted by `apxm compile`.
 ///
 /// A package that names executable source must declare both the relative entry
 /// path and its frontend under `[compile]`. An entry-less package is compiled
-/// by the declarative runtime-loop synthesizer instead.
+/// by explicit source only; runtime-loop synthesis is not supported.
 #[cfg(feature = "driver")]
 #[derive(Debug, Deserialize, Default)]
 struct AgentPackageToml {
@@ -599,135 +459,6 @@ fn declared_agent_package_entry(agent_dir: &Path) -> Result<Option<PathBuf>> {
 }
 
 #[cfg(feature = "driver")]
-#[derive(Debug, Deserialize, Default)]
-struct DeclarativeCapabilitiesToml {
-    #[serde(default, rename = "capability")]
-    capability: Vec<DeclarativeCapabilityToml>,
-}
-
-#[cfg(feature = "driver")]
-#[derive(Debug, Deserialize)]
-struct DeclarativeCapabilityToml {
-    id: String,
-    kind: String,
-    #[serde(default)]
-    read_only: bool,
-}
-
-#[cfg(feature = "driver")]
-fn declarative_turn_param(agent: &DeclarativeAgentToml) -> String {
-    agent
-        .runtime
-        .as_ref()
-        .and_then(|runtime| runtime.runtime_loop.as_ref())
-        .and_then(|value| value.get("turn_param"))
-        .and_then(|value| value.as_str())
-        .unwrap_or("user_message")
-        .to_string()
-}
-
-#[cfg(feature = "driver")]
-fn declarative_loop_mode(agent: &DeclarativeAgentToml) -> String {
-    agent
-        .runtime
-        .as_ref()
-        .and_then(|runtime| runtime.runtime_loop.as_ref())
-        .and_then(|value| value.get("mode"))
-        .and_then(|value| value.as_str())
-        .unwrap_or("host")
-        .to_string()
-}
-
-#[cfg(feature = "driver")]
-fn declarative_loop_rearms(agent: &DeclarativeAgentToml) -> bool {
-    agent
-        .runtime
-        .as_ref()
-        .and_then(|runtime| runtime.runtime_loop.as_ref())
-        .and_then(|value| value.get("rearm"))
-        .and_then(|value| value.as_bool())
-        .unwrap_or(true)
-}
-
-#[cfg(feature = "driver")]
-fn manifest_entry_matches_handler(entry: &HandlerDescriptor, handler: &str) -> bool {
-    let entry_module = entry.module.replace('\\', "/").replace('.', "/");
-    let entry_qual = &entry.qualname;
-
-    if let Some((path_part, qualname)) = handler.split_once(':') {
-        let path_part = path_part.trim_start_matches("./").replace('\\', "/");
-        return entry_qual == qualname
-            && (entry_module == path_part || entry_module.ends_with(&format!("/{path_part}")));
-    }
-
-    let normalized = handler.replace('.', "/").replace('\\', "/");
-    let Some((path_part, qualname)) = normalized.rsplit_once('/') else {
-        return entry_qual == handler;
-    };
-    entry_qual == qualname
-        && (entry_module == path_part || entry_module.ends_with(&format!("/{path_part}")))
-}
-
-#[cfg(feature = "driver")]
-fn resolve_declarative_handler_id(handler: &str, manifest: &HandlerManifest) -> Result<String> {
-    for entry in &manifest.handlers {
-        if manifest_entry_matches_handler(entry, handler) {
-            return Ok(entry.handler_id.clone());
-        }
-    }
-    Err(anyhow::anyhow!(
-        "hook handler '{handler}' not found in capabilities/handlers/tools.json; run agent build first"
-    ))
-}
-
-#[cfg(feature = "driver")]
-fn declarative_tool_surface(
-    capabilities: &DeclarativeCapabilitiesToml,
-    options: &CompileServiceOptions,
-) -> Result<(Vec<String>, Vec<String>)> {
-    let mut tools = Vec::new();
-    let mut groups = Vec::new();
-    if options.tools {
-        groups.push(apxm_ais::capabilities::groups::WEB.to_string());
-    }
-    if options.skills {
-        groups.push(apxm_ais::capabilities::groups::SKILLS.to_string());
-    }
-    if options.capability_discovery {
-        groups.push(apxm_ais::capabilities::groups::DISCOVERY.to_string());
-    }
-    if options.authoring {
-        groups.push(apxm_ais::capabilities::groups::AUTHORING.to_string());
-    }
-    for cap in &capabilities.capability {
-        match cap.kind.as_str() {
-            "typescript_handler" | "python_handler" => {
-                if cap.read_only {
-                    tools.push(cap.id.clone());
-                }
-            }
-            "builtin" => {
-                if cap.read_only {
-                    tools.push(cap.id.clone());
-                }
-            }
-            "host" | "provider" | "http" | "static" | "mcp" => {}
-            other => {
-                anyhow::bail!(
-                    "capability '{}' has unsupported kind '{other}'; expected one of builtin, typescript_handler, python_handler, host, provider, http, static, mcp",
-                    cap.id
-                );
-            }
-        }
-    }
-    tools.sort();
-    tools.dedup();
-    groups.sort();
-    groups.dedup();
-    Ok((tools, groups))
-}
-
-#[cfg(feature = "driver")]
 fn append_handler_manifest_sidecar(mut air: String, manifest: &HandlerManifest) -> Result<String> {
     if manifest.handlers.is_empty() {
         return Ok(air);
@@ -740,353 +471,6 @@ fn append_handler_manifest_sidecar(mut air: String, manifest: &HandlerManifest) 
     air.push_str(HANDLER_MANIFEST_AIR_SIDECAR_PREFIX);
     air.push_str(&sidecar);
     Ok(air)
-}
-
-#[cfg(feature = "driver")]
-fn emit_air_from_declarative_agent(
-    agent_dir: &Path,
-    options: &CompileServiceOptions,
-) -> Result<String> {
-    use apxm_compiler::{
-        AirModule, AirProgram, FrontendEdge, FrontendGraph, FrontendNode, FrontendParameter,
-    };
-    use apxm_core::constants::graph::{attrs as graph_attrs, metadata as graph_meta};
-    use apxm_core::types::{AISOperationType, DependencyType, Value};
-    use std::collections::HashMap;
-
-    let agent_path = agent_dir.join("agent.toml");
-    let agent_text = std::fs::read_to_string(&agent_path)
-        .with_context(|| format!("Failed to read {}", agent_path.display()))?;
-    let agent: DeclarativeAgentToml = toml::from_str(&agent_text)
-        .with_context(|| format!("Failed to parse {}", agent_path.display()))?;
-
-    let tools_path = agent_dir.join("capabilities/handlers/tools.json");
-    let manifest = if tools_path.is_file() {
-        let data = std::fs::read(&tools_path)
-            .with_context(|| format!("Failed to read {}", tools_path.display()))?;
-        let manifest = HandlerManifest::from_json_slice(&data)
-            .with_context(|| format!("Failed to parse {}", tools_path.display()))?;
-        manifest
-            .validate()
-            .with_context(|| format!("Invalid {}", tools_path.display()))?;
-        manifest
-    } else {
-        HandlerManifest::new(Vec::new())
-    };
-    let capabilities_path = agent_dir.join("capabilities/capabilities.toml");
-    let capabilities: DeclarativeCapabilitiesToml = if capabilities_path.is_file() {
-        toml::from_str(
-            &std::fs::read_to_string(&capabilities_path)
-                .with_context(|| format!("Failed to read {}", capabilities_path.display()))?,
-        )
-        .with_context(|| format!("Failed to parse {}", capabilities_path.display()))?
-    } else {
-        DeclarativeCapabilitiesToml::default()
-    };
-    let (tool_names, capability_groups) = declarative_tool_surface(&capabilities, options)?;
-
-    let persona = agent
-        .prompts
-        .get("persona")
-        .map(|rel| agent_dir.join(rel))
-        .filter(|path| path.is_file())
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .unwrap_or_default();
-    let persona = persona.trim().to_string();
-    let effective_system_prompt = effective_system_prompt(options, &persona);
-
-    let turn_param = declarative_turn_param(&agent);
-    let loop_mode = declarative_loop_mode(&agent);
-    let loop_rearms = declarative_loop_rearms(&agent);
-    let use_recv_loop = loop_mode == "recv" && loop_rearms;
-
-    let parameter = FrontendParameter {
-        name: turn_param.clone(),
-        type_name: "str".to_string(),
-    };
-
-    let mut nodes = Vec::new();
-    for (idx, hook) in agent.hooks.iter().enumerate() {
-        let hook_node_id = idx as u64 + 1;
-        let handler_id = resolve_declarative_handler_id(&hook.handler, &manifest)?;
-        nodes.push(FrontendNode {
-            id: hook_node_id,
-            name: format!("register_hook_{idx}"),
-            op: AISOperationType::RegisterHook,
-            attributes: HashMap::from([
-                (
-                    graph_attrs::HOOK_EVENT.to_string(),
-                    Value::String(hook.event.clone()),
-                ),
-                (
-                    graph_attrs::HOOK_MATCH.to_string(),
-                    Value::String(hook.hook_match.clone().unwrap_or_else(|| "*".to_string())),
-                ),
-                (
-                    graph_attrs::HOOK_MODE.to_string(),
-                    Value::String(hook.mode.clone()),
-                ),
-                (
-                    graph_attrs::HOOK_HANDLER_ID.to_string(),
-                    Value::String(handler_id),
-                ),
-            ]),
-        });
-    }
-
-    let run_node_id = nodes.len() as u64 + 1;
-    let return_node_id = run_node_id + 1;
-    let mut edges = (1..run_node_id)
-        .map(|hook_node_id| FrontendEdge {
-            from: hook_node_id,
-            to: run_node_id,
-            dependency: DependencyType::Effect,
-        })
-        .collect::<Vec<_>>();
-    edges.push(FrontendEdge {
-        from: run_node_id,
-        to: return_node_id,
-        dependency: DependencyType::Data,
-    });
-
-    if use_recv_loop {
-        let mut attrs = HashMap::from([
-            (
-                graph_attrs::PROMPT.to_string(),
-                Value::String(effective_system_prompt.unwrap_or_default().to_string()),
-            ),
-            (
-                graph_attrs::MODE.to_string(),
-                Value::String("recv".to_string()),
-            ),
-            ("recv_once".to_string(), Value::String("false".to_string())),
-            (
-                "turn_agent".to_string(),
-                Value::String("conversation".to_string()),
-            ),
-            ("turn_flow".to_string(), Value::String("turn".to_string())),
-            ("turn_param".to_string(), Value::String(turn_param.clone())),
-            (
-                graph_attrs::INPUT_NAMES.to_string(),
-                Value::Array(vec![Value::String(turn_param.clone())]),
-            ),
-        ]);
-        if let Some(system_prompt) = effective_system_prompt {
-            attrs.insert(
-                graph_attrs::SYSTEM_PROMPT.to_string(),
-                Value::String(system_prompt.to_string()),
-            );
-        }
-        insert_optional_route_attr(&mut attrs, graph_attrs::BACKEND, options.backend.as_deref());
-        insert_optional_route_attr(&mut attrs, graph_attrs::MODEL, options.model.as_deref());
-        insert_optional_route_attr(
-            &mut attrs,
-            graph_attrs::PROFILE,
-            options.context_profile.as_deref(),
-        );
-        insert_optional_token_budget_attr(&mut attrs, options.max_output_tokens);
-        nodes.push(FrontendNode {
-            id: run_node_id,
-            name: "turn_loop".to_string(),
-            op: AISOperationType::Autonomous,
-            attributes: attrs,
-        });
-    } else {
-        nodes.push(FrontendNode {
-            id: run_node_id,
-            name: "run_turn".to_string(),
-            op: AISOperationType::FlowCall,
-            attributes: HashMap::from([
-                (
-                    graph_attrs::AGENT_NAME.to_string(),
-                    Value::String("conversation".to_string()),
-                ),
-                (
-                    graph_attrs::FLOW_NAME.to_string(),
-                    Value::String("turn".to_string()),
-                ),
-                (
-                    graph_attrs::ARGS.to_string(),
-                    Value::Object(HashMap::from([(
-                        turn_param.clone(),
-                        Value::String(format!("{{{turn_param}}}")),
-                    )])),
-                ),
-                (
-                    graph_attrs::INPUT_NAMES.to_string(),
-                    Value::Array(vec![Value::String(turn_param.clone())]),
-                ),
-            ]),
-        });
-    }
-
-    nodes.push(FrontendNode {
-        id: return_node_id,
-        name: "return_turn".to_string(),
-        op: AISOperationType::Return,
-        attributes: HashMap::new(),
-    });
-
-    let main_graph = FrontendGraph {
-        name: "main".to_string(),
-        nodes,
-        edges,
-        parameters: vec![parameter.clone()],
-        metadata: HashMap::from([(graph_meta::IS_ENTRY.to_string(), Value::Bool(true))]),
-    };
-
-    let mut ask_attrs = HashMap::from([
-        (
-            graph_attrs::TEMPLATE_STR.to_string(),
-            Value::String(format!("{{{turn_param}}}")),
-        ),
-        (
-            "conversational_turn".to_string(),
-            Value::String("true".to_string()),
-        ),
-    ]);
-    if let Some(system_prompt) = effective_system_prompt {
-        ask_attrs.insert(
-            graph_attrs::SYSTEM_PROMPT.to_string(),
-            Value::String(system_prompt.to_string()),
-        );
-    }
-    insert_optional_route_attr(
-        &mut ask_attrs,
-        graph_attrs::BACKEND,
-        options.backend.as_deref(),
-    );
-    insert_optional_route_attr(&mut ask_attrs, graph_attrs::MODEL, options.model.as_deref());
-    insert_optional_route_attr(
-        &mut ask_attrs,
-        graph_attrs::PROFILE,
-        options.context_profile.as_deref(),
-    );
-    insert_effort_attr(&mut ask_attrs, options.effort.as_deref());
-    insert_optional_token_budget_attr(&mut ask_attrs, options.max_output_tokens);
-    if !tool_names.is_empty() {
-        ask_attrs.insert(
-            graph_attrs::TOOLS.to_string(),
-            Value::Array(tool_names.into_iter().map(Value::String).collect()),
-        );
-    }
-    if !capability_groups.is_empty() {
-        ask_attrs.insert(
-            graph_attrs::CAPABILITY_GROUPS.to_string(),
-            Value::Array(capability_groups.into_iter().map(Value::String).collect()),
-        );
-    }
-    // Declarative compaction dial: absent `compaction_policy` is the
-    // opt-out no-op (no attributes stamped at all); present-but-malformed is
-    // a hard compile error (fail loud), never a silently-ignored policy.
-    if let Some(policy) = declarative_compaction_policy(&agent)? {
-        ask_attrs.insert(
-            compaction_attrs::AT_TOKENS.to_string(),
-            Value::Number(apxm_core::types::values::Number::Integer(
-                policy.compact_at_tokens,
-            )),
-        );
-        if let Some(keep_recent) = policy.keep_recent {
-            ask_attrs.insert(
-                compaction_attrs::KEEP_RECENT.to_string(),
-                Value::Number(apxm_core::types::values::Number::Integer(keep_recent)),
-            );
-        }
-        if let Some(summary_key) = policy.summary_key {
-            ask_attrs.insert(
-                compaction_attrs::SUMMARY_KEY.to_string(),
-                Value::String(summary_key),
-            );
-        }
-        ask_attrs.insert(
-            compaction_attrs::OVERRIDE_PRESENT.to_string(),
-            Value::Bool(declarative_compaction_override_present(&agent)),
-        );
-    }
-
-    let turn_graph = FrontendGraph {
-        name: "conversation.turn".to_string(),
-        nodes: vec![
-            FrontendNode {
-                id: 1,
-                name: "answer".to_string(),
-                op: AISOperationType::Ask,
-                attributes: ask_attrs,
-            },
-            FrontendNode {
-                id: 2,
-                name: "return_answer".to_string(),
-                op: AISOperationType::Return,
-                attributes: HashMap::new(),
-            },
-        ],
-        edges: vec![FrontendEdge {
-            from: 1,
-            to: 2,
-            dependency: DependencyType::Data,
-        }],
-        parameters: vec![parameter],
-        metadata: HashMap::from([(graph_meta::IS_ENTRY.to_string(), Value::Bool(false))]),
-    };
-
-    let modules = [main_graph, turn_graph]
-        .iter()
-        .map(FrontendGraph::to_air_module)
-        .collect::<std::result::Result<Vec<AirModule>, _>>()?;
-    append_handler_manifest_sidecar(AirProgram::new(modules).to_air()?, &manifest)
-}
-
-/// The trailing handler-manifest comment appended to declarative-agent AIR.
-/// Consumed by Server directly; `apxm compile` (below) strips it before
-/// handing the AIR to the MLIR parser and re-attaches it as an embedded
-/// artifact section instead.
-#[cfg(feature = "driver")]
-/// Split a declarative agent's emitted AIR (as `compile-service` writes it:
-/// canonical AIR text plus a trailing handler-manifest comment) into
-/// sidecar-free AIR text (safe for the MLIR parser) and the raw sidecar JSON
-/// bytes, if present.
-#[cfg(feature = "driver")]
-fn split_handler_manifest_sidecar(air: &str) -> (String, HandlerManifestBytes) {
-    let mut clean_lines = Vec::new();
-    let mut sidecar = None;
-    for line in air.lines() {
-        if let Some(json) = line.strip_prefix(HANDLER_MANIFEST_AIR_SIDECAR_PREFIX) {
-            sidecar = Some(json.as_bytes().to_vec());
-        } else {
-            clean_lines.push(line);
-        }
-    }
-    (clean_lines.join("\n"), sidecar)
-}
-
-/// Prepare a declarative agent-package directory (`agent.toml`, no
-/// Python/TypeScript entry file) for `apxm compile`, the same way
-/// [`prepare_graph_input`] prepares a `.py`/`.ts` frontend entry: emit AIR
-/// via [`emit_air_from_agent`] (the exact `compile-service` code path),
-/// strip the trailing handler-manifest comment into a temp `.air` file, and
-/// pass the manifest to `compile_command` for artifact embedding.
-#[cfg(feature = "driver")]
-fn prepare_graph_input_from_declarative_agent(
-    agent_dir: &Path,
-) -> Result<(
-    PathBuf,
-    Option<tempfile::NamedTempFile>,
-    HandlerManifestBytes,
-)> {
-    use std::io::Write;
-
-    let air_with_sidecar = emit_air_from_agent(agent_dir, &CompileServiceOptions::default())?;
-    let (clean_air, handler_manifest) = split_handler_manifest_sidecar(&air_with_sidecar);
-
-    let mut tmp = tempfile::Builder::new()
-        .suffix(".air")
-        .tempfile()
-        .context("Failed to create temporary .air file for declarative agent compile")?;
-    tmp.write_all(clean_air.as_bytes())
-        .context("Failed to write emitted declarative-agent AIR to temporary file")?;
-    tmp.flush().context("Failed to flush temporary .air file")?;
-
-    Ok((tmp.path().to_path_buf(), Some(tmp), handler_manifest))
 }
 
 #[cfg(feature = "driver")]
@@ -1177,25 +561,6 @@ fn resolve_directory_air_source(dir: &Path) -> Result<PathBuf> {
     }
 }
 
-/// Strip `artifact_hash` from a `skill.toml` text so the resulting bytes can
-/// be embedded inside the artifact they would otherwise hash. Other fields are
-/// preserved verbatim so the server's `validate_embedded_manifest_field`
-/// round-trip succeeds field-for-field against the on-disk manifest.
-#[cfg(feature = "driver")]
-fn strip_artifact_hash_for_embed(manifest_toml: &str) -> Result<Vec<u8>> {
-    let mut value: toml::Value = toml::from_str(manifest_toml)
-        .with_context(|| "failed to parse skill.toml for --embed-manifest")?;
-    if let Some(table) = value.as_table_mut() {
-        table.remove("artifact_hash");
-        if let Some(nested) = table.get_mut("skill").and_then(|v| v.as_table_mut()) {
-            nested.remove("artifact_hash");
-        }
-    }
-    let text = toml::to_string(&value)
-        .with_context(|| "failed to re-serialize skill.toml for --embed-manifest")?;
-    Ok(text.into_bytes())
-}
-
 #[cfg(feature = "driver")]
 #[allow(clippy::too_many_arguments)]
 pub fn compile_command(
@@ -1211,7 +576,6 @@ pub fn compile_command(
     disable_passes: Vec<String>,
     pass_list_override: Option<Vec<String>>,
     config: Option<PathBuf>,
-    embed_manifest: Option<PathBuf>,
 ) -> Result<()> {
     use apxm_core::constants::diagnostics;
     use apxm_core::constants::session::metrics_keys;
@@ -1223,27 +587,27 @@ pub fn compile_command(
     let apxm_config = load_config(config.clone())?;
     let analysis_inputs =
         apxm_compiler::CompilerAnalysisInputs::from_backend_configs(&apxm_config.backends);
-    let declared_package_entry = if input.is_dir() && input.join("agent.toml").is_file() {
+    let is_agent_package_dir = input.is_dir() && input.join("agent.toml").is_file();
+    let declared_package_entry = if is_agent_package_dir {
         declared_agent_package_entry(&input)?
     } else {
         None
     };
-    let is_declarative_agent_dir =
-        input.is_dir() && input.join("agent.toml").is_file() && declared_package_entry.is_none();
     let input_source = if input.is_dir() {
         if let Some(entry) = declared_package_entry {
             entry
-        } else if is_declarative_agent_dir {
-            input.clone()
+        } else if is_agent_package_dir {
+            anyhow::bail!(
+                "{} must declare [compile].entry and [compile].frontend; implicit graph synthesis is no longer supported",
+                input.join("agent.toml").display()
+            );
         } else {
             resolve_directory_air_source(&input)?
         }
     } else {
         input.clone()
     };
-    let (graph_input, _frontend_air, handler_manifest_data) = if is_declarative_agent_dir {
-        prepare_graph_input_from_declarative_agent(&input_source)?
-    } else if input_source.is_dir() {
+    let (graph_input, _frontend_air, handler_manifest_data) = if input_source.is_dir() {
         unreachable!("directory inputs are resolved to a canonical .air source before compilation")
     } else {
         prepare_graph_input(&input_source, compiler_config_path.as_deref())?
@@ -1252,12 +616,8 @@ pub fn compile_command(
     let compile_start = std::time::Instant::now();
     let compiler = Compiler::with_opt_level(opt).context("Failed to initialize compiler")?;
 
-    // Check if this is a new-format .air file (valid MLIR). The declarative
-    // agent-package branch above always produces a clean (sidecar-stripped)
-    // temp `.air` file, so it takes this same fast path.
-    let is_new_air = if (is_declarative_agent_dir || !input_source.is_dir())
-        && ApxmPathFormat::from_path(&graph_input).is_air_source()
-    {
+    // Check if this is a new-format .air file (valid MLIR).
+    let is_new_air = if !input_source.is_dir() && ApxmPathFormat::from_path(&graph_input).is_air_source() {
         std::fs::read_to_string(&graph_input)
             .map(|text| is_mlir_air_text(&text))
             .unwrap_or(false)
@@ -1353,24 +713,6 @@ pub fn compile_command(
                 kind: apxm_core::types::HANDLER_MANIFEST_ARTIFACT_SECTION.into(),
                 data: manifest_data,
             });
-        }
-
-        // Embed the supplied skill.toml as an apxm.skill_manifest.v1 section.
-        // The embedded copy has artifact_hash stripped (it cannot live inside
-        // the artifact it hashes); the server's
-        // `validate_embedded_manifest_field` round-trip succeeds against the
-        // on-disk manifest because all other fields are preserved verbatim.
-        if let Some(manifest_path) = embed_manifest.as_ref() {
-            let manifest_toml = std::fs::read_to_string(manifest_path)
-                .with_context(|| format!("Failed to read {}", manifest_path.display()))?;
-            let stripped = strip_artifact_hash_for_embed(&manifest_toml)?;
-            artifact.add_section(apxm_artifact::ArtifactSection {
-                kind: apxm_artifact::section_kinds::SKILL_MANIFEST_V1.into(),
-                data: stripped,
-            });
-            // Pin created_at to 0 so the wire bytes (and the BLAKE3 recorded
-            // in skill.toml::artifact_hash) are stable across rebuilds.
-            artifact.set_created_at(0);
         }
 
         let bytes = artifact
@@ -1483,9 +825,8 @@ pub(super) fn air_graph_from_source(input: &Path) -> Result<apxm_compiler::AirMo
 #[cfg(all(test, feature = "driver"))]
 mod tests {
     use super::*;
-    use apxm_compiler::{Context, Module, Pipeline};
     use apxm_core::constants::mlir::syntax as mlir_syntax;
-    use apxm_core::types::{HandlerKind, HandlerLanguage, HandlerSource, OptimizationLevel};
+    use apxm_core::types::{HandlerDescriptor, HandlerKind, HandlerLanguage, HandlerSource};
     use std::fs;
     use tempfile::tempdir;
 
@@ -1531,7 +872,7 @@ mod tests {
         typescript_hook_manifests(&[qualname])
     }
 
-    fn write_declarative_agent(mode: &str) -> tempfile::TempDir {
+    fn write_entryless_agent_with_loop_config(mode: &str) -> tempfile::TempDir {
         let tmp = tempdir().expect("temp agent");
         let root = tmp.path();
         fs::create_dir_all(root.join("capabilities/handlers")).expect("handlers dir");
@@ -1619,32 +960,15 @@ handler = "hooks.pre_turn"
         assert!(error.to_string().contains("without [compile].entry"));
     }
 
-    fn assert_cli_air_round_trips(air: &str) {
-        let parseable_air = air
-            .lines()
-            .filter(|line| !line.starts_with("; __apxm_"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(!parseable_air.contains("__apxm_"));
-        assert!(!parseable_air.contains("ais.done"));
-        assert!(parseable_air.contains("ais.return"));
-
-        let context = Context::new().expect("compiler context");
-        let parsed =
-            Module::parse(&context, &parseable_air).expect("Module::parse accepts CLI AIR");
-        parsed.verify().expect("parsed module verifies");
-
-        Pipeline::with_opt_level(&context, OptimizationLevel::O0)
-            .compile(&parseable_air)
-            .expect("O0 compile accepts CLI AIR");
-    }
-
-    fn handler_manifest_sidecar(air: &str) -> HandlerManifest {
-        let raw = air
-            .lines()
-            .find_map(|line| line.strip_prefix(HANDLER_MANIFEST_AIR_SIDECAR_PREFIX))
-            .expect("handler manifest sidecar");
-        serde_json::from_str(raw).expect("handler manifest sidecar JSON")
+    #[test]
+    fn compile_service_rejects_entryless_packages() {
+        let agent_dir = write_entryless_agent_with_loop_config("host");
+        let error = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
+            .expect_err("entry-less package must not synthesize AIR");
+        assert!(
+            error.to_string().contains("[compile].entry"),
+            "error should tell the package author to provide explicit frontend source: {error:#}"
+        );
     }
 
     #[test]
@@ -1654,6 +978,8 @@ handler = "hooks.pre_turn"
                 "system_prompt": "Stay concise.",
                 "backend": "corp-gateway",
                 "model": "gpt-4.1-mini",
+                "context_profile": "configured-profile",
+                "max_output_tokens": 256,
                 "effort": "high",
                 "tools": true,
                 "skills": false,
@@ -1669,6 +995,8 @@ handler = "hooks.pre_turn"
                 system_prompt: Some("Stay concise.".to_string()),
                 backend: Some("corp-gateway".to_string()),
                 model: Some("gpt-4.1-mini".to_string()),
+                context_profile: Some("configured-profile".to_string()),
+                max_output_tokens: Some(256),
                 effort: Some("high".to_string()),
                 tools: true,
                 skills: false,
@@ -1682,6 +1010,8 @@ handler = "hooks.pre_turn"
                 "system_prompt": null,
                 "backend": null,
                 "model": null,
+                "context_profile": null,
+                "max_output_tokens": null,
                 "effort": null,
                 "tools": false,
                 "skills": false,
@@ -1715,6 +1045,7 @@ handler = "hooks.pre_turn"
         for (field, value) in [
             ("backend", "corp gateway"),
             ("model", "model@preview"),
+            ("context_profile", "profile preview"),
             ("effort", "HIGH"),
         ] {
             let json = format!(
@@ -1722,6 +1053,8 @@ handler = "hooks.pre_turn"
                     "system_prompt": null,
                     "backend": {},
                     "model": {},
+                    "context_profile": {},
+                    "max_output_tokens": null,
                     "effort": {},
                     "tools": false,
                     "skills": false,
@@ -1734,6 +1067,11 @@ handler = "hooks.pre_turn"
                     "null".to_string()
                 },
                 if field == "model" {
+                    serde_json::to_string(value).unwrap()
+                } else {
+                    "null".to_string()
+                },
+                if field == "context_profile" {
                     serde_json::to_string(value).unwrap()
                 } else {
                     "null".to_string()
@@ -1776,604 +1114,6 @@ handler = "hooks.pre_turn"
         assert!(!is_mlir_air_text("{\"nodes\": []}"));
     }
 
-    #[test]
-    fn declarative_host_loop_air_round_trips_through_mlir_parser() {
-        let agent_dir = write_declarative_agent("host");
-        let air = emit_air_from_agent(
-            agent_dir.path(),
-            &CompileServiceOptions {
-                tools: true,
-                ..CompileServiceOptions::default()
-            },
-        )
-        .expect("declarative AIR");
-
-        assert!(air.contains("ais.register_hook \"pre_turn\""));
-        assert!(air.contains("hook_handler_id"));
-        assert!(air.contains("hook_match = \"*\""));
-        assert!(air.contains("hook_mode = \"observe\""));
-        assert!(!air.contains("python_hook_handler_id"));
-        assert!(air.contains("ais.flow_call \"conversation\" \"turn\""));
-        assert!(air.contains("args = {user_message = \"{user_message}\"}"));
-        assert!(air.contains("capability_groups = [\"web\"]"));
-        assert!(air.contains(HANDLER_MANIFEST_AIR_SIDECAR_PREFIX));
-        assert_cli_air_round_trips(&air);
-    }
-
-    #[test]
-    fn declarative_recv_loop_air_round_trips_through_mlir_parser() {
-        let agent_dir = write_declarative_agent("recv");
-        let air = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
-            .expect("declarative AIR");
-
-        assert!(air.contains("ais.autonomous"));
-        assert!(air.contains("mode = \"recv\""));
-        assert!(air.contains("recv_once = \"false\""));
-        assert!(!air.contains("capability_groups = ["));
-        assert!(air.contains(HANDLER_MANIFEST_AIR_SIDECAR_PREFIX));
-        assert_cli_air_round_trips(&air);
-    }
-
-    #[test]
-    fn declarative_hooks_are_dependencies_of_the_conversation_loop() {
-        let agent_dir = write_declarative_agent("recv");
-        let agent_path = agent_dir.path().join("agent.toml");
-        let agent_text = fs::read_to_string(&agent_path).expect("agent toml");
-        fs::write(
-            &agent_path,
-            format!(
-                "{agent_text}\n[[hooks]]\nevent = \"post_turn\"\nmatch = \"*\"\nmode = \"observe\"\nhandler = \"hooks.post_turn\"\n"
-            ),
-        )
-        .expect("second hook");
-        fs::write(
-            agent_dir.path().join("capabilities/handlers/tools.json"),
-            typescript_hook_manifests(&["pre_turn", "post_turn"]),
-        )
-        .expect("tools manifest");
-        seal_agent(agent_dir.path());
-
-        let air = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
-            .expect("declarative AIR");
-        let pre_turn = air
-            .find("ais.register_hook \"pre_turn\"")
-            .expect("pre hook");
-        let post_turn = air
-            .find("ais.register_hook \"post_turn\"")
-            .expect("post hook");
-        let loop_offset = air.find("ais.autonomous").expect("conversation loop");
-        assert!(pre_turn < post_turn && post_turn < loop_offset, "{air}");
-        let loop_line = air
-            .lines()
-            .find(|line| line.contains("ais.autonomous"))
-            .expect("autonomous line");
-        assert!(
-            loop_line.contains("%n1") && loop_line.contains("%n2"),
-            "{loop_line}"
-        );
-        assert_cli_air_round_trips(&air);
-    }
-
-    #[test]
-    fn declarative_air_applies_compile_service_llm_options() {
-        let agent_dir = write_declarative_agent("recv");
-        let air = emit_air_from_agent(
-            agent_dir.path(),
-            &CompileServiceOptions {
-                system_prompt: Some("Use terse answers.".to_string()),
-                backend: Some("corp-gateway".to_string()),
-                model: Some("gpt-4.1-mini".to_string()),
-                effort: Some("high".to_string()),
-                ..CompileServiceOptions::default()
-            },
-        )
-        .expect("declarative AIR");
-
-        assert!(
-            air.contains(r#"system_prompt = "Use terse answers.""#),
-            "{air}"
-        );
-        assert!(air.contains(r#"backend = "corp-gateway""#), "{air}");
-        assert!(air.contains(r#"model = "gpt-4.1-mini""#), "{air}");
-        assert!(air.contains(r#"effort = "high""#), "{air}");
-        assert_cli_air_round_trips(&air);
-    }
-
-    #[test]
-    fn declarative_air_applies_compile_service_tool_group_controls() {
-        let agent_dir = write_declarative_agent("host");
-        let air = emit_air_from_agent(
-            agent_dir.path(),
-            &CompileServiceOptions {
-                tools: true,
-                skills: true,
-                capability_discovery: true,
-                authoring: true,
-                ..CompileServiceOptions::default()
-            },
-        )
-        .expect("declarative AIR");
-
-        assert!(
-            air.contains(r#"capability_groups = ["authoring", "discovery", "skills", "web"]"#),
-            "{air}"
-        );
-        assert_cli_air_round_trips(&air);
-    }
-
-    #[test]
-    fn compile_service_exposure_options_do_not_inherit_package_groups() {
-        let agent_dir = write_declarative_agent("host");
-        fs::write(
-            agent_dir.path().join("capabilities/capabilities.toml"),
-            r#"
-[[capability]]
-id = "compose_workflow"
-kind = "builtin"
-read_only = false
-builtin_group = "authoring"
-"#,
-        )
-        .expect("capabilities toml");
-        seal_agent(agent_dir.path());
-
-        let air = emit_air_from_agent(
-            agent_dir.path(),
-            &CompileServiceOptions {
-                tools: true,
-                ..CompileServiceOptions::default()
-            },
-        )
-        .expect("declarative AIR");
-
-        assert!(air.contains(r#"capability_groups = ["web"]"#), "{air}");
-        assert!(!air.contains("authoring"), "{air}");
-    }
-
-    #[test]
-    fn declarative_compile_requires_current_integrity() {
-        let missing = write_declarative_agent("recv");
-        fs::remove_file(missing.path().join("integrity.toml")).expect("remove integrity");
-        let err = emit_air_from_agent(missing.path(), &CompileServiceOptions::default())
-            .expect_err("missing integrity must fail");
-        assert!(
-            err.to_string().contains("missing integrity.toml"),
-            "{err:#}"
-        );
-
-        let tampered = write_declarative_agent("recv");
-        fs::write(tampered.path().join("prompts/persona.md"), "tampered\n")
-            .expect("tamper persona");
-        let err = emit_air_from_agent(tampered.path(), &CompileServiceOptions::default())
-            .expect_err("stale integrity must fail");
-        assert!(
-            err.to_string().contains("failed integrity verification"),
-            "{err:#}"
-        );
-
-        let unrecognized = write_declarative_agent("recv");
-        fs::write(unrecognized.path().join("legacy-prompt.md"), "bypass\n")
-            .expect("write unrecognized file");
-        let err = emit_air_from_agent(unrecognized.path(), &CompileServiceOptions::default())
-            .expect_err("files outside the integrity schema must fail");
-        assert!(
-            err.to_string().contains("outside the integrity schema"),
-            "{err:#}"
-        );
-    }
-
-    #[test]
-    fn declarative_air_sidecar_embeds_artifact_local_typescript_source() {
-        let agent_dir = write_declarative_agent("recv");
-        let air = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
-            .expect("declarative AIR");
-        let sidecar = handler_manifest_sidecar(&air);
-        let source = &sidecar.handlers[0].source;
-        assert_eq!(source.artifact_path, "handlers/pre_turn.mjs");
-        assert!(source.content.contains("export function pre_turn"));
-        assert!(
-            !source
-                .content
-                .contains(agent_dir.path().to_string_lossy().as_ref())
-        );
-    }
-
-    #[test]
-    fn declarative_air_sidecar_is_independent_of_the_agent_directory() {
-        let root = PathBuf::from("target/apxm-relative-agent-fixture");
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(root.join("capabilities/handlers")).expect("fixture dirs");
-        fs::create_dir_all(root.join("prompts")).expect("prompts dir");
-        fs::write(root.join("prompts/persona.md"), "You are concise.\n").expect("persona");
-        fs::write(
-            root.join("agent.toml"),
-            r#"
-id = "relative-demo"
-
-[runtime.loop]
-mode = "recv"
-rearm = true
-turn_param = "user_message"
-
-[prompts]
-persona = "prompts/persona.md"
-
-[[hooks]]
-event = "pre_turn"
-match = "*"
-mode = "observe"
-handler = "hooks.pre_turn"
-"#,
-        )
-        .expect("agent toml");
-        fs::write(
-            root.join("capabilities/handlers/tools.json"),
-            typescript_hook_manifest("pre_turn"),
-        )
-        .expect("tools manifest");
-        seal_agent(&root);
-
-        let air =
-            emit_air_from_agent(&root, &CompileServiceOptions::default()).expect("declarative AIR");
-        let sidecar = handler_manifest_sidecar(&air);
-        assert_eq!(
-            sidecar.handlers[0].source.artifact_path,
-            "handlers/pre_turn.mjs"
-        );
-        assert!(
-            !sidecar.handlers[0]
-                .source
-                .content
-                .contains(root.to_string_lossy().as_ref())
-        );
-        let _ = fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn declarative_capability_entries_require_kind() {
-        let agent_dir = write_declarative_agent("recv");
-        fs::create_dir_all(agent_dir.path().join("capabilities")).expect("capabilities dir");
-        fs::write(
-            agent_dir.path().join("capabilities/capabilities.toml"),
-            r#"
-[[capability]]
-id = "fixture.read"
-read_only = true
-"#,
-        )
-        .expect("capabilities toml");
-        seal_agent(agent_dir.path());
-
-        let err = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
-            .expect_err("kind is required");
-        let debug = format!("{err:?}");
-        assert!(
-            debug.contains("Failed to parse")
-                && debug.contains("capabilities.toml")
-                && debug.contains("kind"),
-            "expected missing kind error, got {err}"
-        );
-    }
-
-    #[test]
-    fn declarative_capability_entries_reject_unknown_kind() {
-        let agent_dir = write_declarative_agent("recv");
-        fs::create_dir_all(agent_dir.path().join("capabilities")).expect("capabilities dir");
-        fs::write(
-            agent_dir.path().join("capabilities/capabilities.toml"),
-            r#"
-[[capability]]
-id = "fixture.read"
-kind = "custom"
-read_only = true
-"#,
-        )
-        .expect("capabilities toml");
-        seal_agent(agent_dir.path());
-
-        let err = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
-            .expect_err("kind is canonical");
-        assert!(
-            err.to_string().contains("unsupported kind 'custom'"),
-            "expected unsupported kind error, got {err}"
-        );
-    }
-
-    #[test]
-    fn strip_artifact_hash_round_trips_other_fields() {
-        let original = r#"
-skill_id = "demo"
-version = "0.1.0"
-entry_flow = "main"
-artifact_hash = "blake3:deadbeef"
-required_capabilities = ["workflow_emission_v1"]
-"#;
-        let stripped = strip_artifact_hash_for_embed(original).expect("strip");
-        let parsed = apxm_skill::parse_manifest(std::str::from_utf8(&stripped).expect("utf8"))
-            .expect("re-parse stripped manifest");
-        assert_eq!(parsed.skill_id, "demo");
-        assert_eq!(parsed.version, "0.1.0");
-        assert_eq!(parsed.entry_flow, "main");
-        assert_eq!(parsed.artifact_hash, None);
-        assert_eq!(parsed.required_capabilities, vec!["workflow_emission_v1"]);
-    }
-
-    #[test]
-    fn embedded_manifest_section_round_trips_through_artifact() {
-        use apxm_artifact::{Artifact, ArtifactMetadata, ArtifactSection, section_kinds};
-
-        let manifest_toml = r#"
-skill_id = "demo"
-version = "0.1.0"
-entry_flow = "main"
-required_capabilities = ["workflow_emission_v1"]
-"#;
-        let stripped = strip_artifact_hash_for_embed(manifest_toml).expect("strip");
-
-        let mut artifact = Artifact::new(
-            ArtifactMetadata::new(Some("demo".into()), "test"),
-            Vec::new(),
-        );
-        artifact.add_section(ArtifactSection {
-            kind: section_kinds::SKILL_MANIFEST_V1.into(),
-            data: stripped.clone(),
-        });
-
-        let bytes = artifact.to_bytes().expect("serialize artifact");
-        let decoded = Artifact::from_bytes(&bytes).expect("read back artifact");
-        let section_bytes = decoded
-            .section_data(section_kinds::SKILL_MANIFEST_V1)
-            .expect("embedded skill_manifest section");
-        assert_eq!(section_bytes, stripped.as_slice());
-
-        let reparsed =
-            apxm_skill::parse_manifest(std::str::from_utf8(section_bytes).expect("utf8"))
-                .expect("re-parse embedded manifest");
-        let original = apxm_skill::parse_manifest(manifest_toml).expect("parse original manifest");
-        // artifact_hash is intentionally stripped; every other declared field
-        // matches the on-disk manifest field-for-field.
-        let mut expected = original;
-        expected.artifact_hash = None;
-        assert_eq!(reparsed, expected);
-    }
-
-    #[test]
-    fn set_created_at_yields_byte_identical_artifacts() {
-        // When the compiler pins created_at, two consecutive serializations
-        // of the same (graph + manifest + sections) tuple must produce
-        // identical bytes — required for the artifact_hash chain to mean
-        // anything across rebuilds.
-        use apxm_artifact::{Artifact, ArtifactMetadata, ArtifactSection, section_kinds};
-
-        let make = || {
-            let mut a = Artifact::new(
-                ArtifactMetadata::new(Some("demo".into()), "test"),
-                Vec::new(),
-            );
-            a.add_section(ArtifactSection {
-                kind: section_kinds::SKILL_MANIFEST_V1.into(),
-                data: b"skill_id = \"demo\"\n".to_vec(),
-            });
-            a.set_created_at(0);
-            a.to_bytes().expect("serialize artifact")
-        };
-
-        let b1 = make();
-        std::thread::sleep(std::time::Duration::from_millis(5));
-        let b2 = make();
-        assert_eq!(b1, b2, "set_created_at must produce byte-identical output");
-    }
-
-    // -----------------------------------------------------------------
-    // Declarative compaction dial: replace hand-rolled compaction hooks with
-    // the runtime CompactionPolicy.
-    // -----------------------------------------------------------------
-
-    fn write_declarative_agent_with_compaction(
-        compaction_policy: Option<&str>,
-    ) -> tempfile::TempDir {
-        let tmp = tempdir().expect("temp agent");
-        let root = tmp.path();
-        fs::create_dir_all(root.join("capabilities/handlers")).expect("handlers dir");
-        fs::create_dir_all(root.join("prompts")).expect("prompts dir");
-        fs::write(root.join("prompts/persona.md"), "You are concise.\n").expect("persona");
-        let compaction_line = compaction_policy
-            .map(|json| format!("compaction_policy = {json:?}\n"))
-            .unwrap_or_default();
-        fs::write(
-            root.join("agent.toml"),
-            format!(
-                r#"
-id = "demo"
-
-[runtime]
-{compaction_line}
-
-[runtime.loop]
-mode = "host"
-rearm = true
-turn_param = "user_message"
-
-[prompts]
-persona = "prompts/persona.md"
-
-[[hooks]]
-event = "pre_turn"
-match = "*"
-mode = "observe"
-handler = "hooks.pre_turn"
-"#
-            ),
-        )
-        .expect("agent toml");
-        fs::write(
-            root.join("capabilities/handlers/tools.json"),
-            typescript_hook_manifest("pre_turn"),
-        )
-        .expect("tools manifest");
-        seal_agent(root);
-        tmp
-    }
-
-    #[test]
-    fn declarative_compaction_policy_stamps_marked_ask_attrs() {
-        let policy = r#"{"keep_recent":2,"compact_at_tokens":300,"strategy":"summarize","summary_key":"conversation.summary"}"#;
-        let agent_dir = write_declarative_agent_with_compaction(Some(policy));
-        let air = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
-            .expect("declarative AIR");
-
-        assert!(air.contains("compaction_at_tokens = 300"), "{air}");
-        assert!(air.contains("compaction_keep_recent = 2"), "{air}");
-        assert!(
-            air.contains("compaction_summary_key = \"conversation.summary\""),
-            "{air}"
-        );
-        assert!(
-            air.contains("compaction_override_present = false"),
-            "no post_turn hook is declared, so override_present must be false: {air}"
-        );
-        assert_cli_air_round_trips(&air);
-    }
-
-    #[test]
-    fn declarative_compaction_policy_absent_is_the_opt_out_dial() {
-        let agent_dir = write_declarative_agent_with_compaction(None);
-        let air = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
-            .expect("declarative AIR");
-
-        assert!(!air.contains("compaction_at_tokens"), "{air}");
-        assert!(!air.contains("compaction_keep_recent"), "{air}");
-        assert!(!air.contains("compaction_override_present"), "{air}");
-    }
-
-    #[test]
-    fn declarative_compaction_policy_malformed_json_is_a_hard_compile_error() {
-        let agent_dir = write_declarative_agent_with_compaction(Some("not json"));
-        let err = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
-            .expect_err("malformed compaction_policy must fail loud, not silently no-op");
-        assert!(
-            format!("{err}").contains("compaction_policy"),
-            "error must name the offending field: {err}"
-        );
-    }
-
-    #[test]
-    fn declarative_compaction_override_present_true_when_author_declares_post_turn_hook() {
-        let tmp = tempdir().expect("temp agent");
-        let root = tmp.path();
-        fs::create_dir_all(root.join("capabilities/handlers")).expect("handlers dir");
-        fs::create_dir_all(root.join("prompts")).expect("prompts dir");
-        fs::write(root.join("prompts/persona.md"), "You are concise.\n").expect("persona");
-        fs::write(
-            root.join("agent.toml"),
-            r#"
-id = "demo"
-
-[runtime]
-compaction_policy = "{\"compact_at_tokens\":300}"
-
-[runtime.loop]
-mode = "host"
-rearm = true
-turn_param = "user_message"
-
-[prompts]
-persona = "prompts/persona.md"
-
-[[hooks]]
-event = "post_turn"
-match = "*"
-mode = "observe"
-handler = "hooks.author_compaction"
-"#,
-        )
-        .expect("agent toml");
-        fs::write(
-            root.join("capabilities/handlers/tools.json"),
-            typescript_hook_manifest("author_compaction"),
-        )
-        .expect("tools manifest");
-        seal_agent(root);
-
-        let air =
-            emit_air_from_agent(root, &CompileServiceOptions::default()).expect("declarative AIR");
-        assert!(
-            air.contains("compaction_override_present = true"),
-            "an author-declared post_turn hook must set the fail-closed override signal: {air}"
-        );
-    }
-
-    // -----------------------------------------------------------------
-    // `apxm compile <agent_dir>` — declarative agent-package directory
-    // compile support (shell out to
-    // `apxm run examples/agents/conversational/<artifact>.apxmobj`").
-    // -----------------------------------------------------------------
-
-    #[test]
-    fn split_handler_manifest_sidecar_extracts_trailing_comment() {
-        let manifest = serde_json::to_string(&HandlerManifest::new(Vec::new()))
-            .expect("serialize handler manifest");
-        let air = format!("module {{\n}}\n{HANDLER_MANIFEST_AIR_SIDECAR_PREFIX}{manifest}");
-        let (clean, sidecar) = split_handler_manifest_sidecar(&air);
-        assert!(!clean.contains(HANDLER_MANIFEST_AIR_SIDECAR_PREFIX));
-        assert!(clean.contains("module {"));
-        assert_eq!(sidecar.as_deref(), Some(manifest.as_bytes()));
-    }
-
-    #[test]
-    fn split_handler_manifest_sidecar_is_none_when_absent() {
-        let air = "module {\n}\n";
-        let (clean, sidecar) = split_handler_manifest_sidecar(air);
-        assert_eq!(clean.trim_end(), "module {\n}".trim_end());
-        assert!(sidecar.is_none());
-    }
-
-    #[test]
-    fn prepare_graph_input_from_declarative_agent_yields_clean_air_and_manifest() {
-        let agent_dir = write_declarative_agent("host");
-        let (air_path, _tmp, handler_manifest) =
-            prepare_graph_input_from_declarative_agent(agent_dir.path())
-                .expect("prepare declarative agent graph input");
-
-        let air_text = fs::read_to_string(&air_path).expect("read temp air");
-        assert!(!air_text.contains(HANDLER_MANIFEST_AIR_SIDECAR_PREFIX));
-        assert!(
-            handler_manifest.is_some(),
-            "declarative handlers must round-trip a manifest"
-        );
-
-        // The clean AIR must still parse and verify through the real MLIR
-        // pipeline — the exact bar `apxm compile` itself applies.
-        assert_cli_air_round_trips(&air_text);
-    }
-
-    fn assert_example_agent_artifact_round_trips(name: &str) {
-        let agent_dir = crate::commands::agent::example_agent_dir(name);
-        let (air_path, _tmp, _) = prepare_graph_input_from_declarative_agent(&agent_dir)
-            .unwrap_or_else(|error| panic!("failed to prepare {name}: {error:#}"));
-        let compiler = Compiler::with_opt_level(OptimizationLevel::O0)
-            .unwrap_or_else(|error| panic!("failed to initialize compiler for {name}: {error}"));
-        let module = compiler
-            .compile(&air_path)
-            .unwrap_or_else(|error| panic!("failed to compile {name}: {error}"));
-        let artifact = module
-            .generate_artifact_with_manifest(None, None)
-            .unwrap_or_else(|error| panic!("failed to generate {name} artifact: {error}"));
-        let dag = artifact
-            .entry_dag()
-            .unwrap_or_else(|| panic!("{name} artifact has no entry DAG"));
-        let air = graph_from_execution_dag(dag)
-            .to_air()
-            .unwrap_or_else(|error| panic!("failed to decompile {name}: {error}"));
-
-        assert_cli_air_round_trips(&air);
-    }
-
-    #[test]
-    fn coder_and_explorer_artifacts_round_trip() {
-        assert_example_agent_artifact_round_trips("coder");
-        assert_example_agent_artifact_round_trips("explorer");
-    }
 }
 
 /// Convert an ExecutionDag back to an AirModule for decompile and session output.

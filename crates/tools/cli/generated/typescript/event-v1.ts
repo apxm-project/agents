@@ -10,15 +10,15 @@ export interface EventMeta {
   span_id: string;
   parent_span_id: string | null;
   scope_id?: string;
-  skill?: SkillEventProvenance;
+  program?: ProgramExecutionProvenance;
 }
 
 export type EventSource = "runtime" | "session" | "server" | "gui" | { backend: string } | { acp: string };
 
-export interface SkillEventProvenance {
-  skill_id: string;
-  skill_version: string;
-  parent_skill_id?: string;
+export interface ProgramExecutionProvenance {
+  program_id: string;
+  program_version: string;
+  parent_program_id?: string;
   parent_execution_id?: string;
   flow_name?: string;
 }

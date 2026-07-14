@@ -41,11 +41,8 @@ pub struct AgentDefinition {
     pub hierarchy: Option<AgentHierarchy>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub triggers: Vec<AgentTrigger>,
-    /// `[runtime]` from `agent.toml` — the single source of truth for every
-    /// `ConversationalAgent` knob: loop/memory_space/session_prefix.
-    /// When `entry.flow` is empty, `runtime.loop` is what lets a
-    /// pure-declarative package be instantiated with no Python entry file
-    /// (see [`AgentEntry::flow`]).
+    /// `[runtime]` from `agent.toml`: generic package runtime settings such as
+    /// loop, memory_space, and session_prefix.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<AgentRuntime>,
     /// `[[hooks]]` from `agent.toml`: manifest-declared lifecycle
@@ -57,21 +54,14 @@ pub struct AgentDefinition {
     pub hooks: Vec<AgentHook>,
 }
 
-/// `[runtime]` `extra` key an `agent.toml` author uses to declare the
-/// conversation-compaction policy for a pure-declarative package (no Python
-/// entry file, so no `CompactionPolicy(...)` object to read). The value is
-/// the same JSON shape the Python frontend stamps into `ApxmGraph.metadata`
-/// (the runtime compaction policy): `{"keep_recent", "compact_at_tokens",
-/// "strategy", "summary_key"}`. `extra` is already an open, stringly-typed
-/// bag ([`AgentRuntime::extra`]) — this constant just names the
-/// well-known key so every producer/consumer (this crate's loader, the
-/// server's typed-sidecar loader) agrees on it instead of each side
-/// inventing its own literal.
+/// `[runtime]` `extra` key for package-authored context compaction policy.
+/// `extra` is already an open, stringly-typed bag ([`AgentRuntime::extra`]) —
+/// this constant names the well-known key so every producer/consumer agrees on
+/// it instead of each side inventing its own literal.
 pub const RUNTIME_EXTRA_COMPACTION_POLICY_KEY: &str = "compaction_policy";
 
-/// `[runtime]` — every `ConversationalAgent` knob declarable in the
-/// manifest. Kept an open shape (`extra`) so knobs added later don't
-/// need a schema break. Extra
+/// `[runtime]` package settings. Kept an open shape (`extra`) so knobs added
+/// later don't need a schema break. Extra
 /// values are stringly-typed to keep this derive-`Eq`-able (unlike
 /// `toml::Value`/`serde_json::Value`, which carry floats).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,13 +99,8 @@ fn default_hook_match() -> String {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentEntry {
-    /// Path/reference to the entry flow (e.g. an AIR file). May be empty
-    /// for a **pure-declarative** package with no custom Python
-    /// entry — the loader then instantiates a `ConversationalAgent` straight
-    /// from `AgentDefinition::runtime` + `AgentDefinition::hooks` instead.
-    /// [`AgentDefinition::validate`] requires `runtime.loop` to be set
-    /// whenever `flow` is empty, so there is always an unambiguous loop mode
-    /// to build.
+    /// Path/reference to the entry flow (e.g. an AIR file). Must be explicit;
+    /// loaders do not synthesize a conversational graph from runtime settings.
     pub flow: String,
     /// Optional named loop/driver within the entry flow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -157,7 +142,7 @@ pub enum AgentDefinitionError {
     },
     #[error("id must not be empty")]
     EmptyId,
-    #[error("entry.flow must not be empty unless runtime.loop is set ( pure-declarative agent)")]
+    #[error("entry.flow must not be empty")]
     EmptyEntryFlow,
     #[error("trigger id must not be empty")]
     EmptyTriggerId,
@@ -176,16 +161,7 @@ impl AgentDefinition {
         if self.id.trim().is_empty() {
             return Err(AgentDefinitionError::EmptyId);
         }
-        // an empty entry.flow is only valid for a pure-declarative
-        // agent — one whose [runtime].loop is set, so the loader has an
-        // unambiguous loop mode to build a ConversationalAgent from (no
-        // Python entry file needed).
-        let is_pure_declarative = self
-            .runtime
-            .as_ref()
-            .and_then(|r| r.r#loop.as_deref())
-            .is_some();
-        if self.entry.flow.trim().is_empty() && !is_pure_declarative {
+        if self.entry.flow.trim().is_empty() {
             return Err(AgentDefinitionError::EmptyEntryFlow);
         }
         for trigger in &self.triggers {
@@ -318,14 +294,10 @@ mod tests {
     }
 
     #[test]
-    fn empty_entry_flow_is_valid_for_pure_declarative_agent_with_runtime_loop() {
-        // a package with no entry file at all is valid as long as
-        // [runtime].loop tells the loader which ConversationalAgent loop to
-        // build — nothing ambiguous is left for it to guess.
+    fn rejects_empty_entry_flow_even_with_runtime_loop() {
         let mut def = sample();
         def.entry.flow = String::new();
-        def.validate()
-            .expect("empty entry.flow is valid when runtime.loop is set");
+        assert_eq!(def.validate(), Err(AgentDefinitionError::EmptyEntryFlow));
     }
 
     #[test]

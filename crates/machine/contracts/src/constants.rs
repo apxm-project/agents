@@ -208,23 +208,16 @@ pub mod runtime {
         pub const REVIEWER_UPSTREAM_FRAME_BUDGET_TOKENS: usize = 2_000;
     }
 
-    /// Conversation-window compaction defaults.
+    /// Context-window compaction defaults.
     /// Sibling of [`context_stack`]'s prompt-budget family: that module
     /// bounds ONE assembled prompt; this one bounds the ACCUMULATED
-    /// multi-turn conversation window a `ConversationalAgent` turn measures
-    /// against before folding older turns into a rolling summary. Mirrors
-    /// the Python frontend's `CompactionPolicy` dataclass defaults
-    /// (`crates/compiler/frontend/python/apxm/conversational.py`) — these
-    /// values are also the ones the retired `apxm-machine-ais` CLI
-    /// duplicate (`KEEP_RECENT_TURNS`/`COMPACT_AT_TOKENS`) used, so the
-    /// parity gate for that deletion is these constants matching those
-    /// (proven historically; see `crates/machine/ais/src/chat.rs` history).
+    /// multi-turn context window before older frames can fold into a rolling
+    /// summary.
     pub mod conversation_compaction {
         /// Turns kept verbatim once compaction folds older turns into the
-        /// rolling summary — matches `CompactionPolicy.keep_recent`.
+        /// rolling summary.
         pub const DEFAULT_KEEP_RECENT_TURNS: usize = 4;
-        /// Accumulated-window token budget above which compaction triggers —
-        /// matches `CompactionPolicy.compact_at_tokens`.
+        /// Accumulated-window token budget above which compaction triggers.
         pub const DEFAULT_COMPACT_AT_TOKENS: usize = 20_000;
         /// Utilization percentage (of `compact_at_tokens`) at or above which
         /// `context_window_warning` fires, ahead of the hard compaction
@@ -352,18 +345,6 @@ pub mod memory {
     pub const STM: &str = "stm";
     pub const LTM: &str = "ltm";
     pub const EPISODIC: &str = "episodic";
-}
-
-pub mod call_skill {
-    /// Maximum nested `CALL_SKILL` depth before the runtime fails the call with
-    /// `CallSkillDepthExceeded`. Cross-skill calls compose independent
-    /// contracts, so the depth is intentionally tighter than the intra-artifact
-    /// `MAX_FLOW_CALL_DEPTH`.
-    pub const MAX_CALL_SKILL_DEPTH: usize = 8;
-
-    /// Canonical attribute name carrying the resolved skill identifier
-    /// (`"id"` or `"id@version"`) on a `CALL_SKILL` op.
-    pub const SKILL_ID_ATTR: &str = "skill_id";
 }
 
 pub mod protocols {

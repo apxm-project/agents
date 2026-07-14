@@ -12,6 +12,10 @@ schema_version = "apxm.agent.v1"
 skills = []
 version = "0.1.0"
 
+[compile]
+entry = "python/agent.py"
+frontend = "python"
+
 [[hooks]]
 event = "pre_turn"
 handler = "capabilities.handlers.hooks.inject_context"

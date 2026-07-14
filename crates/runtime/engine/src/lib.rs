@@ -115,11 +115,11 @@ pub use agent_router::{
     AgentRouteDecision, AgentRouteRejection, AgentRouteRequest, AgentRouteScore, AgentRouteSource,
     AgentRouter, AgentRoutingError,
 };
+pub use apxm_capability_iface::CapabilityEffectReplayEvidenceEnvelope;
 pub use background::{
     BackgroundExecution, BackgroundExecutionOutcome, BackgroundExecutionTask,
     BackgroundJoinFailure, PersistedBackgroundExecutionOutcome,
 };
-pub use apxm_capability_iface::CapabilityEffectReplayEvidenceEnvelope;
 pub use capability::{
     CapabilitySystem,
     flow_registry::FlowRegistry,
@@ -137,14 +137,13 @@ pub use effect_receipts::{
     verify_replayable_effect,
 };
 pub use executor::{
-    CallSkillRequest, CallSkillResult, CancellationToken, CapabilityEffectReceiptPayload,
-    ConversationMemoryMiddleware, EmitterAdapter, EventScopeState, ExecutionContext,
-    ExecutionEvent, ExecutionEventEmitter, ExecutionHook, ExecutionHookContext, ExecutorEngine,
-    GraphFinishedEvent, GraphMetricsTracker, GraphStartedEvent, InnerPlanLinker, LoopGuardMiddleware,
-    ModelContextCallKind, ModelContextMetrics, ModelContextPlanStatus, Next, NoOpLinker,
-    NoOpSkillResolver, NoOpWorkflowSpawner, NodeFinishedEvent, NodeReadyEvent, NodeStartedEvent,
-    OperationMiddleware, SkillResolver, TimeoutMiddleware, TokenBudgetMiddleware,
-    TokenUsageSummary, WorkflowSpawnResult, WorkflowSpawner,
+    CancellationToken, CapabilityEffectReceiptPayload, EmitterAdapter, EventScopeState,
+    ExecutionContext, ExecutionEvent, ExecutionEventEmitter, ExecutionHook, ExecutionHookContext,
+    ExecutorEngine, GraphFinishedEvent, GraphMetricsTracker, GraphStartedEvent, InnerPlanLinker,
+    LoopGuardMiddleware, ModelContextCallKind, ModelContextMetrics, ModelContextPlanStatus, Next,
+    NoOpLinker, NoOpWorkflowSpawner, NodeFinishedEvent, NodeReadyEvent, NodeStartedEvent,
+    OperationMiddleware, TimeoutMiddleware, TokenBudgetMiddleware, TokenUsageSummary,
+    WorkflowSpawnResult, WorkflowSpawner,
 };
 pub use graph_lifecycle::BackendGraphLifecycle;
 pub use memory::{MemoryConfig, MemorySpace, MemorySystem, parse_memory_space};

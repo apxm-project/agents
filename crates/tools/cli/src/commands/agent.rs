@@ -6,17 +6,16 @@
 //! rather than loading the JSON schema file at runtime.
 //!
 //! Capability-set drift (agent.toml vs capabilities/capabilities.toml vs
-//! capabilities/permissions.toml vs skills/) is enforced as a lint ERROR
+//! capabilities/permissions.toml) is enforced as a lint ERROR
 //! as a agent invariant. No hand-rolled equivalent of this check
 //! was found elsewhere in the workspace at the schema's grammar (the
 //! only existing "undeclared capability" check is
 //! `server/crates/core/src/skills.rs::validate_inv_cap_node`, which compares
-//! a *compiled skill artifact's* INV_CAP nodes against a manifest's
-//! `declared_tools` set — a different, narrower check over compiled AIR, not
-//! over the agent's authored `capabilities.toml`/`permissions.toml`/
-//! `agent.toml` triple). This module's drift check is therefore a fresh
-//! implementation of the  "joined capability" semantics described in
-//! the agent schema, not a port of that server check.
+//! compiled AIR INV_CAP nodes against runtime admission metadata — a different,
+//! narrower check than the agent's authored `capabilities.toml`/
+//! `permissions.toml`/`agent.toml` triple). This module's drift check is
+//! therefore a fresh implementation of the  "joined capability" semantics
+//! described in the agent schema, not a port of that server check.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -28,9 +27,6 @@ use apxm_core::constants::env as apxm_env;
 use apxm_core::types::{HandlerKind, HandlerLanguage, HandlerManifest};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-
-#[cfg(feature = "driver")]
-use apxm_driver::compiler::Compiler;
 
 use super::implementations::{Status, print_section_header, print_status_line};
 
@@ -118,9 +114,8 @@ pub enum LoopToml {
     Config(RuntimeLoopTable),
 }
 
-/// `agent.toml`'s `[runtime]` table — the single source of truth for every
-/// `ConversationalAgent` knob. `loop`/`memory_space`/`session_prefix`
-/// are the knobs known today; `extra` keeps the table forward-compatible
+/// `agent.toml`'s `[runtime]` table. `loop`/`memory_space`/`session_prefix`
+/// are the runtime settings known today; `extra` keeps the table forward-compatible
 /// with knobs added later without a schema break (same open-shape rule as `CapabilityEntry`/
 /// `PermissionEntry`'s `#[serde(flatten)] extra` pattern above).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -230,13 +225,6 @@ impl FrontendLanguage {
         }
     }
 
-    /// Required source filename for a compiled skill.
-    pub const fn skill_source_filename(self) -> &'static str {
-        match self {
-            Self::Python => "skill.py",
-            Self::TypeScript => "skill.ts",
-        }
-    }
 }
 
 impl fmt::Display for FrontendLanguage {
@@ -277,35 +265,6 @@ pub struct CompileToml {
     /// Frontend that owns the entry source syntax.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frontend: Option<FrontendLanguage>,
-}
-
-/// `skills/<id>/skill.toml` — always present per skill.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SkillToml {
-    pub id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    /// `false` (default) => prompt-only (`CompileStatus::NotCompiled`).
-    #[serde(default)]
-    pub compiled: bool,
-    /// Capability ids this skill invokes; each must be in the agent's
-    /// joined capability set.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub capabilities: Vec<String>,
-    /// Frontend that authored the compiled source. Required when `compiled`
-    /// is true and absent for prompt-only skills.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub frontend: Option<FrontendLanguage>,
-    /// sha256 hex of the frontend source file's bytes as of the last
-    /// successful `agent build` compile of this skill. `None` before the
-    /// first successful compiled build (or for prompt-only skills).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_hash: Option<String>,
-    /// sha256 hex of `skill.air`'s bytes as written by that same build.
-    /// Paired with `source_hash` to detect a hand-edited artifact: see
-    /// [`detect_hand_edited_artifact`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub air_hash: Option<String>,
 }
 
 // ---------------------------------------------------------------------
@@ -523,15 +482,6 @@ fn agent_new_looped_agent(
         &format!("# {display_name}\n\nDescribe this agent's persona here.\n"),
     )?;
 
-    write_new_file(
-        &root.join(format!("skills/{template_skill_id}/skill.toml")),
-        &format!(
-            "id = \"{template_skill_id}\"\n\
-             description = \"Template skill scaffolded by 'apxm agent new'.\"\n\
-             compiled = false\n\
-             capabilities = []\n"
-        ),
-    )?;
     write_new_file(
         &root.join(format!("skills/{template_skill_id}/SKILL.md")),
         &format!("# {template_skill_id}\n\nDescribe what this skill does.\n"),
@@ -860,15 +810,14 @@ fn scan_skill_ids(root: &Path) -> Result<Vec<String>> {
         if !path.is_dir() {
             continue;
         }
-        let skill_toml = path.join("skill.toml");
-        if !skill_toml.is_file() {
+        let skill_md = path.join("SKILL.md");
+        if !skill_md.is_file() {
             bail!(
-                "skill directory '{}' is missing required skill.toml",
+                "skill directory '{}' is missing required SKILL.md",
                 path.display()
             );
         }
-        let skill: SkillToml = read_toml(&skill_toml)?;
-        out.push(skill.id);
+        out.push(entry.file_name().to_string_lossy().into_owned());
     }
     Ok(out)
 }
@@ -1025,7 +974,7 @@ struct LoadedAgent {
     hierarchy: Option<HierarchyToml>,
     capabilities: CapabilitiesToml,
     permissions: PermissionsToml,
-    skills: Vec<SkillToml>,
+    skills: Vec<String>,
 }
 
 fn load_agent(root: &Path) -> Result<LoadedAgent> {
@@ -1070,14 +1019,14 @@ fn load_agent(root: &Path) -> Result<LoadedAgent> {
             if !path.is_dir() {
                 continue;
             }
-            let skill_toml = path.join("skill.toml");
-            if !skill_toml.is_file() {
+            let skill_md = path.join("SKILL.md");
+            if !skill_md.is_file() {
                 bail!(
-                    "skill directory '{}' is missing required skill.toml",
+                    "skill directory '{}' is missing required SKILL.md",
                     path.display()
                 );
             }
-            skills.push(read_toml(&skill_toml)?);
+            skills.push(entry.file_name().to_string_lossy().into_owned());
         }
     }
 
@@ -1123,20 +1072,11 @@ fn recognized_relpath(rel: &str) -> bool {
         ] if *id != "handlers" => true,
         ["prompts", f] => f.ends_with(".md"),
         ["python", f] => f.ends_with(".py"),
-        ["skills", _id, "skill.toml"] => true,
-        // SKILL.md / prompt.md are the primary prose; a skill may also carry
-        // supplementary authored `.md` docs (e.g. a canvas/contract reference)
-        // alongside them, plus its optional compiled artifacts and — for a
-        // `compiled = true` skill — the single frontend source file
-        // (`skill.py` or `skill.ts`) that emits its `skill.air`.
-        ["skills", _id, f] => {
-            f.ends_with(".md")
-                || *f == "skill.air"
-                || *f == "skill.apxmobj"
-                || *f == "skill.py"
-                || *f == "skill.ts"
-        }
-        ["skills", _id, "examples", f] => f.ends_with(".air"),
+        // Instruction catalog resources only. Executable package metadata and
+        // artifacts live at the program/workflow package layer, not under
+        // `skills/<id>/`.
+        ["skills", _id, f] => f.ends_with(".md"),
+        ["skills", _id, "examples", f] => f.ends_with(".md") || f.ends_with(".air"),
         ["examples", f] => f.ends_with(".md"),
         ["tests", f] => !f.is_empty(),
         ["shared", f] => !f.is_empty(),
@@ -1237,11 +1177,9 @@ fn load_org_global_capabilities(org_root: &Path) -> Result<BTreeSet<String>> {
 /// capabilities must resolve into `capabilities.toml`, every
 /// `capabilities.toml` entry must have a matching `permissions.toml` entry
 /// (the "joined capability" — otherwise it "is not a capability and fails
-/// lint"), every `agent.toml` skill reference must be a real `skills/<id>/`
-/// directory, and every skill's own declared capabilities must be in the
-/// agent's joined set (or, per , in `org_globals` — an org-global
-/// capability is real without needing an agent-local permissions.toml
-/// entry; the org agent that owns it already joined it at the org level).
+/// lint"), and every `agent.toml` skill reference must be a real
+/// `skills/<id>/` instruction directory. Executable capability use is declared
+/// by program/workflow package metadata, not by instruction skill resources.
 /// Returns human-readable error strings; empty = clean.
 fn check_capability_drift(pkg: &LoadedAgent, org_globals: &BTreeSet<String>) -> Vec<String> {
     let mut errors = Vec::new();
@@ -1280,11 +1218,6 @@ fn check_capability_drift(pkg: &LoadedAgent, org_globals: &BTreeSet<String>) -> 
         }
     }
 
-    let joined_caps: BTreeSet<&str> = declared_caps
-        .intersection(&permitted_caps)
-        .copied()
-        .collect();
-
     // agent.toml capabilities must resolve into the joined set, or be an
     // org-global capability (already joined at the org level — ).
     for cap in &pkg.agent.capabilities {
@@ -1303,30 +1236,14 @@ fn check_capability_drift(pkg: &LoadedAgent, org_globals: &BTreeSet<String>) -> 
         }
     }
 
-    // agent.toml skills must be real skills/<id>/ directories.
-    let skill_ids: BTreeSet<&str> = pkg.skills.iter().map(|s| s.id.as_str()).collect();
+    // agent.toml skills must be real skills/<id>/ instruction directories.
+    let skill_ids: BTreeSet<&str> = pkg.skills.iter().map(String::as_str).collect();
     for skill_ref in &pkg.agent.skills {
         if !skill_ids.contains(skill_ref.as_str()) {
             errors.push(format!(
                 "agent.toml declares local skill '{skill_ref}' with no matching skills/{skill_ref}/ \
-                 directory (or its skill.toml id does not match its directory name)"
+                 instruction directory"
             ));
-        }
-    }
-
-    // Every skill's own capability references must be inside the joined set,
-    // or be an org-global capability — a skill invoking an
-    // org-global capability must not be falsely flagged as undeclared.
-    for skill in &pkg.skills {
-        for cap in &skill.capabilities {
-            if !joined_caps.contains(cap.as_str()) && !org_globals.contains(cap.as_str()) {
-                errors.push(format!(
-                    "skill '{}' invokes capability '{cap}' which is not in the agent's joined \
-                     capability set (capabilities.toml + permissions.toml) and is not an \
-                     org-global capability",
-                    skill.id
-                ));
-            }
         }
     }
 
@@ -1433,28 +1350,6 @@ fn check_schema_shape(pkg: &LoadedAgent) -> Vec<String> {
             }
         }
     }
-    for skill in &pkg.skills {
-        if skill.id.trim().is_empty() {
-            errors.push("a skill.toml has an empty id".to_string());
-        }
-        if skill.compiled {
-            let skill_dir = pkg.root.join("skills").join(&skill.id);
-            if !skill_dir.join("skill.air").is_file() && !skill_dir.join("skill.apxmobj").is_file()
-            {
-                errors.push(format!(
-                    "skill '{}' declares compiled = true but has neither skill.air nor skill.apxmobj",
-                    skill.id
-                ));
-            }
-            // a compiled skill must resolve to a real frontend source
-            // file (`skill.py`/`skill.ts` per its declared `frontend`) — the
-            // thing `agent build` actually recompiles.
-            if let Err(err) = skill_source_path(&pkg.root, skill) {
-                errors.push(err.to_string());
-            }
-        }
-    }
-
     errors
 }
 
@@ -1697,17 +1592,6 @@ pub(crate) fn agent_lint(path: &Path, org: Option<PathBuf>, json_output: bool) -
     errors.extend(check_capability_drift(&pkg, &org_globals));
     errors.extend(check_hook_contradictions(&pkg));
     errors.extend(check_capability_bindings(&pkg));
-    // a hand-edited compiled artifact is a lint error in every
-    // dialect. This is the "lighter-weight check" documented on
-    // `detect_hand_edited_artifact` — comparing recorded vs current hashes,
-    // not recompiling — which is cheap enough to run unconditionally (lint
-    // has no `driver`-feature dependency, unlike `agent build`'s
-    // recompilation step).
-    for skill in &pkg.skills {
-        if let Some(message) = detect_hand_edited_artifact(path, skill)? {
-            errors.push(message);
-        }
-    }
     for unrecognized in find_unrecognized_files(path)? {
         errors.push(format!(
             "unrecognized file '{unrecognized}' is not part of the agent.v1 folder contract"
@@ -1863,208 +1747,6 @@ pub(super) fn seal_agent_integrity_for_test(root: &Path) -> Result<()> {
     write_integrity_toml(&root.join("integrity.toml"), &integrity)
 }
 
-/// Resolve a compiled skill's single frontend source file
-/// (`skills/<id>/skill.py` or `skills/<id>/skill.ts`) from its declared
-/// `frontend`. Errors clearly for an unknown `frontend` value or a missing
-/// source file rather than silently falling back.
-fn skill_source_path(root: &Path, skill: &SkillToml) -> Result<PathBuf> {
-    let dir = root.join("skills").join(&skill.id);
-    let frontend = skill.frontend.ok_or_else(|| {
-        anyhow!(
-            "skill '{}' declares compiled = true but does not declare frontend",
-            skill.id
-        )
-    })?;
-    let source_path = dir.join(frontend.skill_source_filename());
-    if !source_path.is_file() {
-        bail!(
-            "skill '{}' declares compiled = true with frontend = \"{}\" but is missing {}",
-            skill.id,
-            frontend,
-            source_path.display()
-        );
-    }
-    Ok(source_path)
-}
-
-fn sha256_hex_file(path: &Path) -> Result<String> {
-    let bytes = fs::read(path).with_context(|| format!("Failed to read {}", path.display()))?;
-    Ok(sha256_hex(&bytes))
-}
-
-/// Hand-edited-artifact detection, shared by `agent lint` (a light,
-/// metadata-only check — see the doc comment on `agent_lint`'s call site)
-/// and `agent build` (a hard pre-compile gate — see `agent_build`).
-///
-/// Semantics: a `skill.air` whose hash doesn't match its recorded source is a
-/// build error, but the check must be precise about which recorded hash and
-/// which mismatch triggers it.
-/// `skill.toml` remembers, from the last successful compiled build of a
-/// skill, both `source_hash` (hash of the frontend source file compiled)
-/// and `air_hash` (hash of the `skill.air` that compile produced). If the
-/// *source* has not changed since that build (`source_hash` still matches
-/// the source file on disk) but `skill.air`'s current bytes no longer match
-/// the recorded `air_hash`, the only way that diff can have appeared is a
-/// hand edit of the compiled artifact — recompiling the (unchanged) source
-/// would reproduce the recorded `air_hash`, not what's on disk. That is a
-/// sound, cheap (no recompilation required), and unambiguous drift signal.
-///
-/// A normal source edit (the common, expected `agent build` case) is
-/// explicitly *not* flagged here: `source_hash` no longer matching current
-/// source is exactly what recompiling is for, not an error condition. A
-/// skill with no recorded `source_hash`/`air_hash` yet (first build, or a
-/// skill.toml predating this field) is likewise not flagged — "no prior
-/// recorded hash = normal first build, not an error".
-fn detect_hand_edited_artifact(root: &Path, skill: &SkillToml) -> Result<Option<String>> {
-    if !skill.compiled {
-        return Ok(None);
-    }
-    let (Some(recorded_source_hash), Some(recorded_air_hash)) =
-        (skill.source_hash.as_deref(), skill.air_hash.as_deref())
-    else {
-        return Ok(None);
-    };
-    let air_path = root.join("skills").join(&skill.id).join("skill.air");
-    if !air_path.is_file() {
-        return Ok(None);
-    }
-    let source_path = skill_source_path(root, skill)?;
-    let current_source_hash = sha256_hex_file(&source_path)?;
-    if current_source_hash != recorded_source_hash {
-        // Source changed on purpose; recompiling (not an error) will bring
-        // skill.air back in sync.
-        return Ok(None);
-    }
-    let current_air_hash = sha256_hex_file(&air_path)?;
-    if current_air_hash != recorded_air_hash {
-        return Ok(Some(format!(
-            "skill '{}': skill.air does not match its last recorded build, and the skill's \
-             source ({}) is unchanged since that build — recompiling would reproduce the \
-             recorded artifact, so this diff can only come from hand-editing skill.air. Edit \
-             the source and run 'apxm agent build' again, or discard the hand edit.",
-            skill.id,
-            source_path.display()
-        )));
-    }
-    Ok(None)
-}
-
-/// Compile one `compiled = true` skill's frontend source into `skill.air`,
-/// then convert that AIR into `skill.apxmobj` via the same
-/// `apxm_driver::compiler::Compiler` pipeline `apxm compile` drives.
-/// Returns `(source_hash, air_hash)` for the caller to persist into the
-/// skill's `skill.toml`.
-#[cfg(feature = "driver")]
-fn compile_skill(root: &Path, skill: &SkillToml) -> Result<(String, String)> {
-    let source_path = skill_source_path(root, skill)?;
-    let source_hash = sha256_hex_file(&source_path)?;
-
-    let frontend = skill.frontend.ok_or_else(|| {
-        anyhow!(
-            "skill '{}' declares compiled = true but does not declare frontend",
-            skill.id
-        )
-    })?;
-    let (air_text, handler_manifest_data) = match frontend {
-        FrontendLanguage::Python => {
-            let (tmp, handler_manifest) = super::compile::emit_air_from_python(&source_path, None)
-                .with_context(|| {
-                    format!(
-                        "Failed to compile skill '{}' from {}",
-                        skill.id,
-                        source_path.display()
-                    )
-                })?;
-            (
-                fs::read_to_string(tmp.path()).context("Failed to read emitted AIR")?,
-                handler_manifest,
-            )
-        }
-        FrontendLanguage::TypeScript => {
-            let (tmp, handler_manifest) = super::compile::emit_air_from_typescript(&source_path)
-                .with_context(|| {
-                    format!(
-                        "Failed to compile skill '{}' from {}",
-                        skill.id,
-                        source_path.display()
-                    )
-                })?;
-            (
-                fs::read_to_string(tmp.path()).context("Failed to read emitted AIR")?,
-                handler_manifest,
-            )
-        }
-    };
-
-    let dir = root.join("skills").join(&skill.id);
-    let air_path = dir.join("skill.air");
-    fs::write(&air_path, air_text.as_bytes())
-        .with_context(|| format!("Failed to write {}", air_path.display()))?;
-    let air_hash = sha256_hex(air_text.as_bytes());
-
-    let compiler = Compiler::with_opt_level(apxm_core::types::OptimizationLevel::O0)
-        .context("Failed to initialize compiler (MLIR toolchain not detected)")?;
-    let module = compiler
-        .compile(&air_path)
-        .map_err(|err| anyhow!("Failed to compile skill '{}' AIR: {err}", skill.id))?;
-    let handler_manifest = handler_manifest_data
-        .as_deref()
-        .map(|data| {
-            let manifest = HandlerManifest::from_json_slice(data)
-                .context("Failed to parse compiled skill handler manifest")?;
-            manifest
-                .validate()
-                .context("Invalid compiled skill handler manifest")?;
-            Ok::<_, anyhow::Error>(manifest)
-        })
-        .transpose()?;
-    let mut artifact = module
-        .generate_artifact_with_manifest(None, handler_manifest.as_ref())
-        .with_context(|| format!("Failed to generate artifact for skill '{}'", skill.id))?;
-    if let Some(data) = handler_manifest_data {
-        artifact.add_section(apxm_artifact::ArtifactSection {
-            kind: apxm_core::types::HANDLER_MANIFEST_ARTIFACT_SECTION.into(),
-            data,
-        });
-    }
-    // Pin created_at so the wire bytes (and this build's air_hash-paired
-    // apxmobj) are stable across rebuilds of unchanged source, same as
-    // `compile.rs::compile_command`'s `--embed-manifest` path.
-    artifact.set_created_at(0);
-    let bytes = artifact
-        .to_bytes()
-        .map_err(|err| anyhow!("Failed to serialize skill '{}' artifact: {err}", skill.id))?;
-    let obj_path = dir.join("skill.apxmobj");
-    fs::write(&obj_path, &bytes)
-        .with_context(|| format!("Failed to write {}", obj_path.display()))?;
-
-    Ok((source_hash, air_hash))
-}
-
-#[cfg(not(feature = "driver"))]
-fn compile_skill(_root: &Path, skill: &SkillToml) -> Result<(String, String)> {
-    println!("Compiling skills requires the driver feature");
-    println!("Rebuild with: {}", super::dekk_hints::BUILD);
-    Err(anyhow!(
-        "skill '{}' declares compiled = true; recompiling it requires the driver feature",
-        skill.id
-    ))
-}
-
-fn write_skill_build_hashes(
-    root: &Path,
-    skill_id: &str,
-    source_hash: &str,
-    air_hash: &str,
-) -> Result<()> {
-    let path = root.join("skills").join(skill_id).join("skill.toml");
-    let mut skill: SkillToml = read_toml(&path)?;
-    skill.source_hash = Some(source_hash.to_string());
-    skill.air_hash = Some(air_hash.to_string());
-    let text = toml::to_string_pretty(&skill).context("Failed to serialize skill.toml")?;
-    fs::write(&path, text).with_context(|| format!("Failed to write {}", path.display()))
-}
-
 fn collect_typescript_handler_sources(root: &Path) -> Result<Vec<PathBuf>> {
     let mut sources = BTreeSet::new();
     let handlers_dir = root.join("capabilities/handlers");
@@ -2158,29 +1840,9 @@ fn compile_agent_handlers(root: &Path) -> Result<()> {
 pub(crate) fn agent_build(path: &Path, json_output: bool) -> Result<()> {
     agent_sync(path, false)?;
     let pkg = load_agent(path)?;
-    let mut compiled_skills: Vec<String> = Vec::new();
-
-    for skill in &pkg.skills {
-        if !skill.compiled {
-            continue;
-        }
-        // Hard gate ( "hash-mismatch build error"): refuse to silently
-        // clobber a hand-edited skill.air rather than compiling over it —
-        // see `detect_hand_edited_artifact`'s doc comment for the exact
-        // mismatch this catches.
-        if let Some(message) = detect_hand_edited_artifact(path, skill)? {
-            bail!(message);
-        }
-        let (source_hash, air_hash) = compile_skill(path, skill)?;
-        write_skill_build_hashes(path, &skill.id, &source_hash, &air_hash)?;
-        compiled_skills.push(skill.id.clone());
-    }
-
-    compile_agent_handlers(path)?;
-    // i.e. the FINAL post-compilation artifacts (freshly written
-    // skill.air/skill.apxmobj and the skill.toml files just updated with
-    // source_hash/air_hash), not the pre-compilation source tree. agent.toml
-    // itself is untouched by compiling skills.
+    // Hash the post-sync package metadata and instruction resources. Executable
+    // program content is compiled from the package-level [compile] entry, not
+    // from legacy skills/<id>/ executable artifacts.
     let files = digest_recognized_files(path)?;
     let integrity = compute_integrity(&files);
 
@@ -2193,7 +1855,6 @@ pub(crate) fn agent_build(path: &Path, json_output: bool) -> Result<()> {
                 "path": path.display().to_string(),
                 "files": files.len(),
                 "hash": integrity.hash,
-                "compiled_skills": compiled_skills,
             }))?
         );
     } else {
@@ -2203,9 +1864,6 @@ pub(crate) fn agent_build(path: &Path, json_output: bool) -> Result<()> {
             Status::Ok,
             &format!("{} files hashed, hash={}", files.len(), integrity.hash),
         );
-        if !compiled_skills.is_empty() {
-            println!("  compiled skills: {}", compiled_skills.join(", "));
-        }
     }
     Ok(())
 }
@@ -2336,7 +1994,6 @@ mod tests {
             "package.json",
             "tsconfig.json",
             "prompts/persona.md",
-            "skills/demo-skill/skill.toml",
             "skills/demo-skill/SKILL.md",
             "skills/demo-skill/prompt.md",
             "examples/basic.md",
@@ -2366,10 +2023,6 @@ mod tests {
             }
             other => panic!("expected [runtime.loop] table, got {other:?}"),
         }
-
-        let skill: SkillToml = read_toml(&root.join("skills/demo-skill/skill.toml")).unwrap();
-        assert_eq!(skill.id, "demo-skill");
-        assert!(!skill.compiled);
 
         // The freshly scaffolded tree must lint clean (no capability
         // declared => nothing to join, no drift).
@@ -2437,11 +2090,6 @@ mod tests {
         )
         .unwrap();
         agent_sync(&root, true).unwrap();
-        fs::write(
-            root.join("skills/clean-skill/skill.toml"),
-            "id = \"clean-skill\"\ncompiled = false\ncapabilities = [\"clean_example\"]\n",
-        )
-        .unwrap();
 
         agent_lint(&root, None, true).expect("consistent agent should lint clean");
     }
@@ -2584,21 +2232,6 @@ mod tests {
         assert_eq!(by_name["read_tool"].requires_approval, Some(false));
         assert_eq!(by_name["write_tool"].read_only, Some(false));
         assert_eq!(by_name["write_tool"].requires_approval, Some(true));
-    }
-
-    #[test]
-    fn lint_catches_skill_capability_drift() {
-        let tmp = tempdir().unwrap();
-        let root = tmp.path().join("skill-drift");
-        scaffold(&root, "skill-drift");
-        fs::write(
-            root.join("skills/skill-drift-skill/skill.toml"),
-            "id = \"skill-drift-skill\"\ncompiled = false\ncapabilities = [\"nowhere.declared\"]\n",
-        )
-        .unwrap();
-        let err =
-            agent_lint(&root, None, true).expect_err("undeclared skill capability must fail lint");
-        assert!(err.to_string().contains("lint error"));
     }
 
     #[test]
@@ -2745,6 +2378,73 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "driver")]
+    #[test]
+    fn studio_style_source_package_builds_and_compiles_without_skill_toml() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("studio-generated");
+        fs::create_dir_all(root.join("python")).unwrap();
+        fs::create_dir_all(root.join("skills/studio-instructions")).unwrap();
+        fs::write(
+            root.join("agent.toml"),
+            "id = \"studio-generated\"\n\
+             version = \"0.1.0\"\n\
+             schema_version = \"apxm.agent.v1\"\n\n\
+             [compile]\n\
+             entry = \"python/main.py\"\n\
+             frontend = \"python\"\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("python/main.py"),
+            "from apxm import GraphRecorder, compile, emit_air_if_requested\n\n\n\
+             @compile()\n\
+             def studio_workflow(g: GraphRecorder):\n\
+             \x20\x20\x20\x20ask = g.ask(name=\"respond\", prompt=\"Answer from Studio package metadata.\")\n\
+             \x20\x20\x20\x20g.done(source=ask)\n\n\n\
+             if __name__ == \"__main__\":\n\
+             \x20\x20\x20\x20emit_air_if_requested(studio_workflow)\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("skills/studio-instructions/SKILL.md"),
+            "# Studio Instructions\n\nUse for Studio-authored workflows.\n",
+        )
+        .unwrap();
+
+        agent_build(&root, true).expect("package build must not require skill.toml");
+
+        assert!(!root.join("skills/studio-instructions/skill.toml").exists());
+        assert!(!root.join("skills/studio-instructions/skill.apxmobj").exists());
+        let agent: AgentToml = read_toml(&root.join("agent.toml")).unwrap();
+        assert_eq!(agent.skills, vec!["studio-instructions".to_string()]);
+        assert_eq!(
+            agent
+                .compile
+                .as_ref()
+                .and_then(|compile| compile.entry.as_deref()),
+            Some("python/main.py")
+        );
+
+        let air = super::super::compile::emit_air_from_agent(
+            &root,
+            &apxm_ais::chat::CompileServiceOptions {
+                system_prompt: None,
+                backend: None,
+                model: None,
+                context_profile: None,
+                max_output_tokens: None,
+                effort: None,
+                tools: false,
+                skills: true,
+                capability_discovery: false,
+                authoring: true,
+            },
+        )
+        .expect("compile-service must compile the package-level program entry");
+        assert!(air.contains("Answer from Studio package metadata."));
+    }
+
     #[test]
     fn install_places_files_under_apxm_home() {
         let tmp = tempdir().unwrap();
@@ -2759,7 +2459,7 @@ mod tests {
         let dest = fake_home.path().join("agents").join("installable");
         assert!(dest.join("agent.toml").is_file());
         assert!(dest.join("integrity.toml").is_file());
-        assert!(dest.join("skills/installable-skill/skill.toml").is_file());
+        assert!(dest.join("skills/installable-skill/SKILL.md").is_file());
 
         // The real home directory must never be touched by this test.
         let real_home = dirs::home_dir().unwrap_or_default();
@@ -2802,321 +2502,6 @@ mod tests {
                 .join("agents/conflicted/agent.toml")
                 .is_file()
         );
-    }
-
-    // -----------------------------------------------------------------
-    // skill compilation, hand-edit/hash-drift detection, org globals
-    // -----------------------------------------------------------------
-
-    /// Scaffold a `compiled = true` skill directory with the given frontend
-    /// source, alongside the agent `scaffold()` already created.
-    fn add_compiled_skill(root: &Path, id: &str, frontend: FrontendLanguage, source: &str) {
-        let dir = root.join("skills").join(id);
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(
-            dir.join("skill.toml"),
-            format!(
-                "id = \"{id}\"\ncompiled = true\nfrontend = \"{frontend}\"\ncapabilities = []\n"
-            ),
-        )
-        .unwrap();
-        fs::write(dir.join("SKILL.md"), format!("# {id}\n")).unwrap();
-        fs::write(dir.join("prompt.md"), "Prompt body.\n").unwrap();
-        fs::write(dir.join(frontend.skill_source_filename()), source).unwrap();
-    }
-
-    const PYTHON_SKILL_SOURCE: &str = "from apxm import GraphRecorder, compile, emit_air_if_requested\n\n\n\
-         @compile()\n\
-         def my_skill(g: GraphRecorder):\n\
-         \x20\x20\x20\x20ask = g.ask(name=\"respond\", prompt=\"Describe the weather today.\")\n\
-         \x20\x20\x20\x20g.done(source=ask)\n\n\n\
-         if __name__ == \"__main__\":\n\
-         \x20\x20\x20\x20emit_air_if_requested(my_skill)\n";
-
-    /// Same graph shape as [`PYTHON_SKILL_SOURCE`] (one `ask` -> `done`, same
-    /// name/prompt), authored through `@apxm/frontend`'s `GraphBuilder`.
-    /// TypeScript emits AIR directly from the generated op catalog.
-    #[cfg(feature = "driver")]
-    fn typescript_skill_source() -> String {
-        String::from(
-            "import { GraphBuilder } from \"@apxm/frontend\";\n\n\
-             const g = new GraphBuilder(\"my_skill\");\n\
-             const ask = g.ask({ name: \"respond\", prompt: \"Describe the weather today.\" });\n\
-             g.done(ask);\n\
-             console.log(g.toAir());\n",
-        )
-    }
-
-    #[cfg(feature = "driver")]
-    fn node_available() -> bool {
-        std::process::Command::new("node")
-            .arg("--version")
-            .output()
-            .is_ok_and(|o| o.status.success())
-    }
-
-    #[cfg(feature = "driver")]
-    #[test]
-    fn build_compiles_python_skill_to_air_and_apxmobj() {
-        let tmp = tempdir().unwrap();
-        let root = tmp.path().join("py-skill");
-        scaffold(&root, "py-skill");
-        add_compiled_skill(
-            &root,
-            "py-skill-skill",
-            FrontendLanguage::Python,
-            PYTHON_SKILL_SOURCE,
-        );
-        // Replace the scaffolded prompt-only skill.toml with the compiled one
-        // (scaffold() already created skills/py-skill-skill/{SKILL.md,prompt.md}
-        // with compiled = false; add_compiled_skill above overwrote skill.toml
-        // and the source file in place).
-
-        agent_build(&root, true).expect("build must compile the python skill");
-
-        let skill_dir = root.join("skills/py-skill-skill");
-        assert!(skill_dir.join("skill.air").is_file());
-        assert!(skill_dir.join("skill.apxmobj").is_file());
-        let air = fs::read_to_string(skill_dir.join("skill.air")).unwrap();
-        assert!(air.contains("ais.ask \"Describe the weather today.\""));
-
-        let skill: SkillToml = read_toml(&skill_dir.join("skill.toml")).unwrap();
-        assert!(skill.source_hash.is_some());
-        assert!(skill.air_hash.is_some());
-        assert_eq!(
-            skill.air_hash.as_deref(),
-            Some(sha256_hex(air.as_bytes()).as_str())
-        );
-    }
-
-    #[cfg(feature = "driver")]
-    #[test]
-    fn build_compiles_typescript_skill_to_air_and_apxmobj() {
-        assert!(
-            node_available(),
-            "Node.js is required to validate the supported TypeScript frontend"
-        );
-        let tmp = tempdir().unwrap();
-        let root = tmp.path().join("ts-skill");
-        scaffold(&root, "ts-skill");
-        let ts_source = typescript_skill_source();
-        add_compiled_skill(
-            &root,
-            "ts-skill-skill",
-            FrontendLanguage::TypeScript,
-            &ts_source,
-        );
-
-        agent_build(&root, true).expect("build must compile the typescript skill");
-
-        let skill_dir = root.join("skills/ts-skill-skill");
-        assert!(skill_dir.join("skill.air").is_file());
-        assert!(skill_dir.join("skill.apxmobj").is_file());
-        let air = fs::read_to_string(skill_dir.join("skill.air")).unwrap();
-        assert!(air.contains("ais.ask \"Describe the weather today.\""));
-    }
-
-    #[cfg(not(feature = "driver"))]
-    #[test]
-    fn build_of_compiled_skill_without_driver_feature_errors_clearly() {
-        let tmp = tempdir().unwrap();
-        let root = tmp.path().join("nodriver");
-        scaffold(&root, "nodriver");
-        add_compiled_skill(
-            &root,
-            "nodriver-skill",
-            FrontendLanguage::Python,
-            PYTHON_SKILL_SOURCE,
-        );
-
-        let err = agent_build(&root, true).expect_err("compiling requires the driver feature");
-        assert!(err.to_string().contains("driver feature"));
-    }
-
-    #[test]
-    fn lint_catches_hand_edited_compiled_artifact() {
-        // A skill whose skill.toml already records (source_hash, air_hash)
-        // from a prior build, but whose skill.air on disk no longer matches
-        // air_hash even though the source is unchanged, must fail lint —
-        // this is metadata-only (no compilation) so it runs with or without
-        // the `driver` feature. See `detect_hand_edited_artifact`.
-        let tmp = tempdir().unwrap();
-        let root = tmp.path().join("handedit");
-        scaffold(&root, "handedit");
-        add_compiled_skill(
-            &root,
-            "handedit-skill",
-            FrontendLanguage::Python,
-            PYTHON_SKILL_SOURCE,
-        );
-
-        let dir = root.join("skills/handedit-skill");
-        let original_air = "module {\n  func.func @handedit() -> !ais.token attributes {ais.entry} {\n    %r = ais.ask \"original\" : !ais.token\n    func.return %r : !ais.token\n  }\n}\n";
-        fs::write(dir.join("skill.air"), original_air).unwrap();
-        let source_hash = sha256_hex_file(&dir.join("skill.py")).unwrap();
-        let air_hash = sha256_hex(original_air.as_bytes());
-        fs::write(
-            dir.join("skill.toml"),
-            format!(
-                "id = \"handedit-skill\"\ncompiled = true\nfrontend = \"{}\"\ncapabilities = []\n\
-                 source_hash = \"{source_hash}\"\nair_hash = \"{air_hash}\"\n",
-                FrontendLanguage::Python,
-            ),
-        )
-        .unwrap();
-
-        // Hand-edit skill.air without touching the source.
-        fs::write(
-            dir.join("skill.air"),
-            "module {\n  hand edited garbage\n}\n",
-        )
-        .unwrap();
-
-        let err = agent_lint(&root, None, true).expect_err("hand-edited artifact must fail lint");
-        assert!(
-            err.to_string().contains("lint error"),
-            "expected a lint error, got: {err}"
-        );
-    }
-
-    #[test]
-    fn build_rejects_hand_edited_artifact_before_recompiling() {
-        // Same drift as `lint_catches_hand_edited_compiled_artifact`, but
-        // checked (and rejected) by `agent build` itself, before it would
-        // otherwise recompile and silently clobber the hand edit. This does
-        // not require the `driver` feature: the guard runs before
-        // `compile_skill` is ever called.
-        let tmp = tempdir().unwrap();
-        let root = tmp.path().join("handedit-build");
-        scaffold(&root, "handedit-build");
-        add_compiled_skill(
-            &root,
-            "handedit-build-skill",
-            FrontendLanguage::Python,
-            PYTHON_SKILL_SOURCE,
-        );
-
-        let dir = root.join("skills/handedit-build-skill");
-        let original_air = "module {\n  func.func @x() -> !ais.token attributes {ais.entry} {\n    %r = ais.ask \"original\" : !ais.token\n    func.return %r : !ais.token\n  }\n}\n";
-        fs::write(dir.join("skill.air"), original_air).unwrap();
-        let source_hash = sha256_hex_file(&dir.join("skill.py")).unwrap();
-        let air_hash = sha256_hex(original_air.as_bytes());
-        fs::write(
-            dir.join("skill.toml"),
-            format!(
-                "id = \"handedit-build-skill\"\ncompiled = true\nfrontend = \"{}\"\ncapabilities = []\n\
-                 source_hash = \"{source_hash}\"\nair_hash = \"{air_hash}\"\n",
-                FrontendLanguage::Python,
-            ),
-        )
-        .unwrap();
-
-        // Hand-edit skill.air without touching the source: current air hash
-        // no longer matches the recorded air_hash, even though source_hash
-        // still matches current source — the unambiguous hand-edit signal.
-        fs::write(
-            dir.join("skill.air"),
-            "module {\n  hand edited garbage\n}\n",
-        )
-        .unwrap();
-
-        let err = agent_build(&root, true)
-            .expect_err("build must refuse to recompile over a hand-edited artifact");
-        assert!(
-            err.to_string().contains("hand-editing"),
-            "expected the hand-edit drift message, got: {err}"
-        );
-    }
-
-    #[test]
-    fn build_does_not_flag_first_build_with_no_recorded_hash() {
-        // "no prior recorded hash = normal first build, not an error": a
-        // freshly-scaffolded compiled skill with no skill.air yet and no
-        // source_hash/air_hash recorded must not trip the drift guard.
-        let tmp = tempdir().unwrap();
-        let root = tmp.path().join("firstbuild");
-        scaffold(&root, "firstbuild");
-        add_compiled_skill(
-            &root,
-            "firstbuild-skill",
-            FrontendLanguage::Python,
-            PYTHON_SKILL_SOURCE,
-        );
-
-        let skill: SkillToml = read_toml(&root.join("skills/firstbuild-skill/skill.toml")).unwrap();
-        assert!(
-            detect_hand_edited_artifact(&root, &skill)
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn lint_allows_org_global_capability_without_local_join() {
-        // A skill invoking an org-global capability must not be falsely
-        // flagged as undeclared when the agent itself does not join it
-        // locally.
-        let tmp = tempdir().unwrap();
-        let root = tmp.path().join("orgmember");
-        scaffold(&root, "orgmember");
-        fs::write(
-            root.join("skills/orgmember-skill/skill.toml"),
-            "id = \"orgmember-skill\"\ncompiled = false\ncapabilities = [\"org.shared_tool\"]\n",
-        )
-        .unwrap();
-
-        // Without --org, the org-global capability is undeclared: lint fails.
-        let err = agent_lint(&root, None, true).expect_err("undeclared capability must fail lint");
-        assert!(err.to_string().contains("lint error"));
-
-        // Scaffold a minimal org agent declaring that capability as a
-        // joined org global.
-        let org_root = tmp.path().join("org");
-        fs::create_dir_all(org_root.join("capabilities")).unwrap();
-        fs::write(
-            org_root.join("capabilities/capabilities.toml"),
-            "[[capability]]\nid = \"org.shared_tool\"\n",
-        )
-        .unwrap();
-        fs::write(
-            org_root.join("capabilities/permissions.toml"),
-            "[[permission]]\ncapability = \"org.shared_tool\"\ndecision = \"allow\"\n",
-        )
-        .unwrap();
-
-        agent_lint(&root, Some(org_root), true)
-            .expect("org-global capability must satisfy lint with --org");
-    }
-
-    #[test]
-    fn lint_still_catches_capability_absent_from_org_globals_too() {
-        // Providing --org does not amnesty *every* undeclared capability —
-        // only ones the org agent actually joins as globals.
-        let tmp = tempdir().unwrap();
-        let root = tmp.path().join("orgmember2");
-        scaffold(&root, "orgmember2");
-        fs::write(
-            root.join("skills/orgmember2-skill/skill.toml"),
-            "id = \"orgmember2-skill\"\ncompiled = false\ncapabilities = [\"nowhere.at.all\"]\n",
-        )
-        .unwrap();
-
-        let org_root = tmp.path().join("org2");
-        fs::create_dir_all(org_root.join("capabilities")).unwrap();
-        fs::write(
-            org_root.join("capabilities/capabilities.toml"),
-            "[[capability]]\nid = \"org.other\"\n",
-        )
-        .unwrap();
-        fs::write(
-            org_root.join("capabilities/permissions.toml"),
-            "[[permission]]\ncapability = \"org.other\"\ndecision = \"allow\"\n",
-        )
-        .unwrap();
-
-        let err = agent_lint(&root, Some(org_root), true)
-            .expect_err("a capability absent from both the agent and org globals must fail lint");
-        assert!(err.to_string().contains("lint error"));
     }
 
     #[cfg(feature = "driver")]

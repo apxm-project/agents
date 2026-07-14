@@ -1,4 +1,0 @@
-id = "agent-builder"
-description = "Create APXM agents and compose sub-agents."
-compiled = false
-capabilities = ["read_local_skill"]

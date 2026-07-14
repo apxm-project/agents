@@ -27,7 +27,6 @@ pub mod middlewares;
 pub mod op_usage;
 pub mod pipeline;
 pub mod session_ledger;
-pub mod skill_resolver;
 pub mod timing_tracker;
 pub mod token_accounting;
 pub mod workflow_spawner;
@@ -51,10 +50,7 @@ pub use hooks::{
 };
 pub use inner_plan_linker::{InnerPlanLinker, NoOpLinker};
 pub use middleware::{Next, OperationMiddleware};
-pub use middlewares::{
-    ConversationMemoryMiddleware, LoopGuardMiddleware, TimeoutMiddleware, TokenBudgetMiddleware,
-};
-pub use skill_resolver::{CallSkillRequest, CallSkillResult, NoOpSkillResolver, SkillResolver};
+pub use middlewares::{LoopGuardMiddleware, TimeoutMiddleware, TokenBudgetMiddleware};
 pub use timing_tracker::TimingTracker;
 pub use token_accounting::{TokenAccountant, TokenUsageSummary};
 pub use workflow_spawner::{NoOpWorkflowSpawner, WorkflowSpawnResult, WorkflowSpawner};

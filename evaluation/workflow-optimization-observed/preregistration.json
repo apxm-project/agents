@@ -1,0 +1,57 @@
+{
+  "arms": {
+    "baseline": {
+      "id": "baseline-brief-classifier"
+    },
+    "candidate": {
+      "id": "candidate-typed-contract-classifier"
+    }
+  },
+  "backend_evidence": {
+    "backend": {
+      "id": "amd",
+      "revision": "claude-sonnet-5"
+    },
+    "capabilities": {
+      "context_window": 0,
+      "model": "claude-sonnet-5",
+      "protocol": "anthropic",
+      "source": "registered-backend",
+      "supports_functions": false,
+      "supports_structured_outputs": false,
+      "supports_thinking": false,
+      "supports_vision": false
+    },
+    "kind": "observed-backend-run",
+    "measurement_source": "backend-telemetry"
+  },
+  "dataset": {
+    "id": "workflow-optimization-contract-classification",
+    "revision": "v1"
+  },
+  "decision_rule": {
+    "minimum_candidate_mean": 0.875,
+    "minimum_delta": 0.5
+  },
+  "metric": "exact_match",
+  "provenance": {
+    "bundle_id": "workflow-optimization-observed-v1",
+    "repository": "apxm-project/agents",
+    "revision": "c352b316b7cf3c7017c8502e973be2a5e329032b"
+  },
+  "scenario": "workflow-optimization-observed",
+  "schema_version": 4,
+  "split_policy": {
+    "kind": "fixed-disjoint-case-ids"
+  },
+  "splits": {
+    "held_out": {
+      "case_count": 8,
+      "sha256": "7614c3f3581ced2fec09bfb05943f43fc0188b8412e0ea2efcb51dc6b95f011d"
+    },
+    "optimization": {
+      "case_count": 4,
+      "sha256": "bae777d86e49de363da3a8982c82847b9a9afbc589a9e6093d67703390192c42"
+    }
+  }
+}

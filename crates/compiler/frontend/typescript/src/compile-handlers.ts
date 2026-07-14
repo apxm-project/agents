@@ -103,7 +103,9 @@ async function sourceForHandler(
     bundle: true,
     platform: "node",
     format: "esm",
-    packages: "external",
+    banner: {
+      js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);',
+    },
     write: false,
     alias: {
       "@apxm/frontend": FRONTEND_ENTRY,

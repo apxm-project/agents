@@ -25,6 +25,16 @@ SPEC.loader.exec_module(MODULE)
 TEST_REVISION = "0123456789abcdef0123456789abcdef01234567"
 TEST_DIRTY_CONTENT_SHA256 = "a" * 64
 TEST_FILE_SHA256 = "b" * 64
+TEST_CAPABILITIES = {
+    "protocol": "anthropic",
+    "model": "observed-model",
+    "context_window": 200000,
+    "supports_functions": True,
+    "supports_vision": False,
+    "supports_thinking": True,
+    "supports_structured_outputs": False,
+    "source": "registered-backend",
+}
 TEST_WORKING_TREE = {
     "head_revision": TEST_REVISION,
     "dirty": True,
@@ -138,15 +148,69 @@ class OfflinePromptEvaluationTests(unittest.TestCase):
         token_count: int,
         latency_ms: float,
     ) -> dict[str, str]:
+        request_path = root / "observed-requests" / f"{arm_id}-{case_id}.json"
+        request_path.parent.mkdir(exist_ok=True)
+        request_path.write_text(
+            json.dumps({"model": TEST_CAPABILITIES["model"], "prompt": case_id}, sort_keys=True)
+            + "\n",
+            encoding="utf-8",
+        )
+        response_path = root / "observed-responses" / f"{arm_id}-{case_id}.json"
+        response_path.parent.mkdir(exist_ok=True)
+        response_path.write_text(
+            json.dumps(
+                {
+                    "id": f"response-{arm_id}-{case_id}",
+                    "model": TEST_CAPABILITIES["model"],
+                    "output": output,
+                },
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        request_reference = {
+            "path": request_path.relative_to(root).as_posix(),
+            "sha256": MODULE.sha256_file(request_path),
+        }
+        response_reference = {
+            "path": response_path.relative_to(root).as_posix(),
+            "sha256": MODULE.sha256_file(response_path),
+        }
+        execution = {
+            "schema_version": MODULE.OBSERVED_BACKEND_EXECUTION_SCHEMA_VERSION,
+            "kind": "recorded-backend-execution",
+            "backend": backend,
+            "capabilities_sha256": MODULE.sha256_json(TEST_CAPABILITIES),
+            "case_id": case_id,
+            "arm_id": arm_id,
+            "request": request_reference,
+            "response": response_reference,
+            "provider_response_id": f"response-{arm_id}-{case_id}",
+            "provider_model": TEST_CAPABILITIES["model"],
+            "output_sha256": MODULE.sha256_text(output),
+            "token_count": token_count,
+            "latency_ms": latency_ms,
+            "observed_at_utc": "2026-07-13T12:00:00Z",
+        }
+        execution_path = root / "observed-executions" / f"{arm_id}-{case_id}.json"
+        execution_path.parent.mkdir(exist_ok=True)
+        execution_path.write_text(json.dumps(execution, sort_keys=True) + "\n", encoding="utf-8")
+        execution_reference = {
+            "path": execution_path.relative_to(root).as_posix(),
+            "sha256": MODULE.sha256_file(execution_path),
+        }
         receipt = {
             "schema_version": MODULE.OBSERVED_BACKEND_RECEIPT_SCHEMA_VERSION,
             "kind": "observed-backend-receipt",
             "backend": backend,
             "case_id": case_id,
             "arm_id": arm_id,
+            "request_sha256": request_reference["sha256"],
             "output_sha256": MODULE.sha256_text(output),
             "token_count": token_count,
             "latency_ms": latency_ms,
+            "execution_evidence": execution_reference,
         }
         path = root / "observed-receipts" / f"{arm_id}-{case_id}.json"
         path.parent.mkdir(exist_ok=True)
@@ -380,6 +444,7 @@ class OfflinePromptEvaluationTests(unittest.TestCase):
                         "kind": "observed-backend-run",
                         "backend": {"id": "backend", "revision": "revision-v1"},
                         "measurement_source": "fixture-values",
+                        "capabilities": TEST_CAPABILITIES,
                     },
                     "must declare measurement_source 'backend-telemetry'",
                 ),
@@ -705,6 +770,7 @@ class OfflinePromptEvaluationTests(unittest.TestCase):
                     "kind": "observed-backend-run",
                     "backend": backend,
                     "measurement_source": "backend-telemetry",
+                    "capabilities": TEST_CAPABILITIES,
                 },
             )
 

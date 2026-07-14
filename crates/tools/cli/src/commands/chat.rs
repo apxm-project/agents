@@ -72,9 +72,8 @@ async fn resolve_execute_capability_grant_ids(
 }
 
 /// True when the artifact carries its OWN in-graph conversation loop: a
-/// re-arming `recv` anchor (AUTONOMOUS `mode = "recv"`, `recv_once = "false"`),
-/// the signature a `ConversationalAgent(loop="in_graph")` emits. Such artifacts
-/// own the loop, so the host is a dumb pipe (constitution #2).
+/// re-arming `recv` anchor (AUTONOMOUS `mode = "recv"`, `recv_once = "false"`).
+/// Such artifacts own the loop, so the host is a dumb pipe (constitution #2).
 fn air_has_in_program_loop(air: &str) -> bool {
     air.contains("mode = \"recv\"") && air.contains("recv_once = \"false\"")
 }

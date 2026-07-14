@@ -3,7 +3,6 @@ members = [
 	# ── Machine (AAM/AIS Contracts) ──────────────────────────────────────────
 	"crates/machine/ais",
 	"crates/machine/contracts",
-	"crates/machine/skill",
 	# ── Compiler (Compilation) ────────────────────
 	"crates/compiler/pipeline",
 	# ── Runtime (Execution + Backend) ─────────────
@@ -44,7 +43,6 @@ readme = "README.md"
 # ── Internal crates ──────────────────────────────────────────
 apxm-ais = { version = "0.1.0", path = "crates/machine/ais" }
 apxm-core = { version = "0.1.0", path = "crates/machine/contracts" }
-apxm-skill = { version = "0.1.0", path = "crates/machine/skill" }
 apxm-compiler = { version = "0.1.0", path = "crates/compiler/pipeline" }
 apxm-runtime = { version = "0.1.0", path = "crates/runtime/engine" }
 apxm-capability-iface = { version = "0.1.0", path = "crates/runtime/capability-iface" }

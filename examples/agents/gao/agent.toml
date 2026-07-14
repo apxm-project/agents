@@ -29,6 +29,7 @@ skills = [
 version = "0.1.0"
 
 [compile]
+entry = "capabilities/handlers/main.ts"
 frontend = "typescript"
 
 [[hooks]]

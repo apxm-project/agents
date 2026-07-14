@@ -23,11 +23,6 @@ except ImportError:
     ModelId = None  # type: ignore[assignment,misc]
     OpenAI = None  # type: ignore[assignment,misc]
     Vllm = None  # type: ignore[assignment,misc]
-from .conversational import (
-    CompactionPolicy,
-    ConversationalAgent,
-    MultiFlowArtifact,
-)
 from .constants import (
     CAPABILITY_BASH,
     CAPABILITY_HTTP_GET,
@@ -111,10 +106,8 @@ __all__ = [
     "BoundAgent",
     "close",
     "compile",
-    "CompactionPolicy",
     "CompiledFlow",
     "CompilationError",
-    "ConversationalAgent",
     "CAPABILITY_BASH",
     "CAPABILITY_HTTP_GET",
     "CAPABILITY_HTTP_POST",
@@ -146,7 +139,6 @@ __all__ = [
     "HookEvent",
     "HookFn",
     "HookMode",
-    "MultiFlowArtifact",
     "LLMUsage",
     "config_path",
     "get_backend",

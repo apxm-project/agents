@@ -865,25 +865,6 @@ LogicalResult WorkflowSpawnOp::verify() {
 }
 
 //===----------------------------------------------------------------------===//
-// CallSkillOp - Cross-Skill Invocation by Manifest Identity
-//===----------------------------------------------------------------------===//
-
-LogicalResult CallSkillOp::verify() {
-  if (getSkillId().empty())
-    return emitOpError("skill_id cannot be empty");
-
-  if (failed(verifyTypes<TokenType, HandleType, GoalType>(
-          *this, getInputs(),
-          "inputs must be !ais.token, !ais.handle, or !ais.goal types")))
-    return failure();
-
-  if (failed(verifyType<TokenType>(*this, getResult(), "result must be !ais.token type")))
-    return failure();
-
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
 // TableGen Generated Class Definitions
 //===----------------------------------------------------------------------===//
 

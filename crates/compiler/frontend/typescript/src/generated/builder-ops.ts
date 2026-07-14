@@ -8,7 +8,7 @@ import type { GenericOpOptions, NodeRef } from "../builder.js";
 import type { OpName } from "./ops.js";
 
 /** Generated method names that expose the AIS catalog on GraphBuilder. */
-export type GeneratedBuilderMethodName = "agent" | "qmem" | "umem" | "ask" | "think" | "reason" | "plan" | "reflect" | "verify" | "invCap" | "exc" | "print" | "jump" | "branchOnValue" | "returnNode" | "switchNode" | "flowCall" | "workflowSpawn" | "callSkill" | "merge" | "fence" | "waitAll" | "tryCatch" | "err" | "communicate" | "handoff" | "updateGoal" | "pause" | "resume" | "delegate" | "nop" | "identity" | "spawnAgent" | "registerCapability" | "registerHook" | "autonomous" | "checkpoint" | "constStr" | "yieldNode";
+export type GeneratedBuilderMethodName = "agent" | "qmem" | "umem" | "ask" | "think" | "reason" | "plan" | "reflect" | "verify" | "invCap" | "exc" | "print" | "jump" | "branchOnValue" | "returnNode" | "switchNode" | "flowCall" | "workflowSpawn" | "merge" | "fence" | "waitAll" | "tryCatch" | "err" | "communicate" | "handoff" | "updateGoal" | "pause" | "resume" | "delegate" | "nop" | "identity" | "spawnAgent" | "registerCapability" | "registerHook" | "autonomous" | "checkpoint" | "constStr" | "yieldNode";
 
 /** Catalog operation to generated GraphBuilder method name. */
 export const GENERATED_GRAPH_BUILDER_OP_METHODS: Readonly<Record<OpName, GeneratedBuilderMethodName>> = {
@@ -30,7 +30,6 @@ export const GENERATED_GRAPH_BUILDER_OP_METHODS: Readonly<Record<OpName, Generat
   "SWITCH": "switchNode",
   "FLOW_CALL": "flowCall",
   "WORKFLOW_SPAWN": "workflowSpawn",
-  "CALL_SKILL": "callSkill",
   "MERGE": "merge",
   "FENCE": "fence",
   "WAIT_ALL": "waitAll",
@@ -71,7 +70,6 @@ declare module "../builder.js" {
     switchNode(options?: GenericOpOptions): NodeRef;
     flowCall(options?: GenericOpOptions): NodeRef;
     workflowSpawn(options?: GenericOpOptions): NodeRef;
-    callSkill(options?: GenericOpOptions): NodeRef;
     fence(options?: GenericOpOptions): NodeRef;
     tryCatch(options?: GenericOpOptions): NodeRef;
     err(options?: GenericOpOptions): NodeRef;

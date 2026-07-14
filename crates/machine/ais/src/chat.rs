@@ -5,11 +5,9 @@
 //! `COMPACT_AT_TOKENS`/`estimate_tokens`/`SUMMARIZE_AIR` used to live here as
 //! a chars/4-estimate duplicate with zero call sites (dead policy, never
 //! wired to the dumb-pipe chat host — see `commands/chat.rs`'s doc comment).
-//! They were deleted once the runtime default
-//! (`ConversationMemoryMiddleware`, `apxm-runtime` crate) reached parity —
-//! see the runtime compaction policy and
-//! `apxm_core::constants::runtime::conversation_compaction` for the single
-//! source of truth now.
+//! They were deleted once context compaction moved to generic runtime/session
+//! policy; see `apxm_core::constants::runtime::conversation_compaction` for the
+//! shared defaults.
 
 use crate::capabilities::groups;
 use serde::{Deserialize, Deserializer, Serialize};

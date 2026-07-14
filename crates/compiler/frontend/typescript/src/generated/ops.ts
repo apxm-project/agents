@@ -8,10 +8,10 @@
 export const OP_SPEC_SCHEMA_VERSION = "apxm.op-spec.v1";
 
 /** Total operations declared by the source catalog (including pseudo-ops). */
-export const OP_SPEC_TOTAL_OPERATIONS = 39;
+export const OP_SPEC_TOTAL_OPERATIONS = 38;
 
 /** Union of every AIS opcode name in the catalog. */
-export type OpName = "AGENT" | "QMEM" | "UMEM" | "ASK" | "THINK" | "REASON" | "PLAN" | "REFLECT" | "VERIFY" | "INV_CAP" | "EXC" | "PRINT" | "JUMP" | "BRANCH_ON_VALUE" | "RETURN" | "SWITCH" | "FLOW_CALL" | "WORKFLOW_SPAWN" | "CALL_SKILL" | "MERGE" | "FENCE" | "WAIT_ALL" | "TRY_CATCH" | "ERR" | "COMMUNICATE" | "HANDOFF" | "UPDATE_GOAL" | "PAUSE" | "RESUME" | "DELEGATE" | "NOP" | "IDENTITY" | "SPAWN_AGENT" | "REGISTER_CAPABILITY" | "REGISTER_HOOK" | "AUTONOMOUS" | "CHECKPOINT" | "CONST_STR" | "YIELD";
+export type OpName = "AGENT" | "QMEM" | "UMEM" | "ASK" | "THINK" | "REASON" | "PLAN" | "REFLECT" | "VERIFY" | "INV_CAP" | "EXC" | "PRINT" | "JUMP" | "BRANCH_ON_VALUE" | "RETURN" | "SWITCH" | "FLOW_CALL" | "WORKFLOW_SPAWN" | "MERGE" | "FENCE" | "WAIT_ALL" | "TRY_CATCH" | "ERR" | "COMMUNICATE" | "HANDOFF" | "UPDATE_GOAL" | "PAUSE" | "RESUME" | "DELEGATE" | "NOP" | "IDENTITY" | "SPAWN_AGENT" | "REGISTER_CAPABILITY" | "REGISTER_HOOK" | "AUTONOMOUS" | "CHECKPOINT" | "CONST_STR" | "YIELD";
 
 /** A single field/attribute an AIS operation accepts. */
 export interface OpField {
@@ -397,26 +397,6 @@ export const OP_SPECS: Readonly<Record<OpName, OpSpec>> = {
       { name: "await_result", required: false, description: "Whether to wait for the child result (must be true in the current runtime)", refType: null },
     ],
     exampleJson: "{\"id\": 5, \"op\": \"WORKFLOW_SPAWN\", \"attributes\": {\"target_kind\": \"workflow_path\", \"target\": \"workflows/review.apxmw\", \"args\": {\"topic\": \"{topic}\"}, \"input_names\": [\"topic\"], \"await_result\": true}}",
-  },
-  "CALL_SKILL": {
-    op: "CALL_SKILL",
-    rustVariant: "CallSkill",
-    name: "CallSkill",
-    category: "control_flow",
-    description: "Call another skill by manifest identity (id or id@version)",
-    longDescription: "Invokes another skill resolved by manifest identity through the live SkillLibrary, rather than by raw artifact path. Resolution is lazy: the runtime parses `<skill_id>[@<version>]`, looks up the matching .apxmobj, admits the child's required capabilities against the parent's grant, dispatches the child entry DAG, and records the resolved (skill_id, version, artifact_hash) triple in the parent's provenance. Failure modes are typed: InvalidSkillId, SkillNotFound, SkillVersionNotFound, CapabilityWiden, CallSkillDepthExceeded, ChildExecutionFailed.",
-    latency: "high",
-    wireIndex: 42,
-    isPseudoOp: false,
-    minInputs: 0,
-    producesOutput: true,
-    needsSubmission: true,
-    fields: [
-      { name: "skill_id", required: true, description: "Skill identifier: \"id\" (latest) or \"id@version\" (pinned)", refType: null },
-      { name: "args", required: false, description: "Positional arguments forwarded to the child's entry-flow input vector", refType: null },
-      { name: "input_names", required: false, description: "Optional name vector mapping parent outputs onto the child's positional args", refType: null },
-    ],
-    exampleJson: "{\"id\": 6, \"op\": \"CALL_SKILL\", \"attributes\": {\"skill_id\": \"apxm-orient@0.2.0\", \"args\": [\"context\"], \"input_names\": [\"context\"]}}",
   },
   "MERGE": {
     op: "MERGE",

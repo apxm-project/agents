@@ -23,7 +23,7 @@ Coordination layer bridging compiler and runtime.
 | `cache` | Compilation and artifact caching |
 | `context_assembler` | Context window assembly for multi-node execution |
 | `session_output` | Session directory writer (`manifest.json`, `trace.ndjson`, per-node workspaces) |
-| `skill_resolver` | Skill file discovery and injection into agent workspaces |
+| `workspace_skills` | Skill file discovery and injection into agent workspaces |
 | `error` | `DriverError` type |
 
 ## Key Exports

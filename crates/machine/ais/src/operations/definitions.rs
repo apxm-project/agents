@@ -1,7 +1,7 @@
 //! AIS Operation Definitions - source of truth
 //!
-//! This module contains the complete specification for all 39 AIS operations
-//! (36 public + 1 metadata + 2 internal). Both the compiler and runtime use
+//! This module contains the complete specification for all 38 AIS operations
+//! (35 public + 1 metadata + 2 internal). Both the compiler and runtime use
 //! these definitions to ensure consistent semantics.
 //!
 //! The artifact wire format and the C++ `OperationKind` enum are *generated*
@@ -22,9 +22,9 @@ use std::fmt;
 
 /// Represents all AIS operation types.
 ///
-/// This enum is the canonical list of operations (39 total):
+/// This enum is the canonical list of operations (38 total):
 /// - 1 metadata operation (AgentOp)
-/// - 36 public operations
+/// - 35 public operations
 /// - 2 internal operations (ConstStr, Yield)
 ///
 /// `LOOP_START`/`LOOP_END` were removed because they compiled and verified
@@ -87,11 +87,6 @@ pub enum AISOperationType {
     FlowCall,
     /// Spawn an external AIR file, artifact, or workflow as a child execution.
     WorkflowSpawn,
-    /// Call another skill by manifest identity (`<skill_id>[@<version>]`).
-    /// The runtime resolves the id through the live `SkillLibrary` and
-    /// records the resolved `(skill_id, version, artifact_hash)` triple in
-    /// the parent's provenance.
-    CallSkill,
 
     // Synchronization Operations
     /// Merge multiple tokens into one.
@@ -157,11 +152,12 @@ pub enum AISOperationType {
 /// Canonical AIS artifact wire operation table.
 ///
 /// This table is the single source of truth for operation-kind indexes in the
-/// artifact format. Indices 16, 17, 26, 27, 30, 32, and 39 are retired
+/// artifact format. Indices 16, 17, 26, 27, 30, 32, 39, and 42 are retired
 /// (16/17 formerly LOOP_START/LOOP_END, deleted because they compiled but never
-/// re-executed at runtime; 26/27/32/39
-/// formerly GUARD, CLAIM, NEGOTIATE, and SPAWN_TEAM, deleted as unexercised;
-/// 30 was always reserved) and must never be reassigned.
+/// re-executed at runtime; 26/27/32/39 formerly GUARD, CLAIM, NEGOTIATE, and
+/// SPAWN_TEAM, deleted as unexercised; 42 formerly held the executable-skill
+/// operation, deleted because Agent Skills are trusted context rather than
+/// runtime operations; 30 was always reserved) and must never be reassigned.
 pub const WIRE_INDEXED_OPERATIONS: &[(u32, AISOperationType)] = &[
     (0, AISOperationType::InvCap),
     (1, AISOperationType::Ask),
@@ -198,7 +194,6 @@ pub const WIRE_INDEXED_OPERATIONS: &[(u32, AISOperationType)] = &[
     (38, AISOperationType::Checkpoint),
     (40, AISOperationType::Handoff),
     (41, AISOperationType::WorkflowSpawn),
-    (42, AISOperationType::CallSkill),
     (43, AISOperationType::RegisterHook),
 ];
 
@@ -229,7 +224,6 @@ impl fmt::Display for AISOperationType {
             AISOperationType::Switch => write!(f, "SWITCH"),
             AISOperationType::FlowCall => write!(f, "FLOW_CALL"),
             AISOperationType::WorkflowSpawn => write!(f, "WORKFLOW_SPAWN"),
-            AISOperationType::CallSkill => write!(f, "CALL_SKILL"),
             // Synchronization
             AISOperationType::Merge => write!(f, "MERGE"),
             AISOperationType::Fence => write!(f, "FENCE"),
@@ -289,7 +283,6 @@ impl std::str::FromStr for AISOperationType {
             "switch" => Ok(AISOperationType::Switch),
             "flow_call" => Ok(AISOperationType::FlowCall),
             "workflow_spawn" => Ok(AISOperationType::WorkflowSpawn),
-            "call_skill" => Ok(AISOperationType::CallSkill),
             "merge" => Ok(AISOperationType::Merge),
             "fence" => Ok(AISOperationType::Fence),
             "wait_all" => Ok(AISOperationType::WaitAll),
@@ -337,7 +330,6 @@ impl AISOperationType {
             AISOperationType::Switch => "switch",
             AISOperationType::FlowCall => "flow_call",
             AISOperationType::WorkflowSpawn => "workflow_spawn",
-            AISOperationType::CallSkill => "call_skill",
             AISOperationType::Merge => "merge",
             AISOperationType::Fence => "fence",
             AISOperationType::WaitAll => "wait_all",
@@ -388,7 +380,7 @@ impl AISOperationType {
         WIRE_INDEXED_OPERATIONS
     }
 
-    /// Get all operation types (39 total).
+    /// Get all operation types (38 total).
     pub fn all_operations() -> &'static [AISOperationType] {
         &[
             AISOperationType::Agent,
@@ -409,7 +401,6 @@ impl AISOperationType {
             AISOperationType::Switch,
             AISOperationType::FlowCall,
             AISOperationType::WorkflowSpawn,
-            AISOperationType::CallSkill,
             AISOperationType::Merge,
             AISOperationType::Fence,
             AISOperationType::WaitAll,
@@ -1277,48 +1268,6 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             syntactic_keywords: &[],
         },
     },
-    OperationSpec {
-        op_type: AISOperationType::CallSkill,
-        name: "CallSkill",
-        category: OperationCategory::ControlFlow,
-        description: "Call another skill by manifest identity (id or id@version)",
-        long_description: "Invokes another skill resolved by manifest identity through the live \
-            SkillLibrary, rather than by raw artifact path. Resolution is lazy: the runtime parses \
-            `<skill_id>[@<version>]`, looks up the matching .apxmobj, admits the child's required \
-            capabilities against the parent's grant, dispatches the child entry DAG, and records \
-            the resolved (skill_id, version, artifact_hash) triple in the parent's provenance. \
-            Failure modes are typed: InvalidSkillId, SkillNotFound, SkillVersionNotFound, \
-            CapabilityWiden, CallSkillDepthExceeded, ChildExecutionFailed.",
-        latency: OperationLatency::High,
-        example_json: Some(
-            r#"{"id": 6, "op": "CALL_SKILL", "attributes": {"skill_id": "apxm-orient@0.2.0", "args": ["context"], "input_names": ["context"]}}"#,
-        ),
-        fields: &[
-            OperationField::required(
-                attrs::SKILL_ID,
-                "Skill identifier: \"id\" (latest) or \"id@version\" (pinned)",
-            ),
-            OperationField::optional(
-                attrs::ARGS,
-                "Positional arguments forwarded to the child's entry-flow input vector",
-            ),
-            OperationField::optional(
-                attrs::INPUT_NAMES,
-                "Optional name vector mapping parent outputs onto the child's positional args",
-            ),
-        ],
-        needs_submission: true,
-        min_inputs: 0,
-        produces_output: true,
-        emission: MlirEmissionSpec {
-            primary_attr: Some(attrs::SKILL_ID),
-            context_style: ContextStyle::Parenthesized,
-            result_type: MlirResultType::Token,
-            positional_attrs: &[],
-            keywords: &[attrs::ARGS, attrs::INPUT_NAMES],
-            syntactic_keywords: &[],
-        },
-    },
     // ========== Synchronization Operations ==========
     OperationSpec {
         op_type: AISOperationType::Merge,
@@ -2082,14 +2031,14 @@ mod tests {
     fn test_operation_counts() {
         assert_eq!(
             AIS_OPERATIONS.len(),
-            39,
-            "Expected 39 total operations (1 metadata + 36 public + 2 internal) \
-             after LOOP_START/LOOP_END were deleted"
+            38,
+            "Expected 38 total operations (1 metadata + 35 public + 2 internal) \
+             after the retired loop and executable-skill operations were deleted"
         );
         assert_eq!(
             AISOperationType::all_operations().len(),
-            39,
-            "Expected 39 total operation types"
+            38,
+            "Expected 38 total operation types"
         );
     }
 
@@ -2134,10 +2083,10 @@ mod tests {
             AISOperationType::from_wire_index(29),
             Some(AISOperationType::Resume)
         );
-        // 16, 17, 26, 27, 30, 32, and 39 are retired/reserved (unassigned).
+        // 16, 17, 26, 27, 30, 32, 39, and 42 are retired/reserved (unassigned).
         // 16/17 (LOOP_START/LOOP_END) were retired because they compiled and
         // verified but never re-executed at runtime.
-        for retired in [16, 17, 26, 27, 30, 32, 39] {
+        for retired in [16, 17, 26, 27, 30, 32, 39, 42] {
             assert_eq!(
                 AISOperationType::from_wire_index(retired),
                 None,
@@ -2168,13 +2117,18 @@ mod tests {
             AISOperationType::from_wire_index(41),
             Some(AISOperationType::WorkflowSpawn)
         );
-        // Skill linkage
-        assert_eq!(
-            AISOperationType::from_wire_index(42),
-            Some(AISOperationType::CallSkill)
-        );
+        // 42 is retired after Agent Skills moved to trusted context instead of
+        // runtime execution.
+        assert_eq!(AISOperationType::from_wire_index(42), None);
         // Out-of-range returns None
         assert_eq!(AISOperationType::from_wire_index(u32::MAX), None);
+    }
+
+    #[test]
+    fn retired_executable_skill_slot_is_not_a_runtime_operation() {
+        assert_eq!(AISOperationType::from_wire_index(42), None);
+        assert_eq!(AISOperationType::wire_indexed_operations().len(), 36);
+        assert_eq!(AISOperationType::all_operations().len(), 38);
     }
 
     #[test]
