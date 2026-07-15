@@ -37,13 +37,17 @@ def test_ctx_ask_roundtrips_llm(monkeypatch):
     cap = _fake_runtime(monkeypatch, {tw.HOST_METHOD_LLM_ASK: (True, "the answer", None)})
     ctx = tw._HookCtx({}, req_id="r1")
 
-    out = ctx.ask("hello", system="sys")
+    out = ctx.ask("hello", max_tokens=23, system="sys")
 
     assert out == "the answer"
     call = cap[0]
     assert call[tw.WIRE_FIELD_METHOD] == tw.HOST_METHOD_LLM_ASK
     assert call[tw.WIRE_FIELD_PARENT_REQUEST_ID] == "r1"
-    assert call[tw.WIRE_FIELD_PARAMS] == {"prompt": "hello", "system": "sys"}
+    assert call[tw.WIRE_FIELD_PARAMS] == {
+        "prompt": "hello",
+        "max_tokens": 23,
+        "system": "sys",
+    }
 
 
 def test_ctx_call_invokes_named_tool(monkeypatch):
@@ -85,7 +89,7 @@ def test_host_call_raises_on_error(monkeypatch):
     _fake_runtime(monkeypatch, {tw.HOST_METHOD_LLM_ASK: (False, None, "backend down")})
     ctx = tw._HookCtx({}, req_id="r1")
     try:
-        ctx.ask("hello")
+        ctx.ask("hello", max_tokens=23)
     except RuntimeError as exc:
         assert "backend down" in str(exc)
     else:
@@ -96,11 +100,18 @@ def test_host_call_unavailable_without_parent():
     # No req_id bound (e.g. an offline unit context): host calls are unavailable.
     ctx = tw._HookCtx({})
     try:
-        ctx.ask("hello")
+        ctx.ask("hello", max_tokens=23)
     except RuntimeError as exc:
         assert "no parent request" in str(exc)
     else:
         raise AssertionError("expected RuntimeError without a parent request")
+
+
+def test_hook_context_exposes_no_prompt_mutation_helpers():
+    ctx = tw._HookCtx({}, req_id="r1")
+
+    assert not hasattr(ctx, "prepend_system")
+    assert not hasattr(ctx, "set_system")
 
 
 def test_post_ask_hook_receives_reply():

@@ -215,11 +215,10 @@ pub struct SchedulerState {
     pub delegated_tokens: Arc<DashSet<(NodeId, TokenId)>>,
 
     /// Narrow park-observability signal for fires with `Some(session_id)`
-    /// exactly when a node parks under the conversation-loop's
-    /// `park_registry::session_recv_key(session_id)` wait key (the in-graph
-    /// "waiting for the next turn's message" park) — not for any other park
-    /// reason (PAUSE, generic recv-with-url, etc). A caller that wants to know
-    /// "did this execution just start waiting on turn input" can
+    /// exactly when a node parks under the session input wait key (the
+    /// in-graph host-input boundary) — not for any other park reason. A
+    /// caller that wants to know "did this execution just start waiting on
+    /// turn input" can
     /// `subscribe_session_parked()` and race the receiver's `changed()` against
     /// the execution future, instead of blocking until the whole DAG (which may
     /// run for the lifetime of the session) completes. Kept as a `watch` channel
@@ -517,7 +516,7 @@ impl SchedulerState {
     pub(crate) fn finish_one(&self) {
         let prev = self
             .remaining
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
                 remaining.checked_sub(1)
             })
             .unwrap_or(0);
@@ -739,9 +738,9 @@ impl SchedulerState {
         self.parked.load(Ordering::SeqCst)
     }
 
-    /// Fire the narrow session-recv park-observability signal. Called
-    /// exactly once per session-recv park, from the worker loop, when a node's
-    /// `wait_key` matches `park_registry::session_recv_key(session_id)` for
+    /// Fire the narrow session-input park-observability signal. Called
+    /// exactly once per session-input park, from the worker loop, when a node's
+    /// `wait_key` matches `park_registry::session_input_key(session_id)` for
     /// this execution's session. `send` failing (no subscribers) is
     /// expected and harmless — observability is best-effort and never a
     /// requirement for the park/wake mechanism itself to function.
@@ -773,7 +772,7 @@ impl SchedulerState {
     pub(crate) fn exit_parked(&self) {
         let previous = self
             .parked
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |parked| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |parked| {
                 parked.checked_sub(1)
             })
             .unwrap_or(0);
@@ -1107,13 +1106,28 @@ fn materialize_graph_state(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::executor::ExecutionHook;
+    use crate::aam::Aam;
+    use crate::capability::CapabilitySystem;
+    use crate::executor::{
+        ExecutionContext, ExecutionHook, ExecutorEngine, WorkflowSpawnResult, WorkflowSpawner,
+    };
+    use crate::memory::{MemoryConfig, MemorySystem};
+    use crate::metadata_keys;
+    use crate::scheduler::worker;
+    use apxm_backends::LLMRegistry;
+    use apxm_core::constants::graph::attrs as graph_attrs;
     use apxm_core::types::execution::FlowParameter;
     use apxm_core::types::execution::NodeMetadata;
     use apxm_core::types::operations::AISOperationType;
-    use apxm_core::types::{DagMetadata, DependencyType, Edge, ExecutionDag, Node, Value};
+    use apxm_core::types::{
+        DagMetadata, DependencyType, Edge, ExecutionDag, Node, Value,
+        WORKFLOW_TARGET_KIND_AIR_PATH, WorkflowInvocation, WorkflowTarget,
+    };
+    use async_trait::async_trait;
+    use std::sync::Arc;
     use std::sync::atomic::Ordering;
     use std::time::Duration;
+    use tokio::time::timeout;
 
     static PARK_DURABLE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -1125,6 +1139,27 @@ mod tests {
     impl ExecutionHook for FinishedHook {
         fn on_node_finished(&self, event: &NodeFinishedEvent) {
             self.events.lock().push(event.clone());
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingWorkflowSpawner {
+        invocations: Mutex<Vec<WorkflowInvocation>>,
+    }
+
+    #[async_trait]
+    impl WorkflowSpawner for RecordingWorkflowSpawner {
+        async fn spawn_workflow(
+            &self,
+            invocation: WorkflowInvocation,
+            _parent_emitter: Option<Arc<dyn crate::executor::ExecutionEventEmitter>>,
+            _parent_cancellation: Option<crate::executor::CancellationToken>,
+        ) -> Result<WorkflowSpawnResult, apxm_core::error::RuntimeError> {
+            self.invocations.lock().push(invocation);
+            Ok(WorkflowSpawnResult {
+                value: Value::String("child-complete".to_string()),
+                session_dir: Some("runs/ac66-child".to_string()),
+            })
         }
     }
 
@@ -1733,13 +1768,12 @@ mod tests {
         // The recv anchor (id 1, output token 10) carries generic loop attrs
         // authored by explicit agent source.
         let mut recv = make_node(1, vec![], vec![10]);
-        recv.op_type = AISOperationType::Autonomous;
+        recv.op_type = AISOperationType::AwaitInput;
         for (k, v) in [
-            ("mode", "recv"),
-            ("recv_once", "false"),
-            ("turn_agent", "conversation"),
-            ("turn_flow", "turn"),
-            ("turn_param", "user_message"),
+            ("rearm", "true"),
+            ("agent_name", "test"),
+            ("flow_name", "continue"),
+            ("input_names", "input"),
         ] {
             recv.attributes
                 .insert(k.to_string(), Value::String(v.to_string()));
@@ -1754,12 +1788,12 @@ mod tests {
 
         // Register the re-arming waker exactly as the worker park path does.
         let spec = RearmSpec {
-            recv_node: Arc::new(recv),
-            turn_agent: "conversation".to_string(),
-            turn_flow: "turn".to_string(),
-            turn_param: "user_message".to_string(),
+            await_node: Arc::new(recv),
+            agent_name: "test".to_string(),
+            flow_name: "continue".to_string(),
+            input_name: "input".to_string(),
             session_id: "test".to_string(),
-            max_turns: 100,
+            max_resumes: 100,
         };
         let key = "session_recv:rearm-prod-test-1";
         park_registry::register(
@@ -1786,7 +1820,7 @@ mod tests {
             if n.op_type == AISOperationType::FlowCall {
                 has_flow_call = true;
             }
-            if n.op_type == AISOperationType::Autonomous && n.id != 1 {
+            if n.op_type == AISOperationType::AwaitInput && n.id != 1 {
                 has_fresh_recv = true;
             }
         }
@@ -1806,13 +1840,12 @@ mod tests {
         use futures::poll;
 
         let mut recv = make_node(1, vec![], vec![10]);
-        recv.op_type = AISOperationType::Autonomous;
+        recv.op_type = AISOperationType::AwaitInput;
         for (k, v) in [
-            ("mode", "recv"),
-            ("recv_once", "false"),
-            ("turn_agent", "conversation"),
-            ("turn_flow", "turn"),
-            ("turn_param", "user_message"),
+            ("rearm", "true"),
+            ("agent_name", "test"),
+            ("flow_name", "continue"),
+            ("input_names", "input"),
         ] {
             recv.attributes
                 .insert(k.to_string(), Value::String(v.to_string()));
@@ -1835,12 +1868,12 @@ mod tests {
         );
 
         let spec = RearmSpec {
-            recv_node: Arc::new(recv),
-            turn_agent: "conversation".to_string(),
-            turn_flow: "turn".to_string(),
-            turn_param: "user_message".to_string(),
+            await_node: Arc::new(recv),
+            agent_name: "test".to_string(),
+            flow_name: "continue".to_string(),
+            input_name: "input".to_string(),
             session_id: "test".to_string(),
-            max_turns: 100,
+            max_resumes: 100,
         };
         let key = "session_recv:zero-window-test-1";
         park_registry::register(
@@ -2113,6 +2146,223 @@ mod tests {
         park_registry::durable::close_for_test();
     }
 
+    fn workflow_spawn_then_resume_dag(wait_key: &str) -> ExecutionDag {
+        let spawn = Node {
+            id: 1,
+            op_type: AISOperationType::WorkflowSpawn,
+            attributes: HashMap::from([
+                (
+                    graph_attrs::TARGET_KIND.to_string(),
+                    Value::String(WORKFLOW_TARGET_KIND_AIR_PATH.to_string()),
+                ),
+                (
+                    graph_attrs::TARGET.to_string(),
+                    Value::String("child.air".to_string()),
+                ),
+            ]),
+            input_tokens: vec![],
+            output_tokens: vec![10],
+            metadata: NodeMetadata::default(),
+        };
+        let resume = Node {
+            id: 2,
+            op_type: AISOperationType::Resume,
+            attributes: HashMap::from([(
+                graph_attrs::CHECKPOINT.to_string(),
+                Value::String(wait_key.to_string()),
+            )]),
+            input_tokens: vec![10],
+            output_tokens: vec![20],
+            metadata: NodeMetadata::default(),
+        };
+        let mut dag = ExecutionDag::new();
+        dag.add_node(spawn).unwrap();
+        dag.add_node(resume).unwrap();
+        dag.add_edge(Edge::new(1, 2, 10, DependencyType::Data))
+            .unwrap();
+        dag.entry_nodes = dag.find_entry_nodes();
+        dag.exit_nodes = dag.find_exit_nodes();
+        dag
+    }
+
+    async fn wait_for_park(state: &Arc<SchedulerState>) {
+        timeout(Duration::from_secs(5), async {
+            loop {
+                if state.parked_count() == 1 {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("parent did not park");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn parked_parent_restart_preserves_nested_workflow_spawn_effect_and_lineage() {
+        use crate::scheduler::park_registry;
+
+        let _durable_guard = PARK_DURABLE_TEST_LOCK.lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("ac66_park_journal.sqlite");
+        park_registry::durable::init(&db_path).expect("open durable park journal");
+
+        let wait_key = "ac66-parent-resume";
+        let dag = workflow_spawn_then_resume_dag(wait_key);
+        let parent_execution_id = "ac66-parent-execution";
+        let parent_session_dir = "runs/ac66-parent";
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("in-memory memory system"),
+        );
+        let aam = Aam::new();
+        let capabilities = Arc::new(CapabilitySystem::with_aam(aam.clone()));
+        let spawner = Arc::new(RecordingWorkflowSpawner::default());
+        let mut context =
+            ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), capabilities, aam)
+                .with_graph_id("ac66-parent-graph".to_string());
+        context.metadata.insert(
+            metadata_keys::EXECUTION_ID.to_string(),
+            parent_execution_id.to_string(),
+        );
+        context = context.with_execution_id(parent_execution_id.to_string());
+        context.metadata.insert(
+            metadata_keys::SESSION_DIR.to_string(),
+            parent_session_dir.to_string(),
+        );
+        assert_eq!(context.execution_id, parent_execution_id);
+        assert_eq!(
+            context
+                .metadata
+                .get(metadata_keys::EXECUTION_ID)
+                .map(String::as_str),
+            Some(parent_execution_id)
+        );
+        context.workflow_spawner = spawner.clone();
+        let parent_scope_id = context.scope_id.clone();
+        let scope_registry = Arc::clone(&context.scope_registry);
+        let config = test_config()
+            .with_max_concurrency(1)
+            .with_max_inflight(1)
+            .with_llm_inflight(1);
+        let hooks = ExecutionHookContext::new(parent_execution_id, "ac66-parent-graph", vec![]);
+        let (initial_state, initial_workers) = SchedulerState::new_with_hooks(
+            dag.clone(),
+            config.clone(),
+            Arc::new(MetricsCollector::new()),
+            Instant::now(),
+            vec![],
+            hooks,
+        )
+        .expect("construct initial scheduler state");
+        let initial_state = Arc::new(initial_state);
+        let initial_worker = initial_workers
+            .into_iter()
+            .next()
+            .expect("one scheduler worker");
+        let initial_task = tokio::spawn(worker::worker_loop(
+            0,
+            initial_worker,
+            Arc::clone(&initial_state),
+            Arc::new(ExecutorEngine::new(context.clone())),
+            context.clone(),
+        ));
+
+        wait_for_park(&initial_state).await;
+        assert_eq!(spawner.invocations.lock().len(), 1);
+        let snapshot = initial_state.capture_snapshot();
+        assert!(
+            snapshot.replay_supported,
+            "spawn receipt must permit restart"
+        );
+        assert_eq!(snapshot.execution_id.as_deref(), Some(parent_execution_id));
+        assert!(
+            park_registry::pending_wait_keys()
+                .expect("read durable park journal")
+                .contains(&wait_key.to_string()),
+            "the parent wait must be durable before restart"
+        );
+
+        initial_task.abort();
+        let _ = initial_task.await;
+        park_registry::durable::close_for_test();
+        park_registry::durable::init(&db_path).expect("reopen durable park journal");
+        park_registry::rebuild_from_durable(&[wait_key.to_string()])
+            .expect("rebuild post-restart registry state");
+
+        let (restored_state, restored_workers) = SchedulerState::restore(
+            &snapshot,
+            Arc::new(dag),
+            config,
+            Arc::new(MetricsCollector::new()),
+        )
+        .expect("restore parent scheduler state");
+        let restored_worker = restored_workers
+            .into_iter()
+            .next()
+            .expect("one restored scheduler worker");
+        let restored_task = tokio::spawn(worker::worker_loop(
+            0,
+            restored_worker,
+            Arc::clone(&restored_state),
+            Arc::new(ExecutorEngine::new(context.clone())),
+            context,
+        ));
+
+        wait_for_park(&restored_state).await;
+        assert_eq!(
+            spawner.invocations.lock().len(),
+            1,
+            "restart must not duplicate the completed child workflow effect"
+        );
+        assert_eq!(
+            park_registry::wake(wait_key, Value::String("approved".to_string())),
+            Ok(1)
+        );
+        timeout(Duration::from_secs(5), restored_task)
+            .await
+            .expect("resumed parent worker did not terminate")
+            .expect("resumed parent worker panicked");
+
+        assert_eq!(
+            restored_state
+                .tokens
+                .get(&20)
+                .and_then(|token| token.value.clone()),
+            Some(Value::String("approved".to_string()))
+        );
+        let invocations = spawner.invocations.lock();
+        let invocation = invocations.first().expect("recorded child invocation");
+        assert_eq!(
+            invocation.parent_execution_id.as_deref(),
+            Some(parent_execution_id)
+        );
+        assert_eq!(
+            invocation.parent_session_dir.as_deref(),
+            Some(parent_session_dir)
+        );
+        let invocation_scope_id = invocation
+            .parent_scope_id
+            .as_deref()
+            .expect("child invocation carries the worker scope");
+        assert_ne!(invocation_scope_id, parent_scope_id);
+        assert_eq!(
+            scope_registry
+                .get(invocation_scope_id)
+                .and_then(|entry| entry.parent_id),
+            Some(parent_scope_id)
+        );
+        assert_eq!(invocation.spawn_node_id, Some(1));
+        assert!(matches!(
+            &invocation.target,
+            WorkflowTarget::AirPath { path } if path == "child.air"
+        ));
+
+        park_registry::durable::close_for_test();
+        park_registry::clear_in_memory_for_test(wait_key);
+    }
+
     #[test]
     fn park_durable_failures_and_concurrent_fifo_restart_are_failure_atomic() {
         use crate::scheduler::park_registry;
@@ -2302,13 +2552,12 @@ mod tests {
         use apxm_core::types::operations::AISOperationType;
 
         let mut recv = make_node(1, vec![], vec![10]);
-        recv.op_type = AISOperationType::Autonomous;
+        recv.op_type = AISOperationType::AwaitInput;
         for (k, v) in [
-            ("mode", "recv"),
-            ("recv_once", "false"),
-            ("turn_agent", "conversation"),
-            ("turn_flow", "turn"),
-            ("turn_param", "user_message"),
+            ("rearm", "true"),
+            ("agent_name", "test"),
+            ("flow_name", "continue"),
+            ("input_names", "input"),
         ] {
             recv.attributes
                 .insert(k.to_string(), Value::String(v.to_string()));
@@ -2324,12 +2573,12 @@ mod tests {
         let session_id = "two-turns-session";
         let key = "session_recv:two-turns-unique-1";
         let spec = |sid: &str| RearmSpec {
-            recv_node: Arc::new(recv.clone()),
-            turn_agent: "conversation".to_string(),
-            turn_flow: "turn".to_string(),
-            turn_param: "user_message".to_string(),
+            await_node: Arc::new(recv.clone()),
+            agent_name: "test".to_string(),
+            flow_name: "continue".to_string(),
+            input_name: "input".to_string(),
             session_id: sid.to_string(),
-            max_turns: 100,
+            max_resumes: 100,
         };
 
         // Turn 1.
@@ -2353,13 +2602,13 @@ mod tests {
         );
         let turn1_flow_call = turn1_flow_calls[0];
 
-        // The fresh recv turn 1 spliced (Autonomous, id != 1) is what a real
+        // The fresh recv turn 1 spliced (`AWAIT_INPUT`, id != 1) is what a real
         // worker would eventually dispatch and re-park on this same session
         // key; target turn 2's wake at its output token.
         let fresh_recv = state
             .nodes
             .iter()
-            .find(|e| e.value().op_type == AISOperationType::Autonomous && *e.key() != 1)
+            .find(|e| e.value().op_type == AISOperationType::AwaitInput && *e.key() != 1)
             .expect("turn 1 spliced a fresh recv")
             .value()
             .clone();
@@ -2402,13 +2651,12 @@ mod tests {
         use apxm_core::types::operations::AISOperationType;
 
         let mut recv = make_node(1, vec![], vec![10]);
-        recv.op_type = AISOperationType::Autonomous;
+        recv.op_type = AISOperationType::AwaitInput;
         for (k, v) in [
-            ("mode", "recv"),
-            ("recv_once", "false"),
-            ("turn_agent", "conversation"),
-            ("turn_flow", "turn"),
-            ("turn_param", "user_message"),
+            ("rearm", "true"),
+            ("agent_name", "test"),
+            ("flow_name", "continue"),
+            ("input_names", "input"),
         ] {
             recv.attributes
                 .insert(k.to_string(), Value::String(v.to_string()));
@@ -2425,12 +2673,12 @@ mod tests {
         let key = "session_recv:cap-unique-1";
         const MAX_TURNS: u64 = 2;
         let spec = || RearmSpec {
-            recv_node: Arc::new(recv.clone()),
-            turn_agent: "conversation".to_string(),
-            turn_flow: "turn".to_string(),
-            turn_param: "user_message".to_string(),
+            await_node: Arc::new(recv.clone()),
+            agent_name: "test".to_string(),
+            flow_name: "continue".to_string(),
+            input_name: "input".to_string(),
             session_id: session_id.to_string(),
-            max_turns: MAX_TURNS,
+            max_resumes: MAX_TURNS,
         };
         let flow_call_count = |state: &SchedulerState| -> usize {
             state
@@ -2454,7 +2702,7 @@ mod tests {
         let fresh_recv_output = state
             .nodes
             .iter()
-            .find(|e| e.value().op_type == AISOperationType::Autonomous && *e.key() != 1)
+            .find(|e| e.value().op_type == AISOperationType::AwaitInput && *e.key() != 1)
             .expect("turn 1 spliced a fresh recv")
             .value()
             .output_tokens[0];
@@ -2495,13 +2743,12 @@ mod tests {
         use apxm_core::types::operations::AISOperationType;
 
         let mut recv = make_node(1, vec![], vec![10]);
-        recv.op_type = AISOperationType::Autonomous;
+        recv.op_type = AISOperationType::AwaitInput;
         for (k, v) in [
-            ("mode", "recv"),
-            ("recv_once", "false"),
-            ("turn_agent", "conversation"),
-            ("turn_flow", "turn"),
-            ("turn_param", "user_message"),
+            ("rearm", "true"),
+            ("agent_name", "test"),
+            ("flow_name", "continue"),
+            ("input_names", "input"),
         ] {
             recv.attributes
                 .insert(k.to_string(), Value::String(v.to_string()));
@@ -2527,12 +2774,12 @@ mod tests {
                     Arc::clone(&state),
                     vec![target_token],
                     RearmSpec {
-                        recv_node: Arc::new(recv.clone()),
-                        turn_agent: "conversation".to_string(),
-                        turn_flow: "turn".to_string(),
-                        turn_param: "user_message".to_string(),
+                        await_node: Arc::new(recv.clone()),
+                        agent_name: "test".to_string(),
+                        flow_name: "continue".to_string(),
+                        input_name: "input".to_string(),
                         session_id: session_id.to_string(),
-                        max_turns: MAX_TURNS,
+                        max_resumes: MAX_TURNS,
                     },
                 ),
             )
@@ -2542,7 +2789,7 @@ mod tests {
             if let Some(fresh) = state
                 .nodes
                 .iter()
-                .filter(|e| e.value().op_type == AISOperationType::Autonomous && *e.key() != 1)
+                .filter(|e| e.value().op_type == AISOperationType::AwaitInput && *e.key() != 1)
                 .max_by_key(|e| *e.key())
             {
                 target_token = fresh.value().output_tokens[0];

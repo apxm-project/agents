@@ -21,6 +21,7 @@ EVENT_KIND_REGISTRY: Final[dict[str, dict[str, object]]] = {'agent_message': {'c
                             'terminal': False,
                             'terminal_sense': 'atomic_no_delta'},
  'context_compacted': {'category': 'observability', 'terminal': False, 'terminal_sense': 'n/a'},
+ 'context_lifecycle': {'category': 'observability', 'terminal': False, 'terminal_sense': 'n/a'},
  'context_window_warning': {'category': 'error', 'terminal': False, 'terminal_sense': 'n/a'},
  'error': {'category': 'error', 'terminal': True, 'terminal_sense': 'run_end'},
  'execute_complete': {'category': 'lifecycle', 'terminal': True, 'terminal_sense': 'run_end'},
@@ -575,6 +576,11 @@ class ContextCompactedEventPayload(TypedDict):
     original_tokens: int
     new_tokens: int
 
+class ModelContextMetricsEventPayloadGeneration(TypedDict):
+    call_id: str
+    attempt: int
+    step_number: int
+
 class _ModelContextMetricsEventPayloadOptional(TypedDict, total=False):
     node_id: int
     token_budget: int
@@ -584,11 +590,29 @@ class _ModelContextMetricsEventPayloadOptional(TypedDict, total=False):
     truncated_segments: int
     omitted_token_budget_segments: int
     omitted_empty_segments: int
+    generation: ModelContextMetricsEventPayloadGeneration
 
 class ModelContextMetricsEventPayload(_ModelContextMetricsEventPayloadOptional):
     kind: Literal['model_context_metrics']
     call_kind: Literal['node', 'tool_continuation', 'warmup', 'compaction', 'hook']
     plan_status: Literal['assembled', 'inherited', 'unplanned']
+
+class _ContextLifecycleEventPayloadOptional(TypedDict, total=False):
+    contributor_ref: str
+    authority_ref: str
+    contribution_digest: str
+    contribution_trust: Literal['instruction']
+
+class ContextLifecycleEventPayload(_ContextLifecycleEventPayloadOptional):
+    kind: Literal['context_lifecycle']
+    lifecycle_kind: Literal['context_assembled', 'context_sealed', 'context_compacted', 'context_contribution']
+    context_id: str
+    invocation_id: str
+    context_digest: str
+    policy_ref: str
+    frame_count: int
+    token_count: int
+    content_redacted: Literal[True]
 
 class _CapabilityEffectReceiptEventPayloadOptional(TypedDict, total=False):
     graph_id: str
@@ -880,6 +904,7 @@ KnownEventPayload: TypeAlias = (
     GraphEdgeEventPayload |
     ContextCompactedEventPayload |
     ModelContextMetricsEventPayload |
+    ContextLifecycleEventPayload |
     CapabilityEffectReceiptEventPayload |
     ModelReroutedEventPayload |
     CancelledEventPayload |
@@ -966,6 +991,7 @@ CORE_EVENT_KINDS: Final[tuple[str, ...]] = (
     'graph_edge',
     'context_compacted',
     'model_context_metrics',
+    'context_lifecycle',
     'capability_effect_receipt',
     'model_rerouted',
     'cancelled',

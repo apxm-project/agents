@@ -34,7 +34,7 @@ description = "A minimal APXM conversational agent."
 kind = "agent"
 domain = "examples"
 capabilities = ["ping"]
-skills = []
+allowed_agent_skills = []
 
 [source]
 type = "local"
@@ -44,7 +44,6 @@ entry = "python/hello_agent.py"
 frontend = "python"
 
 [runtime]
-loop = "recv"
 memory_space = "stm"
 session_prefix = "hello"
 
@@ -60,33 +59,25 @@ aggregate `capabilities/capabilities.toml` and `permissions.toml` files.
 ## Frontend Entry
 
 Declare exactly one `[compile]` entry and its frontend. The package router sends
-source-bearing packages through the normal Python or TypeScript frontend path;
-only an entry-less package uses declarative synthesis.
+source-bearing packages through the normal Python or TypeScript frontend path.
+Every executable package must declare an explicit entry; no graph is
+synthesized from manifest settings.
 
-Author a Python entry with `ConversationalAgent` from the APXM Python frontend
-(`crates/compiler/frontend/python/apxm/conversational.py`):
+Author a Python entry with the supported graph frontend and make every input
+wait explicit:
 
 ```python
 #!/usr/bin/env python3
-from apxm import Agent, ConversationalAgent, ToolGroup, tool
+from apxm import GraphBuilder, tool
 
 @tool(name="ping")
 def ping() -> str:
     """Health check."""
     return "pong"
 
-researcher = Agent(name="researcher", instructions="Gather supporting facts.")
-
-agent = ConversationalAgent(
-    persona="You are a helpful APXM assistant.",
-    memory_space="stm",
-    tools=[ping],
-    capability_groups=[ToolGroup.SKILLS],
-    sub_agents=[researcher],
-    loop="recv",
-)
-
-main = agent.compile()
+graph = GraphBuilder("main", metadata={"is_entry": True})
+main = graph.await_input(name="await_request", wait_key="hello.session", rearm=True)
+graph.done(main, "return_request")
 
 if __name__ == "__main__":
     import sys
@@ -96,7 +87,7 @@ if __name__ == "__main__":
         for err in result.errors:
             print(f"  ERROR: {err}")
         sys.exit(0 if result.valid else 1)
-    print(main.to_air())
+    print(graph.to_air())
 ```
 
 TypeScript entries import `GraphBuilder` from `@apxm/frontend`, declare explicit

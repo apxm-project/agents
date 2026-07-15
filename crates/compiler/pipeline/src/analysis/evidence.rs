@@ -212,10 +212,10 @@ impl CompilerAnalysisInputs {
             .filter(|candidate| {
                 backend
                     .as_deref()
-                    .map_or(true, |value| candidate.backend == value)
+                    .is_none_or(|value| candidate.backend == value)
                     && model
                         .as_deref()
-                        .map_or(true, |value| candidate.matches_model(value))
+                        .is_none_or(|value| candidate.matches_model(value))
             })
             .collect();
 
@@ -320,10 +320,10 @@ impl CompilerAnalysisInputs {
             .filter(|candidate| {
                 backend
                     .as_deref()
-                    .map_or(true, |value| candidate.backend == value)
+                    .is_none_or(|value| candidate.backend == value)
                     && model
                         .as_deref()
-                        .map_or(true, |value| candidate.matches_model(value))
+                        .is_none_or(|value| candidate.matches_model(value))
             })
             .collect();
         let candidate = *candidates.first()?;
@@ -378,7 +378,7 @@ impl CompilerAnalysisInputs {
             if matches!(node.op_type, AISOperationType::InvCap)
                 && string_attribute(node, graph_attrs::CAPABILITY)
                     .as_deref()
-                    .map_or(true, |capability| capability != grant.capability)
+                    .is_none_or(|capability| capability != grant.capability)
             {
                 return false;
             }

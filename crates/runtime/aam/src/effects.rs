@@ -60,9 +60,10 @@ pub fn operation_effects(op: &AISOperationType) -> OperationEffects {
             .write(Beliefs)
             .write(ShortTermMemory),
 
-        // LLM
-        AISOperationType::Ask => OperationEffects::new().read(Beliefs),
-        AISOperationType::Think => OperationEffects::new().read(Beliefs),
+        // LLM / verification
+        AISOperationType::Ask | AISOperationType::Think | AISOperationType::Verify => {
+            OperationEffects::new().read(Beliefs)
+        }
         AISOperationType::Reason => OperationEffects::new()
             .read(Beliefs)
             .write(Beliefs)
@@ -74,55 +75,60 @@ pub fn operation_effects(op: &AISOperationType) -> OperationEffects {
             .write(Goals)
             .write(Beliefs),
         AISOperationType::Reflect => OperationEffects::new().read(Episodic).write(Episodic),
-        AISOperationType::Verify => OperationEffects::new().read(Beliefs),
-
         // Tool / Invocation
         AISOperationType::InvCap => OperationEffects::new().read(Capabilities),
-        AISOperationType::Exc => OperationEffects::new(),
-        AISOperationType::Print => OperationEffects::new(),
+
+        // Operations with no AAM effects. Every variant remains explicit so
+        // additions to `AISOperationType` still require an effect declaration.
+        AISOperationType::Exc
+        | AISOperationType::Print
+        // Control Flow
+        | AISOperationType::Jump
+        | AISOperationType::BranchOnValue
+        | AISOperationType::Return
+        | AISOperationType::Switch
+        // Synchronization -- Fence is a pure ordering barrier, no AAM mutation
+        | AISOperationType::Fence
+        | AISOperationType::Merge
+        | AISOperationType::WaitAll
+        | AISOperationType::AwaitInput
+        // Error Handling
+        | AISOperationType::TryCatch
+        | AISOperationType::Err
+        // Coordination
+        | AISOperationType::Pause
+        // Identity Operations
+        | AISOperationType::Nop
+        | AISOperationType::Identity
+        // Literals / Metadata
+        | AISOperationType::ConstStr
+        | AISOperationType::Agent
+        | AISOperationType::Yield => OperationEffects::new(),
 
         // Control Flow
-        AISOperationType::Jump => OperationEffects::new(),
-        AISOperationType::BranchOnValue => OperationEffects::new(),
-        AISOperationType::Return => OperationEffects::new(),
-        AISOperationType::Switch => OperationEffects::new(),
-        AISOperationType::FlowCall => OperationEffects::new().read(Beliefs).write(Beliefs),
-        AISOperationType::WorkflowSpawn => OperationEffects::new().read(Beliefs).write(Beliefs),
+        AISOperationType::FlowCall
+        | AISOperationType::WorkflowSpawn
+        // Communication
+        | AISOperationType::Communicate
+        | AISOperationType::Handoff
+        // Multi-agent coordination
+        | AISOperationType::Delegate => OperationEffects::new().read(Beliefs).write(Beliefs),
 
-        // Synchronization -- Fence is a pure ordering barrier, no AAM mutation
-        AISOperationType::Fence => OperationEffects::new(),
-        AISOperationType::Merge => OperationEffects::new(),
-        AISOperationType::WaitAll => OperationEffects::new(),
+        // Synchronization
         AISOperationType::Checkpoint => OperationEffects::new()
             .read(Beliefs)
             .read(Goals)
             .read(Capabilities)
             .write(ShortTermMemory),
 
-        // Error Handling
-        AISOperationType::TryCatch => OperationEffects::new(),
-        AISOperationType::Err => OperationEffects::new(),
-
-        // Communication
-        AISOperationType::Communicate => OperationEffects::new().read(Beliefs).write(Beliefs),
-        AISOperationType::Handoff => OperationEffects::new().read(Beliefs).write(Beliefs),
-
         // Coordination
         AISOperationType::UpdateGoal => OperationEffects::new().read(Goals).write(Goals),
-        AISOperationType::Pause => OperationEffects::new(),
         AISOperationType::Resume => OperationEffects::new().write(ShortTermMemory),
 
-        // Multi-agent coordination
-        AISOperationType::Delegate => OperationEffects::new().read(Beliefs).write(Beliefs),
-
-        // Identity Operations
-        AISOperationType::Nop => OperationEffects::new(),
-        AISOperationType::Identity => OperationEffects::new(),
-
         // Self-Organization
-        AISOperationType::SpawnAgent => OperationEffects::new().write(Capabilities),
-        AISOperationType::RegisterCapability => OperationEffects::new().write(Capabilities),
-        AISOperationType::RegisterHook => OperationEffects::new().write(Capabilities),
+        AISOperationType::SpawnAgent
+        | AISOperationType::RegisterCapability
+        | AISOperationType::RegisterHook => OperationEffects::new().write(Capabilities),
 
         // Autonomous Execution
         AISOperationType::Autonomous => OperationEffects::new()
@@ -130,10 +136,5 @@ pub fn operation_effects(op: &AISOperationType) -> OperationEffects {
             .write(Beliefs)
             .read(Goals)
             .write(Goals),
-
-        // Literals / Metadata
-        AISOperationType::ConstStr => OperationEffects::new(),
-        AISOperationType::Agent => OperationEffects::new(),
-        AISOperationType::Yield => OperationEffects::new(),
     }
 }

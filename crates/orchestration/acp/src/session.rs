@@ -65,9 +65,8 @@ impl AcpSession {
 
         // Confine the long-running agent when the driver supplied a capable
         // backend. Coding agents reach the model gateway, so network stays on.
-        let child_env = apxm_runtime::sandbox::constants::env::child_environment(
-            profile.env.iter().map(|(key, value)| (key, value)),
-        );
+        let child_env =
+            apxm_runtime::sandbox::constants::env::child_environment(profile.env.iter());
         let sandbox_command = match &sandbox {
             Some(backend) => backend
                 .wrap_command(program, args, cwd, true, &child_env)

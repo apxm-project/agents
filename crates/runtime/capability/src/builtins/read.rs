@@ -287,8 +287,7 @@ impl CapabilityExecutor for ReadCapability {
         let limit = args
             .get("limit")
             .and_then(|value| value.as_u64())
-            .map(|value| value as usize)
-            .unwrap_or(self.config.max_default_lines);
+            .map_or(self.config.max_default_lines, |value| value as usize);
 
         if offset >= lines.len() {
             return Ok(Value::String(String::new()));

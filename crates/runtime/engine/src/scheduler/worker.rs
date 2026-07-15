@@ -218,14 +218,13 @@ pub async fn worker_loop(
                 // without polling and without conflating it with unrelated
                 // parks.
                 if let Some(session_id) = child_ctx.session_id()
-                    && wait_key == crate::scheduler::park_registry::session_recv_key(session_id)
+                    && wait_key == crate::scheduler::park_registry::session_input_key(session_id)
                 {
                     state.notify_session_parked(session_id.to_string());
                 }
-                // A session conversation-loop recv re-arms on wake: deliver the
-                // message, then splice a fresh turn flow-call + a fresh recv (the
-                // native loop keystone). Other parks use the plain waker.
-                let waker = match session_loop_rearm_spec(&node, &child_ctx) {
+                // An AWAIT_INPUT node may re-arm an explicitly declared
+                // continuation flow. Other parks use the plain waker.
+                let waker = match input_rearm_spec(&node, &child_ctx) {
                     Some(spec) => crate::scheduler::park_registry::ParkWaker::for_rearming_node(
                         Arc::clone(&state),
                         node_id,
@@ -264,40 +263,47 @@ pub async fn worker_loop(
     }
 }
 
-/// If `node` is a session input-loop recv (AUTONOMOUS `mode=recv`,
-/// `recv_once=false`, with explicit turn-flow attrs) and the execution has a
-/// session id, return the re-arm spec so its wake splices a fresh turn + recv.
+/// If `node` is an AWAIT_INPUT re-arm with an explicit continuation flow and
+/// the execution has a session id, return the generic re-arm specification so
+/// its wake splices the continuation plus a fresh input wait.
 /// Otherwise `None` (a plain one-shot park).
-fn session_loop_rearm_spec(
+fn input_rearm_spec(
     node: &std::sync::Arc<apxm_core::types::Node>,
     ctx: &dyn SchedulerCtx,
 ) -> Option<crate::scheduler::park_registry::RearmSpec> {
     use apxm_core::types::operations::AISOperationType;
-    if node.op_type != AISOperationType::Autonomous {
+    if node.op_type != AISOperationType::AwaitInput {
         return None;
     }
     let attr = |k: &str| node.attributes.get(k).and_then(|v| v.as_str());
-    if attr("mode") != Some("recv") || attr("recv_once") != Some("false") {
+    if attr(apxm_core::constants::graph::attrs::REARM) != Some("true") {
         return None;
     }
     let session_id = ctx.session_id()?.to_string();
-    let turn_flow = attr("turn_flow")?.to_string();
-    let turn_agent = attr("turn_agent")?.to_string();
-    let turn_param = attr("turn_param")?.to_string();
-    // Bound the loop to the recv node's max_iterations (default 100), so the
-    // park re-arm cannot splice turn+recv nodes without limit.
-    let max_turns = node
+    let flow_name = attr(apxm_core::constants::graph::attrs::FLOW_NAME)?.to_string();
+    let agent_name = attr(apxm_core::constants::graph::attrs::AGENT_NAME)?.to_string();
+    let input_name = node
+        .attributes
+        .get(apxm_core::constants::graph::attrs::INPUT_NAMES)
+        .and_then(|value| value.as_array())
+        .and_then(|names| names.first())
+        .and_then(|value| value.as_str())
+        .filter(|name| !name.is_empty())
+        .map(ToString::to_string)?;
+    // Bound the loop to max_iterations (default 100), so re-arm cannot splice
+    // continuation and wait nodes without limit.
+    let max_resumes = node
         .attributes
         .get(apxm_core::constants::graph::attrs::MAX_ITERATIONS)
         .and_then(|v| v.as_u64())
         .unwrap_or(100);
     Some(crate::scheduler::park_registry::RearmSpec {
-        recv_node: std::sync::Arc::clone(node),
-        turn_agent,
-        turn_flow,
-        turn_param,
+        await_node: std::sync::Arc::clone(node),
+        agent_name,
+        flow_name,
+        input_name,
         session_id,
-        max_turns,
+        max_resumes,
     })
 }
 
@@ -628,7 +634,8 @@ fn max_scheduler_retries_for_node(configured_max_retries: u32, node: &Node) -> u
 fn is_non_retryable_side_effect_op(op: &AISOperationType) -> bool {
     matches!(
         op,
-        AISOperationType::WorkflowSpawn
+        AISOperationType::InvCap
+            | AISOperationType::WorkflowSpawn
             | AISOperationType::SpawnAgent
             | AISOperationType::Communicate
     )
@@ -1005,6 +1012,23 @@ mod tests {
                 TraceEvent::Finished(1),
                 TraceEvent::Ready(2),
             ]
+        );
+    }
+
+    #[test]
+    fn capability_effects_never_receive_scheduler_retries() {
+        let effect = Node::new(1, AISOperationType::InvCap);
+        let inert = Node::new(2, AISOperationType::Nop);
+
+        assert_eq!(
+            max_scheduler_retries_for_node(3, &effect),
+            0,
+            "a lost external-effect response is outcome-unknown, not retryable",
+        );
+        assert_eq!(
+            max_scheduler_retries_for_node(3, &inert),
+            3,
+            "ordinary data-only nodes retain the configured retry policy",
         );
     }
 }

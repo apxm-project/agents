@@ -63,16 +63,9 @@ pub fn is_pure_llm_op(op: &AISOperationType) -> bool {
 /// separate, generous concurrency pool — a burst of them must never exhaust the
 /// compute or LLM permits and stall real work. PAUSE/RESUME are NOT here: they
 /// PARK (return `OperationParked`, yielding their worker + permit immediately —
-/// see the scheduler park path), so they hold nothing while waiting. Only
-/// AUTONOMOUS in its `mode = "recv"` form still long-polls while holding a worker.
+/// see the scheduler park path), so they hold nothing while waiting. External
+/// input waiting is represented by AWAIT_INPUT and also parks immediately.
 pub fn is_blocking_wait_op(node: &apxm_core::types::Node) -> bool {
-    match node.op_type {
-        AISOperationType::Autonomous => node
-            .attributes
-            .get("mode")
-            .and_then(|v| v.as_str())
-            .map(|m| m == "recv")
-            .unwrap_or(false),
-        _ => false,
-    }
+    let _ = node;
+    false
 }

@@ -86,26 +86,26 @@ pub struct EventMeta {
     /// share checkpoint state. `None` for the global (root) scope.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope_id: Option<String>,
-    /// Optional skill provenance for events emitted while running a
-    /// server-owned skill.
+    /// Optional ProgramPackage provenance for events emitted while running a
+    /// server-owned ProgramPackage.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub skill: Option<SkillEventProvenance>,
+    pub program_package: Option<ProgramPackageEventProvenance>,
 }
 
-/// Skill identity and nesting metadata attached to runtime events.
+/// ProgramPackage identity and nesting metadata attached to runtime events.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct SkillEventProvenance {
-    /// Stable manifest skill id.
-    pub skill_id: String,
-    /// Stable manifest skill version.
-    pub skill_version: String,
-    /// Optional parent skill id for nested skill execution.
+pub struct ProgramPackageEventProvenance {
+    /// Immutable ProgramPackage id.
+    pub program_package_id: String,
+    /// Immutable ProgramPackage digest.
+    pub program_package_digest: String,
+    /// Optional parent ProgramPackage id for nested ProgramPackage execution.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parent_skill_id: Option<String>,
-    /// Optional parent execution id for nested skill execution.
+    pub parent_program_package_id: Option<String>,
+    /// Optional parent execution id for nested ProgramPackage execution.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_execution_id: Option<String>,
-    /// Flow name inside the skill artifact, when known.
+    /// Entry flow inside the ProgramPackage, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub flow_name: Option<String>,
 }

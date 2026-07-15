@@ -419,4 +419,3 @@ mod operation_policy_tests {
         assert!(operation_policies_from_config(&config).is_empty());
     }
 }
-

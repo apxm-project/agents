@@ -140,12 +140,6 @@ export const WORKFLOW_DRAFT_V1_SCHEMA = {
       },
       "type": "array"
     },
-    "imports": {
-      "items": {
-        "type": "string"
-      },
-      "type": "array"
-    },
     "name": {
       "minLength": 1,
       "type": "string"

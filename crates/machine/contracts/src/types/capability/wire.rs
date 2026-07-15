@@ -2,8 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::common::RuntimeLimits;
 use super::grant::{CapabilityGrant, GrantStatus};
-use super::permission::PermissionOperation;
+use super::permission::{PermissionOperation, PermissionScope, ResourceHandle};
 
 /// JSON element stored in execution metadata under `capability_grants`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -12,6 +13,12 @@ pub struct RuntimeCapabilityGrant {
     pub grant_id: String,
     pub capability_binding: String,
     pub operations: Vec<PermissionOperation>,
+    /// The resource boundary selected when this grant was minted.
+    pub resource: ResourceHandle,
+    /// Typed selectors constraining the grant's visible resource set.
+    pub scope: PermissionScope,
+    /// Quotas and tool constraints carried with the grant into execution.
+    pub runtime_limits: RuntimeLimits,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
     pub status: GrantStatus,
@@ -23,6 +30,9 @@ impl From<&CapabilityGrant> for RuntimeCapabilityGrant {
             grant_id: grant.grant_id.clone(),
             capability_binding: grant.capability_binding.clone(),
             operations: grant.operations.clone(),
+            resource: grant.resource.clone(),
+            scope: grant.scope.clone(),
+            runtime_limits: grant.runtime_limits.clone(),
             expires_at: grant.lifecycle.expires_at.clone(),
             status: grant.status,
         }
@@ -103,6 +113,9 @@ mod tests {
         assert_eq!(wire.grant_id, grant.grant_id);
         assert_eq!(wire.capability_binding, grant.capability_binding);
         assert_eq!(wire.operations, grant.operations);
+        assert_eq!(wire.resource, grant.resource);
+        assert_eq!(wire.scope, grant.scope);
+        assert_eq!(wire.runtime_limits, grant.runtime_limits);
         assert_eq!(wire.expires_at, grant.lifecycle.expires_at);
         assert_eq!(wire.status, grant.status);
     }

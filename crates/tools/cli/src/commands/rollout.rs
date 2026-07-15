@@ -211,11 +211,10 @@ pub async fn rollout_archive_command(opts: RolloutArchiveOptions) -> Result<Path
     // 3) Optional instruction skill markdown. Executable program content is
     //    captured by package/workflow metadata, not skill artifacts.
     if let Some(skill_dir) = opts.skill_dir {
-        for filename in ["SKILL.md", "prompt.md"] {
-            let path = skill_dir.join(filename);
-            if path.is_file() {
-                append_file(&mut builder, &path, &format!("skill/{filename}"))?;
-            }
+        let filename = "SKILL.md";
+        let path = skill_dir.join(filename);
+        if path.is_file() {
+            append_file(&mut builder, &path, &format!("skill/{filename}"))?;
         }
     }
     builder.finish().context("tar finalize failed")?;

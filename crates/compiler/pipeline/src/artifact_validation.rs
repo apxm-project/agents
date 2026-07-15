@@ -208,18 +208,18 @@ fn check_template_placeholders(
             .iter()
             .position(|input_name| *input_name == root)
         {
-            if let Some(role) = positional_input_roles.get(index) {
-                if !role.is_user() {
-                    return Err(format!(
-                        "node {} (op={}, attr={}): placeholder '{{{}}}' selects {} input '{}'; only user-role inputs may appear in a template",
-                        node.id,
-                        node.op_type,
-                        attr_key,
-                        placeholder,
-                        role.as_str(),
-                        root,
-                    ));
-                }
+            if let Some(role) = positional_input_roles.get(index)
+                && !role.is_user()
+            {
+                return Err(format!(
+                    "node {} (op={}, attr={}): placeholder '{{{}}}' selects {} input '{}'; only user-role inputs may appear in a template",
+                    node.id,
+                    node.op_type,
+                    attr_key,
+                    placeholder,
+                    role.as_str(),
+                    root,
+                ));
             }
             continue;
         }

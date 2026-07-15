@@ -11,6 +11,10 @@ use std::path::{Path, PathBuf};
 use apxm_backends::llm::BackendConfig;
 use apxm_core::constants::env::APXM_CONFIG as APXM_CONFIG_ENV_VAR;
 use apxm_core::env::APXM_HOME;
+use apxm_core::types::context_contracts::{
+    BudgetSet, MODEL_REQUIREMENTS_LOCALITY_ANY, MODEL_REQUIREMENTS_LOCALITY_LOCAL,
+    MODEL_REQUIREMENTS_LOCALITY_REMOTE, ModelRequirements,
+};
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -202,6 +206,11 @@ pub struct ServerConfig {
     /// A2A-generated model-call policy.
     pub a2a: ServerA2aConfig,
 
+    /// Server-owned baseline for every admitted agent invocation. This policy
+    /// is config-only; request bodies cannot widen or replace it.
+    #[serde(default, deserialize_with = "deserialize_invocation_admission")]
+    pub invocation_admission: ServerInvocationAdmissionConfig,
+
     /// `/v1/generate-stream` transport controls.
     pub generate_stream: GenerateStreamConfig,
 
@@ -228,6 +237,128 @@ pub struct ServerConfig {
 
     /// Graceful shutdown drain controls.
     pub shutdown: ServerShutdownConfig,
+}
+
+/// Complete envelope budgets and model requirements set by Server policy
+/// before an invocation reaches the runtime. The types are generated from the
+/// canonical invocation contract so this configuration cannot drift from the
+/// persisted envelope shape.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ServerInvocationAdmissionConfig {
+    pub budgets: BudgetSet,
+    pub model_requirements: ModelRequirements,
+}
+
+impl Default for ServerInvocationAdmissionConfig {
+    fn default() -> Self {
+        Self {
+            budgets: BudgetSet {
+                input_tokens: default_invocation_input_tokens(),
+                output_tokens: default_invocation_output_tokens(),
+                tool_calls: default_invocation_tool_calls(),
+                memory_bytes: default_invocation_memory_bytes(),
+                concurrency: default_invocation_concurrency(),
+                effects: default_invocation_effects(),
+                wall_clock_ms: default_invocation_wall_clock_ms(),
+            },
+            model_requirements: ModelRequirements {
+                tools: false,
+                structured_output: false,
+                thinking: false,
+                vision: false,
+                locality: MODEL_REQUIREMENTS_LOCALITY_ANY.to_string(),
+                minimum_context_tokens: default_invocation_minimum_context_tokens(),
+            },
+        }
+    }
+}
+
+impl PartialEq for ServerInvocationAdmissionConfig {
+    fn eq(&self, other: &Self) -> bool {
+        let left = &self.budgets;
+        let right = &other.budgets;
+        left.input_tokens == right.input_tokens
+            && left.output_tokens == right.output_tokens
+            && left.tool_calls == right.tool_calls
+            && left.memory_bytes == right.memory_bytes
+            && left.concurrency == right.concurrency
+            && left.effects == right.effects
+            && left.wall_clock_ms == right.wall_clock_ms
+            && self.model_requirements.tools == other.model_requirements.tools
+            && self.model_requirements.structured_output
+                == other.model_requirements.structured_output
+            && self.model_requirements.thinking == other.model_requirements.thinking
+            && self.model_requirements.vision == other.model_requirements.vision
+            && self.model_requirements.locality == other.model_requirements.locality
+            && self.model_requirements.minimum_context_tokens
+                == other.model_requirements.minimum_context_tokens
+    }
+}
+
+impl Eq for ServerInvocationAdmissionConfig {}
+
+impl ServerInvocationAdmissionConfig {
+    fn validate(&self) -> std::result::Result<(), &'static str> {
+        if self.budgets.concurrency == 0 {
+            return Err("server.invocation_admission.budgets.concurrency must be at least one");
+        }
+        if self.budgets.wall_clock_ms == 0 {
+            return Err("server.invocation_admission.budgets.wall_clock_ms must be at least one");
+        }
+        if !matches!(
+            self.model_requirements.locality.as_str(),
+            MODEL_REQUIREMENTS_LOCALITY_ANY
+                | MODEL_REQUIREMENTS_LOCALITY_LOCAL
+                | MODEL_REQUIREMENTS_LOCALITY_REMOTE
+        ) {
+            return Err("server.invocation_admission.model_requirements.locality is not supported");
+        }
+        Ok(())
+    }
+}
+
+fn deserialize_invocation_admission<'de, D>(
+    deserializer: D,
+) -> std::result::Result<ServerInvocationAdmissionConfig, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let config = ServerInvocationAdmissionConfig::deserialize(deserializer)?;
+    config.validate().map_err(serde::de::Error::custom)?;
+    Ok(config)
+}
+
+const fn default_invocation_input_tokens() -> u64 {
+    8_192
+}
+
+const fn default_invocation_output_tokens() -> u64 {
+    2_048
+}
+
+const fn default_invocation_tool_calls() -> u64 {
+    16
+}
+
+const fn default_invocation_memory_bytes() -> u64 {
+    16 * 1024 * 1024
+}
+
+const fn default_invocation_concurrency() -> u64 {
+    1
+}
+
+const fn default_invocation_effects() -> u64 {
+    0
+}
+
+const fn default_invocation_wall_clock_ms() -> u64 {
+    300_000
+}
+
+const fn default_invocation_minimum_context_tokens() -> u64 {
+    8_192
 }
 
 /// APXM server process configuration.
@@ -299,7 +430,7 @@ impl Default for ServerInferenceConfig {
 }
 
 /// Opt-in, fail-closed bearer auth configuration for the server's mutating
-/// routes (`/v1/execute`, `/v1/execute/stream`, skill execute/execute-stream).
+/// routes (`/v1/execute` and `/v1/execute/stream`).
 ///
 /// Default is **off** so existing tests and local development are unaffected.
 /// When `require_auth` is enabled, every request to a mutating route must
@@ -1047,7 +1178,10 @@ pub enum ConfigError {
 
 #[cfg(test)]
 mod tests {
-    use super::{ApXmConfig, ServerConfig};
+    use super::{ApXmConfig, ServerConfig, ServerInvocationAdmissionConfig};
+    use apxm_core::types::context_contracts::{
+        MODEL_REQUIREMENTS_LOCALITY_ANY, MODEL_REQUIREMENTS_LOCALITY_LOCAL,
+    };
     use apxm_runtime::context_stack::{ContextTokenizer, ScopeRules};
 
     #[test]
@@ -1099,5 +1233,96 @@ mod tests {
 
         assert_eq!(config.server.a2a.max_output_tokens, Some(512));
         assert_eq!(ServerConfig::default().a2a.max_output_tokens, None);
+    }
+
+    #[test]
+    fn invocation_admission_defaults_are_complete_and_contract_aligned() {
+        let policy = ServerInvocationAdmissionConfig::default();
+        assert_eq!(policy.budgets.input_tokens, 8_192);
+        assert_eq!(policy.budgets.output_tokens, 2_048);
+        assert_eq!(policy.budgets.tool_calls, 16);
+        assert_eq!(policy.budgets.memory_bytes, 16 * 1024 * 1024);
+        assert_eq!(policy.budgets.concurrency, 1);
+        assert_eq!(policy.budgets.effects, 0);
+        assert_eq!(policy.budgets.wall_clock_ms, 300_000);
+        assert!(!policy.model_requirements.tools);
+        assert!(!policy.model_requirements.structured_output);
+        assert!(!policy.model_requirements.thinking);
+        assert!(!policy.model_requirements.vision);
+        assert_eq!(
+            policy.model_requirements.locality,
+            MODEL_REQUIREMENTS_LOCALITY_ANY
+        );
+        assert_eq!(policy.model_requirements.minimum_context_tokens, 8_192);
+        assert!(policy.validate().is_ok());
+
+        let mut zero_concurrency = policy.clone();
+        zero_concurrency.budgets.concurrency = 0;
+        assert!(zero_concurrency.validate().is_err());
+
+        let mut zero_wall_clock = policy;
+        zero_wall_clock.budgets.wall_clock_ms = 0;
+        assert!(zero_wall_clock.validate().is_err());
+    }
+
+    #[test]
+    fn invocation_admission_policy_is_config_driven_and_complete() {
+        let config: ApXmConfig = toml::from_str(
+            r#"
+                [server.invocation_admission.budgets]
+                input_tokens = 4000
+                output_tokens = 1000
+                tool_calls = 8
+                memory_bytes = 4096
+                concurrency = 2
+                effects = 1
+                wall_clock_ms = 60000
+
+                [server.invocation_admission.model_requirements]
+                tools = true
+                structured_output = true
+                thinking = false
+                vision = false
+                locality = "local"
+                minimum_context_tokens = 4096
+            "#,
+        )
+        .expect("complete invocation admission policy parses");
+
+        let policy = config.server.invocation_admission;
+        assert_eq!(policy.budgets.tool_calls, 8);
+        assert_eq!(policy.budgets.concurrency, 2);
+        assert!(policy.model_requirements.tools);
+        assert!(policy.model_requirements.structured_output);
+        assert_eq!(
+            policy.model_requirements.locality,
+            MODEL_REQUIREMENTS_LOCALITY_LOCAL
+        );
+    }
+
+    #[test]
+    fn invocation_admission_rejects_invalid_model_locality() {
+        let error = toml::from_str::<ApXmConfig>(
+            r#"
+                [server.invocation_admission.budgets]
+                input_tokens = 1
+                output_tokens = 1
+                tool_calls = 0
+                memory_bytes = 0
+                concurrency = 1
+                effects = 0
+                wall_clock_ms = 1
+
+                [server.invocation_admission.model_requirements]
+                tools = false
+                structured_output = false
+                thinking = false
+                vision = false
+                locality = "unsupported"
+                minimum_context_tokens = 0
+            "#,
+        )
+        .expect_err("unknown model locality must fail config parsing");
+        assert!(error.to_string().contains("model_requirements.locality"));
     }
 }

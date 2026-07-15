@@ -6,6 +6,7 @@ use std::sync::Arc;
 use super::event::{ApxmEvent, EventSource};
 use super::kind::{self, CORE_EVENT_KINDS};
 use super::payload::*;
+use crate::types::context_contracts::ContextLifecycleEventPayload;
 
 /// A valid `EventMeta` JSON object, used to build well-formed envelope
 /// fixtures for the negative-path test below without depending on
@@ -414,6 +415,22 @@ fn representative_core_payloads() -> Vec<Box<dyn EventPayload>> {
             truncated_segments: Some(1),
             omitted_token_budget_segments: Some(2),
             omitted_empty_segments: Some(1),
+            generation: None,
+        }),
+        Box::new(ContextLifecycleEventPayload {
+            lifecycle_kind: "context_contribution".to_string(),
+            context_id: "context-1".to_string(),
+            invocation_id: "invocation-1".to_string(),
+            context_digest: "sha256:context".to_string(),
+            policy_ref: "sealed-context-policy:sha256:policy".to_string(),
+            frame_count: 4,
+            token_count: 128,
+            content_redacted: true,
+            compaction_ref: None,
+            contributor_ref: Some("handler:trusted".to_string()),
+            authority_ref: Some("policy:trusted-instructions".to_string()),
+            contribution_digest: Some("sha256:contribution".to_string()),
+            contribution_trust: Some("instruction".to_string()),
         }),
         Box::new(CapabilityEffectReceiptPayload {
             receipt_id: "receipt-1".to_string(),
@@ -638,6 +655,7 @@ fn model_context_metrics_round_trips_unplanned_shape_and_rejects_unknown_call_ki
             truncated_segments: None,
             omitted_token_budget_segments: None,
             omitted_empty_segments: None,
+            generation: None,
         },
         EventSource::Runtime,
         "trace-context-plan",

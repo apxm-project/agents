@@ -14,6 +14,7 @@ channels = ["conda-forge"]
 mlir = "22"
 libclang13 = "22"
 clang = "22"
+gxx_linux-64 = ""
 python = "3.11"
 pytest = ""
 pytest-asyncio = ""
@@ -36,6 +37,9 @@ MLIR_DIR = "{environment}/lib/cmake/mlir"
 LLVM_DIR = "{environment}/lib/cmake/llvm"
 MLIR_PREFIX = "{environment}"
 LLVM_PREFIX = "{environment}"
+CC = "{environment}/bin/x86_64-conda-linux-gnu-gcc"
+CXX = "{environment}/bin/x86_64-conda-linux-gnu-g++"
+CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER = "{environment}/bin/clang"
 # Intentionally NOT setting APXM_HOME: it's the user data root
 # (default ~/.apxm), and pinning it to {project} broke roaming-bucket
 # resolution. Override per-shell or via .apxm/config.toml instead.

@@ -49,7 +49,7 @@ pub const GENAI_OPERATION_INVOKE_WORKFLOW: &str = "invoke_workflow";
 pub const GENAI_OPERATION_EVENT: &str = "apxm.event";
 
 /// Registration and privacy controls for the GenAI event exporter.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct GenAiExporterConfig {
     /// Whether the exporter is active. The default is disabled so constructing
     /// the adapter cannot change execution or create telemetry by accident.
@@ -57,15 +57,6 @@ pub struct GenAiExporterConfig {
     /// Whether raw message/tool content may be included in span attributes.
     /// The default is false; hashes and shape metadata remain available.
     pub capture_message_content: bool,
-}
-
-impl Default for GenAiExporterConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            capture_message_content: false,
-        }
-    }
 }
 
 impl GenAiExporterConfig {
@@ -276,7 +267,7 @@ impl CorrelationOutcome {
 enum SpanEmission {
     Paired {
         begin: PendingCorrelation,
-        end: PendingCorrelation,
+        end: Box<PendingCorrelation>,
     },
     Unmatched {
         pending: PendingCorrelation,
@@ -320,7 +311,10 @@ impl CorrelationState {
             };
 
             if end.event.meta.timestamp >= begin.event.meta.timestamp {
-                return vec![SpanEmission::Paired { begin, end }];
+                return vec![SpanEmission::Paired {
+                    begin,
+                    end: Box::new(end),
+                }];
             }
 
             return vec![
@@ -472,7 +466,8 @@ fn correlation_descriptor(event: &ApxmEvent) -> Option<CorrelationDescriptor> {
                 GENAI_OPERATION_EXECUTE_TOOL,
                 SpanKind::Internal,
             )
-        } else if let Some(payload) = event.payload.downcast_ref::<ToolEndPayload>() {
+        } else {
+            let payload = event.payload.downcast_ref::<ToolEndPayload>()?;
             (
                 CorrelationFamily::Tool,
                 CorrelationRole::End,
@@ -483,8 +478,6 @@ fn correlation_descriptor(event: &ApxmEvent) -> Option<CorrelationDescriptor> {
                 GENAI_OPERATION_EXECUTE_TOOL,
                 SpanKind::Internal,
             )
-        } else {
-            return None;
         };
 
     let parent_span_id = if matches!(
@@ -523,7 +516,9 @@ fn operation_identity(event: &ApxmEvent) -> Option<(u64, String)> {
 
 fn export_emission(tracer: &Tracer, config: GenAiExporterConfig, emission: SpanEmission) {
     match emission {
-        SpanEmission::Paired { begin, end } => export_paired_span(tracer, config, begin, end),
+        SpanEmission::Paired { begin, end } => {
+            export_paired_span(tracer, config, begin, *end);
+        }
         SpanEmission::Unmatched { pending, outcome } => {
             export_instant_span(
                 tracer,
@@ -751,11 +746,14 @@ fn add_common_attributes(
     if let Some(scope_id) = &event.meta.scope_id {
         attributes.push(KeyValue::new("apxm.event.scope_id", scope_id.clone()));
     }
-    if let Some(skill) = &event.meta.skill {
-        attributes.push(KeyValue::new("apxm.skill.id", skill.skill_id.clone()));
+    if let Some(program_package) = &event.meta.program_package {
         attributes.push(KeyValue::new(
-            "apxm.skill.version",
-            skill.skill_version.clone(),
+            "apxm.program_package.id",
+            program_package.program_package_id.clone(),
+        ));
+        attributes.push(KeyValue::new(
+            "apxm.program_package.digest",
+            program_package.program_package_digest.clone(),
         ));
     }
 }

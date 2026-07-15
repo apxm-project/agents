@@ -22,7 +22,7 @@ script-local package when a command grows beyond one responsibility.
 
 - `check_commit_message.py` enforces APXM commit-message rules for the
   `dekk agents commit-lint` command.
-- `validate_skill.py` validates a single skill bundle.
+- `validate_agent_skill.py` validates one instruction-only Agent Skill directory.
 - `apxm_mcp_install.py` installs or removes the APXM MCP server in supported
   local agent configs.
 - `prompt_as_workflow_smoke.py` runs real-backend MCP prompt-as-workflow

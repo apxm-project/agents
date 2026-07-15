@@ -6,7 +6,7 @@ use crate::python_tools::PythonHandlerBridge;
 use crate::sandbox::SandboxRegistry;
 use crate::typescript_tools::TypeScriptHandlerBridge;
 use crate::{
-    aam::{Aam, ScopeSpec},
+    aam::{Aam, ScopePolicy, ScopeSpec},
     agent_pool::AgentPool,
     capability::flow_registry::FlowRegistry,
     context_stack::{ContextPlanningPolicy, ContextStack},
@@ -20,16 +20,22 @@ use apxm_capability_iface::{
 };
 use apxm_core::InstructionConfig;
 use apxm_core::constants::cache;
+use apxm_core::error::RuntimeError;
 use apxm_core::events::payload::CapabilityEffectDispatchPath;
 use apxm_core::paths::ApxmPaths;
+use apxm_core::types::context_contracts::BudgetSet;
 use apxm_core::types::execution::{ExecutionDag, Node};
 use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::{Agent, ApxmGraphHints, MetricsLevel, OptimizationTarget};
 use std::sync::Arc;
 
+use super::admitted_budget::AdmittedInvocationBudget;
 use super::agent_scope::AgentScopeStack;
 use super::cancellation::CancellationToken;
-use super::capability_admission::{metadata_admits_write, metadata_matching_write_grants};
+use super::capability_admission::{
+    metadata_admits_capability, metadata_admits_write, metadata_matching_capability_grants,
+    metadata_matching_write_grants,
+};
 use super::correlated_batch::CorrelatedBatchDispatcher;
 use super::dag_splicer::{DagSplicer, NoOpSplicer};
 use super::events::ExecutionEventEmitter;
@@ -46,6 +52,75 @@ use super::token_accounting::TokenAccountant;
 use super::workflow_spawner::{NoOpWorkflowSpawner, WorkflowSpawner};
 use crate::model_router::{ModelRouter, ProfileRegistry};
 use crate::runtime::LlmToolDispatchConfig;
+
+/// Explicitly permitted state transfers for a HANDOFF child.
+///
+/// A handoff is isolated by default. The source may opt into a snapshot of
+/// generic AAM state and a rendered context-frame payload, but never inherits
+/// prompt defaults, host/Agent Skill metadata, credentials, grants, budgets,
+/// session state, or arbitrary metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HandoffTransfer {
+    aam_state: HandoffAamState,
+    context_frames: HandoffContextFrames,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum HandoffAamState {
+    #[default]
+    Isolated,
+    Snapshot,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum HandoffContextFrames {
+    #[default]
+    Omit,
+    Include,
+}
+
+impl Default for HandoffTransfer {
+    fn default() -> Self {
+        Self {
+            aam_state: HandoffAamState::Isolated,
+            context_frames: HandoffContextFrames::Omit,
+        }
+    }
+}
+
+impl HandoffTransfer {
+    /// The only current opt-in transfer. This is selected by the typed
+    /// `transfer_state=true` HANDOFF attribute, never by a default or fallback.
+    pub fn explicit_state_transfer() -> Self {
+        Self {
+            aam_state: HandoffAamState::Snapshot,
+            context_frames: HandoffContextFrames::Include,
+        }
+    }
+
+    pub fn transfers_state(self) -> bool {
+        self.aam_state == HandoffAamState::Snapshot
+    }
+
+    pub fn transfers_context_frames(self) -> bool {
+        self.context_frames == HandoffContextFrames::Include
+    }
+
+    fn scope_spec(self) -> ScopeSpec {
+        match self.aam_state {
+            HandoffAamState::Snapshot => ScopeSpec {
+                beliefs: ScopePolicy::Snapshot,
+                capabilities: ScopePolicy::Isolate,
+                goals: ScopePolicy::Snapshot,
+            },
+            HandoffAamState::Isolated => ScopeSpec {
+                beliefs: ScopePolicy::Isolate,
+                capabilities: ScopePolicy::Isolate,
+                goals: ScopePolicy::Isolate,
+            },
+        }
+    }
+}
 
 /// Execution context passed to all operation handlers.
 #[derive(Clone)]
@@ -76,6 +151,12 @@ pub struct ExecutionContext {
     pub start_time: std::time::Instant,
     pub metadata: std::collections::HashMap<String, String>,
     pub token_budget: Option<u64>,
+    /// Exact token limits admitted by the trusted host in the canonical
+    /// `AgentInvocationEnvelope`. This is distinct from local runtime
+    /// configuration: it is parsed only from the generated `BudgetSet` wire
+    /// shape and shared by child execution contexts so descendants cannot
+    /// widen the invocation budget.
+    pub(crate) admitted_invocation_budget: Option<Arc<AdmittedInvocationBudget>>,
     /// Runtime view of the compiler/driver optimization target for this graph.
     pub optimization_target: OptimizationTarget,
     /// Metrics emission tier for this execution. `Detailed` enables in-flight
@@ -175,9 +256,6 @@ pub struct ExecutionContext {
     pub host_dispatch: std::sync::Arc<dyn apxm_core::types::host::HostDispatchGateway>,
     /// Consent broker for per-call host capability approval.
     pub consent_broker: std::sync::Arc<dyn apxm_core::types::consent::ConsentBroker>,
-    /// Prompt-supplement text a host-authorized hook rendered for the request
-    /// currently in flight. `pre_ask` hooks may further override/prepend on top.
-    pub pending_turn_prompt_supplement: Arc<parking_lot::RwLock<Option<String>>>,
 }
 
 impl ExecutionContext {
@@ -246,6 +324,7 @@ impl ExecutionContext {
             start_time: std::time::Instant::now(),
             metadata: metadata_map,
             token_budget: None,
+            admitted_invocation_budget: None,
             optimization_target: OptimizationTarget::Balanced,
             metrics_level: MetricsLevel::default(),
             scheduler_config: crate::scheduler::SchedulerConfig::default(),
@@ -285,7 +364,6 @@ impl ExecutionContext {
             consent_broker: std::sync::Arc::new(
                 apxm_core::types::consent::UnavailableConsentBroker,
             ),
-            pending_turn_prompt_supplement: Arc::new(parking_lot::RwLock::new(None)),
         }
     }
 
@@ -384,6 +462,24 @@ impl ExecutionContext {
     pub fn with_token_budget(mut self, budget: Option<u64>) -> Self {
         self.token_budget = budget;
         self
+    }
+
+    /// Apply the exact generated budget set the host admitted for this
+    /// invocation. A context can be bound only once, preventing a later
+    /// metadata layer from replacing or widening the host's authority.
+    pub(crate) fn with_admitted_invocation_budget(
+        mut self,
+        budget: BudgetSet,
+    ) -> Result<Self, RuntimeError> {
+        if self.admitted_invocation_budget.is_some() {
+            return Err(RuntimeError::LLM {
+                message: "admitted invocation budget is already bound to this execution context"
+                    .to_string(),
+                backend: None,
+            });
+        }
+        self.admitted_invocation_budget = Some(Arc::new(AdmittedInvocationBudget::new(budget)?));
+        Ok(self)
     }
 
     /// Set the per-tool call-count budget for this execution. An
@@ -561,6 +657,13 @@ impl ExecutionContext {
         args: std::collections::HashMap<String, apxm_core::types::values::Value>,
         timeout: std::time::Duration,
     ) -> Result<apxm_core::types::values::Value, apxm_core::error::RuntimeError> {
+        let grant_contexts = self
+            .capability_system
+            .get_metadata(name)
+            .map(|capability| {
+                metadata_matching_capability_grants(&self.metadata, name, &capability, &args)
+            })
+            .unwrap_or_default();
         let invocation = CapabilityInvocation {
             execution_id: self.execution_id.clone(),
             graph_id: self.graph_id.clone(),
@@ -570,7 +673,15 @@ impl ExecutionContext {
                 AISOperationType::InvCap => CapabilityEffectDispatchPath::InvCap,
                 _ => CapabilityEffectDispatchPath::AskTool,
             },
-            grant_refs: metadata_matching_write_grants(&self.metadata, name),
+            grant_refs: if grant_contexts.is_empty() {
+                metadata_matching_write_grants(&self.metadata, name)
+            } else {
+                grant_contexts
+                    .iter()
+                    .map(|grant| grant.grant_id.clone())
+                    .collect()
+            },
+            grant_contexts,
         };
         self.invoke_capability_prepared(name, args, timeout, Some(invocation))
             .await
@@ -639,9 +750,11 @@ impl ExecutionContext {
     /// Enforce execution-scoped admission for a capability invocation before it
     /// reaches a native capability or an artifact-local script handler.
     ///
-    /// Read-only and demonstrably sandboxed capabilities may proceed. Direct
-    /// mutating capabilities require an active runtime-minted grant for their
-    /// binding; malformed, expired, and non-mutating grants fail closed.
+    /// Capabilities declaring grant requirements are admitted through their
+    /// typed operations, resources, selectors, and quotas before the generic
+    /// read-only or sandbox paths. Direct mutating capabilities require an
+    /// active runtime-minted grant for their binding; malformed, expired, and
+    /// non-mutating grants fail closed.
     pub fn ensure_capability_admitted(
         &self,
         name: &str,
@@ -650,6 +763,21 @@ impl ExecutionContext {
     ) -> Result<(), apxm_core::error::RuntimeError> {
         let capabilities = &self.capability_system;
         if capabilities.has_capability(name) {
+            let metadata = capabilities.get_metadata(name);
+            if let Some(capability) = metadata.as_ref()
+                && (!capability.required_grant_operations.is_empty()
+                    || !capability.grant_scope_requirements.is_empty())
+            {
+                if metadata_admits_capability(&self.metadata, name, capability, args) {
+                    return Ok(());
+                }
+                return Err(apxm_core::error::RuntimeError::Capability {
+                    capability: name.to_string(),
+                    message: format!(
+                        "capability '{name}' is missing a matching capability grant for its declared operations, resource scope, or runtime limits"
+                    ),
+                });
+            }
             if capabilities.is_read_only(name) {
                 return Ok(());
             }
@@ -692,7 +820,7 @@ impl ExecutionContext {
     /// Budget-check and increment the per-tool call counter. Fail-closed: an
     /// exhausted budget denies before the capability executes. A tool with no
     /// configured budget is unbounded. The counter is shared across child
-    /// contexts, so the bound spans spawned agents and called skills.
+    /// contexts, so the bound spans spawned agents and child workflows.
     ///
     /// When a session ledger is attached, per-session tool budgets are the SSOT;
     /// per-execution counters are skipped.
@@ -775,7 +903,51 @@ impl ExecutionContext {
 
     /// Create a child context that shares the parent's AAM (Inherit on all dimensions).
     pub fn child(&self) -> Self {
-        self.child_with_scope(ScopeSpec::default())
+        let mut child = self.child_with_scope(ScopeSpec::default());
+        // Scheduler workers are implementation lanes of the same host-admitted
+        // execution, not nested executions. Durable capability receipts must
+        // therefore retain the canonical execution identity the host bound to
+        // the root context before the first node dispatch.
+        child.execution_id.clone_from(&self.execution_id);
+        child
+    }
+
+    /// Create an isolated HANDOFF child.
+    ///
+    /// Unlike ordinary sub-flow children, an agent handoff never receives
+    /// parent instruction/configuration or authority state implicitly. The
+    /// caller supplies a typed [`HandoffTransfer`] for the narrow state it
+    /// deliberately wants to transfer, then passes the HANDOFF payload through
+    /// the child memory boundary. Lineage and cancellation remain hierarchical.
+    pub fn handoff_child(&self, transfer: HandoffTransfer) -> Self {
+        let mut child = self.child_with_scope(transfer.scope_spec());
+        let mut metadata_map = std::collections::HashMap::new();
+        metadata_map.insert(metadata::SCOPE_ID.to_string(), child.scope_id.clone());
+        metadata_map.insert(metadata::PARENT_SCOPE_ID.to_string(), self.scope_id.clone());
+        metadata_map.insert(
+            metadata::PARENT_EXECUTION_ID.to_string(),
+            self.execution_id.clone(),
+        );
+
+        // Do not retain any host or parent metadata. In particular this drops
+        // capability grants, sealed context transport, side-effect policy, and
+        // caller-defined metadata.
+        child.metadata = metadata_map;
+        child.session_id = None;
+        child.current_agent = None;
+        child.instruction_config = InstructionConfig::default();
+        child.token_budget = None;
+        child.admitted_invocation_budget = None;
+        child.consumed_tokens = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        child.tool_call_budgets = None;
+        child.tool_call_counts = Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        child.tool_credentials = None;
+        child.context_planning = None;
+        child.context_stack = None;
+        child.default_model_profile = None;
+        child.session_ledger = None;
+        child.agent_scope_stack = Arc::new(AgentScopeStack::new());
+        child
     }
 
     /// Create a child context with a scoped AAM.
@@ -824,6 +996,7 @@ impl ExecutionContext {
             start_time: std::time::Instant::now(),
             metadata: metadata_map,
             token_budget: self.token_budget,
+            admitted_invocation_budget: self.admitted_invocation_budget.as_ref().map(Arc::clone),
             optimization_target: self.optimization_target,
             metrics_level: self.metrics_level,
             scheduler_config: self.scheduler_config.clone(),
@@ -864,10 +1037,6 @@ impl ExecutionContext {
             host_id: self.host_id.clone(),
             host_dispatch: std::sync::Arc::clone(&self.host_dispatch),
             consent_broker: std::sync::Arc::clone(&self.consent_broker),
-            // Shared, not reset: a spawned/called child never re-fires
-            // `pre_turn` (the turn marker gates it to the top-level ask), so
-            // there is nothing child-local to isolate here.
-            pending_turn_prompt_supplement: Arc::clone(&self.pending_turn_prompt_supplement),
         }
     }
 
@@ -972,12 +1141,15 @@ impl ExecutionContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::aam::Aam;
+    use crate::aam::{Aam, CapabilityRecord};
     use crate::capability::CapabilitySystem;
     use crate::capability::executor::EchoCapability;
     use crate::memory::{MemoryConfig, MemorySystem};
     use apxm_backends::LLMRegistry;
+    use apxm_core::InstructionConfig;
+    use apxm_core::types::values::Value;
     use std::collections::HashMap;
+    use std::path::PathBuf;
     use std::sync::Arc;
 
     async fn test_ctx_with_ledger(ledger: SessionLedger) -> ExecutionContext {
@@ -1001,6 +1173,139 @@ mod tests {
         assert_eq!(ctx.charge_session_turn().unwrap(), 1);
         assert_eq!(ctx.charge_session_turn().unwrap(), 2);
         assert!(ctx.charge_session_turn().is_err(), "third turn exceeds cap");
+    }
+
+    #[tokio::test]
+    async fn scheduler_worker_child_retains_host_execution_identity() {
+        let host_execution_id = "server-execution-identity".to_string();
+        let parent = test_ctx_with_ledger(SessionLedger::new(None, HashMap::new()))
+            .await
+            .with_execution_id(host_execution_id.clone());
+
+        let child = parent.child();
+
+        assert_eq!(child.execution_id, host_execution_id);
+        assert_ne!(child.scope_id, parent.scope_id);
+    }
+
+    #[tokio::test]
+    async fn handoff_child_isolates_parent_authority_and_context_by_default() {
+        let mut tool_budgets = HashMap::new();
+        tool_budgets.insert("write.issue".to_string(), 1);
+        let mut tool_credentials = HashMap::new();
+        tool_credentials.insert(
+            "write.issue".to_string(),
+            "Bearer parent-secret".to_string(),
+        );
+        let context_stack = ContextStack::new(
+            PathBuf::from("/tmp/handoff-parent-context"),
+            Arc::new(HashMap::new()),
+            Arc::new(Vec::new()),
+        );
+        let mut parent = test_ctx_with_ledger(SessionLedger::new(None, HashMap::new()))
+            .await
+            .with_session_id("parent-session".to_string())
+            .with_instruction_config(InstructionConfig {
+                ask: Some("parent prompt".to_string()),
+                ..InstructionConfig::default()
+            })
+            .with_token_budget(Some(42))
+            .with_admitted_invocation_budget(BudgetSet {
+                input_tokens: 32,
+                output_tokens: 16,
+                tool_calls: 1,
+                memory_bytes: 0,
+                concurrency: 1,
+                effects: 0,
+                wall_clock_ms: 1,
+            })
+            .expect("admitted budget")
+            .with_tool_call_budgets(Some(tool_budgets))
+            .with_tool_credentials(Some(tool_credentials))
+            .with_context_stack(Arc::new(context_stack));
+        parent.metadata.insert(
+            crate::metadata_keys::CAPABILITY_GRANTS.to_string(),
+            "parent-grants".to_string(),
+        );
+        parent.metadata.insert(
+            crate::metadata_keys::SEALED_CONTEXT_TRANSPORT_V1.to_string(),
+            "sealed-context".to_string(),
+        );
+        parent.metadata.insert(
+            "parent-only-metadata".to_string(),
+            "must-not-transfer".to_string(),
+        );
+        parent.aam.set_belief(
+            "parent-private-belief".to_string(),
+            Value::String("private".to_string()),
+            crate::aam::TransitionLabel::Custom("handoff-test".to_string()),
+        );
+        parent.aam.register_capability(
+            "parent-capability".to_string(),
+            CapabilityRecord {
+                name: "parent-capability".to_string(),
+                description: "must not cross handoff".to_string(),
+                schema: serde_json::json!({}),
+                cost_estimate: 0.0,
+            },
+            crate::aam::TransitionLabel::Custom("handoff-test".to_string()),
+        );
+
+        let child = parent.handoff_child(HandoffTransfer::default());
+
+        assert!(child.session_id.is_none());
+        assert!(child.instruction_config.ask.is_none());
+        assert!(child.token_budget.is_none());
+        assert!(child.admitted_invocation_budget.is_none());
+        assert!(child.tool_call_budgets.is_none());
+        assert!(child.tool_credentials.is_none());
+        assert!(child.context_planning.is_none());
+        assert!(child.context_stack.is_none());
+        assert!(child.session_ledger.is_none());
+        assert!(child.agent_scope_stack.is_empty());
+        assert_eq!(child.aam.get_belief("parent-private-belief"), None);
+        assert!(!child.aam.has_capability("parent-capability"));
+        assert_eq!(
+            child
+                .metadata
+                .get(crate::metadata_keys::PARENT_EXECUTION_ID),
+            Some(&parent.execution_id)
+        );
+        assert_eq!(
+            child.metadata.get(crate::metadata_keys::PARENT_SCOPE_ID),
+            Some(&parent.scope_id)
+        );
+        assert!(
+            !child
+                .metadata
+                .contains_key(crate::metadata_keys::CAPABILITY_GRANTS)
+        );
+        assert!(
+            !child
+                .metadata
+                .contains_key(crate::metadata_keys::SEALED_CONTEXT_TRANSPORT_V1)
+        );
+        assert!(!child.metadata.contains_key("parent-only-metadata"));
+        assert_eq!(child.metadata.len(), 3);
+
+        parent.cancellation_token.cancel();
+        assert!(child.cancellation_token.is_cancelled());
+
+        let explicit = parent.handoff_child(HandoffTransfer::explicit_state_transfer());
+        assert_eq!(
+            explicit.aam.get_belief("parent-private-belief"),
+            Some(Value::String("private".to_string()))
+        );
+        assert!(!explicit.aam.has_capability("parent-capability"));
+        assert!(explicit.context_stack.is_none());
+        assert!(explicit.tool_credentials.is_none());
+        assert!(
+            explicit
+                .metadata
+                .get(crate::metadata_keys::SEALED_CONTEXT_TRANSPORT_V1)
+                .is_none()
+        );
+        assert_eq!(explicit.metadata.len(), 3);
     }
 
     #[tokio::test]
@@ -1029,6 +1334,7 @@ mod tests {
     struct StubFacade {
         registered: bool,
         read_only: bool,
+        metadata: Option<apxm_capability_iface::RuntimeCapability>,
         direct_invoke_used: std::sync::atomic::AtomicBool,
         approval_context_seen: std::sync::atomic::AtomicBool,
     }
@@ -1038,6 +1344,7 @@ mod tests {
             Self {
                 registered: true,
                 read_only: true,
+                metadata: None,
                 direct_invoke_used: std::sync::atomic::AtomicBool::new(false),
                 approval_context_seen: std::sync::atomic::AtomicBool::new(false),
             }
@@ -1081,7 +1388,7 @@ mod tests {
         }
 
         fn get_metadata(&self, _name: &str) -> Option<apxm_capability_iface::RuntimeCapability> {
-            None
+            self.metadata.clone()
         }
 
         fn list_capabilities(&self) -> Vec<apxm_capability_iface::RuntimeCapability> {
@@ -1173,6 +1480,9 @@ mod tests {
                 "grant_id": "grant_fixture",
                 "capability_binding": "artifact.script",
                 "operations": ["write"],
+                "resource": {"kind": "fixture", "uri": "fixture://artifact-script"},
+                "scope": {"kind": "fixture", "boundary": "fixture"},
+                "runtime_limits": {},
                 "expires_at": null,
                 "status": "active"
             }])
@@ -1180,5 +1490,106 @@ mod tests {
         );
         ctx.prepare_capability_invocation("artifact.script", &mut args, true)
             .expect("runtime-minted mutating grant admits script capability");
+    }
+
+    #[tokio::test]
+    async fn read_only_capabilities_with_declared_grants_fail_closed_until_scope_matches() {
+        use apxm_capability_iface::{
+            CapabilityGrantRuntimeQuota, CapabilityGrantScopeRequirements,
+            CapabilityGrantScopeSelector, RuntimeCapability,
+        };
+        use apxm_core::types::PermissionOperation;
+
+        const CAPABILITY: &str = "fixture.catalog.read";
+        const ROOT_SELECTOR: &str = "catalog_roots";
+        const ROOT_ARGUMENT: &str = "catalog_root";
+        const BYTE_QUOTA: &str = "max_result_bytes";
+        const BYTE_ARGUMENT: &str = "max_result_bytes";
+
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("memory"),
+        );
+        let aam = Aam::new();
+        let metadata = RuntimeCapability::new(
+            CAPABILITY,
+            "Fixture catalog reader",
+            serde_json::json!({"type": "object"}),
+        )
+        .with_read_only()
+        .with_required_grant_operations(vec![PermissionOperation::Read])
+        .with_grant_scope_requirements(CapabilityGrantScopeRequirements {
+            resource_kind: Some("fixture_catalog".to_string()),
+            scope_selectors: vec![CapabilityGrantScopeSelector {
+                selector: ROOT_SELECTOR.to_string(),
+                argument: Some(ROOT_ARGUMENT.to_string()),
+            }],
+            runtime_quotas: vec![CapabilityGrantRuntimeQuota {
+                quota: BYTE_QUOTA.to_string(),
+                argument: Some(BYTE_ARGUMENT.to_string()),
+            }],
+        });
+        let facade = Arc::new(StubFacade {
+            metadata: Some(metadata),
+            ..Default::default()
+        });
+        let mut ctx = ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), facade, aam);
+        let mut args = HashMap::from([
+            (
+                ROOT_ARGUMENT.to_string(),
+                apxm_core::types::values::Value::String("catalog://fixture".to_string()),
+            ),
+            (
+                BYTE_ARGUMENT.to_string(),
+                apxm_core::types::values::Value::from(32_i64),
+            ),
+        ]);
+
+        let missing = ctx
+            .prepare_capability_invocation(CAPABILITY, &mut args, false)
+            .expect_err("read-only capability with declared grants must reject missing grant");
+        assert!(
+            missing
+                .to_string()
+                .contains("missing a matching capability grant")
+        );
+
+        ctx.metadata.insert(
+            crate::metadata_keys::CAPABILITY_GRANTS.to_string(),
+            serde_json::json!([{
+                "grant_id": "grant_fixture_catalog",
+                "capability_binding": CAPABILITY,
+                "operations": ["read"],
+                "resource": {"kind": "fixture_catalog", "uri": "catalog://fixture"},
+                "scope": {
+                    "kind": "catalog",
+                    "boundary": "fixture",
+                    "selectors": {ROOT_SELECTOR: ["catalog://fixture"]}
+                },
+                "runtime_limits": {
+                    "quotas": {BYTE_QUOTA: 32}
+                },
+                "expires_at": null,
+                "status": "active"
+            }])
+            .to_string(),
+        );
+        ctx.prepare_capability_invocation(CAPABILITY, &mut args, false)
+            .expect("matching read grant admits the ordinary capability path");
+
+        let mut over_limit = args.clone();
+        over_limit.insert(
+            BYTE_ARGUMENT.to_string(),
+            apxm_core::types::values::Value::from(33_i64),
+        );
+        let denied = ctx
+            .prepare_capability_invocation(CAPABILITY, &mut over_limit, false)
+            .expect_err("quota above the grant ceiling must fail closed");
+        assert!(
+            denied
+                .to_string()
+                .contains("missing a matching capability grant")
+        );
     }
 }

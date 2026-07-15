@@ -9,6 +9,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
+use std::fmt::Write as _;
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -227,8 +228,7 @@ impl CapabilityExecutor for SearchWebCapability {
         let max_results = args
             .get("max_results")
             .and_then(|value| value.as_u64())
-            .map(|value| value as usize)
-            .unwrap_or(self.config.max_results);
+            .map_or(self.config.max_results, |value| value as usize);
 
         let api_key = std::env::var("TAVILY_API_KEY").map_err(|_| RuntimeError::Capability {
             capability: self.metadata.name.clone(),
@@ -290,17 +290,18 @@ impl CapabilityExecutor for SearchWebCapability {
         if let Some(answer) = tavily_response.answer
             && !answer.trim().is_empty()
         {
-            output.push_str(&format!("Summary: {answer}\n\n"));
+            let _ = write!(output, "Summary: {answer}\n\n");
         }
 
         for (index, result) in filtered_results.iter().enumerate() {
-            output.push_str(&format!(
+            let _ = write!(
+                output,
                 "{}. {} ({})\n{}\n\n",
                 index + 1,
                 result.title,
                 result.url,
                 result.content
-            ));
+            );
         }
 
         if output.trim().is_empty() {

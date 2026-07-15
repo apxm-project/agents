@@ -275,6 +275,7 @@ fn configure_cmake(
     workspace_root: &Path,
     profile: &str,
 ) -> Result<()> {
+    const GENERATOR: &str = "Ninja";
     let mlir_cmake_dir = mlir_dir.join("lib/cmake/mlir");
     let llvm_cmake_dir = mlir_dir.join("lib/cmake/llvm");
 
@@ -285,8 +286,41 @@ fn configure_cmake(
         "Debug"
     };
 
+    let configured_cxx = env::var_os("CXX")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    let cache_path = build_dir.join("CMakeCache.txt");
+    let cache_is_current = fs::read_to_string(&cache_path).is_ok_and(|cache| {
+        let generator_matches = cache.contains(&format!("CMAKE_GENERATOR:INTERNAL={GENERATOR}"));
+        let compiler_matches = configured_cxx.as_ref().is_none_or(|compiler| {
+            cache.contains(&format!(
+                "CMAKE_CXX_COMPILER:FILEPATH={}",
+                compiler.display()
+            )) || cache.contains(&format!(
+                "CMAKE_CXX_COMPILER:UNINITIALIZED={}",
+                compiler.display()
+            ))
+        });
+        generator_matches && compiler_matches
+    });
+    if cache_path.is_file() && !cache_is_current {
+        // The Dekk environment owns Ninja. Drop only CMake's generated cache
+        // state when an older build selected a different generator or compiler;
+        // retained generated APXM include files stay in place for this configure
+        // pass.
+        fs::remove_file(&cache_path)
+            .with_context(|| format!("Failed to remove stale {}", cache_path.display()))?;
+        let files_dir = build_dir.join("CMakeFiles");
+        if files_dir.is_dir() {
+            fs::remove_dir_all(&files_dir)
+                .with_context(|| format!("Failed to remove stale {}", files_dir.display()))?;
+        }
+    }
+
     let mut cmd = Command::new("cmake");
     cmd.current_dir(build_dir)
+        .arg("-G")
+        .arg(GENERATOR)
         .arg(manifest_dir)
         .arg(format!("-DMLIR_DIR={}", mlir_cmake_dir.display()))
         .arg(format!("-DLLVM_DIR={}", llvm_cmake_dir.display()))
@@ -296,6 +330,19 @@ fn configure_cmake(
             "-DAPXM_WORKSPACE_ROOT={}",
             workspace_root.display()
         ));
+
+    // Cargo rebuilds can reuse a CMake cache created under a previous Dekk
+    // toolchain. Pass the active compiler paths explicitly so a stale cache
+    // cannot retain a removed `cc`/`c++` executable after the environment
+    // contract changes.
+    for (env_key, cmake_key) in [("CC", "CMAKE_C_COMPILER"), ("CXX", "CMAKE_CXX_COMPILER")] {
+        if let Some(compiler) = env::var_os(env_key).filter(|value| !value.is_empty()) {
+            cmd.arg(format!(
+                "-D{cmake_key}={}",
+                PathBuf::from(compiler).display()
+            ));
+        }
+    }
 
     if !runtime_rpaths.is_empty() {
         let joined = runtime_rpaths

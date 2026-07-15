@@ -763,10 +763,12 @@ def AIS_CommunicateOp : AIS_Op<"communicate"> {
 def AIS_HandoffOp : AIS_Op<"handoff"> {
   let summary = "Hand off execution to another agent";
   let description = [{
-    Transfers execution from a source agent to a target agent. When
-    transfer_state is true (default), the source agent's context-stack
-    frames are copied to the target agent so it can continue with full
-    conversational context.
+    Transfers execution from a source agent to an isolated target agent.
+    An omitted or false transfer_state isolates the target. An explicit true
+    permits only a snapshot of non-authority AAM beliefs and goals plus a
+    rendered context-frame payload. Credentials, capability grants, budgets,
+    Agent Skill selections, prompt defaults, session state, and caller
+    metadata never cross the handoff boundary.
 
     Example:
     ```mlir
@@ -909,6 +911,30 @@ def AIS_RegisterHookOp : AIS_Op<"register_hook"> {
   let assemblyFormat = [{
     $hook_event attr-dict `:` type($result)
   }];
+}
+
+def AIS_AwaitInputOp : AIS_Op<"await_input"> {
+  let summary = "Park until the host delivers one typed external input";
+  let description = [{
+    AWAIT_INPUT is a generic durable park/resume primitive. It returns a seed
+    input when one is supplied; otherwise it parks on an opaque host-owned
+    correlation key. It carries no model, prompt, persona, capability, or
+    conversational semantics.
+  }];
+  let arguments = (ins
+    OptionalAttr<StrAttr>:$wait_key,
+    OptionalAttr<StrAttr>:$rearm,
+    OptionalAttr<StrAttr>:$agent_name,
+    OptionalAttr<StrAttr>:$flow_name,
+    OptionalAttr<ArrayAttr>:$input_names,
+    OptionalAttr<I64Attr>:$max_iterations,
+    Variadic<AIS_TokenType>:$inputs
+  );
+  let results = (outs AIS_TokenType:$result);
+  let assemblyFormat = [{
+    $wait_key (`(` $inputs^ `:` type($inputs) `)`)? attr-dict `:` type($result)
+  }];
+  let hasVerifier = 1;
 }
 
 def AIS_AutonomousOp : AIS_Op<"autonomous"> {

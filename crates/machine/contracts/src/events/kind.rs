@@ -180,6 +180,10 @@ pub const CONTEXT_COMPACTED: EventKind =
     EventKind::new("context_compacted", EventCategory::Observability, false);
 pub const MODEL_CONTEXT_METRICS: EventKind =
     EventKind::new("model_context_metrics", EventCategory::Observability, false);
+/// Redacted lifecycle evidence for host-sealed model context, including an
+/// explicitly authorized trusted instruction contribution.
+pub const CONTEXT_LIFECYCLE: EventKind =
+    EventKind::new("context_lifecycle", EventCategory::Observability, false);
 pub const CAPABILITY_EFFECT_RECEIPT: EventKind = EventKind::new(
     "capability_effect_receipt",
     EventCategory::Observability,
@@ -279,6 +283,7 @@ pub const CORE_EVENT_KINDS: &[EventKind] = &[
     GRAPH_EDGE,
     CONTEXT_COMPACTED,
     MODEL_CONTEXT_METRICS,
+    CONTEXT_LIFECYCLE,
     CAPABILITY_EFFECT_RECEIPT,
     MODEL_REROUTED,
     CANCELLED,

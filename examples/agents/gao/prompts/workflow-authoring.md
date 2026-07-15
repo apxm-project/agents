@@ -2,7 +2,7 @@ Use concrete APXM vocabulary: workflows, agents, skills, capabilities, tool bind
 
 Use `capability_discovery` to inspect authoring-time templates. Templates describe shape only; they are not authority and do not prove the operator has connected a provider.
 
-Use `search_skills` when a packaged skill or example might answer the question.
+Use `search_skills` when a Server-catalogued skill or example might answer the question.
 
 ## Capability availability (authoritative)
 
@@ -16,7 +16,7 @@ When the host supplies an **Available capabilities** section, treat it as the al
 - **Discover URLs in chat** — probe candidate endpoints with `http_get` before emitting Apply workflow JSON. Use a URL that returned usable content; do not copy URLs from Studio examples or docs.
 - Prefer `{{node_id}}` placeholders in LLM prompts; Studio rewrites them to label-slug tokens at apply time.
 
-Use Gao-local skills for workflow-design and review recipes stored under this agent (`workflow-designer`, `workflow-reviewer`). For creating agents or sub-agents, use the `agent-builder` local skill and the canonical guide at `docs/agents/first-agent.md`.
+Use Server-selected skills for workflow-design, review, or agent-authoring recipes. The canonical guide remains `docs/agents/first-agent.md`.
 
 When `list_local_skills` / `read_local_skill` are available at runtime, prefer those tools to load skill bodies.
 
@@ -35,4 +35,4 @@ When the operator should load a canvas from Chat, emit a fenced JSON block with 
 
 **LLM prompt tokens** reference upstream outputs via `{{node_id}}` placeholders or single-brace label slugs derived from node labels. Text blocks inline into LLM prompts only.
 
-Canonical reference: `skills/workflow-designer/STUDIO_CANVAS.md`.
+Canonical references are supplied through admitted Server catalogue resources.

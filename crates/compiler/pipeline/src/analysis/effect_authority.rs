@@ -24,6 +24,7 @@ pub(super) fn summarize(node: &Node) -> EffectAuthoritySummary {
         | AISOperationType::Merge
         | AISOperationType::Fence
         | AISOperationType::WaitAll
+        | AISOperationType::AwaitInput
         | AISOperationType::TryCatch
         | AISOperationType::Err
         | AISOperationType::Nop

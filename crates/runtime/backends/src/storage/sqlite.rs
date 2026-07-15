@@ -482,12 +482,14 @@ fn embedding_to_blob(embedding: &[f32]) -> Vec<u8> {
 
 /// Deserialize f32 embedding from little-endian byte blob.
 fn blob_to_embedding(blob: &[u8]) -> Option<Vec<f32>> {
-    if !blob.len().is_multiple_of(4) {
+    let (chunks, []) = blob.as_chunks::<4>() else {
         return None;
-    }
+    };
+
     Some(
-        blob.chunks_exact(4)
-            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        chunks
+            .iter()
+            .map(|chunk| f32::from_le_bytes(*chunk))
             .collect(),
     )
 }

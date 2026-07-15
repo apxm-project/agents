@@ -5,6 +5,7 @@
 //! - Managing execution context
 //! - Coordinating subsystems (memory, models, etc.)
 
+pub(crate) mod admitted_budget;
 pub mod agent_scope;
 mod cancellation;
 pub(crate) mod capability_admission;
@@ -33,7 +34,7 @@ pub mod workflow_spawner;
 
 pub use agent_scope::{AgentScope, AgentScopeStack};
 pub use cancellation::CancellationToken;
-pub use context::ExecutionContext;
+pub use context::{ExecutionContext, HandoffTransfer};
 pub use dag_splicer::{DagSplicer, NoOpSplicer};
 pub use dispatcher::OperationDispatcher;
 pub use emitter_adapter::EmitterAdapter;

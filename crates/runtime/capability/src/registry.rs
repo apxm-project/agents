@@ -115,6 +115,14 @@ impl CapabilityRegistry {
             .collect()
     }
 
+    /// Return registered executors for construction of an execution-local facade.
+    pub fn list_capabilities(&self) -> Vec<Arc<dyn CapabilityExecutor>> {
+        self.capabilities
+            .iter()
+            .map(|entry| Arc::clone(entry.value()))
+            .collect()
+    }
+
     /// Unregister a capability.
     pub fn unregister(&self, name: &str) -> bool {
         let cap_removed = self.capabilities.remove(name).is_some();

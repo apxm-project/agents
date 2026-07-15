@@ -222,7 +222,7 @@ fn default_integration_root(id: &str) -> PathBuf {
 }
 
 fn titleize(id: &str) -> String {
-    id.split(|c: char| c == '-' || c == '_')
+    id.split(['-', '_'])
         .filter(|s| !s.is_empty())
         .map(|word| {
             let mut chars = word.chars();

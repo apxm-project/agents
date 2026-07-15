@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use apxm_core::events::payload::{
     ApprovalRiskLevel, GenerationIdentity, LlmDonePayload, LlmStepCompletedPayload,
-    ToolCallCorrelation, ToolCallPayload, ToolCallStatus,
+    ToolCallCorrelation, ToolCallPayload, ToolCallStatus, WorkflowStepCompletedPayload,
 };
 use apxm_core::types::TimingBreakdown;
 use apxm_core::types::operations::AISOperationType;
@@ -126,7 +126,7 @@ impl ExecutionEventEmitter for MultiEmitter {
 
     fn emit_tool_call(&self, payload: ToolCallPayload) {
         self.for_each("emit_tool_call", |child| {
-            child.emit_tool_call(payload.clone())
+            child.emit_tool_call(payload.clone());
         });
     }
 
@@ -265,30 +265,9 @@ impl ExecutionEventEmitter for MultiEmitter {
         });
     }
 
-    fn emit_workflow_step_completed(
-        &self,
-        workflow_name: &str,
-        workflow_session_dir: &str,
-        step_id: &str,
-        step_index: usize,
-        status: &str,
-        success: bool,
-        duration: Duration,
-        session_dir: Option<&str>,
-        error: Option<&str>,
-    ) {
+    fn emit_workflow_step_completed(&self, payload: WorkflowStepCompletedPayload) {
         self.for_each("emit_workflow_step_completed", |child| {
-            child.emit_workflow_step_completed(
-                workflow_name,
-                workflow_session_dir,
-                step_id,
-                step_index,
-                status,
-                success,
-                duration,
-                session_dir,
-                error,
-            );
+            child.emit_workflow_step_completed(payload.clone());
         });
     }
 

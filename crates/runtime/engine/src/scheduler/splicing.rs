@@ -518,46 +518,43 @@ impl SchedulerState {
         })
     }
 
-    /// Re-arm one conversation turn from a woken session recv (the production
-    /// driver for [`Self::splice_turn_and_rearm`], wired on the worker park path).
+    /// Re-arm one explicit continuation from a woken AWAIT_INPUT node.
     ///
-    /// Builds, in one splice: (1) a FLOW_CALL node that dispatches the author
-    /// turn flow (`<turn_agent>.<turn_flow>`) with the woken user message bound
-    /// to its reserved `turn_param` (constitution #6), and (2) a fresh recv node
-    /// (a clone of `recv_node`) that re-parks on the session key — so the next
-    /// user message drives another turn. Prior turns are never re-run.
-    pub fn rearm_session_turn(
+    /// Builds, in one splice: (1) a FLOW_CALL to the declared continuation with
+    /// the woken input bound to its declared parameter, and (2) a fresh cloned
+    /// AWAIT_INPUT node. Prior continuations are never re-run.
+    pub fn rearm_input_continuation(
         &self,
-        message_token: TokenId,
-        recv_node: &Node,
-        turn_agent: &str,
-        turn_flow: &str,
-        turn_param: &str,
+        input_token: TokenId,
+        await_node: &Node,
+        agent_name: &str,
+        flow_name: &str,
+        input_name: &str,
     ) -> Result<(), RuntimeError> {
         use apxm_core::constants::graph::attrs as ga;
         use apxm_core::types::execution::NodeMetadata;
         use apxm_core::types::operations::AISOperationType;
 
-        // FLOW_CALL node: dispatch the turn flow, binding the message (inner
-        // input token 1) to the reserved turn param via args + input_names.
+        // FLOW_CALL node: dispatch the explicit continuation, binding the input
+        // token to its declared parameter through args + input_names.
         let mut fc_attrs = std::collections::HashMap::new();
         fc_attrs.insert(
             ga::AGENT_NAME.to_string(),
-            Value::String(turn_agent.to_string()),
+            Value::String(agent_name.to_string()),
         );
         fc_attrs.insert(
             ga::FLOW_NAME.to_string(),
-            Value::String(turn_flow.to_string()),
+            Value::String(flow_name.to_string()),
         );
         let mut args = std::collections::HashMap::new();
         args.insert(
-            turn_param.to_string(),
-            Value::String(format!("{{{turn_param}}}")),
+            input_name.to_string(),
+            Value::String(format!("{{{input_name}}}")),
         );
         fc_attrs.insert(ga::ARGS.to_string(), Value::Object(args));
         fc_attrs.insert(
             ga::INPUT_NAMES.to_string(),
-            Value::Array(vec![Value::String(turn_param.to_string())]),
+            Value::Array(vec![Value::String(input_name.to_string())]),
         );
         let flow_call = Node {
             id: 1,
@@ -567,22 +564,22 @@ impl SchedulerState {
             output_tokens: vec![2],
             metadata: NodeMetadata::default(),
         };
-        let mut turn_dag = ExecutionDag::new();
-        turn_dag.add_node(flow_call)?;
+        let mut continuation_dag = ExecutionDag::new();
+        continuation_dag.add_node(flow_call)?;
 
-        // Fresh recv: same attrs as the woken recv (so it re-arms again on the
-        // next wake), no inputs (ready immediately → parks), fresh output token.
-        let mut fresh_recv = recv_node.clone();
-        fresh_recv.id = 2;
-        fresh_recv.input_tokens = vec![];
-        fresh_recv.output_tokens = vec![3];
+        // Fresh wait: same attrs as the woken AWAIT_INPUT (so it re-arms again
+        // on the next wake), no inputs, and a fresh output token.
+        let mut fresh_await = await_node.clone();
+        fresh_await.id = 2;
+        fresh_await.input_tokens = vec![];
+        fresh_await.output_tokens = vec![3];
 
         self.splice_turn_and_rearm(
-            message_token,
-            1, // the FLOW_CALL's inner input token, connected to message_token
+            input_token,
+            1, // the FLOW_CALL inner input token connected to input_token
             std::collections::HashMap::new(),
-            turn_dag,
-            fresh_recv,
+            continuation_dag,
+            fresh_await,
         )?;
         Ok(())
     }
