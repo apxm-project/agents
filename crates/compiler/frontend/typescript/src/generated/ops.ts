@@ -8,10 +8,10 @@
 export const OP_SPEC_SCHEMA_VERSION = "apxm.op-spec.v1";
 
 /** Total operations declared by the source catalog (including pseudo-ops). */
-export const OP_SPEC_TOTAL_OPERATIONS = 38;
+export const OP_SPEC_TOTAL_OPERATIONS = 39;
 
 /** Union of every AIS opcode name in the catalog. */
-export type OpName = "AGENT" | "QMEM" | "UMEM" | "ASK" | "THINK" | "REASON" | "PLAN" | "REFLECT" | "VERIFY" | "INV_CAP" | "EXC" | "PRINT" | "JUMP" | "BRANCH_ON_VALUE" | "RETURN" | "SWITCH" | "FLOW_CALL" | "WORKFLOW_SPAWN" | "MERGE" | "FENCE" | "WAIT_ALL" | "TRY_CATCH" | "ERR" | "COMMUNICATE" | "HANDOFF" | "UPDATE_GOAL" | "PAUSE" | "RESUME" | "DELEGATE" | "NOP" | "IDENTITY" | "SPAWN_AGENT" | "REGISTER_CAPABILITY" | "REGISTER_HOOK" | "AUTONOMOUS" | "CHECKPOINT" | "CONST_STR" | "YIELD";
+export type OpName = "AGENT" | "QMEM" | "UMEM" | "ASK" | "THINK" | "REASON" | "PLAN" | "REFLECT" | "VERIFY" | "INV_CAP" | "EXC" | "PRINT" | "JUMP" | "BRANCH_ON_VALUE" | "RETURN" | "SWITCH" | "FLOW_CALL" | "WORKFLOW_SPAWN" | "MERGE" | "FENCE" | "WAIT_ALL" | "TRY_CATCH" | "ERR" | "COMMUNICATE" | "HANDOFF" | "UPDATE_GOAL" | "PAUSE" | "RESUME" | "DELEGATE" | "NOP" | "IDENTITY" | "SPAWN_AGENT" | "REGISTER_CAPABILITY" | "REGISTER_HOOK" | "AWAIT_INPUT" | "AUTONOMOUS" | "CHECKPOINT" | "CONST_STR" | "YIELD";
 
 /** A single field/attribute an AIS operation accepts. */
 export interface OpField {
@@ -513,8 +513,8 @@ export const OP_SPECS: Readonly<Record<OpName, OpSpec>> = {
     rustVariant: "Handoff",
     name: "Handoff",
     category: "communication",
-    description: "Hand off execution from one agent to another with optional state transfer",
-    longDescription: "Transfers execution control from a source agent to a target agent. When transfer_state is true, the source agent's context-stack frames are copied to the target agent so it can continue with full conversational context. Emits HANDOFF_START and HANDOFF_END events with span continuity for tracing. The target agent's response becomes this node's output token.",
+    description: "Hand off execution to an isolated target agent",
+    longDescription: "Transfers execution control from a source agent to a target agent. An omitted or false transfer_state isolates the target. An explicit true permits only a snapshot of non-authority AAM beliefs and goals plus a rendered context-frame payload. Credentials, capability grants, budgets, Agent Skill selections, prompt defaults, session state, and caller metadata never cross the handoff boundary. Emits HANDOFF_START and HANDOFF_END events with span continuity for tracing. The target agent's response becomes this node's output token.",
     latency: "medium",
     wireIndex: 40,
     isPseudoOp: false,
@@ -525,9 +525,9 @@ export const OP_SPECS: Readonly<Record<OpName, OpSpec>> = {
       { name: "handoff_from", required: true, description: "Source agent name", refType: null },
       { name: "handoff_to", required: true, description: "Target agent name", refType: null },
       { name: "payload", required: false, description: "Message payload to pass to the target agent", refType: null },
-      { name: "transfer_state", required: false, description: "Whether to copy context-stack frames from source to target (default: true)", refType: null },
+      { name: "transfer_state", required: false, description: "Whether to explicitly transfer non-authority AAM state and rendered context frames (default: false)", refType: null },
     ],
-    exampleJson: "{\"id\": 3, \"op\": \"HANDOFF\", \"attributes\": {\"handoff_from\": \"agent_a\", \"handoff_to\": \"agent_b\", \"transfer_state\": true}}",
+    exampleJson: "{\"id\": 3, \"op\": \"HANDOFF\", \"attributes\": {\"handoff_from\": \"agent_a\", \"handoff_to\": \"agent_b\"}}",
   },
   "UPDATE_GOAL": {
     op: "UPDATE_GOAL",
@@ -715,6 +715,29 @@ export const OP_SPECS: Readonly<Record<OpName, OpSpec>> = {
       { name: "hook_handler_id", required: true, description: "Stable content-addressed id (sha256:<hex64>) for the artifact hook handler", refType: null },
     ],
     exampleJson: "{\\\"id\\\": 4, \\\"op\\\": \\\"REGISTER_HOOK\\\", \\\"attributes\\\": {\\\"hook_event\\\": \\\"pre_cap\\\", \\\"hook_match\\\": \\\"lookup\\\", \\\"hook_mode\\\": \\\"gate\\\", \\\"hook_handler_id\\\": \\\"sha256:...\\\"}}",
+  },
+  "AWAIT_INPUT": {
+    op: "AWAIT_INPUT",
+    rustVariant: "AwaitInput",
+    name: "AwaitInput",
+    category: "synchronization",
+    description: "Park until the host delivers one typed external input",
+    longDescription: "AWAIT_INPUT is a generic durable park/resume primitive. A seed input returns immediately; otherwise the runtime parks without consuming a worker or compute permit until the trusted host wakes its opaque wait key. It has no model, persona, transcript, capability, Agent Skill, or conversational semantics.",
+    latency: "low",
+    wireIndex: 44,
+    isPseudoOp: false,
+    minInputs: 0,
+    producesOutput: true,
+    needsSubmission: false,
+    fields: [
+      { name: "wait_key", required: false, description: "Opaque host-owned external-input correlation key; defaults to the execution session input key", refType: null },
+      { name: "rearm", required: false, description: "When true, re-arm the explicit continuation flow after a host wake", refType: null },
+      { name: "agent_name", required: false, description: "Agent containing the continuation flow", refType: null },
+      { name: "flow_name", required: false, description: "Explicit continuation flow to invoke", refType: null },
+      { name: "input_names", required: false, description: "Single continuation parameter name bound to the delivered input", refType: null },
+      { name: "max_iterations", required: false, description: "Maximum number of generic wake/re-arm cycles for this session", refType: null },
+    ],
+    exampleJson: "{\"id\": 3, \"op\": \"AWAIT_INPUT\", \"attributes\": {\"wait_key\": \"webhook:order-42\"}}",
   },
   "AUTONOMOUS": {
     op: "AUTONOMOUS",

@@ -48,7 +48,7 @@ impl MemorySystem {
     pub async fn new(config: MemoryConfig) -> Result<Self> {
         let stm = Arc::new(ShortTermMemory::new(config.stm_config)?);
         let ltm = Arc::new(LongTermMemory::new(config.ltm_config).await?);
-        let episodic = Arc::new(EpisodicMemory::new(config.episodic_config));
+        let episodic = Arc::new(EpisodicMemory::new(config.episodic_config)?);
 
         Ok(Self { stm, ltm, episodic })
     }

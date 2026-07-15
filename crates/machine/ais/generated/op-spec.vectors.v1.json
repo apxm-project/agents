@@ -119,8 +119,8 @@
     },
     {
       "op": "HANDOFF",
-      "example_json": "{\"id\": 3, \"op\": \"HANDOFF\", \"attributes\": {\"handoff_from\": \"agent_a\", \"handoff_to\": \"agent_b\", \"transfer_state\": true}}",
-      "bytes": 118
+      "example_json": "{\"id\": 3, \"op\": \"HANDOFF\", \"attributes\": {\"handoff_from\": \"agent_a\", \"handoff_to\": \"agent_b\"}}",
+      "bytes": 94
     },
     {
       "op": "UPDATE_GOAL",
@@ -166,6 +166,11 @@
       "op": "REGISTER_HOOK",
       "example_json": "{\\\"id\\\": 4, \\\"op\\\": \\\"REGISTER_HOOK\\\", \\\"attributes\\\": {\\\"hook_event\\\": \\\"pre_cap\\\", \\\"hook_match\\\": \\\"lookup\\\", \\\"hook_mode\\\": \\\"gate\\\", \\\"hook_handler_id\\\": \\\"sha256:...\\\"}}",
       "bytes": 175
+    },
+    {
+      "op": "AWAIT_INPUT",
+      "example_json": "{\"id\": 3, \"op\": \"AWAIT_INPUT\", \"attributes\": {\"wait_key\": \"webhook:order-42\"}}",
+      "bytes": 78
     },
     {
       "op": "AUTONOMOUS",

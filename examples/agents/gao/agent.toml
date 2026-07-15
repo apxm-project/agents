@@ -1,3 +1,8 @@
+allowed_agent_skills = [
+    "agent-builder",
+    "workflow-designer",
+    "workflow-reviewer",
+]
 capabilities = [
     "bash",
     "capability_discovery",
@@ -21,26 +26,11 @@ id = "gao"
 kind = "agent"
 license = "MIT"
 schema_version = "apxm.agent.v1"
-skills = [
-    "agent-builder",
-    "workflow-designer",
-    "workflow-reviewer",
-]
 version = "0.1.0"
 
 [compile]
 entry = "capabilities/handlers/main.ts"
 frontend = "typescript"
-
-[[hooks]]
-event = "pre_turn"
-handler = "capabilities.handlers.hooks.inject_context"
-mode = "observe"
-
-[[hooks]]
-event = "pre_ask"
-handler = "capabilities.handlers.hooks.inject_apxm_context"
-mode = "observe"
 
 [[hooks]]
 event = "pre_cap"
@@ -69,11 +59,6 @@ workflow_authoring = "prompts/workflow-authoring.md"
 [runtime]
 memory_space = "stm"
 session_prefix = "gao"
-
-[runtime.loop]
-mode = "recv"
-rearm = true
-turn_param = "user_message"
 
 [source]
 type = "local"

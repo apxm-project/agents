@@ -558,8 +558,7 @@ fn systemd_environment(
     sandbox_env::child_environment(
         request_env
             .iter()
-            .filter(|(key, _)| !policy.blocks_env_var(key))
-            .map(|(key, value)| (key, value)),
+            .filter(|(key, _)| !policy.blocks_env_var(key)),
     )
 }
 

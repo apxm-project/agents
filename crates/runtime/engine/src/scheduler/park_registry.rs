@@ -38,19 +38,17 @@ pub enum ParkRegistryError {
     CorruptRecord { wait_key: String, message: String },
 }
 
-/// Re-arm spec for a session conversation loop: on wake, after delivering the
-/// user message, splice a fresh turn flow-call + a fresh recv (the native loop
-/// keystone). Carried by the recv's [`ParkWaker`].
+/// Re-arm specification for a session input loop. On wake, splice a fresh
+/// explicit continuation FLOW_CALL plus a fresh AWAIT_INPUT node.
 pub(crate) struct RearmSpec {
-    pub(crate) recv_node: Arc<Node>,
-    pub(crate) turn_agent: String,
-    pub(crate) turn_flow: String,
-    pub(crate) turn_param: String,
-    /// Session id keying the per-session turn counter, and the max turns to
-    /// re-arm (the recv node's `max_iterations`). Once the running count reaches
-    /// the cap the loop stops re-arming, so a session is bounded.
+    pub(crate) await_node: Arc<Node>,
+    pub(crate) agent_name: String,
+    pub(crate) flow_name: String,
+    pub(crate) input_name: String,
+    /// Session id keying the per-session input counter and its bounded re-arm
+    /// count. Once the cap is reached the loop stops re-arming.
     pub(crate) session_id: String,
-    pub(crate) max_turns: u64,
+    pub(crate) max_resumes: u64,
 }
 
 /// Resumes one parked node by making its output tokens ready in its scheduler.
@@ -59,8 +57,7 @@ pub struct ParkWaker {
     node_id: NodeId,
     outputs: Vec<TokenId>,
     attempts: u32,
-    /// When set, the parked node is a re-arming session recv: after delivering
-    /// the message, splice a fresh turn + recv to continue the loop.
+    /// When set, the parked node re-arms an explicit continuation after wake.
     rearm: Option<RearmSpec>,
 }
 
@@ -80,7 +77,7 @@ impl ParkWaker {
         }
     }
 
-    /// A re-arming waker for a session conversation-loop recv node.
+    /// A re-arming waker for a session input wait node.
     pub(crate) fn for_rearming_node(
         state: Arc<SchedulerState>,
         node_id: NodeId,
@@ -131,8 +128,8 @@ impl ParkWaker {
     }
 
     fn fire(self, wait_key: &str, value: Value) {
-        // SPLICE-THEN-WAKE (robust by construction). For a session loop, splice
-        // the fresh turn flow-call (binding the message token) + a fresh recv
+        // SPLICE-THEN-WAKE (robust by construction). For a re-arming input loop,
+        // splice the explicit continuation flow-call (binding the input token) + a fresh wait
         // FIRST, raising `remaining` before any decrement; only then wake the
         // recv to deliver the message and do the single compensating completion.
         // The inverse order (wake-then-splice) momentarily drives `remaining` to
@@ -143,40 +140,38 @@ impl ParkWaker {
         if let Some(spec) = &self.rearm
             && let Some(message_token) = self.outputs.first().copied()
         {
-            // Session ledger turn cap: charge before re-arm so
-            // turn N+1 is denied without host-side counting (fail-closed).
+            // Charge the session input before re-arm so the next cycle is
+            // denied without host-side counting (fail-closed).
             if let Err(error) =
                 crate::executor::session_ledger::charge_turn_for_wake(&spec.session_id)
             {
                 tracing::info!(
                  session_id = %spec.session_id,
                  %error,
-                 "session turn charge denied at recv re-arm"
+                 "session input charge denied at AWAIT_INPUT re-arm"
                 );
                 self.finish(wait_key, Value::String(format!("[turn_denied: {error}]")));
                 return;
             }
-            // Bound the loop: count this delivered turn and only re-arm
-            // while under the recv node's max_iterations cap. At the cap we skip
-            // the re-arm so the recv completes and the session loop ends, instead
-            // of splicing fresh turn+recv nodes forever.
+            // Bound the loop: count this delivered input and only re-arm while
+            // under the node's max_iterations cap.
             let turn = self.state.next_rearm_turn(&spec.session_id);
-            if turn < spec.max_turns {
-                if let Err(error) = self.state.rearm_session_turn(
+            if turn < spec.max_resumes {
+                if let Err(error) = self.state.rearm_input_continuation(
                     message_token,
-                    &spec.recv_node,
-                    &spec.turn_agent,
-                    &spec.turn_flow,
-                    &spec.turn_param,
+                    &spec.await_node,
+                    &spec.agent_name,
+                    &spec.flow_name,
+                    &spec.input_name,
                 ) {
-                    tracing::error!(%error, "failed to re-arm session turn loop before recv wake");
+                    tracing::error!(%error, "failed to re-arm input continuation before wake");
                 }
             } else {
                 tracing::info!(
                  session_id = %spec.session_id,
                  turn,
-                 max_turns = spec.max_turns,
-                 "session turn cap reached; not re-arming (in-graph loop ends)"
+                 max_resumes = spec.max_resumes,
+                 "session input cap reached; not re-arming"
                 );
             }
         }
@@ -236,11 +231,11 @@ pub(crate) fn contains_in_memory_for_test(wait_key: &str) -> bool {
 /// Canonical park `wait_key` for a conversation session's turn-input recv node.
 ///
 /// The in-graph conversation loop's `recv` node parks under this key; the
-/// server's `POST /v1/conversations/{session_id}/message` endpoint wakes it with
-/// the user message. Both sides MUST derive the key the same way, so it lives
+/// server's session-input endpoint wakes it with typed input. Both sides MUST
+/// derive the key the same way, so it lives
 /// here next to [`wake`]. Wake-before-register is handled by the registry.
-pub fn session_recv_key(session_id: &str) -> String {
-    format!("session_recv:{session_id}")
+pub fn session_input_key(session_id: &str) -> String {
+    format!("session_input:{session_id}")
 }
 
 /// Register a parked node's waker under `wait_key`. If a wake already arrived
@@ -276,12 +271,10 @@ pub(crate) fn register(wait_key: String, waker: ParkWaker) -> Result<(), ParkReg
                     waker.abandon();
                     return Err(error);
                 }
-            } else {
-                if let Err(error) = durable::record_resolved(&wait_key, &remaining) {
-                    drop(guard);
-                    waker.abandon();
-                    return Err(error);
-                }
+            } else if let Err(error) = durable::record_resolved(&wait_key, &remaining) {
+                drop(guard);
+                waker.abandon();
+                return Err(error);
             }
             guard.closed.remove(&wait_key);
             if remaining.is_empty() {
@@ -440,7 +433,7 @@ impl apxm_capability_iface::CapabilityHost for ParkRegistryHost {
 /// Durable park-checkpoint journal: there is otherwise no on-disk
 /// representation of "node X is parked on wait_key Y" at all, so a `kill -9`
 /// loses that bookkeeping even though the wait_key itself (a pure function of
-/// session/execution id, see [`session_recv_key`]) is a perfectly stable
+/// session/execution id, see [`session_input_key`]) is a perfectly stable
 /// resumption handle. This journal records two things durably:
 ///
 /// - **pending**: a `register` happened (someone is parked here) — read at

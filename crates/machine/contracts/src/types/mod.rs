@@ -20,6 +20,8 @@ pub mod values;
 // ── Execution ──────────────────────────────────────────────
 pub mod communicate;
 pub mod config;
+#[path = "generated_context_contracts.rs"]
+pub mod context_contracts;
 pub mod conversation;
 pub mod execution;
 pub mod graph_hints;
@@ -40,7 +42,7 @@ pub use aam::{
 };
 pub use agent_definition::{
     AGENT_DEFINITION_SCHEMA_V1, AgentDefinition, AgentDefinitionError, AgentEntry, AgentHierarchy,
-    AgentHook, AgentRuntime, AgentTrigger, RUNTIME_EXTRA_COMPACTION_POLICY_KEY,
+    AgentHook, AgentRuntime, AgentTrigger,
 };
 pub use capability::{
     AuthMethod, CAPABILITY_DEFINITION_SCHEMA_V1, CAPABILITY_GRANT_SCHEMA_V1,
@@ -65,13 +67,13 @@ pub use compiler::{
 };
 pub use conversation::{TurnInput, TurnInputError};
 pub use execution::{
-    Agent, AgentFlow, AgentId, AgentMetadata, CapabilityDeclaration, DagMetadata, DependencyType,
-    Edge, ExecutionDag, ExecutionStats, GraphMetricAggregates, GraphMetricTotals,
-    GraphMetricsSnapshot, LatencyTierConfig, MemoryDeclaration, Node, NodeId, NodeMetadata,
-    NodeMetrics, NodeProcessMetrics, NodeStatus, ObservedCriticalPath, ObservedGraphMetrics,
-    ObservedQueueWait, OpStatus, OperationMetric, OperationMetricTotals, ProcessMetricTotals,
-    ProcessPromptMetric, ProcessSpawnMetric, SpawnedProcessKind, Task, TaskDag, TaskId,
-    TaskMetadata, WORKFLOW_SPAWN_PATH_TARGET_KINDS, WORKFLOW_TARGET_KIND_AIR_PATH,
+    Agent, AgentFlow, AgentId, AgentMetadata, CapabilityDeclaration, ChildExecutionAdmission,
+    DagMetadata, DependencyType, Edge, ExecutionDag, ExecutionStats, GraphMetricAggregates,
+    GraphMetricTotals, GraphMetricsSnapshot, LatencyTierConfig, MemoryDeclaration, Node, NodeId,
+    NodeMetadata, NodeMetrics, NodeProcessMetrics, NodeStatus, ObservedCriticalPath,
+    ObservedGraphMetrics, ObservedQueueWait, OpStatus, OperationMetric, OperationMetricTotals,
+    ProcessMetricTotals, ProcessPromptMetric, ProcessSpawnMetric, SpawnedProcessKind, Task,
+    TaskDag, TaskId, TaskMetadata, WORKFLOW_SPAWN_PATH_TARGET_KINDS, WORKFLOW_TARGET_KIND_AIR_PATH,
     WORKFLOW_TARGET_KIND_ARTIFACT_PATH, WORKFLOW_TARGET_KIND_REGISTERED_FLOW,
     WORKFLOW_TARGET_KIND_WORKFLOW_PATH, WorkflowInvocation, WorkflowInvocationKind, WorkflowNode,
     WorkflowTarget,

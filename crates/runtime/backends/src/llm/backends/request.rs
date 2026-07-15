@@ -246,11 +246,19 @@ impl LLMRequest {
 
     /// Resolve messages for backend consumption.
     ///
-    /// If `messages` is non-empty, returns a clone of it.
-    /// Otherwise, synthesizes messages from `prompt` (and optionally `system_prompt`).
+    /// Structured messages do not erase the separately assembled trusted
+    /// system/developer context. When both are present the system message is
+    /// always first, followed by the ordered structured conversation frames.
+    /// Otherwise this synthesizes a user message from `prompt`.
     pub fn resolved_messages(&self) -> Vec<Message> {
         if !self.messages.is_empty() {
-            return self.messages.clone();
+            let mut messages =
+                Vec::with_capacity(self.messages.len() + usize::from(self.system_prompt.is_some()));
+            if let Some(system) = &self.system_prompt {
+                messages.push(Message::text(Role::System, system.clone()));
+            }
+            messages.extend(self.messages.clone());
+            return messages;
         }
         let mut msgs = Vec::new();
         if let Some(system) = &self.system_prompt {
@@ -441,6 +449,27 @@ impl LLMRequest {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn structured_messages_preserve_host_assembled_system_context() {
+        let request = LLMRequest::from_messages(vec![Message::text(Role::User, "review this")])
+            .with_system_prompt("platform policy\nselected skill instructions");
+
+        let messages = request.resolved_messages();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, Role::System);
+        assert_eq!(
+            messages[0].text_content(),
+            "platform policy\nselected skill instructions"
+        );
+        assert_eq!(messages[1].role, Role::User);
+        assert_eq!(messages[1].text_content(), "review this");
     }
 }
 

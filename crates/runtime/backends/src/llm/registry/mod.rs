@@ -864,6 +864,19 @@ impl LLMRegistry {
         Ok(backend)
     }
 
+    /// Generate a streaming response from the exact resolved backend.
+    ///
+    /// This is the fail-closed streaming path for callers that have already
+    /// admitted a backend/model through a stricter routing boundary. A registry
+    /// fallback cannot carry that admission evidence, so a pre-commit failure
+    /// remains an error for the caller to reroute deliberately.
+    pub fn generate_stream_strict<'a>(
+        &'a self,
+        request: &'a LLMRequest,
+    ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + 'a>> {
+        self.generate_stream(request, false)
+    }
+
     /// Generate streaming response with fallback on first-chunk error.
     ///
     /// Uses the same health and rate-limit admission as non-streaming calls.
@@ -874,6 +887,16 @@ impl LLMRegistry {
     pub fn generate_stream_with_fallback<'a>(
         &'a self,
         request: &'a LLMRequest,
+    ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + 'a>> {
+        self.generate_stream(request, true)
+    }
+
+    /// Stream one request with either ordinary registry failover or an exact,
+    /// already-admitted route.
+    fn generate_stream<'a>(
+        &'a self,
+        request: &'a LLMRequest,
+        allow_configured_fallback: bool,
     ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + 'a>> {
         Box::pin(async_stream::try_stream! {
             let prepared = self.prepare_request(request);
@@ -886,7 +909,9 @@ impl LLMRegistry {
             };
 
             let mut backend_names = vec![primary_backend.clone()];
-            if let Some(fallback_chain) = self.fallback_chains.get(&primary_backend) {
+            if allow_configured_fallback
+                && let Some(fallback_chain) = self.fallback_chains.get(&primary_backend)
+            {
                 backend_names.extend(fallback_chain.value().iter().cloned());
             }
 
@@ -1136,8 +1161,7 @@ impl LLMRegistry {
     fn canonical_model_name(&self, model: &str) -> String {
         self.model_aliases
             .get(model)
-            .map(|entry| entry.value().clone())
-            .unwrap_or_else(|| model.to_string())
+            .map_or_else(|| model.to_string(), |entry| entry.value().clone())
     }
 
     /// Snapshot all backends (clones name + Arc pairs out of the lock).

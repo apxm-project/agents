@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use apxm_core::types::{WorkflowInvocation, WorkflowInvocationKind, WorkflowTarget};
+use apxm_core::types::{
+    ChildExecutionAdmission, WorkflowInvocation, WorkflowInvocationKind, WorkflowTarget,
+};
 
 /// A workflow that composes multiple workflow steps.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,7 +88,7 @@ impl WorkflowStep {
             parent_session_dir: None,
             parent_scope_id: None,
             spawn_node_id: None,
-            authority_metadata: HashMap::new(),
+            child_execution_admission: ChildExecutionAdmission::Isolated,
         }
     }
 }

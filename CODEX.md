@@ -1,4 +1,4 @@
-# APXM — agent-facing project memory
+# agents — agent-facing project memory
 
 The `.agents/` tree is the single source of truth (SSOT) for every coding
 agent that enters this repository (Claude Code, Codex CLI, Cursor, Aider,
@@ -17,16 +17,17 @@ per `.agents.json`; ACP session output for the `codex` profile also writes
 workflows that look for a Codex-named file. Cursor reads `.cursorrules`;
 GitHub Copilot reads `.github/copilot-instructions.md`.
 
-## 1. What APXM is
+## 1. What agents is
 
-APXM is a graph-aware **dispatch + scheduling layer** for vLLM, with an
-AMD-aligned **CPU/GPU split** so that planning, validation, and analysis stay
-on CPU while inference runs on GPU. Its public surface is an MLIR dialect
-(AIS) plus a Rust runtime plus a vLLM fork that accepts dispatch hints.
+`agents` is the APXM abstract-machine repo: AIS dialect, compiler, runtime,
+capability contracts, context handling, permissions, orchestration, CLI, and
+the profile-backed agent execution path. It is not the whole APXM workspace;
+the `apxm` coordinator owns repo composition, while `server`, `os`, `auth`,
+and `studio` own their own planes.
 
-Do **not** describe APXM as "an agent framework", "an LLM orchestrator", or
-"a multi-agent runtime" — that mischaracterizes the project and confuses
-new contributors. The correct anchor is: *graph-aware dispatch for vLLM*.
+Do **not** describe `agents` as the APXM coordinator, the HTTP server, the OS
+host plane, or only "vLLM dispatch". The correct anchor is: *the abstract
+machine and runtime contracts for APXM agents*.
 
 ## 2. Authority CLI
 
@@ -231,13 +232,31 @@ Attribute names must be a single source of truth — see the
 `apxm-core`; Python kwargs, MLIR attrs, and Rust executors must all
 resolve through it, never via duplicated string literals.
 
-## 10. Storage layout
+## 10. Capability abstract machine vocabulary
+
+APXM models **capabilities** as the first-class abstract-machine unit.
+Each capability composes a **capability_binding** (callable implementation) plus a
+**permission policy** (authority). Runtime authority flows through typed
+**capability grants** (`grant_*` ids), not bare handler strings.
+
+Canonical terms, reserved aliases, route naming, and schema versions live in
+the coordinator glossary:
+
+- `../../docs/context/capability-vocabulary.md` — SSOT for APXM-owned capability
+  vocabulary (`CapabilityDefinition`, `CapabilityBinding`, `PermissionPolicy`,
+  `CapabilityGrant`, `PermissionOperation`, `PromptPolicy`, …).
+
+When touching capability registry, admission, pack schemas, AIS
+`REGISTER_CAPABILITY` / `INV_CAP.capability`, or server `/v1/capability-templates`
+routes, read that doc first and keep code, schemas, and UI copy aligned.
+
+## 11. Storage layout
 
 `/home` is shared WekaFS (9.1 TiB, 50+ tenants). It is **not** personal
 disk:
 
 - **Build outputs**: `/tmp/apxm-target-$USER` (456 GiB local). `/home`
-  contention has caused random ENOSPC and stale-rustc-cache SIGBUS in
+  contention has caused random ENOSPC and invalid-rustc-cache SIGBUS in
   the past.
 - **HF cache + vLLM images + service registry**: under
   `~/.cache/huggingface-apxm-vllm/hub/` and `.apxm/vllm-images/`; these
@@ -253,7 +272,7 @@ disk:
 See `docs/backends/storage-layout.md` for the full contract and the
 supported migration procedure.
 
-## 11. Boundaries (read before any potentially destructive action)
+## 12. Boundaries (read before any potentially destructive action)
 
 ### Never, under any circumstance
 
@@ -296,8 +315,6 @@ push, an overwritten branch, or a tainted benchmark.
 
 <!-- BEGIN SKILLS INVENTORY -->
 ## Available Skills
-
-Before editing APXM sources, scan the Skills inventory below and read the SKILL.md for any whose description matches your task.
 
 ### Other
 

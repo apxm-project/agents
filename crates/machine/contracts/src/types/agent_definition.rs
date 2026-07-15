@@ -41,8 +41,9 @@ pub struct AgentDefinition {
     pub hierarchy: Option<AgentHierarchy>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub triggers: Vec<AgentTrigger>,
-    /// `[runtime]` from `agent.toml`: generic package runtime settings such as
-    /// loop, memory_space, and session_prefix.
+    /// `[runtime]` from `agent.toml`: generic package settings such as
+    /// memory_space and session_prefix. Program control flow belongs only in
+    /// the compiled ProgramPackage entry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<AgentRuntime>,
     /// `[[hooks]]` from `agent.toml`: manifest-declared lifecycle
@@ -54,26 +55,18 @@ pub struct AgentDefinition {
     pub hooks: Vec<AgentHook>,
 }
 
-/// `[runtime]` `extra` key for package-authored context compaction policy.
-/// `extra` is already an open, stringly-typed bag ([`AgentRuntime::extra`]) —
-/// this constant names the well-known key so every producer/consumer agrees on
-/// it instead of each side inventing its own literal.
-pub const RUNTIME_EXTRA_COMPACTION_POLICY_KEY: &str = "compaction_policy";
-
-/// `[runtime]` package settings. Kept an open shape (`extra`) so knobs added
-/// later don't need a schema break. Extra
-/// values are stringly-typed to keep this derive-`Eq`-able (unlike
-/// `toml::Value`/`serde_json::Value`, which carry floats).
+/// `[runtime]` package settings.
+///
+/// This is deliberately a closed contract. Program behavior belongs to the
+/// immutable entry flow, so a package cannot introduce unreviewed runtime
+/// controls through manifest keys.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentRuntime {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub r#loop: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_space: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_prefix: Option<String>,
-    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub extra: BTreeMap<String, String>,
 }
 
 /// One `[[hooks]]` entry: a manifest-declared binding of a lifecycle event to
@@ -102,9 +95,6 @@ pub struct AgentEntry {
     /// Path/reference to the entry flow (e.g. an AIR file). Must be explicit;
     /// loaders do not synthesize a conversational graph from runtime settings.
     pub flow: String,
-    /// Optional named loop/driver within the entry flow.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub r#loop: Option<String>,
 }
 
 /// Hierarchy edge: this agent's parent and the children it is permitted to
@@ -218,7 +208,6 @@ impl From<&Agent> for AgentDefinition {
             description: agent.metadata.context.clone(),
             entry: AgentEntry {
                 flow: String::new(),
-                r#loop: None,
             },
             prompts: BTreeMap::new(),
             capabilities: agent
@@ -247,7 +236,6 @@ mod tests {
             description: Some("does demo things".to_string()),
             entry: AgentEntry {
                 flow: "main.air".to_string(),
-                r#loop: None,
             },
             prompts: BTreeMap::from([("system".to_string(), "be helpful".to_string())]),
             capabilities: vec!["web.search".to_string(), "files.read".to_string()],
@@ -261,10 +249,8 @@ mod tests {
                 config: None,
             }],
             runtime: Some(AgentRuntime {
-                r#loop: Some("in_graph".to_string()),
                 memory_space: Some("stm".to_string()),
                 session_prefix: Some("demo".to_string()),
-                extra: BTreeMap::new(),
             }),
             hooks: vec![AgentHook {
                 event: "pre_cap".to_string(),
@@ -294,17 +280,9 @@ mod tests {
     }
 
     #[test]
-    fn rejects_empty_entry_flow_even_with_runtime_loop() {
+    fn rejects_empty_entry_flow() {
         let mut def = sample();
         def.entry.flow = String::new();
-        assert_eq!(def.validate(), Err(AgentDefinitionError::EmptyEntryFlow));
-    }
-
-    #[test]
-    fn rejects_empty_entry_flow_without_runtime_loop() {
-        let mut def = sample();
-        def.entry.flow = String::new();
-        def.runtime = None;
         assert_eq!(def.validate(), Err(AgentDefinitionError::EmptyEntryFlow));
     }
 
@@ -361,36 +339,13 @@ mod tests {
         assert_eq!(def, back);
     }
 
-    /// **Cross-plane parity surface:** a pure-declarative package's
-    /// `[runtime]` extra bag round-trips a `compaction_policy` knob
-    /// unchanged through serde — the same `extra: BTreeMap<String, String>`
-    /// open shape every other runtime knob already uses, so no schema break
-    /// was needed to add compaction parity to the declarative surface.
     #[test]
-    fn runtime_extra_round_trips_compaction_policy_knob() {
-        let mut def = sample();
-        let policy_json = r#"{"keep_recent":2,"compact_at_tokens":300,"strategy":"summarize","summary_key":"conversation:summary"}"#;
-        def.runtime = Some(AgentRuntime {
-            r#loop: Some("in_graph".to_string()),
-            memory_space: Some("stm".to_string()),
-            session_prefix: None,
-            extra: BTreeMap::from([(
-                RUNTIME_EXTRA_COMPACTION_POLICY_KEY.to_string(),
-                policy_json.to_string(),
-            )]),
-        });
-
-        let json = serde_json::to_string(&def).expect("serialize");
-        let back: AgentDefinition = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(def, back);
-        assert_eq!(
-            back.runtime
-                .as_ref()
-                .unwrap()
-                .extra
-                .get(RUNTIME_EXTRA_COMPACTION_POLICY_KEY)
-                .map(String::as_str),
-            Some(policy_json),
-        );
+    fn runtime_rejects_unknown_controls() {
+        let error = serde_json::from_value::<AgentRuntime>(serde_json::json!({
+            "memory_space": "stm",
+            "compaction_policy": "legacy"
+        }))
+        .expect_err("runtime controls must be declared by the closed contract");
+        assert!(error.to_string().contains("compaction_policy"));
     }
 }

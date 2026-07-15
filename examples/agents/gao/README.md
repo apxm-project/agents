@@ -2,8 +2,8 @@
 
 Gao is the TypeScript reference APXM agent package for designing, reviewing,
 and controlling APXM workflows. `agent.toml` is the authored package manifest;
-the runtime loads its capabilities, permission policies, prompts, skills, hooks,
-loop configuration, and generated integrity seal from this directory.
+the runtime loads its capabilities, permission policies, prompts, hooks,
+and generated integrity seal from this directory.
 
 ## Typed capability surface
 
@@ -16,13 +16,13 @@ schemas in `capabilities/handlers/tools.json`.
 | `capability_discovery` | builtin | allow | Discover typed templates without granting authority. |
 | `http_get` | builtin | allow | Fetch public HTTP content. |
 | `read` | builtin | allow | Read within declared roots. |
-| `search_skills` | builtin | allow | Search registered skills. |
+| `search_skills` | builtin | allow | Search host-granted Agent Skill metadata. |
 | `explain_permission` | TypeScript | allow | Explain a capability's approval posture. |
 | `list_files` | TypeScript | allow | List package-local files. |
-| `list_local_skills` | TypeScript | allow | Enumerate Gao-owned skills. |
+| `list_local_skills` | builtin | allow | List host-granted Agent Skill metadata. |
 | `plan_workflow` | TypeScript | allow | Produce a structured workflow plan. |
 | `prepare_validation` | TypeScript | allow | Prepare an authoritative validation request. |
-| `read_local_skill` | TypeScript | allow | Read one Gao-owned skill. |
+| `read_local_skill` | builtin | allow | Read one host-granted Agent Skill resource. |
 | `bash` | builtin | ask | Run a sandboxed command. |
 | `compose_workflow` | builtin | ask | Validate and stage a workflow. |
 | `run_workflow` | builtin | ask | Run a staged workflow. |
@@ -33,21 +33,20 @@ compatibility, or legacy capability aliases.
 
 ## Runtime lifecycle
 
-Gao runs a re-arming `recv` loop with `user_message` as the turn parameter,
-session-scoped STM, and the `gao` session prefix. A successful turn follows
-this order:
+Gao waits for session input under the `gao` session prefix. Sealed package
+prompts supply its instruction layer; host and hook values remain typed data and
+cannot modify that layer. A successful turn follows this order:
 
-1. `pre_turn` injects the redacted host snapshot and package prompts.
-2. `pre_ask` injects APXM terminology, workflow guidance, recent turns, and the
-   running summary.
-3. Model calls may invoke capabilities. `pre_cap` gates `compose_workflow`, and
+1. Model calls may invoke capabilities. `pre_cap` gates `compose_workflow`, and
    `post_cap` redacts sensitive result markers.
-4. `post_turn` compacts long conversations into `gao:conversation:summary`.
-5. The loop re-arms for the next numbered request.
+2. `post_turn` compacts long conversations into `gao:conversation:summary`.
+3. The input wait re-arms for the next request.
 
-The packaged skills are `agent-builder`, `workflow-designer`, and
-`workflow-reviewer`. They are instruction catalog resources; executable
-authority stays in the package capabilities and workflow/program metadata.
+Selected Agent Skills are resolved by the Server catalogue and sealed into
+context. The host owns catalogue visibility, resource confinement, digest and
+size checks, quotas, and audit; Gao declares only the standard capability IDs
+and allowed selection policy. Executable authority stays in package
+capabilities and workflow/program metadata.
 
 ## Public observability
 

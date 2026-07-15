@@ -12,11 +12,11 @@
 //! per-name `RwLock`, so concurrent writes to the SAME capability serialize
 //! while distinct tools and all reads run free.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tokio::sync::RwLock;
 
-static TOOL_WRITE_LOCKS: once_cell::sync::Lazy<dashmap::DashMap<String, Arc<RwLock<()>>>> =
-    once_cell::sync::Lazy::new(dashmap::DashMap::new);
+static TOOL_WRITE_LOCKS: LazyLock<dashmap::DashMap<String, Arc<RwLock<()>>>> =
+    LazyLock::new(dashmap::DashMap::new);
 
 /// Get (or create) the write lock for a capability name.
 pub fn write_lock_for_tool(name: &str) -> Arc<RwLock<()>> {

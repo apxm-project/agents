@@ -152,6 +152,18 @@ export interface AutonomousOptions {
   [extra: string]: unknown;
 }
 
+export interface AwaitInputOptions {
+  name?: string;
+  waitKey?: string;
+  rearm?: boolean;
+  agentName?: string;
+  flowName?: string;
+  inputName?: string;
+  maxIterations?: number;
+  inputs?: Record<string, NodeRef>;
+  [extra: string]: unknown;
+}
+
 export interface CheckpointOptions {
   name?: string;
   checkpointId: string;
@@ -448,6 +460,22 @@ export class GraphBuilder {
       ...rest,
     };
     const node = this.addNode(name ?? this.autoName("AUTONOMOUS"), "AUTONOMOUS", attrs);
+    this.wireInputs(node, inputs);
+    return node;
+  }
+
+  /** Return one supplied input or park until the host delivers one. */
+  awaitInput(options: AwaitInputOptions): NodeRef {
+    const { name, waitKey, rearm, agentName, flowName, inputName, maxIterations, inputs, ...rest } = options;
+    const node = this.addNode(name ?? this.autoName("AWAIT_INPUT"), "AWAIT_INPUT", {
+      wait_key: waitKey,
+      rearm: rearm ? "true" : undefined,
+      agent_name: agentName,
+      flow_name: flowName,
+      input_names: inputName ? [inputName] : undefined,
+      max_iterations: maxIterations,
+      ...rest,
+    });
     this.wireInputs(node, inputs);
     return node;
   }

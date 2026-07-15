@@ -12,7 +12,7 @@ Compile:
 
 Install:
   mkdir -p ~/.apxm/skills/telegram-coding-bot
-  cp .apxm/compiled/telegram_coding_bot.apxmobj ~/.apxm/skills/telegram-coding-bot/skill.apxmobj
+  cp .apxm/compiled/telegram_coding_bot.apxmobj ~/.apxm/program-packages/telegram-coding-bot/program.apxmobj
 """
 
 import os

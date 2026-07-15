@@ -1,12 +1,14 @@
 //! Capability executor trait and execution infrastructure
 
 use super::metadata::RuntimeCapability;
+use apxm_aam::Aam;
 use apxm_capability_iface::CapabilityInvocation;
 use apxm_capability_iface::sandbox::{ExecRequest, ExecResult};
 use apxm_core::events::payload::CapabilityEffectReceiptPayload;
 use apxm_core::{error::RuntimeError, types::values::Value};
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::fmt::Write as _;
 
 /// Result type for capability operations
 pub type CapabilityResult<T> = Result<T, RuntimeError>;
@@ -104,6 +106,14 @@ pub trait CapabilityExecutor: Send + Sync {
         let _ = args; // suppress unused warning
         None
     }
+
+    /// Create an execution-local variant bound to a supplied AAM, when this
+    /// capability owns AAM state directly. Stateless capabilities retain their
+    /// registered instance; AAM-aware capabilities must opt in so concurrent
+    /// sessions cannot mutate the runtime-global AAM through a captured handle.
+    fn bind_aam(&self, _aam: Aam) -> Option<std::sync::Arc<dyn CapabilityExecutor>> {
+        None
+    }
 }
 
 /// Convert a sandbox [`ExecResult`] into a [`Value`] suitable for
@@ -124,10 +134,10 @@ pub fn exec_result_to_value(result: ExecResult) -> Value {
             payload.push_str("[stderr]\n");
             payload.push_str(&result.stderr);
         }
-        if let Some(code) = result.exit_code {
-            if code != 0 {
-                payload.push_str(&format!("\n[exit code: {}]", code));
-            }
+        if let Some(code) = result.exit_code
+            && code != 0
+        {
+            let _ = write!(payload, "\n[exit code: {code}]");
         }
         Value::String(payload)
     }
@@ -232,8 +242,7 @@ impl CapabilityExecutor for MockSearchCapability {
         let query = args
             .get("query")
             .and_then(|v| v.as_string())
-            .map(|s| s.as_str())
-            .unwrap_or("unknown");
+            .map_or("unknown", |s| s.as_str());
 
         // Return mock search results
         Ok(Value::String(format!(

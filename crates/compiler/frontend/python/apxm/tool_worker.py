@@ -303,7 +303,6 @@ class _HookCtx:
         self.context = payload.get("context")
         # The parent call's req_id, stamped on host_calls this hook raises.
         self._req_id = req_id
-        self._system = payload.get("system", "")
         # Accumulated memory writes; the runtime applies them after the hook
         # returns (carried in the decision's `writes`), so umem() works.
         self._writes: list[dict[str, Any]] = []
@@ -323,12 +322,6 @@ class _HookCtx:
 
     def replace_result(self, result: Any) -> dict[str, Any]:
         return {"decision": "replace_result", "result": result}
-
-    def prepend_system(self, text: str) -> dict[str, Any]:
-        return {"decision": "prepend_system", "text": text}
-
-    def set_system(self, text: str) -> dict[str, Any]:
-        return {"decision": "set_system", "text": text}
 
     def read_agents_md(self) -> str:
         for candidate in ("AGENTS.md", "CLAUDE.md"):
@@ -390,10 +383,19 @@ class _HookCtx:
 
     # ---- apxm primitives the hook receives; the USER decides what to do ----
 
-    def ask(self, prompt: str, system: str | None = None) -> str:
-        """Call the runtime LLM. The user writes the prompt — apxm bakes no
-        policy. Use this to summarize, classify, route, score, etc."""
-        params: dict[str, Any] = {"prompt": prompt}
+    def ask(
+        self,
+        prompt: str,
+        max_tokens: int,
+        system: str | None = None,
+    ) -> str:
+        """Call the runtime LLM with an explicit output reservation.
+
+        The runtime checks this request against the host-admitted invocation
+        budget before provider egress; hooks cannot obtain an implicit output
+        allowance.
+        """
+        params: dict[str, Any] = {"prompt": prompt, "max_tokens": max_tokens}
         if system is not None:
             params["system"] = system
         value = self._host_call(HOST_METHOD_LLM_ASK, params)

@@ -17,6 +17,56 @@ use apxm_core::types::values::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Declares one grant selector that constrains a capability invocation.
+///
+/// `selector` names the typed selector carried in [`PermissionScope`]. When
+/// `argument` is present, a caller-supplied string or string array must be a
+/// subset of that selector. An absent argument leaves the executor to apply
+/// the trusted grant context to its result set.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityGrantScopeSelector {
+    pub selector: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub argument: Option<String>,
+}
+
+/// Declares one runtime quota a grant must carry for capability execution.
+///
+/// `argument` optionally binds a caller-provided upper bound to the named
+/// quota. The executor still receives the trusted grant context and must cap
+/// generated output when the caller leaves that argument absent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityGrantRuntimeQuota {
+    pub quota: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub argument: Option<String>,
+}
+
+/// Typed resource and quota requirements for grants that admit a capability.
+///
+/// This declaration is capability metadata, not a capability-specific
+/// runtime branch. The executor uses the matching grants supplied in the
+/// trusted invocation context to constrain any result that has no direct
+/// request argument.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityGrantScopeRequirements {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scope_selectors: Vec<CapabilityGrantScopeSelector>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runtime_quotas: Vec<CapabilityGrantRuntimeQuota>,
+}
+
+impl CapabilityGrantScopeRequirements {
+    /// Returns whether this capability declares any resource-scoped grant requirements.
+    pub fn is_empty(&self) -> bool {
+        self.resource_kind.is_none()
+            && self.scope_selectors.is_empty()
+            && self.runtime_quotas.is_empty()
+    }
+}
+
 /// Execution-time capability metadata (projection of [`CapabilityDefinition`]).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeCapability {
@@ -60,6 +110,15 @@ pub struct RuntimeCapability {
     #[serde(default)]
     pub read_only: bool,
 
+    /// Operations that require an active runtime-minted grant even when the
+    /// capability is otherwise read-only.
+    #[serde(default)]
+    pub required_grant_operations: Vec<PermissionOperation>,
+
+    /// Resource selectors and quotas that matching grants must carry.
+    #[serde(default)]
+    pub grant_scope_requirements: CapabilityGrantScopeRequirements,
+
     /// Additional metadata
     #[serde(default)]
     pub metadata: HashMap<String, Value>,
@@ -98,6 +157,8 @@ impl RuntimeCapability {
             tags: Vec::new(),
             groups: Vec::new(),
             read_only: false,
+            required_grant_operations: Vec::new(),
+            grant_scope_requirements: CapabilityGrantScopeRequirements::default(),
             metadata: HashMap::new(),
         }
     }
@@ -150,6 +211,21 @@ impl RuntimeCapability {
         self
     }
 
+    /// Require active grants containing every supplied permission operation.
+    pub fn with_required_grant_operations(mut self, operations: Vec<PermissionOperation>) -> Self {
+        self.required_grant_operations = operations;
+        self
+    }
+
+    /// Require matching grant resource selectors and runtime quotas.
+    pub fn with_grant_scope_requirements(
+        mut self,
+        requirements: CapabilityGrantScopeRequirements,
+    ) -> Self {
+        self.grant_scope_requirements = requirements;
+        self
+    }
+
     /// Add metadata entry
     pub fn with_metadata(mut self, key: String, value: Value) -> Self {
         self.metadata.insert(key, value);
@@ -174,6 +250,8 @@ impl From<CapabilityDefinition> for RuntimeCapability {
             tags,
             groups: vec![def.tool.id],
             read_only,
+            required_grant_operations: Vec::new(),
+            grant_scope_requirements: CapabilityGrantScopeRequirements::default(),
             metadata: HashMap::new(),
         }
     }

@@ -285,13 +285,13 @@ class BoundAgent:
         self,
         target_agent: Agent,
         payload: str,
-        transfer_state: bool = True,
+        transfer_state: bool = False,
     ) -> NodeRef:
         """Hand off execution from this agent to target_agent.
 
-        Emits a HANDOFF node that transfers control from this bound agent
-        to the target. If transfer_state is True, context-stack frames are
-        copied from source to target at runtime.
+        Emits an isolated HANDOFF node from this bound agent to the target.
+        Set transfer_state to True only to explicitly transfer the permitted
+        handoff state and rendered context frames.
 
         Returns the HANDOFF NodeRef (the target agent's response token).
         """

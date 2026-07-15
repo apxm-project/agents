@@ -75,6 +75,7 @@ pub mod host_dispatch;
 /// crate so existing `apxm_runtime::memory::...` import paths keep working
 /// after the  sub-crate extraction.
 pub use apxm_memory as memory;
+pub mod context_envelope;
 pub mod metadata_keys;
 pub mod model_router;
 pub mod observability;
@@ -107,7 +108,7 @@ pub use aam::{
     Aam, AamCheckpoint, CapabilityRecord, Goal, GoalId, GoalStatus, STAGED_BELIEF_PREFIX,
     ScopePolicy, ScopeSpec, TransitionLabel,
     effects::{AamComponent, OperationEffects, operation_effects},
-    session::SessionManager,
+    session::{SessionCheckpoint, SessionManager},
 };
 pub use agent_pool::{AgentPool, PoolStats, ProfileStats};
 pub use agent_router::{

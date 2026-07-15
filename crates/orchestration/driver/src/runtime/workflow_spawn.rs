@@ -1,14 +1,15 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, Weak};
 
 use apxm_artifact::Artifact;
+use apxm_core::events::payload::WorkflowStepCompletedPayload;
 use apxm_core::paths::ApxmPaths;
 use apxm_core::types::{
-    OPTIMIZATION_SUMMARY_ARTIFACT_SECTION, OptimizationSummaryV1, SessionStatus,
-    WorkflowInvocation, WorkflowTarget,
+    ChildExecutionAdmission, OPTIMIZATION_SUMMARY_ARTIFACT_SECTION, OptimizationSummaryV1,
+    RuntimeCapabilityGrant, SessionStatus, WorkflowInvocation, WorkflowTarget,
 };
 use apxm_runtime::{
     CancellationToken, ExecutionEventEmitter, Runtime, RuntimeError, RuntimeExecutionResult,
@@ -16,6 +17,7 @@ use apxm_runtime::{
 };
 use async_trait::async_trait;
 use futures::future::join_all;
+use sha2::{Digest, Sha256};
 
 use crate::compiler::Compiler;
 use crate::hooks;
@@ -82,7 +84,6 @@ impl DriverWorkflowSpawner {
                         Path::new(&path),
                         invocation.args.clone(),
                         &session_base_dir,
-                        &invocation,
                         parent_emitter,
                         cancellation_token,
                     )
@@ -123,7 +124,12 @@ impl DriverWorkflowSpawner {
 
         let ordered_args = ordered_args_from_artifact(&artifact, args)?;
         let input_graph = load_graph_for_session(air_path).ok();
-        let execution_id = child_execution_id("air", air_path);
+        let (execution_id, child_metadata) = child_execution_metadata(
+            &artifact,
+            &invocation.child_execution_admission,
+            "air",
+            air_path,
+        )?;
         let provenance = provenance_from_invocation(invocation);
         let writer = create_session_writer(
             session_base_dir,
@@ -154,7 +160,7 @@ impl DriverWorkflowSpawner {
                     None,
                     emitter,
                     Some(session_dir.to_string_lossy().to_string()),
-                    invocation.authority_metadata.clone(),
+                    child_metadata.clone(),
                     cancellation_token,
                 )
                 .await
@@ -166,7 +172,7 @@ impl DriverWorkflowSpawner {
                     None,
                     emitter,
                     Some(session_dir.to_string_lossy().to_string()),
-                    invocation.authority_metadata.clone(),
+                    child_metadata,
                 )
                 .await
         };
@@ -202,7 +208,12 @@ impl DriverWorkflowSpawner {
             ))
         })?;
         let ordered_args = ordered_args_from_artifact(&artifact, args)?;
-        let execution_id = child_execution_id("artifact", artifact_path);
+        let (execution_id, child_metadata) = child_execution_metadata(
+            &artifact,
+            &invocation.child_execution_admission,
+            "artifact",
+            artifact_path,
+        )?;
         let provenance = provenance_from_invocation(invocation);
         let writer = create_session_writer(
             session_base_dir,
@@ -233,7 +244,7 @@ impl DriverWorkflowSpawner {
                     None,
                     emitter,
                     Some(session_dir.to_string_lossy().to_string()),
-                    invocation.authority_metadata.clone(),
+                    child_metadata.clone(),
                     cancellation_token,
                 )
                 .await
@@ -245,7 +256,7 @@ impl DriverWorkflowSpawner {
                     None,
                     emitter,
                     Some(session_dir.to_string_lossy().to_string()),
-                    invocation.authority_metadata.clone(),
+                    child_metadata,
                 )
                 .await
         };
@@ -270,7 +281,6 @@ impl DriverWorkflowSpawner {
         workflow_path: &Path,
         args: HashMap<String, serde_json::Value>,
         session_base_dir: &Path,
-        invocation: &WorkflowInvocation,
         parent_emitter: Option<Arc<dyn ExecutionEventEmitter>>,
         cancellation_token: Option<CancellationToken>,
     ) -> Result<WorkflowSpawnResult, RuntimeError> {
@@ -370,17 +380,20 @@ impl DriverWorkflowSpawner {
                         ))
                     })?;
                     if let Some(emitter) = parent_emitter.as_ref() {
-                        emitter.emit_workflow_step_completed(
-                            &def.name,
-                            &workflow_session_dir_text,
-                            &step_id,
+                        emitter.emit_workflow_step_completed(WorkflowStepCompletedPayload {
+                            workflow_name: def.name.clone(),
+                            workflow_session_dir: workflow_session_dir_text.clone(),
+                            step_id: step_id.clone(),
                             step_index,
-                            workflow_step_status_wire(apxm_runtime::workflow::StepStatus::Skipped),
-                            false,
-                            std::time::Duration::ZERO,
-                            None,
-                            Some("skipped because a dependency did not succeed"),
-                        );
+                            status: workflow_step_status_wire(
+                                apxm_runtime::workflow::StepStatus::Skipped,
+                            )
+                            .to_string(),
+                            success: false,
+                            duration_ms: 0,
+                            session_dir: None,
+                            error: Some("skipped because a dependency did not succeed".to_string()),
+                        });
                     }
                     step_results.insert(
                         step_id.clone(),
@@ -410,7 +423,7 @@ impl DriverWorkflowSpawner {
                 let mut child_invocation = step.spawn_invocation(&base_dir, resolved_params);
                 child_invocation.session_root =
                     Some(workflow_session_dir.to_string_lossy().to_string());
-                child_invocation.authority_metadata = invocation.authority_metadata.clone();
+                child_invocation.child_execution_admission = ChildExecutionAdmission::Isolated;
 
                 apxm_runtime::workflow::write_workflow_step_started(
                     &workflow_session_dir,
@@ -482,19 +495,20 @@ impl DriverWorkflowSpawner {
                             ))
                         })?;
                         if let Some(emitter) = parent_emitter.as_ref() {
-                            emitter.emit_workflow_step_completed(
-                                &def.name,
-                                &workflow_session_dir_text,
-                                &completed.step_id,
-                                completed.step_index,
-                                workflow_step_status_wire(
+                            emitter.emit_workflow_step_completed(WorkflowStepCompletedPayload {
+                                workflow_name: def.name.clone(),
+                                workflow_session_dir: workflow_session_dir_text.clone(),
+                                step_id: completed.step_id.clone(),
+                                step_index: completed.step_index,
+                                status: workflow_step_status_wire(
                                     apxm_runtime::workflow::StepStatus::Success,
-                                ),
-                                true,
-                                std::time::Duration::from_millis(completed.duration_ms),
-                                child_session_dir_text.as_deref(),
-                                None,
-                            );
+                                )
+                                .to_string(),
+                                success: true,
+                                duration_ms: completed.duration_ms,
+                                session_dir: child_session_dir_text,
+                                error: None,
+                            });
                         }
                         if let Some(ref text) = output {
                             phase_outputs.push((completed.step_id.clone(), text.clone()));
@@ -533,19 +547,20 @@ impl DriverWorkflowSpawner {
                             ))
                         })?;
                         if let Some(emitter) = parent_emitter.as_ref() {
-                            emitter.emit_workflow_step_completed(
-                                &def.name,
-                                &workflow_session_dir_text,
-                                &completed.step_id,
-                                completed.step_index,
-                                workflow_step_status_wire(
+                            emitter.emit_workflow_step_completed(WorkflowStepCompletedPayload {
+                                workflow_name: def.name.clone(),
+                                workflow_session_dir: workflow_session_dir_text.clone(),
+                                step_id: completed.step_id.clone(),
+                                step_index: completed.step_index,
+                                status: workflow_step_status_wire(
                                     apxm_runtime::workflow::StepStatus::Failed,
-                                ),
-                                false,
-                                std::time::Duration::from_millis(completed.duration_ms),
-                                Some(&fallback_session_dir_text),
-                                Some(&error_text),
-                            );
+                                )
+                                .to_string(),
+                                success: false,
+                                duration_ms: completed.duration_ms,
+                                session_dir: Some(fallback_session_dir_text),
+                                error: Some(error_text.clone()),
+                            });
                         }
                         step_results.insert(
                             completed.step_id.clone(),
@@ -785,6 +800,138 @@ fn child_execution_id(prefix: &str, path: &Path) -> String {
         "{prefix}-{name}-{}",
         chrono::Utc::now().format("%Y%m%d-%H%M%S-%6f")
     )
+}
+
+fn child_execution_metadata(
+    artifact: &Artifact,
+    admission: &ChildExecutionAdmission,
+    prefix: &str,
+    path: &Path,
+) -> Result<(String, HashMap<String, String>), RuntimeError> {
+    match admission {
+        ChildExecutionAdmission::Isolated => Ok((child_execution_id(prefix, path), HashMap::new())),
+        ChildExecutionAdmission::Delegated {
+            envelope,
+            sealed_context_transport,
+            runtime_capability_grants,
+        } => {
+            validate_child_program_package(artifact, envelope)?;
+            validate_delegated_runtime_grants(envelope, runtime_capability_grants)?;
+            let budgets = serde_json::to_string(&envelope.budgets).map_err(|error| {
+                RuntimeError::State(format!(
+                    "failed to serialize admitted child execution budgets: {error}"
+                ))
+            })?;
+            let credential_refs =
+                serde_json::to_string(&envelope.credential_refs).map_err(|error| {
+                    RuntimeError::State(format!(
+                        "failed to serialize child credential references: {error}"
+                    ))
+                })?;
+            Ok((
+                envelope.lineage.child_execution_id.clone(),
+                HashMap::from([
+                    (
+                        apxm_runtime::metadata_keys::EXECUTION_ID.to_string(),
+                        envelope.lineage.child_execution_id.clone(),
+                    ),
+                    (
+                        apxm_runtime::metadata_keys::PARENT_EXECUTION_ID.to_string(),
+                        envelope.lineage.parent_execution_id.clone(),
+                    ),
+                    (
+                        apxm_runtime::metadata_keys::CAPABILITY_GRANTS.to_string(),
+                        runtime_capability_grants.clone(),
+                    ),
+                    (
+                        apxm_runtime::metadata_keys::SEALED_CONTEXT_TRANSPORT_V1.to_string(),
+                        sealed_context_transport.clone(),
+                    ),
+                    (
+                        apxm_runtime::metadata_keys::ADMITTED_INVOCATION_BUDGET_SET_V1.to_string(),
+                        budgets,
+                    ),
+                    (
+                        apxm_runtime::metadata_keys::SIDE_EFFECT_POLICY.to_string(),
+                        envelope.effect_policy_ref.clone(),
+                    ),
+                    (
+                        apxm_runtime::metadata_keys::TRACE_ID.to_string(),
+                        envelope.trace.trace_id.clone(),
+                    ),
+                    (
+                        apxm_runtime::metadata_keys::CREDENTIAL_REFS.to_string(),
+                        credential_refs,
+                    ),
+                    (
+                        apxm_runtime::metadata_keys::MEMORY_POLICY_REF.to_string(),
+                        envelope.memory_policy_ref.clone(),
+                    ),
+                ]),
+            ))
+        }
+    }
+}
+
+fn validate_child_program_package(
+    artifact: &Artifact,
+    envelope: &apxm_core::types::context_contracts::ChildExecutionEnvelope,
+) -> Result<(), RuntimeError> {
+    let mut canonical = artifact.clone();
+    canonical.set_created_at(0);
+    let payload_hash = canonical.payload_hash().map_err(|error| {
+        RuntimeError::State(format!("failed to hash child ProgramPackage: {error}"))
+    })?;
+    let digest = format!("sha256:{:x}", Sha256::digest(payload_hash));
+    let entry_flow = artifact
+        .entry_dag()
+        .and_then(|dag| dag.metadata.name.as_deref());
+    let package_id_matches = artifact
+        .metadata()
+        .module_name
+        .as_deref()
+        .is_none_or(|package_id| package_id == envelope.program_package.package_id);
+    if digest != envelope.program_package.digest
+        || entry_flow != Some(envelope.program_package.entry_flow.as_str())
+        || !package_id_matches
+    {
+        return Err(RuntimeError::State(
+            "child ProgramPackage does not match its admitted execution envelope".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_delegated_runtime_grants(
+    envelope: &apxm_core::types::context_contracts::ChildExecutionEnvelope,
+    serialized_grants: &str,
+) -> Result<(), RuntimeError> {
+    let grants: Vec<RuntimeCapabilityGrant> =
+        serde_json::from_str(serialized_grants).map_err(|error| {
+            RuntimeError::State(format!(
+                "delegated runtime capability grants are malformed: {error}"
+            ))
+        })?;
+    if grants.len() != envelope.capability_grants.len() {
+        return Err(RuntimeError::State(
+            "delegated runtime capability grants do not match the child envelope".to_string(),
+        ));
+    }
+    let expected = envelope
+        .capability_grants
+        .iter()
+        .map(|grant| grant.grant_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let actual = grants
+        .iter()
+        .map(|grant| grant.grant_id.as_str())
+        .collect::<BTreeSet<_>>();
+    if actual != expected {
+        return Err(RuntimeError::State(
+            "delegated runtime capability grant ids differ from the child envelope".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Require current compiler replay evidence for every spawned AIR/artifact and

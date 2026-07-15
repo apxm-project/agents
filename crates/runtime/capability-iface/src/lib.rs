@@ -46,5 +46,8 @@ pub use facade::{
     capability_effect_idempotency_key_digest,
 };
 pub use host::{CapabilityHost, CapabilityHostError};
-pub use metadata::RuntimeCapability;
+pub use metadata::{
+    CapabilityGrantRuntimeQuota, CapabilityGrantScopeRequirements, CapabilityGrantScopeSelector,
+    RuntimeCapability,
+};
 pub use token_usage::TokenUsageSummary;

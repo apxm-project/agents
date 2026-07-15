@@ -277,6 +277,14 @@ impl ModelRegistry {
             .or_else(|| self.models.read().values().next().map(|m| m.name.clone()))
     }
 
+    /// Return only the model explicitly configured as the default. Routing a
+    /// configured default backend uses this rather than the convenience
+    /// fallback above, so an unrelated hash-map entry cannot be paired with a
+    /// backend it does not describe.
+    pub fn configured_default_model(&self) -> Option<String> {
+        self.defaults.read().model.clone()
+    }
+
     /// Get the default backend name from config.
     pub fn default_backend(&self) -> Option<String> {
         self.defaults.read().backend.clone()

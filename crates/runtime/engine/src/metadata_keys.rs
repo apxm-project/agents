@@ -23,16 +23,37 @@ pub const COMMUNICATE_SENDER: &str = "communicate_sender";
 pub const COMMUNICATE_RECIPIENT: &str = "communicate_recipient";
 pub const COMMUNICATE_MODE: &str = "communicate_mode";
 pub const FLOW_CALL_DEPTH: &str = "flow_call_depth";
-/// The effective side-effect policy granted to the current execution (wire
-/// form of `apxm_skill::CapabilityPolicy`). Seeded at the top-level execution.
+/// The effective side-effect policy granted to the current execution. Seeded
+/// at the top-level execution by the trusted host.
 pub const SIDE_EFFECT_POLICY: &str = "side_effect_policy";
 /// JSON array of runtime-minted capability grants presented by the host.
 /// INV_CAP write admission checks these opaque grants by `capability_binding`; raw
 /// callable names are never authority.
 pub const CAPABILITY_GRANTS: &str = "capability_grants";
-/// Comma-joined visible skill set (lib / lib::skill / skill ids). Seeded from
-/// `imports`, propagated to children. Absent = unrestricted (back-compat).
-pub const VISIBLE_SKILLS: &str = "visible_skills";
+/// JSON-serialized [`crate::context_envelope::SealedContextRuntimeTransport`]
+/// supplied by the trusted host after durable pin verification. Child
+/// workflows do not inherit this metadata without a typed child envelope.
+pub const SEALED_CONTEXT_TRANSPORT_V1: &str = "sealed_context_transport_v1";
+/// JSON-serialized canonical `ChildExecutionEnvelope` admitted by the trusted
+/// host for one `WORKFLOW_SPAWN`. Its absence means the child is isolated; a
+/// malformed or incomplete envelope is rejected before the spawner runs.
+pub const CHILD_EXECUTION_ENVELOPE_V1: &str = "child_execution_envelope_v1";
+/// Serialized sealed context transport paired with
+/// [`CHILD_EXECUTION_ENVELOPE_V1`]. It is copied only after the envelope's
+/// context identity and delegated selected-skill pins have been verified.
+pub const CHILD_SEALED_CONTEXT_TRANSPORT_V1: &str = "child_sealed_context_transport_v1";
+/// JSON array of opaque credential references admitted for the child. It never
+/// contains credential material and is not a substitute for credential
+/// resolution at the trusted host boundary.
+pub const CREDENTIAL_REFS: &str = "credential_refs";
+/// The opaque Server-owned memory policy selected for this child execution.
+/// A child receives no parent memory state merely by carrying this reference.
+pub const MEMORY_POLICY_REF: &str = "memory_policy_ref";
+/// JSON-serialized generated [`apxm_core::types::context_contracts::BudgetSet`]
+/// copied exactly from the host-persisted `AgentInvocationEnvelope`. The
+/// runtime parses it once at root execution and shares its accounting ledger
+/// with ordinary child contexts; malformed values fail closed.
+pub const ADMITTED_INVOCATION_BUDGET_SET_V1: &str = "admitted_invocation_budget_set_v1";
 /// JSON object `{capability_name: max_calls}` declaring the per-tool call-count
 /// budget. Seeded by the program/request at the top-level execution
 /// and parsed into `ExecutionContext::tool_call_budgets`; the shared per-tool
@@ -40,8 +61,6 @@ pub const VISIBLE_SKILLS: &str = "visible_skills";
 pub const TOOL_CALL_BUDGETS: &str = "tool_call_budgets";
 pub const TARGET_AGENT: &str = "target_agent";
 pub const TARGET_FLOW: &str = "target_flow";
-pub const TARGET_SKILL_ID: &str = "target_skill_id";
-pub const TARGET_SKILL_VERSION: &str = "target_skill_version";
 
 /// Partial replay (`rerun-from-node`): the node id in the recompiled graph to
 /// restart execution from. When present (with [`REPLAY_TOKEN_VALUES`]), the

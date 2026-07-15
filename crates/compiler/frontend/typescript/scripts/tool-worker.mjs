@@ -166,7 +166,6 @@ class HookCtx {
     this.remainingBudget = payload.remaining_budget;
     this.context = payload.context;
     this._reqId = parentReqId;
-    this._system = payload.system || "";
     this._writes = [];
   }
 
@@ -192,14 +191,6 @@ class HookCtx {
 
   replaceResult(result) {
     return { decision: "replace_result", result };
-  }
-
-  prependSystem(text) {
-    return { decision: "prepend_system", text };
-  }
-
-  setSystem(text) {
-    return { decision: "set_system", text };
   }
 
   readAgentsMd() {
@@ -252,8 +243,8 @@ class HookCtx {
     });
   }
 
-  ask(prompt, system = null) {
-    const params = { prompt };
+  ask(prompt, maxTokens, system = null) {
+    const params = { prompt, max_tokens: maxTokens };
     if (system != null) params.system = system;
     return this._hostCall(HOST_METHOD_LLM_ASK, params).then((value) =>
       typeof value === "string" ? value : String(value),

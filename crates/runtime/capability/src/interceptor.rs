@@ -33,15 +33,17 @@ pub struct PreInvokeContext<'a> {
     pub permission_timeout: Duration,
 }
 
-impl<'a> PreInvokeContext<'a> {
+impl PreInvokeContext<'_> {
     /// Resolve timeout from `APXM_PERMISSION_TIMEOUT_SECS` (default 120s).
     pub fn permission_timeout_from_env() -> Duration {
         std::env::var(apxm_core::constants::env::APXM_PERMISSION_TIMEOUT_SECS)
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
             .filter(|&s| s > 0)
-            .map(Duration::from_secs)
-            .unwrap_or_else(|| Duration::from_secs(DEFAULT_PERMISSION_TIMEOUT_SECS))
+            .map_or_else(
+                || Duration::from_secs(DEFAULT_PERMISSION_TIMEOUT_SECS),
+                Duration::from_secs,
+            )
     }
 }
 
@@ -95,7 +97,9 @@ pub(crate) async fn pre_invoke_policy_ctx(
     let args_digest = args_digest_for(args);
     let args_preview = serde_json::to_value(args).unwrap_or_else(|_| serde_json::json!({}));
     let expires_at = (chrono::Utc::now()
-        + chrono::Duration::seconds(ctx.permission_timeout.as_secs() as i64))
+        + chrono::Duration::seconds(
+            i64::try_from(ctx.permission_timeout.as_secs()).unwrap_or(i64::MAX),
+        ))
     .to_rfc3339();
 
     let agent_code = ctx.agent_code.unwrap_or("runtime");
@@ -189,7 +193,7 @@ pub enum InterceptDecision {
 #[async_trait]
 pub trait CapabilityInterceptor: Send + Sync {
     /// Stable interceptor name for deduplication.
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "interceptor"
     }
 
@@ -247,7 +251,7 @@ impl PermissionInterceptor {
 
 #[async_trait]
 impl CapabilityInterceptor for PermissionInterceptor {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "permission"
     }
 

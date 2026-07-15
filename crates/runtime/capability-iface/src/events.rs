@@ -9,11 +9,13 @@ use std::time::Duration;
 
 use apxm_core::events::payload::{
     ApprovalRiskLevel, GenerationIdentity, LlmDonePayload, LlmStepCompletedPayload,
-    ToolCallCorrelation, ToolCallPayload, ToolCallStatus, TurnBoundaryPayload,
+    ToolCallCorrelation, ToolCallPayload, ToolCallStatus, TurnBoundaryPayload, UsagePayload,
+    WorkflowStepCompletedPayload,
 };
 use apxm_core::types::NodeMetrics;
 use apxm_core::types::TimingBreakdown;
 use apxm_core::types::consent::ApprovalResolution;
+use apxm_core::types::context_contracts::ContextLifecycleEventPayload;
 use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::values::Value;
 
@@ -36,6 +38,9 @@ pub struct ModelContextMetrics {
     pub truncated_segments: Option<usize>,
     pub omitted_token_budget_segments: Option<usize>,
     pub omitted_empty_segments: Option<usize>,
+    /// Physical model generation receiving this context, when the caller has
+    /// a standalone model-call identity rather than a graph node.
+    pub generation: Option<GenerationIdentity>,
 }
 
 impl ModelContextMetrics {
@@ -51,7 +56,14 @@ impl ModelContextMetrics {
             truncated_segments: None,
             omitted_token_budget_segments: None,
             omitted_empty_segments: None,
+            generation: None,
         }
+    }
+
+    /// Bind this pre-dispatch context evidence to one physical generation.
+    pub fn with_generation(mut self, generation: GenerationIdentity) -> Self {
+        self.generation = Some(generation);
+        self
     }
 }
 
@@ -292,19 +304,7 @@ pub trait ExecutionEventEmitter: Send + Sync {
         _step_count: usize,
     ) {
     }
-    fn emit_workflow_step_completed(
-        &self,
-        _workflow_name: &str,
-        _workflow_session_dir: &str,
-        _step_id: &str,
-        _step_index: usize,
-        _status: &str,
-        _success: bool,
-        _duration: Duration,
-        _session_dir: Option<&str>,
-        _error: Option<&str>,
-    ) {
-    }
+    fn emit_workflow_step_completed(&self, _payload: WorkflowStepCompletedPayload) {}
     fn emit_workflow_finished(
         &self,
         _workflow_name: &str,
@@ -422,6 +422,14 @@ pub trait ExecutionEventEmitter: Send + Sync {
 
     /// Emit aggregate-only context-packing evidence before a model dispatch.
     fn emit_model_context_metrics(&self, _metrics: &ModelContextMetrics) {}
+
+    /// Emit redacted token accounting for one model call that is not owned by
+    /// a graph node, such as a hook or compaction request.
+    fn emit_model_usage(&self, _usage: UsagePayload) {}
+
+    /// Emit redacted context lifecycle evidence without serializing prompt or
+    /// instruction content into the event stream.
+    fn emit_context_lifecycle(&self, _payload: &ContextLifecycleEventPayload) {}
 
     /// Emit content-free evidence after a capability effect is durably committed.
     fn emit_capability_effect_receipt(&self, _receipt: &CapabilityEffectReceiptPayload) {}

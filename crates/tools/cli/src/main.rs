@@ -150,10 +150,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
             pass_list_override,
             cli.config,
         ),
-        Commands::CompileService {
-            agent_dir,
-            options_stdin: _,
-        } => compile_service_command(agent_dir, cli.config),
+        Commands::CompileService { agent_dir } => compile_service_command(agent_dir, cli.config),
         Commands::Decompile { artifact, output } => decompile_command(artifact, output),
         Commands::Execute {
             input,

@@ -75,7 +75,7 @@ pub struct CapabilitySystem {
     aam: Option<Aam>,
     interceptors: Arc<RwLock<Vec<Arc<dyn CapabilityInterceptor>>>>,
     approval_store: Arc<ApprovalStore>,
-    sandbox_registry: RwLock<Option<Arc<SandboxRegistry>>>,
+    sandbox_registry: Arc<RwLock<Option<Arc<SandboxRegistry>>>>,
 }
 
 impl CapabilitySystem {
@@ -87,7 +87,7 @@ impl CapabilitySystem {
             aam: None,
             interceptors: Arc::new(RwLock::new(Vec::new())),
             approval_store: Arc::new(ApprovalStore::new()),
-            sandbox_registry: RwLock::new(None),
+            sandbox_registry: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -116,6 +116,30 @@ impl CapabilitySystem {
     /// with this handle so they share the runtime's single goal tree.
     pub fn aam(&self) -> Option<&Aam> {
         self.aam.as_ref()
+    }
+
+    /// Build a facade for one execution-local AAM.
+    ///
+    /// The registered capability set, approvals, interceptors, and sandbox
+    /// policy are shared with the host runtime. Any capability that captures
+    /// AAM state must explicitly supply a bound variant through
+    /// [`CapabilityExecutor::bind_aam`], so no session can route task or goal
+    /// mutations through the process-global AAM.
+    pub fn session_bound(&self, aam: Aam) -> Result<Self, RuntimeError> {
+        let scoped = Self {
+            registry: Arc::new(CapabilityRegistry::new()),
+            default_timeout: self.default_timeout,
+            aam: Some(aam.clone()),
+            interceptors: Arc::clone(&self.interceptors),
+            approval_store: Arc::clone(&self.approval_store),
+            sandbox_registry: Arc::clone(&self.sandbox_registry),
+        };
+
+        for capability in self.registry.list_capabilities() {
+            let capability = capability.bind_aam(aam.clone()).unwrap_or(capability);
+            scoped.register(capability)?;
+        }
+        Ok(scoped)
     }
 
     /// Set the sandbox registry for routing capability execution through
@@ -343,7 +367,7 @@ impl CapabilitySystem {
         let interceptors = self.interceptors.read().clone();
 
         // Validate arguments against schema
-        self.validate_args(name, &args).await?;
+        self.validate_args(name, &args)?;
 
         tracing::debug!(capability = %name, "Invoking capability");
 
@@ -354,70 +378,69 @@ impl CapabilitySystem {
             // Check if capability wants sandbox execution
             if let Some(exec_req) = capability.to_exec_request(&args) {
                 // Route through sandbox backend
-                if let Some(ref registry) = sandbox_reg {
-                    if !registry.is_empty() {
-                        let selection = registry
-                            .select_for_request(&exec_req)
-                            .map_err(|e| RuntimeError::Capability {
-                                capability: name.to_string(),
-                                message: format!("sandbox select: {e}"),
-                            })?;
-                        let backend = selection.backend;
-                        if let ValidationResult::Degraded { warnings } = &selection.validation {
-                            tracing::warn!(
-                                capability = %name,
-                                backend = %backend.capabilities().name,
-                                warnings = ?warnings,
-                                "sandbox backend selected with degraded guarantees"
-                            );
-                            return Err(RuntimeError::Capability {
-                                capability: name.to_string(),
-                                message: format!(
-                                    "{SANDBOX_DEGRADED_GUARANTEES}: {}",
-                                    warnings.join("; ")
-                                ),
-                            });
-                        }
-                        tracing::debug!(
-                            capability = %name,
-                            backend = %backend.capabilities().name,
-                            "routing capability through sandbox backend"
-                        );
-                        let session = backend.create_session().await
-                            .map_err(|e| RuntimeError::Capability {
-                                capability: name.to_string(),
-                                message: format!("sandbox session: {e}"),
-                            })?;
-                        let exec_result = match backend.execute(&session, exec_req).await {
-                            Ok(result) => result,
-                            Err(error) => {
-                                let _ = backend.destroy_session(session).await;
-                                return Err(RuntimeError::Capability {
-                                    capability: name.to_string(),
-                                    message: format!("sandbox execute: {error}"),
-                                });
-                            }
-                        };
-                        let _ = backend.destroy_session(session).await;
-                        return Ok(CapabilityExecutionResult::new(exec_result_to_value(exec_result)));
-                    } else {
-                        // Capability requires sandbox but registry is empty
-                        return Err(RuntimeError::Capability {
-                            capability: name.to_string(),
-                            message: "Capability requires sandbox execution but no sandbox backend is available".to_string(),
-                        });
-                    }
-                } else {
+                let Some(registry) = sandbox_reg else {
                     // Capability requires sandbox but no registry configured
                     return Err(RuntimeError::Capability {
                         capability: name.to_string(),
                         message: "Capability requires sandbox execution but sandbox registry is not configured".to_string(),
                     });
+                };
+                if registry.is_empty() {
+                    // Capability requires sandbox but registry is empty
+                    return Err(RuntimeError::Capability {
+                        capability: name.to_string(),
+                        message: "Capability requires sandbox execution but no sandbox backend is available".to_string(),
+                    });
                 }
-            } else {
-                // Capability doesn't need sandbox, execute directly
-                capability.execute_with_effect_receipt(args, invocation).await
+
+                let selection = registry
+                    .select_for_request(&exec_req)
+                    .map_err(|e| RuntimeError::Capability {
+                        capability: name.to_string(),
+                        message: format!("sandbox select: {e}"),
+                    })?;
+                let backend = selection.backend;
+                if let ValidationResult::Degraded { warnings } = &selection.validation {
+                    tracing::warn!(
+                        capability = %name,
+                        backend = %backend.capabilities().name,
+                        warnings = ?warnings,
+                        "sandbox backend selected with degraded guarantees"
+                    );
+                    return Err(RuntimeError::Capability {
+                        capability: name.to_string(),
+                        message: format!(
+                            "{SANDBOX_DEGRADED_GUARANTEES}: {}",
+                            warnings.join("; ")
+                        ),
+                    });
+                }
+                tracing::debug!(
+                    capability = %name,
+                    backend = %backend.capabilities().name,
+                    "routing capability through sandbox backend"
+                );
+                let session = backend.create_session().await
+                    .map_err(|e| RuntimeError::Capability {
+                        capability: name.to_string(),
+                        message: format!("sandbox session: {e}"),
+                    })?;
+                let exec_result = match backend.execute(&session, exec_req).await {
+                    Ok(result) => result,
+                    Err(error) => {
+                        let _ = backend.destroy_session(session).await;
+                        return Err(RuntimeError::Capability {
+                            capability: name.to_string(),
+                            message: format!("sandbox execute: {error}"),
+                        });
+                    }
+                };
+                let _ = backend.destroy_session(session).await;
+                return Ok(CapabilityExecutionResult::new(exec_result_to_value(exec_result)));
             }
+
+            // Capability doesn't need sandbox, execute directly
+            capability.execute_with_effect_receipt(args, invocation).await
         })
             .await
             .map_err(|_| RuntimeError::Timeout { op_id: 0, timeout })?
@@ -466,11 +489,7 @@ impl CapabilitySystem {
     }
 
     /// Validate arguments against capability schema
-    async fn validate_args(
-        &self,
-        name: &str,
-        args: &HashMap<String, Value>,
-    ) -> CapabilityResult<()> {
+    fn validate_args(&self, name: &str, args: &HashMap<String, Value>) -> CapabilityResult<()> {
         let schema = self
             .registry
             .get_schema(name)
@@ -528,8 +547,7 @@ impl CapabilitySystem {
     pub fn is_read_only(&self, name: &str) -> bool {
         self.registry
             .get(name)
-            .map(|cap| cap.metadata().read_only)
-            .unwrap_or(false)
+            .is_some_and(|cap| cap.metadata().read_only)
     }
 
     /// Check whether a capability invocation would route through a compatible
@@ -701,7 +719,7 @@ impl CapabilityFacade for CapabilitySystem {
     }
 
     fn set_sandbox_registry(&self, registry: Arc<SandboxRegistry>) {
-        CapabilitySystem::set_sandbox_registry(self, registry)
+        CapabilitySystem::set_sandbox_registry(self, registry);
     }
 
     fn sandbox_preflight(

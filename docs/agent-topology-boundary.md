@@ -47,7 +47,7 @@ Topology policy affects execution at the admission boundary:
 3. The host evaluates topology policy.
 4. If denied, the host rejects or records a policy-denied event.
 5. If allowed, the host lowers the request into a normal APXM primitive:
-   `COMMUNICATE`, `HANDOFF`, `DELEGATE`, `FLOW_CALL`, `CALL_SKILL`, an inbox
+   `COMMUNICATE`, `HANDOFF`, `DELEGATE`, `FLOW_CALL`, an inbox
    event, or an A2A/MCP message.
 6. APXM runtime executes the concrete graph without interpreting the topology
    relation that allowed it.
@@ -76,7 +76,7 @@ directory visibility does not imply handoff.
 APXM runtime code that touches multi-agent primitives must follow these rules:
 
 - `COMMUNICATE`, `HANDOFF`, `DELEGATE`, `FLOW_CALL`, `SPAWN_AGENT`, and
-  `CALL_SKILL` accept concrete targets, not relationship names.
+  `FLOW_CALL` and `WORKFLOW_SPAWN` accept concrete program targets, not relationship names.
 - Broadcast-style fan-out is a concrete runtime mode over the registered runtime
   set. If a host wants topology-aware broadcast, it must filter the target set
   before lowering or attach host policy middleware before the handler runs.

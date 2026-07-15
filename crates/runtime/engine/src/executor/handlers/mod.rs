@@ -1,6 +1,7 @@
 //! Operation handlers for all AIS operation types
 
 pub mod autonomous;
+pub mod await_input;
 pub mod branch;
 pub mod checkpoint;
 pub mod communicate;
@@ -370,7 +371,7 @@ async fn execute_llm_request_with_node_name(
                         emitter.emit_llm_token_for_node(node_id, &response.content);
                     }
                 }
-                reservation.reconcile(response.usage.total_tokens)?;
+                reservation.reconcile(&response.usage)?;
                 return Ok(response);
             }
             crate::executor::correlated_batch::CorrelatedBatchDispatch::NotMember
@@ -384,7 +385,7 @@ async fn execute_llm_request_with_node_name(
     if let Some(emitter) = &ctx.event_emitter {
         emitter.emit_llm_prompt_with_name(node_id, node_name, &request.prompt);
         let response = execute_llm_request_streaming(ctx, node_id, phase, request).await?;
-        reservation.reconcile(response.usage.total_tokens)?;
+        reservation.reconcile(&response.usage)?;
         return Ok(response);
     }
 
@@ -418,14 +419,14 @@ async fn execute_llm_request_with_node_name(
         record_llm_event(ctx, phase, request, &response, latency).await;
     }
 
-    reservation.reconcile(response.usage.total_tokens)?;
+    reservation.reconcile(&response.usage)?;
     Ok(response)
 }
 
 /// Forward a [`RoutingDecision`] to the execution event emitter.
 /// Shared helper so model-routing observability stays identical regardless
 /// of call site.
-fn emit_model_route_decision_event(
+pub(crate) fn emit_model_route_decision_event(
     emitter: &dyn crate::executor::events::ExecutionEventEmitter,
     decision: &RoutingDecision,
 ) {
@@ -500,9 +501,12 @@ async fn execute_llm_request_streaming(
         (None, ctx.llm_registry.prepare_request(request))
     };
 
-    let mut stream = ctx
-        .llm_registry
-        .generate_stream_with_fallback(&prepared_request);
+    let mut stream = if router_decision.is_some() {
+        ctx.llm_registry.generate_stream_strict(&prepared_request)
+    } else {
+        ctx.llm_registry
+            .generate_stream_with_fallback(&prepared_request)
+    };
 
     let mut final_response: Option<LLMResponse> = None;
     let mut emitted_text = false;
@@ -901,6 +905,7 @@ mod model_profile_routing_tests {
             truncated_segments: Some(1),
             omitted_token_budget_segments: Some(2),
             omitted_empty_segments: Some(1),
+            generation: None,
         };
 
         let response =
@@ -1052,5 +1057,71 @@ mod model_profile_routing_tests {
         let request =
             apply_llm_request_routing_from_node(LLMRequest::new("hi"), &node).expect("routing ok");
         assert_eq!(request.model_profile.as_deref(), Some("reasoning-tier"));
+    }
+
+    #[tokio::test]
+    async fn model_routed_streaming_fails_closed_without_registry_fallback() {
+        let registry = Arc::new(LLMRegistry::new());
+        let primary = MockLLMBackend::static_response("must not reach fallback")
+            .model_name("primary-model")
+            .always_fail("primary unavailable");
+        let fallback =
+            MockLLMBackend::static_response("fallback must not run").model_name("fallback-model");
+        registry
+            .register("primary", primary)
+            .expect("register failing primary");
+        registry
+            .register("fallback", fallback.clone())
+            .expect("register fallback");
+        registry
+            .set_model_route("primary-model", "primary")
+            .expect("register primary model route");
+        registry
+            .set_fallback("primary", vec!["fallback".to_string()])
+            .expect("register fallback chain");
+
+        let model_registry = Arc::new(ModelRegistry::new());
+        model_registry.register(ModelEntry {
+            name: "primary-model".to_string(),
+            backend: "primary".to_string(),
+            ..Default::default()
+        });
+        let router = Arc::new(
+            ModelRouter::with_model_registry(
+                Arc::clone(&registry),
+                model_registry,
+                ModelRouterConfig::default(),
+            )
+            .expect("router construction"),
+        );
+
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("memory"),
+        );
+        let aam = Aam::new();
+        let capabilities = Arc::new(CapabilitySystem::with_aam(aam.clone()));
+        let context =
+            ExecutionContext::new(memory, registry, capabilities, aam).with_model_router(router);
+
+        let error = execute_llm_request_streaming(
+            &context,
+            1,
+            "strict-route-fixture",
+            &LLMRequest::new("stream through the selected model"),
+        )
+        .await
+        .expect_err("a model-routed stream must not cross into the registry fallback chain");
+
+        assert!(
+            !error.to_string().is_empty(),
+            "the selected backend failure must remain observable"
+        );
+        assert_eq!(
+            fallback.call_count(),
+            0,
+            "the unvalidated registry fallback must not receive a model-routed stream"
+        );
     }
 }
