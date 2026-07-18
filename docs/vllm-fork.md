@@ -91,11 +91,13 @@ APXM metrics have two complementary layers:
   `backend_name`, `graph_id`, `pinned_handles`, `pinned_blocks`,
   `critical_path_length`, and `node_count`.
 
-Spawned coding agents such as Claude Code or Codex are ACP subprocesses. APXM
-can record their node lifecycle, latency, output, session files, and child
-execution links. Token usage for those subprocesses belongs in
-`runtime.token_accounting` only when the ACP adapter reports it back to APXM.
-Do not infer tokens or cost from wall-clock time.
+External coding agents use exact admitted profiles: Claude through the
+`claude-agent-acp` adapter over the Claude Agent SDK, Codex through the admitted
+ACP adapter over the Codex App Server, and other peers only for their proven
+matrix. Their private work is one outer Capability NodeExecution with nested
+attributed evidence, not APXM child executions. Peer-reported model/token/cost
+data remains third-party evidence and never becomes authoritative
+`runtime.token_accounting`. Do not infer tokens or cost from wall-clock time.
 
 ## Hard Stop Conditions
 

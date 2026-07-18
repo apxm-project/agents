@@ -1,9 +1,15 @@
 ---
 title: "Agent Abstract Machine (AAM)"
 description: "The formal state model underpinning every A-PXM agent: Beliefs, Goals, Capabilities, and a three-tier memory hierarchy."
+status: "precanonical-historical-model"
 ---
 
 # Agent Abstract Machine (AAM)
+
+> **Pre-canonical historical model — non-normative.** AAM beliefs/goals/
+> capability state below describes the replaced prototype. Canonical v1 uses explicit Program
+> Context/local values and admitted Capabilities; see the
+> [canonical contract](../agents/agent-program-composition-and-air-contract.md).
 
 The AAM defines **what an agent is** at any point in time. It is the state model that every AIS instruction reads from and writes to. Without a formal state model, agent behavior is scattered across Python closures, global variables, and implicit LLM context -- making it impossible to reason about, optimize, or verify.
 

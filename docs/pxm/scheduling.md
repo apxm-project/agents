@@ -1,5 +1,11 @@
 # Scheduling in A-PXM
 
+> **Pre-canonical scheduler model — non-normative.** Memory/message/cognition
+> ops, runtime compaction, and public CHECKPOINT below describe the current
+> system. Target AIR and durability are fixed by
+> [ADR-0009](../adr/0009-air-has-five-public-semantic-operations.md) and the
+> [canonical v1 contract](../agents/agent-program-composition-and-air-contract.md).
+
 APXM scheduling starts from a compiled dataflow graph. A node can run when its
 typed inputs are available, its capability grants are valid, and its declared
 effects do not conflict with other admitted work.

@@ -1,47 +1,47 @@
-# A-PXM: Agent Program Execution Model
+# PXM documentation
 
-> This is the **formal model** behind APXM. For the practical "skills as
-> libraries" framing aimed at users and contributors, start at
-> [VISION.md](../../VISION.md) and the [root README](../../README.md).
+The normative theory is [Program Execution Model theory](theory.md). It defines
+the single digest-linked execution spine and the separate authoritative sources
+for behavior, semantic legality, publication, authority, admission/spend,
+delivery, execution, evidence, and Studio projections.
 
-A-PXM is a formal Program Execution Model (PXM) for agentic AI. It treats agent
-workflows not as opaque scripts but as typed dataflow graphs, making them
-visible to compilers, schedulers, and verification tools.
+## Historical theory
 
-## Workflow Boundary
+- Status: non-normative migration evidence
+- Baseline: pre-replacement APXM abstract-machine design
+- Target authority: [Program Execution Model theory](theory.md) and [Agent Program composition and AIR contract](../agents/agent-program-composition-and-air-contract.md)
 
-An APXM workflow is a bounded dataflow graph. Long-running autonomous behavior
-is built by composing explicit passes through host-owned control loops:
+This directory preserves the theory that informed the prototype
+implementation: AAM beliefs/goals, memory tiers, the 38-operation AIS,
+process/spawn/communicate semantics, cognition op latency classes, session
+re-arm, and graph scheduling. It is useful for understanding what must be
+migrated, but it is not the accepted target architecture.
 
-```text
-[event] -> [trigger] -> [action/workflow pass] -> [eval] -> [feedback]
-```
+The target replaces those assumptions:
 
-The graph owns the visible work for one admitted pass. APXM server owns
-execution IDs, sessions, events, status, cancellation, and evidence. APXM OS or
-an MCP client owns listener policy, dedupe, retry, re-arm, and whether feedback
-starts another admitted pass. This keeps coordination observable without
-pretending that every workflow must contain a recursive scheduler loop.
+| Pre-canonical idea | Canonical v1 target |
+| --- | --- |
+| AAM beliefs/goals/capabilities as runtime semantic state | Explicit typed Program Context/local values plus admitted Capabilities |
+| QMEM/UMEM and memory tiers in AIR | Local values or external durable-memory Capability |
+| ASK/THINK/REASON/etc. runtime operations | Frontend patterns over `model.call` |
+| spawn/communicate/handoff/delegate/flow/workflow ops | `program.new` and `program.invoke` |
+| host/runtime session re-arm loop | Frontend-authored loop and generic program yield/resume |
+| runtime Turn | Studio projection of a generic loop-region occurrence |
+| direct/raw AIR authoring | Python/TypeScript FrontendGraph v1 through Rust compiler |
 
----
+Historical pages:
 
-## Learning Path
+1. [AAM](aam.md)
+2. [AIS](ais.md)
+3. [Memory](memory.md)
+4. [Processes](processes.md)
+5. [Foundations](foundations.md)
+6. [Compute](compute.md)
+7. [Scheduling](scheduling.md)
 
-| Order | Document | What You Learn |
-|-------|----------|----------------|
-| 1 | [aam.md](aam.md) | The Agent Abstract Machine, the formal (Beliefs, Goals, Capabilities) state model every instruction operates on. |
-| 2 | [ais.md](ais.md) | The Agent Instruction Set, typed operations organized by category, latency model, and MLIR dialect. |
-| 3 | [memory.md](memory.md) | A-PXM's three-tier hierarchy (STM / LTM / Episodic) and why each tier exists. |
-| 4 | [processes.md](processes.md) | Agent lifecycle, process/thread distinction, and multi-agent execution semantics. |
-| 5 | [../agent-topology-boundary.md](../agent-topology-boundary.md) | The hard runtime boundary: organization topology is host policy, not APXM execution semantics. |
-
----
-
-## For Implementers
-
-The theory documented here is realized in the compiler and runtime. For
-implementation details, see the crate READMEs:
-
-- [apxm-compiler](../../crates/compiler/pipeline/README.md): MLIR pipeline, [optimization pipeline](../compiler/pipeline.md), artifact format
-- [apxm-runtime](../../crates/runtime/engine/README.md): dataflow scheduler, memory hierarchy, concrete multi-agent primitives
-- [apxm-ais](../../crates/machine/ais/README.md): 43 AIS operations, attributes, types
+Every page above is baseline evidence only. The binding dispositions are
+[ADR-0008](../adr/0008-agent-programs-compose-through-new-and-invoke.md),
+[ADR-0009](../adr/0009-air-has-five-public-semantic-operations.md), and
+[ADR-0010](../adr/0010-agent-program-source-owns-context-hooks-and-conversational-loops.md).
+No target implementation may cite this directory to preserve a v1 operation,
+runtime state model, loop, callback, reader, or compatibility path.

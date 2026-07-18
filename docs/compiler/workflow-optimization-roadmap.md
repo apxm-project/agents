@@ -1,6 +1,12 @@
 # Workflow optimization roadmap
 
-This document is the source of truth for APXM workflow optimization. An
+> **Archived pre-canonical optimization evidence; non-authoritative.** Direct
+> AIR, cognition-op fusion, and prototype memory transforms below are retired
+> by [ADR-0009](../adr/0009-air-has-five-public-semantic-operations.md).
+> Canonical v1 optimization work must first update the v1 contract and P3/P9
+> plan.
+
+This document records the prototype optimization design. Any canonical v1
 optimization is complete only when its compiler analysis, runtime behavior,
 frontend parity, generated consumers, permission/effect semantics, replay
 behavior, documentation, tests, and evaluation evidence agree.
@@ -26,8 +32,8 @@ one backend-independent meaning. Prompt inputs carry typed roles for system,
 user, tool, control, and dependency-only content so lowering and optimization
 cannot synthesize, reorder, or prune them as interchangeable strings.
 
-Direct AIR plus Rust, TypeScript, and Python frontends must lower to equivalent
-typed contracts. Production compilation rejects incomplete DSPy behavior;
+Python and TypeScript frontends must lower through FrontendGraph to equivalent
+compiler-owned AIR contracts. Production compilation rejects incomplete DSPy behavior;
 experimental DSPy work cannot silently alter production artifacts.
 
 Acceptance evidence:

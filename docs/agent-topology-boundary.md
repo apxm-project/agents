@@ -1,115 +1,96 @@
-# Agent Topology Boundary
+# Agent topology boundary
 
-Status: hard runtime architecture rule.
+- Status: hard target runtime rule
+- Owner decision: APXM Studio hierarchy/admission policy; APXM generic enforcement
+- Program contract: [Agent Program composition and AIR contract](agents/agent-program-composition-and-air-contract.md)
 
-Agent hierarchy, reporting lines, directory visibility, delegation rights, and
-approval relationships are fleet policy. They are authored and enforced outside
-the APXM runtime.
+Company, area/department, group, reporting, visibility, approval, and routing
+relationships are product/control-plane policy. They are never AIR operations,
+runtime scheduling hints, implicit context, or Program Instance ownership.
 
-## Hard Rule
+## Hard rule
 
-APXM runtime MUST remain agent-topology agnostic.
+APXM runtime MUST remain organization-topology agnostic. It MUST NOT parse,
+store, schedule on, or branch on policy fields such as `reports_to`,
+`directory_policy`, `delegates_to`, `consults`, `notifies`, `observes`,
+`peers_with`, or `approves`.
 
-The runtime MUST NOT parse, store, schedule on, or branch on organization-policy
-fields such as `reports_to`, `directory_policy`, `handoff_policy`,
-`delegates_to`, `consults`, `notifies`, `observes`, `peers_with`, or
-`approves`.
-
-Those fields may exist in higher layers such as `apxm-studio` and `apxm-os`, but
-they must be enforced before execution is admitted or lowered into APXM runtime
-primitives.
+APXM Studio/Auth may use those relationships before admission. The runtime receives
+only exact, typed executable facts and validates/enforces the resulting
+identity, authority, and scope. Mutable organization policy never becomes an
+unstamped replay input.
 
 ## Ownership
 
 | Layer | Owns | Does not own |
-|---|---|---|
-| `apxm-studio` | Authoring and visualization of agent topology; export of desired-state policy. | Runtime authorization decisions. |
-| `apxm-os` | Agent identity, inboxes, discovery, routing, topology policy, approval, and handoff admission. | APXM graph scheduling semantics. |
-| APXM runtime | AIR/.apxmobj execution, DAG scheduling, operation handlers, memory tiers, capability execution, events. | Company/org topology, directory policy, reporting hierarchy. |
+| --- | --- | --- |
+| APXM Studio | Company/area/group/agent authoring and visualization | Runtime scheduling or execution authority |
+| APXM Studio/Auth | Directory visibility, target selection policy, authenticated Agent Identity, complete grants, approvals, Skill Associations | AIR, Program Context, callbacks, or program composition semantics |
+| APXM admission/runtime | Exact ProgramRef/instance admission, identity/grant validation, five AIR operations, generic regions/invocations/evidence | Company hierarchy, reporting policy, Skill injection, or implicit reach |
 
-APXM receives concrete executable facts only:
+APXM receives concrete facts only:
 
-- AIR graph nodes and edges.
-- Operation attributes such as `recipient`, `target_agent`, `handoff_to`,
-  `agent_name`, `skill_id`, and protocol.
-- Scoped context that has already been admitted by the host.
-- Capability and skill visibility sets chosen by the host.
-- Generic trace metadata such as execution id, span id, agent code, and
-  correlation id.
+- exact digest-bound `ProgramRef` or `ProgramInstanceRef`;
+- authenticated target `AgentIdentityBinding` supplied by admission;
+- typed input `I`, including any caller data explicitly projected by source;
+- complete attenuated Capability Grants and approval/event references;
+- admitted Skill-discovery scope for `search_skills`/`read_skill`, never Skill
+  bodies injected into context; and
+- generic invocation, callsite, occurrence, trace, and policy-evidence refs.
 
-## Lowering Model
+## Admission model
 
-Topology policy affects execution at the admission boundary:
+1. APXM Studio receives a task, event, question, approval, or target-selection request.
+2. APXM Auth authenticates the caller and resolves company/topology policy.
+3. Studio selects an exact allowed published Agent Program/identity and obtains
+   complete attenuated authority and policy evidence.
+4. APXM admission verifies that identity, artifact, scope, compatibility, and
+   authority agree.
+5. If admitted, authored source uses only `program.new`, `program.invoke`,
+   `capability.invoke`, or `await.event` as appropriate. If denied, no Program
+   Invocation begins.
+6. APXM records exact policy/admission references but never reinterprets the
+   organization relation that led to them.
 
-1. A host receives an event, question, task, handoff request, approval request,
-   or tool/skill call.
-2. The host identifies the caller and target.
-3. The host evaluates topology policy.
-4. If denied, the host rejects or records a policy-denied event.
-5. If allowed, the host lowers the request into a normal APXM primitive:
-   `COMMUNICATE`, `HANDOFF`, `DELEGATE`, `FLOW_CALL`, an inbox
-   event, or an A2A/MCP message.
-6. APXM runtime executes the concrete graph without interpreting the topology
-   relation that allowed it.
+Dynamic choice inside a program is limited to a finite set of statically
+imported typed Program references. A model may select a key; ordinary program
+control flow chooses the exact reference. There is no `HANDOFF`, `DELEGATE`,
+`COMMUNICATE`, `FLOW_CALL`, `SPAWN_AGENT`, string target, or model-minted
+authority operation. Provider/human messaging and non-APXM agent protocols are
+admitted Capabilities or external adapters.
 
-This keeps replay, optimization, and scheduler behavior tied to the artifact and
-its admitted inputs, not to mutable fleet policy.
+## Relationship projection
 
-## Relationship Mapping
+| Product relation | Permitted product/control-plane effect |
+| --- | --- |
+| reports to | Routing default, escalation, visualization, or approval policy; never an AIR edge |
+| may delegate/invoke | Admission may allow one of the source program's exact typed ProgramRefs |
+| consults/notifies | Admission may allow a messaging Capability with a concrete target/resource |
+| observes | Product may expose permissioned evidence; no automatic Program Context sharing |
+| peers with | Directory visibility or target-selection policy; never implicit authority |
+| approves | Authorized fulfillment of an exact typed APXM event/approval reference |
+| shares Skills | Skill-discovery association/filter only; never prompt injection or a grant |
 
-| Topology concept | Runtime effect |
-|---|---|
-| `reports_to` | Host routing, escalation, default supervisor, visualization. Never a DAG edge. |
-| `delegates_to` | Host may admit `DELEGATE`, `HANDOFF`, local task send, or A2A `tasks/send` when reach allows it. |
-| `consults` | Host may admit message/question exchange. No ownership transfer. |
-| `notifies` | Host may emit one-way events or inbox deliveries. |
-| `observes` | Host may deliver safe belief/event updates. |
-| `peers_with` | Host may admit lateral discovery/message, according to policy. |
-| `approves` | Host may satisfy approval gates, often by emitting pending/approved/rejected events before a continuation runs. |
+Visibility is not authority. Knowing that an agent, Skill, Tool, or Capability
+exists cannot authorize its use. A specialist may discover Skills unavailable
+to its parent while still operating only under its own admitted identity and
+attenuated complete grants.
 
-Reach levels are cumulative only when the policy layer explicitly defines them
-that way. Visibility is not authority: `know` does not imply `message`, and
-directory visibility does not imply handoff.
+## Runtime requirements
 
-## Runtime Requirements
+- Runtime events expose generic Program Instance/Invocation/NodeExecution
+  lineage, not organization relationships.
+- Parent/child ownership is structured program lifecycle, not company
+  hierarchy.
+- Policy changes affect later admissions only unless a signed revocation or
+  cancellation contract explicitly applies to active work.
+- Replay uses the recorded identity/grant/policy evidence for that occurrence;
+  it never queries ambient hierarchy to invent different behavior.
+- No adapter or middleware may add a sixth AIR operation, bypass
+  `capability.invoke`, inject Skills/context, or widen child authority.
 
-APXM runtime code that touches multi-agent primitives must follow these rules:
+## Non-goals
 
-- `COMMUNICATE`, `HANDOFF`, `DELEGATE`, `FLOW_CALL`, `SPAWN_AGENT`, and
-  `FLOW_CALL` and `WORKFLOW_SPAWN` accept concrete program targets, not relationship names.
-- Broadcast-style fan-out is a concrete runtime mode over the registered runtime
-  set. If a host wants topology-aware broadcast, it must filter the target set
-  before lowering or attach host policy middleware before the handler runs.
-- Runtime events may expose generic execution topology, such as
-  `agent_spawned`, `communicate_dispatched`, and `graph_edge`. They must not
-  encode organization-policy relation types as core runtime semantics.
-- If an embedded host enforces topology through `OperationMiddleware`, the
-  middleware is host policy. It must use canonical operation attributes and
-  scoped metadata; it must not add topology fields to the core runtime model.
-- Dynamic policy decisions that change what can execute must be made before
-  execution or recorded as durable host policy-decision events. Do not make
-  replay depend on unstamped ambient topology state.
-
-## Constants And Strings
-
-Topology schema tokens and relation names belong to the policy-owning layer.
-When APXM runtime needs shared strings for executable operation attributes,
-events, or metadata, they must live in the appropriate shared constants module
-instead of being repeated inline.
-
-Do not add topology relation string literals to runtime handlers. If a new
-executable APXM concept is required, add a typed AIS operation, attribute, or
-event contract; if it remains fleet policy, keep it in `apxm-os`/Studio.
-
-## Non-Goals
-
-APXM runtime does not answer:
-
-- Who can discover which agent?
-- Who can message which agent?
-- Who may hand off work to whom?
-- Who approves a risky action?
-- Which agents are in the same company, team, domain, or reporting chain?
-
-Those are valid APXM-family concerns, but they are not runtime scheduling or
-artifact semantics.
+APXM program/runtime semantics do not answer who can discover, invoke, message,
+observe, supervise, or approve whom. Those are valid APXM Studio decisions;
+APXM consumes only their exact admitted result.

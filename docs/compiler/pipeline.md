@@ -1,4 +1,11 @@
-# Compiler Optimization Pipeline
+# Compiler optimization pipeline — pre-canonical baseline
+
+> **Migration evidence, not target compiler authority.** Direct AIR/
+> `apxm emit-air` and current ASK/cognition-op behavior below describe the
+> pre-canonical
+> compiler. FrontendGraph v1, AIR v1, and P3/P9 of the
+> [normative composition/AIR plan](../agents/agent-program-composition-and-air-full-replacement-plan.md)
+> replace this path without a prototype reader.
 
 How the APXM compiler turns an authored agent graph into a runnable,
 deterministic artifact. Rust, Python, and TypeScript author the shared
