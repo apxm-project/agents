@@ -1,4 +1,11 @@
-# Telegram Coding Bot — Execution Flow and Implementation Reference
+# Telegram coding bot — pre-canonical implementation reference
+
+> **Migration evidence, not target architecture.** Spawn/communicate, session
+> loops, AIR v1 compilation, and the “correct pattern” language below describe
+> an earlier implementation. Canonical bots use exact Agent Program
+> composition, admitted Integration/Host boundaries, and the
+> [v1 contract](agents/agent-program-composition-and-air-contract.md). No target
+> code may preserve this flow as a compatibility path.
 
 This document synthesizes a full investigation of the stack for running a
 Telegram coding bot in APXM without Studio. It covers topology, execution

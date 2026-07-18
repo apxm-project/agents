@@ -1,9 +1,16 @@
 ---
 title: "Memory in Program Execution Models"
 description: "Comparative analysis of how memory is separated and formalized across classical and modern PXMs, and how A-PXM's tiered memory hierarchy resolves the agentic memory problem."
+status: "historical-v1-analysis"
 ---
 
 # Memory in Program Execution Models
+
+> **Historical design analysis — non-normative for target APXM.** Sections
+> describing QMEM/UMEM, AAM memory tiers, FLOW_CALL, or COMM record the v1
+> baseline. The target uses explicit Program Context/local values and admitted
+> Capabilities as fixed by [ADR-0009](../adr/0009-air-has-five-public-semantic-operations.md)
+> and [ADR-0010](../adr/0010-agent-program-source-owns-context-hooks-and-conversational-loops.md).
 
 Memory is the silent axis of every program execution model (PXM). How a model organizes, isolates, and exposes memory determines what optimizations are possible, what concurrency is safe, and what abstractions the programmer can rely on. This document surveys memory formalization across six established PXMs, then shows how A-PXM introduces a purpose-built memory architecture for agentic AI.
 

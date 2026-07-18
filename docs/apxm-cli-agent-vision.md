@@ -1,14 +1,21 @@
-# apxm-cli conversational agent — vision: the agent *is* an APXM program
+# apxm-cli conversational agent — historical vision record
 
-> **Implementation:** this vision is realized by the *agent-in-program*
-> feature — see `examples/python/conversational/controllable_agent.py`,
-> `examples/python/conversational/README.md`, and the conversational tests under
-> `crates/tools/cli/`. The acceptance fixture is
-> `examples/python/conversational/controllable_agent.py`: one
-> `ConversationalAgent(...)` program carrying the loop, turns, context/compaction,
-> `@hook` lifecycle control, skills, and sub-agents, with the host as a dumb pipe.
+- Status: superseded design record; not current implementation authority
+- Superseded by: [Agent Program composition and AIR contract](agents/agent-program-composition-and-air-contract.md),
+  [composition/AIR full-replacement plan](agents/agent-program-composition-and-air-full-replacement-plan.md),
+  and [compiler bridge ADR](adr/0006-authoring-frontends-use-explicit-compiler-bridges.md)
+- Original review date: 2026-06-03
 
-Status: vision draft, multi-agent verified · 2026-06-03
+This file preserves the investigation that motivated Agent Programs and
+conversational lifecycle control. Its path references, branch status, and
+implementation claims describe an earlier repository state and MUST NOT be
+used as evidence of shipped behavior. In particular, the
+[current Python public API](../crates/compiler/frontend/python/apxm/__init__.py)
+does not export `ConversationalAgent`; the accepted contract defines it as a
+frontend construct that will ship only after frontend/compiler/runtime
+conformance. Current behavior is anchored by source and tests cited in the
+canonical contract.
+
 Principle (the brief): the chat agent must not be hardcoded Rust in `chat.rs`. It
 should **be an APXM program** — a turn body + composable middleware + dynamic
 prompts that do context injection, skill discovery, tool execution, compaction —

@@ -1,8 +1,17 @@
 # Create Your First APXM Agent
 
-An APXM agent is one folder with an authored `agent.toml`, source files, and a
-generated `integrity.toml` seal. The top-level manifest is both the
-distribution identity and the runtime identity.
+> **Current implementation guide, not the accepted target contract.** The
+> supported v1 path is governed by the APXM master-plan baseline and exists
+> only after the P0-P9 composition/AIR gates pass. Do not copy `runtime.loop`, manifest Hooks,
+> subprocess compilation, or the current identity conflation into target work.
+> See the [canonical target contract](agent-program-composition-and-air-contract.md).
+
+The current implementation stores an Agent Program Source Bundle in one folder
+with an authored `agent.toml`, source files, and a generated `integrity.toml`
+seal. In the accepted target, the Source Bundle manifest identifies source,
+entrypoint, handlers, resources, and requirements; frontend source alone owns
+Hooks, loop behavior, and graph semantics. Source identity, admitted Agent
+Definition identity, and Executable Agent Artifact digest remain distinct.
 
 ```text
 <agent-id>/
@@ -20,7 +29,7 @@ Optional folders such as `README.md`, `examples/`, `tests/`, or `shared/` can
 help operators and maintainers, but they are not required by the minimum
 contract.
 
-## Minimum `agent.toml`
+## Current legacy `agent.toml` evidence
 
 The current schema id is `apxm.agent.v1`.
 
@@ -44,13 +53,24 @@ entry = "python/hello_agent.py"
 frontend = "python"
 
 [runtime]
-loop = "recv"
 memory_space = "stm"
 session_prefix = "hello"
+
+[runtime.loop]
+mode = "host"
+rearm = true
+turn_param = "message"
 
 [prompts]
 persona = "prompts/persona.md"
 ```
+
+`mode = "host"` documents the
+[current packaging surface](../../crates/tools/cli/src/commands/agent.rs) and is
+a read-only implementation-evidence path slated for deletion. The accepted
+[Conversational Agent loop contract](conversational-agent-loop-contract.md)
+requires frontend source to lower the complete Turn through APXM; the Source
+Bundle manifest must not retain `[runtime.loop]` or `[[hooks]]` as behavior.
 
 Capabilities are flat ids. Their joined definitions live under
 `capabilities/<id>/capability.toml` and
@@ -63,45 +83,41 @@ Declare exactly one `[compile]` entry and its frontend. The package router sends
 source-bearing packages through the normal Python or TypeScript frontend path;
 only an entry-less package uses declarative synthesis.
 
-Author a Python entry with `ConversationalAgent` from the APXM Python frontend
-(`crates/compiler/frontend/python/apxm/conversational.py`):
+The [current public Python frontend](../../crates/compiler/frontend/python/apxm/__init__.py)
+uses `@compile`, `GraphRecorder`, `Agent`, and `@tool`. The accepted design
+defines `ConversationalAgent` as a canonical v1 frontend construct, not a
+runtime type; the pre-canonical revision does not export it. See the
+[Hook and Context contract](hook-and-context-contract.md) and its
+[implementation plan](hook-and-context-implementation-plan.md) for the target
+API and its release gate.
+
+A current Python frontend entry looks like this:
 
 ```python
 #!/usr/bin/env python3
-from apxm import Agent, ConversationalAgent, ToolGroup, tool
+from apxm import Agent, GraphRecorder, compile, tool
 
-@tool(name="ping")
+@tool
 def ping() -> str:
     """Health check."""
     return "pong"
 
-researcher = Agent(name="researcher", instructions="Gather supporting facts.")
-
-agent = ConversationalAgent(
-    persona="You are a helpful APXM assistant.",
-    memory_space="stm",
+assistant = Agent(
+    name="hello-agent",
+    instructions="Answer clearly and use the ping tool when a health check is requested.",
     tools=[ping],
-    capability_groups=[ToolGroup.SKILLS],
-    sub_agents=[researcher],
-    loop="recv",
 )
 
-main = agent.compile()
-
-if __name__ == "__main__":
-    import sys
-    if "--validate" in sys.argv:
-        result = main.validate()
-        print("VALID" if result.valid else "INVALID")
-        for err in result.errors:
-            print(f"  ERROR: {err}")
-        sys.exit(0 if result.valid else 1)
-    print(main.to_air())
+@compile()
+def main(g: GraphRecorder, message: str):
+    reply = assistant.ask(g, message)
+    g.done(reply)
 ```
 
 TypeScript entries import `GraphBuilder` from `@apxm/frontend`, declare explicit
 entry metadata, and follow the same `FrontendGraph -> apxm emit-air` path.
-Neither frontend formats AIR itself.
+Neither frontend formats AIR itself. The target Hook API must preserve semantic
+parity across both languages before it is documented here as runnable.
 
 Validate, compile, and build with the authority CLI:
 
@@ -153,25 +169,33 @@ root `hash` served by installed-agent APIs.
 
 ## Sub-Agents
 
-Three shipped patterns are valid; pick by scope:
+Two shipped patterns are valid; pick by lifecycle boundary:
 
 | Pattern | When to use | Source |
 |---------|-------------|--------|
-| `sub_agents=[Agent(...)]` | Specialists compiled into the same artifact | `apxm/conversational.py` |
-| `g.spawn_agent` + `g.delegate` | Explicit delegation steps in a workflow graph | `examples/python/conversational/chat_agent.py` |
-| `.apxmw` workflow execution | Server-owned workflow lifecycle for reusable multi-step work | `examples/workflows/` |
+| `g.spawn_agent` + `g.delegate` | Explicit runtime-agent routing and delegation steps in one authored graph | [`chat_agent.py`](../../examples/python/conversational/chat_agent.py) |
+| `g.workflow_spawn` | A child AIR workflow executed with a separate session root | [`workflow_spawn.py`](../../examples/python/patterns/workflow_spawn.py) |
+
+`Agent(sub_agents=[...])` and `.apxmw` are not current public frontend
+contracts and must not be presented as shipped APIs.
 
 ## Studio Integration
 
-Studio discovers bundled agents under `workspace/studio/agents/<id>/` and
-proxies installed agent records from apxm-server through:
+Studio reads installed agent records through its server-backed registry:
 
 - `GET /api/agents`
 - `GET /api/agents/{id}`
 
-Chat selects an agent with `agent_preset: "<id>"`. For Gao and other
-server-owned chat agents, Studio creates an agent session through
-`POST /v1/agents/{id}/sessions` and sends compact page/canvas context on each
-turn.
+Chat selects an installed agent with `agent_preset: "<id>"`. The
+[current Studio dispatch](../../../studio/apxm-studio/crates/studio/src/chat.rs)
+validates the server-projected record and sends each Turn through APXM OS's
+`http_in` ingress; it does not own an alternate conversational runtime.
+Structured page/canvas context is forwarded as Turn input.
 
-See also: [Studio agents](../../../studio/agents/README.md).
+Gao currently assembles a loop directly with
+[`GraphBuilder.autonomous`](../../examples/agents/gao/capabilities/handlers/main.ts).
+That is read-only implementation evidence, not the accepted end state. Gao must become an
+ordinary specialization of the standard Conversational Agent construct under
+[ADR-0002](../adr/0002-gao-specializes-the-conversational-agent-construct.md)
+and its
+[implementation plan](gao-conversational-agent-implementation-plan.md).

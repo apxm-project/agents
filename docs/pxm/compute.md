@@ -1,5 +1,10 @@
 # Compute in A-PXM
 
+> **Pre-canonical framing — non-normative.** References to AAM and current
+> multi-agent operations describe the system being replaced. Target execution
+> semantics are fixed by the
+> [canonical v1 contract](../agents/agent-program-composition-and-air-contract.md).
+
 Classical PXMs make compute visible to compilers: von Neumann exposes
 instruction streams and memory; dataflow exposes dependency edges; actor models
 expose message passing. A-PXM combines those lessons for agentic programs.
