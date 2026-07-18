@@ -1,151 +1,95 @@
-# Releasing apxm
+# Releasing agents surfaces
 
-This doc covers releases of the `apxm` Python package on PyPI, plus the two
-npm packages built out of this repo (`@apxm/frontend`, `@apxm/client`; see
-[npm packages](#npm-packages-apxmfrontend-apxmclient) below). The Rust
-crates are not yet published — the workspace tracks the release version and waits
-for the public Rust API to stabilize.
+All packages and release artifacts from this repository are private members of
+one APXM Release Family. Publication is blocked until the release controller
+supplies exact signed registry configuration and the package is a canonical
+surface named by the accepted workspace architecture.
 
-PyPI releases are cut **manually** from a maintainer's machine through
-`dekk agents release`. There is intentionally no GitHub Actions workflow that
-auto-publishes the Python package: the maintainer's PyPI API token never
-leaves the local environment, and every release is a deliberate human
-action. The npm packages are the exception — see below — because a package
-is unregistered until its LICENSE and compiled-artifact-only layout is
-verified, so tag-gated CI publish carries less risk than the PyPI flow.
+## Current publication state
 
-## Versioning
+- Every Rust crate has `publish = false`. There is no Cargo publication
+  command in this repository.
+- `@apxm/frontend` is a canonical private npm coordinate and declares
+  `publishConfig.access = restricted`. No npm registry endpoint or publish
+  command is configured here.
+- The handwritten `@apxm/client` is prototype evidence, not a generated remote
+  client, and is marked `private = true`.
+- The current Python `apxm` distribution is prototype packaging and is marked
+  non-publishable. Canonical Python distributions use focused private
+  coordinates such as `apxm-frontend` and `apxm-compiler` after their owning
+  implementation lanes land.
 
-- **SemVer**, bumped in `crates/compiler/frontend/python/pyproject.toml`.
-- `0.x.y` while the AIS dialect is unstable.
-- Bump the **minor** for any AIS op change that consumers might depend
-  on (op name, input/output shape, attribute taxonomy).
-- Bump the **patch** for fixes that don't change the IR surface.
-- Bump the **major** to `1.0.0` only when AIS is declared stable and
-  the dialect is committed to backwards-compatibility guarantees.
+The coordinator owns exact registry endpoints, namespace authority, and the
+Compatibility Set. This repository does not guess or default any endpoint.
 
-## One-time setup
+## Readiness and artifacts
 
-1. Claim the `apxm` project name on PyPI (first publish creates it; the
-   maintainer who publishes `0.1.0` becomes the project owner).
-2. Generate a **project-scoped** API token on PyPI:
-   - Account settings → API tokens → Add API token
-   - Scope: *Project: `apxm`* (NOT account-wide)
-3. Store the token in `~/.pypirc` (chmod `0600`) — never in this repo:
-   ```ini
-   [pypi]
-   username = __token__
-   password = pypi-AgENdGVzdC5weXBpLm9yZwIk...
-   ```
-   Alternatively pass `TWINE_USERNAME=__token__` and
-   `TWINE_PASSWORD=<token>` via the environment at upload time.
-
-## Pre-release checks
+Release work goes through Dekk:
 
 ```bash
 dekk agents release check
+dekk agents release dist
+dekk agents release publish
 ```
 
-## Cutting a release
+`release check` enumerates every tracked Cargo, npm, and Python manifest plus
+every release command surface. It rejects a publishable Rust crate, public or
+default npm access, an unclassified Python distribution, and public/default
+registry commands.
 
-1. Bump `version =` in `crates/compiler/frontend/python/pyproject.toml`
-   and `[workspace.package].version` in `Cargo.toml`.
-2. Commit:
-   `chore(release): bump apxm to v0.X.Y`
-3. Open and merge the PR.
-4. Tag the release on `main`:
-   ```bash
-   git tag -a v0.X.Y -m "apxm 0.X.Y"
-   git push origin v0.X.Y
-   ```
-5. From a clean checkout of the tagged commit, rebuild the artifacts:
-   ```bash
-   dekk agents release dist
-   ```
-   Artifacts are written under `.apxm/releases/v0.X.Y/`, including the
-   Python wheel/sdist, binary archive, source archive, and `SHA256SUMS`.
-6. Upload to PyPI when the Python package is ready:
-   ```bash
-   dekk agents release pypi --yes
-   ```
-   `twine` reads credentials from `~/.pypirc` (or
-   `TWINE_USERNAME`/`TWINE_PASSWORD` env vars). Confirm the upload by
-   visiting <https://pypi.org/project/apxm/0.X.Y/>.
-7. Create the GitHub release:
-   ```bash
-   dekk agents release publish --yes
-   ```
+`release dist` writes eligible artifacts and checksums under
+`.apxm/releases/vX.Y.Z/`. Non-publishable Python packaging is excluded from the
+release artifact set. `release publish` is a dry run unless `--yes` is passed;
+the mutating path verifies that the GitHub repository visibility is exactly
+`PRIVATE` before creating or updating a release.
 
-## Test publishing (optional)
+## Private Python registry publication
 
-To rehearse a release against TestPyPI:
+The Python publication surface requires all four release-controller inputs:
+
+- a strict `apxm.private-package-registry.v1` JSON manifest;
+- its detached OpenSSH signature;
+- the trusted allowed-signers file; and
+- the exact signer identity.
+
+The signed manifest contains only these fields:
+
+```json
+{
+  "schema_version": "apxm.private-package-registry.v1",
+  "ecosystem": "python",
+  "visibility": "private",
+  "repository_url": "<exact credential-free HTTPS endpoint>",
+  "package_names": ["<authorized canonical distribution>"]
+}
+```
+
+Do not commit the manifest, signature, allowed-signers file, registry endpoint,
+or credentials. Once a canonical Python package is marked publishable and the
+release controller supplies those external inputs, use:
 
 ```bash
-dekk agents release pypi --repository testpypi --yes
+dekk agents release python \
+  --registry-manifest <path> \
+  --registry-signature <path> \
+  --allowed-signers <path> \
+  --signer <identity>
 ```
 
-Requires a separate TestPyPI account + token under a `[testpypi]` block
-in `~/.pypirc`. Install from TestPyPI to verify:
+The command verifies the signature and package authorization before its dry
+run. `--yes` performs the upload with an explicit `--repository-url`; there is
+no repository-name or implicit-index option. The command rejects known public
+Python index hosts, credential-bearing URLs, unsigned configuration,
+noncanonical coordinates, and packages marked non-publishable.
 
-```bash
-pip install --index-url https://test.pypi.org/simple/ apxm==0.X.Y
-```
+## Version and release sequence
 
-## Yanking a release
+1. Update the family version only through its owning release lane.
+2. Add release notes for the exact version.
+3. Run `dekk agents release check` and the repository gates.
+4. Merge through the protected integration and promotion queues.
+5. Build artifacts from the exact promoted revision.
+6. Publish only to destinations admitted by the signed release inputs.
 
-If a release ships a regression that downstream `eval`
-consumers depend on, **yank** rather than delete. Yanked
-releases stay installable for pinned users but are skipped by
-`pip install apxm`:
-
-1. PyPI UI: project → release → "Options" → "Yank".
-2. Ship the fix on the next patch version.
-
-Do not attempt to re-upload the same version — PyPI rejects overwrites
-even after a yank.
-
-## npm packages (`@apxm/frontend`, `@apxm/client`)
-
-Per masterplan decision D6, packages built out of this private repo publish
-to npm as **Apache-2.0-licensed, compiled-artifact-only** packages (`dist/`
-+ typings + `LICENSE`, no duplicated `src/`) even though the `agents` repo
-itself stays MIT. This applies to:
-
-- `@apxm/frontend` (`crates/compiler/frontend/typescript/`)
-- `@apxm/client` (`crates/tools/client/typescript/`)
-
-Unlike the PyPI flow above, npm releases run through
-`.github/workflows/release.yml` and are **tag-triggered**:
-
-1. Bump `version` in the package's `package.json`.
-2. Commit and merge as usual.
-3. Tag the release commit with the package-scoped prefix:
-   ```bash
-   git tag -a frontend-v0.X.Y -m "@apxm/frontend 0.X.Y"
-   git push origin frontend-v0.X.Y
-   # or
-   git tag -a client-v0.X.Y -m "@apxm/client 0.X.Y"
-   git push origin client-v0.X.Y
-   ```
-4. The matching CI job (`frontend` or `client`) installs, typechecks, tests,
-   builds, then runs `npm publish --access public` using `NPM_TOKEN` from
-   repo secrets. Confirm at
-   `https://www.npmjs.com/package/@apxm/frontend` or
-   `https://www.npmjs.com/package/@apxm/client`.
-
-To rehearse a publish without a tag push (e.g. to confirm the tarball
-contents before cutting a release), use the workflow's manual dispatch path,
-which runs `npm publish --dry-run --access public` instead of a real
-publish:
-
-```bash
-gh workflow run release.yml -f target=frontend
-gh workflow run release.yml -f target=client
-```
-
-You can also rehearse locally from the package directory:
-
-```bash
-npm run build && npm run typecheck && npm run test
-npm pack --dry-run
-```
+Previously published artifacts remain immutable registry history. A new
+release uses a new family version; it never overwrites an existing artifact.

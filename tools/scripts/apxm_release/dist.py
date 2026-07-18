@@ -20,6 +20,7 @@ from apxm_release.constants import (
 )
 from apxm_release.util import (
     clean_python_env,
+    python_publish_enabled,
     release_dir,
     release_tag,
     release_version,
@@ -152,7 +153,11 @@ def build_dist(args: argparse.Namespace) -> int:
         _stage_binary_release(staging, version=version, tag=tag, target=current_target_label)
         _make_tarball(staging, binary_archive, binary_root)
     _make_source_archive(source_archive, f"apxm-{version}")
-    python_artifacts = _build_python_dist(output_dir) if not args.skip_python_dist else []
+    python_artifacts = (
+        _build_python_dist(output_dir)
+        if python_publish_enabled() and not args.skip_python_dist
+        else []
+    )
     checksum_path = write_checksums([binary_archive, source_archive, *python_artifacts], output_dir)
 
     print(f"wrote {binary_archive}")
@@ -164,7 +169,9 @@ def build_dist(args: argparse.Namespace) -> int:
 
 
 def release_artifacts(output_dir: Path) -> list[Path]:
-    patterns = ("*.tar.gz", "python/apxm-*", CHECKSUM_FILE)
+    patterns = ["*.tar.gz", CHECKSUM_FILE]
+    if python_publish_enabled():
+        patterns.append("python/apxm-*")
     artifacts: list[Path] = []
     for pattern in patterns:
         artifacts.extend(sorted(output_dir.glob(pattern)))

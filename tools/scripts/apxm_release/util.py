@@ -56,6 +56,16 @@ def python_version() -> str:
     return str(pyproject["project"]["version"])
 
 
+def python_distribution_name() -> str:
+    pyproject = load_toml(PYTHON_PROJECT / "pyproject.toml")
+    return str(pyproject["project"]["name"])
+
+
+def python_publish_enabled() -> bool:
+    pyproject = load_toml(PYTHON_PROJECT / "pyproject.toml")
+    return pyproject["tool"]["apxm"]["release"]["publish"] is True
+
+
 def release_version() -> str:
     workspace = workspace_version()
     python = python_version()
