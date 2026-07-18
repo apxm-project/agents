@@ -116,7 +116,7 @@ fn enc(seg: &str) -> String {
     for b in seg.bytes() {
         match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char)
+                out.push(b as char);
             }
             _ => {
                 out.push('%');
@@ -280,10 +280,10 @@ impl CapabilityExecutor for McpBridgeCapability {
             .header("MCP-Protocol-Version", MCP_PROTOCOL_VERSION)
             .header("Accept", "application/json, text/event-stream")
             .json(&body);
-        if let Some(cred) = as_json("credential").and_then(|j| j.as_str().map(String::from)) {
-            if let Some(tok) = self.resolve_token(&cred).await {
-                req = req.bearer_auth(tok);
-            }
+        if let Some(cred) = as_json("credential").and_then(|j| j.as_str().map(String::from))
+            && let Some(tok) = self.resolve_token(&cred).await
+        {
+            req = req.bearer_auth(tok);
         }
 
         let resp = req

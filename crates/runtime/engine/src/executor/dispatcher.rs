@@ -291,22 +291,19 @@ impl OperationDispatcher {
             // Direct INV_CAP terminal for the generic runtime call above.
             if let Some(begin) = layer2_begin.as_ref() {
                 let latency_ms = begin.started_at.elapsed().as_millis() as u64;
-                match node.op_type {
-                    AISOperationType::InvCap => {
-                        let tool_name = begin.tool_name.as_deref().unwrap_or("");
-                        let (status, result_keys) = match &result {
-                            Ok(value) => (ToolCallStatus::Ok, result_keys_for_layer2(value)),
-                            Err(_) => (ToolCallStatus::Error, Vec::new()),
-                        };
-                        emitter.emit_tool_call_end(
-                            &begin.agent_code,
-                            tool_name,
-                            &result_keys,
-                            status,
-                            latency_ms,
-                        );
-                    }
-                    _ => {}
+                if node.op_type == AISOperationType::InvCap {
+                    let tool_name = begin.tool_name.as_deref().unwrap_or("");
+                    let (status, result_keys) = match &result {
+                        Ok(value) => (ToolCallStatus::Ok, result_keys_for_layer2(value)),
+                        Err(_) => (ToolCallStatus::Error, Vec::new()),
+                    };
+                    emitter.emit_tool_call_end(
+                        &begin.agent_code,
+                        tool_name,
+                        &result_keys,
+                        status,
+                        latency_ms,
+                    );
                 }
             }
 
@@ -523,6 +520,7 @@ impl OperationDispatcher {
 
             // Synchronization operations
             AISOperationType::WaitAll => wait_all::execute(ctx, node, inputs).await,
+            AISOperationType::AwaitInput => await_input::execute(ctx, node, inputs).await,
             AISOperationType::Merge => merge::execute(ctx, node, inputs).await,
             AISOperationType::Fence => fence::execute(ctx, node, inputs).await,
             AISOperationType::Checkpoint => checkpoint::execute(ctx, node, inputs).await,

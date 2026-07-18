@@ -54,21 +54,21 @@ impl ApprovalStore {
         // Fast path: read-only check for Session/Always scopes.
         {
             let guard = self.decisions.read();
-            if let Some(record) = guard.get(capability) {
-                if record.scope != ApprovalScope::Once {
-                    return Some(record.decision.clone());
-                }
+            if let Some(record) = guard.get(capability)
+                && record.scope != ApprovalScope::Once
+            {
+                return Some(record.decision.clone());
             }
         }
 
         // Slow path: write lock to atomically consume Once decisions.
         let mut guard = self.decisions.write();
-        if let Some(record) = guard.get(capability) {
-            if record.scope == ApprovalScope::Once {
-                let decision = record.decision.clone();
-                guard.remove(capability);
-                return Some(decision);
-            }
+        if let Some(record) = guard.get(capability)
+            && record.scope == ApprovalScope::Once
+        {
+            let decision = record.decision.clone();
+            guard.remove(capability);
+            return Some(decision);
         }
         None
     }

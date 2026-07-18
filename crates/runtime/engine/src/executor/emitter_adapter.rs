@@ -10,12 +10,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use apxm_core::events::payload::*;
-use apxm_core::events::{ApxmEvent, EventEmitter, EventSource, SkillEventProvenance};
+use apxm_core::events::{ApxmEvent, EventEmitter, EventSource, ProgramPackageEventProvenance};
 use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::values::Value;
 use parking_lot::RwLock;
 
-use super::events::{EventScopeState, ExecutionEventEmitter};
+use super::events::{EventScopeState, ExecutionEventEmitter, ModelContextMetrics};
 
 /// Adapter that implements [`ExecutionEventEmitter`] by forwarding each call
 /// to an [`EventEmitter`] sink as a fully-formed [`ApxmEvent`].
@@ -23,7 +23,7 @@ pub struct EmitterAdapter {
     emitter: Arc<dyn EventEmitter>,
     source: EventSource,
     trace_id: String,
-    skill_provenance: Option<SkillEventProvenance>,
+    program_package_provenance: Option<ProgramPackageEventProvenance>,
     seq: AtomicU64,
     /// Current parent span ID for hierarchical event nesting.
     /// Updated by the executor engine when entering/leaving node scopes.
@@ -42,16 +42,19 @@ impl EmitterAdapter {
             emitter,
             source,
             trace_id: trace_id.into(),
-            skill_provenance: None,
+            program_package_provenance: None,
             seq: AtomicU64::new(0),
             current_span_id: RwLock::new(None),
             scope_state: RwLock::new(EventScopeState::default()),
         }
     }
 
-    /// Attach skill provenance to every subsequently emitted event.
-    pub fn with_skill_provenance(mut self, provenance: SkillEventProvenance) -> Self {
-        self.skill_provenance = Some(provenance);
+    /// Attach ProgramPackage provenance to every subsequently emitted event.
+    pub fn with_program_package_provenance(
+        mut self,
+        provenance: ProgramPackageEventProvenance,
+    ) -> Self {
+        self.program_package_provenance = Some(provenance);
         self
     }
 
@@ -76,7 +79,7 @@ impl EmitterAdapter {
         };
         let event = event
             .with_scope_id(scope)
-            .with_skill_provenance(self.skill_provenance.clone())
+            .with_program_package_provenance(self.program_package_provenance.clone())
             .with_seq(self.seq.fetch_add(1, Ordering::Relaxed));
         self.emitter.emit(event);
     }
@@ -431,29 +434,8 @@ impl ExecutionEventEmitter for EmitterAdapter {
         });
     }
 
-    fn emit_workflow_step_completed(
-        &self,
-        workflow_name: &str,
-        workflow_session_dir: &str,
-        step_id: &str,
-        step_index: usize,
-        status: &str,
-        success: bool,
-        duration: Duration,
-        session_dir: Option<&str>,
-        error: Option<&str>,
-    ) {
-        self.emit(WorkflowStepCompletedPayload {
-            workflow_name: workflow_name.to_string(),
-            workflow_session_dir: workflow_session_dir.to_string(),
-            step_id: step_id.to_string(),
-            step_index,
-            status: status.to_string(),
-            success,
-            duration_ms: duration.as_millis() as u64,
-            session_dir: session_dir.map(str::to_string),
-            error: error.map(str::to_string),
-        });
+    fn emit_workflow_step_completed(&self, payload: WorkflowStepCompletedPayload) {
+        self.emit(payload);
     }
 
     fn emit_workflow_finished(
@@ -622,6 +604,35 @@ impl ExecutionEventEmitter for EmitterAdapter {
             original_tokens,
             new_tokens,
         });
+    }
+
+    fn emit_model_context_metrics(&self, metrics: &ModelContextMetrics) {
+        self.emit(ModelContextMetricsPayload {
+            node_id: metrics.node_id,
+            call_kind: metrics.call_kind,
+            plan_status: metrics.plan_status,
+            token_budget: metrics.token_budget.map(|value| value as u64),
+            original_tokens: metrics.original_tokens.map(|value| value as u64),
+            admitted_tokens: metrics.admitted_tokens.map(|value| value as u64),
+            kept_segments: metrics.kept_segments.map(|value| value as u64),
+            truncated_segments: metrics.truncated_segments.map(|value| value as u64),
+            omitted_token_budget_segments: metrics
+                .omitted_token_budget_segments
+                .map(|value| value as u64),
+            omitted_empty_segments: metrics.omitted_empty_segments.map(|value| value as u64),
+            generation: metrics.generation.clone(),
+        });
+    }
+
+    fn emit_model_usage(&self, usage: UsagePayload) {
+        self.emit(usage);
+    }
+
+    fn emit_context_lifecycle(
+        &self,
+        payload: &apxm_core::types::context_contracts::ContextLifecycleEventPayload,
+    ) {
+        self.emit(payload.clone());
     }
 
     fn emit_context_window_warning(

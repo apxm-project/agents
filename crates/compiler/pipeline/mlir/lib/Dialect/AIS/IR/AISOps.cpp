@@ -907,6 +907,7 @@ void ReasonOp::getCanonicalizationPatterns(RewritePatternSet &patterns, MLIRCont
 
 LogicalResult SpawnAgentOp::verify()       { return success(); }
 LogicalResult RegisterCapabilityOp::verify() { return success(); }
+LogicalResult AwaitInputOp::verify()       { return success(); }
 LogicalResult AutonomousOp::verify()       { return success(); }
 LogicalResult DelegateOp::verify()         { return success(); }
 LogicalResult NopOp::verify()              { return success(); }

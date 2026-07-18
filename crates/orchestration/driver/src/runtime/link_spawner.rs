@@ -26,6 +26,12 @@ use apxm_runtime::process_table::{AgentSpawnContext, AgentSpawner};
 use tokio::sync::{Mutex, mpsc};
 use tracing::debug;
 
+type HostRelayChannels = (
+    mpsc::Sender<serde_json::Value>,
+    mpsc::Receiver<serde_json::Value>,
+);
+type HostRelayRegistry = HashMap<String, HostRelayChannels>;
+
 /// A session handle for a relay-backed ACP child running on a LINK-RUNTIME host.
 ///
 /// The handle owns the `RelayTransport` so the prompter can borrow it to send
@@ -44,15 +50,7 @@ pub struct RelaySessionHandle {
 /// removes them on disconnect.
 pub struct LinkHostRegistry {
     /// host_id → (tx to host, rx from host)
-    hosts: Mutex<
-        HashMap<
-            String,
-            (
-                mpsc::Sender<serde_json::Value>,
-                mpsc::Receiver<serde_json::Value>,
-            ),
-        >,
-    >,
+    hosts: Mutex<HostRelayRegistry>,
 }
 
 impl LinkHostRegistry {
@@ -85,13 +83,7 @@ impl LinkHostRegistry {
     /// Take the channel pair for a host, allowing the caller to build a
     /// `RelayTransport`.  Once taken, the registry no longer holds the channels
     /// (the active session owns them).
-    pub async fn take(
-        &self,
-        host_id: &str,
-    ) -> Option<(
-        mpsc::Sender<serde_json::Value>,
-        mpsc::Receiver<serde_json::Value>,
-    )> {
+    pub async fn take(&self, host_id: &str) -> Option<HostRelayChannels> {
         self.hosts.lock().await.remove(host_id)
     }
 }

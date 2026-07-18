@@ -9,22 +9,21 @@ id = "conversational-opt-out"
 kind = "agent"
 license = "MIT"
 schema_version = "apxm.agent.v1"
-skills = []
+allowed_agent_skills = []
 version = "0.1.0"
 
 [chat]
 capability_discovery = true
+
+[compile]
+entry = "src/main.ts"
+frontend = "typescript"
 
 [prompts]
 persona = "prompts/persona.md"
 
 [runtime]
 session_prefix = "conversational-opt-out"
-
-[runtime.loop]
-mode = "host"
-rearm = true
-turn_param = "user_message"
 
 [source]
 type = "local"

@@ -47,8 +47,10 @@ pub struct Config {
     pub service_name: &'static str,
     /// `tracing_subscriber::EnvFilter` directive string (e.g. `"info"`).
     pub log_filter: String,
-    /// OTLP/HTTP trace exporter endpoint. `None` disables trace export —
-    /// logging still initializes.
+    /// OTLP/HTTP collector base endpoint (for example
+    /// `http://otel-collector:4318`). `None` disables trace export — logging
+    /// still initializes. The shared bootstrap appends the signal-specific
+    /// `/v1/traces` or `/v1/metrics` path; callers must not provide one.
     pub otlp_endpoint: Option<String>,
 }
 
@@ -134,7 +136,7 @@ pub fn init(config: &Config) -> Result<Option<OtelExporter>, InitError> {
 
     let exporter = opentelemetry_otlp::SpanExporter::builder()
         .with_http()
-        .with_endpoint(endpoint)
+        .with_endpoint(otlp_http_signal_endpoint(endpoint, "/v1/traces"))
         .build()
         .map_err(|error| InitError(error.to_string()))?;
 
@@ -189,7 +191,7 @@ pub fn init_metrics(config: &Config) -> Result<AppMetrics, InitError> {
         Some(endpoint) => {
             let exporter = opentelemetry_otlp::MetricExporter::builder()
                 .with_http()
-                .with_endpoint(endpoint)
+                .with_endpoint(otlp_http_signal_endpoint(endpoint, "/v1/metrics"))
                 .build()
                 .map_err(|error| InitError(error.to_string()))?;
 
@@ -215,4 +217,32 @@ pub fn init_metrics(config: &Config) -> Result<AppMetrics, InitError> {
 
     let meter = provider.meter(config.service_name);
     Ok(AppMetrics::new(&meter))
+}
+
+/// Resolve a signal endpoint from the OTLP/HTTP collector base URL.
+///
+/// `opentelemetry-otlp` treats an endpoint supplied through
+/// `WithExportConfig::with_endpoint` as a complete signal URL. APXM exposes a
+/// single base URL in service configuration, so the shared library owns this
+/// one normalization point rather than accidentally posting traces and
+/// metrics to the same route.
+fn otlp_http_signal_endpoint(base: &str, signal_path: &str) -> String {
+    format!("{}{}", base.trim_end_matches('/'), signal_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::otlp_http_signal_endpoint;
+
+    #[test]
+    fn otlp_http_base_endpoint_expands_to_signal_routes() {
+        assert_eq!(
+            otlp_http_signal_endpoint("http://otel-collector:4318", "/v1/traces"),
+            "http://otel-collector:4318/v1/traces"
+        );
+        assert_eq!(
+            otlp_http_signal_endpoint("http://otel-collector:4318/", "/v1/metrics"),
+            "http://otel-collector:4318/v1/metrics"
+        );
+    }
 }

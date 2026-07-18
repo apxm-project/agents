@@ -33,7 +33,7 @@ impl CountTokensCapability {
     }
 
     fn estimate(text: &str) -> i64 {
-        (text.len() / 4) as i64
+        i64::try_from(text.len() / 4).unwrap_or(i64::MAX)
     }
 }
 

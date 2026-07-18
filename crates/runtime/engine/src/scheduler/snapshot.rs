@@ -218,7 +218,7 @@ impl SchedulerState {
 
     /// Rehydrate a [`SchedulerState`] from a captured [`SchedulerSnapshot`]
     /// against a freshly recompiled `dag` (same node/token ids as the
-    /// original run — the deterministic skill-compilation case, matching the
+    /// original run — the deterministic ProgramPackage recompilation case, matching the
     /// precondition [`crate::scheduler::replay::ReplaySeed`] already relies
     /// on).
     ///

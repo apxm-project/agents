@@ -95,6 +95,8 @@ pub enum AISOperationType {
     Fence,
     /// Wait for all input tokens to be ready.
     WaitAll,
+    /// Park until the host delivers one typed external input.
+    AwaitInput,
 
     // Error Handling Operations
     /// Try-catch exception handling.
@@ -165,6 +167,7 @@ pub const WIRE_INDEXED_OPERATIONS: &[(u32, AISOperationType)] = &[
     (3, AISOperationType::UMem),
     (4, AISOperationType::Plan),
     (5, AISOperationType::WaitAll),
+    (44, AISOperationType::AwaitInput),
     (6, AISOperationType::Merge),
     (7, AISOperationType::Fence),
     (8, AISOperationType::Exc),
@@ -228,6 +231,7 @@ impl fmt::Display for AISOperationType {
             AISOperationType::Merge => write!(f, "MERGE"),
             AISOperationType::Fence => write!(f, "FENCE"),
             AISOperationType::WaitAll => write!(f, "WAIT_ALL"),
+            AISOperationType::AwaitInput => write!(f, "AWAIT_INPUT"),
             // Error Handling
             AISOperationType::TryCatch => write!(f, "TRY_CATCH"),
             AISOperationType::Err => write!(f, "ERR"),
@@ -286,6 +290,7 @@ impl std::str::FromStr for AISOperationType {
             "merge" => Ok(AISOperationType::Merge),
             "fence" => Ok(AISOperationType::Fence),
             "wait_all" => Ok(AISOperationType::WaitAll),
+            "await_input" => Ok(AISOperationType::AwaitInput),
             "try_catch" => Ok(AISOperationType::TryCatch),
             "err" => Ok(AISOperationType::Err),
             "communicate" => Ok(AISOperationType::Communicate),
@@ -333,6 +338,7 @@ impl AISOperationType {
             AISOperationType::Merge => "merge",
             AISOperationType::Fence => "fence",
             AISOperationType::WaitAll => "wait_all",
+            AISOperationType::AwaitInput => "await_input",
             AISOperationType::TryCatch => "try_catch",
             AISOperationType::Err => "err",
             AISOperationType::Communicate => "communicate",
@@ -404,6 +410,7 @@ impl AISOperationType {
             AISOperationType::Merge,
             AISOperationType::Fence,
             AISOperationType::WaitAll,
+            AISOperationType::AwaitInput,
             AISOperationType::TryCatch,
             AISOperationType::Err,
             AISOperationType::Communicate,
@@ -1423,23 +1430,28 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         op_type: AISOperationType::Handoff,
         name: "Handoff",
         category: OperationCategory::Communication,
-        description: "Hand off execution from one agent to another with optional state transfer",
+        description: "Hand off execution to an isolated target agent",
         long_description: "Transfers execution control from a source agent to a target agent. \
-            When transfer_state is true, the source agent's context-stack frames are copied to \
-            the target agent so it can continue with full conversational context. Emits \
+            An omitted or false transfer_state isolates the target. An explicit true permits \
+            only a snapshot of non-authority AAM beliefs and goals plus a rendered context-frame \
+            payload. Credentials, capability grants, budgets, Agent Skill selections, prompt \
+            defaults, session state, and caller metadata never cross the handoff boundary. Emits \
             HANDOFF_START and HANDOFF_END events with span continuity for tracing. The target \
             agent's response becomes this node's output token.",
         latency: OperationLatency::Medium,
         example_json: Some(
-            r#"{"id": 3, "op": "HANDOFF", "attributes": {"handoff_from": "agent_a", "handoff_to": "agent_b", "transfer_state": true}}"#,
+            r#"{"id": 3, "op": "HANDOFF", "attributes": {"handoff_from": "agent_a", "handoff_to": "agent_b"}}"#,
         ),
         fields: &[
             OperationField::required(attrs::HANDOFF_FROM, "Source agent name"),
             OperationField::required(attrs::HANDOFF_TO, "Target agent name"),
-            OperationField::optional("payload", "Message payload to pass to the target agent"),
+            OperationField::optional(
+                attrs::PAYLOAD,
+                "Message payload to pass to the target agent",
+            ),
             OperationField::optional(
                 attrs::TRANSFER_STATE,
-                "Whether to copy context-stack frames from source to target (default: true)",
+                "Whether to explicitly transfer non-authority AAM state and rendered context frames (default: false)",
             ),
         ],
         needs_submission: true,
@@ -1776,6 +1788,58 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
             syntactic_keywords: &[],
         },
     },
+    // ========== External Input ==========
+    OperationSpec {
+        op_type: AISOperationType::AwaitInput,
+        name: "AwaitInput",
+        category: OperationCategory::Synchronization,
+        description: "Park until the host delivers one typed external input",
+        long_description: "AWAIT_INPUT is a generic durable park/resume primitive. A seed input \
+            returns immediately; otherwise the runtime parks without consuming a worker or \
+            compute permit until the trusted host wakes its opaque wait key. It has no model, \
+            persona, transcript, capability, Agent Skill, or conversational semantics.",
+        latency: OperationLatency::Low,
+        example_json: Some(
+            r#"{"id": 3, "op": "AWAIT_INPUT", "attributes": {"wait_key": "webhook:order-42"}}"#,
+        ),
+        fields: &[
+            OperationField::optional(
+                attrs::WAIT_KEY,
+                "Opaque host-owned external-input correlation key; defaults to the execution session input key",
+            ),
+            OperationField::optional(
+                attrs::REARM,
+                "When true, re-arm the explicit continuation flow after a host wake",
+            ),
+            OperationField::optional(attrs::AGENT_NAME, "Agent containing the continuation flow"),
+            OperationField::optional(attrs::FLOW_NAME, "Explicit continuation flow to invoke"),
+            OperationField::optional(
+                attrs::INPUT_NAMES,
+                "Single continuation parameter name bound to the delivered input",
+            ),
+            OperationField::optional(
+                attrs::MAX_ITERATIONS,
+                "Maximum number of generic wake/re-arm cycles for this session",
+            ),
+        ],
+        needs_submission: false,
+        min_inputs: 0,
+        produces_output: true,
+        emission: MlirEmissionSpec {
+            primary_attr: Some(attrs::WAIT_KEY),
+            context_style: ContextStyle::Parenthesized,
+            result_type: MlirResultType::Token,
+            positional_attrs: &[],
+            keywords: &[
+                attrs::REARM,
+                attrs::AGENT_NAME,
+                attrs::FLOW_NAME,
+                attrs::INPUT_NAMES,
+                attrs::MAX_ITERATIONS,
+            ],
+            syntactic_keywords: &[],
+        },
+    },
     // ========== Autonomous Execution ==========
     OperationSpec {
         op_type: AISOperationType::Autonomous,
@@ -1964,6 +2028,9 @@ pub fn get_all_operations() -> impl Iterator<Item = &'static OperationSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const EXPECTED_OPERATION_COUNT: usize = 39;
+    const EXPECTED_WIRE_INDEXED_OPERATION_COUNT: usize = 37;
     use std::collections::HashSet;
 
     const ARTIFACT_OPERATION_KIND_ENTRIES_FILE: &str = "OperationKind.generated.inc";
@@ -2031,14 +2098,14 @@ mod tests {
     fn test_operation_counts() {
         assert_eq!(
             AIS_OPERATIONS.len(),
-            38,
-            "Expected 38 total operations (1 metadata + 35 public + 2 internal) \
+            EXPECTED_OPERATION_COUNT,
+            "Expected {EXPECTED_OPERATION_COUNT} total operations (1 metadata + 36 public + 2 internal) \
              after the retired loop and executable-skill operations were deleted"
         );
         assert_eq!(
             AISOperationType::all_operations().len(),
-            38,
-            "Expected 38 total operation types"
+            EXPECTED_OPERATION_COUNT,
+            "Expected {EXPECTED_OPERATION_COUNT} total operation types"
         );
     }
 
@@ -2127,8 +2194,14 @@ mod tests {
     #[test]
     fn retired_executable_skill_slot_is_not_a_runtime_operation() {
         assert_eq!(AISOperationType::from_wire_index(42), None);
-        assert_eq!(AISOperationType::wire_indexed_operations().len(), 36);
-        assert_eq!(AISOperationType::all_operations().len(), 38);
+        assert_eq!(
+            AISOperationType::wire_indexed_operations().len(),
+            EXPECTED_WIRE_INDEXED_OPERATION_COUNT
+        );
+        assert_eq!(
+            AISOperationType::all_operations().len(),
+            EXPECTED_OPERATION_COUNT
+        );
     }
 
     #[test]

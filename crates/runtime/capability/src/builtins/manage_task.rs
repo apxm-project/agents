@@ -68,7 +68,7 @@ impl ManageTaskCapability {
         }
     }
 
-    fn err(&self, message: impl Into<String>) -> apxm_core::error::RuntimeError {
+    fn err(message: impl Into<String>) -> apxm_core::error::RuntimeError {
         apxm_core::error::RuntimeError::Capability {
             capability: CAP.to_string(),
             message: message.into(),
@@ -92,7 +92,7 @@ impl ManageTaskCapability {
     /// completion policy so it survives a restart.
     fn persist(&self, goal: &Goal) -> CapabilityResult<()> {
         let json =
-            serde_json::to_string(goal).map_err(|e| self.err(format!("serialize task: {e}")))?;
+            serde_json::to_string(goal).map_err(|e| Self::err(format!("serialize task: {e}")))?;
         let row = TaskRow {
             id: goal.id.to_string(),
             parent_id: goal.parent_id.map(|p| p.to_string()),
@@ -106,7 +106,7 @@ impl ManageTaskCapability {
             json,
             updated_at_ms: now_ms(),
         };
-        self.store.upsert_task(&row).map_err(|e| self.err(e))
+        self.store.upsert_task(&row).map_err(Self::err)
     }
 
     fn goal_value(goal: &Goal) -> Value {
@@ -148,13 +148,13 @@ impl ManageTaskCapability {
         let description = args
             .get("description")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| self.err("'create' requires 'description'"))?
+            .ok_or_else(|| Self::err("'create' requires 'description'"))?
             .to_string();
         let priority = args.get("priority").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
         let parent = match args.get("parent_id").and_then(|v| v.as_str()) {
             Some(pid) => Some(
                 self.resolve(pid)
-                    .ok_or_else(|| self.err(format!("parent task '{pid}' not found")))?,
+                    .ok_or_else(|| Self::err(format!("parent task '{pid}' not found")))?,
             ),
             None => None,
         };
@@ -177,7 +177,7 @@ impl ManageTaskCapability {
         }
         if let Some(raw_policy) = args.get("completion_policy").and_then(|v| v.as_str()) {
             let policy = parse_policy(raw_policy).ok_or_else(|| {
-                self.err("'completion_policy' must be all_children, any_child, or manual")
+                Self::err("'completion_policy' must be all_children, any_child, or manual")
             })?;
             self.aam.set_completion_policy(goal.id, policy);
         }
@@ -189,10 +189,10 @@ impl ManageTaskCapability {
         let task_id = args
             .get("task_id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| self.err("'update' requires 'task_id'"))?;
+            .ok_or_else(|| Self::err("'update' requires 'task_id'"))?;
         let id = self
             .resolve(task_id)
-            .ok_or_else(|| self.err(format!("task '{task_id}' not found")))?;
+            .ok_or_else(|| Self::err(format!("task '{task_id}' not found")))?;
         let description = args
             .get("description")
             .and_then(|v| v.as_str())
@@ -203,18 +203,18 @@ impl ManageTaskCapability {
             .map(|p| p as u32);
         let status = match args.get("status").and_then(|v| v.as_str()) {
             Some(raw) => Some(parse_status(raw).ok_or_else(|| {
-                self.err("'status' must be pending, active, completed, failed, or cancelled")
+                Self::err("'status' must be pending, active, completed, failed, or cancelled")
             })?),
             None => None,
         };
         let policy = match args.get("completion_policy").and_then(|v| v.as_str()) {
             Some(raw) => Some(parse_policy(raw).ok_or_else(|| {
-                self.err("'completion_policy' must be all_children, any_child, or manual")
+                Self::err("'completion_policy' must be all_children, any_child, or manual")
             })?),
             None => None,
         };
         if description.is_none() && priority.is_none() && status.is_none() && policy.is_none() {
-            return Err(self.err(
+            return Err(Self::err(
                 "'update' requires at least one of description, priority, status, or completion_policy",
             ));
         }
@@ -227,14 +227,14 @@ impl ManageTaskCapability {
                 status,
                 TransitionLabel::custom("manage_task:update"),
             )
-            .ok_or_else(|| self.err(format!("task '{task_id}' not found")))?;
+            .ok_or_else(|| Self::err(format!("task '{task_id}' not found")))?;
         if let Some(policy) = policy {
             self.aam.set_completion_policy(id, policy);
         }
 
         let goal = self
             .fetch(id)
-            .ok_or_else(|| self.err("task vanished after update"))?;
+            .ok_or_else(|| Self::err("task vanished after update"))?;
         self.persist(&goal)?;
         if status == Some(GoalStatus::Completed) {
             self.propagate_parent_completion(&goal)?;
@@ -245,13 +245,13 @@ impl ManageTaskCapability {
     fn apply_status(&self, task_id: &str, status: GoalStatus) -> CapabilityResult<Value> {
         let id = self
             .resolve(task_id)
-            .ok_or_else(|| self.err(format!("task '{task_id}' not found")))?;
+            .ok_or_else(|| Self::err(format!("task '{task_id}' not found")))?;
         self.aam
             .update_goal_status(id, status, TransitionLabel::custom("manage_task:update"))
-            .ok_or_else(|| self.err(format!("task '{task_id}' not found")))?;
+            .ok_or_else(|| Self::err(format!("task '{task_id}' not found")))?;
         let goal = self
             .fetch(id)
-            .ok_or_else(|| self.err("task vanished after update"))?;
+            .ok_or_else(|| Self::err("task vanished after update"))?;
         self.persist(&goal)?;
 
         // Propagate completion to the parent if the policy is satisfied.
@@ -278,13 +278,13 @@ impl ManageTaskCapability {
         let task_id = args
             .get("task_id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| self.err("'get' requires 'task_id'"))?;
+            .ok_or_else(|| Self::err("'get' requires 'task_id'"))?;
         let id = self
             .resolve(task_id)
-            .ok_or_else(|| self.err(format!("task '{task_id}' not found")))?;
+            .ok_or_else(|| Self::err(format!("task '{task_id}' not found")))?;
         let goal = self
             .fetch(id)
-            .ok_or_else(|| self.err(format!("task '{task_id}' not found")))?;
+            .ok_or_else(|| Self::err(format!("task '{task_id}' not found")))?;
         Ok(Self::goal_value(&goal))
     }
 
@@ -302,7 +302,7 @@ impl CapabilityExecutor for ManageTaskCapability {
         let action = args
             .get("action")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| self.err("missing required 'action'"))?;
+            .ok_or_else(|| Self::err("missing required 'action'"))?;
         match action {
             "create" => self.do_create(&args),
             "update" => self.do_update(&args),
@@ -310,7 +310,7 @@ impl CapabilityExecutor for ManageTaskCapability {
                 let task_id = args
                     .get("task_id")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| self.err("'complete' requires 'task_id'"))?
+                    .ok_or_else(|| Self::err("'complete' requires 'task_id'"))?
                     .to_string();
                 self.apply_status(&task_id, GoalStatus::Completed)
             }
@@ -318,18 +318,22 @@ impl CapabilityExecutor for ManageTaskCapability {
                 let task_id = args
                     .get("task_id")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| self.err("'cancel' requires 'task_id'"))?
+                    .ok_or_else(|| Self::err("'cancel' requires 'task_id'"))?
                     .to_string();
                 self.apply_status(&task_id, GoalStatus::Cancelled)
             }
             "get" => self.do_get(&args),
             "list" => self.do_list(),
-            other => Err(self.err(format!("unknown action '{other}'"))),
+            other => Err(Self::err(format!("unknown action '{other}'"))),
         }
     }
 
     fn metadata(&self) -> &RuntimeCapability {
         &self.metadata
+    }
+
+    fn bind_aam(&self, aam: Aam) -> Option<std::sync::Arc<dyn CapabilityExecutor>> {
+        Some(std::sync::Arc::new(Self::new(aam, self.store.clone())))
     }
 }
 

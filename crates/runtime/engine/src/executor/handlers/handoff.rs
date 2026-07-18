@@ -1,9 +1,10 @@
 //! HANDOFF operation — transfer execution from one agent to another
 //!
-//! Reads source/target agent names from attributes. If `transfer_state` is true
-//! (the default), copies context-stack frames from the source agent into the
-//! target agent's sub-flow so it can continue with full conversational context.
-//! Emits typed handoff lifecycle events with span continuity.
+//! Reads source/target agent names from attributes. Handoffs are isolated by
+//! default. `transfer_state=true` is an explicit, typed opt-in for the limited
+//! AAM snapshot and rendered context-frame payload transfer; credentials,
+//! grants, Agent Skill selections, budgets, prompts, and parent metadata never
+//! cross the child boundary. Emits typed lifecycle events with span continuity.
 
 use super::{
     ExecutionContext, Node, Result, Value, get_string_attribute,
@@ -12,10 +13,9 @@ use super::{
     },
     read_stm_with_scope_fallback,
 };
-use crate::aam::{ScopeSpec, TransitionLabel};
-use crate::executor::ExecutorEngine;
+use crate::aam::TransitionLabel;
+use crate::executor::{ExecutorEngine, HandoffTransfer};
 use crate::flow_names::HANDOFF_FLOWS as HANDOFF_FLOW_NAMES;
-use crate::metadata_keys as metadata;
 use apxm_backends::LLMRequest;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::{belief_keys, response_keys};
@@ -26,19 +26,24 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     let source = get_string_attribute(node, graph_attrs::HANDOFF_FROM)?;
     let target = get_string_attribute(node, graph_attrs::HANDOFF_TO)?;
 
-    // transfer_state defaults to true when not specified
-    let transfer_state = node
+    // State transfer is fail-closed. Only an explicit typed `true` opts in.
+    let transfer = if node
         .attributes
         .get(graph_attrs::TRANSFER_STATE)
         .and_then(|v| v.as_bool())
-        .unwrap_or(true);
+        .unwrap_or(false)
+    {
+        HandoffTransfer::explicit_state_transfer()
+    } else {
+        HandoffTransfer::default()
+    };
 
     let payload = inputs
         .first()
         .cloned()
         .or_else(|| {
             node.attributes
-                .get("payload")
+                .get(graph_attrs::PAYLOAD)
                 .and_then(|v| v.as_string())
                 .map(|s| Value::String(s.to_string()))
         })
@@ -48,7 +53,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         execution_id = %ctx.execution_id,
         source = %source,
         target = %target,
-        transfer_state = transfer_state,
+        transfer_state = transfer.transfers_state(),
         "Executing HANDOFF operation"
     );
 
@@ -73,7 +78,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                 ),
                 (
                     graph_attrs::TRANSFER_STATE.to_string(),
-                    Value::Bool(transfer_state),
+                    Value::Bool(transfer.transfers_state()),
                 ),
             ]
             .into_iter()
@@ -82,77 +87,52 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         label,
     );
 
-    // Resolve the target agent. Prefer a registered flow; otherwise fall back
-    // to an inline-spawned agent (SPAWN_AGENT in the current flow stamps
-    // instructions+model into STM agent_info).
-    let sub_dag = {
-        let mut found = None;
-        for flow_name in HANDOFF_FLOW_NAMES {
-            if let Some(dag) = ctx.flow_registry.get_flow(&target, flow_name) {
-                found = Some(dag);
-                break;
-            }
-        }
-        match found {
-            Some(dag) => Some(dag),
-            None => {
-                if let Some(response) =
-                    handoff_inline_agent(ctx, node, &source, &target, &payload).await?
-                {
-                    finalize_handoff(ctx, node, &source, &target, response.clone(), 0);
-                    return Ok(response);
-                }
-                let available = ctx.flow_registry.flows_for_agent(&target);
-                let hint = if available.is_empty() {
-                    let all_flows = ctx.flow_registry.list_flows();
-                    if all_flows.is_empty() {
-                        format!(
-                            "HANDOFF target '{}' not found. No agents registered and no inline \
-                             SPAWN_AGENT info in STM.",
-                            target
-                        )
-                    } else {
-                        format!(
-                            "HANDOFF target '{}' not found. Registered agents: {}",
-                            target,
-                            all_flows
-                                .iter()
-                                .map(|(a, f)| format!("{}.{}", a, f))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        )
-                    }
-                } else {
-                    format!(
-                        "HANDOFF target '{}' has no 'communicate' or 'main' flow. Available: {}",
-                        target,
-                        available.join(", ")
-                    )
-                };
-                return Err(RuntimeError::Operation {
-                    op_type: node.op_type,
-                    message: hint,
-                });
-            }
-        }
-    }
-    .expect("sub_dag is Some at this point");
-
-    // Build a child context for the target agent
-    let scope_spec = if transfer_state {
-        ScopeSpec::snapshot_all()
+    // Resolve a target-owned flow or an explicit inline-agent configuration.
+    // The latter is target lookup data, not inherited child state.
+    let sub_dag = HANDOFF_FLOW_NAMES
+        .iter()
+        .find_map(|flow_name| ctx.flow_registry.get_flow(&target, flow_name));
+    let inline_agent = if sub_dag.is_none() {
+        resolve_inline_agent_config(ctx, &target).await
     } else {
-        ScopeSpec::default()
+        None
     };
 
-    let child_ctx = ctx
-        .child_with_scope(scope_spec)
-        .with_metadata(
-            metadata::PARENT_EXECUTION_ID.to_string(),
-            ctx.execution_id.clone(),
-        )
-        .with_metadata("handoff_from".to_string(), source.clone())
-        .with_metadata("handoff_to".to_string(), target.clone());
+    if sub_dag.is_none() && inline_agent.is_none() {
+        let available = ctx.flow_registry.flows_for_agent(&target);
+        let hint = if available.is_empty() {
+            let all_flows = ctx.flow_registry.list_flows();
+            if all_flows.is_empty() {
+                format!(
+                    "HANDOFF target '{}' not found. No agents registered and no inline \
+                     SPAWN_AGENT info in STM.",
+                    target
+                )
+            } else {
+                format!(
+                    "HANDOFF target '{}' not found. Registered agents: {}",
+                    target,
+                    all_flows
+                        .iter()
+                        .map(|(agent, flow)| format!("{agent}.{flow}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+        } else {
+            format!(
+                "HANDOFF target '{}' has no 'communicate' or 'main' flow. Available: {}",
+                target,
+                available.join(", ")
+            )
+        };
+        return Err(RuntimeError::Operation {
+            op_type: node.op_type,
+            message: hint,
+        });
+    }
+
+    let child_ctx = ctx.handoff_child(transfer);
 
     // Inject the payload into STM so the target flow can access it
     let _ = child_ctx
@@ -165,10 +145,10 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         )
         .await;
 
-    // If transfer_state is true and we have a context stack, assemble context
-    // from the source agent and write it into the child's STM so the target
-    // agent can see the source's conversational history.
-    if transfer_state {
+    // Context frames cross only through the explicit typed transfer. The child
+    // never receives the parent ContextStack itself, so it cannot demand-page
+    // additional prompt, memory, or selected-skill state later.
+    if transfer.transfers_context_frames() {
         if let Some(ref stack) = ctx.context_stack {
             let profile = context_profile_for_node(node)
                 .map_err(|error| context_planning_runtime_error(node, error))?;
@@ -190,9 +170,17 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         }
     }
 
-    // Execute the target agent's flow
+    if let Some(inline_agent) = inline_agent {
+        let response =
+            handoff_inline_agent(&child_ctx, node, &source, &target, &payload, inline_agent)
+                .await?;
+        finalize_handoff(ctx, node, &source, &target, response.clone(), 0);
+        return Ok(response);
+    }
+
+    // Execute the target agent's registered flow in the isolated child.
     let engine = ExecutorEngine::new(child_ctx);
-    let dag_to_execute = (*sub_dag).clone();
+    let dag_to_execute = (*sub_dag.expect("registered flow was resolved")).clone();
 
     let result = engine.execute_dag(dag_to_execute).await.map_err(|e| {
         tracing::error!(
@@ -262,43 +250,63 @@ fn finalize_handoff(
     );
 }
 
+/// Target-owned configuration resolved from an inline SPAWN_AGENT record.
+///
+/// This is target lookup data, not parent state copied into the handoff child.
+#[derive(Clone)]
+struct InlineAgentConfig {
+    system_prompt: Option<String>,
+    backend: Option<String>,
+    model: Option<String>,
+}
+
+/// Resolve the explicit configuration of an inline target agent. Returns
+/// `None` when the target has no executable inline configuration.
+async fn resolve_inline_agent_config(
+    ctx: &ExecutionContext,
+    target: &str,
+) -> Option<InlineAgentConfig> {
+    let key = format!("{}{}", belief_keys::AGENT_INFO_PREFIX, target);
+    let Value::Object(agent_info) = read_stm_with_scope_fallback(ctx, &key).await? else {
+        return None;
+    };
+    let config = InlineAgentConfig {
+        system_prompt: agent_info
+            .get(response_keys::SYSTEM_PROMPT)
+            .and_then(|value| value.as_string())
+            .cloned(),
+        backend: agent_info
+            .get(response_keys::BACKEND)
+            .and_then(|value| value.as_string())
+            .cloned(),
+        model: agent_info
+            .get(response_keys::MODEL)
+            .and_then(|value| value.as_string())
+            .cloned(),
+    };
+
+    (config.system_prompt.is_some() || config.backend.is_some() || config.model.is_some())
+        .then_some(config)
+}
+
 /// Fallback dispatch when the target agent has no registered flow.
 ///
-/// Looks up `agent_info:<target>` in STM (written by SPAWN_AGENT) and, if it
-/// has a `system_prompt` and/or `model`, dispatches the payload as a one-shot
-/// LLM ASK against that agent's config. Returns `Ok(None)` if no inline agent
-/// info is present so the caller can emit the original "not found" error.
+/// The request executes in the already-isolated HANDOFF child. Its only input
+/// from the source is the explicit payload; the supplied configuration belongs
+/// to the resolved target agent.
 async fn handoff_inline_agent(
     ctx: &ExecutionContext,
     node: &Node,
     source: &str,
     target: &str,
     payload: &Value,
-) -> Result<Option<Value>> {
-    let key = format!("{}{}", belief_keys::AGENT_INFO_PREFIX, target);
-    let agent_info = match read_stm_with_scope_fallback(ctx, &key).await {
-        Some(Value::Object(obj)) => obj,
-        _ => return Ok(None),
-    };
-
-    let system_prompt = agent_info
-        .get(response_keys::SYSTEM_PROMPT)
-        .and_then(|v| v.as_string())
-        .cloned();
-    let backend = agent_info
-        .get(response_keys::BACKEND)
-        .and_then(|v| v.as_string())
-        .cloned();
-    let model = agent_info
-        .get(response_keys::MODEL)
-        .and_then(|v| v.as_string())
-        .cloned();
-
-    // Require at least one of system_prompt/backend/model — pure metadata-only entries
-    // (e.g. ACP subprocess agents) shouldn't be auto-dispatched as LLMs.
-    if system_prompt.is_none() && backend.is_none() && model.is_none() {
-        return Ok(None);
-    }
+    config: InlineAgentConfig,
+) -> Result<Value> {
+    let InlineAgentConfig {
+        system_prompt,
+        backend,
+        model,
+    } = config;
 
     let prompt = payload.as_string().cloned().unwrap_or_default();
 
@@ -321,5 +329,5 @@ async fn handoff_inline_agent(
     );
 
     let response = execute_contextual_node_request(ctx, node, "HANDOFF", &request).await?;
-    Ok(Some(Value::String(response.content)))
+    Ok(Value::String(response.content))
 }

@@ -50,22 +50,21 @@ impl PipelineAnalysisCache {
             return Ok(());
         }
 
-        if self.store.is_none() {
-            self.store = Some(AnalysisStore::with_inputs(
+        if let Some(store) = self.store.as_mut() {
+            if !self.snapshot_is_current {
+                store.rebase_with_inputs(module.analysis_dags()?, module.analysis_inputs().clone());
+                self.snapshot_is_current = true;
+            }
+            store.materialize(required);
+        } else {
+            let mut store = AnalysisStore::with_inputs(
                 module.analysis_dags()?,
                 module.analysis_inputs().clone(),
-            ));
-            self.snapshot_is_current = true;
-        } else if !self.snapshot_is_current {
-            let store = self.store.as_mut().expect("analysis store exists");
-            store.rebase_with_inputs(module.analysis_dags()?, module.analysis_inputs().clone());
+            );
+            store.materialize(required);
+            self.store = Some(store);
             self.snapshot_is_current = true;
         }
-
-        self.store
-            .as_mut()
-            .expect("analysis store exists")
-            .materialize(required);
         Ok(())
     }
 

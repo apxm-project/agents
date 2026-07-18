@@ -80,6 +80,29 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
         .and_then(|agent| ctx.process_table.get_by_name(&agent.name))
         .map(|entry| entry.id.clone());
 
+    // Route selection validates the candidate set before any spawn-visible
+    // state is written. A rejected route must leave no phantom agent behind.
+    let route = if wants_route {
+        Some(
+            resolve_spawn_agent_route(
+                ctx,
+                node,
+                &agent_name,
+                initial_profile.clone(),
+                route_mode.as_deref(),
+                required_capabilities.clone(),
+                preferred_profiles.clone(),
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    let profile = route
+        .as_ref()
+        .and_then(|decision| decision.profile.clone())
+        .or(initial_profile);
+
     // Record agent spawn in AAM
     ctx.aam.set_belief(
         format!("{}{}", belief_keys::SPAWNED_AGENT_PREFIX, agent_name),
@@ -118,27 +141,6 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, _inputs: Vec<Value>) -
     if let Some(m) = get_optional_string_attribute(node, graph_attrs::MODEL)? {
         agent_info.insert(response_keys::MODEL.to_string(), Value::String(m));
     }
-
-    let route = if wants_route {
-        Some(
-            resolve_spawn_agent_route(
-                ctx,
-                node,
-                &agent_name,
-                initial_profile.clone(),
-                route_mode.as_deref(),
-                required_capabilities.clone(),
-                preferred_profiles.clone(),
-            )
-            .await?,
-        )
-    } else {
-        None
-    };
-    let profile = route
-        .as_ref()
-        .and_then(|decision| decision.profile.clone())
-        .or(initial_profile);
 
     // When profile is present or APXM selected one, spawn an external ACP
     // process through the configured adapter. In production this may be a
@@ -839,14 +841,16 @@ fn project_aam_context(ctx: &ExecutionContext, node: &Node, profile: &str) -> Re
 
 #[cfg(test)]
 mod tests {
-    use super::enforce_spawn_agent_admission;
+    use super::{enforce_spawn_agent_admission, execute};
     use crate::aam::Aam;
     use crate::capability::CapabilitySystem;
     use crate::executor::ExecutionContext;
     use crate::memory::{MemoryConfig, MemorySystem};
     use apxm_backends::LLMRegistry;
+    use apxm_core::constants::graph::attrs as graph_attrs;
     use apxm_core::constants::orchestration::admission as orchestration_admission;
-    use apxm_core::types::{AISOperationType, Node};
+    use apxm_core::constants::runtime::belief_keys;
+    use apxm_core::types::{AISOperationType, Node, Value};
     use std::sync::Arc;
 
     async fn test_context() -> ExecutionContext {
@@ -875,6 +879,9 @@ mod tests {
                 "grant_id": "grant_spawn_agent_fixture",
                 "capability_binding": orchestration_admission::SPAWN_AGENT,
                 "operations": ["write"],
+                "resource": {"kind": "fixture", "uri": "fixture://spawn-agent"},
+                "scope": {"kind": "fixture", "boundary": "fixture"},
+                "runtime_limits": {},
                 "expires_at": null,
                 "status": "active"
             }])
@@ -882,5 +889,49 @@ mod tests {
         );
 
         enforce_spawn_agent_admission(&ctx, &node).expect("matching grant admits process spawn");
+    }
+
+    #[tokio::test]
+    async fn rejected_route_leaves_no_spawned_agent_belief() {
+        let mut ctx = test_context().await;
+        let agent_name = "route-rejected-agent";
+        let mut node = Node::new(1, AISOperationType::SpawnAgent);
+        node.set_attribute(
+            graph_attrs::AGENT_NAME.to_string(),
+            Value::String(agent_name.to_string()),
+        );
+        node.set_attribute(
+            graph_attrs::AGENT_ROUTE.to_string(),
+            Value::String("not-auto".to_string()),
+        );
+        ctx.metadata.insert(
+            crate::metadata_keys::CAPABILITY_GRANTS.to_string(),
+            serde_json::json!([{
+                "grant_id": "grant_spawn_agent_fixture",
+                "capability_binding": orchestration_admission::SPAWN_AGENT,
+                "operations": ["write"],
+                "resource": {"kind": "fixture", "uri": "fixture://spawn-agent"},
+                "scope": {"kind": "fixture", "boundary": "fixture"},
+                "runtime_limits": {},
+                "expires_at": null,
+                "status": "active"
+            }])
+            .to_string(),
+        );
+
+        let error = execute(&ctx, &node, Vec::new())
+            .await
+            .expect_err("an unsupported route mode must fail before spawn commit");
+        assert!(error.to_string().contains("agent_route must be 'auto'"));
+        assert!(
+            ctx.aam
+                .get_belief(&format!(
+                    "{}{}",
+                    belief_keys::SPAWNED_AGENT_PREFIX,
+                    agent_name
+                ))
+                .is_none(),
+            "routing rejection must not publish a spawned-agent belief"
+        );
     }
 }

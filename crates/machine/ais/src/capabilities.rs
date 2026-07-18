@@ -12,7 +12,9 @@ pub const SEARCH_WEB: &str = "search_web";
 pub const HTTP_GET: &str = "http_get";
 pub const HTTP_POST: &str = "http_post";
 pub const CAPABILITY_DISCOVERY: &str = "capability_discovery";
+pub const LIST_LOCAL_SKILLS: &str = "list_local_skills";
 pub const SEARCH_SKILLS: &str = "search_skills";
+pub const READ_LOCAL_SKILL: &str = "read_local_skill";
 
 /// Event-driven scheduling tool (durable one-shot / recurring wakeups).
 pub const SCHEDULE: &str = "schedule";
@@ -52,7 +54,9 @@ pub const BUILTINS: &[&str] = &[
     WRITE,
     SEARCH_WEB,
     CAPABILITY_DISCOVERY,
+    LIST_LOCAL_SKILLS,
     SEARCH_SKILLS,
+    READ_LOCAL_SKILL,
     HTTP_GET,
     HTTP_POST,
     SCHEDULE,

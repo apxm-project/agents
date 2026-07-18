@@ -9,6 +9,7 @@ use apxm_backends::LLMRequest;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::error::RuntimeError;
 use apxm_core::types::execution::Node;
+use apxm_core::types::models::TokenUsage;
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -28,6 +29,7 @@ pub(crate) struct ModelCallReservation {
     reserved_tokens: u64,
     budget: Option<u64>,
     settled: bool,
+    admitted_budget: Option<crate::executor::admitted_budget::AdmittedInvocationReservation>,
 }
 
 /// A request annotated with the exact input capacity admitted by the shared
@@ -51,7 +53,19 @@ impl RequestTokenEstimate {
 
 impl ModelCallReservation {
     /// Reconcile the pre-dispatch estimate to provider-reported total usage.
-    pub(crate) fn reconcile(mut self, actual_tokens: usize) -> Result<()> {
+    pub(crate) fn reconcile(mut self, usage: &TokenUsage) -> Result<()> {
+        let total_result = self.reconcile_total(usage.total_tokens);
+        let admitted_result = self
+            .admitted_budget
+            .take()
+            .map(|reservation| reservation.reconcile(usage))
+            .transpose()
+            .map(|_| ());
+
+        total_result.and(admitted_result)
+    }
+
+    fn reconcile_total(&mut self, actual_tokens: usize) -> Result<()> {
         if self.reserved_tokens == 0 {
             self.settled = true;
             return Ok(());
@@ -103,11 +117,17 @@ pub(crate) fn admit_model_call(
 ) -> Result<ModelCallAdmission> {
     let planning = context_planning_policy(ctx)?;
     let estimated = estimate_request_tokens(planning, request)?;
-    let reservation = reserve_tokens(
+    let mut reservation = reserve_tokens(
         ctx.consumed_tokens.clone(),
         ctx.token_budget,
         estimated.total_tokens(),
     )?;
+    let admitted_budget = ctx
+        .admitted_invocation_budget
+        .as_ref()
+        .map(|budget| budget.reserve(estimated.input_tokens, estimated.output_tokens))
+        .transpose()?;
+    reservation.admitted_budget = admitted_budget;
     Ok(ModelCallAdmission {
         request: request
             .clone()
@@ -147,6 +167,7 @@ fn reserve_tokens(
             reserved_tokens: 0,
             budget,
             settled: true,
+            admitted_budget: None,
         });
     };
 
@@ -170,6 +191,7 @@ fn reserve_tokens(
                 reserved_tokens,
                 budget,
                 settled: false,
+                admitted_budget: None,
             });
         }
     }
@@ -361,7 +383,9 @@ mod tests {
         let reservation = reserve_tokens(counter.clone(), Some(100), 60).expect("reserve");
         assert_eq!(counter.load(Ordering::SeqCst), 70);
 
-        reservation.reconcile(25).expect("reconcile");
+        reservation
+            .reconcile(&TokenUsage::new(10, 15))
+            .expect("reconcile");
         assert_eq!(counter.load(Ordering::SeqCst), 35);
     }
 
@@ -416,7 +440,9 @@ mod tests {
         let counter = Arc::new(AtomicU64::new(10));
         let reservation = reserve_tokens(counter.clone(), Some(100), 60).expect("reserve");
 
-        reservation.reconcile(0).expect("retain estimate");
+        reservation
+            .reconcile(&TokenUsage::default())
+            .expect("retain estimate");
 
         assert_eq!(counter.load(Ordering::SeqCst), 70);
     }

@@ -326,7 +326,7 @@ pub async fn dispatch_warmup(
                 );
             }
             Ok(response) => {
-                if let Err(error) = admission.reservation.reconcile(response.usage.total_tokens) {
+                if let Err(error) = admission.reservation.reconcile(&response.usage) {
                     tracing::debug!(
                         "Warmup request for node {} phase {} exceeded its reserved budget: {}",
                         node_id,

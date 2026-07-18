@@ -402,6 +402,24 @@ export interface ModelContextMetricsEventPayload {
   truncated_segments?: number;
   omitted_token_budget_segments?: number;
   omitted_empty_segments?: number;
+  generation?: { "call_id": string; "attempt": number; "step_number": number; };
+  [key: string]: unknown;
+}
+
+export interface ContextLifecycleEventPayload {
+  kind: "context_lifecycle";
+  lifecycle_kind: "context_assembled" | "context_sealed" | "context_compacted" | "context_contribution";
+  context_id: string;
+  invocation_id: string;
+  context_digest: string;
+  policy_ref: string;
+  frame_count: number;
+  token_count: number;
+  content_redacted: true;
+  contributor_ref?: string;
+  authority_ref?: string;
+  contribution_digest?: string;
+  contribution_trust?: "instruction";
   [key: string]: unknown;
 }
 
@@ -653,6 +671,7 @@ export type KnownEventPayload =
   | GraphEdgeEventPayload
   | ContextCompactedEventPayload
   | ModelContextMetricsEventPayload
+  | ContextLifecycleEventPayload
   | CapabilityEffectReceiptEventPayload
   | ModelReroutedEventPayload
   | CancelledEventPayload
@@ -736,6 +755,7 @@ export const EVENT_KIND_REGISTRY: Readonly<Record<CoreEventKindName, EventKindDe
   "graph_edge": { name: "graph_edge", category: "topology", terminal: false, terminalSense: "atomic_no_delta" },
   "context_compacted": { name: "context_compacted", category: "observability", terminal: false, terminalSense: "n/a" },
   "model_context_metrics": { name: "model_context_metrics", category: "observability", terminal: false, terminalSense: "n/a" },
+  "context_lifecycle": { name: "context_lifecycle", category: "observability", terminal: false, terminalSense: "n/a" },
   "capability_effect_receipt": { name: "capability_effect_receipt", category: "observability", terminal: false, terminalSense: "n/a" },
   "model_rerouted": { name: "model_rerouted", category: "lifecycle", terminal: false, terminalSense: "n/a" },
   "cancelled": { name: "cancelled", category: "error", terminal: false, terminalSense: "n/a" },

@@ -18,7 +18,7 @@
 //! described in the agent schema, not a port of that server check.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
+use std::fmt::{self, Write};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -80,7 +80,7 @@ pub struct AgentToml {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capabilities: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub skills: Vec<String>,
+    pub allowed_agent_skills: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat: Option<toml::Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -96,70 +96,16 @@ pub struct HookToml {
     pub handler: String,
 }
 
-/// `[runtime.loop]` table for recv/re-arm looped agents.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RuntimeLoopTable {
-    pub mode: String,
-    #[serde(default)]
-    pub rearm: bool,
-    pub turn_param: String,
-}
-
-/// `[runtime]` loop: string (`host`/`in_graph`) or nested `[runtime.loop]`
-/// table (`mode`, `rearm`, `turn_param`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum LoopToml {
-    StringMode(String),
-    Config(RuntimeLoopTable),
-}
-
-/// `agent.toml`'s `[runtime]` table. `loop`/`memory_space`/`session_prefix`
-/// are the runtime settings known today; `extra` keeps the table forward-compatible
-/// with knobs added later without a schema break (same open-shape rule as `CapabilityEntry`/
-/// `PermissionEntry`'s `#[serde(flatten)] extra` pattern above).
+/// `agent.toml`'s runtime metadata. Execution control belongs to the explicit
+/// compiled entry flow, so this table intentionally has no generic extension
+/// bucket and rejects unknown settings.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RuntimeToml {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub r#loop: Option<LoopToml>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_space: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_prefix: Option<String>,
-    #[serde(flatten)]
-    pub extra: toml::Table,
-}
-
-fn runtime_has_loop(runtime: &RuntimeToml) -> bool {
-    match &runtime.r#loop {
-        Some(LoopToml::StringMode(value)) => !value.trim().is_empty(),
-        Some(LoopToml::Config(_)) => true,
-        None => false,
-    }
-}
-
-fn validate_runtime_loop(runtime: &RuntimeToml) -> Option<String> {
-    match &runtime.r#loop {
-        Some(LoopToml::StringMode(loop_mode)) => {
-            if loop_mode != "host" && loop_mode != "in_graph" {
-                Some(format!(
-                    "agent.toml: [runtime] loop '{loop_mode}' must be 'host' or 'in_graph'"
-                ))
-            } else {
-                None
-            }
-        }
-        Some(LoopToml::Config(table)) => {
-            if table.mode.trim().is_empty() {
-                Some("agent.toml: [runtime.loop] mode must not be empty".to_string())
-            } else if table.turn_param.trim().is_empty() {
-                Some("agent.toml: [runtime.loop] turn_param must not be empty".to_string())
-            } else {
-                None
-            }
-        }
-        None => None,
-    }
 }
 
 /// Projection of the optional `hierarchy.toml`.
@@ -224,7 +170,6 @@ impl FrontendLanguage {
             Self::TypeScript => ".ts",
         }
     }
-
 }
 
 impl fmt::Display for FrontendLanguage {
@@ -291,7 +236,7 @@ fn default_agent_root(id: &str) -> PathBuf {
 }
 
 fn titleize(id: &str) -> String {
-    id.split(|c: char| c == '-' || c == '_')
+    id.split(['-', '_'])
         .filter(|s| !s.is_empty())
         .map(|word| {
             let mut chars = word.chars();
@@ -406,8 +351,6 @@ fn agent_new_looped_agent(
     json_output: bool,
 ) -> Result<()> {
     let display_name = display_name.unwrap_or_else(|| titleize(id));
-    let template_skill_id = format!("{id}-skill");
-
     write_new_file(
         &root.join("agent.toml"),
         &format!(
@@ -419,14 +362,13 @@ fn agent_new_looped_agent(
              kind = \"agent\"\n\
              domain = \"{id}\"\n\
              capabilities = []\n\
-             skills = [\"{template_skill_id}\"]\n\n\
+             allowed_agent_skills = []\n\n\
              [runtime]\n\
              memory_space = \"stm\"\n\
              session_prefix = \"{id}\"\n\n\
-             [runtime.loop]\n\
-             mode = \"recv\"\n\
-             rearm = true\n\
-             turn_param = \"user_message\"\n\n\
+             [compile]\n\
+             frontend = \"typescript\"\n\
+             entry = \"src/main.ts\"\n\n\
              [prompts]\n\
              persona = \"prompts/persona.md\"\n\n\
              [chat]\n\
@@ -473,7 +415,7 @@ fn agent_new_looped_agent(
 
     write_new_file(
         &root.join("capabilities/handlers/hooks.ts"),
-        "// Sample hook handlers for a looped agent.\n\
+        "// Sample hook handlers for an explicit agent package.\n\
          export function inject_context(_ctx: unknown): null {\n  return null;\n}\n",
     )?;
 
@@ -481,14 +423,9 @@ fn agent_new_looped_agent(
         &root.join("prompts/persona.md"),
         &format!("# {display_name}\n\nDescribe this agent's persona here.\n"),
     )?;
-
     write_new_file(
-        &root.join(format!("skills/{template_skill_id}/SKILL.md")),
-        &format!("# {template_skill_id}\n\nDescribe what this skill does.\n"),
-    )?;
-    write_new_file(
-        &root.join(format!("skills/{template_skill_id}/prompt.md")),
-        "Prompt body for this skill goes here.\n",
+        &root.join("src/main.ts"),
+        "// Define this package's explicit APXM entry with @apxm/frontend.\n",
     )?;
 
     write_new_file(
@@ -767,11 +704,11 @@ fn enrich_typescript_capabilities_from_tools_manifest(
         let qualname = &entry.qualname;
         cap.extra.insert(
             "handler_module".to_string(),
-            toml::Value::String(module.to_string()),
+            toml::Value::String(module.clone()),
         );
         cap.extra.insert(
             "handler_function".to_string(),
-            toml::Value::String(qualname.to_string()),
+            toml::Value::String(qualname.clone()),
         );
     }
     Ok(())
@@ -793,33 +730,6 @@ fn write_typescript_tools_manifest(root: &Path, manifest: &HandlerManifest) -> R
         serde_json::to_vec_pretty(manifest).context("Failed to serialize handler manifest")?;
     fs::write(&path, [data.as_slice(), b"\n"].concat())
         .with_context(|| format!("Failed to write {}", path.display()))
-}
-
-fn scan_skill_ids(root: &Path) -> Result<Vec<String>> {
-    let skills_dir = root.join("skills");
-    if !skills_dir.is_dir() {
-        return Ok(Vec::new());
-    }
-    let mut out = Vec::new();
-    let mut entries: Vec<_> = fs::read_dir(&skills_dir)
-        .with_context(|| format!("Failed to read {}", skills_dir.display()))?
-        .collect::<std::io::Result<Vec<_>>>()?;
-    entries.sort_by_key(|entry| entry.path());
-    for entry in entries {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let skill_md = path.join("SKILL.md");
-        if !skill_md.is_file() {
-            bail!(
-                "skill directory '{}' is missing required SKILL.md",
-                path.display()
-            );
-        }
-        out.push(entry.file_name().to_string_lossy().into_owned());
-    }
-    Ok(out)
 }
 
 fn write_generated_capabilities_toml(path: &Path, capabilities: &[CapabilityEntry]) -> Result<()> {
@@ -871,7 +781,7 @@ fn format_toml_value(value: &toml::Value) -> String {
     }
 }
 
-fn update_agent_inventories(root: &Path, capabilities: &[String], skills: &[String]) -> Result<()> {
+fn update_agent_inventories(root: &Path, capabilities: &[String]) -> Result<()> {
     let path = root.join("agent.toml");
     let text =
         fs::read_to_string(&path).with_context(|| format!("Failed to read {}", path.display()))?;
@@ -886,15 +796,6 @@ fn update_agent_inventories(root: &Path, capabilities: &[String], skills: &[Stri
             capabilities
                 .iter()
                 .map(|cap| toml::Value::String(cap.clone()))
-                .collect(),
-        ),
-    );
-    table.insert(
-        "skills".into(),
-        toml::Value::Array(
-            skills
-                .iter()
-                .map(|skill| toml::Value::String(skill.clone()))
                 .collect(),
         ),
     );
@@ -925,13 +826,12 @@ pub(crate) fn agent_sync(root: &Path, json_output: bool) -> Result<()> {
     )?;
     write_typescript_tools_manifest(root, &tools_manifest)?;
     let capability_ids: Vec<String> = capabilities.iter().map(|cap| cap.id.clone()).collect();
-    let skill_ids = scan_skill_ids(root)?;
 
     fs::create_dir_all(root.join("capabilities"))
         .with_context(|| format!("Failed to create {}", root.join("capabilities").display()))?;
     write_generated_capabilities_toml(&root.join("capabilities/capabilities.toml"), &capabilities)?;
     write_generated_permissions_toml(&root.join("capabilities/permissions.toml"), &permissions)?;
-    update_agent_inventories(root, &capability_ids, &skill_ids)?;
+    update_agent_inventories(root, &capability_ids)?;
 
     if json_output {
         println!(
@@ -939,7 +839,6 @@ pub(crate) fn agent_sync(root: &Path, json_output: bool) -> Result<()> {
             serde_json::to_string_pretty(&serde_json::json!({
                 "path": root.display().to_string(),
                 "capabilities": capability_ids,
-                "skills": skill_ids,
                 "status": "synced",
             }))?
         );
@@ -948,11 +847,7 @@ pub(crate) fn agent_sync(root: &Path, json_output: bool) -> Result<()> {
         print_status_line(
             &agent.id,
             Status::Ok,
-            &format!(
-                "{} capabilities, {} skills regenerated",
-                capability_ids.len(),
-                skill_ids.len()
-            ),
+            &format!("{} capabilities regenerated", capability_ids.len()),
         );
     }
     Ok(())
@@ -974,7 +869,6 @@ struct LoadedAgent {
     hierarchy: Option<HierarchyToml>,
     capabilities: CapabilitiesToml,
     permissions: PermissionsToml,
-    skills: Vec<String>,
 }
 
 fn load_agent(root: &Path) -> Result<LoadedAgent> {
@@ -1007,36 +901,12 @@ fn load_agent(root: &Path) -> Result<LoadedAgent> {
         PermissionsToml::default()
     };
 
-    let mut skills = Vec::new();
-    let skills_dir = root.join("skills");
-    if skills_dir.is_dir() {
-        let mut entries: Vec<_> = fs::read_dir(&skills_dir)
-            .with_context(|| format!("Failed to read {}", skills_dir.display()))?
-            .collect::<std::io::Result<Vec<_>>>()?;
-        entries.sort_by_key(std::fs::DirEntry::path);
-        for entry in entries {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            let skill_md = path.join("SKILL.md");
-            if !skill_md.is_file() {
-                bail!(
-                    "skill directory '{}' is missing required SKILL.md",
-                    path.display()
-                );
-            }
-            skills.push(entry.file_name().to_string_lossy().into_owned());
-        }
-    }
-
     Ok(LoadedAgent {
         root: root.to_path_buf(),
         agent,
         hierarchy,
         capabilities,
         permissions,
-        skills,
     })
 }
 
@@ -1072,11 +942,7 @@ fn recognized_relpath(rel: &str) -> bool {
         ] if *id != "handlers" => true,
         ["prompts", f] => f.ends_with(".md"),
         ["python", f] => f.ends_with(".py"),
-        // Instruction catalog resources only. Executable package metadata and
-        // artifacts live at the program/workflow package layer, not under
-        // `skills/<id>/`.
-        ["skills", _id, f] => f.ends_with(".md"),
-        ["skills", _id, "examples", f] => f.ends_with(".md") || f.ends_with(".air"),
+        ["src", .., f] => f.ends_with(".ts"),
         ["examples", f] => f.ends_with(".md"),
         ["tests", f] => !f.is_empty(),
         ["shared", f] => !f.is_empty(),
@@ -1088,7 +954,7 @@ fn recognized_relpath(rel: &str) -> bool {
 /// (relative-path, absolute-path) pair, sorted by relative path.
 fn walk_recognized_files(root: &Path) -> Result<Vec<(String, PathBuf)>> {
     let mut out = Vec::new();
-    for entry in walkdir::WalkDir::new(root).into_iter() {
+    for entry in walkdir::WalkDir::new(root) {
         let entry = entry.with_context(|| format!("Failed to walk {}", root.display()))?;
         if !entry.file_type().is_file() {
             continue;
@@ -1177,9 +1043,8 @@ fn load_org_global_capabilities(org_root: &Path) -> Result<BTreeSet<String>> {
 /// capabilities must resolve into `capabilities.toml`, every
 /// `capabilities.toml` entry must have a matching `permissions.toml` entry
 /// (the "joined capability" — otherwise it "is not a capability and fails
-/// lint"), and every `agent.toml` skill reference must be a real
-/// `skills/<id>/` instruction directory. Executable capability use is declared
-/// by program/workflow package metadata, not by instruction skill resources.
+/// lint"). Executable capability use is declared by program/workflow package
+/// metadata, while Agent Skill selection is owned by the Server catalogue.
 /// Returns human-readable error strings; empty = clean.
 fn check_capability_drift(pkg: &LoadedAgent, org_globals: &BTreeSet<String>) -> Vec<String> {
     let mut errors = Vec::new();
@@ -1236,22 +1101,11 @@ fn check_capability_drift(pkg: &LoadedAgent, org_globals: &BTreeSet<String>) -> 
         }
     }
 
-    // agent.toml skills must be real skills/<id>/ instruction directories.
-    let skill_ids: BTreeSet<&str> = pkg.skills.iter().map(String::as_str).collect();
-    for skill_ref in &pkg.agent.skills {
-        if !skill_ids.contains(skill_ref.as_str()) {
-            errors.push(format!(
-                "agent.toml declares local skill '{skill_ref}' with no matching skills/{skill_ref}/ \
-                 instruction directory"
-            ));
-        }
-    }
-
     errors
 }
 
 /// Structural + required-field checks for `agent.v1`: id/version, source
-/// declaration, runtime loop, hierarchy, skills, and hook vocabulary.
+/// declaration, hierarchy, instruction inventory, and hook vocabulary.
 fn check_schema_shape(pkg: &LoadedAgent) -> Vec<String> {
     let mut errors = Vec::new();
 
@@ -1274,19 +1128,10 @@ fn check_schema_shape(pkg: &LoadedAgent) -> Vec<String> {
         )),
     }
     match declared_compile_source(&pkg.agent) {
-        Ok(None) => {
-            if pkg
-                .agent
-                .runtime
-                .as_ref()
-                .is_none_or(|runtime| !runtime_has_loop(runtime))
-            {
-                errors.push(
-                    "agent.toml: an entry-less declarative package requires [runtime] loop"
-                        .to_string(),
-                );
-            }
-        }
+        Ok(None) => errors.push(
+            "agent.toml: an explicit [compile].entry is required; runtime loop declarations are unsupported"
+                .to_string(),
+        ),
         Ok(Some((entry, frontend))) => {
             let entry_path = Path::new(entry);
             if entry_path.is_absolute()
@@ -1315,11 +1160,6 @@ fn check_schema_shape(pkg: &LoadedAgent) -> Vec<String> {
         }
         Err(error) => errors.push(error),
     }
-    if let Some(runtime) = &pkg.agent.runtime {
-        if let Some(message) = validate_runtime_loop(runtime) {
-            errors.push(message);
-        }
-    }
     for hook in &pkg.agent.hooks {
         const VALID_EVENTS: &[&str] = &[
             "session_start",
@@ -1343,12 +1183,11 @@ fn check_schema_shape(pkg: &LoadedAgent) -> Vec<String> {
             ));
         }
     }
-    if let Some(hierarchy) = &pkg.hierarchy {
-        if let Some(parent) = &hierarchy.parent {
-            if parent.trim().is_empty() {
-                errors.push("hierarchy.toml: parent must not be empty when present".to_string());
-            }
-        }
+    if let Some(hierarchy) = &pkg.hierarchy
+        && let Some(parent) = &hierarchy.parent
+        && parent.trim().is_empty()
+    {
+        errors.push("hierarchy.toml: parent must not be empty when present".to_string());
     }
     errors
 }
@@ -1391,7 +1230,7 @@ fn extract_kwarg(args: &str, key: &str) -> Option<String> {
     // Accept `key = "value"` / `key='value'`.
     let needle = key;
     let mut search_from = 0;
-    while let Some(rel) = args[search_from..].find(&needle) {
+    while let Some(rel) = args[search_from..].find(needle) {
         let pos = search_from + rel;
         // Ensure this is a whole keyword token, not a substring of another
         // identifier (e.g. "match" inside "rematch").
@@ -1406,10 +1245,10 @@ fn extract_kwarg(args: &str, key: &str) -> Option<String> {
         if let Some(rest) = rest.strip_prefix('=') {
             let rest = rest.trim_start();
             for quote in ['"', '\''] {
-                if let Some(rest) = rest.strip_prefix(quote) {
-                    if let Some(end) = rest.find(quote) {
-                        return Some(rest[..end].to_string());
-                    }
+                if let Some(rest) = rest.strip_prefix(quote)
+                    && let Some(end) = rest.find(quote)
+                {
+                    return Some(rest[..end].to_string());
                 }
             }
         }
@@ -1638,7 +1477,11 @@ fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     let digest = hasher.finalize();
-    digest.iter().map(|b| format!("{b:02x}")).collect()
+    let mut encoded = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        write!(&mut encoded, "{byte:02x}").expect("writing to a string cannot fail");
+    }
+    encoded
 }
 
 /// Genesis `prev_hash` for the first chain link — 64 zeros, per .
@@ -1669,8 +1512,7 @@ fn compute_integrity(files: &BTreeMap<String, String>) -> IntegrityToml {
     }
     let hash = chain
         .last()
-        .map(|l| l.hash.clone())
-        .unwrap_or_else(|| genesis.to_string());
+        .map_or_else(|| genesis.to_string(), |link| link.hash.clone());
     IntegrityToml {
         algorithm: "sha256".to_string(),
         hash,
@@ -1840,9 +1682,8 @@ fn compile_agent_handlers(root: &Path) -> Result<()> {
 pub(crate) fn agent_build(path: &Path, json_output: bool) -> Result<()> {
     agent_sync(path, false)?;
     let pkg = load_agent(path)?;
-    // Hash the post-sync package metadata and instruction resources. Executable
-    // program content is compiled from the package-level [compile] entry, not
-    // from legacy skills/<id>/ executable artifacts.
+    // Hash the post-sync package metadata and instruction resources. Program
+    // content is compiled from the package-level [compile] entry.
     let files = digest_recognized_files(path)?;
     let integrity = compute_integrity(&files);
 
@@ -1994,8 +1835,6 @@ mod tests {
             "package.json",
             "tsconfig.json",
             "prompts/persona.md",
-            "skills/demo-skill/SKILL.md",
-            "skills/demo-skill/prompt.md",
             "examples/basic.md",
             "tests/README.md",
         ] {
@@ -2006,24 +1845,17 @@ mod tests {
         assert_eq!(agent.id, "demo");
         assert_eq!(agent.version, "0.1.0");
         assert_eq!(agent.schema_version.as_deref(), Some(AGENT_SCHEMA_V1));
-        assert!(agent.compile.is_none());
+        assert_eq!(
+            agent
+                .compile
+                .as_ref()
+                .and_then(|compile| compile.entry.as_deref()),
+            Some("src/main.ts")
+        );
 
         assert_eq!(agent.kind.as_deref(), Some("agent"));
         assert_eq!(agent.capabilities, vec!["read", "write"]);
-        assert_eq!(agent.skills, vec!["demo-skill".to_string()]);
-        match agent
-            .runtime
-            .as_ref()
-            .and_then(|runtime| runtime.r#loop.as_ref())
-        {
-            Some(LoopToml::Config(table)) => {
-                assert_eq!(table.mode, "recv");
-                assert!(table.rearm);
-                assert_eq!(table.turn_param, "user_message");
-            }
-            other => panic!("expected [runtime.loop] table, got {other:?}"),
-        }
-
+        assert!(agent.allowed_agent_skills.is_empty());
         // The freshly scaffolded tree must lint clean (no capability
         // declared => nothing to join, no drift).
         agent_lint(&root, None, true).expect("scaffolded agent should lint clean");
@@ -2101,12 +1933,7 @@ mod tests {
         scaffold(&root, "drift");
 
         // agent.toml references a capability that capabilities.toml never declares.
-        update_agent_inventories(
-            &root,
-            &["drift.undeclared".to_string()],
-            &["drift-skill".to_string()],
-        )
-        .unwrap();
+        update_agent_inventories(&root, &["drift.undeclared".to_string()]).unwrap();
 
         let err = agent_lint(&root, None, true).expect_err("drift must fail lint");
         assert!(err.to_string().contains("lint error"));
@@ -2293,16 +2120,6 @@ mod tests {
     }
 
     #[test]
-    fn lint_allows_no_entry_with_runtime_loop() {
-        // Pure-declarative looped agent: no entry file, [runtime.loop] declared.
-        let tmp = tempdir().unwrap();
-        let root = tmp.path().join("declarative");
-        scaffold(&root, "declarative");
-
-        agent_lint(&root, None, true).expect("entry-less declarative agent should lint clean");
-    }
-
-    #[test]
     fn lint_rejects_unrecognized_files() {
         let tmp = tempdir().unwrap();
         let root = tmp.path().join("stray");
@@ -2310,6 +2127,12 @@ mod tests {
         fs::write(root.join("not-a-real-file.txt"), "nope").unwrap();
         let err = agent_lint(&root, None, true).expect_err("unrecognized file must fail lint");
         assert!(err.to_string().contains("lint error"));
+    }
+
+    #[test]
+    fn agent_package_rejects_local_skill_resources() {
+        assert!(!recognized_relpath("skills/review/SKILL.md"));
+        assert!(!recognized_relpath("skills/review/resources/guide.md"));
     }
 
     #[test]
@@ -2380,16 +2203,16 @@ mod tests {
 
     #[cfg(feature = "driver")]
     #[test]
-    fn studio_style_source_package_builds_and_compiles_without_skill_toml() {
+    fn studio_style_source_package_builds_with_server_selected_skill_policy() {
         let tmp = tempdir().unwrap();
         let root = tmp.path().join("studio-generated");
         fs::create_dir_all(root.join("python")).unwrap();
-        fs::create_dir_all(root.join("skills/studio-instructions")).unwrap();
         fs::write(
             root.join("agent.toml"),
             "id = \"studio-generated\"\n\
              version = \"0.1.0\"\n\
-             schema_version = \"apxm.agent.v1\"\n\n\
+             schema_version = \"apxm.agent.v1\"\n\
+             allowed_agent_skills = [\"studio-instructions\"]\n\n\
              [compile]\n\
              entry = \"python/main.py\"\n\
              frontend = \"python\"\n",
@@ -2406,18 +2229,12 @@ mod tests {
              \x20\x20\x20\x20emit_air_if_requested(studio_workflow)\n",
         )
         .unwrap();
-        fs::write(
-            root.join("skills/studio-instructions/SKILL.md"),
-            "# Studio Instructions\n\nUse for Studio-authored workflows.\n",
-        )
-        .unwrap();
-
-        agent_build(&root, true).expect("package build must not require skill.toml");
-
-        assert!(!root.join("skills/studio-instructions/skill.toml").exists());
-        assert!(!root.join("skills/studio-instructions/skill.apxmobj").exists());
+        agent_build(&root, true).expect("package with Server-selected skill policy must build");
         let agent: AgentToml = read_toml(&root.join("agent.toml")).unwrap();
-        assert_eq!(agent.skills, vec!["studio-instructions".to_string()]);
+        assert_eq!(
+            agent.allowed_agent_skills,
+            vec!["studio-instructions".to_string()]
+        );
         assert_eq!(
             agent
                 .compile
@@ -2426,23 +2243,23 @@ mod tests {
             Some("python/main.py")
         );
 
-        let air = super::super::compile::emit_air_from_agent(
-            &root,
-            &apxm_ais::chat::CompileServiceOptions {
-                system_prompt: None,
-                backend: None,
-                model: None,
-                context_profile: None,
-                max_output_tokens: None,
-                effort: None,
-                tools: false,
-                skills: true,
-                capability_discovery: false,
-                authoring: true,
-            },
-        )
-        .expect("compile-service must compile the package-level program entry");
+        let air = super::super::compile::emit_air_from_agent(&root)
+            .expect("compile-service must compile the package-level program entry");
         assert!(air.contains("Answer from Studio package metadata."));
+    }
+
+    #[test]
+    fn sync_preserves_only_package_capability_inventory() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("catalogue");
+        scaffold(&root, "catalogue");
+        let manifest = fs::read_to_string(root.join("agent.toml")).expect("agent manifest");
+
+        assert!(
+            !manifest
+                .lines()
+                .any(|line| line.trim_start().starts_with("skills ="))
+        );
     }
 
     #[test]
@@ -2459,7 +2276,7 @@ mod tests {
         let dest = fake_home.path().join("agents").join("installable");
         assert!(dest.join("agent.toml").is_file());
         assert!(dest.join("integrity.toml").is_file());
-        assert!(dest.join("skills/installable-skill/SKILL.md").is_file());
+        assert!(!dest.join("skills").exists());
 
         // The real home directory must never be touched by this test.
         let real_home = dirs::home_dir().unwrap_or_default();

@@ -5,44 +5,50 @@ import {
   LifecycleEvent,
   type HookCall,
   type HookContext,
-  type HookDecision,
 } from "@apxm/frontend";
 
-import {
-  prompt,
-  renderStudioContextSupplement,
-  scrubSecrets,
-  SUMMARY_KEY,
-} from "./context.js";
+const SUMMARY_KEY = "gao:conversation:summary";
+const SUMMARY_OUTPUT_TOKEN_LIMIT = 1_024;
+const SENSITIVE_KEY =
+  /(?:api[_-]?key|token|secret|password|credential|authorization|auth)/i;
+const ASSIGNMENT_SECRET =
+  /(\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|credential|authorization|auth)\b\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}\]\r\n]+)/gi;
+const BEARER_SECRET = /\bbearer\s+[^\s,;}\]]+/gi;
 
-declare module "@apxm/frontend" {
-  interface HookContext {
-    defer(): HookDecision;
-  }
+function scrubText(value: string): string {
+  return value
+    .replace(BEARER_SECRET, "<redacted>")
+    .replace(ASSIGNMENT_SECRET, "$1<redacted>");
 }
 
-export const inject_context = hook({
-  on: LifecycleEvent.PRE_TURN,
-  mode: HookMode.OBSERVE,
-})(async (ctx: HookContext) => {
-  const supplement = await renderStudioContextSupplement(ctx, ctx.context);
-  return ctx.prependSystem(supplement);
-});
-
-export const inject_apxm_context = hook({
-  on: LifecycleEvent.PRE_ASK,
-  mode: HookMode.OBSERVE,
-})(async (ctx: HookContext) => {
-  const recent = await ctx.recallWindow(4);
-  const summary = await ctx.recall(SUMMARY_KEY);
-  const context = [
-    prompt("terminology"),
-    prompt("workflow_authoring"),
-    `Recent context:\n${recent}`,
-    `Running summary:\n${String(summary ?? "")}`,
-  ].join("\n\n");
-  return ctx.prependSystem(context);
-});
+function scrubSecrets(
+  value: unknown,
+  options: { maxStringChars?: number } = {},
+  key = "",
+): unknown {
+  if (key && SENSITIVE_KEY.test(key)) {
+    return "<redacted>";
+  }
+  if (typeof value === "string") {
+    const scrubbed = scrubText(value);
+    const maxStringChars = options.maxStringChars;
+    return maxStringChars != null && scrubbed.length > maxStringChars
+      ? `${scrubbed.slice(0, maxStringChars)}…`
+      : scrubbed;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => scrubSecrets(item, options));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([entryKey, entryValue]) => [
+        entryKey,
+        scrubSecrets(entryValue, options, entryKey),
+      ]),
+    );
+  }
+  return value;
+}
 
 export const gate_compose_workflow = hook({
   on: LifecycleEvent.PRE_CAP,
@@ -79,6 +85,7 @@ export const compact_conversation = hook({
   const summary = await ctx.ask(
     "Update Gao's running summary. Preserve user goals, workflow decisions, APXM terms, tool grants, and open questions.\n\n" +
       window,
+    SUMMARY_OUTPUT_TOKEN_LIMIT,
     "You maintain a compact APXM workflow-design session summary.",
   );
   ctx.umem(SUMMARY_KEY, summary);

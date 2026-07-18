@@ -47,6 +47,7 @@ tracing.workspace = true
 reqwest.workspace = true
 base64 = "0.22"
 blake3 = { workspace = true }
+sha2.workspace = true
 ed25519-dalek.workspace = true
 
 # Utilities

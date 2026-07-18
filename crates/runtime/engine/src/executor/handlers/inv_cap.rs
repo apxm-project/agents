@@ -9,91 +9,31 @@ use super::{
     ExecutionContext, Node, Result, Value, get_optional_u64_attribute, get_string_attribute,
     template::{input_names_from_node, render_named},
 };
-use crate::capability::CapabilitySandboxPreflight;
-use crate::executor::capability_admission::metadata_admits_write;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
 use apxm_core::types::AISOperationType;
 
-/// Invoke-site capability admission — enforced for EVERY tool call regardless of how
-/// the execution was launched. A direct (write) capability runs only when this
-/// execution's effective capability grants admit its tool binding.
-pub(in crate::executor::handlers) async fn enforce_write_boundary(
+/// Apply the complete capability-admission boundary before a registered script
+/// worker receives a call. ASK and INV_CAP both use this seam so script policy,
+/// grants, consent, budget, credential injection, and hook-edited arguments
+/// cannot diverge by dispatch path.
+pub(in crate::executor::handlers) async fn admit_script_capability_call(
     ctx: &ExecutionContext,
     name: &str,
-    args: &HashMap<String, Value>,
-    unregistered_requires_delegation: bool,
+    args: HashMap<String, Value>,
+    requires_approval: bool,
     call_id: &str,
-) -> Result<()> {
-    let caps = &ctx.capability_system;
-    if caps.has_capability(name) {
-        if caps.is_read_only(name) {
-            return Ok(());
-        }
-        match caps.sandbox_preflight(name, args) {
-            Ok(CapabilitySandboxPreflight::Sandboxed { .. }) => return Ok(()),
-            Ok(CapabilitySandboxPreflight::Direct) => {}
-            // Pre-flight error -> fail-closed: treat as a write needing admission.
-            Err(_) => {}
-        }
-    } else if !unregistered_requires_delegation {
-        return Ok(());
-    }
-    if metadata_admits_write(&ctx.metadata, name) {
-        if ctx.host_id.is_some() {
-            use apxm_core::types::consent::{
-                ConsentDecision, PermissionPrompt, PromptMode, RiskLevel,
-            };
-            let expires_at = (chrono::Utc::now() + chrono::Duration::seconds(30)).to_rfc3339();
-            let prompt = PermissionPrompt {
-                prompt_id: uuid::Uuid::new_v4().to_string(),
-                call_id: call_id.to_string(),
-                grant_id: "runtime-grant".to_string(),
-                capability_id: name.to_string(),
-                capability_binding: name.to_string(),
-                host_id: ctx.host_id.clone(),
-                operation: "invoke".to_string(),
-                mode: PromptMode::Confirm,
-                subject: None,
-                args_digest: format!("args-len:{}", args.len()),
-                args_preview: serde_json::json!({ "arg_count": args.len() }),
-                risk_level: RiskLevel::High,
-                expires_at,
-                channel_id: None,
-                description: Some(format!("Host capability '{}' requires consent", name)),
-                target_ref: None,
-                resource: None,
-                diff_ref: None,
-            };
-            match ctx
-                .consent_broker
-                .request_consent(prompt, std::time::Duration::from_secs(30))
-                .await
-            {
-                ConsentDecision::Approved { .. } => Ok(()),
-                ConsentDecision::Denied { reason } => Err(RuntimeError::Capability {
-                    capability: name.to_string(),
-                    message: reason,
-                }),
-                ConsentDecision::Expired => Err(RuntimeError::Capability {
-                    capability: name.to_string(),
-                    message: "consent timed out".to_string(),
-                }),
-            }
-        } else {
-            Ok(())
-        }
-    } else {
-        Err(RuntimeError::Capability {
-            capability: name.to_string(),
-            message: format!(
-                "capability '{}' performs writes and is missing a capability grant; \
- mint a grant for its tool binding and present grant_* ids in capability_grant_ids",
-                name
-            ),
-        })
-    }
+    tool_call_correlation: Option<&apxm_core::events::payload::ToolCallCorrelation>,
+) -> Result<HashMap<String, Value>> {
+    ctx.admit_capability_call(
+        name,
+        args,
+        requires_approval,
+        call_id,
+        tool_call_correlation,
+    )
+    .await
 }
 
 /// Execute INV_CAP operation - Invoke a registered capability
@@ -131,18 +71,10 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
     let timeout_ms = get_optional_u64_attribute(node, graph_attrs::TIMEOUT_MS)?
         .unwrap_or(apxm_core::constants::defaults::DEFAULT_TIMEOUT_MS);
 
-    // Check if this capability is backed by a Python handler.
-    let python_handler_id = node
-        .attributes
-        .get(graph_attrs::PYTHON_HANDLER_ID)
-        .and_then(|v| v.as_string())
-        .map(|s| s.to_string());
-
     tracing::debug!(
      capability = %capability_name,
      inputs = inputs.len(),
      timeout_ms = timeout_ms,
-     python_handler = ?python_handler_id,
      "Executing INV_CAP operation"
     );
 
@@ -177,12 +109,6 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
                 .to_string(),
         });
     }
-    super::llm::tool_dispatch::inject_visible_skill_imports(
-        &capability_name,
-        &mut args,
-        &ctx.metadata,
-    );
-
     // Check cancellation before expensive capability invocation
     if ctx.cancellation_token.is_cancelled() {
         return Err(RuntimeError::SchedulerCancelled);
@@ -209,37 +135,25 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         emitter.emit_tool_start(&capability_name, &args);
     }
 
-    let script_handler =
-        python_handler_id.is_some() || script_handler_for_capability(ctx, &capability_name);
+    let script_handler = script_handler_for_capability(ctx, &capability_name);
     let script_policy = if script_handler {
         Some(super::llm::script_tool_policy(ctx, &capability_name)?)
     } else {
         None
     };
 
-    enforce_write_boundary(
-        ctx,
-        &capability_name,
-        &args,
-        script_policy.is_some_and(|policy| !policy.read_only),
-        &call_id,
-    )
-    .await?;
-
     let raw = if let Some(policy) = script_policy {
-        let admitted_args = ctx
-            .admit_capability_call(
-                &capability_name,
-                args,
-                policy.requires_approval,
-                &call_id,
-                None,
-            )
-            .await?;
-        tokio::select! {
-        result = execute_script_handler(ctx, &capability_name, &admitted_args, timeout) => result?,
-        _ = ctx.cancellation_token.cancelled() => return Err(RuntimeError::SchedulerCancelled),
-        }
+        let admitted_args = admit_script_capability_call(
+            ctx,
+            &capability_name,
+            args,
+            policy.requires_approval,
+            &call_id,
+            None,
+        )
+        .await?;
+        execute_admitted_script_handler(ctx, &capability_name, &admitted_args, timeout, &call_id)
+            .await?
     } else {
         // Write serialization on the GRAPH path: the dataflow scheduler runs
         // independent inv_cap nodes concurrently and serializes only by data
@@ -257,12 +171,11 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
             None
         };
         let outcome = tokio::select! {
-         result = ctx.invoke_capability_with_timeout_for_call(
+         result = ctx.invoke_capability_for_node(
+             node,
              &capability_name,
              args,
              timeout,
-             &call_id,
-             None,
          ) => {
          result.map_err(|e| {
          tracing::error!(
@@ -397,6 +310,7 @@ async fn execute_script_handler(
     capability_name: &str,
     args: &HashMap<String, Value>,
     timeout: std::time::Duration,
+    call_id: &str,
 ) -> Result<Value> {
     let json_args =
         serde_json::to_value(args).map_err(|e| RuntimeError::Serialization(e.to_string()))?;
@@ -409,7 +323,7 @@ async fn execute_script_handler(
 
     if let Some(bridge) = ctx.python_handler_bridge.as_ref() {
         if bridge.has_tool(capability_name) {
-            let json_result = bridge.call(capability_name, json_args.clone(), timeout).await.map_err(|e| {
+            let json_result = bridge.call_with_call_id(capability_name, json_args.clone(), timeout, Some(call_id)).await.map_err(|e| {
  tracing::error!(capability = %capability_name, error = %e, "Python tool invocation failed");
  RuntimeError::Capability {
  capability: capability_name.to_string(),
@@ -425,12 +339,11 @@ async fn execute_script_handler(
             .as_ref()
             .ok_or_else(|| RuntimeError::Capability {
                 capability: capability_name.to_string(),
-                message: "INV_CAP has script handler id but no handler bridge is configured"
-                    .to_string(),
+                message: "script capability has no handler bridge configured".to_string(),
             })?;
 
     let json_result = bridge
-        .call(capability_name, json_args, timeout)
+        .call_with_call_id(capability_name, json_args, timeout, Some(call_id))
         .await
         .map_err(|e| {
             tracing::error!(
@@ -445,6 +358,21 @@ async fn execute_script_handler(
         })?;
 
     json_to_value(json_result)
+}
+
+/// Execute an already-admitted script call with the same cancellation behavior
+/// for every dispatch surface.
+pub(in crate::executor::handlers) async fn execute_admitted_script_handler(
+    ctx: &ExecutionContext,
+    capability_name: &str,
+    args: &HashMap<String, Value>,
+    timeout: std::time::Duration,
+    call_id: &str,
+) -> Result<Value> {
+    tokio::select! {
+        result = execute_script_handler(ctx, capability_name, args, timeout, call_id) => result,
+        _ = ctx.cancellation_token.cancelled() => Err(RuntimeError::SchedulerCancelled),
+    }
 }
 
 /// Convert a `serde_json::Value` to the runtime `Value` type.
@@ -482,6 +410,77 @@ fn json_to_value(v: serde_json::Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::aam::Aam;
+    use crate::capability::CapabilitySystem;
+    use crate::memory::{MemoryConfig, MemorySystem};
+    use crate::python_tools::{PythonHandlerBridge, PythonHandlerRegistry};
+    use crate::typescript_tools::{TypeScriptHandlerBridge, TypeScriptHandlerRegistry};
+    use apxm_backends::LLMRegistry;
+    use apxm_core::types::{
+        HANDLER_MANIFEST_HANDLER_ID_HEX_LENGTH, HANDLER_MANIFEST_HANDLER_ID_PREFIX,
+        HANDLER_MANIFEST_SOURCE_DIRECTORY, HandlerDescriptor, HandlerKind, HandlerLanguage,
+        HandlerManifest, HandlerSource,
+    };
+    use std::sync::Arc;
+
+    fn script_tool_descriptor(language: HandlerLanguage, capability: &str) -> HandlerDescriptor {
+        let extension = match language {
+            HandlerLanguage::Python => "py",
+            HandlerLanguage::TypeScript => "ts",
+        };
+        let content = match language {
+            HandlerLanguage::Python => "def invoke():\n    return None\n",
+            HandlerLanguage::TypeScript => "export function invoke() { return null; }\n",
+        };
+        HandlerDescriptor {
+            kind: HandlerKind::Tool,
+            language,
+            handler_id: format!(
+                "{HANDLER_MANIFEST_HANDLER_ID_PREFIX}{}",
+                "a".repeat(HANDLER_MANIFEST_HANDLER_ID_HEX_LENGTH)
+            ),
+            module: "admission_fixture".to_string(),
+            qualname: "invoke".to_string(),
+            name: capability.to_string(),
+            source: HandlerSource {
+                artifact_path: format!("{HANDLER_MANIFEST_SOURCE_DIRECTORY}/invoke.{extension}"),
+                content: content.to_string(),
+            },
+            description: String::new(),
+            schema: serde_json::json!({}),
+            read_only: Some(false),
+            requires_approval: Some(false),
+            event: None,
+            r#match: None,
+            mode: None,
+        }
+    }
+
+    async fn script_context(language: HandlerLanguage, capability: &str) -> ExecutionContext {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("memory"),
+        );
+        let aam = Aam::new();
+        let capabilities = Arc::new(CapabilitySystem::with_aam(aam.clone()));
+        let context =
+            ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), capabilities, aam);
+        let manifest = HandlerManifest::new(vec![script_tool_descriptor(language, capability)]);
+        match language {
+            HandlerLanguage::Python => {
+                context.with_python_handler_bridge(Arc::new(PythonHandlerBridge::new(
+                    PythonHandlerRegistry::from_manifest(manifest).expect("python registry"),
+                )))
+            }
+            HandlerLanguage::TypeScript => {
+                context.with_typescript_handler_bridge(Arc::new(TypeScriptHandlerBridge::new(
+                    TypeScriptHandlerRegistry::from_manifest(manifest)
+                        .expect("typescript registry"),
+                )))
+            }
+        }
+    }
 
     #[test]
     fn args_from_params_json_preserves_structured_values() {
@@ -497,6 +496,30 @@ mod tests {
         );
         assert!(matches!(args.get("headers"), Some(Value::Object(_))));
         assert!(matches!(args.get("items"), Some(Value::Array(_))));
+    }
+
+    #[tokio::test]
+    async fn inv_cap_script_bridges_reject_missing_grants_before_worker_dispatch() {
+        for language in [HandlerLanguage::Python, HandlerLanguage::TypeScript] {
+            let capability = match language {
+                HandlerLanguage::Python => "fixture.python.write",
+                HandlerLanguage::TypeScript => "fixture.typescript.write",
+            };
+            let context = script_context(language, capability).await;
+            let mut node = Node::new(1, AISOperationType::InvCap);
+            node.set_attribute(
+                graph_attrs::CAPABILITY.to_string(),
+                Value::String(capability.to_string()),
+            );
+
+            let error = execute(&context, &node, Vec::new())
+                .await
+                .expect_err("ungranted script tool must not reach its worker bridge");
+            assert!(
+                error.to_string().contains("missing a capability grant"),
+                "unexpected {language:?} bridge admission error: {error}"
+            );
+        }
     }
 
     #[test]
@@ -542,7 +565,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn write_boundary_denies_when_consent_broker_is_unavailable() {
+    async fn script_admission_denies_when_consent_broker_is_unavailable() {
         use crate::aam::Aam;
         use crate::capability::CapabilitySystem;
         use crate::memory::{MemoryConfig, MemorySystem};
@@ -565,16 +588,25 @@ mod tests {
                 "grant_id": "grant_fixture",
                 "capability_binding": "script-write",
                 "operations": ["write"],
+                "resource": {"kind": "fixture", "uri": "fixture://script-write"},
+                "scope": {"kind": "fixture", "boundary": "fixture"},
+                "runtime_limits": {},
                 "expires_at": null,
                 "status": "active"
             }])
             .to_string(),
         );
 
-        let error =
-            enforce_write_boundary(&ctx, "script-write", &HashMap::new(), true, "call-denied")
-                .await
-                .expect_err("missing broker must deny approval-gated write");
+        let error = admit_script_capability_call(
+            &ctx,
+            "script-write",
+            HashMap::new(),
+            true,
+            "call-denied",
+            None,
+        )
+        .await
+        .expect_err("missing broker must deny approval-gated script call");
 
         assert!(matches!(
             error,
@@ -587,9 +619,9 @@ mod tests {
 
     /// **Approved protected-path write denial:** an
     /// operator-set `blocked_paths` entry on `WriteCapability` is a floor a
-    /// consent `Approved` decision cannot reach. `enforce_write_boundary`
-    /// (the admission gate above) approves this call via the
-    /// `StubBroker`/`ConsentDecision::Approved` path — proving the eventual
+    /// consent `Approved` decision cannot reach. The typed capability
+    /// admission accepts this call via the `StubBroker`/`ConsentDecision::Approved`
+    /// path, proving the eventual
     /// denial below comes from `WriteCapability::validate_path_and_content`
     /// running downstream, independent of and never overridden by the
     /// approval outcome.
@@ -644,13 +676,14 @@ mod tests {
             .expect("register write capability");
 
         // Runtime-minted, active, mutating grant admitting a direct write to
-        // the `write` capability binding — the admission gate
-        // (`enforce_write_boundary`) requires this before it even asks the
-        // consent broker.
+        // the `write` capability binding before typed approval admission.
         let grants = serde_json::json!([{
             "grant_id": "grant_fixture",
             "capability_binding": "write",
             "operations": ["write"],
+            "resource": {"kind": "fixture", "uri": "fixture://write"},
+            "scope": {"kind": "fixture", "boundary": "fixture"},
+            "runtime_limits": {},
             "expires_at": null,
             "status": "active"
         }])

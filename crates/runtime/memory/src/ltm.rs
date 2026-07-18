@@ -40,10 +40,10 @@ impl LongTermMemory {
     }
 
     /// Create in-memory LTM (for testing)
-    pub async fn in_memory() -> Result<Self> {
-        Ok(Self {
+    pub fn in_memory() -> impl std::future::Future<Output = Result<Self>> {
+        std::future::ready(Ok(Self {
             backend: Arc::new(InMemoryBackend::unlimited()),
-        })
+        }))
     }
 
     /// Store a value in LTM

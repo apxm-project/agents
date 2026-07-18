@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import {
   GATE_LIFECYCLE_EVENTS,
@@ -44,6 +44,14 @@ describe("tool metadata", () => {
 });
 
 describe("hook validation", () => {
+  it("keeps hook context data-only for model instructions", () => {
+    type NoPromptPrepend = "prependSystem" extends keyof HookContext ? false : true;
+    type NoPromptReplace = "setSystem" extends keyof HookContext ? false : true;
+
+    expectTypeOf<NoPromptPrepend>().toEqualTypeOf<true>();
+    expectTypeOf<NoPromptReplace>().toEqualTypeOf<true>();
+  });
+
   it("accepts typed lifecycle hook arguments", () => {
     const wrapped = hook({ on: LifecycleEvent.PRE_CAP, mode: HookMode.GATE })(
       (ctx: HookContext, call: HookCall) =>

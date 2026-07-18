@@ -464,19 +464,19 @@ export const HANDOFF: OpSpec = {
   op: "HANDOFF",
   name: "Handoff",
   category: "communication" as OpCategory,
-  description: "Hand off execution from one agent to another with optional state transfer",
-  longDescription: "Transfers execution control from a source agent to a target agent. When transfer_state is true, the source agent's context-stack frames are copied to the target agent so it can continue with full conversational context. Emits HANDOFF_START and HANDOFF_END events with span continuity for tracing. The target agent's response becomes this node's output token.",
+  description: "Hand off execution to an isolated target agent",
+  longDescription: "Transfers execution control from a source agent to a target agent. An omitted or false transfer_state isolates the target. An explicit true permits only a snapshot of non-authority AAM beliefs and goals plus a rendered context-frame payload. Credentials, capability grants, budgets, Agent Skill selections, prompt defaults, session state, and caller metadata never cross the handoff boundary. Emits HANDOFF_START and HANDOFF_END events with span continuity for tracing. The target agent's response becomes this node's output token.",
   latency: "medium",
   fields: [
     { name: "handoff_from", description: "Source agent name", required: true, refType: null },
     { name: "handoff_to", description: "Target agent name", required: true, refType: null },
     { name: "payload", description: "Message payload to pass to the target agent", required: false, refType: null },
-    { name: "transfer_state", description: "Whether to copy context-stack frames from source to target (default: true)", required: false, refType: null },
+    { name: "transfer_state", description: "Whether to explicitly transfer non-authority AAM state and rendered context frames (default: false)", required: false, refType: null },
   ],
   producesOutput: true,
   needsSubmission: true,
   minInputs: 1,
-  exampleJson: "{\"id\": 3, \"op\": \"HANDOFF\", \"attributes\": {\"handoff_from\": \"agent_a\", \"handoff_to\": \"agent_b\", \"transfer_state\": true}}",
+  exampleJson: "{\"id\": 3, \"op\": \"HANDOFF\", \"attributes\": {\"handoff_from\": \"agent_a\", \"handoff_to\": \"agent_b\"}}",
 } as const;
 
 export const UPDATE_GOAL: OpSpec = {
@@ -648,6 +648,27 @@ export const REGISTER_HOOK: OpSpec = {
   exampleJson: "{\\\"id\\\": 4, \\\"op\\\": \\\"REGISTER_HOOK\\\", \\\"attributes\\\": {\\\"hook_event\\\": \\\"pre_cap\\\", \\\"hook_match\\\": \\\"lookup\\\", \\\"hook_mode\\\": \\\"gate\\\", \\\"hook_handler_id\\\": \\\"sha256:...\\\"}}",
 } as const;
 
+export const AWAIT_INPUT: OpSpec = {
+  op: "AWAIT_INPUT",
+  name: "AwaitInput",
+  category: "synchronization" as OpCategory,
+  description: "Park until the host delivers one typed external input",
+  longDescription: "AWAIT_INPUT is a generic durable park/resume primitive. A seed input returns immediately; otherwise the runtime parks without consuming a worker or compute permit until the trusted host wakes its opaque wait key. It has no model, persona, transcript, capability, Agent Skill, or conversational semantics.",
+  latency: "low",
+  fields: [
+    { name: "wait_key", description: "Opaque host-owned external-input correlation key; defaults to the execution session input key", required: false, refType: null },
+    { name: "rearm", description: "When true, re-arm the explicit continuation flow after a host wake", required: false, refType: null },
+    { name: "agent_name", description: "Agent containing the continuation flow", required: false, refType: null },
+    { name: "flow_name", description: "Explicit continuation flow to invoke", required: false, refType: null },
+    { name: "input_names", description: "Single continuation parameter name bound to the delivered input", required: false, refType: null },
+    { name: "max_iterations", description: "Maximum number of generic wake/re-arm cycles for this session", required: false, refType: null },
+  ],
+  producesOutput: true,
+  needsSubmission: false,
+  minInputs: 0,
+  exampleJson: "{\"id\": 3, \"op\": \"AWAIT_INPUT\", \"attributes\": {\"wait_key\": \"webhook:order-42\"}}",
+} as const;
+
 export const AUTONOMOUS: OpSpec = {
   op: "AUTONOMOUS",
   name: "Autonomous",
@@ -757,6 +778,7 @@ export const ALL_OPERATIONS: readonly OpSpec[] = [
   SPAWN_AGENT,
   REGISTER_CAPABILITY,
   REGISTER_HOOK,
+  AWAIT_INPUT,
   AUTONOMOUS,
   CHECKPOINT,
   CONST_STR,
@@ -785,6 +807,8 @@ export const ATTR = {
   PREFERRED_PROFILES: "preferred_profiles",
   NODE_NAME: "node_name",
   MODE: "mode",
+  WAIT_KEY: "wait_key",
+  REARM: "rearm",
   CWD: "cwd",
   MODEL: "model",
   MODEL_PROFILE: "model_profile",

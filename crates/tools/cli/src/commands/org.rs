@@ -155,7 +155,7 @@ fn default_org_root(id: &str) -> PathBuf {
 }
 
 fn titleize(id: &str) -> String {
-    id.split(|c: char| c == '-' || c == '_')
+    id.split(['-', '_'])
         .filter(|s| !s.is_empty())
         .map(|word| {
             let mut chars = word.chars();
@@ -442,13 +442,13 @@ fn check_tree_well_formed(tree: &TreeToml) -> Vec<String> {
             .entry(edge.parent.as_str())
             .or_default()
             .push(edge.child.as_str());
-        if let Some(existing_parent) = parent_of.insert(edge.child.as_str(), edge.parent.as_str()) {
-            if existing_parent != edge.parent.as_str() {
-                errors.push(format!(
-                    "topology.tree: node '{}' has multiple parents ('{}' and '{}') — not a tree",
-                    edge.child, existing_parent, edge.parent
-                ));
-            }
+        if let Some(existing_parent) = parent_of.insert(edge.child.as_str(), edge.parent.as_str())
+            && existing_parent != edge.parent.as_str()
+        {
+            errors.push(format!(
+                "topology.tree: node '{}' has multiple parents ('{}' and '{}') — not a tree",
+                edge.child, existing_parent, edge.parent
+            ));
         }
     }
 

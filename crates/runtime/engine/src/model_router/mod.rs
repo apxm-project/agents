@@ -344,60 +344,54 @@ impl ModelRouter {
         // precedence step ( observability) — carried forward so the
         // final `RoutingDecision` never silently drops a rejected candidate.
         let mut rejected_candidates: Vec<ModelRouteRejection> = Vec::new();
+        let requirements = RoutingRequirements::from_request(request);
 
-        // 1. Explicit backend in request → honour it if the breaker allows.
+        // 1. Explicit backend in request. Even an explicit request must name a
+        // registry-described model that satisfies the final request; otherwise
+        // a failover would be able to bypass tool/context requirements.
         if let Some(ref backend) = request.backend {
-            if self.circuit_breakers.is_available(backend) {
+            if let Some(candidate) = self.select_backend_candidate(
+                backend,
+                request.model.as_deref(),
+                &requirements,
+                &mut rejected_candidates,
+            ) {
                 return Ok(RoutingDecision {
-                    backend: backend.clone(),
-                    model: request.model.clone(),
+                    backend: candidate.backend,
+                    model: Some(candidate.name),
                     was_failover: false,
                     reason: "explicit backend override from request".to_string(),
                     rejected_candidates,
                 });
             }
-            // Breaker tripped — fall through to policy routing.
-            tracing::warn!(
-                backend = %backend,
-                "Requested backend tripped; falling back to policy routing"
-            );
-            rejected_candidates.push(ModelRouteRejection {
-                candidate: request.model.clone().unwrap_or_default(),
-                backend: backend.clone(),
-                reason_kind: ModelRouteRejectionReason::CircuitBreakerOpen,
-                reason: format!("requested backend '{backend}' circuit breaker is open"),
-            });
         }
 
         // 2. Explicit model in request → resolve to backend via model registry.
-        if let Some(ref model_name) = request.model {
+        if request.backend.is_none()
+            && let Some(ref model_name) = request.model
+        {
             if let Some(entry) = self.model_registry.get(model_name) {
-                if self.circuit_breakers.is_available(&entry.backend) {
-                    return Ok(RoutingDecision {
-                        backend: entry.backend.clone(),
-                        model: Some(model_name.clone()),
-                        was_failover: false,
-                        reason: format!(
-                            "explicit model '{model_name}' resolved to backend '{}' via model registry",
-                            entry.backend
-                        ),
-                        rejected_candidates,
-                    });
+                match self.validate_final_candidate(&requirements, &entry) {
+                    Ok(()) => {
+                        return Ok(RoutingDecision {
+                            backend: entry.backend.clone(),
+                            model: Some(model_name.clone()),
+                            was_failover: false,
+                            reason: format!(
+                                "explicit model '{model_name}' resolved to backend '{}' via model registry",
+                                entry.backend
+                            ),
+                            rejected_candidates,
+                        });
+                    }
+                    Err(rejection) => rejected_candidates.push(rejection),
                 }
-                tracing::warn!(
-                    model = %model_name,
-                    backend = %entry.backend,
-                    "Model's backend tripped; falling back to policy routing"
-                );
-                rejected_candidates.push(ModelRouteRejection {
-                    candidate: model_name.clone(),
-                    backend: entry.backend.clone(),
-                    reason_kind: ModelRouteRejectionReason::CircuitBreakerOpen,
-                    reason: format!(
-                        "requested model '{model_name}' backend '{}' circuit breaker is open",
-                        entry.backend
-                    ),
-                });
+            } else {
+                rejected_candidates.push(Self::unregistered_candidate_rejection(
+                    model_name,
+                    "",
+                    "explicit model is not present in the model registry",
+                ));
             }
         }
 
@@ -409,10 +403,15 @@ impl ModelRouter {
 
         if let Some(policy) = &op_policy {
             if let Some(ref backend) = policy.backend {
-                if self.circuit_breakers.is_available(backend) {
+                if let Some(candidate) = self.select_backend_candidate(
+                    backend,
+                    policy.model.as_deref().or(request.model.as_deref()),
+                    &requirements,
+                    &mut rejected_candidates,
+                ) {
                     return Ok(RoutingDecision {
-                        backend: backend.clone(),
-                        model: policy.model.clone().or_else(|| request.model.clone()),
+                        backend: candidate.backend,
+                        model: Some(candidate.name),
                         was_failover: false,
                         reason: format!(
                             "operation policy for {:?} pinned backend '{backend}'",
@@ -421,12 +420,29 @@ impl ModelRouter {
                         rejected_candidates,
                     });
                 }
-                rejected_candidates.push(ModelRouteRejection {
-                    candidate: policy.model.clone().unwrap_or_default(),
-                    backend: backend.clone(),
-                    reason_kind: ModelRouteRejectionReason::CircuitBreakerOpen,
-                    reason: format!("operation policy backend '{backend}' circuit breaker is open"),
-                });
+            } else if let Some(model) = policy.model.as_deref() {
+                match self.model_registry.get(model) {
+                    Some(entry) => match self.validate_final_candidate(&requirements, &entry) {
+                        Ok(()) => {
+                            return Ok(RoutingDecision {
+                                backend: entry.backend,
+                                model: Some(entry.name),
+                                was_failover: false,
+                                reason: format!(
+                                    "operation policy for {:?} pinned model '{model}'",
+                                    policy.operation
+                                ),
+                                rejected_candidates,
+                            });
+                        }
+                        Err(rejection) => rejected_candidates.push(rejection),
+                    },
+                    None => rejected_candidates.push(Self::unregistered_candidate_rejection(
+                        model,
+                        "",
+                        "operation policy model is not present in the model registry",
+                    )),
+                }
             }
         }
 
@@ -444,7 +460,9 @@ impl ModelRouter {
         if target == RoutingTarget::Balanced {
             // Balanced preserves the tag-preference behaviour.
             for tag in &routing.prefer_tags {
-                if let Some(mut decision) = self.find_by_tag(tag, &mut rejected_candidates) {
+                if let Some(mut decision) =
+                    self.find_by_tag(tag, &requirements, &mut rejected_candidates)
+                {
                     decision.rejected_candidates = rejected_candidates;
                     return Ok(decision);
                 }
@@ -460,10 +478,15 @@ impl ModelRouter {
 
         // 5. Default model/backend from ModelRegistry config.
         if let Some(backend) = self.model_registry.default_backend() {
-            if self.circuit_breakers.is_available(&backend) {
+            if let Some(candidate) = self.select_backend_candidate(
+                &backend,
+                self.model_registry.configured_default_model().as_deref(),
+                &requirements,
+                &mut rejected_candidates,
+            ) {
                 return Ok(RoutingDecision {
-                    backend: backend.clone(),
-                    model: self.model_registry.default_model(),
+                    backend: candidate.backend,
+                    model: Some(candidate.name),
                     was_failover: false,
                     reason: "default backend/model from ModelRegistry config".to_string(),
                     rejected_candidates,
@@ -474,10 +497,15 @@ impl ModelRouter {
         // 6. First available healthy backend from LLMRegistry.
         let all_backends = self.llm_registry.backend_names();
         for backend in &all_backends {
-            if self.circuit_breakers.is_available(backend) {
+            if let Some(candidate) = self.select_backend_candidate(
+                backend,
+                request.model.as_deref(),
+                &requirements,
+                &mut rejected_candidates,
+            ) {
                 return Ok(RoutingDecision {
-                    backend: backend.clone(),
-                    model: request.model.clone(),
+                    backend: candidate.backend,
+                    model: Some(candidate.name),
                     was_failover: all_backends.len() > 1,
                     reason: format!(
                         "first available healthy backend out of {} known backends",
@@ -490,7 +518,9 @@ impl ModelRouter {
 
         // 7. Fallback tags from RoutingConfig.
         for tag in &routing.fallback_tags {
-            if let Some(mut decision) = self.find_by_tag(tag, &mut rejected_candidates) {
+            if let Some(mut decision) =
+                self.find_by_tag(tag, &requirements, &mut rejected_candidates)
+            {
                 decision.was_failover = true;
                 decision.reason =
                     format!("fallback tag '{tag}' matched after primary routing exhausted");
@@ -499,7 +529,9 @@ impl ModelRouter {
             }
         }
 
-        anyhow::bail!("ModelRouter: no available backend (all circuit breakers open)")
+        anyhow::bail!(
+            "ModelRouter: no registry-described candidate satisfies the final routing requirements"
+        )
     }
 
     /// Select a backend and consume one rate-limit token before dispatch.
@@ -671,35 +703,137 @@ impl ModelRouter {
         self.llm_registry.backend_latency_ms_ewma(backend)
     }
 
+    /// Validate a concrete, registry-described candidate against the final
+    /// request that will be dispatched. Every routing branch uses this single
+    /// admission point so a fallback cannot weaken the request's constraints.
+    fn validate_final_candidate(
+        &self,
+        requirements: &RoutingRequirements,
+        candidate: &ModelEntry,
+    ) -> Result<(), ModelRouteRejection> {
+        if !self.circuit_breakers.is_available(&candidate.backend) {
+            return Err(ModelRouteRejection {
+                candidate: candidate.name.clone(),
+                backend: candidate.backend.clone(),
+                reason_kind: ModelRouteRejectionReason::CircuitBreakerOpen,
+                reason: format!(
+                    "candidate '{}' backend '{}' circuit breaker is open",
+                    candidate.name, candidate.backend
+                ),
+            });
+        }
+        if !requirements.satisfied_by(candidate) {
+            return Err(ModelRouteRejection {
+                candidate: candidate.name.clone(),
+                backend: candidate.backend.clone(),
+                reason_kind: ModelRouteRejectionReason::RequirementsNotSatisfied,
+                reason: format!(
+                    "'{}' does not satisfy the final request's hard constraints (context fit / tools / json / thinking / vision / local)",
+                    candidate.name
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    fn unregistered_candidate_rejection(
+        candidate: &str,
+        backend: &str,
+        detail: &str,
+    ) -> ModelRouteRejection {
+        ModelRouteRejection {
+            candidate: candidate.to_string(),
+            backend: backend.to_string(),
+            reason_kind: ModelRouteRejectionReason::RequirementsNotSatisfied,
+            reason: format!(
+                "{detail}; a candidate needs registry capability metadata before it can satisfy final routing requirements"
+            ),
+        }
+    }
+
+    /// Select the first deterministic, final-request-compatible model for a
+    /// backend. A backend without a registry model is not dispatchable: there
+    /// is no capability/context record to validate against.
+    fn select_backend_candidate(
+        &self,
+        backend: &str,
+        requested_model: Option<&str>,
+        requirements: &RoutingRequirements,
+        rejected_candidates: &mut Vec<ModelRouteRejection>,
+    ) -> Option<ModelEntry> {
+        let mut candidates = if let Some(model) = requested_model {
+            match self.model_registry.get(model) {
+                Some(entry) if entry.backend == backend => vec![entry],
+                Some(entry) => {
+                    rejected_candidates.push(Self::unregistered_candidate_rejection(
+                        model,
+                        backend,
+                        &format!(
+                            "model '{model}' is registered to backend '{}' rather than requested backend '{backend}'",
+                            entry.backend
+                        ),
+                    ));
+                    return None;
+                }
+                None => {
+                    rejected_candidates.push(Self::unregistered_candidate_rejection(
+                        model,
+                        backend,
+                        "requested model is not present in the model registry",
+                    ));
+                    return None;
+                }
+            }
+        } else {
+            self.model_registry
+                .list()
+                .into_iter()
+                .filter(|entry| entry.backend == backend)
+                .collect::<Vec<_>>()
+        };
+        candidates.sort_by(|left, right| left.name.cmp(&right.name));
+
+        if candidates.is_empty() {
+            rejected_candidates.push(Self::unregistered_candidate_rejection(
+                requested_model.unwrap_or_default(),
+                backend,
+                "backend has no registered model",
+            ));
+            return None;
+        }
+
+        for candidate in candidates {
+            match self.validate_final_candidate(requirements, &candidate) {
+                Ok(()) => return Some(candidate),
+                Err(rejection) => rejected_candidates.push(rejection),
+            }
+        }
+        None
+    }
+
     fn find_by_tag(
         &self,
         tag: &str,
+        requirements: &RoutingRequirements,
         rejected_candidates: &mut Vec<ModelRouteRejection>,
     ) -> Option<RoutingDecision> {
-        let models = self.model_registry.models_with_tags(&[tag]);
-        let mut chosen = None;
+        let mut models = self.model_registry.models_with_tags(&[tag]);
+        models.sort_by(|left, right| left.name.cmp(&right.name));
         for model in models {
-            if chosen.is_none() && self.circuit_breakers.is_available(&model.backend) {
-                chosen = Some(RoutingDecision {
-                    backend: model.backend.clone(),
-                    model: Some(model.name.clone()),
-                    was_failover: false,
-                    reason: format!("matched preferred tag '{tag}'"),
-                    rejected_candidates: Vec::new(),
-                });
-            } else if !self.circuit_breakers.is_available(&model.backend) {
-                rejected_candidates.push(ModelRouteRejection {
-                    candidate: model.name.clone(),
-                    backend: model.backend.clone(),
-                    reason_kind: ModelRouteRejectionReason::CircuitBreakerOpen,
-                    reason: format!(
-                        "tag '{tag}' candidate backend '{}' circuit breaker is open",
-                        model.backend
-                    ),
-                });
+            match self.validate_final_candidate(requirements, &model) {
+                Ok(()) => {
+                    return Some(RoutingDecision {
+                        backend: model.backend.clone(),
+                        model: Some(model.name.clone()),
+                        was_failover: false,
+                        reason: format!("matched preferred tag '{tag}'"),
+                        rejected_candidates: Vec::new(),
+                    });
+                }
+                Err(rejection) => rejected_candidates.push(rejection),
             }
         }
-        chosen
+        None
     }
 
     /// Price/capability-aware selection: prune the pool to the candidates that
@@ -722,12 +856,11 @@ impl ModelRouter {
     ) -> Option<RoutingDecision> {
         let reqs = RoutingRequirements::from_request(request);
 
-        let mut feasible: Vec<ModelEntry> = self
-            .model_registry
-            .list()
-            .into_iter()
-            .filter(|m| self.circuit_breakers.is_available(&m.backend))
-            .filter(|m| reqs.satisfied_by(m))
+        let candidates = self.model_registry.list();
+        let mut feasible: Vec<ModelEntry> = candidates
+            .iter()
+            .filter(|candidate| self.validate_final_candidate(&reqs, candidate).is_ok())
+            .cloned()
             .collect();
 
         if feasible.is_empty() {
@@ -775,43 +908,20 @@ impl ModelRouter {
         // Every other candidate in the full table, classified against the
         // same rules that pruned `feasible` — so the decision never silently
         // drops why a candidate lost.
-        let rejected_candidates = self
-            .model_registry
-            .list()
+        let rejected_candidates = candidates
             .into_iter()
             .filter(|entry| entry.name != chosen_name)
-            .map(|entry| {
-                if !self.circuit_breakers.is_available(&entry.backend) {
-                    ModelRouteRejection {
-                        candidate: entry.name.clone(),
-                        backend: entry.backend.clone(),
-                        reason_kind: ModelRouteRejectionReason::CircuitBreakerOpen,
-                        reason: format!(
-                            "backend '{}' circuit breaker is open",
-                            entry.backend
-                        ),
-                    }
-                } else if !reqs.satisfied_by(&entry) {
-                    ModelRouteRejection {
-                        candidate: entry.name.clone(),
-                        backend: entry.backend.clone(),
-                        reason_kind: ModelRouteRejectionReason::RequirementsNotSatisfied,
-                        reason: format!(
-                            "'{}' does not satisfy the request's hard constraints (context fit / tools / json / thinking / vision / local)",
-                            entry.name
-                        ),
-                    }
-                } else {
-                    ModelRouteRejection {
-                        candidate: entry.name.clone(),
-                        backend: entry.backend.clone(),
-                        reason_kind: ModelRouteRejectionReason::NotBestRanked,
-                        reason: format!(
-                            "feasible but ranked behind '{chosen_name}' for {} target",
-                            target.as_str()
-                        ),
-                    }
-                }
+            .map(|entry| match self.validate_final_candidate(&reqs, &entry) {
+                Err(rejection) => rejection,
+                Ok(()) => ModelRouteRejection {
+                    candidate: entry.name,
+                    backend: entry.backend,
+                    reason_kind: ModelRouteRejectionReason::NotBestRanked,
+                    reason: format!(
+                        "feasible but ranked behind '{chosen_name}' for {} target",
+                        target.as_str()
+                    ),
+                },
             })
             .collect();
 
@@ -951,6 +1061,7 @@ mod latency_routing_tests {
 mod routing_observability_tests {
     use super::latency_routing_tests_support::router_with_backends;
     use super::*;
+    use apxm_backends::{ToolDefinition, llm::backends::MockLLMBackend};
 
     #[test]
     fn select_from_table_explains_the_losing_candidate_as_not_best_ranked() {
@@ -1040,6 +1151,95 @@ mod routing_observability_tests {
             ModelRouteRejectionReason::CircuitBreakerOpen
         );
         assert!(!decision.reason.is_empty());
+    }
+
+    #[test]
+    fn fallback_tag_rejects_a_model_without_required_tool_support() {
+        let router = router_with_backends(&["fallback"]);
+        router.model_registry.register(ModelEntry {
+            name: "fallback-model".to_string(),
+            backend: "fallback".to_string(),
+            tags: vec!["fallback".to_string()],
+            supports_tools: false,
+            ..Default::default()
+        });
+        let request =
+            LLMRequest::new("use the admitted tool").with_tools(vec![ToolDefinition::new(
+                "lookup",
+                "look up a value",
+                serde_json::json!({}),
+            )]);
+        let requirements = RoutingRequirements::from_request(&request);
+        let mut rejected = Vec::new();
+
+        assert!(
+            router
+                .find_by_tag("fallback", &requirements, &mut rejected)
+                .is_none(),
+            "a tag fallback must not dispatch a model that cannot serve the final request"
+        );
+        assert!(rejected.iter().any(|rejection| {
+            rejection.candidate == "fallback-model"
+                && rejection.reason_kind == ModelRouteRejectionReason::RequirementsNotSatisfied
+        }));
+    }
+
+    #[test]
+    fn operation_policy_failover_revalidates_final_tool_requirements() {
+        let llm_registry = Arc::new(LLMRegistry::new());
+        llm_registry
+            .register(
+                "incompatible",
+                MockLLMBackend::static_response("incompatible"),
+            )
+            .expect("register incompatible backend");
+        llm_registry
+            .register("compatible", MockLLMBackend::static_response("compatible"))
+            .expect("register compatible backend");
+        let model_registry = Arc::new(ModelRegistry::new());
+        model_registry.register(ModelEntry {
+            name: "incompatible-model".to_string(),
+            backend: "incompatible".to_string(),
+            supports_tools: false,
+            ..Default::default()
+        });
+        model_registry.register(ModelEntry {
+            name: "compatible-model".to_string(),
+            backend: "compatible".to_string(),
+            supports_tools: true,
+            ..Default::default()
+        });
+        let router = ModelRouter::with_model_registry(
+            llm_registry,
+            model_registry,
+            ModelRouterConfig {
+                operation_policies: vec![OperationPolicy {
+                    operation: AISOperationType::Ask,
+                    model: Some("incompatible-model".to_string()),
+                    backend: Some("incompatible".to_string()),
+                    target: RoutingTarget::Balanced,
+                }],
+                ..Default::default()
+            },
+        )
+        .expect("router construction");
+        let request = LLMRequest::new("use the admitted tool")
+            .with_tools(vec![ToolDefinition::new(
+                "lookup",
+                "look up a value",
+                serde_json::json!({}),
+            )])
+            .with_operation_type(AISOperationType::Ask);
+
+        let decision = router
+            .select(&request)
+            .expect("a compatible failover candidate should be selected");
+
+        assert_eq!(decision.backend, "compatible");
+        assert!(decision.rejected_candidates.iter().any(|rejection| {
+            rejection.candidate == "incompatible-model"
+                && rejection.reason_kind == ModelRouteRejectionReason::RequirementsNotSatisfied
+        }));
     }
 }
 

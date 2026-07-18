@@ -397,7 +397,6 @@ fn stage(name: &str, kind: PipelineStageKind, mandatory: bool) -> PipelineStage 
         &[CompilerAnalysisKind],
         &[CompilerAnalysisKind],
     ) = match name {
-        NORMALIZE | CANONICALIZER => (&[][..], &[][..], ALL_ANALYSES),
         BUILD_PROMPT | TEMPLATE_SPECIALIZATION => {
             (&[][..], EFFECT_DAG_AND_PROFILE, PROMPT_AND_COST)
         }

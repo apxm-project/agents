@@ -1,5 +1,4 @@
 id = "search_skills"
-description = "Find relevant APXM skills by description."
+description = "Search grant-visible Agent Skill metadata through the host catalogue."
 kind = "builtin"
-builtin_group = "skills"
 read_only = true

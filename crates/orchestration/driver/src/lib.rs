@@ -41,14 +41,14 @@ pub mod hooks;
 pub mod linker;
 pub mod runtime;
 pub mod session_output;
-pub mod workspace_skills;
 
 // --- Config ---
 pub use config::{
     ApXmConfig, ChatConfig, ConfigError, ExecutionStreamConfig, GenerateStreamConfig, HookConfig,
     HookEvent, RunEventsConfig, ServerAuthConfig, ServerConfig, ServerExecutionsConfig,
-    ServerInferenceConfig, ServerMcpConfig, ServerObservabilityConfig, ServerProcessConfig,
-    ServerRolloutConfig, ServerRuntimeConfig, ServerSafetyConfig, ServerShutdownConfig, ToolConfig,
+    ServerInferenceConfig, ServerInvocationAdmissionConfig, ServerMcpConfig,
+    ServerObservabilityConfig, ServerProcessConfig, ServerRolloutConfig, ServerRuntimeConfig,
+    ServerSafetyConfig, ServerShutdownConfig, ToolConfig,
 };
 
 // --- Linker ---

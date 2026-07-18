@@ -975,7 +975,7 @@ fn artifact_input_identity(
             update_string(&mut hasher, node.op_type.mlir_mnemonic());
             update_len(&mut hasher, node.attributes.len());
             let mut attributes: Vec<_> = node.attributes.iter().collect();
-            attributes.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+            attributes.sort_unstable_by_key(|(name, _)| *name);
             for (name, value) in attributes {
                 update_string(&mut hasher, name);
                 update_value(&mut hasher, value);
@@ -1178,7 +1178,7 @@ fn update_value(hasher: &mut blake3::Hasher, value: &Value) {
             update_u8(hasher, 6);
             update_len(hasher, values.len());
             let mut entries: Vec<_> = values.iter().collect();
-            entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+            entries.sort_unstable_by_key(|(name, _)| *name);
             for (name, value) in entries {
                 update_string(hasher, name);
                 update_value(hasher, value);
