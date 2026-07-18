@@ -101,7 +101,8 @@ class ReleasePrivacyTests(unittest.TestCase):
         )
 
         self.assertEqual(frontend["name"], "@apxm/frontend")
-        self.assertEqual(frontend["publishConfig"], {"access": "restricted"})
+        self.assertIs(frontend["private"], True)
+        self.assertNotIn("publishConfig", frontend)
         self.assertIs(handwritten_client["private"], True)
         self.assertNotIn("publishConfig", handwritten_client)
         self.assertEqual(python["project"]["name"], "apxm")
@@ -131,6 +132,28 @@ class ReleasePrivacyTests(unittest.TestCase):
                 self.assertTrue(privacy._audit_cargo_manifest(cargo))
                 self.assertTrue(privacy._audit_npm_manifest(npm))
                 self.assertTrue(privacy._audit_python_manifest(pyproject))
+
+    def test_restricted_scope_does_not_replace_exact_registry_authority(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            npm = root / "package.json"
+            npm.write_text(
+                json.dumps(
+                    {
+                        "name": "@apxm/frontend",
+                        "publishConfig": {"access": "restricted"},
+                    }
+                )
+            )
+
+            with patch.object(privacy, "REPO_ROOT", root):
+                self.assertEqual(
+                    privacy._audit_npm_manifest(npm),
+                    [
+                        "package.json: private must be true until signed private npm "
+                        "registry authority exists"
+                    ],
+                )
 
     @unittest.skipUnless(shutil.which("ssh-keygen"), "ssh-keygen is required")
     def test_signed_private_registry_manifest_is_verified(self) -> None:
