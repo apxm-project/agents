@@ -6,7 +6,7 @@ import argparse
 
 from apxm_release.checks import run_checks
 from apxm_release.dist import build_dist
-from apxm_release.publish import publish_github, publish_pypi
+from apxm_release.publish import publish_github, publish_python
 
 
 def _add_check_options(subparser: argparse.ArgumentParser) -> None:
@@ -103,18 +103,24 @@ def main(argv: list[str]) -> int:
     )
     publish_parser.set_defaults(func=publish_github)
 
-    pypi_parser = subparsers.add_parser("pypi", help="Upload Python artifacts to PyPI with twine")
-    pypi_parser.add_argument(
+    python_parser = subparsers.add_parser(
+        "python",
+        help="Upload an eligible Python distribution to a signed private registry",
+    )
+    python_parser.add_argument(
         "--output-dir",
         help="Release artifact directory (default: .apxm/releases/vX.Y.Z)",
     )
-    pypi_parser.add_argument("--repository", help="Twine repository name, for example testpypi")
-    pypi_parser.add_argument(
+    python_parser.add_argument("--registry-manifest", required=True)
+    python_parser.add_argument("--registry-signature", required=True)
+    python_parser.add_argument("--allowed-signers", required=True)
+    python_parser.add_argument("--signer", required=True)
+    python_parser.add_argument(
         "--yes",
         action="store_true",
         help="Actually upload; otherwise print a dry run",
     )
-    pypi_parser.set_defaults(func=publish_pypi)
+    python_parser.set_defaults(func=publish_python)
 
     args = parser.parse_args(argv)
     return int(args.func(args))

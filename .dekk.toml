@@ -54,7 +54,7 @@ lib = ["{project}/target/release/lib", "{environment}/lib"]
 [commands]
 build = { run = "python tools/scripts/cargo.py build -p apxm-cli --features driver,metrics --release", description = "Build APXM", skill = true, group = "Build & Test" }
 build-dialect = { run = "python tools/scripts/cargo.py build-dialect", description = "Rebuild MLIR dialect (TableGen + C++ + Rust) after editing .td or .cpp files", skill = true, group = "Build & Test" }
-test = { run = "python -m unittest discover -s tools/tests -p test_offline_prompt_evaluation.py && python -m unittest discover -s tools/tests -p test_observed_prompt_evaluation.py && python tools/scripts/check_frontend_parity.py && python tools/scripts/cargo.py test --workspace --exclude apxm-compiler --exclude apxm-cli", description = "Run evaluator evidence validation, frontend parity checks, and workspace tests", skill = true, group = "Build & Test" }
+test = { run = "python -m unittest discover -s tools/tests -p test_offline_prompt_evaluation.py && python -m unittest discover -s tools/tests -p test_observed_prompt_evaluation.py && python -m unittest discover -s tools/tests -p test_release_privacy.py && python tools/scripts/check_frontend_parity.py && python tools/scripts/cargo.py test --workspace --exclude apxm-compiler --exclude apxm-cli", description = "Run evaluator evidence validation, release privacy, frontend parity checks, and workspace tests", skill = true, group = "Build & Test" }
 test-compiler = { run = "python tools/scripts/cargo.py test -p apxm-compiler", description = "Run compiler AIR builder and pipeline tests", group = "Build & Test" }
 test-all = { run = "python tools/scripts/cargo.py test --workspace", description = "All tests (requires MLIR)", group = "Build & Test" }
 test-cli = { run = "python tools/scripts/cargo.py test -p apxm-cli --features driver,metrics --release", description = "Run CLI tests with driver (preserves MLIR-linked binary)", group = "Build & Test" }
@@ -101,6 +101,7 @@ offline-prompt-evaluation = { run = "python tools/scripts/offline_prompt_evaluat
 observed-prompt-evaluation = { run = "python tools/scripts/observed_prompt_evaluation.py", description = "Execute preregistered prompt arms and record portable backend evidence", group = "Evaluation" }
 test-offline-prompt-evaluation = { run = "python -m unittest discover -s tools/tests -p test_offline_prompt_evaluation.py", description = "Test offline prompt-evaluation evidence validation", group = "Evaluation" }
 test-observed-prompt-evaluation = { run = "python -m unittest discover -s tools/tests -p test_observed_prompt_evaluation.py", description = "Test observed backend execution evidence", group = "Evaluation" }
+test-release-privacy = { run = "python -m unittest discover -s tools/tests -p test_release_privacy.py -v", description = "Audit every tracked package manifest and release command for private fail-closed publication", group = "Build & Test" }
 
 [commands.session]
 description = "Inspect APXM execution session outputs"
@@ -159,7 +160,7 @@ group = "Release"
 check = { run = "python tools/scripts/release.py check", description = "Run release readiness checks without publishing" }
 dist = { run = "python tools/scripts/release.py dist", description = "Build APXM release artifacts and checksums under .apxm/releases" }
 publish = { run = "python tools/scripts/release.py publish", description = "Create or update a GitHub release from .apxm/releases artifacts" }
-pypi = { run = "python tools/scripts/release.py pypi", description = "Upload Python release artifacts to PyPI with twine" }
+python = { run = "python tools/scripts/release.py python", description = "Upload an eligible Python distribution to an exact signed private registry" }
 
 [commands.ops]
 description = "Browse AIS operations"

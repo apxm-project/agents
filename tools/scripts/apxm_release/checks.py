@@ -8,6 +8,7 @@ import sys
 from dataclasses import dataclass
 
 from apxm_release.constants import RELEASE_BINARIES, REPO_ROOT, TARGET_RELEASE_DIR
+from apxm_release.privacy import audit_release_privacy
 from apxm_release.util import (
     internal_crate_name,
     last_line,
@@ -122,21 +123,24 @@ def _check_tag_available() -> CheckResult:
     return CheckResult("release tag", True, f"{tag} is available")
 
 
-def _check_rust_publish_guards() -> CheckResult:
-    missing: list[str] = []
-    for path in sorted((REPO_ROOT / "crates").glob("**/Cargo.toml")):
-        text = path.read_text(encoding="utf-8")
-        if "publish = false" not in text:
-            missing.append(str(path.relative_to(REPO_ROOT)))
-    if missing:
-        return CheckResult("rust publish guards", False, ", ".join(missing))
-    return CheckResult("rust publish guards", True, "all workspace crates are publish=false")
+def _check_release_privacy() -> CheckResult:
+    try:
+        violations = audit_release_privacy()
+    except (OSError, RuntimeError, ValueError) as error:
+        return CheckResult("release privacy", False, str(error))
+    if violations:
+        return CheckResult("release privacy", False, "; ".join(violations))
+    return CheckResult(
+        "release privacy",
+        True,
+        "all tracked package and release surfaces fail closed",
+    )
 
 
 def _check_dekk_doctor() -> CheckResult:
     if shutil.which("dekk") is None:
         return CheckResult("dekk doctor", False, "dekk not found on PATH")
-    check = run(["dekk", "apxm", "doctor"], capture=True)
+    check = run(["dekk", "agents", "doctor"], capture=True)
     detail = "environment ready" if check.returncode == 0 else last_line(check)
     return CheckResult("dekk doctor", check.returncode == 0, detail)
 
@@ -145,10 +149,7 @@ def _check_codegen_current(skip_codegen: bool) -> CheckResult:
     if skip_codegen:
         return CheckResult("codegen", True, "skipped")
     commands = (
-        (["dekk", "apxm", "codegen", "--check"], "Python frontend"),
-        (["dekk", "apxm", "codegen-typescript", "--check"], "TypeScript bindings"),
-        (["dekk", "apxm", "codegen-event-kinds", "--check"], "event kinds"),
-        (["dekk", "apxm", "codegen-op-spec", "--check"], "op-spec catalog"),
+        (["dekk", "agents", "check-frontend-codegen"], "frontend codegen"),
     )
     for command, label in commands:
         check = run(command, capture=True)
@@ -157,14 +158,14 @@ def _check_codegen_current(skip_codegen: bool) -> CheckResult:
     return CheckResult(
         "codegen",
         True,
-        "generated Python frontend, TypeScript bindings, event kinds, and op-spec catalog are current",
+        "generated frontend metadata is current",
     )
 
 
 def _check_python_tests(skip_tests: bool) -> CheckResult:
     if skip_tests:
         return CheckResult("python frontend tests", True, "skipped")
-    check = run(["dekk", "apxm", "test-python-frontend"], capture=True)
+    check = run(["dekk", "agents", "test-python-frontend"], capture=True)
     detail = "passed" if check.returncode == 0 else last_line(check)
     return CheckResult("python frontend tests", check.returncode == 0, detail)
 
@@ -216,7 +217,7 @@ def run_checks(args: argparse.Namespace) -> int:
         _check_changelog(),
         _check_release_notes(),
         _check_tag_available(),
-        _check_rust_publish_guards(),
+        _check_release_privacy(),
         _check_dekk_doctor(),
         _check_codegen_current(args.skip_codegen),
         _check_python_tests(args.skip_python_tests),
