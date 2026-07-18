@@ -1,5 +1,10 @@
 # PXM Foundations
 
+> **Pre-canonical framing — non-normative.** AAM, memory-tier, process, and
+> prototype AIS claims below are origin/migration evidence. Canonical v1
+> authority is the
+> [Agent Program composition and AIR contract](../agents/agent-program-composition-and-air-contract.md).
+
 A Program Execution Model (PXM) defines what work is, how work is represented,
 where state lives, and which scheduler rules are valid. APXM applies that idea
 to agentic AI: workflows are typed dataflow graphs instead of opaque scripts.

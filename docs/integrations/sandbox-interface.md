@@ -1,7 +1,12 @@
 # apxm sandbox interface — backend-agnostic design spec
 
-> **SUPERSEDED IN PART — read with `docs/integrations/sandbox-acp-seam.md` on
-> `main`.** A later code-level investigation corrected several premises here:
+> **Pre-canonical investigation — fully non-normative for v1.** The registry,
+> mega-interface, degradation, and candidate-selection design below is replaced
+> by [ADR-0013](../adr/0013-core-semantics-are-closed-and-implementations-enter-through-exact-port-bindings.md)
+> and its narrow
+> [Confinement Port](../agents/portable-core-interface-contract.md#confinement-port).
+> It remains only as implementation history. A later code-level investigation
+> had already corrected several premises here:
 > the capability/`INV` path is **not** an unsandboxed bypass (it already routes
 > through `SandboxRegistry` and fails closed); `read_paths` is an *informational
 > grant*, so the "remove the read-allowlist warning" idea was wrong (the real

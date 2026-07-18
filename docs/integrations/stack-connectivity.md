@@ -1,6 +1,15 @@
 # Stack connectivity: studio + os → the execution/sandbox backend
 
-How apxm-studio and apxm-os connect to apxm-server (the execution backend that
+> **Pre-canonical implementation baseline — non-normative.** This page records
+> the prototype routes, registries, defaults, and sandbox flags that the v1 full
+> replacement deletes. The target is governed by
+> [ADR-0013](../adr/0013-core-semantics-are-closed-and-implementations-enter-through-exact-port-bindings.md)
+> and the
+> [portable-core contract](../agents/portable-core-interface-contract.md): an
+> explicit Composition Root, verified Deployment Composition Manifest, exact
+> Port Bindings, and a narrow Confinement Port with no discovery or fallback.
+
+How the current apxm-studio and apxm-os connect to apxm-server (the execution backend that
 owns the sandbox), verified by a three-way code audit. The short version: both
 **already route execution through apxm-server over HTTP**, so the server-side
 sandbox applies to their work. This documents the seams and the contract that
