@@ -68,25 +68,15 @@ def _audit_npm_manifest(path: Path) -> list[str]:
     if not isinstance(manifest, dict):
         return [f"{relative}: package manifest must be an object"]
 
-    name = manifest.get("name")
     publish_config = manifest.get("publishConfig")
     if manifest.get("private") is True:
         if publish_config is not None:
             return [f"{relative}: private package must not carry publishConfig"]
         return []
-    if not isinstance(name, str) or not name.startswith("@apxm/"):
-        return [f"{relative}: publishable npm package must use the private @apxm scope"]
-    if not isinstance(publish_config, dict):
-        return [f"{relative}: publishable npm package requires publishConfig"]
-
-    violations: list[str] = []
-    if publish_config.get("access") != "restricted":
-        violations.append(f"{relative}: publishConfig.access must be restricted")
-    if "registry" in publish_config:
-        violations.append(
-            f"{relative}: registry endpoint must come from signed release configuration"
-        )
-    return violations
+    return [
+        f"{relative}: private must be true until signed private npm registry "
+        "authority exists"
+    ]
 
 
 def _audit_python_manifest(path: Path) -> list[str]:
