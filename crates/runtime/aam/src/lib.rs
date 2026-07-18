@@ -24,8 +24,15 @@ use parking_lot::RwLock;
 pub use scope::{ScopePolicy, ScopeSpec};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
+use std::fs::{File, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+const CHECKPOINT_TEMP_PREFIX: &str = ".";
+const CHECKPOINT_TEMP_SUFFIX: &str = ".tmp";
+static CHECKPOINT_WRITE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// Prefix for staged belief keys in QMEM.
 pub const STAGED_BELIEF_PREFIX: &str = apxm_core::constants::runtime::belief_keys::STAGED_PREFIX;
@@ -240,15 +247,13 @@ impl Aam {
                 state
                     .goal_details
                     .get(child_id)
-                    .map(|g| g.status == GoalStatus::Completed)
-                    .unwrap_or(false) // missing children should NOT count as completed
+                    .is_some_and(|g| g.status == GoalStatus::Completed) // missing children should NOT count as completed
             }),
             CompletionPolicy::AnyChild => children.iter().any(|child_id| {
                 state
                     .goal_details
                     .get(child_id)
-                    .map(|g| g.status == GoalStatus::Completed)
-                    .unwrap_or(false)
+                    .is_some_and(|g| g.status == GoalStatus::Completed)
             }),
             CompletionPolicy::Manual => false,
         };
@@ -506,8 +511,8 @@ impl AamState {
     }
 
     fn restore(&mut self, checkpoint: &AamCheckpoint) {
-        self.beliefs = checkpoint.beliefs.clone();
-        self.capabilities = checkpoint.capabilities.clone();
+        self.beliefs.clone_from(&checkpoint.beliefs);
+        self.capabilities.clone_from(&checkpoint.capabilities);
         self.goal_tree = checkpoint.goal_tree.clone();
         self.goals.clear();
         self.goal_details.clear();
@@ -575,13 +580,14 @@ pub struct AamCheckpoint {
 }
 
 impl AamCheckpoint {
-    /// Save checkpoint to a file (JSON serialized).
+    /// Save a checkpoint by atomically replacing the previous complete value.
+    ///
+    /// A restart therefore observes either the prior checkpoint or this one,
+    /// never a file truncated by an interrupted write.
     pub fn save_to_file(&self, path: &Path) -> Result<(), RuntimeError> {
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| RuntimeError::Serialization(e.to_string()))?;
-        std::fs::write(path, json)
-            .map_err(|e| RuntimeError::State(format!("Failed to write checkpoint: {}", e)))?;
-        Ok(())
+        atomic_replace_checkpoint(path, json.as_bytes())
     }
 
     /// Load checkpoint from a file.
@@ -589,5 +595,103 @@ impl AamCheckpoint {
         let json = std::fs::read_to_string(path)
             .map_err(|e| RuntimeError::State(format!("Failed to read checkpoint: {}", e)))?;
         serde_json::from_str(&json).map_err(|e| RuntimeError::Serialization(e.to_string()))
+    }
+}
+
+/// Write and activate one complete checkpoint in the same directory.
+fn atomic_replace_checkpoint(path: &Path, contents: &[u8]) -> Result<(), RuntimeError> {
+    let parent = checkpoint_parent(path)?;
+    std::fs::create_dir_all(&parent).map_err(|error| {
+        RuntimeError::State(format!(
+            "Failed to create checkpoint directory {}: {}",
+            parent.display(),
+            error
+        ))
+    })?;
+
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            RuntimeError::State(format!(
+                "Checkpoint path {} has no UTF-8 filename",
+                path.display()
+            ))
+        })?;
+    let sequence = CHECKPOINT_WRITE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let temporary_path = parent.join(format!(
+        "{CHECKPOINT_TEMP_PREFIX}{filename}.{}.{}{}",
+        std::process::id(),
+        sequence,
+        CHECKPOINT_TEMP_SUFFIX
+    ));
+
+    let write_result = (|| -> Result<(), RuntimeError> {
+        let mut temporary = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary_path)
+            .map_err(|error| {
+                RuntimeError::State(format!(
+                    "Failed to create checkpoint temporary file {}: {}",
+                    temporary_path.display(),
+                    error
+                ))
+            })?;
+        temporary.write_all(contents).map_err(|error| {
+            RuntimeError::State(format!(
+                "Failed to write checkpoint temporary file {}: {}",
+                temporary_path.display(),
+                error
+            ))
+        })?;
+        temporary.sync_all().map_err(|error| {
+            RuntimeError::State(format!(
+                "Failed to sync checkpoint temporary file {}: {}",
+                temporary_path.display(),
+                error
+            ))
+        })?;
+        drop(temporary);
+
+        std::fs::rename(&temporary_path, path).map_err(|error| {
+            RuntimeError::State(format!(
+                "Failed to activate checkpoint {}: {}",
+                path.display(),
+                error
+            ))
+        })?;
+        File::open(&parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| {
+                RuntimeError::State(format!(
+                    "Failed to sync checkpoint directory {}: {}",
+                    parent.display(),
+                    error
+                ))
+            })?;
+        Ok(())
+    })();
+
+    if write_result.is_err() {
+        let _ = std::fs::remove_file(&temporary_path);
+    }
+    write_result
+}
+
+/// Resolve the directory containing a configured checkpoint path.
+fn checkpoint_parent(path: &Path) -> Result<PathBuf, RuntimeError> {
+    match path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        Some(parent) => Ok(parent.to_path_buf()),
+        None => std::env::current_dir().map_err(|error| {
+            RuntimeError::State(format!(
+                "Failed to resolve checkpoint directory for {}: {}",
+                path.display(),
+                error
+            ))
+        }),
     }
 }

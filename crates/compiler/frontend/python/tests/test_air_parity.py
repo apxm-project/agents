@@ -8,7 +8,9 @@ from typing import Callable
 
 import pytest
 
+from apxm import constants as graph_keys
 from apxm.constants import PromptInputRole
+from apxm.agent import Agent
 from apxm.ir import (
     AirEmissionError,
     AirEmitterCommand,
@@ -167,6 +169,17 @@ def _coordination_flow() -> ApxmGraph:
     recorder.add_edge(delegated, transferred)
     recorder.done(transferred, name="out")
     return recorder.to_graph()
+
+
+def test_bound_agent_handoff_defaults_to_isolated_state():
+    recorder = GraphRecorder("isolated_handoff", metadata={"is_entry": True})
+    source = Agent("source").bind(recorder)
+    source.handoff(Agent("target"), "Start with only this payload.")
+
+    handoff = next(
+        node for node in recorder.to_graph().nodes if node.op == graph_keys.OP_HANDOFF
+    )
+    assert handoff.attributes[graph_keys.TRANSFER_STATE] is False
 
 
 def test_native_authoring_matches_shared_dto_vectors():

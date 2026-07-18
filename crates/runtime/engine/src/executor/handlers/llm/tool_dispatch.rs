@@ -11,7 +11,6 @@ use apxm_backends::llm::backends::request::{ContentPart, FunctionCall, Message, 
 use apxm_backends::{LLMRequest, ToolChoice, ToolDefinition};
 use apxm_capability_iface::events::{ModelContextCallKind, ModelContextPlanStatus};
 use apxm_core::apxm_llm;
-use apxm_core::constants::capabilities;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
@@ -203,28 +202,6 @@ fn delegate_tool_definition() -> ToolDefinition {
     )
 }
 
-pub(crate) fn inject_visible_skill_imports(
-    tool_name: &str,
-    args: &mut HashMap<String, Value>,
-    metadata: &HashMap<String, String>,
-) {
-    if tool_name != capabilities::SEARCH_SKILLS || args.contains_key("imports") {
-        return;
-    }
-    let Some(visible) = metadata.get(crate::metadata_keys::VISIBLE_SKILLS) else {
-        return;
-    };
-    let imports: Vec<Value> = visible
-        .split(',')
-        .map(str::trim)
-        .filter(|item| !item.is_empty())
-        .map(|item| Value::String(item.to_string()))
-        .collect();
-    if !imports.is_empty() {
-        args.insert("imports".to_string(), Value::Array(imports));
-    }
-}
-
 /// Execute a single tool call.
 ///
 /// Dispatch order:
@@ -333,15 +310,13 @@ async fn execute_tool_call(
      "Executing tool call"
     );
 
-    let mut args: HashMap<String, Value> = match &tool_call.args {
+    let args: HashMap<String, Value> = match &tool_call.args {
         serde_json::Value::Object(obj) => obj
             .iter()
             .map(|(k, v)| (k.clone(), json_to_value(v)))
             .collect(),
         _ => HashMap::new(),
     };
-    inject_visible_skill_imports(&tool_call.name, &mut args, &ctx.metadata);
-
     if let Some(emitter) = &ctx.event_emitter {
         emitter.emit_tool_start(&tool_call.name, &args);
     }
@@ -358,12 +333,12 @@ async fn execute_tool_call(
 
     if let Some(bridge) = ctx.python_handler_bridge.as_ref() {
         if bridge.has_tool(&tool_call.name) {
-            return dispatch_script_tool_call(ctx, node, tool_call, args, "Python").await;
+            return dispatch_script_tool_call(ctx, tool_call, args).await;
         }
     }
     if let Some(bridge) = ctx.typescript_handler_bridge.as_ref() {
         if bridge.has_tool(&tool_call.name) {
-            return dispatch_script_tool_call(ctx, node, tool_call, args, "TypeScript").await;
+            return dispatch_script_tool_call(ctx, tool_call, args).await;
         }
     }
 
@@ -498,6 +473,26 @@ pub(crate) fn script_tool_policy(ctx: &ExecutionContext, name: &str) -> Result<S
     })
 }
 
+/// Admit an ASK-originated script call through the same capability boundary as
+/// INV_CAP before any language worker receives its arguments.
+pub(crate) async fn admit_ask_script_tool_call(
+    ctx: &ExecutionContext,
+    name: &str,
+    args: HashMap<String, Value>,
+    policy: ScriptToolPolicy,
+    call_id: &str,
+) -> Result<HashMap<String, Value>> {
+    super::super::inv_cap::admit_script_capability_call(
+        ctx,
+        name,
+        args,
+        policy.requires_approval,
+        call_id,
+        None,
+    )
+    .await
+}
+
 fn resolve_tool_access(ctx: &ExecutionContext, name: &str) -> Option<ToolAccess> {
     if let Some(metadata) = ctx.capability_system.get_metadata(name) {
         return Some(if metadata.read_only {
@@ -528,14 +523,12 @@ fn resolve_tool_access(ctx: &ExecutionContext, name: &str) -> Option<ToolAccess>
 
 async fn dispatch_script_tool_call(
     ctx: &ExecutionContext,
-    _node: &Node,
     tool_call: &ToolCall,
     args: HashMap<String, Value>,
-    label: &str,
 ) -> ToolResult {
     let timeout =
         std::time::Duration::from_millis(apxm_core::constants::defaults::DEFAULT_TIMEOUT_MS);
-    let mut edited_args =
+    let edited_args =
         match crate::executor::hook_driver::run_pre_cap_hooks(ctx, &tool_call.name, args, None)
             .await
         {
@@ -547,33 +540,38 @@ async fn dispatch_script_tool_call(
                 return ToolResult::error(&tool_call.id, e.to_string());
             }
         };
-    if let Err(error) = ctx.prepare_capability_invocation(&tool_call.name, &mut edited_args, true) {
-        if let Some(emitter) = &ctx.event_emitter {
-            emitter.emit_tool_end(&tool_call.name, &Value::String(error.to_string()));
-        }
-        return ToolResult::error(&tool_call.id, error.to_string());
-    }
-    let json_args = serde_json::to_value(&edited_args).unwrap_or_else(|_| tool_call.args.clone());
-    let bridge_call = async {
-        if let Some(bridge) = ctx.python_handler_bridge.as_ref() {
-            if bridge.has_tool(&tool_call.name) {
-                return bridge
-                    .call(&tool_call.name, json_args.clone(), timeout)
-                    .await;
+    let policy = match script_tool_policy(ctx, &tool_call.name) {
+        Ok(policy) => policy,
+        Err(error) => {
+            if let Some(emitter) = &ctx.event_emitter {
+                emitter.emit_tool_end(&tool_call.name, &Value::String(error.to_string()));
             }
+            return ToolResult::error(&tool_call.id, error.to_string());
         }
-        let bridge = ctx.typescript_handler_bridge.as_ref().ok_or_else(|| {
-            apxm_core::error::RuntimeError::Capability {
-                capability: tool_call.name.clone(),
-                message: format!("no {label} handler bridge configured"),
-            }
-        })?;
-        bridge.call(&tool_call.name, json_args, timeout).await
     };
+    let admitted_args =
+        match admit_ask_script_tool_call(ctx, &tool_call.name, edited_args, policy, &tool_call.id)
+            .await
+        {
+            Ok(args) => args,
+            Err(error) => {
+                if let Some(emitter) = &ctx.event_emitter {
+                    emitter.emit_tool_end(&tool_call.name, &Value::String(error.to_string()));
+                }
+                return ToolResult::error(&tool_call.id, error.to_string());
+            }
+        };
 
-    match bridge_call.await {
-        Ok(json_result) => {
-            let raw = Value::try_from(json_result).unwrap_or(Value::Null);
+    match super::super::inv_cap::execute_admitted_script_handler(
+        ctx,
+        &tool_call.name,
+        &admitted_args,
+        timeout,
+        &tool_call.id,
+    )
+    .await
+    {
+        Ok(raw) => {
             let transformed =
                 crate::executor::hook_driver::run_post_cap_hooks(ctx, &tool_call.name, raw, None)
                     .await;
@@ -587,7 +585,6 @@ async fn dispatch_script_tool_call(
             apxm_llm!(info,
              execution_id = %ctx.execution_id,
              tool_name = %tool_call.name,
-             bridge = %label,
              "Script tool call succeeded"
             );
             ToolResult::success(&tool_call.id, content)
@@ -599,7 +596,6 @@ async fn dispatch_script_tool_call(
             apxm_llm!(warn,
              execution_id = %ctx.execution_id,
              tool_name = %tool_call.name,
-             bridge = %label,
              error = %e,
              "Script tool call failed"
             );
@@ -1029,8 +1025,125 @@ pub(crate) async fn execute_ask_with_tools(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::aam::Aam;
+    use crate::capability::CapabilitySystem;
     use crate::context_stack::{ContextPlanningPolicy, ContextTokenizer, ScopeRules};
+    use crate::executor::handlers::inv_cap;
+    use crate::memory::{MemoryConfig, MemorySystem};
+    use crate::python_tools::{PythonHandlerBridge, PythonHandlerRegistry};
+    use crate::typescript_tools::{TypeScriptHandlerBridge, TypeScriptHandlerRegistry};
+    use apxm_backends::LLMRegistry;
+    use apxm_core::error::RuntimeError;
+    use apxm_core::types::{
+        HANDLER_MANIFEST_HANDLER_ID_HEX_LENGTH, HANDLER_MANIFEST_HANDLER_ID_PREFIX,
+        HANDLER_MANIFEST_SOURCE_DIRECTORY, HandlerDescriptor, HandlerKind, HandlerLanguage,
+        HandlerManifest, HandlerSource,
+    };
     use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    async fn script_context() -> ExecutionContext {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("memory"),
+        );
+        let aam = Aam::new();
+        let capabilities = Arc::new(CapabilitySystem::with_aam(aam.clone()));
+        ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), capabilities, aam)
+    }
+
+    fn script_tool_descriptor(language: HandlerLanguage, capability: &str) -> HandlerDescriptor {
+        let (extension, content) = match language {
+            HandlerLanguage::Python => ("py", "def invoke():\n    return None\n"),
+            HandlerLanguage::TypeScript => ("ts", "export function invoke() { return null; }\n"),
+        };
+        HandlerDescriptor {
+            kind: HandlerKind::Tool,
+            language,
+            handler_id: format!(
+                "{HANDLER_MANIFEST_HANDLER_ID_PREFIX}{}",
+                "a".repeat(HANDLER_MANIFEST_HANDLER_ID_HEX_LENGTH)
+            ),
+            module: "admission_fixture".to_string(),
+            qualname: "invoke".to_string(),
+            name: capability.to_string(),
+            source: HandlerSource {
+                artifact_path: format!("{HANDLER_MANIFEST_SOURCE_DIRECTORY}/invoke.{extension}"),
+                content: content.to_string(),
+            },
+            description: String::new(),
+            schema: serde_json::json!({}),
+            read_only: Some(false),
+            requires_approval: Some(false),
+            event: None,
+            r#match: None,
+            mode: None,
+        }
+    }
+
+    async fn ask_script_context(language: HandlerLanguage, capability: &str) -> ExecutionContext {
+        let context = script_context().await;
+        let manifest = HandlerManifest::new(vec![script_tool_descriptor(language, capability)]);
+        match language {
+            HandlerLanguage::Python => {
+                context.with_python_handler_bridge(Arc::new(PythonHandlerBridge::new(
+                    PythonHandlerRegistry::from_manifest(manifest).expect("python registry"),
+                )))
+            }
+            HandlerLanguage::TypeScript => {
+                context.with_typescript_handler_bridge(Arc::new(TypeScriptHandlerBridge::new(
+                    TypeScriptHandlerRegistry::from_manifest(manifest)
+                        .expect("typescript registry"),
+                )))
+            }
+        }
+    }
+
+    fn mutating_grant(capability: &str) -> String {
+        serde_json::json!([{
+            "grant_id": "grant_script_fixture",
+            "capability_binding": capability,
+            "operations": ["write"],
+            "resource": {"kind": "fixture", "uri": "fixture://script"},
+            "scope": {"kind": "fixture", "boundary": "fixture"},
+            "runtime_limits": {},
+            "expires_at": null,
+            "status": "active"
+        }])
+        .to_string()
+    }
+
+    fn approval_denial_reason(error: &RuntimeError) -> Option<&str> {
+        match error {
+            RuntimeError::Capability { message, .. } => Some(message.as_str()),
+            _ => None,
+        }
+    }
+
+    async fn inv_cap_script_admission(
+        ctx: &ExecutionContext,
+        capability: &str,
+        policy: ScriptToolPolicy,
+    ) -> Result<HashMap<String, Value>> {
+        inv_cap::admit_script_capability_call(
+            ctx,
+            capability,
+            HashMap::new(),
+            policy.requires_approval,
+            "inv-cap-call",
+            None,
+        )
+        .await
+    }
+
+    async fn ask_script_admission(
+        ctx: &ExecutionContext,
+        capability: &str,
+        policy: ScriptToolPolicy,
+    ) -> Result<HashMap<String, Value>> {
+        admit_ask_script_tool_call(ctx, capability, HashMap::new(), policy, "ask-tool-call").await
+    }
 
     fn planning(tokenizer: ContextTokenizer, token_budget: usize) -> ContextPlanningPolicy {
         ContextPlanningPolicy {
@@ -1046,61 +1159,6 @@ mod tests {
                 },
             )]),
         }
-    }
-
-    fn visible_metadata(value: &str) -> HashMap<String, String> {
-        HashMap::from([(
-            crate::metadata_keys::VISIBLE_SKILLS.to_string(),
-            value.to_string(),
-        )])
-    }
-
-    #[test]
-    fn search_skills_inherits_execution_visible_imports() {
-        let mut args = HashMap::from([("request".to_string(), Value::String("review".into()))]);
-
-        inject_visible_skill_imports(
-            capabilities::SEARCH_SKILLS,
-            &mut args,
-            &visible_metadata("support, engineering,,docs "),
-        );
-
-        assert_eq!(
-            args.get("imports"),
-            Some(&Value::Array(vec![
-                Value::String("support".into()),
-                Value::String("engineering".into()),
-                Value::String("docs".into()),
-            ]))
-        );
-    }
-
-    #[test]
-    fn explicit_search_skills_imports_are_preserved() {
-        let mut args = HashMap::from([(
-            "imports".to_string(),
-            Value::Array(vec![Value::String("security".into())]),
-        )]);
-
-        inject_visible_skill_imports(
-            capabilities::SEARCH_SKILLS,
-            &mut args,
-            &visible_metadata("support,engineering"),
-        );
-
-        assert_eq!(
-            args.get("imports"),
-            Some(&Value::Array(vec![Value::String("security".into())]))
-        );
-    }
-
-    #[test]
-    fn non_discovery_tools_do_not_receive_skill_imports() {
-        let mut args = HashMap::new();
-
-        inject_visible_skill_imports("http_get", &mut args, &visible_metadata("support"));
-
-        assert!(!args.contains_key("imports"));
     }
 
     #[test]
@@ -1120,5 +1178,110 @@ mod tests {
         assert_eq!(first[0].role, Role::Tool);
         assert_eq!(first[0].tool_call_id.as_deref(), Some("call"));
         assert!(first[0].text_content().contains("[truncated"));
+    }
+
+    #[tokio::test]
+    async fn ask_and_inv_cap_script_admission_match_for_granted_calls() {
+        let mut ask = script_context().await;
+        let mut inv_cap = script_context().await;
+        let capability = "artifact.script.granted";
+        let grant = mutating_grant(capability);
+        ask.metadata.insert(
+            crate::metadata_keys::CAPABILITY_GRANTS.to_string(),
+            grant.clone(),
+        );
+        inv_cap
+            .metadata
+            .insert(crate::metadata_keys::CAPABILITY_GRANTS.to_string(), grant);
+        let policy = ScriptToolPolicy {
+            read_only: false,
+            requires_approval: false,
+        };
+
+        let ask_args = ask_script_admission(&ask, capability, policy)
+            .await
+            .expect("ASK must admit the granted script call");
+        let inv_cap_args = inv_cap_script_admission(&inv_cap, capability, policy)
+            .await
+            .expect("INV_CAP must admit the granted script call");
+        assert_eq!(ask_args, inv_cap_args);
+    }
+
+    #[tokio::test]
+    async fn ask_and_inv_cap_script_admission_match_for_missing_grants() {
+        let ask = script_context().await;
+        let inv_cap = script_context().await;
+        let capability = "artifact.script.denied";
+        let policy = ScriptToolPolicy {
+            read_only: false,
+            requires_approval: false,
+        };
+
+        let ask_error = ask_script_admission(&ask, capability, policy)
+            .await
+            .expect_err("ASK must reject an ungranted script write");
+        let inv_cap_error = inv_cap_script_admission(&inv_cap, capability, policy)
+            .await
+            .expect_err("INV_CAP must reject an ungranted script write");
+        assert_eq!(ask_error.to_string(), inv_cap_error.to_string());
+    }
+
+    #[tokio::test]
+    async fn ask_and_inv_cap_script_admission_match_for_approval_required_calls() {
+        let mut ask = script_context().await;
+        let mut inv_cap = script_context().await;
+        let capability = "artifact.script.approval";
+        let grant = mutating_grant(capability);
+        ask.metadata.insert(
+            crate::metadata_keys::CAPABILITY_GRANTS.to_string(),
+            grant.clone(),
+        );
+        inv_cap
+            .metadata
+            .insert(crate::metadata_keys::CAPABILITY_GRANTS.to_string(), grant);
+        let policy = ScriptToolPolicy {
+            read_only: false,
+            requires_approval: true,
+        };
+
+        let ask_error = ask_script_admission(&ask, capability, policy)
+            .await
+            .expect_err("ASK must fail closed without approval");
+        let inv_cap_error = inv_cap_script_admission(&inv_cap, capability, policy)
+            .await
+            .expect_err("INV_CAP must fail closed without approval");
+        assert_eq!(
+            approval_denial_reason(&ask_error),
+            Some(apxm_core::types::consent::APPROVAL_BROKER_UNAVAILABLE_REASON)
+        );
+        assert_eq!(
+            approval_denial_reason(&ask_error),
+            approval_denial_reason(&inv_cap_error),
+            "ASK and INV_CAP must preserve the same canonical approval denial"
+        );
+    }
+
+    #[tokio::test]
+    async fn ask_script_bridges_reject_missing_grants_before_worker_dispatch() {
+        for language in [HandlerLanguage::Python, HandlerLanguage::TypeScript] {
+            let capability = match language {
+                HandlerLanguage::Python => "fixture.python.write",
+                HandlerLanguage::TypeScript => "fixture.typescript.write",
+            };
+            let context = ask_script_context(language, capability).await;
+            let call = ToolCall {
+                id: "fixture-call".to_string(),
+                name: capability.to_string(),
+                args: serde_json::json!({}),
+            };
+
+            let result = dispatch_script_tool_call(&context, &call, HashMap::new()).await;
+            assert!(!result.success, "ungranted {language:?} ASK tool must fail");
+            assert!(
+                result.content.contains("missing a capability grant"),
+                "unexpected {language:?} bridge admission error: {}",
+                result.content
+            );
+        }
     }
 }

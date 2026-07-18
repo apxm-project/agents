@@ -1,4 +1,4 @@
 id = "read_local_skill"
-description = "Read a Gao-owned skill document."
-kind = "typescript_handler"
+description = "Read one grant-visible Agent Skill resource through the host catalogue."
+kind = "builtin"
 read_only = true

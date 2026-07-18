@@ -41,7 +41,6 @@ base64 = "0.22"
 blake3 = { workspace = true }
 
 # Utilities
-once_cell.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 rusqlite = { workspace = true, optional = true }

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use uuid::Uuid;
 
-use super::event::{ApxmEvent, EventMeta, EventSource, SkillEventProvenance};
+use super::event::{ApxmEvent, EventMeta, EventSource, ProgramPackageEventProvenance};
 use super::payload::EventPayload;
 
 impl ApxmEvent {
@@ -36,7 +36,7 @@ impl ApxmEvent {
                 span_id: Uuid::new_v4().to_string(),
                 parent_span_id: None,
                 scope_id: None,
-                skill: None,
+                program_package: None,
             },
             payload,
         }
@@ -71,7 +71,7 @@ impl ApxmEvent {
                 span_id: Uuid::new_v4().to_string(),
                 parent_span_id: Some(parent_span_id.into()),
                 scope_id: None,
-                skill: None,
+                program_package: None,
             },
             payload,
         }
@@ -95,9 +95,12 @@ impl ApxmEvent {
         self
     }
 
-    /// Set skill provenance for this event.
-    pub fn with_skill_provenance(mut self, provenance: Option<SkillEventProvenance>) -> Self {
-        self.meta.skill = provenance;
+    /// Set ProgramPackage provenance for this event.
+    pub fn with_program_package_provenance(
+        mut self,
+        provenance: Option<ProgramPackageEventProvenance>,
+    ) -> Self {
+        self.meta.program_package = provenance;
         self
     }
 }

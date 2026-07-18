@@ -168,17 +168,17 @@ pub fn shared_client() -> &'static Client {
 /// variant shape.
 fn header_map(args: &HashMap<String, Value>) -> HeaderMap {
     let mut map = HeaderMap::new();
-    if let Some(hv) = args.get("headers") {
-        if let Ok(serde_json::Value::Object(obj)) = serde_json::to_value(hv) {
-            for (k, v) in obj {
-                if let Some(s) = v.as_str() {
-                    if let (Ok(name), Ok(val)) = (
-                        HeaderName::from_bytes(k.as_bytes()),
-                        HeaderValue::from_str(s),
-                    ) {
-                        map.insert(name, val);
-                    }
-                }
+    if let Some(hv) = args.get("headers")
+        && let Ok(serde_json::Value::Object(obj)) = serde_json::to_value(hv)
+    {
+        for (k, v) in obj {
+            if let Some(s) = v.as_str()
+                && let (Ok(name), Ok(val)) = (
+                    HeaderName::from_bytes(k.as_bytes()),
+                    HeaderValue::from_str(s),
+                )
+            {
+                map.insert(name, val);
             }
         }
     }
@@ -309,7 +309,7 @@ impl CapabilityExecutor for HttpPostCapability {
                 Ok(jv) => {
                     req = req
                         .header("content-type", "application/json")
-                        .body(jv.to_string())
+                        .body(jv.to_string());
                 }
                 Err(_) => {}
             }

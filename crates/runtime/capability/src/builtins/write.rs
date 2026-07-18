@@ -262,8 +262,7 @@ impl WriteCapability {
 
         let effective_len = if append {
             std::fs::metadata(path)
-                .map(|metadata| metadata.len() as usize)
-                .unwrap_or(0)
+                .map_or(0, |metadata| metadata.len() as usize)
                 .saturating_add(content_len)
         } else {
             content_len

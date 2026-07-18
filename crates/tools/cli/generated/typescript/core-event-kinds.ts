@@ -78,6 +78,7 @@ export enum CoreEventKind {
   GRAPH_EDGE = "graph_edge",
   CONTEXT_COMPACTED = "context_compacted",
   MODEL_CONTEXT_METRICS = "model_context_metrics",
+  CONTEXT_LIFECYCLE = "context_lifecycle",
   CAPABILITY_EFFECT_RECEIPT = "capability_effect_receipt",
   MODEL_REROUTED = "model_rerouted",
   CANCELLED = "cancelled",
@@ -146,6 +147,7 @@ export const COMMUNICATE_DISPATCHED = kind(CoreEventKind.COMMUNICATE_DISPATCHED,
 export const GRAPH_EDGE = kind(CoreEventKind.GRAPH_EDGE, EventCategoryKind.TOPOLOGY);
 export const CONTEXT_COMPACTED = kind(CoreEventKind.CONTEXT_COMPACTED, EventCategoryKind.OBSERVABILITY);
 export const MODEL_CONTEXT_METRICS = kind(CoreEventKind.MODEL_CONTEXT_METRICS, EventCategoryKind.OBSERVABILITY);
+export const CONTEXT_LIFECYCLE = kind(CoreEventKind.CONTEXT_LIFECYCLE, EventCategoryKind.OBSERVABILITY);
 export const CAPABILITY_EFFECT_RECEIPT = kind(CoreEventKind.CAPABILITY_EFFECT_RECEIPT, EventCategoryKind.OBSERVABILITY);
 export const MODEL_REROUTED = kind(CoreEventKind.MODEL_REROUTED, EventCategoryKind.LIFECYCLE);
 export const CANCELLED = kind(CoreEventKind.CANCELLED, EventCategoryKind.ERROR);
@@ -214,6 +216,7 @@ export const CORE_EVENT_KINDS = [
   GRAPH_EDGE,
   CONTEXT_COMPACTED,
   MODEL_CONTEXT_METRICS,
+  CONTEXT_LIFECYCLE,
   CAPABILITY_EFFECT_RECEIPT,
   MODEL_REROUTED,
   CANCELLED,

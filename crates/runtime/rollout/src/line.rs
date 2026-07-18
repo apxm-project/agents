@@ -4,7 +4,7 @@
 //! The Rust definitions here are the authoritative encoding the writer/reader
 //! pair agree on. Bump [`crate::SCHEMA_VERSION`] when this changes.
 
-use apxm_core::events::{EventSource, SkillEventProvenance};
+use apxm_core::events::{EventSource, ProgramPackageEventProvenance};
 use serde::{Deserialize, Serialize};
 
 /// One physical line in a rollout JSONL file.
@@ -27,7 +27,7 @@ pub struct RolloutMeta {
     pub scope_id: Option<String>,
     pub source: EventSource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub skill: Option<SkillEventProvenance>,
+    pub program_package: Option<ProgramPackageEventProvenance>,
 
     // Rollout-tree extensions (Claude Code parent_uuid + Codex thread fields).
     pub uuid: String,
@@ -73,8 +73,8 @@ pub struct SessionMetaPayload {
     pub agent_role: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_code: Option<String>,
-    pub skill_id: String,
-    pub skill_version: String,
+    pub program_package_id: String,
+    pub program_package_digest: String,
     pub artifact_hash: String,
     pub source_hash: String,
     pub air_hash: String,

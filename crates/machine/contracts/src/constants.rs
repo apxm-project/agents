@@ -9,9 +9,6 @@ pub mod diagnostics {
 
 pub mod env {
     pub const APXM_BACKEND: &str = "APXM_BACKEND";
-    /// Docker workspace libs root where Studio writes deployed workflow/skill packs.
-    /// Used for executable skill resolution, not integration catalog discovery.
-    pub const APXM_LIBS_ROOT: &str = "APXM_LIBS_ROOT";
     /// Canonical integration catalog root (`<workspace>/integrations` or bundled source).
     /// Used by Studio, Server, OS, and Auth to discover provider integration folders.
     pub const APXM_INTEGRATIONS_ROOT: &str = "APXM_INTEGRATIONS_ROOT";
@@ -408,7 +405,8 @@ pub mod capabilities {
     pub use apxm_ais::capabilities::groups;
     pub use apxm_ais::capabilities::{
         AGENT_MANAGEMENT_BUILTINS, BASH, BUILTINS, CAPABILITY_DISCOVERY, HTTP_GET, HTTP_POST,
-        MANAGE_TASK, READ, SCHEDULE, SEARCH_SKILLS, SEARCH_WEB, STANDARD_BUILTINS, WRITE,
+        LIST_LOCAL_SKILLS, MANAGE_TASK, READ, READ_LOCAL_SKILL, SCHEDULE, SEARCH_SKILLS,
+        SEARCH_WEB, STANDARD_BUILTINS, WRITE,
     };
 }
 
@@ -762,7 +760,6 @@ pub mod session {
         pub const SPAWN_NODE_ID: &str = "spawn_node_id";
         pub const PROMPT_TXT: &str = "prompt.txt";
         pub const RESPONSE_TXT: &str = "response.txt";
-        pub const SKILLS_DIR: &str = "skills";
     }
 }
 

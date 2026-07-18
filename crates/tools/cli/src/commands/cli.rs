@@ -73,15 +73,12 @@ pub enum Commands {
         #[arg(long = "pass-list", value_name = "A,B,C", value_delimiter = ',')]
         pass_list_override: Option<Vec<String>>,
     },
-    /// Synthesize an entry-less declarative agent package to AIR on stdout.
+    /// Compile an explicit agent ProgramPackage entry to AIR on stdout.
     /// Stdout contains only AIR; diagnostics use stderr and failures are
     /// nonzero so callers can consume the command as a process contract.
     CompileService {
         /// Agent directory (contains agent.toml, integrity.toml, and capabilities/)
         agent_dir: PathBuf,
-        /// Read the required typed JSON options object from stdin.
-        #[arg(long, required = true)]
-        options_stdin: bool,
     },
     /// Decompile an artifact back to AIR
     Decompile {
@@ -894,26 +891,22 @@ mod tests {
     use clap::Parser;
 
     #[test]
-    fn compile_service_accepts_options_stdin_flag() {
-        let cli = Cli::try_parse_from(["apxm", "compile-service", "--options-stdin", "/tmp/agent"])
+    fn compile_service_accepts_explicit_package_path() {
+        let cli = Cli::try_parse_from(["apxm", "compile-service", "/tmp/agent"])
             .expect("compile-service parses");
 
         match cli.command {
-            Commands::CompileService {
-                agent_dir,
-                options_stdin,
-            } => {
+            Commands::CompileService { agent_dir } => {
                 assert_eq!(agent_dir, PathBuf::from("/tmp/agent"));
-                assert!(options_stdin);
             }
             _ => panic!("expected compile-service command"),
         }
     }
 
     #[test]
-    fn compile_service_rejects_bare_invocation() {
-        let err = match Cli::try_parse_from(["apxm", "compile-service", "/tmp/agent"]) {
-            Ok(_) => panic!("compile-service requires --options-stdin"),
+    fn compile_service_rejects_missing_package_path() {
+        let err = match Cli::try_parse_from(["apxm", "compile-service"]) {
+            Ok(_) => panic!("compile-service requires an agent package path"),
             Err(err) => err,
         };
         assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);

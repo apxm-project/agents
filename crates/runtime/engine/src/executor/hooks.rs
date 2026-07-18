@@ -4,6 +4,7 @@
 //! operation handler, while execution hooks observe scheduler lifecycle events
 //! such as ready, start, finish, and graph completion.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use apxm_core::types::{AISOperationType, NodeId, OpStatus};
@@ -314,6 +315,31 @@ pub struct HookBinding {
     pub mode: HookMode,
 }
 
+/// Host-granted authority for one hook to contribute trusted instructions.
+///
+/// Author-authored `REGISTER_HOOK` bindings never create this authority. The
+/// trusted host grants it only after it has admitted the matching sealed policy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrustedInstructionHookAuthority {
+    policy_ref: String,
+}
+
+impl TrustedInstructionHookAuthority {
+    /// Construct one non-empty trusted policy reference.
+    pub fn new(policy_ref: impl Into<String>) -> Result<Self, String> {
+        let policy_ref = policy_ref.into();
+        if policy_ref.trim().is_empty() {
+            return Err("trusted instruction hook policy reference must not be empty".to_string());
+        }
+        Ok(Self { policy_ref })
+    }
+
+    /// The host policy reference that grants this narrow authority.
+    pub fn policy_ref(&self) -> &str {
+        &self.policy_ref
+    }
+}
+
 impl HookBinding {
     /// Does this hook apply to a tool/op named `name`? Supports `*` wildcards.
     pub fn matches(&self, name: &str) -> bool {
@@ -330,6 +356,7 @@ impl HookBinding {
 #[derive(Debug, Default)]
 pub struct HookRegistry {
     bindings: std::sync::Mutex<Vec<HookBinding>>,
+    instruction_authorities: std::sync::Mutex<HashMap<String, TrustedInstructionHookAuthority>>,
 }
 
 impl HookRegistry {
@@ -353,6 +380,51 @@ impl HookRegistry {
             .lock()
             .expect("hook registry poisoned")
             .push(binding);
+    }
+
+    /// Grant one already-registered hook authority to contribute a trusted
+    /// instruction frame. Replacing an existing grant is rejected so a later
+    /// registration path cannot silently widen or swap host authority.
+    pub fn authorize_instruction_contribution(
+        &self,
+        handler_id: impl Into<String>,
+        authority: TrustedInstructionHookAuthority,
+    ) -> Result<(), String> {
+        let handler_id = handler_id.into();
+        if !self
+            .bindings
+            .lock()
+            .expect("hook registry poisoned")
+            .iter()
+            .any(|binding| binding.handler_id == handler_id)
+        {
+            return Err(format!(
+                "trusted instruction hook '{handler_id}' is not registered"
+            ));
+        }
+        let mut authorities = self
+            .instruction_authorities
+            .lock()
+            .expect("hook registry poisoned");
+        if authorities.contains_key(&handler_id) {
+            return Err(format!(
+                "trusted instruction hook '{handler_id}' is already authorized"
+            ));
+        }
+        authorities.insert(handler_id, authority);
+        Ok(())
+    }
+
+    /// Resolve host-granted instruction authority for one registered hook.
+    pub fn instruction_contribution_authority(
+        &self,
+        handler_id: &str,
+    ) -> Option<TrustedInstructionHookAuthority> {
+        self.instruction_authorities
+            .lock()
+            .expect("hook registry poisoned")
+            .get(handler_id)
+            .cloned()
     }
 
     /// All bindings for `event`, in registration order (owned clones so the
@@ -516,5 +588,39 @@ mod hook_registry_tests {
         let m2 = reg.matching(HookEvent::PreCap, "search");
         assert_eq!(m2.len(), 1);
         assert_eq!(m2[0].handler_id, "h2");
+    }
+
+    #[test]
+    fn trusted_instruction_authority_is_host_granted_and_immutable() {
+        let registry = HookRegistry::new();
+        let authority = TrustedInstructionHookAuthority::new("policy:trusted-instructions")
+            .expect("non-empty authority");
+        assert!(
+            registry
+                .authorize_instruction_contribution("missing", authority.clone())
+                .is_err()
+        );
+
+        registry.register(HookBinding {
+            handler_id: "trusted-hook".into(),
+            event: HookEvent::PostTurn,
+            match_glob: "*".into(),
+            mode: HookMode::Observe,
+        });
+        registry
+            .authorize_instruction_contribution("trusted-hook", authority.clone())
+            .expect("host authorizes registered hook");
+        assert_eq!(
+            registry
+                .instruction_contribution_authority("trusted-hook")
+                .expect("stored authority")
+                .policy_ref(),
+            authority.policy_ref()
+        );
+        assert!(
+            registry
+                .authorize_instruction_contribution("trusted-hook", authority)
+                .is_err()
+        );
     }
 }

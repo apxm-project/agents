@@ -39,7 +39,7 @@ type SchedulerExecutionResult = (
 /// variant only reports that the caller no longer needs to keep waiting on
 /// this particular execution future to know "a turn boundary was reached".
 pub enum SchedulerOutcome {
-    Completed(SchedulerExecutionResult),
+    Completed(Box<SchedulerExecutionResult>),
     Parked {
         session_id: String,
         /// Handle to the detached background task that joins the still-running
@@ -458,13 +458,13 @@ impl DataflowScheduler {
 
         let scheduler_metrics = SchedulerMetrics::from_collector(&state.metrics);
 
-        Ok(SchedulerOutcome::Completed((
+        Ok(SchedulerOutcome::Completed(Box::new((
             results,
             stats,
             scheduler_metrics,
             all_outputs,
             node_output_map,
-        )))
+        ))))
     }
 
     /// Apply runtime latency tier overrides to DAG nodes.

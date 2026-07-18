@@ -43,10 +43,8 @@ read_only = true
 
 [[capability]]
 id = "list_local_skills"
-description = "List Gao-owned local skills."
-handler_function = "listLocalSkills"
-handler_module = "capabilities/list_local_skills/handler"
-kind = "typescript_handler"
+description = "List grant-visible Agent Skill metadata through the host catalogue."
+kind = "builtin"
 read_only = true
 
 [[capability]]
@@ -73,10 +71,8 @@ read_only = true
 
 [[capability]]
 id = "read_local_skill"
-description = "Read a Gao-owned skill document."
-handler_function = "readLocalSkill"
-handler_module = "capabilities/read_local_skill/handler"
-kind = "typescript_handler"
+description = "Read one grant-visible Agent Skill resource through the host catalogue."
+kind = "builtin"
 read_only = true
 
 [[capability]]
@@ -88,8 +84,7 @@ read_only = false
 
 [[capability]]
 id = "search_skills"
-description = "Find relevant APXM skills by description."
-builtin_group = "skills"
+description = "Search grant-visible Agent Skill metadata through the host catalogue."
 kind = "builtin"
 read_only = true
 

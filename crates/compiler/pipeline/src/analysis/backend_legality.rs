@@ -239,7 +239,7 @@ fn memoization_safe_producer(effect: &EffectAuthoritySummary) -> bool {
 /// Whether an array-backed tool selector can resolve one or more tools.
 fn non_empty_array_attribute(node: &Node, attribute: &str) -> bool {
     node.get_attribute(attribute)
-        .is_some_and(|value| value.as_array().map_or(true, |values| !values.is_empty()))
+        .is_some_and(|value| value.as_array().is_none_or(|values| !values.is_empty()))
 }
 
 /// Whether a boolean tool switch is enabled or cannot be proven disabled.
@@ -253,7 +253,7 @@ fn enabled_boolean_attribute(node: &Node, attribute: &str) -> bool {
 /// Whether a tool-loop limit is positive or malformed.
 fn positive_integer_attribute(node: &Node, attribute: &str) -> bool {
     node.get_attribute(attribute)
-        .is_some_and(|value| value.as_u64().map_or(true, |limit| limit > 0))
+        .is_some_and(|value| value.as_u64().is_none_or(|limit| limit > 0))
 }
 
 #[cfg(test)]

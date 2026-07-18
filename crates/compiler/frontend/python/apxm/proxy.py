@@ -1551,51 +1551,43 @@ class GraphRecorder:
         attrs = self._apply_policy(attrs, attributes)
         return self._add_node(name, graph_keys.OP_AUTONOMOUS, attrs)
 
-    def recv(
+    def await_input(
         self,
         name: str | None = None,
         *,
-        recv_url: str,
-        persona: str | None = None,
-        once: bool = True,
+        wait_key: str | None = None,
+        rearm: bool = False,
+        agent_name: str | None = None,
+        flow_name: str | None = None,
+        input_name: str | None = None,
         max_iterations: int | None = None,
-        poll_interval_ms: int | None = None,
-        recv_max_polls: int | None = None,
-        agent: AgentConfig | None = None,
-        model: ModelId | None = None,
-        provider: ProviderSpec | None = None,
-        route: BackendRoute | None = None,
-        backend: str | None = None,
         **attributes: Any,
     ) -> NodeRef:
-        """Park as an in-graph node until an event arrives at ``recv_url``, then
-        run one agent turn per event (AUTONOMOUS ``mode=recv``).
+        """Return one supplied input or park until the host delivers one.
 
-        This is the artifact-resident counterpart to a host-loop monitor: the
-        wait lives in the ``.air`` graph. ``once=True`` (default) returns after
-        the first event; ``once=False`` re-arms up to ``max_iterations`` events.
-        ``recv_url`` is polled (2xx + non-empty body = an event) every
-        ``poll_interval_ms``; without ``recv_max_polls`` it waits indefinitely.
+        ``wait_key`` is an opaque host-owned correlation key. When omitted,
+        the runtime uses the execution session's input key. This operation has
+        no conversational or model behavior; compose a downstream FLOW_CALL
+        explicitly when a delivered input should start more work.
         """
-        recv_attrs: dict[str, Any] = {"mode": "recv", "recv_url": recv_url}
-        if not once:
-            recv_attrs["recv_once"] = "false"
-        if poll_interval_ms is not None:
-            recv_attrs[graph_keys.POLL_INTERVAL_MS] = poll_interval_ms
-        if recv_max_polls is not None:
-            recv_attrs["recv_max_polls"] = recv_max_polls
-        recv_attrs.update(attributes)
-        return self.autonomous(
-            name=name,
-            prompt=persona or "You are an agent reacting to external events.",
-            max_iterations=max_iterations,
-            agent=agent,
-            model=model,
-            provider=provider,
-            route=route,
-            backend=backend,
-            **recv_attrs,
-        )
+        if name is None:
+            name = self._auto_name(graph_keys.OP_AWAIT_INPUT)
+        attrs: dict[str, Any] = {}
+        if wait_key is not None:
+            attrs[graph_keys.WAIT_KEY] = wait_key
+        if rearm:
+            attrs[graph_keys.REARM] = "true"
+        if agent_name is not None:
+            attrs[graph_keys.AGENT_NAME] = agent_name
+        if flow_name is not None:
+            attrs[graph_keys.FLOW_NAME] = flow_name
+        if input_name is not None:
+            attrs[graph_keys.INPUT_NAMES] = [input_name]
+        if max_iterations is not None:
+            attrs[graph_keys.MAX_ITERATIONS] = max_iterations
+        attrs.update(attributes)
+        attrs = self._apply_policy(attrs, {})
+        return self._add_node(name, graph_keys.OP_AWAIT_INPUT, attrs)
 
     def to_graph(self) -> ApxmGraph:
         """Snapshot the recorded operations into an :class:`ApxmGraph`.

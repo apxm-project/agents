@@ -91,7 +91,7 @@ impl ScheduleCapability {
         }
     }
 
-    fn err(&self, message: impl Into<String>) -> apxm_core::error::RuntimeError {
+    fn err(message: impl Into<String>) -> apxm_core::error::RuntimeError {
         apxm_core::error::RuntimeError::Capability {
             capability: CAP.to_string(),
             message: message.into(),
@@ -102,7 +102,7 @@ impl ScheduleCapability {
         let when = args
             .get("when")
             .and_then(|v| v.as_object())
-            .ok_or_else(|| self.err("'create' requires a 'when' object"))?;
+            .ok_or_else(|| Self::err("'create' requires a 'when' object"))?;
         let after_secs = when.get("after_secs").and_then(|v| v.as_i64());
         let at_ms = when.get("at_ms").and_then(|v| v.as_i64());
         let every_secs = when.get("every_secs").and_then(|v| v.as_i64());
@@ -121,18 +121,19 @@ impl ScheduleCapability {
         .filter(|b| **b)
         .count();
         if specified != 1 {
-            return Err(self
-                .err("'when' must specify exactly one of after_secs, at_ms, every_secs, or cron"));
+            return Err(Self::err(
+                "'when' must specify exactly one of after_secs, at_ms, every_secs, or cron",
+            ));
         }
 
         let now = now_ms();
         let (kind, recurring, next_fire_ms, cron_stored) = if let Some(expr) = &cron {
             let next = cron::next_after(expr, now)
-                .map_err(|e| self.err(format!("invalid cron expression: {e}")))?;
+                .map_err(|e| Self::err(format!("invalid cron expression: {e}")))?;
             ("cron", true, next, Some(expr.clone()))
         } else if let Some(secs) = every_secs {
             if secs < 1 {
-                return Err(self.err("every_secs must be >= 1"));
+                return Err(Self::err("every_secs must be >= 1"));
             }
             ("recurring", true, now + secs * 1000, None)
         } else if let Some(secs) = after_secs {
@@ -148,7 +149,7 @@ impl ScheduleCapability {
         if let Some(queue) = args.get(PAYLOAD_QUEUE).and_then(|v| v.as_str()) {
             let obj = payload_json
                 .as_object_mut()
-                .ok_or_else(|| self.err("'payload' must be an object when 'queue' is set"))?;
+                .ok_or_else(|| Self::err("'payload' must be an object when 'queue' is set"))?;
             obj.insert(
                 PAYLOAD_QUEUE.to_string(),
                 serde_json::Value::String(queue.to_string()),
@@ -173,7 +174,7 @@ impl ScheduleCapability {
             created_at_ms: now,
             last_fired_ms: None,
         };
-        self.store.upsert_schedule(&row).map_err(|e| self.err(e))?;
+        self.store.upsert_schedule(&row).map_err(Self::err)?;
         // Nudge the firer so it re-evaluates its next sleep deadline.
         self.arm.notify_one();
 
@@ -188,7 +189,7 @@ impl ScheduleCapability {
     }
 
     fn do_list(&self) -> CapabilityResult<Value> {
-        let rows = self.store.list_schedules().map_err(|e| self.err(e))?;
+        let rows = self.store.list_schedules().map_err(Self::err)?;
         let schedules: Vec<Value> = rows.iter().map(schedule_value).collect();
         let mut obj = HashMap::new();
         obj.insert("schedules".to_string(), Value::Array(schedules));
@@ -199,10 +200,10 @@ impl ScheduleCapability {
         let id = args
             .get("schedule_id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| self.err("'get' requires 'schedule_id'"))?;
-        match self.store.get_schedule(id).map_err(|e| self.err(e))? {
+            .ok_or_else(|| Self::err("'get' requires 'schedule_id'"))?;
+        match self.store.get_schedule(id).map_err(Self::err)? {
             Some(row) => Ok(schedule_value(&row)),
-            None => Err(self.err(format!("schedule '{id}' not found"))),
+            None => Err(Self::err(format!("schedule '{id}' not found"))),
         }
     }
 
@@ -210,8 +211,8 @@ impl ScheduleCapability {
         let id = args
             .get("schedule_id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| self.err("'cancel' requires 'schedule_id'"))?;
-        let cancelled = self.store.cancel_schedule(id).map_err(|e| self.err(e))?;
+            .ok_or_else(|| Self::err("'cancel' requires 'schedule_id'"))?;
+        let cancelled = self.store.cancel_schedule(id).map_err(Self::err)?;
         let mut obj = HashMap::new();
         obj.insert("cancelled".to_string(), Value::Bool(cancelled));
         Ok(Value::Object(obj))
@@ -224,13 +225,13 @@ impl CapabilityExecutor for ScheduleCapability {
         let action = args
             .get("action")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| self.err("missing required 'action'"))?;
+            .ok_or_else(|| Self::err("missing required 'action'"))?;
         match action {
             "create" => self.do_create(&args),
             "list" => self.do_list(),
             "get" => self.do_get(&args),
             "cancel" => self.do_cancel(&args),
-            other => Err(self.err(format!("unknown action '{other}'"))),
+            other => Err(Self::err(format!("unknown action '{other}'"))),
         }
     }
 

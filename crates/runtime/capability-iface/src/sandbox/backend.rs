@@ -44,7 +44,7 @@ pub struct WrappedCommand {
 /// owned until the process handle itself is dropped.
 pub struct WrappedChild {
     child: Child,
-    _guard: Option<Box<dyn WrappedCommandGuard>>,
+    guard: Option<Box<dyn WrappedCommandGuard>>,
 }
 
 impl WrappedCommand {
@@ -98,19 +98,16 @@ impl WrappedCommand {
         }
         configure(&mut command);
         let child = command.spawn()?;
-        Ok(WrappedChild {
-            child,
-            _guard: guard,
-        })
+        Ok(WrappedChild { child, guard })
     }
 }
 
 impl WrappedChild {
     /// Wait for process completion while retaining the backend guard.
     pub async fn wait_with_output(self) -> std::io::Result<std::process::Output> {
-        let Self { child, _guard } = self;
+        let Self { child, guard } = self;
         let output = child.wait_with_output().await;
-        drop(_guard);
+        drop(guard);
         output
     }
 }

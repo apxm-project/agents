@@ -22,8 +22,6 @@ use serde::Deserialize;
 use super::agent::{CompileToml, FrontendLanguage, installed_typescript_frontend_entry};
 #[cfg(feature = "driver")]
 use super::implementations::{load_config, parse_opt_level};
-#[cfg(feature = "driver")]
-use apxm_ais::chat::CompileServiceOptions;
 
 #[cfg(feature = "driver")]
 fn is_python_graph_input(input: &Path) -> bool {
@@ -290,31 +288,6 @@ type HandlerManifestBytes = Option<Vec<u8>>;
 // service boundary.
 // ---------------------------------------------------------------------------
 
-#[cfg(feature = "driver")]
-fn parse_compile_service_options_json(json: &str) -> Result<CompileServiceOptions> {
-    let mut deserializer = serde_json::Deserializer::from_str(json);
-    let options = CompileServiceOptions::deserialize(&mut deserializer)
-        .context("compile-service --options-stdin expects one typed JSON object on stdin")?;
-    deserializer
-        .end()
-        .context("compile-service --options-stdin expects exactly one JSON object on stdin")?;
-    options
-        .validate()
-        .context("compile-service options validation failed")?;
-    Ok(options)
-}
-
-#[cfg(feature = "driver")]
-fn read_compile_service_options_from_stdin() -> Result<CompileServiceOptions> {
-    use std::io::Read;
-
-    let mut stdin = String::new();
-    std::io::stdin()
-        .read_to_string(&mut stdin)
-        .context("Failed to read compile-service options JSON from stdin")?;
-    parse_compile_service_options_json(&stdin)
-}
-
 /// Compile a package-declared frontend entry into canonical AIR text.
 ///
 /// # Cross-repo I/O contract
@@ -325,17 +298,15 @@ fn read_compile_service_options_from_stdin() -> Result<CompileServiceOptions> {
 /// Python frontend:
 ///
 /// - **Input**: a single positional argument, the agent directory containing
-///   `agent.toml` with `[compile].entry` and `[compile].frontend`.
-///   `--options-stdin` is required, and stdin must contain exactly one JSON
-///   object matching the typed compile-service options contract.
+///   `agent.toml` with `[compile].entry` and `[compile].frontend`. It accepts
+///   no request-level source, persona, model, or capability overrides.
 /// - **stdout**: on success, ONLY emitted AIR text. No other text is ever
 ///   written to stdout; all progress/log/diagnostic output goes to stderr.
 /// - **Exit code**: `0` on success. Nonzero on any failure, with a
 ///   human-readable message on stderr.
 #[cfg(feature = "driver")]
 pub fn compile_service_command(agent_dir: PathBuf, _config: Option<PathBuf>) -> Result<()> {
-    let options = read_compile_service_options_from_stdin()?;
-    let air = emit_air_from_agent(&agent_dir, &options)?;
+    let air = emit_air_from_agent(&agent_dir)?;
 
     // Only the AIR text goes to stdout, written byte-for-byte as the frontend
     // produced it (no added trailing newline) — this is the process contract
@@ -351,10 +322,7 @@ pub fn compile_service_command(agent_dir: PathBuf, _config: Option<PathBuf>) -> 
 /// writing wrapper above so it can be exercised directly by tests (including
 /// the Studio-equivalence fixture test) without spawning a subprocess.
 #[cfg(feature = "driver")]
-pub(crate) fn emit_air_from_agent(
-    agent_dir: &Path,
-    options: &CompileServiceOptions,
-) -> Result<String> {
+pub(crate) fn emit_air_from_agent(agent_dir: &Path) -> Result<String> {
     if !agent_dir.is_dir() {
         return Err(anyhow::anyhow!(
             "'{}' is not a directory",
@@ -362,9 +330,6 @@ pub(crate) fn emit_air_from_agent(
         ));
     }
 
-    options
-        .validate()
-        .context("compile-service options validation failed")?;
     let entry = declared_agent_package_entry(agent_dir)?.ok_or_else(|| {
         anyhow::anyhow!(
             "{} must declare [compile].entry and [compile].frontend; implicit graph synthesis is no longer supported",
@@ -617,13 +582,14 @@ pub fn compile_command(
     let compiler = Compiler::with_opt_level(opt).context("Failed to initialize compiler")?;
 
     // Check if this is a new-format .air file (valid MLIR).
-    let is_new_air = if !input_source.is_dir() && ApxmPathFormat::from_path(&graph_input).is_air_source() {
-        std::fs::read_to_string(&graph_input)
-            .map(|text| is_mlir_air_text(&text))
-            .unwrap_or(false)
-    } else {
-        false
-    };
+    let is_new_air =
+        if !input_source.is_dir() && ApxmPathFormat::from_path(&graph_input).is_air_source() {
+            std::fs::read_to_string(&graph_input)
+                .map(|text| is_mlir_air_text(&text))
+                .unwrap_or(false)
+        } else {
+            false
+        };
 
     // For new .air format (valid MLIR), compile directly without AirModule.
     // The .air path skips graph lowering, but still honors PipelineConfig
@@ -872,7 +838,7 @@ mod tests {
         typescript_hook_manifests(&[qualname])
     }
 
-    fn write_entryless_agent_with_loop_config(mode: &str) -> tempfile::TempDir {
+    fn write_entryless_agent() -> tempfile::TempDir {
         let tmp = tempdir().expect("temp agent");
         let root = tmp.path();
         fs::create_dir_all(root.join("capabilities/handlers")).expect("handlers dir");
@@ -883,11 +849,6 @@ mod tests {
             format!(
                 r#"
 id = "demo"
-
-[runtime.loop]
-mode = "{mode}"
-rearm = true
-turn_param = "user_message"
 
 [prompts]
 persona = "prompts/persona.md"
@@ -962,133 +923,13 @@ handler = "hooks.pre_turn"
 
     #[test]
     fn compile_service_rejects_entryless_packages() {
-        let agent_dir = write_entryless_agent_with_loop_config("host");
-        let error = emit_air_from_agent(agent_dir.path(), &CompileServiceOptions::default())
+        let agent_dir = write_entryless_agent();
+        let error = emit_air_from_agent(agent_dir.path())
             .expect_err("entry-less package must not synthesize AIR");
         assert!(
             error.to_string().contains("[compile].entry"),
             "error should tell the package author to provide explicit frontend source: {error:#}"
         );
-    }
-
-    #[test]
-    fn compile_service_options_json_requires_exactly_one_typed_object() {
-        let options = parse_compile_service_options_json(
-            r#"{
-                "system_prompt": "Stay concise.",
-                "backend": "corp-gateway",
-                "model": "gpt-4.1-mini",
-                "context_profile": "configured-profile",
-                "max_output_tokens": 256,
-                "effort": "high",
-                "tools": true,
-                "skills": false,
-                "capability_discovery": true,
-                "authoring": false
-            }"#,
-        )
-        .expect("typed options json parses");
-
-        assert_eq!(
-            options,
-            CompileServiceOptions {
-                system_prompt: Some("Stay concise.".to_string()),
-                backend: Some("corp-gateway".to_string()),
-                model: Some("gpt-4.1-mini".to_string()),
-                context_profile: Some("configured-profile".to_string()),
-                max_output_tokens: Some(256),
-                effort: Some("high".to_string()),
-                tools: true,
-                skills: false,
-                capability_discovery: true,
-                authoring: false,
-            }
-        );
-
-        let err = parse_compile_service_options_json(
-            r#"{
-                "system_prompt": null,
-                "backend": null,
-                "model": null,
-                "context_profile": null,
-                "max_output_tokens": null,
-                "effort": null,
-                "tools": false,
-                "skills": false,
-                "capability_discovery": false,
-                "authoring": false
-            } {}"#,
-        )
-        .expect_err("multiple JSON values must fail");
-        assert!(
-            err.to_string().contains("exactly one JSON object"),
-            "expected strict single-object error, got {err}"
-        );
-
-        let err = parse_compile_service_options_json(
-            r#"{
-                "backend": null,
-                "model": null,
-                "effort": null,
-                "tools": false,
-                "skills": false,
-                "capability_discovery": false,
-                "authoring": false
-            }"#,
-        )
-        .expect_err("nullable fields must still be present");
-        assert!(
-            format!("{err:#}").contains("missing field `system_prompt`"),
-            "expected required nullable field error, got {err:#}"
-        );
-
-        for (field, value) in [
-            ("backend", "corp gateway"),
-            ("model", "model@preview"),
-            ("context_profile", "profile preview"),
-            ("effort", "HIGH"),
-        ] {
-            let json = format!(
-                r#"{{
-                    "system_prompt": null,
-                    "backend": {},
-                    "model": {},
-                    "context_profile": {},
-                    "max_output_tokens": null,
-                    "effort": {},
-                    "tools": false,
-                    "skills": false,
-                    "capability_discovery": false,
-                    "authoring": false
-                }}"#,
-                if field == "backend" {
-                    serde_json::to_string(value).unwrap()
-                } else {
-                    "null".to_string()
-                },
-                if field == "model" {
-                    serde_json::to_string(value).unwrap()
-                } else {
-                    "null".to_string()
-                },
-                if field == "context_profile" {
-                    serde_json::to_string(value).unwrap()
-                } else {
-                    "null".to_string()
-                },
-                if field == "effort" {
-                    serde_json::to_string(value).unwrap()
-                } else {
-                    "null".to_string()
-                },
-            );
-            let err = parse_compile_service_options_json(&json)
-                .expect_err("invalid option values must fail instead of being sanitized");
-            assert!(
-                format!("{err:#}").contains(&format!("invalid {field}")),
-                "expected exact {field} validation error, got {err:#}"
-            );
-        }
     }
 
     #[test]
@@ -1113,7 +954,6 @@ handler = "hooks.pre_turn"
     fn mlir_air_text_rejects_json_graph() {
         assert!(!is_mlir_air_text("{\"nodes\": []}"));
     }
-
 }
 
 /// Convert an ExecutionDag back to an AirModule for decompile and session output.

@@ -7,7 +7,6 @@
 //! event and returns a decision object the runtime applies:
 //! - `pre_cap` → allow | defer | deny(reason) | edit_args(args)
 //! - `post_cap` → replace_result(x) | (none)
-//! - `pre_ask` → prepend_system(text) | set_system(text) | (none)
 //!
 //! Failure semantics: a `gate` hook that errors fails CLOSED (the guarded
 //! action is denied and the error surfaced); an `observe` hook that errors
@@ -16,17 +15,27 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use apxm_capability_iface::events::{ModelContextCallKind, ModelContextMetrics};
 use apxm_core::error::RuntimeError;
-use apxm_core::events::payload::ToolCallCorrelation;
+use apxm_core::events::payload::{GenerationIdentity, ToolCallCorrelation, UsagePayload};
+use apxm_core::types::context_contracts::ContextLifecycleEventPayload;
 use apxm_core::types::values::{Number, Value};
-use serde_json::{Map as JsonMap, Value as JsonValue, json};
+use serde_json::{Value as JsonValue, json};
+use sha2::{Digest, Sha256};
 
 use super::ExecutionContext;
-use super::hooks::{HookEvent, HookMode};
+use super::hooks::{HookBinding, HookEvent, HookMode};
+use crate::context_envelope::lifecycle_metadata_from_serialized;
 use crate::memory::MemorySpace;
 
 const HOOK_DEADLINE: Duration = Duration::from_secs(30);
 const HOOK_PAYLOAD_KEY: &str = "__apxm_hook__";
+const CONTEXT_CONTRIBUTION_DECISION_KEY: &str = "context_contribution";
+const CONTEXT_CONTRIBUTION_CONTENT_KEY: &str = "content";
+const CONTEXT_CONTRIBUTION_TRUST_KEY: &str = "trust";
+const CONTEXT_CONTRIBUTION_INSTRUCTION_TRUST: &str = "instruction";
+const CONTEXT_CONTRIBUTION_LIFECYCLE_KIND: &str = "context_contribution";
+const SHA256_PREFIX: &str = "sha256:";
 
 async fn call_hook_with_host_bridge<F, Fut>(
     ctx: &ExecutionContext,
@@ -77,9 +86,10 @@ async fn dispatch_host_call(
     ctx: &ExecutionContext,
     method: String,
     params: JsonValue,
+    call_kind: ModelContextCallKind,
 ) -> std::result::Result<JsonValue, String> {
     match method.as_str() {
-        "llm.ask" => host_llm_ask(ctx, params).await,
+        "llm.ask" => host_llm_ask(ctx, params, call_kind).await,
         "tool.call" => host_tool_call(ctx, params).await,
         "mem.read" => host_mem_read(ctx, params).await,
         "mem.recent" => host_mem_recent(ctx, params).await,
@@ -173,18 +183,18 @@ async fn host_mem_read(
 }
 
 /// One-shot LLM ask for hooks. Uses the shared egress admission path without
-/// streaming, an event emitter, or nested `pre_ask` hooks. This is deliberate:
+/// streaming, an event emitter, or nested lifecycle hooks. This is deliberate:
 /// - no emitter → a hook's own LLM call (e.g. compaction's summarize) never
-/// leaks tokens into the USER's reply stream;
-/// - no nested hooks → no `pre_ask → llm → pre_ask` re-entrancy.
+///   leaks tokens into the USER's reply stream;
+/// - no nested hooks → no lifecycle re-entrancy.
 ///
 /// Routes through the ModelRouter when present (circuit breakers + policy).
 async fn host_llm_ask(
     ctx: &ExecutionContext,
     params: JsonValue,
+    call_kind: ModelContextCallKind,
 ) -> std::result::Result<JsonValue, String> {
     use apxm_backends::LLMRequest;
-    use apxm_capability_iface::events::{ModelContextCallKind, ModelContextMetrics};
     use apxm_core::types::operations::AISOperationType;
 
     let prompt = params
@@ -196,6 +206,7 @@ async fn host_llm_ask(
         return Err("llm.ask requires a non-empty 'prompt'".to_string());
     }
     let output_tokens = hook_output_token_limit(&params)?;
+    let generation = GenerationIdentity::new(uuid::Uuid::now_v7().to_string(), 1, 1);
     let mut request = LLMRequest::new(prompt)
         .with_operation_type(AISOperationType::Ask)
         .with_max_tokens(output_tokens);
@@ -205,22 +216,124 @@ async fn host_llm_ask(
     let admission = crate::executor::handlers::llm::admit_model_egress(ctx, &request)
         .map_err(|error| format!("llm.ask budget reservation failed: {error}"))?;
     if let Some(emitter) = &ctx.event_emitter {
-        emitter.emit_model_context_metrics(&ModelContextMetrics::unplanned(
-            None,
-            ModelContextCallKind::Hook,
-        ));
+        emitter.emit_model_context_metrics(
+            &ModelContextMetrics::unplanned(None, call_kind).with_generation(generation.clone()),
+        );
     }
     let response = if let Some(router) = &ctx.model_router {
-        router.generate(admission.request).await
+        let (response, decision) = router
+            .generate_with_decision(admission.request)
+            .await
+            .map_err(|error| format!("llm.ask routed dispatch failed: {error}"))?;
+        if let Some(emitter) = &ctx.event_emitter {
+            crate::executor::handlers::emit_model_route_decision_event(emitter.as_ref(), &decision);
+        }
+        Ok(response)
     } else {
         ctx.llm_registry.generate(admission.request).await
     }
     .map_err(|e| format!("llm.ask failed: {e}"))?;
     admission
         .reservation
-        .reconcile(response.usage.total_tokens)
+        .reconcile(&response.usage)
         .map_err(|error| format!("llm.ask budget reconciliation failed: {error}"))?;
+    if let Some(emitter) = &ctx.event_emitter {
+        emitter.emit_model_usage(UsagePayload {
+            input_tokens: response.usage.input_tokens,
+            output_tokens: response.usage.output_tokens,
+            generation: Some(generation),
+        });
+    }
     Ok(JsonValue::String(response.content))
+}
+
+/// Emit a redacted contribution receipt only when a hook has an explicit host
+/// grant that matches the sealed context policy. The returned instruction is
+/// deliberately not merged into the current runtime prompt: host assembly owns
+/// frame construction, and ordinary hook output remains data.
+fn emit_trusted_instruction_contribution(
+    ctx: &ExecutionContext,
+    binding: &HookBinding,
+    decision: &JsonValue,
+) -> Result<(), RuntimeError> {
+    let Some(contribution) = decision
+        .as_object()
+        .and_then(|decision| decision.get(CONTEXT_CONTRIBUTION_DECISION_KEY))
+        .and_then(JsonValue::as_object)
+    else {
+        return Ok(());
+    };
+    let trust = contribution
+        .get(CONTEXT_CONTRIBUTION_TRUST_KEY)
+        .and_then(JsonValue::as_str)
+        .ok_or_else(|| {
+            RuntimeError::Executor("context contribution requires a trust class".to_string())
+        })?;
+    if trust != CONTEXT_CONTRIBUTION_INSTRUCTION_TRUST {
+        return Err(RuntimeError::Executor(
+            "hook context contributions may only request the instruction trust class".to_string(),
+        ));
+    }
+    let content = contribution
+        .get(CONTEXT_CONTRIBUTION_CONTENT_KEY)
+        .and_then(JsonValue::as_str)
+        .filter(|content| !content.trim().is_empty())
+        .ok_or_else(|| {
+            RuntimeError::Executor("context contribution requires non-empty content".to_string())
+        })?;
+    let registry = ctx.hook_registry().ok_or_else(|| {
+        RuntimeError::Executor(
+            "trusted instruction contribution requires a hook registry".to_string(),
+        )
+    })?;
+    let authority = registry
+        .instruction_contribution_authority(&binding.handler_id)
+        .ok_or_else(|| {
+            RuntimeError::Executor(format!(
+                "hook '{}' has no trusted instruction contribution authority",
+                binding.handler_id
+            ))
+        })?;
+    let serialized = ctx
+        .metadata
+        .get(crate::metadata_keys::SEALED_CONTEXT_TRANSPORT_V1)
+        .ok_or_else(|| {
+            RuntimeError::Executor(
+                "trusted instruction contribution requires a sealed context transport".to_string(),
+            )
+        })?;
+    let context = lifecycle_metadata_from_serialized(serialized).map_err(|error| {
+        RuntimeError::Executor(format!(
+            "trusted instruction contribution requires a valid sealed context: {error}"
+        ))
+    })?;
+    if authority.policy_ref() != context.trusted_instruction_hook_policy_ref {
+        return Err(RuntimeError::Executor(
+            "trusted instruction contribution authority does not match the sealed context policy"
+                .to_string(),
+        ));
+    }
+    let contribution_digest = format!("{SHA256_PREFIX}{:x}", Sha256::digest(content.as_bytes()));
+    let payload = ContextLifecycleEventPayload {
+        lifecycle_kind: CONTEXT_CONTRIBUTION_LIFECYCLE_KIND.to_string(),
+        context_id: context.context_id,
+        invocation_id: context.invocation_id,
+        context_digest: context.context_digest,
+        policy_ref: context.policy_ref,
+        frame_count: context.frame_count,
+        token_count: context.token_count,
+        content_redacted: true,
+        compaction_ref: None,
+        contributor_ref: Some(binding.handler_id.clone()),
+        authority_ref: Some(authority.policy_ref().to_string()),
+        contribution_digest: Some(contribution_digest),
+        contribution_trust: Some(CONTEXT_CONTRIBUTION_INSTRUCTION_TRUST.to_string()),
+    };
+    payload.validate().map_err(RuntimeError::Executor)?;
+    if let Some(emitter) = &ctx.event_emitter {
+        emitter.emit_context_lifecycle(&payload);
+    }
+    Ok(())
 }
 
 fn hook_output_token_limit(params: &JsonValue) -> std::result::Result<usize, String> {
@@ -348,34 +461,37 @@ pub async fn run_pre_cap_hooks(
             &binding.handler_id,
             payload,
             HOOK_DEADLINE,
-            |method, params| dispatch_host_call(ctx, method, params),
+            |method, params| dispatch_host_call(ctx, method, params, ModelContextCallKind::Hook),
         )
         .await
         {
-            Ok(decision) => match parse_pre_cap_decision(decision) {
-                decision @ (PreCapDecision::Allow | PreCapDecision::Defer) => {
-                    if pre_cap_continuation(binding.mode, requires_approval, &decision)
-                        == PreCapContinuation::RejectWidening
-                    {
-                        return Err(RuntimeError::Capability {
-                            capability: tool_name.to_string(),
-                            message: format!(
-                                "gate hook '{}' attempted to authorize a capability whose policy \
+            Ok(decision) => {
+                emit_trusted_instruction_contribution(ctx, &binding, &decision)?;
+                match parse_pre_cap_decision(decision) {
+                    decision @ (PreCapDecision::Allow | PreCapDecision::Defer) => {
+                        if pre_cap_continuation(binding.mode, requires_approval, &decision)
+                            == PreCapContinuation::RejectWidening
+                        {
+                            return Err(RuntimeError::Capability {
+                                capability: tool_name.to_string(),
+                                message: format!(
+                                    "gate hook '{}' attempted to authorize a capability whose policy \
  is not already open; rejected — a hook may only narrow canonical \
  capability policy, never replace or widen it",
-                                binding.handler_id
-                            ),
+                                    binding.handler_id
+                                ),
+                            });
+                        }
+                    }
+                    PreCapDecision::Deny(reason) => {
+                        return Err(RuntimeError::Capability {
+                            capability: tool_name.to_string(),
+                            message: format!("denied by pre_cap hook: {reason}"),
                         });
                     }
+                    PreCapDecision::EditArgs(new_args) => current = new_args,
                 }
-                PreCapDecision::Deny(reason) => {
-                    return Err(RuntimeError::Capability {
-                        capability: tool_name.to_string(),
-                        message: format!("denied by pre_cap hook: {reason}"),
-                    });
-                }
-                PreCapDecision::EditArgs(new_args) => current = new_args,
-            },
+            }
             Err(e) => {
                 // Gate hooks fail closed; observe hooks continue.
                 if binding.mode == HookMode::Gate {
@@ -413,32 +529,6 @@ fn pre_cap_continuation(
         }
         PreCapDecision::Allow | PreCapDecision::Defer => PreCapContinuation::CanonicalAdmission,
         _ => unreachable!("only nonterminal pre_cap decisions have a continuation"),
-    }
-}
-
-/// Fold one `pre_turn` hook's decision into the running supplement.
-/// `set_system` replaces; `prepend_system` stacks ahead of whatever earlier
-/// `pre_turn` hooks already contributed (first-registered ends up innermost,
-/// matching `pre_ask`'s prepend order). Anything else (missing/unknown
-/// `decision`, non-object, no `text`) is a no-op — pure function, no I/O.
-fn apply_pre_turn_decision(supplement: Option<String>, decision: &JsonValue) -> Option<String> {
-    let Some(obj) = decision.as_object() else {
-        return supplement;
-    };
-    match obj.get("decision").and_then(|v| v.as_str()) {
-        Some("set_system") => obj
-            .get("text")
-            .and_then(|v| v.as_str())
-            .map(str::to_string)
-            .or(supplement),
-        Some("prepend_system") => match obj.get("text").and_then(|v| v.as_str()) {
-            Some(t) => Some(match supplement {
-                Some(prev) => format!("{t}\n{prev}"),
-                None => t.to_string(),
-            }),
-            None => supplement,
-        },
-        _ => supplement,
     }
 }
 
@@ -503,11 +593,15 @@ pub async fn run_post_cap_hooks(
             &binding.handler_id,
             payload,
             HOOK_DEADLINE,
-            |method, params| dispatch_host_call(ctx, method, params),
+            |method, params| dispatch_host_call(ctx, method, params, ModelContextCallKind::Hook),
         )
         .await
         {
             Ok(decision) => {
+                if let Err(error) = emit_trusted_instruction_contribution(ctx, &binding, &decision)
+                {
+                    tracing::warn!(tool = %tool_name, error = %error, "post_cap context contribution rejected");
+                }
                 if let Some(obj) = decision.as_object()
                     && obj.get("decision").and_then(|v| v.as_str()) == Some("replace_result")
                     && let Some(r) = obj.get("result")
@@ -544,90 +638,36 @@ async fn fire_lifecycle_hooks(
         return Ok(());
     }
     for binding in bindings {
-        if let Err(e) = call_hook_with_host_bridge(
+        match call_hook_with_host_bridge(
             ctx,
             &binding.handler_id,
             payload.clone(),
             HOOK_DEADLINE,
-            |method, params| dispatch_host_call(ctx, method, params),
+            |method, params| dispatch_host_call(ctx, method, params, ModelContextCallKind::Hook),
         )
         .await
         {
-            if binding.mode == HookMode::Gate {
-                return Err(RuntimeError::Operation {
-                    op_type: apxm_core::types::operations::AISOperationType::Ask,
-                    message: format!("{} gate hook failed (fail-closed): {e}", event.as_str()),
-                });
+            Ok(decision) => {
+                if let Err(error) = emit_trusted_instruction_contribution(ctx, &binding, &decision)
+                {
+                    if binding.mode == HookMode::Gate {
+                        return Err(error);
+                    }
+                    tracing::warn!(event = %event.as_str(), error = %error, "observe lifecycle context contribution rejected");
+                }
             }
-            tracing::warn!(event = %event.as_str(), error = %e, "observe lifecycle hook failed; continuing");
-        }
-    }
-    Ok(())
-}
-
-/// Fire `pre_turn` hooks (before the turn's ask). Gate-capable (fail-closed).
-///
-/// `turn_context` is the turn's structured `context` field when the host
-/// supplies one. `None` means the compiled AIR did not bind an additional
-/// per-turn JSON payload for this call.
-///
-/// Like `pre_ask`, a hook may return a `set_system`/`prepend_system` decision;
-/// the (possibly combined, first-wins-then-chains) text is returned so the
-/// caller can stash it where the ask handler's system-prompt composition picks
-/// it up (`ExecutionContext::pending_turn_prompt_supplement`).
-pub async fn run_pre_turn_hooks(
-    ctx: &ExecutionContext,
-    turn_context: Option<JsonMap<String, JsonValue>>,
-) -> Result<Option<String>, RuntimeError> {
-    let Some(registry) = ctx.hook_registry() else {
-        return Ok(None);
-    };
-    let bindings = registry.for_event(HookEvent::PreTurn);
-    if bindings.is_empty() {
-        return Ok(None);
-    }
-    if ctx.python_handler_bridge.is_none() && ctx.typescript_handler_bridge.is_none() {
-        return Ok(None);
-    }
-
-    let mut supplement: Option<String> = None;
-    for binding in bindings {
-        let payload = pre_turn_payload(ctx, turn_context.clone());
-        match call_hook_with_host_bridge(
-            ctx,
-            &binding.handler_id,
-            payload,
-            HOOK_DEADLINE,
-            |method, params| dispatch_host_call(ctx, method, params),
-        )
-        .await
-        {
-            Ok(decision) => supplement = apply_pre_turn_decision(supplement, &decision),
             Err(e) => {
                 if binding.mode == HookMode::Gate {
                     return Err(RuntimeError::Operation {
                         op_type: apxm_core::types::operations::AISOperationType::Ask,
-                        message: format!("pre_turn gate hook failed (fail-closed): {e}"),
+                        message: format!("{} gate hook failed (fail-closed): {e}", event.as_str()),
                     });
                 }
-                tracing::warn!(error = %e, "observe pre_turn hook failed; continuing");
+                tracing::warn!(event = %event.as_str(), error = %e, "observe lifecycle hook failed; continuing");
             }
         }
     }
-    Ok(supplement)
-}
-
-fn pre_turn_payload(
-    ctx: &ExecutionContext,
-    turn_context: Option<JsonMap<String, JsonValue>>,
-) -> JsonValue {
-    json!({
-    HOOK_PAYLOAD_KEY: {
-    "event": "pre_turn",
-    "remaining_budget": remaining_budget(ctx),
-    "context": turn_context.map(JsonValue::Object).unwrap_or(JsonValue::Null),
-    }
-    })
+    Ok(())
 }
 
 /// Fire `post_turn` hooks (after the turn's reply). The payload is enriched with
@@ -666,11 +706,19 @@ pub async fn run_post_turn_hooks(ctx: &ExecutionContext, reply: &str) {
             &binding.handler_id,
             payload,
             HOOK_DEADLINE,
-            |method, params| dispatch_host_call(ctx, method, params),
+            |method, params| {
+                dispatch_host_call(ctx, method, params, ModelContextCallKind::Compaction)
+            },
         )
         .await
         {
-            Ok(decision) => apply_hook_writes(ctx, &decision).await,
+            Ok(decision) => {
+                if let Err(error) = emit_trusted_instruction_contribution(ctx, &binding, &decision)
+                {
+                    tracing::warn!(error = %error, "post_turn context contribution rejected");
+                }
+                apply_hook_writes(ctx, &decision).await;
+            }
             Err(e) => {
                 tracing::warn!(error = %e, "observe post_turn hook failed; continuing")
             }
@@ -721,77 +769,6 @@ pub async fn run_post_ask_hooks(ctx: &ExecutionContext, reply: &str) {
     .await;
 }
 
-/// Run all matching `pre_ask` hooks; returns a system-prompt override, if any.
-/// `Some(prompt)` replaces/prepends the system prompt; `None` leaves it.
-pub async fn run_pre_ask_hooks(
-    ctx: &ExecutionContext,
-    base_system: &str,
-) -> Result<Option<String>, RuntimeError> {
-    let Some(registry) = ctx.hook_registry() else {
-        return Ok(None);
-    };
-    let bindings = registry.matching(HookEvent::PreAsk, "ask");
-    if bindings.is_empty() {
-        return Ok(None);
-    }
-    if ctx.python_handler_bridge.is_none() && ctx.typescript_handler_bridge.is_none() {
-        return Ok(None);
-    }
-
-    // The hook recalls context on demand via `ctx.recall_window(n)` (mem.recent),
-    // choosing how much to pull — no fixed window is baked into the payload.
-    let mut system = base_system.to_string();
-    let mut changed = false;
-    for binding in bindings {
-        let payload = json!({
-        HOOK_PAYLOAD_KEY: {
-        "event": "pre_ask",
-        "remaining_budget": remaining_budget(ctx),
-        "system": system,
-        }
-        });
-        match call_hook_with_host_bridge(
-            ctx,
-            &binding.handler_id,
-            payload,
-            HOOK_DEADLINE,
-            |method, params| dispatch_host_call(ctx, method, params),
-        )
-        .await
-        {
-            Ok(decision) => {
-                if let Some(obj) = decision.as_object() {
-                    match obj.get("decision").and_then(|v| v.as_str()) {
-                        Some("set_system") => {
-                            if let Some(t) = obj.get("text").and_then(|v| v.as_str()) {
-                                system = t.to_string();
-                                changed = true;
-                            }
-                        }
-                        Some("prepend_system") => {
-                            if let Some(t) = obj.get("text").and_then(|v| v.as_str()) {
-                                system = format!("{t}\n{system}");
-                                changed = true;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            Err(e) => {
-                if binding.mode == HookMode::Gate {
-                    return Err(RuntimeError::Operation {
-                        op_type: apxm_core::types::operations::AISOperationType::Ask,
-                        message: format!("pre_ask gate hook failed (fail-closed): {e}"),
-                    });
-                }
-                tracing::warn!(error = %e, "observe pre_ask hook failed; continuing");
-            }
-        }
-    }
-    Ok(if changed { Some(system) } else { None })
-}
-
 #[cfg(test)]
 mod script_bridge_tests {
     use super::hook_output_token_limit;
@@ -816,6 +793,216 @@ mod script_bridge_tests {
             hook_output_token_limit(&json!({"max_tokens": 23})).unwrap(),
             23
         );
+    }
+}
+
+#[cfg(test)]
+mod admitted_budget_e2e_tests {
+    use super::*;
+    use crate::aam::Aam;
+    use crate::capability::CapabilitySystem;
+    use crate::context_stack::{ContextPlanningPolicy, ContextTokenizer};
+    use crate::executor::{HookBinding, HookRegistry};
+    use crate::memory::{MemoryConfig, MemorySystem};
+    use crate::python_tools::{PythonHandlerBridge, PythonHandlerRegistry};
+    use apxm_backends::LLMRegistry;
+    use apxm_backends::llm::backends::MockLLMBackend;
+    use apxm_capability_iface::events::ExecutionEventEmitter;
+    use apxm_core::events::payload::UsagePayload;
+    use apxm_core::types::values::Value;
+    use apxm_core::types::{
+        HandlerDescriptor, HandlerKind, HandlerLanguage, HandlerManifest, HandlerSource,
+        context_contracts::BudgetSet,
+    };
+    use std::collections::BTreeMap;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::sync::Mutex;
+
+    const COMPACTION_BACKEND: &str = "compaction-budget-backend";
+    const COMPACTION_MODEL: &str = "compaction-budget-model";
+    const COMPACTION_HANDLER_ID: &str =
+        "sha256:de5e2f09a4b6c7d8e9f00112233445566778899aabbccddeeff0011223344556";
+    const COMPACTION_HOOK_SOURCE: &str = r#"
+def compact(ctx, reply):
+    ctx.ask("summarize the completed turn", 8)
+    return None
+"#;
+
+    #[derive(Default)]
+    struct RecordedModelLifecycle {
+        metrics: Mutex<Vec<ModelContextMetrics>>,
+        usage: Mutex<Vec<UsagePayload>>,
+    }
+
+    impl ExecutionEventEmitter for RecordedModelLifecycle {
+        fn emit_llm_token(&self, _content: &str) {}
+
+        fn emit_tool_start(&self, _name: &str, _args: &HashMap<String, Value>) {}
+
+        fn emit_tool_end(&self, _name: &str, _result: &Value) {}
+
+        fn emit_model_context_metrics(&self, metrics: &ModelContextMetrics) {
+            self.metrics
+                .lock()
+                .expect("metrics lock")
+                .push(metrics.clone());
+        }
+
+        fn emit_model_usage(&self, usage: UsagePayload) {
+            self.usage.lock().expect("usage lock").push(usage);
+        }
+    }
+
+    fn admitted_budget(input_tokens: u64, output_tokens: u64) -> BudgetSet {
+        BudgetSet {
+            input_tokens,
+            output_tokens,
+            tool_calls: 0,
+            memory_bytes: 0,
+            concurrency: 1,
+            effects: 0,
+            wall_clock_ms: 1,
+        }
+    }
+
+    fn compaction_hook_bridge() -> Arc<PythonHandlerBridge> {
+        let manifest = HandlerManifest::new(vec![HandlerDescriptor {
+            kind: HandlerKind::Hook,
+            language: HandlerLanguage::Python,
+            handler_id: COMPACTION_HANDLER_ID.to_string(),
+            module: "compaction_budget_hook".to_string(),
+            qualname: "compact".to_string(),
+            name: "compact".to_string(),
+            source: HandlerSource {
+                artifact_path: "handlers/compaction_budget_hook.py".to_string(),
+                content: COMPACTION_HOOK_SOURCE.to_string(),
+            },
+            description: String::new(),
+            schema: serde_json::json!({}),
+            read_only: None,
+            requires_approval: None,
+            event: Some(HookEvent::PostTurn.as_str().to_string()),
+            r#match: Some("*".to_string()),
+            mode: Some(HookMode::Observe.as_str().to_string()),
+        }]);
+        let registry = PythonHandlerRegistry::from_manifest(manifest).expect("hook registry");
+        Arc::new(PythonHandlerBridge::new(registry))
+    }
+
+    async fn compaction_context(
+        input_tokens: u64,
+        output_tokens: u64,
+    ) -> (ExecutionContext, MockLLMBackend) {
+        let memory = Arc::new(
+            MemorySystem::new(MemoryConfig::in_memory_ltm())
+                .await
+                .expect("memory"),
+        );
+        let aam = Aam::new();
+        let capability_system = Arc::new(CapabilitySystem::with_aam(aam.clone()));
+        let mut ctx =
+            ExecutionContext::new(memory, Arc::new(LLMRegistry::new()), capability_system, aam);
+        ctx.context_planning = Some(ContextPlanningPolicy {
+            tokenizer: ContextTokenizer::O200kBase,
+            token_budget: 1_024,
+            profiles: BTreeMap::new(),
+        });
+
+        let mock = MockLLMBackend::static_response("summary").model_name(COMPACTION_MODEL);
+        ctx.llm_registry
+            .register(COMPACTION_BACKEND, mock.clone())
+            .expect("backend");
+        ctx.llm_registry
+            .set_model_route(COMPACTION_MODEL, COMPACTION_BACKEND)
+            .expect("model route");
+        ctx.llm_registry
+            .set_default_model(COMPACTION_MODEL)
+            .expect("default model");
+
+        let hooks = Arc::new(HookRegistry::new());
+        hooks.register(HookBinding {
+            handler_id: COMPACTION_HANDLER_ID.to_string(),
+            event: HookEvent::PostTurn,
+            match_glob: "*".to_string(),
+            mode: HookMode::Observe,
+        });
+        let ctx = ctx
+            .with_admitted_invocation_budget(admitted_budget(input_tokens, output_tokens))
+            .expect("admitted budget")
+            .with_python_handler_bridge(compaction_hook_bridge())
+            .with_hook_registry(hooks);
+        (ctx, mock)
+    }
+
+    #[tokio::test]
+    async fn exhausted_admitted_input_budget_blocks_compaction_before_provider_egress() {
+        let (ctx, backend) = compaction_context(0, 8).await;
+
+        run_post_turn_hooks(&ctx, "completed reply").await;
+
+        assert_eq!(
+            backend.call_count(),
+            0,
+            "budget rejection precedes provider egress"
+        );
+        assert_eq!(
+            ctx.admitted_invocation_budget
+                .as_ref()
+                .expect("admitted budget")
+                .consumed(),
+            (0, 0),
+            "a rejected compaction request does not consume capacity"
+        );
+    }
+
+    #[tokio::test]
+    async fn exhausted_admitted_output_budget_blocks_compaction_before_provider_egress() {
+        let (ctx, backend) = compaction_context(1_024, 0).await;
+
+        run_post_turn_hooks(&ctx, "completed reply").await;
+
+        assert_eq!(
+            backend.call_count(),
+            0,
+            "budget rejection precedes provider egress"
+        );
+        assert_eq!(
+            ctx.admitted_invocation_budget
+                .as_ref()
+                .expect("admitted budget")
+                .consumed(),
+            (0, 0),
+            "a rejected compaction request does not consume capacity"
+        );
+    }
+
+    #[tokio::test]
+    async fn compaction_model_call_emits_correlated_redacted_lifecycle_evidence() {
+        let (ctx, backend) = compaction_context(1_024, 64).await;
+        let recorder = Arc::new(RecordedModelLifecycle::default());
+        let ctx = ctx.with_event_emitter(Some(recorder.clone()));
+
+        run_post_turn_hooks(&ctx, "completed reply").await;
+
+        assert_eq!(
+            backend.call_count(),
+            1,
+            "compaction reaches the admitted provider"
+        );
+        let metrics = recorder.metrics.lock().expect("metrics lock");
+        assert_eq!(metrics.len(), 1);
+        assert!(matches!(
+            metrics[0].call_kind,
+            ModelContextCallKind::Compaction
+        ));
+        let generation = metrics[0]
+            .generation
+            .as_ref()
+            .expect("pre-dispatch context evidence carries a generation identity");
+        let usage = recorder.usage.lock().expect("usage lock");
+        assert_eq!(usage.len(), 1);
+        assert_eq!(usage[0].generation.as_ref(), Some(generation));
     }
 }
 
@@ -948,57 +1135,5 @@ mod gate_narrowing_tests {
         let ctx = context_with_python_policy(&manifest).await;
 
         assert_eq!(canonical_requires_approval(&ctx, "script-open"), None);
-    }
-}
-
-#[cfg(test)]
-mod pre_turn_decision_tests {
-    use super::*;
-
-    #[test]
-    fn prepend_system_with_no_prior_supplement_sets_it() {
-        let decision = json!({ "decision": "prepend_system", "text": "A" });
-        assert_eq!(
-            apply_pre_turn_decision(None, &decision),
-            Some("A".to_string())
-        );
-    }
-
-    #[test]
-    fn prepend_system_stacks_ahead_of_prior_supplement() {
-        let decision = json!({ "decision": "prepend_system", "text": "B" });
-        let result = apply_pre_turn_decision(Some("A".to_string()), &decision);
-        assert_eq!(result, Some("B\nA".to_string()));
-    }
-
-    #[test]
-    fn set_system_replaces_prior_supplement() {
-        let decision = json!({ "decision": "set_system", "text": "B" });
-        let result = apply_pre_turn_decision(Some("A".to_string()), &decision);
-        assert_eq!(result, Some("B".to_string()));
-    }
-
-    #[test]
-    fn unknown_decision_is_a_no_op() {
-        let decision = json!({ "decision": "allow" });
-        assert_eq!(
-            apply_pre_turn_decision(Some("A".to_string()), &decision),
-            Some("A".to_string())
-        );
-    }
-
-    #[test]
-    fn missing_text_is_a_no_op() {
-        let decision = json!({ "decision": "prepend_system" });
-        assert_eq!(apply_pre_turn_decision(None, &decision), None);
-    }
-
-    #[test]
-    fn non_object_decision_is_a_no_op() {
-        let decision = JsonValue::Null;
-        assert_eq!(
-            apply_pre_turn_decision(Some("A".to_string()), &decision),
-            Some("A".to_string())
-        );
     }
 }

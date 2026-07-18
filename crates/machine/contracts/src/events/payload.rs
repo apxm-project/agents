@@ -10,6 +10,7 @@ use super::registry::{
     EventPayloadRegistry, decode_registered_payload, event_kind_for_payload, payload_without_kind,
 };
 use crate::types::consent::ApprovalResolution;
+use crate::types::context_contracts::ContextLifecycleEventPayload;
 use crate::types::execution::NodeMetrics;
 use crate::types::operations::AISOperationType;
 
@@ -211,6 +212,12 @@ fn boxed_core_payload_from_json(
         boxed!(ContextCompactedPayload)
     } else if kind_name == kind::MODEL_CONTEXT_METRICS.name() {
         boxed!(ModelContextMetricsPayload)
+    } else if kind_name == kind::CONTEXT_LIFECYCLE.name() {
+        let payload = serde_json::from_value::<ContextLifecycleEventPayload>(payload_json)?;
+        payload
+            .validate()
+            .map_err(<serde_json::Error as serde::de::Error>::custom)?;
+        Ok(Some(Box::new(payload)))
     } else if kind_name == kind::CAPABILITY_EFFECT_RECEIPT.name() {
         let receipt = serde_json::from_value::<CapabilityEffectReceiptPayload>(payload_json)?;
         receipt
@@ -1230,8 +1237,51 @@ pub struct ModelContextMetricsPayload {
     /// Empty segments omitted from the assembled context.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub omitted_empty_segments: Option<u64>,
+    /// Physical model generation receiving this context, when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<GenerationIdentity>,
 }
 impl_event_payload!(ModelContextMetricsPayload, kind::MODEL_CONTEXT_METRICS);
+
+impl ContextLifecycleEventPayload {
+    /// Validate the redaction and authority invariants for a context event.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.context_id.is_empty()
+            || self.invocation_id.is_empty()
+            || self.context_digest.is_empty()
+            || self.policy_ref.is_empty()
+            || !self.content_redacted
+        {
+            return Err(
+                "context_lifecycle requires complete redacted context identity".to_string(),
+            );
+        }
+
+        let contribution_fields_present = self.contributor_ref.is_some()
+            || self.authority_ref.is_some()
+            || self.contribution_digest.is_some()
+            || self.contribution_trust.is_some();
+        if self.lifecycle_kind == "context_contribution" {
+            if self.contributor_ref.as_deref().is_none_or(str::is_empty)
+                || self.authority_ref.as_deref().is_none_or(str::is_empty)
+                || self
+                    .contribution_digest
+                    .as_deref()
+                    .is_none_or(str::is_empty)
+                || self.contribution_trust.as_deref() != Some("instruction")
+            {
+                return Err(
+                    "context contribution requires contributor, authority, digest, and instruction trust"
+                        .to_string(),
+                );
+            }
+        } else if contribution_fields_present {
+            return Err("only context_contribution may carry contribution evidence".to_string());
+        }
+        Ok(())
+    }
+}
+impl_event_payload!(ContextLifecycleEventPayload, kind::CONTEXT_LIFECYCLE);
 
 /// Capability dispatch surface that committed an effect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1380,7 +1430,7 @@ impl CapabilityEffectReceiptPayload {
         }
 
         if matches!(self.admission_kind, CapabilityEffectAdmissionKind::Grant)
-            && self.grant_id.as_deref().map_or(true, str::is_empty)
+            && self.grant_id.as_deref().is_none_or(str::is_empty)
         {
             return Err(
                 "capability_effect_receipt.grant_id is required for grant admission".into(),
@@ -1389,7 +1439,7 @@ impl CapabilityEffectReceiptPayload {
         if matches!(
             self.approval_status,
             Some(CapabilityEffectApprovalStatus::Approved)
-        ) && self.approval_id.as_deref().map_or(true, str::is_empty)
+        ) && self.approval_id.as_deref().is_none_or(str::is_empty)
         {
             return Err(
                 "capability_effect_receipt.approval_id is required for approved authorization"

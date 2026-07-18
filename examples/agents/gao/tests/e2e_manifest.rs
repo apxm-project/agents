@@ -8,7 +8,6 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use apxm_ais::chat::CompileServiceOptions;
 use crate::commands::compile::emit_air_from_agent;
 use tempfile::TempDir;
 
@@ -58,7 +57,7 @@ fn read_tools_manifest(root: &Path) -> Vec<serde_json::Value> {
 }
 
 fn read_compile_service_manifest(root: &Path) -> Vec<serde_json::Value> {
-    let air = emit_air_from_agent(root, &CompileServiceOptions::default())
+    let air = emit_air_from_agent(root)
         .expect("compile-service AIR");
     let sidecar = air
         .lines()
@@ -267,25 +266,80 @@ fn gao_declares_runtime_registered_discovery_and_http_builtins() {
 }
 
 #[test]
-fn gao_context_uses_typed_host_input_without_direct_networking() {
+fn gao_local_skill_capabilities_use_host_registered_builtins() {
+    let tmp = copy_gao_example();
+    let root = tmp.path().join("gao");
+    agent_sync(&root, true).expect("gao agent sync");
+    agent_lint(&root, None, true).expect("gao agent lint");
+
+    for capability in ["list_local_skills", "search_skills", "read_local_skill"] {
+        let definition_path = root
+            .join("capabilities")
+            .join(capability)
+            .join("capability.toml");
+        let definition: toml::Value = toml::from_str(
+            &fs::read_to_string(&definition_path).expect("read local-skill capability definition"),
+        )
+        .expect("parse local-skill capability definition");
+        assert_eq!(
+            definition.get("kind").and_then(toml::Value::as_str),
+            Some("builtin")
+        );
+        assert!(
+            !root
+                .join("capabilities")
+                .join(capability)
+                .join("handler.ts")
+                .exists(),
+            "{capability} must not carry a package-local catalogue reader"
+        );
+    }
+
+    let tool_names = read_tools_manifest(&root)
+        .into_iter()
+        .filter(|entry| entry.get("kind").and_then(serde_json::Value::as_str) == Some("tool"))
+        .filter_map(|entry| {
+            entry
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    for capability in ["list_local_skills", "search_skills", "read_local_skill"] {
+        assert!(
+            !tool_names.contains(capability),
+            "{capability} must resolve through the host capability registry, not tools.json"
+        );
+    }
+}
+
+#[test]
+fn gao_uses_generic_host_input_without_package_context_injection() {
     let root = require_gao_example();
     let context = fs::read_to_string(root.join("capabilities/handlers/context.ts"))
         .expect("read Gao context handler");
+    let entry = fs::read_to_string(root.join("capabilities/handlers/main.ts"))
+        .expect("read Gao entry source");
 
     assert!(
         !context.contains("fetch("),
-        "pre-turn hooks must not perform direct network I/O"
+        "package-local path helpers must not perform direct network I/O"
     );
     assert!(
         !context.contains("APXM_CAPABILITY_INVENTORY_"),
-        "inventory transport must not be hidden in process environment variables"
+        "host context must not be read through process environment variables"
     );
-    assert!(context.contains("snapshot.capabilityInventory"));
-    assert!(context.contains("snapshot.nodeKinds"));
-    assert!(context.contains("do not emit workflow tool nodes"));
     assert!(
         !root.join("shared/node_kinds.json").exists(),
         "Gao must not carry a hand-maintained Studio node-kind snapshot"
+    );
+    assert!(
+        entry.contains("graph.awaitInput"),
+        "Gao must receive turns through the generic AWAIT_INPUT primitive"
+    );
+    assert!(
+        entry.contains("rearm: true"),
+        "Gao must explicitly re-arm its generic host-input boundary"
     );
 }
 
@@ -307,7 +361,7 @@ fn gao_package_is_typescript_only() {
                 "gao must not contain Python source: {}",
                 path.display()
             );
-            if matches!(path.extension().and_then(|value| value.to_str()), Some("toml" | "json")) {
+            if path.extension().and_then(|value| value.to_str()) == Some("toml") {
                 let text = fs::read_to_string(&path).expect("read Gao manifest");
                 assert!(
                     !text.contains("python_handler"),
@@ -367,20 +421,65 @@ fn gao_example_build_writes_tools_json_manifest() {
         !manifest.is_empty(),
         "tools.json must list compiled typescript handlers"
     );
-    assert!(
-        manifest.iter().any(|entry| {
-            entry.get("qualname").and_then(|v| v.as_str()) == Some("inject_context")
-        }),
-        "tools.json must include gao hook handlers"
-    );
+    let agent: toml::Value = toml::from_str(
+        &fs::read_to_string(root.join("agent.toml")).expect("read gao agent.toml"),
+    )
+    .expect("parse gao agent.toml");
+    let declared_hooks = agent
+        .get("hooks")
+        .and_then(toml::Value::as_array)
+        .expect("Gao agent manifest must declare hooks");
+    let hook_entries = manifest
+        .iter()
+        .filter(|entry| entry.get("kind").and_then(serde_json::Value::as_str) == Some("hook"))
+        .collect::<Vec<_>>();
+    assert!(!hook_entries.is_empty(), "tools.json must include Gao hook handlers");
+    for hook in declared_hooks {
+        let handler = hook
+            .get("handler")
+            .and_then(toml::Value::as_str)
+            .expect("declared hook handler");
+        let qualname = handler.rsplit('.').next().expect("hook handler qualname");
+        let event = hook
+            .get("event")
+            .and_then(toml::Value::as_str)
+            .expect("declared hook event");
+        let match_value = hook
+            .get("match")
+            .and_then(toml::Value::as_str)
+            .unwrap_or("*");
+        let mode = hook
+            .get("mode")
+            .and_then(toml::Value::as_str)
+            .expect("declared hook mode");
+        assert!(
+            hook_entries.iter().any(|entry| {
+                entry.get("qualname").and_then(serde_json::Value::as_str) == Some(qualname)
+                    && entry.get("event").and_then(serde_json::Value::as_str) == Some(event)
+                    && entry.get("match").and_then(serde_json::Value::as_str) == Some(match_value)
+                    && entry.get("mode").and_then(serde_json::Value::as_str) == Some(mode)
+            }),
+            "tools.json must contain the declared hook {handler}"
+        );
+    }
     for entry in &manifest {
-        for key in ["module", "source_file"] {
+        for key in ["module"] {
             let value = entry.get(key).and_then(|v| v.as_str()).unwrap_or("");
             assert!(
                 !value.starts_with('/') && !value.contains("/home/"),
                 "tools.json {key} must be package-relative, got {value:?}"
             );
         }
+        let artifact_path = entry
+            .get("source")
+            .and_then(serde_json::Value::as_object)
+            .and_then(|source| source.get("artifact_path"))
+            .and_then(serde_json::Value::as_str)
+            .expect("handler manifest source artifact path");
+        assert!(
+            !artifact_path.starts_with('/') && !artifact_path.contains("/home/"),
+            "tools.json source artifact path must be package-relative, got {artifact_path:?}"
+        );
         if entry.get("name").and_then(|value| value.as_str()) != Some("hook") {
             let schema = entry
                 .get("schema")
@@ -672,31 +771,18 @@ fn gao_post_cap_hook_recursively_scrubs_nested_results_without_losing_types() {
 #[test]
 fn gao_compile_service_declarative_emits_recv_loop_air() {
     if !node_available() || !npm_available() {
-        eprintln!(
-            "skipping gao_compile_service_declarative_emits_recv_loop_air: node/npm not on PATH"
-        );
+        eprintln!("skipping gao_compile_service_emits_await_input_air: node/npm not on PATH");
         return;
     }
     let tmp = copy_gao_example();
     let root = tmp.path().join("gao");
     agent_build(&root, true).expect("gao agent build must succeed before compile-service");
 
-    let air = emit_air_from_agent(&root, &CompileServiceOptions::default())
+    let air = emit_air_from_agent(&root)
         .expect("declarative compile-service AIR for gao");
 
-    assert!(air.contains("mode = \"recv\""), "expected in-graph recv loop");
-    assert!(
-        air.contains("recv_once = \"false\""),
-        "expected re-arming recv loop"
-    );
-    assert!(
-        air.contains("turn_param = \"user_message\""),
-        "expected gao turn_param in recv attrs"
-    );
-    assert!(
-        air.contains("ais.autonomous"),
-        "declarative gao AIR must lower to ais.autonomous recv anchor"
-    );
+    assert!(air.contains("ais.await_input"), "expected explicit input park");
+    assert!(air.contains("rearm = \"true\""), "expected re-arming input park");
     assert!(
         air.contains("__apxm_handler_manifest__"),
         "gao AIR must carry the TypeScript handler manifest sidecar"

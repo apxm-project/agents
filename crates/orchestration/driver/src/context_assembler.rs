@@ -56,18 +56,16 @@ impl ContextAssembler {
         &self,
         node_id: u64,
         meta: &WorkspaceNodeMetadata,
-        skill_names: &[String],
     ) -> io::Result<String> {
-        Ok(self.render_agent_doc("Claude", node_id, meta, skill_names))
+        Ok(self.render_agent_doc("Claude", node_id, meta))
     }
 
     pub fn assemble_agents_md(
         &self,
         node_id: u64,
         meta: &WorkspaceNodeMetadata,
-        skill_names: &[String],
     ) -> io::Result<String> {
-        Ok(self.render_agent_doc("Codex", node_id, meta, skill_names))
+        Ok(self.render_agent_doc("Codex", node_id, meta))
     }
 
     fn render_agent_doc(
@@ -75,7 +73,6 @@ impl ContextAssembler {
         agent_label: &str,
         node_id: u64,
         meta: &WorkspaceNodeMetadata,
-        skill_names: &[String],
     ) -> String {
         let upstream = self.load_upstream_outputs(node_id);
         let profile = meta
@@ -91,10 +88,6 @@ impl ContextAssembler {
         let constraints: Vec<String> = agent_profile
             .map(|p| p.constraints.clone())
             .unwrap_or_default();
-        let skills_to_show: &[String] = agent_profile
-            .map(|p| p.suggested_skills.as_slice())
-            .filter(|s| !s.is_empty())
-            .unwrap_or(skill_names);
         let task = self.extract_task(meta, &upstream);
 
         let mut doc = String::new();
@@ -116,14 +109,6 @@ impl ContextAssembler {
             doc.push_str("## Agent History\n");
             doc.push_str(&history);
             doc.push_str("\n\n");
-        }
-
-        if !skills_to_show.is_empty() {
-            doc.push_str("## Available Skills\n");
-            for skill in skills_to_show {
-                doc.push_str(&format!("- {}: see skills/{}/SKILL.md\n", skill, skill));
-            }
-            doc.push('\n');
         }
 
         doc.push_str("## Session\n");

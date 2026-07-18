@@ -137,7 +137,7 @@ Better-built than the OpenClaw-era notes implied:
 - **`EXC` op routes through the registry** (`exc.rs:46`, hard-errors with no backend).
 - **apxm's policy is RICHER than OpenShell in places:** capability-granular write
   boundary enforced at **every** `INV_CAP` (incl. nested via no-widen
-  `side_effect_policy` propagation, `call_skill.rs`), the visible-set/`imports`
+  `side_effect_policy` propagation), the visible-set/`imports`
   call-graph containment, read/write capability path allowlists, bash denylist,
   `guard_url_ssrf`, and ASK tool-exposure being read-only-by-default.
 

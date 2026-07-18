@@ -6,7 +6,10 @@ use crate::python_tools::{PythonHandlerBridge, PythonHandlerRegistry};
 use crate::sandbox::SandboxRegistry;
 use crate::typescript_tools::{TypeScriptHandlerBridge, TypeScriptHandlerRegistry};
 use crate::{
-    aam::Aam,
+    aam::{
+        Aam,
+        session::{SessionCheckpoint, SessionManager},
+    },
     agent_pool::AgentPool,
     background::{BackgroundExecution, BackgroundExecutionOutcome, BackgroundExecutionTask},
     capability::{CapabilitySystem, flow_registry::FlowRegistry},
@@ -33,12 +36,17 @@ use apxm_core::{
     types::{
         BackendGraphCapabilities, GraphStatusSnapshot, HANDLER_MANIFEST_ARTIFACT_SECTION,
         HandlerManifest, OptimizationTarget,
+        context_contracts::BudgetSet,
         execution::{Agent, AgentFlow, ExecutionDag, ExecutionStats},
         values::Value,
     },
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 /// Outcome of
 /// [`Runtime::execute_artifact_with_session_emitter_metadata_and_cancellation_or_park`]
@@ -52,7 +60,7 @@ use std::{collections::HashMap, path::Path, sync::Arc};
 /// waiting once "the next turn boundary was reached" is known, instead of
 /// blocking for the lifetime of the session.
 pub enum ExecutionOutcome {
-    Completed(RuntimeExecutionResult),
+    Completed(Box<RuntimeExecutionResult>),
     Parked {
         session_id: String,
         /// Handle to the detached background task that keeps running the DAG
@@ -259,6 +267,29 @@ impl Default for LlmToolDispatchConfig {
     }
 }
 
+/// A checkpoint store and AAM selected for one durable session execution.
+///
+/// The manager is created only from a host-provided session directory, and
+/// the envelope written through it carries these same canonical identities.
+struct SessionCheckpointBinding {
+    session_id: String,
+    execution_id: String,
+    manager: SessionManager,
+    aam: Aam,
+}
+
+impl SessionCheckpointBinding {
+    /// Persist the selected AAM under its immutable host identity.
+    fn save(&self) -> Result<(), RuntimeError> {
+        let checkpoint = SessionCheckpoint::new(
+            self.session_id.clone(),
+            self.execution_id.clone(),
+            self.aam.checkpoint(),
+        )?;
+        self.manager.save_checkpoint(&checkpoint)
+    }
+}
+
 /// APxM Runtime - Main coordinator
 ///
 /// The runtime coordinates all subsystems and provides the main API
@@ -270,6 +301,10 @@ pub struct Runtime {
     capability_system: Arc<CapabilitySystem>,
     flow_registry: Arc<FlowRegistry>,
     aam: Aam,
+    /// Session state for callers that supply a session identity but no
+    /// host-owned durable session directory. Durable sessions always restore
+    /// from their bound checkpoint instead of sharing this process-local map.
+    volatile_session_aams: parking_lot::RwLock<HashMap<String, Aam>>,
     scheduler: DataflowScheduler,
     session_lane_guard: SessionLaneGuard,
     inner_plan_linker: Arc<dyn InnerPlanLinker>,
@@ -331,6 +366,7 @@ impl Runtime {
             capability_system,
             flow_registry,
             aam,
+            volatile_session_aams: parking_lot::RwLock::new(HashMap::new()),
             scheduler,
             session_lane_guard: SessionLaneGuard::new(),
             inner_plan_linker: Arc::new(NoOpLinker),
@@ -439,6 +475,69 @@ impl Runtime {
             ctx = ctx.with_session_ledger(ledger);
         }
         ctx
+    }
+
+    /// Bind an execution context to the AAM selected for its session.
+    ///
+    /// A durable binding requires all three host-owned inputs: a session id,
+    /// a session directory, and the canonical execution id in metadata. The
+    /// checkpoint envelope is validated before any state is restored. Session
+    /// capability facades are rebuilt against the selected AAM so a native
+    /// AAM-aware capability cannot retain the process-global handle.
+    fn bind_session_aam(
+        &self,
+        context: &mut ExecutionContext,
+    ) -> Result<Option<SessionCheckpointBinding>, RuntimeError> {
+        let Some(session_id) = context.session_id.as_deref() else {
+            return Ok(None);
+        };
+
+        let binding = match context.metadata.get(metadata::SESSION_DIR) {
+            Some(session_dir) => {
+                let execution_id = context
+                    .metadata
+                    .get(metadata::EXECUTION_ID)
+                    .filter(|execution_id| !execution_id.trim().is_empty())
+                    .ok_or_else(|| {
+                        RuntimeError::State(
+                            "session checkpointing requires the canonical execution identity"
+                                .to_string(),
+                        )
+                    })?;
+                let manager = SessionManager::new(PathBuf::from(session_dir.as_str()))?;
+                let aam = match manager.load_checkpoint()? {
+                    Some(checkpoint) => {
+                        checkpoint.validate_for(session_id, execution_id)?;
+                        let aam = Aam::new();
+                        aam.restore(&checkpoint.aam);
+                        aam
+                    }
+                    None => Aam::new(),
+                };
+                Some(SessionCheckpointBinding {
+                    session_id: session_id.to_string(),
+                    execution_id: execution_id.to_string(),
+                    manager,
+                    aam,
+                })
+            }
+            None => None,
+        };
+
+        let aam = binding.as_ref().map_or_else(
+            || {
+                let mut sessions = self.volatile_session_aams.write();
+                sessions
+                    .entry(session_id.to_string())
+                    .or_insert_with(Aam::new)
+                    .clone()
+            },
+            |binding| binding.aam.clone(),
+        );
+        let capability_system = Arc::new(self.capability_system.session_bound(aam.clone())?);
+        context.aam = aam;
+        context.capability_system = capability_system;
+        Ok(binding)
     }
 
     /// Attach a custom inner plan linker implementation to the runtime.
@@ -627,6 +726,10 @@ impl Runtime {
         let context = self
             .build_context(None, event_emitter, None)
             .with_graph_id(graph_id_from_dag(&dag));
+        // Partial replay is validated before graph resources are acquired. A
+        // malformed or unverified request must not degrade into a full rerun
+        // that could repeat an external effect.
+        let replay_seed = replay_seed_from_metadata(&context, &dag)?;
         let dispatch_ir =
             graph_dispatch_ir_from_dag(&context.graph_id, &context.execution_id, &dag);
         context.set_dispatch_ir_v1(dispatch_ir.clone());
@@ -658,11 +761,6 @@ impl Runtime {
             self.execution_hooks.clone(),
         );
 
-        // Partial replay (`rerun-from-node`): when the host stamped a replay seed
-        // into execution metadata, compute it against this (recompiled) DAG so
-        // only `from_node` and its descendants re-execute; the upstream nodes are
-        // pre-completed from the prior run's boundary token values.
-        let replay_seed = replay_seed_from_metadata(&context, &dag);
         let exec_result = self
             .scheduler
             .execute_with_hooks_and_seed(
@@ -1099,10 +1197,12 @@ impl Runtime {
         for (key, value) in extra_metadata {
             context.metadata.insert(key, value);
         }
+        context = bind_host_execution_identity(context)?;
+        context = bind_admitted_invocation_budget(context)?;
         // Seed the per-tool call budget from metadata. The program /
         // request DECLARES the budget as data; enforcement is the trusted
         // `ctx.invoke_capability` seam. Child contexts share the counter, so the bound
-        // spans the in-process execution tree (called skills, inner DAGs).
+        // spans the in-process execution tree (child workflows and inner DAGs).
         if let Some(budgets) = context
             .metadata
             .get(metadata::TOOL_CALL_BUDGETS)
@@ -1116,7 +1216,12 @@ impl Runtime {
         if tool_credentials.is_some() {
             context = context.with_tool_credentials(tool_credentials);
         }
+        let checkpoint_binding = self.bind_session_aam(&mut context)?;
         let context = context;
+        // Partial replay is validated before graph resources are acquired. A
+        // malformed or unverified request must not degrade into a full rerun
+        // that could repeat an external effect.
+        let replay_seed = replay_seed_from_metadata(&context, &entry_dag)?;
         let graph_emitter = context.event_emitter.as_ref().map(Arc::clone);
         let execution_id = context.execution_id.clone();
         let node_count = entry_dag.nodes.len();
@@ -1142,11 +1247,6 @@ impl Runtime {
             self.execution_hooks.clone(),
         );
 
-        // Partial replay (`rerun-from-node`): when the host stamped a replay seed
-        // into execution metadata, only `from_node` and its descendants
-        // re-execute; the upstream nodes are pre-completed from the prior run's
-        // boundary token values.
-        let replay_seed = replay_seed_from_metadata(&context, &entry_dag);
         let exec_result = self
             .scheduler
             .execute_with_hooks_and_seed(
@@ -1159,13 +1259,28 @@ impl Runtime {
             )
             .await;
 
+        let checkpoint_result = if exec_result.is_ok() {
+            checkpoint_binding
+                .as_ref()
+                .map(SessionCheckpointBinding::save)
+                .transpose()
+                .map(|_| ())
+        } else {
+            Ok(())
+        };
+
         let graph_status_snapshots = release_graph_lifecycles(&lifecycles).await;
 
         if let Some(emitter) = &graph_emitter {
-            emitter.emit_graph_end(&execution_id, node_count, exec_result.is_ok());
+            emitter.emit_graph_end(
+                &execution_id,
+                node_count,
+                exec_result.is_ok() && checkpoint_result.is_ok(),
+            );
         }
 
         let (results, stats, scheduler_metrics, all_outputs, node_output_map) = exec_result?;
+        checkpoint_result?;
 
         let token_snapshot = token_accountant.snapshot();
         let graph_metrics_snapshot = graph_metrics.snapshot();
@@ -1262,6 +1377,8 @@ impl Runtime {
         for (key, value) in extra_metadata {
             context.metadata.insert(key, value);
         }
+        context = bind_host_execution_identity(context)?;
+        context = bind_admitted_invocation_budget(context)?;
         if let Some(budgets) = context
             .metadata
             .get(metadata::TOOL_CALL_BUDGETS)
@@ -1269,7 +1386,12 @@ impl Runtime {
         {
             context = context.with_tool_call_budgets(Some(budgets));
         }
+        let checkpoint_binding = self.bind_session_aam(&mut context)?;
         let context = context;
+        // Partial replay is validated before graph resources are acquired. A
+        // malformed or unverified request must not degrade into a full rerun
+        // that could repeat an external effect.
+        let replay_seed = replay_seed_from_metadata(&context, &entry_dag)?;
         let graph_emitter = context.event_emitter.as_ref().map(Arc::clone);
         let execution_id = context.execution_id.clone();
         let node_count = entry_dag.nodes.len();
@@ -1277,7 +1399,7 @@ impl Runtime {
         let dispatch_ir =
             graph_dispatch_ir_from_dag(&context.graph_id, &context.execution_id, &entry_dag);
         context.set_dispatch_ir_v1(dispatch_ir.clone());
-        let (lifecycles, _dispatch_fallbacks) =
+        let (lifecycles, dispatch_fallbacks) =
             build_graph_lifecycles(&self.llm_registry, &dispatch_ir).await;
         if let Some(emitter) = &graph_emitter {
             emitter.emit_graph_start(&execution_id, node_count);
@@ -1293,7 +1415,6 @@ impl Runtime {
             self.execution_hooks.clone(),
         );
 
-        let replay_seed = replay_seed_from_metadata(&context, &entry_dag);
         let outcome = self
             .scheduler
             .execute_or_park(
@@ -1323,13 +1444,19 @@ impl Runtime {
                     let _lane_permit = lane_permit;
                     let graph_end =
                         GraphEndCompletionGuard::new(graph_emitter, execution_id, node_count);
-                    let completion = match scheduler_background.await {
+                    let mut completion = match scheduler_background.await {
                         Ok(completion) => completion,
                         Err(error) => BackgroundExecutionOutcome::join_failure(
                             BackgroundExecutionTask::SchedulerFinalizer,
                             error,
                         ),
                     };
+                    if completion.is_success()
+                        && let Some(binding) = checkpoint_binding
+                        && let Err(error) = binding.save()
+                    {
+                        completion = BackgroundExecutionOutcome::DomainFailure { error };
+                    }
                     release_graph_lifecycles(&lifecycles).await;
                     graph_end.emit(completion.is_success());
                     completion
@@ -1339,17 +1466,17 @@ impl Runtime {
                     background,
                 })
             }
-            Ok(crate::scheduler::SchedulerOutcome::Completed((
-                results,
-                stats,
-                scheduler_metrics,
-                all_outputs,
-                node_output_map,
-            ))) => {
+            Ok(crate::scheduler::SchedulerOutcome::Completed(result)) => {
+                let checkpoint_result = checkpoint_binding
+                    .as_ref()
+                    .map(SessionCheckpointBinding::save)
+                    .transpose();
+                let (results, stats, scheduler_metrics, all_outputs, node_output_map) = *result;
                 let graph_status_snapshots = release_graph_lifecycles(&lifecycles).await;
                 if let Some(emitter) = &graph_emitter {
-                    emitter.emit_graph_end(&execution_id, node_count, true);
+                    emitter.emit_graph_end(&execution_id, node_count, checkpoint_result.is_ok());
                 }
+                checkpoint_result?;
 
                 let token_snapshot = token_accountant.snapshot();
                 let graph_metrics_snapshot = graph_metrics.snapshot();
@@ -1359,28 +1486,30 @@ impl Runtime {
                     Some(&dispatch_ir),
                     &backend_graph_capabilities,
                     &graph_status_snapshots,
-                    &_dispatch_fallbacks,
+                    &dispatch_fallbacks,
                     &fields_honored_by_backend,
                 );
 
-                Ok(ExecutionOutcome::Completed(RuntimeExecutionResult {
-                    results,
-                    stats,
-                    #[cfg(feature = "metrics")]
-                    llm_metrics: self.llm_registry.metrics().aggregate(),
-                    scheduler_metrics,
-                    all_outputs,
-                    node_output_map,
-                    token_snapshot,
-                    graph_metrics_snapshot,
-                    graph_status_snapshots,
-                    backend_graph_capabilities,
-                    dispatch_ir_metrics,
-                    tool_call_counts: tool_call_counts
-                        .lock()
-                        .map(|m| m.clone())
-                        .unwrap_or_default(),
-                }))
+                Ok(ExecutionOutcome::Completed(Box::new(
+                    RuntimeExecutionResult {
+                        results,
+                        stats,
+                        #[cfg(feature = "metrics")]
+                        llm_metrics: self.llm_registry.metrics().aggregate(),
+                        scheduler_metrics,
+                        all_outputs,
+                        node_output_map,
+                        token_snapshot,
+                        graph_metrics_snapshot,
+                        graph_status_snapshots,
+                        backend_graph_capabilities,
+                        dispatch_ir_metrics,
+                        tool_call_counts: tool_call_counts
+                            .lock()
+                            .map(|m| m.clone())
+                            .unwrap_or_default(),
+                    },
+                )))
             }
             Err(error) => {
                 let _graph_status_snapshots = release_graph_lifecycles(&lifecycles).await;
@@ -1534,25 +1663,76 @@ async fn release_graph_lifecycles(
     graph_status_snapshots
 }
 
+/// Bind the canonical host execution identity to the runtime context.
+///
+/// Server persists this identity with the execution record and supplies it via
+/// [`metadata::EXECUTION_ID`]. Binding it before graph scheduling makes every
+/// durable capability invocation and receipt use the authority's identity
+/// rather than a process-local generated identifier.
+fn bind_host_execution_identity(
+    mut context: ExecutionContext,
+) -> Result<ExecutionContext, RuntimeError> {
+    let Some(execution_id) = context.metadata.get(metadata::EXECUTION_ID) else {
+        return Ok(context);
+    };
+    if execution_id.trim().is_empty() {
+        return Err(RuntimeError::State(
+            "host execution identity metadata cannot be empty".to_string(),
+        ));
+    }
+    context.execution_id.clone_from(execution_id);
+    Ok(context)
+}
+
+/// Bind the host-persisted generated `BudgetSet` to a root execution context.
+///
+/// The Server is the authority that constructs and persists the enclosing
+/// `AgentInvocationEnvelope`; the runtime accepts only the generated budget
+/// shape from its declared metadata seam. Missing metadata remains valid for
+/// local/offline execution, while malformed or semantically invalid metadata
+/// fails before graph scheduling or model egress.
+fn bind_admitted_invocation_budget(
+    context: ExecutionContext,
+) -> Result<ExecutionContext, RuntimeError> {
+    let Some(raw_budget) = context
+        .metadata
+        .get(metadata::ADMITTED_INVOCATION_BUDGET_SET_V1)
+    else {
+        return Ok(context);
+    };
+    let budget =
+        serde_json::from_str::<BudgetSet>(raw_budget).map_err(|error| RuntimeError::LLM {
+            message: format!("admitted invocation budget metadata is malformed: {error}"),
+            backend: None,
+        })?;
+    context.with_admitted_invocation_budget(budget)
+}
+
 /// Decode a [`crate::scheduler::ReplaySeed`] from execution metadata for a
 /// partial replay (`rerun-from-node`). The host stamps `replay_from_node` +
 /// `replay_token_values` (JSON `{token_id: Value}`); the seed is computed
-/// against the recompiled `dag`. Returns `None` (full run) when the keys are
-/// absent, malformed, or `from_node` is not a node in `dag`.
+/// against the recompiled `dag`. Returns `None` (full run) only when no replay
+/// request is present; malformed or unverified replay metadata fails closed so
+/// a restart cannot repeat a non-idempotent external effect.
 fn replay_seed_from_metadata(
     context: &ExecutionContext,
     dag: &ExecutionDag,
-) -> Option<crate::scheduler::ReplaySeed> {
-    let seed = crate::scheduler::ReplaySeed::from_metadata(&context.metadata, dag)?;
-    log_info!(
-        "runtime",
-        execution_id = %context.execution_id,
-        from_node = seed.from_node,
-        replayed = seed.replayed_count(),
-        completed = seed.completed_nodes.len(),
-        "partial replay: re-executing from_node + descendants only"
-    );
-    Some(seed)
+) -> Result<Option<crate::scheduler::ReplaySeed>, RuntimeError> {
+    let seed = crate::scheduler::ReplaySeed::from_metadata_checked(&context.metadata, dag)
+        .map_err(|error| RuntimeError::Scheduler {
+            message: format!("partial replay rejected: {error}"),
+        })?;
+    if let Some(seed) = &seed {
+        log_info!(
+            "runtime",
+            execution_id = %context.execution_id,
+            from_node = seed.from_node,
+            replayed = seed.replayed_count(),
+            completed = seed.completed_nodes.len(),
+            "partial replay: re-executing from_node + descendants only"
+        );
+    }
+    Ok(seed)
 }
 
 fn graph_id_from_dag(dag: &ExecutionDag) -> String {
@@ -1586,17 +1766,16 @@ fn ensure_script_artifact_admitted(artifact: &Artifact) -> Result<(), RuntimeErr
     Ok(())
 }
 
+type HandlerBridges = (
+    Option<Arc<PythonHandlerBridge>>,
+    Option<Arc<TypeScriptHandlerBridge>>,
+);
+
 fn handler_bridges_from_artifact(
     artifact: &Artifact,
     sandbox: Option<Arc<dyn crate::sandbox::SandboxBackend>>,
     sandbox_required: bool,
-) -> Result<
-    (
-        Option<Arc<PythonHandlerBridge>>,
-        Option<Arc<TypeScriptHandlerBridge>>,
-    ),
-    RuntimeError,
-> {
+) -> Result<HandlerBridges, RuntimeError> {
     let section = artifact
         .sections()
         .iter()
@@ -1661,27 +1840,19 @@ fn find_entry_dag(artifact: &Artifact) -> Result<ExecutionDag, RuntimeError> {
     })
 }
 
-/// True when `dag` is an in-graph conversation loop entry: it contains an
-/// AUTONOMOUS `recv` anchor that binds its reserved turn parameter from the
-/// server turn-input endpoint at runtime (park/wake), not from launch args.
+/// True when `dag` receives its initial value through the generic host-input
+/// park/resume primitive rather than through launch arguments.
 fn is_turn_input_entry(dag: &ExecutionDag) -> bool {
-    dag.nodes.iter().any(|node| {
-        node.op_type == apxm_core::types::operations::AISOperationType::Autonomous
-            && node
-                .attributes
-                .get("mode")
-                .and_then(|v| v.as_str())
-                .map(|m| m == "recv")
-                .unwrap_or(false)
-    })
+    dag.nodes
+        .iter()
+        .any(|node| node.op_type == apxm_core::types::operations::AISOperationType::AwaitInput)
 }
 
 fn validate_args(dag: &ExecutionDag, args: &[String]) -> Result<(), RuntimeError> {
     let params = &dag.metadata.parameters;
     if args.len() != params.len() {
-        // A turn-input (recv) loop entry binds its reserved turn parameter from
-        // the server turn-input endpoint at runtime, so launching it with zero
-        // args is valid because the recv anchor parks for each user message.
+        // A host-input entry binds its reserved parameter through AWAIT_INPUT at
+        // runtime, so zero launch args are valid.
         if args.is_empty() && is_turn_input_entry(dag) {
             return Ok(());
         }
@@ -1775,10 +1946,22 @@ fn parse_flow_name(name: &str) -> (String, String) {
 mod tests {
     use super::*;
     use crate::PersistedBackgroundExecutionOutcome;
+    use crate::capability::{
+        executor::{CapabilityExecutionResult, CapabilityExecutor, CapabilityResult},
+        metadata::RuntimeCapability,
+    };
     use apxm_artifact::{ArtifactMetadata, ArtifactSection};
+    use apxm_capability_iface::{CapabilityInvocation, capability_effect_idempotency_key_digest};
     use apxm_core::constants::graph::attrs as graph_attrs;
+    use apxm_core::events::payload::{
+        CapabilityEffectAdmissionKind, CapabilityEffectApprovalStatus,
+        CapabilityEffectIdempotencyProof, CapabilityEffectImplementationKind,
+        CapabilityEffectReceiptPayload, CapabilityEffectReceiptStatus,
+    };
     use apxm_core::types::execution::FlowParameter;
-    use apxm_core::types::{AISOperationType, DagMetadata, Node, Value};
+    use apxm_core::types::{AISOperationType, DagMetadata, DependencyType, Edge, Node, Value};
+    use async_trait::async_trait;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn artifact(dags: Vec<ExecutionDag>) -> Artifact {
         Artifact::new(
@@ -1805,6 +1988,203 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn malformed_admitted_budget_metadata_fails_before_execution() {
+        let runtime = Runtime::new(RuntimeConfig::in_memory())
+            .await
+            .expect("runtime");
+        let mut context = runtime.build_context(None, None, None);
+        context.metadata.insert(
+            metadata::ADMITTED_INVOCATION_BUDGET_SET_V1.to_string(),
+            "not-json".to_string(),
+        );
+
+        let error = match bind_admitted_invocation_budget(context) {
+            Ok(_) => panic!("malformed host budget must fail closed"),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("admitted invocation budget metadata is malformed")
+        );
+    }
+
+    /// Produce a unique host-owned directory for one durable-session regression.
+    fn temporary_session_directory(test_name: &str) -> PathBuf {
+        let unique = format!(
+            "{test_name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time after epoch")
+                .as_nanos(),
+        );
+        std::env::temp_dir().join(unique)
+    }
+
+    /// Build a context through the production session-binding seam.
+    fn session_context(
+        runtime: &Runtime,
+        session_id: &str,
+        session_dir: &Path,
+        execution_id: &str,
+    ) -> (ExecutionContext, SessionCheckpointBinding) {
+        let mut context = runtime.build_context(
+            Some(session_id.to_string()),
+            None,
+            Some(session_dir.to_string_lossy().to_string()),
+        );
+        context
+            .metadata
+            .insert(metadata::EXECUTION_ID.to_string(), execution_id.to_string());
+        let binding = runtime
+            .bind_session_aam(&mut context)
+            .expect("bind durable session")
+            .expect("durable session supplies a checkpoint binding");
+        (context, binding)
+    }
+
+    #[tokio::test]
+    async fn fresh_runtime_restores_aam_from_a_matching_session_checkpoint() {
+        let session_dir = temporary_session_directory("runtime-aam-restart");
+        let source = Runtime::new(RuntimeConfig::in_memory())
+            .await
+            .expect("source runtime");
+        let source_artifact = artifact(vec![single_node_dag(
+            "session.restart",
+            true,
+            Node::new(1, AISOperationType::Identity),
+        )]);
+        source
+            .execute_artifact_with_session_emitter_and_metadata(
+                source_artifact,
+                Vec::new(),
+                Some("session-restart".to_string()),
+                None,
+                Some(session_dir.to_string_lossy().to_string()),
+                HashMap::from([(
+                    metadata::EXECUTION_ID.to_string(),
+                    "execution-restart".to_string(),
+                )]),
+            )
+            .await
+            .expect("session execution checkpoints its AAM");
+
+        let restarted = Runtime::new(RuntimeConfig::in_memory())
+            .await
+            .expect("fresh runtime");
+        let (restored_context, _) = session_context(
+            &restarted,
+            "session-restart",
+            &session_dir,
+            "execution-restart",
+        );
+
+        assert_eq!(
+            restored_context.aam.get_belief(&format!(
+                "{}{}",
+                apxm_core::constants::runtime::belief_keys::IDENTITY_NODE_PREFIX,
+                1
+            )),
+            Some(Value::Null),
+        );
+        assert!(
+            restarted
+                .aam()
+                .get_belief(&format!(
+                    "{}{}",
+                    apxm_core::constants::runtime::belief_keys::IDENTITY_NODE_PREFIX,
+                    1
+                ))
+                .is_none(),
+            "restored session state must not enter the runtime-global AAM",
+        );
+
+        std::fs::remove_dir_all(session_dir).expect("remove temporary session directory");
+    }
+
+    #[tokio::test]
+    async fn session_checkpoint_rejects_identity_mismatch_without_restoring_state() {
+        let session_dir = temporary_session_directory("runtime-aam-identity-mismatch");
+        let source = Runtime::new(RuntimeConfig::in_memory())
+            .await
+            .expect("source runtime");
+        let (source_context, source_binding) = session_context(
+            &source,
+            "session-expected",
+            &session_dir,
+            "execution-expected",
+        );
+        source_context.aam.set_belief(
+            "must-not-cross-identities".to_string(),
+            Value::String("sealed".to_string()),
+            crate::aam::TransitionLabel::custom("identity-mismatch-regression"),
+        );
+        source_binding.save().expect("checkpoint source session");
+
+        let restarted = Runtime::new(RuntimeConfig::in_memory())
+            .await
+            .expect("fresh runtime");
+        let mut mismatched_context = restarted.build_context(
+            Some("session-expected".to_string()),
+            None,
+            Some(session_dir.to_string_lossy().to_string()),
+        );
+        mismatched_context.metadata.insert(
+            metadata::EXECUTION_ID.to_string(),
+            "execution-unexpected".to_string(),
+        );
+        let error = match restarted.bind_session_aam(&mut mismatched_context) {
+            Ok(_) => panic!("wrong execution identity must fail closed"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("requested execution"));
+        assert!(
+            mismatched_context
+                .aam
+                .get_belief("must-not-cross-identities")
+                .is_none(),
+            "a rejected checkpoint must not partially restore into the context",
+        );
+
+        std::fs::remove_dir_all(session_dir).expect("remove temporary session directory");
+    }
+
+    #[tokio::test]
+    async fn corrupt_session_checkpoint_never_falls_back_to_a_fresh_aam() {
+        let session_dir = temporary_session_directory("runtime-aam-corrupt-checkpoint");
+        let manager = SessionManager::new(session_dir.clone()).expect("checkpoint manager");
+        std::fs::write(manager.checkpoint_path(), b"not-json")
+            .expect("write corrupt checkpoint fixture");
+        let runtime = Runtime::new(RuntimeConfig::in_memory())
+            .await
+            .expect("runtime");
+        let mut context = runtime.build_context(
+            Some("session-corrupt".to_string()),
+            None,
+            Some(session_dir.to_string_lossy().to_string()),
+        );
+        context.metadata.insert(
+            metadata::EXECUTION_ID.to_string(),
+            "execution-corrupt".to_string(),
+        );
+
+        let error = match runtime.bind_session_aam(&mut context) {
+            Ok(_) => panic!("corrupt checkpoint must reject execution"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, RuntimeError::Serialization(_)));
+        assert!(
+            context.aam.get_belief("restart-belief").is_none(),
+            "corruption must not be converted into a new session state",
+        );
+
+        std::fs::remove_dir_all(session_dir).expect("remove temporary session directory");
+    }
+
     #[derive(Default)]
     struct GraphEndCapturingEmitter {
         successes: std::sync::Mutex<Vec<bool>>,
@@ -1828,17 +2208,266 @@ mod tests {
         }
     }
 
-    fn rearming_conversation_artifact(turn_node: Option<Node>) -> Artifact {
-        let mut recv = Node::new(1, AISOperationType::Autonomous);
+    /// Captures one durable public effect receipt without retaining request content.
+    #[derive(Default)]
+    struct EffectReceiptCapturingEmitter {
+        receipt: std::sync::Mutex<Option<CapabilityEffectReceiptPayload>>,
+    }
+
+    impl EffectReceiptCapturingEmitter {
+        /// Return the receipt emitted after the source external effect commits.
+        fn receipt(&self) -> Option<CapabilityEffectReceiptPayload> {
+            self.receipt.lock().expect("effect receipt lock").clone()
+        }
+    }
+
+    impl ExecutionEventEmitter for EffectReceiptCapturingEmitter {
+        fn emit_llm_token(&self, _content: &str) {}
+
+        fn emit_tool_start(&self, _name: &str, _args: &HashMap<String, Value>) {}
+
+        fn emit_tool_end(&self, _name: &str, _result: &Value) {}
+
+        fn emit_capability_effect_receipt(&self, receipt: &CapabilityEffectReceiptPayload) {
+            *self.receipt.lock().expect("effect receipt lock") = Some(receipt.clone());
+        }
+    }
+
+    /// A test host executor whose counter represents one non-idempotent external commit.
+    struct NonIdempotentEffectCapability {
+        metadata: RuntimeCapability,
+        effect_count: Arc<AtomicUsize>,
+    }
+
+    impl NonIdempotentEffectCapability {
+        /// Construct the receipt-bearing external-effect fixture.
+        fn new(effect_count: Arc<AtomicUsize>) -> Self {
+            Self {
+                metadata: RuntimeCapability::new(
+                    "test.non_idempotent_effect",
+                    "Test-only non-idempotent external effect",
+                    serde_json::json!({"type": "object"}),
+                )
+                .with_returns("string"),
+                effect_count,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl CapabilityExecutor for NonIdempotentEffectCapability {
+        async fn execute(&self, _args: HashMap<String, Value>) -> CapabilityResult<Value> {
+            Err(RuntimeError::Capability {
+                capability: self.metadata.name.clone(),
+                message: "durable external effects require invocation identity".to_string(),
+            })
+        }
+
+        async fn execute_with_effect_receipt(
+            &self,
+            _args: HashMap<String, Value>,
+            invocation: Option<&CapabilityInvocation>,
+        ) -> CapabilityResult<CapabilityExecutionResult> {
+            let invocation = invocation.ok_or_else(|| RuntimeError::Capability {
+                capability: self.metadata.name.clone(),
+                message: "durable external effects require invocation identity".to_string(),
+            })?;
+            let grant_id =
+                invocation
+                    .grant_refs
+                    .first()
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::Capability {
+                        capability: self.metadata.name.clone(),
+                        message: "durable external effects require a matching grant".to_string(),
+                    })?;
+            self.effect_count.fetch_add(1, Ordering::SeqCst);
+
+            let idempotency_key =
+                format!("{}:{}", invocation.execution_id, invocation.invocation_id);
+            let receipt = CapabilityEffectReceiptPayload {
+                receipt_id: crate::mint_capability_effect_receipt_id(),
+                execution_id: invocation.execution_id.clone(),
+                node_id: invocation.node_id,
+                invocation_id: invocation.invocation_id.clone(),
+                capability_binding: self.metadata.name.clone(),
+                dispatch_path: invocation.dispatch_path.clone(),
+                implementation_kind: CapabilityEffectImplementationKind::Host,
+                implementation_ref: "test-host/non-idempotent-effect".to_string(),
+                request_digest: "sha256:test-non-idempotent-effect-request".to_string(),
+                admission_kind: CapabilityEffectAdmissionKind::Grant,
+                grant_id: Some(grant_id),
+                approval_status: Some(CapabilityEffectApprovalStatus::NotRequired),
+                approval_id: None,
+                idempotency_proof: CapabilityEffectIdempotencyProof::TransactionVerified,
+                idempotency_key_digest: capability_effect_idempotency_key_digest(&idempotency_key),
+                effect_ref: format!("test-effect:{}", invocation.invocation_id),
+                status: CapabilityEffectReceiptStatus::Committed,
+            };
+            Ok(CapabilityExecutionResult::with_effect_receipt(
+                Value::String("external-effect-committed".to_string()),
+                receipt,
+            ))
+        }
+
+        fn metadata(&self) -> &RuntimeCapability {
+            &self.metadata
+        }
+    }
+
+    /// Build a source effect followed by a replayable downstream data node.
+    fn non_idempotent_effect_artifact() -> Artifact {
+        let mut effect = Node::new(1, AISOperationType::InvCap);
+        effect.add_output_token(10);
+        effect.set_attribute(
+            graph_attrs::CAPABILITY.to_string(),
+            Value::String("test.non_idempotent_effect".to_string()),
+        );
+        effect.set_attribute(
+            graph_attrs::PARAMS_JSON.to_string(),
+            Value::String("{}".to_string()),
+        );
+        let mut downstream = Node::new(2, AISOperationType::Nop);
+        downstream.add_input_token(10);
+        downstream.add_output_token(20);
+        artifact(vec![ExecutionDag {
+            nodes: vec![effect, downstream],
+            edges: vec![Edge::new(1, 2, 10, DependencyType::Data)],
+            entry_nodes: vec![1],
+            exit_nodes: vec![2],
+            metadata: DagMetadata {
+                name: Some("test.non_idempotent_effect".to_string()),
+                is_entry: true,
+                parameters: Vec::new(),
+            },
+        }])
+    }
+
+    /// Return a host-issued mutating grant fixture for the test capability.
+    fn non_idempotent_effect_grants() -> String {
+        serde_json::json!([{
+            "grant_id": "test-non-idempotent-effect-grant",
+            "capability_binding": "test.non_idempotent_effect",
+            "operations": ["write"],
+            "resource": {"kind": "test_effect", "uri": "test://non-idempotent-effect"},
+            "scope": {"kind": "test_effect", "boundary": "test"},
+            "runtime_limits": {},
+            "expires_at": null,
+            "status": "active"
+        }])
+        .to_string()
+    }
+
+    /// A retry after a caller loses the source response must stop before the
+    /// non-idempotent effect unless the host returns verified replay evidence.
+    #[tokio::test]
+    async fn lost_response_restart_does_not_repeat_non_idempotent_effect_without_evidence() {
+        let effect_count = Arc::new(AtomicUsize::new(0));
+        let source_runtime = Runtime::new(RuntimeConfig::in_memory())
+            .await
+            .expect("source runtime");
+        source_runtime
+            .capability_system()
+            .register(Arc::new(NonIdempotentEffectCapability::new(Arc::clone(
+                &effect_count,
+            ))))
+            .expect("register source external effect");
+        let source_emitter = Arc::new(EffectReceiptCapturingEmitter::default());
+        let source_execution_id = "test-source-execution".to_string();
+        let source_metadata = HashMap::from([
+            (
+                crate::metadata_keys::EXECUTION_ID.to_string(),
+                source_execution_id.clone(),
+            ),
+            (
+                crate::metadata_keys::CAPABILITY_GRANTS.to_string(),
+                non_idempotent_effect_grants(),
+            ),
+        ]);
+
+        let _lost_response = source_runtime
+            .execute_artifact_with_session_emitter_and_metadata(
+                non_idempotent_effect_artifact(),
+                Vec::new(),
+                None,
+                Some(source_emitter.clone()),
+                None,
+                source_metadata,
+            )
+            .await
+            .expect("source external effect commits before its response is lost");
+        let source_receipt = source_emitter
+            .receipt()
+            .expect("source commit emits a durable receipt");
+        assert_eq!(source_receipt.execution_id, source_execution_id);
+        assert_eq!(effect_count.load(Ordering::SeqCst), 1);
+
+        let restarted_runtime = Runtime::new(RuntimeConfig::in_memory())
+            .await
+            .expect("fresh runtime after restart");
+        restarted_runtime
+            .capability_system()
+            .register(Arc::new(NonIdempotentEffectCapability::new(Arc::clone(
+                &effect_count,
+            ))))
+            .expect("register restarted external effect");
+        let retry_metadata = HashMap::from([
+            (
+                crate::metadata_keys::CAPABILITY_GRANTS.to_string(),
+                non_idempotent_effect_grants(),
+            ),
+            (
+                crate::metadata_keys::REPLAY_FROM_NODE.to_string(),
+                "2".to_string(),
+            ),
+            (
+                crate::metadata_keys::REPLAY_TOKEN_VALUES.to_string(),
+                serde_json::json!({"10": "external-effect-committed"}).to_string(),
+            ),
+            (
+                crate::metadata_keys::REPLAY_SOURCE_EXECUTION_ID.to_string(),
+                source_receipt.execution_id,
+            ),
+        ]);
+
+        let error = restarted_runtime
+            .execute_artifact_with_session_emitter_and_metadata(
+                non_idempotent_effect_artifact(),
+                Vec::new(),
+                None,
+                None,
+                None,
+                retry_metadata,
+            )
+            .await
+            .expect_err("restart without verified host evidence must fail closed");
+
+        assert!(
+            error
+                .to_string()
+                .contains("durable host-effect evidence is missing"),
+            "restart must reject the missing receipt authority: {error}",
+        );
+        assert_eq!(
+            effect_count.load(Ordering::SeqCst),
+            1,
+            "a lost-response retry must not repeat the committed external effect",
+        );
+    }
+
+    fn rearming_input_artifact(turn_node: Option<Node>) -> Artifact {
+        let mut recv = Node::new(1, AISOperationType::AwaitInput);
         for (name, value) in [
-            ("mode", "recv"),
-            ("recv_once", "false"),
-            ("turn_agent", "conversation"),
-            ("turn_flow", "turn"),
-            ("turn_param", "user_message"),
+            ("rearm", "true"),
+            ("agent_name", "conversation"),
+            ("flow_name", "turn"),
         ] {
             recv.set_attribute(name.to_string(), Value::String(value.to_string()));
         }
+        recv.set_attribute(
+            graph_attrs::INPUT_NAMES.to_string(),
+            Value::Array(vec![Value::String("user_message".to_string())]),
+        );
         recv.set_attribute(graph_attrs::MAX_ITERATIONS.to_string(), Value::from(2_i64));
 
         let entry = single_node_dag("conversation.main", true, recv);
@@ -1857,7 +2486,7 @@ mod tests {
     }
 
     fn wake_rearming_session(session_id: &str) {
-        let key = crate::scheduler::park_registry::session_recv_key(session_id);
+        let key = crate::scheduler::park_registry::session_input_key(session_id);
         assert_eq!(
             crate::scheduler::park_registry::wake(&key, Value::String("first".to_string())),
             Ok(1),
@@ -2060,18 +2689,15 @@ mod tests {
     }
 
     /// An execution whose in-graph conversation loop reaches its
-    /// `session_recv` park point returns `Parked { session_id }` promptly —
+    /// An AWAIT_INPUT session park point returns `Parked { session_id }` promptly —
     /// as soon as the park happens, not after some fixed timeout and not only
     /// at full completion (a session-recv park never completes on its own).
     #[tokio::test]
-    async fn or_park_returns_parked_for_a_session_recv_park() {
+    async fn or_park_returns_parked_for_a_session_input_wait() {
         let runtime = Runtime::new(RuntimeConfig::in_memory()).await.unwrap();
 
-        // AUTONOMOUS mode=recv with no `recv_url` and no seed input parks on
-        // `park_registry::session_recv_key(session_id)` (see
-        // `executor/handlers/autonomous.rs::recv_loop`) instead of completing.
-        let mut node = Node::new(1, AISOperationType::Autonomous);
-        node.set_attribute("mode".to_string(), Value::String("recv".to_string()));
+        // AWAIT_INPUT with no seed input parks on the session input key.
+        let node = Node::new(1, AISOperationType::AwaitInput);
         let art = artifact(vec![single_node_dag("main", true, node)]);
 
         let session_id = "test-session-recv-park".to_string();
@@ -2113,7 +2739,7 @@ mod tests {
 
         let outcome = runtime
             .execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
-                rearming_conversation_artifact(None),
+                rearming_input_artifact(None),
                 Vec::new(),
                 Some(session_id.clone()),
                 Some(emitter.clone()),
@@ -2154,7 +2780,7 @@ mod tests {
 
         let outcome = runtime
             .execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
-                rearming_conversation_artifact(Some(Node::new(1, AISOperationType::Nop))),
+                rearming_input_artifact(Some(Node::new(1, AISOperationType::Nop))),
                 Vec::new(),
                 Some(session_id.clone()),
                 Some(emitter.clone()),
@@ -2191,7 +2817,7 @@ mod tests {
 
         let outcome = runtime
             .execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
-                rearming_conversation_artifact(None),
+                rearming_input_artifact(None),
                 Vec::new(),
                 Some(session_id),
                 Some(emitter.clone()),
@@ -2228,7 +2854,7 @@ mod tests {
 
         let first = runtime
             .execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
-                rearming_conversation_artifact(None),
+                rearming_input_artifact(None),
                 Vec::new(),
                 Some(session_id.clone()),
                 None,
@@ -2246,7 +2872,7 @@ mod tests {
         let second_cancellation = CancellationToken::new();
         let second = runtime
             .execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
-                rearming_conversation_artifact(None),
+                rearming_input_artifact(None),
                 Vec::new(),
                 Some(session_id),
                 None,
@@ -2303,7 +2929,7 @@ mod tests {
 
         let first = runtime
             .execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
-                rearming_conversation_artifact(None),
+                rearming_input_artifact(None),
                 Vec::new(),
                 Some(first_session),
                 None,
@@ -2321,7 +2947,7 @@ mod tests {
         let second = tokio::time::timeout(
             std::time::Duration::from_secs(10),
             runtime.execute_artifact_with_session_emitter_metadata_and_cancellation_or_park(
-                rearming_conversation_artifact(None),
+                rearming_input_artifact(None),
                 Vec::new(),
                 Some(second_session),
                 None,

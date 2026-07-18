@@ -43,7 +43,7 @@ description = "A minimal APXM conversational agent."
 kind = "agent"
 domain = "examples"
 capabilities = ["ping"]
-skills = []
+allowed_agent_skills = []
 
 [source]
 type = "local"
@@ -80,8 +80,9 @@ aggregate `capabilities/capabilities.toml` and `permissions.toml` files.
 ## Frontend Entry
 
 Declare exactly one `[compile]` entry and its frontend. The package router sends
-source-bearing packages through the normal Python or TypeScript frontend path;
-only an entry-less package uses declarative synthesis.
+source-bearing packages through the normal Python or TypeScript frontend path.
+Every executable package must declare an explicit entry; no graph is
+synthesized from manifest settings.
 
 The [current public Python frontend](../../crates/compiler/frontend/python/apxm/__init__.py)
 uses `@compile`, `GraphRecorder`, `Agent`, and `@tool`. The accepted design

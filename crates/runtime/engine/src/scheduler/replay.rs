@@ -10,13 +10,14 @@
 //!
 //! The seed is computed against the *recompiled* DAG, so it is only valid when
 //! the recompiled graph carries the same node/token ids as the prior run (the
-//! deterministic skill-compilation case). When `from_node` is not in the graph,
+//! deterministic ProgramPackage recompilation case). When `from_node` is not in the graph,
 //! seed construction returns `None` and the caller falls back to a full re-run.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 
 use apxm_core::constants::graph::attrs;
+use apxm_core::constants::runtime::response_keys;
 use apxm_core::events::payload::CapabilityEffectDispatchPath;
 use apxm_core::types::operations::AISOperationType;
 use apxm_core::types::{ExecutionDag, NodeId, TokenId, Value};
@@ -24,6 +25,7 @@ use apxm_core::types::{ExecutionDag, NodeId, TokenId, Value};
 use crate::effect_receipts::{
     ExpectedCapabilityEffect, lookup_replayable_effect, verify_replayable_effect,
 };
+use crate::metadata_keys;
 
 /// A partial replay request cannot preserve the original execution boundary.
 ///
@@ -48,6 +50,8 @@ pub enum ReplayRejection {
     },
     /// A skipped capability node did not carry exact durable replay authority.
     InvalidCapabilityEffectEvidence { node_id: NodeId, reason: String },
+    /// A skipped workflow spawn did not preserve the child execution identity.
+    InvalidWorkflowSpawnReceipt { node_id: NodeId, reason: String },
     /// A declared edge cannot be normalized into an executable replay boundary.
     InvalidReplayEdge {
         from_node: NodeId,
@@ -81,6 +85,10 @@ impl fmt::Display for ReplayRejection {
             Self::InvalidCapabilityEffectEvidence { node_id, reason } => write!(
                 formatter,
                 "partial replay cannot reuse completed capability node {node_id}: {reason}"
+            ),
+            Self::InvalidWorkflowSpawnReceipt { node_id, reason } => write!(
+                formatter,
+                "partial replay cannot reuse completed workflow spawn {node_id}: {reason}"
             ),
             Self::InvalidReplayEdge {
                 from_node,
@@ -223,6 +231,10 @@ impl ReplaySeed {
             }
             if node.op_type == AISOperationType::InvCap {
                 validate_replayable_invocation(node, metadata)?;
+                continue;
+            }
+            if node.op_type == AISOperationType::WorkflowSpawn {
+                validate_replayable_workflow_spawn(node, self)?;
                 continue;
             }
             return Err(ReplayRejection::UnsafeCompletedOperation {
@@ -394,6 +406,70 @@ impl ReplaySeed {
     }
 }
 
+/// Verify that a completed WORKFLOW_SPAWN has a captured child session receipt.
+///
+/// The parent must never replay the spawn merely because a token is present: a
+/// restart may skip it only when the persisted output identifies the exact
+/// target and child session produced by the first execution. The child session
+/// is the durable boundary for its effects and lineage.
+fn validate_replayable_workflow_spawn(
+    node: &apxm_core::types::Node,
+    replay: &ReplaySeed,
+) -> Result<(), ReplayRejection> {
+    let receipt_error = |reason: String| ReplayRejection::InvalidWorkflowSpawnReceipt {
+        node_id: node.id,
+        reason,
+    };
+    let target_kind = node
+        .attributes
+        .get(attrs::TARGET_KIND)
+        .and_then(Value::as_string)
+        .ok_or_else(|| receipt_error("missing target_kind".to_string()))?;
+    let target = node
+        .attributes
+        .get(attrs::TARGET)
+        .and_then(Value::as_string)
+        .ok_or_else(|| receipt_error("missing target".to_string()))?;
+
+    for token_id in &node.output_tokens {
+        let receipt = replay
+            .seed_tokens
+            .get(token_id)
+            .and_then(Value::as_object)
+            .ok_or_else(|| {
+                receipt_error(format!(
+                    "missing object receipt for output token {token_id}"
+                ))
+            })?;
+        let session_dir = receipt
+            .get(metadata_keys::SESSION_DIR)
+            .and_then(Value::as_string)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                receipt_error(format!(
+                    "missing child session_dir for output token {token_id}"
+                ))
+            })?;
+        if receipt.get(attrs::TARGET_KIND).and_then(Value::as_string) != Some(target_kind) {
+            return Err(receipt_error(format!(
+                "target_kind does not match captured child session '{session_dir}'"
+            )));
+        }
+        if receipt.get(attrs::TARGET).and_then(Value::as_string) != Some(target) {
+            return Err(receipt_error(format!(
+                "target does not match captured child session '{session_dir}'"
+            )));
+        }
+        if !receipt.contains_key(response_keys::RESULT) {
+            return Err(receipt_error(format!(
+                "missing child result for output token {token_id}"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 /// Operations whose skipped execution is data-only and deterministic under the
 /// scheduler's existing token model. Every other operation requires a
 /// persisted, replay-verifiable receipt before a partial replay may skip it.
@@ -405,6 +481,7 @@ fn operation_is_safe_to_skip(operation: AISOperationType) -> bool {
             | AISOperationType::Identity
             | AISOperationType::Merge
             | AISOperationType::WaitAll
+            | AISOperationType::AwaitInput
             | AISOperationType::Fence
     )
 }

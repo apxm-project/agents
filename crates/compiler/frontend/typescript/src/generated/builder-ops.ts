@@ -8,7 +8,7 @@ import type { GenericOpOptions, NodeRef } from "../builder.js";
 import type { OpName } from "./ops.js";
 
 /** Generated method names that expose the AIS catalog on GraphBuilder. */
-export type GeneratedBuilderMethodName = "agent" | "qmem" | "umem" | "ask" | "think" | "reason" | "plan" | "reflect" | "verify" | "invCap" | "exc" | "print" | "jump" | "branchOnValue" | "returnNode" | "switchNode" | "flowCall" | "workflowSpawn" | "merge" | "fence" | "waitAll" | "tryCatch" | "err" | "communicate" | "handoff" | "updateGoal" | "pause" | "resume" | "delegate" | "nop" | "identity" | "spawnAgent" | "registerCapability" | "registerHook" | "autonomous" | "checkpoint" | "constStr" | "yieldNode";
+export type GeneratedBuilderMethodName = "agent" | "qmem" | "umem" | "ask" | "think" | "reason" | "plan" | "reflect" | "verify" | "invCap" | "exc" | "print" | "jump" | "branchOnValue" | "returnNode" | "switchNode" | "flowCall" | "workflowSpawn" | "merge" | "fence" | "waitAll" | "tryCatch" | "err" | "communicate" | "handoff" | "updateGoal" | "pause" | "resume" | "delegate" | "nop" | "identity" | "spawnAgent" | "registerCapability" | "registerHook" | "awaitInput" | "autonomous" | "checkpoint" | "constStr" | "yieldNode";
 
 /** Catalog operation to generated GraphBuilder method name. */
 export const GENERATED_GRAPH_BUILDER_OP_METHODS: Readonly<Record<OpName, GeneratedBuilderMethodName>> = {
@@ -46,6 +46,7 @@ export const GENERATED_GRAPH_BUILDER_OP_METHODS: Readonly<Record<OpName, Generat
   "SPAWN_AGENT": "spawnAgent",
   "REGISTER_CAPABILITY": "registerCapability",
   "REGISTER_HOOK": "registerHook",
+  "AWAIT_INPUT": "awaitInput",
   "AUTONOMOUS": "autonomous",
   "CHECKPOINT": "checkpoint",
   "CONST_STR": "constStr",
@@ -77,6 +78,7 @@ declare module "../builder.js" {
     updateGoal(options?: GenericOpOptions): NodeRef;
     identity(options?: GenericOpOptions): NodeRef;
     registerHook(options?: GenericOpOptions): NodeRef;
+    awaitInput(options?: GenericOpOptions): NodeRef;
     constStr(options?: GenericOpOptions): NodeRef;
     yieldNode(options?: GenericOpOptions): NodeRef;
   }

@@ -987,6 +987,15 @@ fn emit_node(
             &[graph_attrs::HOOK_EVENT],
             None,
         ),
+        AISOperationType::AwaitInput => emit_simple_op(
+            state,
+            node,
+            &inputs,
+            &[graph_attrs::WAIT_KEY],
+            "",
+            &[graph_attrs::WAIT_KEY],
+            Some(('(', ')')),
+        ),
         AISOperationType::Autonomous => emit_simple_op(
             state,
             node,

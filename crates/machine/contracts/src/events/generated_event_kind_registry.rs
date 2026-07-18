@@ -127,6 +127,12 @@ pub const SCHEMA_EVENT_KIND_REGISTRY: &[SchemaEventKindEntry] = &[
         terminal_sense: SchemaTerminalSense::NA,
     },
     SchemaEventKindEntry {
+        name: "context_lifecycle",
+        category: SchemaEventCategory::Observability,
+        terminal: false,
+        terminal_sense: SchemaTerminalSense::NA,
+    },
+    SchemaEventKindEntry {
         name: "context_window_warning",
         category: SchemaEventCategory::Error,
         terminal: false,

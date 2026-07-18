@@ -531,13 +531,13 @@ mod tests {
     fn backend_registration_allows_literal_non_sensitive_header() {
         let mut headers = HashMap::new();
         headers.insert("X-Trace".to_string(), "trace-id".to_string());
-        let err =
-            BackendRegistration::from_backend_config(&backend(Some("env:OPENAI_API_KEY"), headers))
-                .unwrap_err();
+        let mut configured_backend = backend(None, headers);
+        configured_backend.backend_type = BackendType::Local;
+        let registration = BackendRegistration::from_backend_config(&configured_backend)
+            .expect("non-sensitive literal headers are valid local-backend metadata");
         assert!(
-            err.to_string()
-                .contains("Environment variable 'OPENAI_API_KEY' not set"),
-            "unexpected error: {err}"
+            registration.extra_headers.contains_key("X-Trace"),
+            "the non-sensitive header must be retained"
         );
     }
 

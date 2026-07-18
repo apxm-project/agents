@@ -135,6 +135,7 @@ fn rust_variant_name(op: AISOperationType) -> &'static str {
         AISOperationType::Merge => "Merge",
         AISOperationType::Fence => "Fence",
         AISOperationType::WaitAll => "WaitAll",
+        AISOperationType::AwaitInput => "AwaitInput",
         AISOperationType::TryCatch => "TryCatch",
         AISOperationType::Err => "Err",
         AISOperationType::Communicate => "Communicate",

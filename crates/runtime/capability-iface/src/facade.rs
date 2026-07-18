@@ -19,6 +19,7 @@ use apxm_core::error::RuntimeError;
 use apxm_core::events::payload::{
     CapabilityEffectDispatchPath, CapabilityEffectReceiptPayload, ToolCallCorrelation,
 };
+use apxm_core::types::RuntimeCapabilityGrant;
 use apxm_core::types::consent::ConsentBroker;
 use apxm_core::types::host::{HostEffectCommit, HostEffectPrepare};
 use apxm_core::types::values::Value;
@@ -74,7 +75,13 @@ pub struct CapabilityInvocation {
     pub node_id: u64,
     pub invocation_id: String,
     pub dispatch_path: CapabilityEffectDispatchPath,
+    /// Opaque identifiers retained in durable traces and capability receipts.
     pub grant_refs: Vec<String>,
+    /// Trusted projections of the grants that admitted this invocation.
+    ///
+    /// Executors use this only to constrain resource visibility and output;
+    /// callers cannot supply it through capability arguments.
+    pub grant_contexts: Vec<RuntimeCapabilityGrant>,
 }
 
 /// Shared digest helper for committed capability-effect idempotency keys.

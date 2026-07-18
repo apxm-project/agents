@@ -28,6 +28,7 @@ use super::{
     warmup::{dispatch_warmup, should_dispatch_warmup},
 };
 use crate::aam::TransitionLabel;
+use crate::context_envelope::resolve_serialized as resolve_sealed_context;
 use crate::context_stack::{
     ContextPermissionScope, ContextPlan, ContextPlanMetrics, ContextPlanningError, ContextScope,
     ContextSegmentRole, ContextSegmentSpec, ContextSensitivity,
@@ -209,6 +210,28 @@ mod context_request_tests {
         assert!(contextual.metrics.token_budget.is_none());
         assert!(contextual.metrics.original_tokens.is_none());
         assert!(contextual.plan.is_none());
+    }
+
+    #[tokio::test]
+    async fn malformed_sealed_context_transport_rejects_before_model_context_assembly() {
+        let mut ctx = test_execution_context().await;
+        ctx.metadata.insert(
+            crate::metadata_keys::SEALED_CONTEXT_TRANSPORT_V1.to_string(),
+            "not-json".to_string(),
+        );
+
+        let error = contextualize_node_request(
+            &ctx,
+            &Node::new(27, AISOperationType::Ask),
+            LLMRequest::new("answer"),
+        )
+        .err()
+        .expect("malformed sealed context must fail before model dispatch");
+        assert!(
+            error
+                .to_string()
+                .contains("sealed model context failed validation")
+        );
     }
 
     #[test]
@@ -592,6 +615,23 @@ struct ContextSystemPrompt {
     plan: Option<ContextPlan>,
 }
 
+/// Resolve the host-owned sealed transport without interpreting any catalogue
+/// or activation metadata.
+fn sealed_context_messages(ctx: &ExecutionContext) -> Result<Vec<Message>> {
+    let Some(serialized) = ctx
+        .metadata
+        .get(crate::metadata_keys::SEALED_CONTEXT_TRANSPORT_V1)
+    else {
+        return Ok(Vec::new());
+    };
+    resolve_sealed_context(serialized)
+        .map(|context| context.messages)
+        .map_err(|error| RuntimeError::LLM {
+            message: format!("sealed model context failed validation: {error}"),
+            backend: None,
+        })
+}
+
 /// A model request with the execution-owned context boundary applied.
 pub(crate) struct ContextualNodeRequest {
     /// Request with the admitted context rendered into its system prompt.
@@ -622,7 +662,7 @@ fn compose_context_stack_system_prompt(
         });
     }
     Ok(ContextSystemPrompt {
-        system_prompt: format!("{}\n\n---\n\n{}", assembly, system_prompt),
+        system_prompt: format!("{}\n\n---\n\n{}", system_prompt, assembly),
         plan: Some(assembly.plan),
     })
 }
@@ -699,16 +739,31 @@ pub(crate) fn contextualize_node_request(
     request: LLMRequest,
 ) -> Result<ContextualNodeRequest> {
     let original_messages = request.resolved_messages();
+    let sealed_messages = sealed_context_messages(ctx)?;
     let system_prompt = request.system_prompt.clone().unwrap_or_default();
     let contextual = compose_context_stack_system_prompt(ctx, node, system_prompt)
         .map_err(|error| context_planning_runtime_error(node, error))?;
+    let mut request = request.with_system_prompt(contextual.system_prompt);
+    let messages_for_plan = if sealed_messages.is_empty() {
+        original_messages
+    } else {
+        let mut messages = request.resolved_messages();
+        let insertion_index = messages
+            .iter()
+            .take_while(|message| message.role == Role::System)
+            .count();
+        messages.splice(insertion_index..insertion_index, sealed_messages);
+        request.system_prompt = None;
+        request.messages = messages.clone();
+        messages
+    };
     let mut plan = contextual.plan.or_else(|| {
         ctx.context_planning
             .as_ref()
             .and_then(|policy| ContextPlan::from_policy(policy, None).ok())
     });
     if let Some(plan) = plan.as_mut() {
-        for (index, message) in original_messages.iter().enumerate() {
+        for (index, message) in messages_for_plan.iter().enumerate() {
             record_request_message(plan, message, format!("request:message:{index}"))
                 .map_err(|error| context_planning_runtime_error(node, error))?;
         }
@@ -720,7 +775,7 @@ pub(crate) fn contextualize_node_request(
         ModelContextPlanStatus::Unplanned
     };
     Ok(ContextualNodeRequest {
-        request: request.with_system_prompt(contextual.system_prompt),
+        request,
         metrics: model_context_metrics(
             Some(node.id),
             ModelContextCallKind::Node,
@@ -773,6 +828,7 @@ pub(crate) fn model_context_metrics(
             truncated_segments: Some(plan.truncated_segments),
             omitted_token_budget_segments: Some(plan.omitted_token_budget_segments),
             omitted_empty_segments: Some(plan.omitted_empty_segments),
+            generation: None,
         },
         None => ModelContextMetrics {
             node_id,
@@ -785,6 +841,7 @@ pub(crate) fn model_context_metrics(
             truncated_segments: None,
             omitted_token_budget_segments: None,
             omitted_empty_segments: None,
+            generation: None,
         },
     }
 }
@@ -911,15 +968,15 @@ fn attach_cache_salt(mut request: LLMRequest, cache_salt: String) -> LLMRequest 
 /// Resolution chain for the vLLM `cache_salt`:
 ///
 /// 1. Explicit `vllm_cache_salt` node attribute — author intent always wins.
-/// A value of `"none"` (or empty) disables salting entirely.
+///    A value of `"none"` (or empty) disables salting entirely.
 /// 2. Compiler-stamped `shared_prefix_group` — the SharedPrefixAnalysis
-/// pass marks sibling nodes that share a bit-identical leading prompt.
-/// Salting by `{graph_id}:{group}` lets the vLLM prefix cache survive
-/// across executions of the same graph for grouped nodes, while the
-/// benchmark harness can still keep ungrouped nodes execution-isolated
-/// via `APXM_VLLM_CACHE_SALT=execution`.
+///    pass marks sibling nodes that share a bit-identical leading prompt.
+///    Salting by `{graph_id}:{group}` lets the vLLM prefix cache survive
+///    across executions of the same graph for grouped nodes, while the
+///    benchmark harness can still keep ungrouped nodes execution-isolated
+///    via `APXM_VLLM_CACHE_SALT=execution`.
 /// 3. Env var fallback (`APXM_VLLM_CACHE_SALT`) — harness iteration
-/// isolation for ungrouped nodes.
+///    isolation for ungrouped nodes.
 fn apply_vllm_request_overrides_from_node(
     ctx: &ExecutionContext,
     node: &Node,
@@ -1031,25 +1088,7 @@ pub async fn execute(ctx: &ExecutionContext, node: &Node, inputs: Vec<Value>) ->
         request = request.with_output_schema(schema.clone());
     }
 
-    let mut system_prompt = resolve_system_prompt(ctx, node, mode, provider_inputs.system_prompt)?;
-    // A `pre_turn` hook may have rendered a prompt supplement for the
-    // top-level turn currently in flight.
-    // Consume it once (`take`) so a later sub-ask in the same turn does not
-    // re-prepend it. Applied before `pre_ask` so `pre_ask` hooks still see —
-    // and may further prepend/override — the combined text.
-    if mode == LlmMode::Ask
-        && let Some(turn_supplement) = ctx.pending_turn_prompt_supplement.write().take()
-    {
-        system_prompt = format!("{turn_supplement}\n{system_prompt}");
-    }
-    // pre_ask hooks may prepend/replace the system prompt (in-program context
-    // injection; constitution #5). Ask mode only; gate hooks fail closed.
-    if mode == LlmMode::Ask
-        && let Some(overridden) =
-            crate::executor::hook_driver::run_pre_ask_hooks(ctx, &system_prompt).await?
-    {
-        system_prompt = overridden;
-    }
+    let system_prompt = resolve_system_prompt(ctx, node, mode, provider_inputs.system_prompt)?;
     let ContextualNodeRequest {
         mut request,
         metrics: _,

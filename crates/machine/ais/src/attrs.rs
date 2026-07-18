@@ -13,6 +13,10 @@ pub const REQUIRED_CAPABILITIES: &str = "required_capabilities";
 pub const PREFERRED_PROFILES: &str = "preferred_profiles";
 pub const NODE_NAME: &str = "node_name";
 pub const MODE: &str = "mode";
+/// Opaque correlation key for a generic external input wait.
+pub const WAIT_KEY: &str = "wait_key";
+/// Whether an AWAIT_INPUT node re-arms its explicit continuation after wake.
+pub const REARM: &str = "rearm";
 pub const CWD: &str = "cwd";
 
 // -- LLM / model --
@@ -360,6 +364,7 @@ pub const SID: &str = "sid";
 pub const HANDOFF: &str = "handoff";
 pub const HANDOFF_FROM: &str = "handoff_from";
 pub const HANDOFF_TO: &str = "handoff_to";
+pub const PAYLOAD: &str = "payload";
 pub const TRANSFER_STATE: &str = "transfer_state";
 
 // -- Optimization hints --
@@ -457,6 +462,8 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     PREFERRED_PROFILES,
     NODE_NAME,
     MODE,
+    WAIT_KEY,
+    REARM,
     CWD,
     MODEL,
     MODEL_PROFILE,
@@ -608,7 +615,7 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     "cases",
     "default",
     "ordering",
-    "payload",
+    PAYLOAD,
     "error_handler",
     NAME,
     SID,

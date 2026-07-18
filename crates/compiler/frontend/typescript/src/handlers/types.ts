@@ -4,9 +4,7 @@ export type HookDecision =
   | { decision: "defer" }
   | { decision: "deny"; reason: string }
   | { decision: "edit_args"; args: Record<string, unknown> }
-  | { decision: "replace_result"; result: unknown }
-  | { decision: "prepend_system"; text: string }
-  | { decision: "set_system"; text: string };
+  | { decision: "replace_result"; result: unknown };
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
@@ -30,13 +28,11 @@ export interface HookContext {
   deny(reason?: string): HookDecision;
   editArgs(args: Record<string, unknown>): HookDecision;
   replaceResult(result: unknown): HookDecision;
-  prependSystem(text: string): HookDecision;
-  setSystem(text: string): HookDecision;
   readAgentsMd(): string;
   recall(key: string): Promise<unknown>;
   recallWindow(n?: number, prefix?: string): Promise<string>;
   umem(key: string, value: unknown): void;
-  ask(prompt: string, system?: string | null): Promise<string>;
+  ask(prompt: string, maxTokens: number, system?: string | null): Promise<string>;
   call(name: string, args?: Record<string, unknown>): Promise<unknown>;
   countTokens(text: string): Promise<number>;
 }
