@@ -33,7 +33,7 @@
     "directory": "crates/compiler/frontend/typescript"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "restricted"
   },
   "files": [
     "dist",

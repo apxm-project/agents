@@ -12,6 +12,7 @@ license = "MIT"
 authors = [{ name = "The APXM authors" }]
 keywords = ["apxm", "workflows", "graphs", "agents", "mlir"]
 classifiers = [
+    "Private :: Do Not Upload",
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
@@ -47,6 +48,9 @@ include = ["apxm", "apxm.*"]
 
 [tool.setuptools.package-data]
 apxm = ["py.typed"]
+
+[tool.apxm.release]
+publish = false
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
