@@ -1,5 +1,13 @@
 # Agent Process Model
 
+> **Pre-canonical implementation baseline — non-normative.** This page
+> documents the current ACP/process-table/spawn/communicate mechanisms that the
+> target deletes as Agent Program composition. Target composition is owned by
+> [ADR-0008](../adr/0008-agent-programs-compose-through-new-and-invoke.md),
+> [ADR-0009](../adr/0009-air-has-five-public-semantic-operations.md), and the
+> [canonical v1 contract](../agents/agent-program-composition-and-air-contract.md).
+> External processes remain adapters/Capabilities, never a second program API.
+
 > This document covers both conceptual semantics and implementation-level behavior. For additional runtime details, see [apxm-runtime](../../crates/runtime/engine/README.md).
 
 The A-PXM process model introduces formal OS-like abstractions for agent lifecycle management. Agents are **processes**; node executions within an agent are **threads**.

@@ -1,11 +1,21 @@
 ---
 title: "Agent Instruction Set (AIS)"
 description: "The typed operation taxonomy that forms A-PXM's intermediate representation -- design principles, instruction categories, latency model, and type system."
+status: "precanonical-historical-baseline"
 ---
 
 # Agent Instruction Set (AIS)
 
-The AIS is a typed intermediate representation -- the ISA contract for agentic AI (see [foundations.md](foundations.md) for why this contract matters). Every operation takes typed inputs, produces typed outputs, and transitions the [AAM](aam.md) state deterministically. The AIS is what makes agent workflows visible: each operation is a typed node with declared dependencies, not an opaque function call.
+> **Pre-canonical implementation baseline — non-normative.** The operation
+> names and runtime behavior below describe the pre-replacement system at
+> `agents@9e26a62adebb`. The accepted target is
+> [ADR-0009](../adr/0009-air-has-five-public-semantic-operations.md) and the
+> [canonical v1 composition/AIR contract](../agents/agent-program-composition-and-air-contract.md):
+> exactly five public semantic operations, compiler-owned structural IR, and
+> no legacy op compatibility. Do not use this page to design target code.
+
+The material below records how the prototype AIS was conceived and
+implemented; it is retained only as migration evidence.
 
 ## Design Principles
 

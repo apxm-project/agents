@@ -1,5 +1,14 @@
 # ACP and script-worker sandbox seam
 
+> **Pre-canonical implementation baseline — non-normative.** The registry,
+> backend selection, profile flag, and `SandboxBackend` names below describe
+> prototype code to replace. Canonical v1 uses the narrow
+> [Confinement Port](../agents/portable-core-interface-contract.md#confinement-port)
+> selected exactly by a verified Deployment Composition Manifest under
+> [ADR-0013](../adr/0013-core-semantics-are-closed-and-implementations-enter-through-exact-port-bindings.md).
+> There is no candidate search, degraded selection, or legacy registry in the
+> target.
+
 APXM routes one-shot commands and long-running subprocesses through the same
 backend registry without weakening a request when a backend is unavailable.
 
