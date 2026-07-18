@@ -17,9 +17,7 @@
     "url": "git+https://github.com/apxm-project/agents.git",
     "directory": "crates/tools/client/typescript"
   },
-  "publishConfig": {
-    "access": "public"
-  },
+  "private": true,
   "files": [
     "dist",
     "LICENSE"

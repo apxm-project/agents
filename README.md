@@ -85,11 +85,14 @@ dekk agents release dist      # writes archives + SHA256SUMS under .apxm/release
 dekk agents release publish   # dry run by default; pass --yes to publish with gh
 ```
 
-`release dist` packages the Python wheel/sdist, release binaries (`apxm`,
-`apxm-server`, `mcp-server`), runtime libraries, docs, source archive,
-and checksums under `.apxm/releases/vX.Y.Z`. GitHub publishing uses `gh` and
-never creates a release unless `--yes` is explicit. PyPI upload is a separate
-maintainer action: `dekk agents release pypi --yes`.
+`release dist` packages eligible private release surfaces and checksums under
+`.apxm/releases/vX.Y.Z`. Prototype/internal packages are excluded. GitHub
+publishing uses `gh`, never creates a release unless `--yes` is explicit, and
+the mutating path requires repository visibility to be exactly `PRIVATE`.
+Private Python publication is a separate, fail-closed
+`dekk agents release python` action requiring an exact externally supplied
+registry manifest, detached signature, allowed-signers file, and signer
+identity. No registry endpoint is committed or inferred.
 
 ## Cargo feature flags
 

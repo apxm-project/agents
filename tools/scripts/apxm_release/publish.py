@@ -5,12 +5,27 @@ from __future__ import annotations
 import argparse
 import shutil
 import sys
-import tempfile
 from pathlib import Path
 
 from apxm_release.constants import REPO_ROOT
 from apxm_release.dist import build_dist, release_artifacts
-from apxm_release.util import release_dir, release_tag, release_version, run, stdout, venv_bin
+from apxm_release.privacy import (
+    load_private_python_registry,
+    require_publishable_python_distribution,
+)
+from apxm_release.util import release_dir, release_tag, release_version, run, stdout
+
+
+def _require_private_github_repository() -> bool:
+    visibility = stdout(["gh", "repo", "view", "--json", "visibility", "--jq", ".visibility"])
+    if visibility != "PRIVATE":
+        detail = visibility or "unavailable"
+        print(
+            f"error: GitHub repository visibility must be PRIVATE, got {detail}",
+            file=sys.stderr,
+        )
+        return False
+    return True
 
 
 def publish_github(args: argparse.Namespace) -> int:
@@ -44,6 +59,9 @@ def publish_github(args: argparse.Namespace) -> int:
         print("pass --yes to publish")
         return 0
 
+    if not _require_private_github_repository():
+        return 2
+
     if existing.returncode == 0:
         cmd = ["gh", "release", "upload", tag, "--clobber", *(str(path) for path in artifacts)]
     else:
@@ -67,29 +85,44 @@ def publish_github(args: argparse.Namespace) -> int:
     return run(cmd).returncode
 
 
-def publish_pypi(args: argparse.Namespace) -> int:
+def publish_python(args: argparse.Namespace) -> int:
     version = release_version()
     output_dir = release_dir(version, args.output_dir)
-    python_artifacts = sorted((output_dir / "python").glob("apxm-*"))
+    try:
+        registry = load_private_python_registry(
+            Path(args.registry_manifest).expanduser().resolve(),
+            Path(args.registry_signature).expanduser().resolve(),
+            Path(args.allowed_signers).expanduser().resolve(),
+            args.signer,
+        )
+        distribution = require_publishable_python_distribution(registry)
+    except (OSError, ValueError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+
+    normalized = distribution.replace("-", "_")
+    python_artifacts = sorted(
+        path
+        for path in (output_dir / "python").iterdir()
+        if path.is_file()
+        and (path.name.startswith(f"{distribution}-") or path.name.startswith(f"{normalized}-"))
+    ) if (output_dir / "python").is_dir() else []
     if not python_artifacts:
         print(f"error: no Python artifacts found under {output_dir / 'python'}", file=sys.stderr)
         return 1
     if not args.yes:
-        print(f"PyPI upload dry run for apxm {version}:")
+        print(
+            f"private Python registry dry run for {distribution} {version} "
+            f"(manifest sha256:{registry.manifest_sha256}):"
+        )
         for artifact in python_artifacts:
             print(f"  {artifact}")
-        print("pass --yes to upload with twine")
+        print("pass --yes to upload to the signed exact endpoint")
         return 0
-    with tempfile.TemporaryDirectory(prefix="apxm-pypi-") as temp:
-        venv = Path(temp) / "venv"
-        if run([sys.executable, "-m", "venv", str(venv)]).returncode != 0:
-            return 1
-        pip = venv_bin(venv, "pip")
-        python = venv_bin(venv, "python")
-        if run([str(pip), "install", "twine"]).returncode != 0:
-            return 1
-        cmd = [str(python), "-m", "twine", "upload"]
-        if args.repository:
-            cmd.extend(["--repository", args.repository])
-        cmd.extend(str(path) for path in python_artifacts)
-        return run(cmd).returncode
+    twine = shutil.which("twine")
+    if twine is None:
+        print("error: twine must be installed before private Python publishing", file=sys.stderr)
+        return 2
+    cmd = [twine, "upload", "--repository-url", registry.repository_url]
+    cmd.extend(str(path) for path in python_artifacts)
+    return run(cmd).returncode
