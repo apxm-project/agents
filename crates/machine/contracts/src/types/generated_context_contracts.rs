@@ -1,4 +1,4 @@
-// AUTO-GENERATED from APXM Wave 1 context contract schemas; DO NOT EDIT.
+// AUTO-GENERATED from APXM context contract schemas; DO NOT EDIT.
 
 use serde::{Deserialize, Serialize};
 
