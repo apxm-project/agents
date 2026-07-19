@@ -395,6 +395,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "apxm-execution"
+version = "0.1.0"
+dependencies = [
+ "apxm-inference",
+ "apxm-kernel",
+ "apxm-program",
+ "async-trait",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "apxm-frontend-python"
 version = "0.1.0"
 dependencies = [
