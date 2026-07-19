@@ -27,6 +27,12 @@ pub enum DiagnosticCode {
     NonForwardSpan,
     /// An artifact requirement declared a scope other than `artifact_semantic`.
     RequirementScopeNotArtifactSemantic,
+    /// An evidence sequence was not strictly monotonic by event sequence.
+    NonMonotonicEvidence,
+    /// An uncertain effect fact claimed a committed/success outcome.
+    OutcomeUnknownClaimsSuccess,
+    /// An atomic write set was not the exact canonical five-member set.
+    NonAtomicWriteSet,
 }
 
 impl DiagnosticCode {
@@ -41,6 +47,9 @@ impl DiagnosticCode {
             Self::DuplicateRegionId => "duplicate_region_id",
             Self::NonForwardSpan => "non_forward_span",
             Self::RequirementScopeNotArtifactSemantic => "requirement_scope_not_artifact_semantic",
+            Self::NonMonotonicEvidence => "non_monotonic_evidence",
+            Self::OutcomeUnknownClaimsSuccess => "outcome_unknown_claims_success",
+            Self::NonAtomicWriteSet => "non_atomic_write_set",
         }
     }
 }
