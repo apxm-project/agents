@@ -11,6 +11,7 @@ pub mod analysis;
 #[cfg(feature = "driver")]
 pub mod backend;
 pub mod cache;
+pub mod canonical_air;
 #[cfg(feature = "driver")]
 pub mod chat;
 pub mod codegen;
@@ -49,6 +50,7 @@ pub use analysis::*;
 #[cfg(feature = "driver")]
 pub use backend::*;
 pub use cache::*;
+pub use canonical_air::*;
 pub use codegen::*;
 #[cfg(feature = "driver")]
 pub use compile::*;

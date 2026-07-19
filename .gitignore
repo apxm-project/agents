@@ -112,3 +112,6 @@ deploy/vllm/zoo.toml
 # to track). Refresh via the pin sha recorded in tools/external/_apxm-notes/.
 tools/external/tau2-bench/
 .apxm/
+
+# Canonical Python authoring native bridge (built by tests)
+crates/compiler/frontend/python/apxm_program/_native.so
