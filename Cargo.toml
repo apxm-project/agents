@@ -7,6 +7,7 @@ members = [
 	# ── Compiler (Compilation) ────────────────────
 	"crates/compiler/pipeline",
 	"crates/compiler/frontend/native/python",
+	"crates/compiler/frontend/native/typescript",
 	# ── Runtime (Execution + Backend) ─────────────
 	"crates/runtime/engine",
 	"crates/runtime/capability-iface",

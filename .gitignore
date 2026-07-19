@@ -115,3 +115,6 @@ tools/external/tau2-bench/
 
 # Canonical Python authoring native bridge (built by tests)
 crates/compiler/frontend/python/apxm_program/_native.so
+
+# Canonical TypeScript authoring Node-API addon (built by tests)
+crates/compiler/frontend/native/typescript/js/_native.node
