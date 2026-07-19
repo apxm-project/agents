@@ -28,6 +28,7 @@ EXAMPLES = [
         "external_agent_graph",
         "external-agent",
     ),
+    ("gao", PARITY_DIR / "air.gao.expected.json", "gao_conversational_graph", "gao"),
 ]
 
 

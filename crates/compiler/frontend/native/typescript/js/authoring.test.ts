@@ -8,13 +8,21 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 import { canonicalAirJson, lower, verify } from "./index.ts";
-import { externalAgentGraph, specialistGraph } from "./example.ts";
+import { externalAgentGraph, gaoConversationalGraph, specialistGraph } from "./example.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const parityDir = join(here, "..", "..", "parity");
 const goldenGraph = JSON.parse(readFileSync(join(parityDir, "frontend-graph.example.json"), "utf8"));
 const goldenAir = readFileSync(join(parityDir, "air.expected.json"), "utf8").trim();
 const goldenAcpAir = readFileSync(join(parityDir, "air.external-agent.expected.json"), "utf8").trim();
+const goldenGaoAir = readFileSync(join(parityDir, "air.gao.expected.json"), "utf8").trim();
+const FIVE_OPS = new Set([
+  "model.call",
+  "capability.invoke",
+  "program.new",
+  "program.invoke",
+  "await.event",
+]);
 
 test("authored graph matches golden input", () => {
   assert.deepStrictEqual(specialistGraph(), goldenGraph);
@@ -47,6 +55,17 @@ test("external agent capability lowers only to capability.invoke", () => {
 
 test("external agent AIR matches golden", () => {
   assert.strictEqual(canonicalAirJson(externalAgentGraph()), goldenAcpAir);
+});
+
+test("gao conversational agent lowers to only the five semantic ops", () => {
+  const air = lower(gaoConversationalGraph()) as { semantic_operations: { op: string }[] };
+  for (const op of air.semantic_operations) {
+    assert.ok(FIVE_OPS.has(op.op), `unexpected op ${op.op}`);
+  }
+});
+
+test("gao AIR matches golden", () => {
+  assert.strictEqual(canonicalAirJson(gaoConversationalGraph()), goldenGaoAir);
 });
 
 test("lower rejects an unknown operation", () => {
