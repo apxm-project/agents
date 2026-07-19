@@ -435,6 +435,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "apxm-kernel"
+version = "0.1.0"
+dependencies = [
+ "apxm-inference",
+ "apxm-program",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "apxm-memory"
 version = "0.1.0"
 dependencies = [
