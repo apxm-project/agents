@@ -167,6 +167,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "apxm-adapter-acp"
+version = "0.1.0"
+dependencies = [
+ "apxm-kernel",
+ "apxm-program",
+ "async-trait",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "apxm-adapter-runtime"
+version = "0.1.0"
+dependencies = [
+ "apxm-inference",
+ "apxm-kernel",
+ "apxm-program",
+ "async-trait",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "apxm-ais"
 version = "0.1.0"
 dependencies = [
@@ -342,6 +365,21 @@ dependencies = [
  "thiserror 2.0.18",
  "toml",
  "tracing",
+]
+
+[[package]]
+name = "apxm-composition"
+version = "0.1.0"
+dependencies = [
+ "apxm-adapter-acp",
+ "apxm-adapter-runtime",
+ "apxm-execution",
+ "apxm-inference",
+ "apxm-kernel",
+ "apxm-program",
+ "async-trait",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
