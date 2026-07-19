@@ -15,6 +15,7 @@ members = [
 	"crates/runtime/backends",
 	"crates/runtime/backend-registry",
 	"crates/runtime/rollout",
+	"crates/runtime/inference",
 	# ── Orchestration (Driver + ACP + Artifact) ───
 	"crates/orchestration/driver",
 	"crates/orchestration/acp",
@@ -54,6 +55,7 @@ apxm-memory = { version = "0.1.0", path = "crates/runtime/memory" }
 apxm-backends = { version = "0.1.0", path = "crates/runtime/backends" }
 apxm-backend-registry = { version = "0.1.0", path = "crates/runtime/backend-registry" }
 apxm-rollout = { version = "0.1.0", path = "crates/runtime/rollout" }
+apxm-inference = { version = "0.1.0", path = "crates/runtime/inference" }
 apxm-driver = { version = "0.1.0", path = "crates/orchestration/driver" }
 apxm-acp = { version = "0.1.0", path = "crates/orchestration/acp" }
 apxm-artifact = { version = "0.1.0", path = "crates/orchestration/artifact" }

@@ -1,0 +1,17 @@
+[package]
+name = "apxm-inference"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+apxm-program.workspace = true
+serde.workspace = true
+serde_json.workspace = true
