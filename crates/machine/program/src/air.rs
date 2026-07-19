@@ -37,6 +37,20 @@ pub enum SemanticOpKind {
     AwaitEvent,
 }
 
+impl SemanticOpKind {
+    /// The canonical wire string, identical to the `apxm.air.v1` op enum member.
+    #[must_use]
+    pub const fn wire(self) -> &'static str {
+        match self {
+            Self::ModelCall => "model.call",
+            Self::CapabilityInvoke => "capability.invoke",
+            Self::ProgramNew => "program.new",
+            Self::ProgramInvoke => "program.invoke",
+            Self::AwaitEvent => "await.event",
+        }
+    }
+}
+
 /// The closed compiler-owned structural IR kinds. `nop` is intentionally absent:
 /// it is transient machinery and never serialized.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,6 +69,28 @@ pub enum StructuralKind {
     Catch,
     Return,
     Yield,
+}
+
+impl StructuralKind {
+    /// The canonical wire string, identical to the `apxm.air.v1` kind enum member.
+    #[must_use]
+    pub const fn wire(self) -> &'static str {
+        match self {
+            Self::Function => "function",
+            Self::Region => "region",
+            Self::Block => "block",
+            Self::Value => "value",
+            Self::Branch => "branch",
+            Self::Switch => "switch",
+            Self::Loop => "loop",
+            Self::ParallelJoin => "parallel_join",
+            Self::Try => "try",
+            Self::Throw => "throw",
+            Self::Catch => "catch",
+            Self::Return => "return",
+            Self::Yield => "yield",
+        }
+    }
 }
 
 /// One public semantic operation.
