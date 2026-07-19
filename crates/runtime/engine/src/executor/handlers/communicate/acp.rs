@@ -8,7 +8,6 @@ use crate::aam::TransitionLabel;
 use apxm_core::constants::graph::attrs as graph_attrs;
 use apxm_core::constants::runtime::belief_keys;
 use apxm_core::error::RuntimeError;
-use apxm_core::events::payload::GenerationIdentity;
 use apxm_core::types::{CommunicateProtocol, ProcessPromptMetric};
 
 /// Dispatch COMMUNICATE to an ACP agent subprocess via the ProcessTable.
@@ -168,27 +167,10 @@ pub(super) async fn execute_acp(
         error: None,
     });
 
-    let generation = prompt_generation_identity(&prompt_response);
-    if let (Some(input_tokens), Some(output_tokens)) = (
-        prompt_response.token_usage.input_tokens,
-        prompt_response.token_usage.output_tokens,
-    ) {
-        ctx.token_accountant.record(
-            node.id,
-            input_tokens,
-            output_tokens,
-            None,
-            Some(&process.name),
-        );
-        if let Some(emitter) = &ctx.event_emitter {
-            emitter.emit_token_usage_with_generation(
-                node.id,
-                input_tokens,
-                output_tokens,
-                generation.as_ref(),
-            );
-        }
-    }
+    // An ACP peer runs its own private model/tool cycles. Any usage it reports
+    // is third-party attribution recorded on the ACP turn metric above; it is
+    // never converted into native model token accounting and never fabricates a
+    // native model generation identity.
 
     let text_output = Value::String(prompt_response.text.clone());
     let response = prompt_response.to_value(&process.name);
@@ -217,31 +199,6 @@ pub(super) async fn execute_acp(
     );
 
     Ok(text_output)
-}
-
-fn prompt_generation_identity(
-    prompt_response: &crate::process_table::AgentPromptResponse,
-) -> Option<GenerationIdentity> {
-    let session_id = prompt_response
-        .session_id
-        .as_deref()
-        .filter(|session_id| !session_id.is_empty())
-        .or_else(|| {
-            prompt_response
-                .agent_session_id
-                .as_deref()
-                .filter(|session_id| !session_id.is_empty())
-        })?;
-    let turn = prompt_response.turn.filter(|turn| *turn > 0)?;
-
-    // ACP reports one aggregated `session/prompt` completion per turn. Treat
-    // that observed turn as one canonical generation so retry/step semantics
-    // stay aligned with the normal LLM path: one attempt, one physical step.
-    Some(GenerationIdentity::new(
-        format!("{session_id}/turn/{turn}"),
-        1,
-        1,
-    ))
 }
 
 #[cfg(test)]
@@ -308,7 +265,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn communicate_acp_token_usage_carries_generation_identity() {
+    async fn communicate_acp_peer_usage_never_enters_native_token_accounting() {
         let (emitter, capture) = adapter_with_capture();
         let ctx = test_context(Some(emitter)).await;
 
@@ -341,18 +298,19 @@ mod tests {
 
         assert_eq!(result, Value::String("reply:hello ACP".to_string()));
 
+        // The peer reported usage, but it is third-party attribution: it must
+        // not produce a native model token-usage event and must not enter the
+        // execution's native token accountant.
         let events = capture.events.lock();
-        let token_usage = events
-            .iter()
-            .find_map(|event| event.payload.downcast_ref::<TokenUsagePayload>())
-            .expect("token_usage event");
-        let generation = token_usage.generation.as_ref().expect("generation");
-
-        assert_eq!(token_usage.node_id, 2);
-        assert_eq!(token_usage.input_tokens, 11);
-        assert_eq!(token_usage.output_tokens, 13);
-        assert_eq!(generation.call_id, format!("{MOCK_SESSION_ID}/turn/3"));
-        assert_eq!(generation.attempt, 1);
-        assert_eq!(generation.step_number, 1);
+        assert!(
+            events
+                .iter()
+                .all(|event| event.payload.downcast_ref::<TokenUsagePayload>().is_none()),
+            "peer usage must not emit a native model token_usage event",
+        );
+        assert!(
+            ctx.token_accountant.get_node(node.id).is_none(),
+            "peer usage must not enter native token accounting",
+        );
     }
 }
