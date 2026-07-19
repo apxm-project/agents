@@ -25,6 +25,7 @@ pub mod air_builder;
 mod analysis;
 pub mod api;
 mod artifact_validation;
+pub mod canonical;
 pub mod codegen;
 mod ffi;
 pub mod optimization;
@@ -42,6 +43,7 @@ pub use analysis::{
     ProfileCostEvidence, TokenizerEvidence,
 };
 pub use api::{Context, Module, Pipeline};
+pub use canonical::{LoweringError, lower_air_to_mlir_text, lower_and_verify, verify_mlir_text};
 pub use passes::{
     ExecutionProfile, NodeProfile, PassManager, PassMetrics, PipelineDiagnostics, ProfileError,
     SelectBackendError, find_pass, get_pass_count, get_pass_info, list_passes,

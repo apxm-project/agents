@@ -24,6 +24,17 @@ pub enum SourceLanguage {
     Typescript,
 }
 
+impl SourceLanguage {
+    /// The canonical wire string, identical to the schema `source_language` enum.
+    #[must_use]
+    pub const fn wire(self) -> &'static str {
+        match self {
+            Self::Python => "python",
+            Self::Typescript => "typescript",
+        }
+    }
+}
+
 /// The closed region-annotation set. `turn` and other invented labels are
 /// rejected at decode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
