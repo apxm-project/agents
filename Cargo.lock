@@ -405,6 +405,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "apxm-inference"
+version = "0.1.0"
+dependencies = [
+ "apxm-program",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "apxm-memory"
 version = "0.1.0"
 dependencies = [
