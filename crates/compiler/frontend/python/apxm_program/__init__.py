@@ -93,6 +93,25 @@ class GraphBuilder:
         operands = {"capability_ref": capability_ref} if capability_ref is not None else None
         return self._op(node_id, "capability.invoke", operands)
 
+    def external_agent_capability(
+        self,
+        node_id: str,
+        profile_ref: str,
+        session_ref: str,
+    ) -> "GraphBuilder":
+        """Author an External Agent (ACP) capability.
+
+        It lowers to exactly one `capability.invoke` semantic operation — no new
+        AIR op and no native `model.call`. The peer's private model/tool cycles
+        are recorded as nested attributed evidence under this one NodeExecution.
+        The opaque session reference is the only handle retained in Context.
+        """
+        return self._op(
+            node_id,
+            "capability.invoke",
+            {"capability_ref": f"external-agent:{profile_ref}", "external_agent_session": session_ref},
+        )
+
     def program_new(self, node_id: str) -> "GraphBuilder":
         return self._op(node_id, "program.new", None)
 

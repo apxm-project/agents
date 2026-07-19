@@ -47,3 +47,19 @@ export function specialistGraph(): Record<string, unknown> {
   builder.modelRequirement("model.default");
   return builder.build();
 }
+
+export function externalAgentGraph(): Record<string, unknown> {
+  const builder = new GraphBuilder("python");
+  builder.program({
+    program_id: "Delegator",
+    entrypoint: "run",
+    input_type_ref: "DelegatorInput",
+    output_type_ref: "DelegatorOutput",
+    has_default_context: true,
+    context_type_ref: "DelegatorContext",
+  });
+  builder.externalAgentCapability("node.acp.1", "acp:claude-code", "session.acp.1");
+  builder.region("region.return.1", "return");
+  builder.capabilityRequirement("external-agent:acp:claude-code");
+  return builder.build();
+}

@@ -8,12 +8,13 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 import { canonicalAirJson, lower, verify } from "./index.ts";
-import { specialistGraph } from "./example.ts";
+import { externalAgentGraph, specialistGraph } from "./example.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const parityDir = join(here, "..", "..", "parity");
 const goldenGraph = JSON.parse(readFileSync(join(parityDir, "frontend-graph.example.json"), "utf8"));
 const goldenAir = readFileSync(join(parityDir, "air.expected.json"), "utf8").trim();
+const goldenAcpAir = readFileSync(join(parityDir, "air.external-agent.expected.json"), "utf8").trim();
 
 test("authored graph matches golden input", () => {
   assert.deepStrictEqual(specialistGraph(), goldenGraph);
@@ -36,6 +37,16 @@ test("verify rejects an unknown operation", () => {
   const graph = specialistGraph() as Record<string, unknown>;
   (graph.semantic_operations as unknown[]).push({ node_id: "node.bad", op: "tool.loop" });
   assert.notStrictEqual(verify(graph), null);
+});
+
+test("external agent capability lowers only to capability.invoke", () => {
+  const air = lower(externalAgentGraph()) as { semantic_operations: { op: string }[] };
+  const ops = air.semantic_operations.map((o) => o.op);
+  assert.deepStrictEqual(ops, ["capability.invoke"]);
+});
+
+test("external agent AIR matches golden", () => {
+  assert.strictEqual(canonicalAirJson(externalAgentGraph()), goldenAcpAir);
 });
 
 test("lower rejects an unknown operation", () => {

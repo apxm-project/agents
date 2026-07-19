@@ -93,6 +93,17 @@ export class GraphBuilder {
     return this.op(nodeId, "capability.invoke", capabilityRef === undefined ? undefined : { capability_ref: capabilityRef });
   }
 
+  externalAgentCapability(nodeId: string, profileRef: string, sessionRef: string): this {
+    // Lowers to exactly one capability.invoke — no new AIR op and no native
+    // model.call. The peer's private model/tool cycles are nested attributed
+    // evidence under this one NodeExecution; the opaque session reference is the
+    // only handle retained in Context.
+    return this.op(nodeId, "capability.invoke", {
+      capability_ref: `external-agent:${profileRef}`,
+      external_agent_session: sessionRef,
+    });
+  }
+
   programNew(nodeId: string): this {
     return this.op(nodeId, "program.new");
   }
