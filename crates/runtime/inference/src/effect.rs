@@ -137,7 +137,7 @@ impl Default for RetryPolicy {
 /// backend never retries and never duplicates the request: it commits a typed
 /// [`ModelOutcome::ModelOutcomeUnknown`].
 #[must_use]
-pub fn execute<P: ModelInferencePort>(
+pub fn execute<P: ModelInferencePort + ?Sized>(
     port: &P,
     request: &ModelCallRequest,
     policy: RetryPolicy,
