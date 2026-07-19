@@ -86,7 +86,7 @@ class ReleasePrivacyTests(unittest.TestCase):
             "setup.cfg",
             "**/setup.cfg",
         )
-        self.assertEqual(len(manifests), 25)
+        self.assertEqual(len(manifests), 29)
         self.assertEqual(privacy.audit_release_privacy(), ())
 
     def test_manifest_classification_matches_current_owner_boundaries(self) -> None:
