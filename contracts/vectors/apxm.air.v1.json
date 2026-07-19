@@ -1,0 +1,115 @@
+[
+  {
+    "name": "valid-air-five-semantic-ops-and-structural-ir",
+    "input": {
+      "schema_version": "apxm.air.v1",
+      "semantic_operations": [
+        {
+          "node_id": "node.model.1",
+          "op": "model.call"
+        },
+        {
+          "node_id": "node.cap.1",
+          "op": "capability.invoke"
+        },
+        {
+          "node_id": "node.new.1",
+          "op": "program.new"
+        },
+        {
+          "node_id": "node.invoke.1",
+          "op": "program.invoke"
+        },
+        {
+          "node_id": "node.await.1",
+          "op": "await.event"
+        }
+      ],
+      "structural_ir": [
+        {
+          "region_id": "region.fn.1",
+          "kind": "function"
+        },
+        {
+          "region_id": "region.loop.1",
+          "kind": "loop"
+        },
+        {
+          "region_id": "region.yield.1",
+          "kind": "yield"
+        },
+        {
+          "region_id": "region.return.1",
+          "kind": "return"
+        }
+      ],
+      "source_map": {
+        "schema_version": "apxm.source-map.v1",
+        "source_language": "python",
+        "node_spans": [],
+        "region_annotations": []
+      }
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "structural-op-as-public-semantic-op-rejected",
+    "input": {
+      "schema_version": "apxm.air.v1",
+      "semantic_operations": [
+        {
+          "node_id": "node.loop.1",
+          "op": "loop"
+        }
+      ],
+      "structural_ir": [],
+      "source_map": {
+        "schema_version": "apxm.source-map.v1",
+        "source_language": "python",
+        "node_spans": [],
+        "region_annotations": []
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "yield-as-public-semantic-op-rejected",
+    "input": {
+      "schema_version": "apxm.air.v1",
+      "semantic_operations": [
+        {
+          "node_id": "node.yield.1",
+          "op": "yield"
+        }
+      ],
+      "structural_ir": [],
+      "source_map": {
+        "schema_version": "apxm.source-map.v1",
+        "source_language": "python",
+        "node_spans": [],
+        "region_annotations": []
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "serialized-nop-structural-node-rejected",
+    "input": {
+      "schema_version": "apxm.air.v1",
+      "semantic_operations": [],
+      "structural_ir": [
+        {
+          "region_id": "region.nop.1",
+          "kind": "nop"
+        }
+      ],
+      "source_map": {
+        "schema_version": "apxm.source-map.v1",
+        "source_language": "python",
+        "node_spans": [],
+        "region_annotations": []
+      }
+    },
+    "expected_valid": false
+  }
+]

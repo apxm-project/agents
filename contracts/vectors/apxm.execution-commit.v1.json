@@ -1,0 +1,163 @@
+[
+  {
+    "name": "atomic-commit-covers-canonical-write-set",
+    "input": {
+      "schema_version": "apxm.execution-commit.v1",
+      "commit_id": "commit.1",
+      "invocation_ref": {
+        "ref_type": "ProgramInvocationRef",
+        "ref": "invoke.1"
+      },
+      "idempotency_key": {
+        "key_id": "idem.commit.1",
+        "scope_ref": "invoke.1",
+        "request_digest": "sha256:1010101010101010101010101010101010101010101010101010101010101010"
+      },
+      "expected_program_state_version": 7,
+      "atomic_write_set": [
+        "state_continuation",
+        "checkpoint_effect_outcomes",
+        "runtime_evidence",
+        "usage_facts",
+        "session_output_refs"
+      ],
+      "next_program_state_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "continuation_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "checkpoint_effect_outcomes_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "runtime_evidence_batch_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "usage_facts_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "session_output_refs_digest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+      "commit_result": "committed",
+      "new_program_state_version": 8
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "compare-conflict-is-a-closed-outcome",
+    "input": {
+      "schema_version": "apxm.execution-commit.v1",
+      "commit_id": "commit.1",
+      "invocation_ref": {
+        "ref_type": "ProgramInvocationRef",
+        "ref": "invoke.1"
+      },
+      "idempotency_key": {
+        "key_id": "idem.commit.1",
+        "scope_ref": "invoke.1",
+        "request_digest": "sha256:1010101010101010101010101010101010101010101010101010101010101010"
+      },
+      "expected_program_state_version": 7,
+      "atomic_write_set": [
+        "state_continuation",
+        "checkpoint_effect_outcomes",
+        "runtime_evidence",
+        "usage_facts",
+        "session_output_refs"
+      ],
+      "next_program_state_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "continuation_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "checkpoint_effect_outcomes_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "runtime_evidence_batch_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "usage_facts_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "session_output_refs_digest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+      "commit_result": "compare_conflict"
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "partial-commit-missing-member-rejected",
+    "input": {
+      "schema_version": "apxm.execution-commit.v1",
+      "commit_id": "commit.1",
+      "invocation_ref": {
+        "ref_type": "ProgramInvocationRef",
+        "ref": "invoke.1"
+      },
+      "idempotency_key": {
+        "key_id": "idem.commit.1",
+        "scope_ref": "invoke.1",
+        "request_digest": "sha256:1010101010101010101010101010101010101010101010101010101010101010"
+      },
+      "expected_program_state_version": 7,
+      "atomic_write_set": [
+        "state_continuation",
+        "checkpoint_effect_outcomes",
+        "runtime_evidence",
+        "session_output_refs"
+      ],
+      "next_program_state_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "continuation_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "checkpoint_effect_outcomes_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "runtime_evidence_batch_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "usage_facts_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "session_output_refs_digest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+      "commit_result": "committed"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "split-commit-path-rejected",
+    "input": {
+      "schema_version": "apxm.execution-commit.v1",
+      "commit_id": "commit.1",
+      "invocation_ref": {
+        "ref_type": "ProgramInvocationRef",
+        "ref": "invoke.1"
+      },
+      "idempotency_key": {
+        "key_id": "idem.commit.1",
+        "scope_ref": "invoke.1",
+        "request_digest": "sha256:1010101010101010101010101010101010101010101010101010101010101010"
+      },
+      "expected_program_state_version": 7,
+      "atomic_write_set": [
+        "state_continuation",
+        "checkpoint_effect_outcomes",
+        "runtime_evidence",
+        "usage_facts",
+        "session_output_refs"
+      ],
+      "next_program_state_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "continuation_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "checkpoint_effect_outcomes_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "runtime_evidence_batch_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "usage_facts_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "session_output_refs_digest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+      "commit_result": "committed",
+      "state_commit_ref": "state-only-write"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "unknown-commit-result-discriminant-rejected",
+    "input": {
+      "schema_version": "apxm.execution-commit.v1",
+      "commit_id": "commit.1",
+      "invocation_ref": {
+        "ref_type": "ProgramInvocationRef",
+        "ref": "invoke.1"
+      },
+      "idempotency_key": {
+        "key_id": "idem.commit.1",
+        "scope_ref": "invoke.1",
+        "request_digest": "sha256:1010101010101010101010101010101010101010101010101010101010101010"
+      },
+      "expected_program_state_version": 7,
+      "atomic_write_set": [
+        "state_continuation",
+        "checkpoint_effect_outcomes",
+        "runtime_evidence",
+        "usage_facts",
+        "session_output_refs"
+      ],
+      "next_program_state_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "continuation_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "checkpoint_effect_outcomes_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "runtime_evidence_batch_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "usage_facts_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "session_output_refs_digest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+      "commit_result": "reconciled"
+    },
+    "expected_valid": false
+  }
+]

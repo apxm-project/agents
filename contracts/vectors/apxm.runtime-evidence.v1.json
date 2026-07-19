@@ -1,0 +1,126 @@
+[
+  {
+    "name": "valid-monotonic-evidence-sequence",
+    "input": {
+      "schema_version": "apxm.runtime-evidence.v1",
+      "program_identity": {
+        "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "entrypoint": "run",
+        "agent_identity_binding": "agent-identity.1",
+        "program_instance_id": "instance.1"
+      },
+      "facts": [
+        {
+          "fact_id": "fact.1",
+          "event_sequence": 1,
+          "fact_kind": "instance.created",
+          "instance_state": "ready"
+        },
+        {
+          "fact_id": "fact.2",
+          "event_sequence": 2,
+          "fact_kind": "invocation.admitted",
+          "invocation_state": "running"
+        },
+        {
+          "fact_id": "fact.3",
+          "event_sequence": 3,
+          "fact_kind": "invocation.committed",
+          "invocation_state": "committed_return",
+          "commit_sequence": 1
+        }
+      ]
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "outcome-unknown-recorded-as-uncertain-effect",
+    "input": {
+      "schema_version": "apxm.runtime-evidence.v1",
+      "program_identity": {
+        "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "entrypoint": "run",
+        "agent_identity_binding": "agent-identity.1"
+      },
+      "facts": [
+        {
+          "fact_id": "fact.1",
+          "event_sequence": 1,
+          "fact_kind": "effect.outcome_unknown",
+          "model_outcome": "model_outcome_unknown",
+          "effect_outcome_ref": {
+            "ref_type": "ModelEffectRef",
+            "ref": "effect.model.1"
+          }
+        }
+      ]
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "non-monotonic-sequence-rejected",
+    "input": {
+      "schema_version": "apxm.runtime-evidence.v1",
+      "program_identity": {
+        "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "entrypoint": "run",
+        "agent_identity_binding": "agent-identity.1"
+      },
+      "facts": [
+        {
+          "fact_id": "fact.1",
+          "event_sequence": 5,
+          "fact_kind": "instance.created",
+          "instance_state": "ready"
+        },
+        {
+          "fact_id": "fact.2",
+          "event_sequence": 3,
+          "fact_kind": "invocation.admitted",
+          "invocation_state": "running"
+        }
+      ]
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "outcome-unknown-claiming-success-rejected",
+    "input": {
+      "schema_version": "apxm.runtime-evidence.v1",
+      "program_identity": {
+        "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "entrypoint": "run",
+        "agent_identity_binding": "agent-identity.1"
+      },
+      "facts": [
+        {
+          "fact_id": "fact.1",
+          "event_sequence": 1,
+          "fact_kind": "effect.outcome_unknown",
+          "invocation_state": "committed_return",
+          "model_outcome": "committed_success"
+        }
+      ]
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "unknown-fact-kind-rejected",
+    "input": {
+      "schema_version": "apxm.runtime-evidence.v1",
+      "program_identity": {
+        "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "entrypoint": "run",
+        "agent_identity_binding": "agent-identity.1"
+      },
+      "facts": [
+        {
+          "fact_id": "fact.1",
+          "event_sequence": 1,
+          "fact_kind": "turn.completed"
+        }
+      ]
+    },
+    "expected_valid": false
+  }
+]
