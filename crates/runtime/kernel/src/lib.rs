@@ -13,6 +13,7 @@ pub mod bundle;
 pub mod commit;
 pub mod confinement;
 pub mod events;
+pub mod external_agent;
 pub mod hook;
 pub mod instance;
 pub mod reconcile;
@@ -28,6 +29,13 @@ pub use confinement::{
     ConfinementAttestation, ConfinementError, ConfinementPort, ConfinementRequest, ConfinementType,
 };
 pub use events::{EventSink, NullEventSink, TelemetryNote};
+pub use external_agent::{
+    AcpPromptOutcome, AcpPromptRequest, ExternalAgentCapabilityPort, PromptEffectState,
+    assemble_evidence,
+};
 pub use hook::{AgentFacade, Hook, HookEffect, HookReturn, apply_hooks};
-pub use instance::{Invocation, InvocationReport, InstanceError, ProgramInstance};
+pub use instance::{
+    CapabilityInvocation, CapabilityReport, Invocation, InvocationReport, InstanceError,
+    ProgramInstance,
+};
 pub use reconcile::{LifecycleView, reconstruct};

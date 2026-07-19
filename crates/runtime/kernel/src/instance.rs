@@ -31,6 +31,7 @@ pub enum InvocationReport {
     CompareConflict { current_program_state_version: u64 },
     OutcomeUnknown { reconciliation_ref: String },
     Cancelled,
+    Failed { message: String },
 }
 
 /// Why an invocation could not even start.
@@ -38,12 +39,15 @@ pub enum InvocationReport {
 pub enum InstanceError {
     /// The instance is single-flight and already has an invocation in flight.
     Busy,
+    /// The invocation needs a port the bundle does not carry.
+    MissingPort(crate::bundle::PortSlot),
 }
 
 impl std::fmt::Display for InstanceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Busy => write!(f, "instance is single-flight and busy"),
+            Self::MissingPort(slot) => write!(f, "bundle has no {} port", slot.as_str()),
         }
     }
 }
@@ -248,6 +252,167 @@ impl ProgramInstance {
             }
         }
     }
+}
+
+/// One External Agent capability invocation: the outer `capability.invoke`
+/// NodeExecution id, the ACP prompt request, and the prepared write set.
+pub struct CapabilityInvocation {
+    pub commit_id: String,
+    pub capability_node_execution_id: String,
+    pub request: crate::external_agent::AcpPromptRequest,
+    pub write_set: AtomicWriteSet,
+}
+
+/// The result of one External Agent capability invocation: the nested attributed
+/// evidence (including peer usage provenance) and the commit outcome.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CapabilityReport {
+    pub evidence: apxm_program::external_agent::ExternalAgentEvidence,
+    pub commit: InvocationReport,
+}
+
+impl ProgramInstance {
+    /// Execute one External Agent capability through the bundle's external-agent
+    /// port and commit it atomically. The peer loop becomes ordered attributed
+    /// nested evidence under one Capability NodeExecution; peer usage stays in
+    /// that evidence as provenance and never enters the native usage facts.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InstanceError::Busy`] if an invocation is in flight, or
+    /// [`InstanceError::MissingPort`] if the bundle carries no external-agent port.
+    pub async fn invoke_capability(
+        &self,
+        invocation: CapabilityInvocation,
+    ) -> Result<CapabilityReport, InstanceError> {
+        use crate::external_agent::{PromptEffectState, assemble_evidence};
+
+        let _guard = self.acquire()?;
+
+        let port = self
+            .bundle
+            .external_agent_capability()
+            .ok_or(InstanceError::MissingPort(
+                crate::bundle::PortSlot::ExternalAgentCapability,
+            ))?
+            .clone();
+
+        let node_exec = invocation.capability_node_execution_id.clone();
+        let outcome = port.prompt(invocation.request).await;
+        let evidence = assemble_evidence(node_exec.clone(), &outcome);
+
+        let expected = self
+            .bundle
+            .execution_commit()
+            .current_version(&self.version_scope)
+            .await;
+        let target_version = expected + 1;
+
+        let (mut seq, created_recorded) = {
+            let inner = self.inner.lock().expect("instance inner");
+            (inner.durable_seq, inner.created_recorded)
+        };
+        let mut batch: Vec<Fact> = Vec::new();
+        if !created_recorded {
+            seq += 1;
+            batch.push(lifecycle_fact(seq, FactKind::InstanceCreated, Some(InstanceState::Ready), None, None));
+        }
+        seq += 1;
+        batch.push(lifecycle_fact(seq, FactKind::InvocationAdmitted, None, Some(InvocationState::Running), None));
+        seq += 1;
+        batch.push(capability_attempt_fact(seq, &node_exec));
+        seq += 1;
+        let last_seq = seq;
+        batch.push(capability_terminal_fact(last_seq, &node_exec, &outcome.state, target_version));
+
+        let request = ExecutionCommitRequest {
+            commit_id: invocation.commit_id.clone(),
+            invocation_ref: self.version_scope.clone(),
+            idempotency_key: format!("idem.{}", invocation.commit_id),
+            expected_program_state_version: expected,
+            write_set: invocation.write_set,
+            evidence_batch: batch.clone(),
+        };
+
+        let commit = match self.bundle.execution_commit().commit(request).await {
+            ExecutionCommitResult::Committed { new_program_state_version, .. } => {
+                let mut inner = self.inner.lock().expect("instance inner");
+                inner.created_recorded = true;
+                inner.durable_seq = last_seq;
+                inner.durable_facts.extend(batch);
+                match &outcome.state {
+                    PromptEffectState::Completed { .. } => {
+                        InvocationReport::Committed { new_program_state_version }
+                    }
+                    PromptEffectState::Cancelled => InvocationReport::Cancelled,
+                    PromptEffectState::Failed { message } => {
+                        InvocationReport::Failed { message: message.clone() }
+                    }
+                    PromptEffectState::OutcomeUnknown { message } => {
+                        InvocationReport::OutcomeUnknown { reconciliation_ref: message.clone() }
+                    }
+                }
+            }
+            ExecutionCommitResult::CompareConflict { current_program_state_version } => {
+                InvocationReport::CompareConflict { current_program_state_version }
+            }
+            ExecutionCommitResult::OutcomeUnknown { reconciliation_ref } => {
+                InvocationReport::OutcomeUnknown { reconciliation_ref }
+            }
+        };
+
+        Ok(CapabilityReport { evidence, commit })
+    }
+}
+
+fn capability_attempt_fact(seq: u64, node_execution_id: &str) -> Fact {
+    let mut fact = lifecycle_fact(seq, FactKind::AttemptRecorded, None, None, None);
+    fact.node_execution_id = Some(node_execution_id.to_string());
+    fact
+}
+
+fn capability_terminal_fact(
+    seq: u64,
+    node_execution_id: &str,
+    state: &crate::external_agent::PromptEffectState,
+    target_version: u64,
+) -> Fact {
+    use crate::external_agent::PromptEffectState;
+    let mut fact = match state {
+        PromptEffectState::Completed { .. } => lifecycle_fact(
+            seq,
+            FactKind::InvocationCommitted,
+            None,
+            Some(InvocationState::CommittedReturn),
+            Some(target_version),
+        ),
+        PromptEffectState::Cancelled => {
+            lifecycle_fact(seq, FactKind::InvocationCancelled, None, Some(InvocationState::Cancelled), None)
+        }
+        PromptEffectState::Failed { message } => {
+            let mut fact =
+                lifecycle_fact(seq, FactKind::InvocationFailed, None, Some(InvocationState::Failed), None);
+            fact.typed_error = Some(apxm_program::common::TypedErrorEnvelope {
+                error_id: "agents.external_agent_failed".to_string(),
+                category: apxm_program::common::ErrorCategory::Unavailable,
+                code_ref: "ExternalAgentFailed".to_string(),
+                message: message.clone(),
+                details_digest: None,
+            });
+            fact
+        }
+        PromptEffectState::OutcomeUnknown { .. } => {
+            let mut fact = lifecycle_fact(seq, FactKind::EffectOutcomeUnknown, None, None, None);
+            fact.effect_outcome_ref = Some(apxm_program::common::TypedRef {
+                ref_type: "ExternalAgentEffectRef".to_string(),
+                target: node_execution_id.to_string(),
+                digest: None,
+            });
+            fact
+        }
+    };
+    fact.node_execution_id = Some(node_execution_id.to_string());
+    fact
 }
 
 fn lifecycle_fact(
