@@ -17,11 +17,19 @@ fn agents_root() -> PathBuf {
 /// Load a JSON document from `agents/contracts/<relative>`.
 #[must_use]
 pub fn load_contract(relative: &str) -> Value {
-    let path = agents_root().join("contracts").join(relative);
+    load_json(agents_root().join("contracts").join(relative))
+}
+
+/// Load a constitution schema owned by the sibling `contracts` repo.
+#[must_use]
+pub fn load_constitution(relative: &str) -> Value {
+    load_json(agents_root().join("..").join("contracts").join(relative))
+}
+
+fn load_json(path: PathBuf) -> Value {
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    serde_json::from_str(&text)
-        .unwrap_or_else(|e| panic!("parse {}: {e}", path.display()))
+    serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()))
 }
 
 /// One conformance vector: a name, an input document, and its expected verdict.
