@@ -1,0 +1,24 @@
+{
+  "schema_version": "apxm.port-contract.v1",
+  "port_contract_id": "apxm.execution-commit.v1",
+  "port_contract_digest": "sha256:ed876d171e7131696135ebb213084ed581c190babfddd1e3f2472cbe7124eff2",
+  "semantic_owner": "agents",
+  "primary_responsibility": "one atomic idempotent compare-and-commit of Program state/continuation, checkpoint/effect outcomes, canonical runtime evidence, usage facts, and immutable Session Output refs; there is no split or partial commit path",
+  "request_schema": {
+    "schema_id": "apxm.execution-commit.v1",
+    "digest": "sha256:760f5393a62e2462c5a94850681d18b6f0c40572d5076411cab4a0e65d0a83a7"
+  },
+  "result_schema": {
+    "schema_id": "apxm.execution-commit.v1",
+    "digest": "sha256:760f5393a62e2462c5a94850681d18b6f0c40572d5076411cab4a0e65d0a83a7"
+  },
+  "failure_schema": {
+    "schema_id": "apxm.execution-commit.v1",
+    "digest": "sha256:760f5393a62e2462c5a94850681d18b6f0c40572d5076411cab4a0e65d0a83a7"
+  },
+  "lifecycle_digest": "sha256:94d5cfdf8e97a1865a9edaea5edd6ca7b3291dfa59e11d33d09bb9a335943cf4",
+  "authority_data_classification_digest": "sha256:7fb5ec15f02bfd7b32ff03bd9fee36f87a48081550087edadfdf7e18dcf54752",
+  "feature_vocabulary_digest": "sha256:c8b3352254b5925abfd15602b81ac616d012928122e24ec763ce35144c42ab3c",
+  "configuration_contract_digest": "sha256:1c33ecbb239610102a4c61226667a09b42f12148bd6849cf9a547d0cd3c7af2c",
+  "conformance_vector_digest": "sha256:918fa75f97b5f0bd9419b0f06d79e6d900f62e895ff8b4f51b2f5356bf293d7a"
+}

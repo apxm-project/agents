@@ -1,0 +1,197 @@
+[
+  {
+    "name": "valid-artifact-emits-only-artifact-semantic-requirements",
+    "input": {
+      "schema_version": "apxm.executable-artifact.v1",
+      "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "air_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "source_bundle_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "source_map": {
+        "schema_version": "apxm.source-map.v1",
+        "source_language": "python",
+        "node_spans": [],
+        "region_annotations": []
+      },
+      "entrypoints": [
+        {
+          "entrypoint": "run",
+          "program_id": "Specialist",
+          "input_type_ref": "SpecialistInput",
+          "output_type_ref": "SpecialistOutput"
+        }
+      ],
+      "artifact_semantic_requirements": [
+        {
+          "schema_version": "apxm.port-requirement.v1",
+          "typed_port_slot": "model_inference",
+          "required_port_contract": {
+            "schema_id": "apxm.model-context-envelope.v1",
+            "digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+          },
+          "required_feature_set": [
+            "structured_output"
+          ],
+          "semantic_limits_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+          "source_scope": "artifact_semantic",
+          "source_owner": "agents",
+          "source_digest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+          "requirement_digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+        }
+      ],
+      "integrity_algorithm": "sha256"
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "abstraction-deployment-infrastructure-requirement-rejected",
+    "input": {
+      "schema_version": "apxm.executable-artifact.v1",
+      "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "air_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "source_bundle_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "source_map": {
+        "schema_version": "apxm.source-map.v1",
+        "source_language": "python",
+        "node_spans": [],
+        "region_annotations": []
+      },
+      "entrypoints": [
+        {
+          "entrypoint": "run",
+          "program_id": "Specialist",
+          "input_type_ref": "SpecialistInput",
+          "output_type_ref": "SpecialistOutput"
+        }
+      ],
+      "artifact_semantic_requirements": [
+        {
+          "schema_version": "apxm.port-requirement.v1",
+          "typed_port_slot": "state_store",
+          "required_port_contract": {
+            "schema_id": "apxm.execution-commit.v1",
+            "digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+          },
+          "required_feature_set": [],
+          "semantic_limits_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+          "source_scope": "deployment_infrastructure",
+          "source_owner": "server",
+          "source_digest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+          "requirement_digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+        }
+      ],
+      "integrity_algorithm": "sha256"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "abstraction-invocation-authority-requirement-rejected",
+    "input": {
+      "schema_version": "apxm.executable-artifact.v1",
+      "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "air_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "source_bundle_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "source_map": {
+        "schema_version": "apxm.source-map.v1",
+        "source_language": "python",
+        "node_spans": [],
+        "region_annotations": []
+      },
+      "entrypoints": [
+        {
+          "entrypoint": "run",
+          "program_id": "Specialist",
+          "input_type_ref": "SpecialistInput",
+          "output_type_ref": "SpecialistOutput"
+        }
+      ],
+      "artifact_semantic_requirements": [
+        {
+          "schema_version": "apxm.port-requirement.v1",
+          "typed_port_slot": "grant",
+          "required_port_contract": {
+            "schema_id": "apxm.invocation-admission.v1",
+            "digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+          },
+          "required_feature_set": [],
+          "semantic_limits_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+          "source_scope": "invocation_authority",
+          "source_owner": "server",
+          "source_digest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+          "requirement_digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+        }
+      ],
+      "integrity_algorithm": "sha256"
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "deployment-binding-content-in-artifact-rejected",
+    "input": {
+      "schema_version": "apxm.executable-artifact.v1",
+      "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "air_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "source_bundle_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "source_map": {
+        "schema_version": "apxm.source-map.v1",
+        "source_language": "python",
+        "node_spans": [],
+        "region_annotations": []
+      },
+      "entrypoints": [
+        {
+          "entrypoint": "run",
+          "program_id": "Specialist",
+          "input_type_ref": "SpecialistInput",
+          "output_type_ref": "SpecialistOutput"
+        }
+      ],
+      "artifact_semantic_requirements": [],
+      "integrity_algorithm": "sha256",
+      "exact_port_binding": {
+        "implementation_descriptor": "sha256:8888888888888888888888888888888888888888888888888888888888888888"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "unknown-requirement-source-scope-rejected",
+    "input": {
+      "schema_version": "apxm.executable-artifact.v1",
+      "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "air_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "source_bundle_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "source_map": {
+        "schema_version": "apxm.source-map.v1",
+        "source_language": "python",
+        "node_spans": [],
+        "region_annotations": []
+      },
+      "entrypoints": [
+        {
+          "entrypoint": "run",
+          "program_id": "Specialist",
+          "input_type_ref": "SpecialistInput",
+          "output_type_ref": "SpecialistOutput"
+        }
+      ],
+      "artifact_semantic_requirements": [
+        {
+          "schema_version": "apxm.port-requirement.v1",
+          "typed_port_slot": "model_inference",
+          "required_port_contract": {
+            "schema_id": "apxm.model-context-envelope.v1",
+            "digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+          },
+          "required_feature_set": [],
+          "semantic_limits_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+          "source_scope": "storage",
+          "source_owner": "agents",
+          "source_digest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+          "requirement_digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+        }
+      ],
+      "integrity_algorithm": "sha256"
+    },
+    "expected_valid": false
+  }
+]

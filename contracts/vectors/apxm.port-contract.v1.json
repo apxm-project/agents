@@ -1,0 +1,58 @@
+[
+  {
+    "name": "valid-agents-owned-execution-commit-port-contract",
+    "input": {
+      "schema_version": "apxm.port-contract.v1",
+      "port_contract_id": "apxm.execution-commit.v1",
+      "port_contract_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "semantic_owner": "agents",
+      "primary_responsibility": "one atomic idempotent compare-and-commit of program state, evidence, usage, and output refs",
+      "request_schema": {
+        "schema_id": "apxm.execution-commit.v1",
+        "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "result_schema": {
+        "schema_id": "apxm.execution-commit.v1",
+        "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "failure_schema": {
+        "schema_id": "apxm.execution-commit.v1",
+        "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "lifecycle_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "authority_data_classification_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "feature_vocabulary_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "configuration_contract_digest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+      "conformance_vector_digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "unknown-semantic-owner-rejected",
+    "input": {
+      "schema_version": "apxm.port-contract.v1",
+      "port_contract_id": "apxm.execution-commit.v1",
+      "port_contract_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "semantic_owner": "runtime",
+      "primary_responsibility": "one atomic idempotent compare-and-commit of program state, evidence, usage, and output refs",
+      "request_schema": {
+        "schema_id": "apxm.execution-commit.v1",
+        "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "result_schema": {
+        "schema_id": "apxm.execution-commit.v1",
+        "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "failure_schema": {
+        "schema_id": "apxm.execution-commit.v1",
+        "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "lifecycle_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "authority_data_classification_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "feature_vocabulary_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "configuration_contract_digest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+      "conformance_vector_digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+    },
+    "expected_valid": false
+  }
+]

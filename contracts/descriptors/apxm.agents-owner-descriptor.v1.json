@@ -1,0 +1,302 @@
+{
+  "schema_version": "apxm.agents-owner-descriptor.v1",
+  "semantic_owner": "agents",
+  "primary_responsibility": "Agent Program authoring frontends, FrontendGraph, five-operation AIR, digest-bound executable artifacts with artifact_semantic requirements only, runtime evidence semantics, source maps, and the atomic execution-commit boundary.",
+  "constitution": {
+    "schema_id": "apxm.contract-constitution.v1",
+    "digest": "sha256:ffe3a716c79b73a98ec5fbedf3249d8aa0fbb0d8525ca55dea63edfee2c3512a"
+  },
+  "referenced_common_envelopes": [
+    {
+      "schema_id": "apxm.contract-common.v1",
+      "digest": "sha256:e20f171121aa42afe52ebc8722ada247d835ba3f59c83d18e544d41e60e38067"
+    },
+    {
+      "schema_id": "apxm.port-contract.v1",
+      "digest": "sha256:99c96c9c3fe6c61c7762003ad4ccb6a92330010757129ee6690b0be32ebec110"
+    },
+    {
+      "schema_id": "apxm.port-requirement.v1",
+      "digest": "sha256:99b4327c186023096f3b492bcfab0c0a3668cd592def0ad90a55a8d4ad428e0b"
+    },
+    {
+      "schema_id": "apxm.execution-commit.v1",
+      "digest": "sha256:760f5393a62e2462c5a94850681d18b6f0c40572d5076411cab4a0e65d0a83a7"
+    }
+  ],
+  "owned_schemas": [
+    {
+      "schema_id": "apxm.frontend-graph.v1",
+      "path": "schemas/apxm.frontend-graph.v1.json",
+      "digest": "sha256:299797c6bfadc2fbd3e6b42aaacfeab89068b768f9a5fbe079c7903c6e00ec43"
+    },
+    {
+      "schema_id": "apxm.air.v1",
+      "path": "schemas/apxm.air.v1.json",
+      "digest": "sha256:0f6c79135d10b1f3eefffeafac4e7eb72a4c5b4d526120ffefcb8751e43622b0"
+    },
+    {
+      "schema_id": "apxm.executable-artifact.v1",
+      "path": "schemas/apxm.executable-artifact.v1.json",
+      "digest": "sha256:c5187793ffe7e66972cac8e10d3155354f58ffd49a9006ba641562870706d716"
+    },
+    {
+      "schema_id": "apxm.runtime-evidence.v1",
+      "path": "schemas/apxm.runtime-evidence.v1.json",
+      "digest": "sha256:8460a2d6e9b67c04860b01fe0c2a5ee093716e02cf0c764500e35046b5f6dd3d"
+    },
+    {
+      "schema_id": "apxm.source-map.v1",
+      "path": "schemas/apxm.source-map.v1.json",
+      "digest": "sha256:8a146d35673e91f57b4c5623712dcc685dde7c19d8b1430f9c6cb6a4f91b5f49"
+    }
+  ],
+  "owned_port_contracts": [
+    {
+      "port_contract_id": "apxm.execution-commit.v1",
+      "built_on": "apxm.execution-commit.v1",
+      "path": "port-contracts/apxm.execution-commit.port-contract.v1.json",
+      "digest": "sha256:8653249de3ecb487f002ecfae89ec969f649147b05b148c753f9b0cdfd6b5ce0"
+    }
+  ],
+  "source_scope_invariant": "artifact_semantic",
+  "state_machines": {
+    "instance": {
+      "states": [
+        "admission_pending",
+        "ready",
+        "invoking",
+        "completed",
+        "closing",
+        "closed",
+        "cancelling",
+        "cancelled"
+      ],
+      "initial": "admission_pending",
+      "terminal": [
+        "completed",
+        "closed",
+        "cancelled"
+      ],
+      "concurrency": "single_flight_fail_busy"
+    },
+    "invocation": {
+      "states": [
+        "admission_pending",
+        "running",
+        "waiting_event",
+        "committed_yield",
+        "committed_return",
+        "failed",
+        "cancelling",
+        "cancelled",
+        "cancellation_unconfirmed"
+      ],
+      "initial": "admission_pending",
+      "terminal": [
+        "committed_return",
+        "failed",
+        "cancelled",
+        "cancellation_unconfirmed"
+      ]
+    },
+    "event": {
+      "states": [
+        "pending",
+        "fulfilled",
+        "expired",
+        "cancelled"
+      ],
+      "initial": "pending",
+      "terminal": [
+        "fulfilled",
+        "expired",
+        "cancelled"
+      ]
+    },
+    "model_outcome": {
+      "states": [
+        "committed_success",
+        "typed_failure",
+        "cancelled",
+        "model_outcome_unknown"
+      ]
+    },
+    "commit_result": {
+      "states": [
+        "committed",
+        "compare_conflict",
+        "outcome_unknown"
+      ]
+    }
+  },
+  "typed_errors": [
+    {
+      "error_id": "agents.program_instance_busy",
+      "category": "conflict",
+      "code_ref": "ProgramInstanceBusy"
+    },
+    {
+      "error_id": "agents.program_instance_completed",
+      "category": "conflict",
+      "code_ref": "ProgramInstanceCompleted"
+    },
+    {
+      "error_id": "agents.program_instance_missing",
+      "category": "validation",
+      "code_ref": "ProgramInstanceMissing"
+    },
+    {
+      "error_id": "agents.incompatible_artifact",
+      "category": "validation",
+      "code_ref": "IncompatibleArtifact"
+    },
+    {
+      "error_id": "agents.identity_binding_denied",
+      "category": "admission",
+      "code_ref": "IdentityBindingDenied"
+    },
+    {
+      "error_id": "agents.capability_denied",
+      "category": "authority",
+      "code_ref": "CapabilityDenied"
+    },
+    {
+      "error_id": "agents.event_already_bound",
+      "category": "conflict",
+      "code_ref": "EventAlreadyBound"
+    },
+    {
+      "error_id": "agents.model_outcome_unknown",
+      "category": "outcome_unknown",
+      "code_ref": "ModelOutcomeUnknown"
+    },
+    {
+      "error_id": "agents.cancellation_unconfirmed",
+      "category": "outcome_unknown",
+      "code_ref": "CancellationUnconfirmed"
+    },
+    {
+      "error_id": "agents.compare_conflict",
+      "category": "conflict",
+      "code_ref": "ExecutionCommitCompareConflict"
+    },
+    {
+      "error_id": "agents.commit_storage_unavailable",
+      "category": "unavailable",
+      "code_ref": "ExecutionCommitUnavailable"
+    }
+  ],
+  "port_boundary": {
+    "lifecycle": {
+      "states": [
+        "prepared",
+        "committed",
+        "compare_conflict",
+        "outcome_unknown"
+      ],
+      "concurrency": "compare_and_commit_single_writer",
+      "ordering": "monotonic_program_state_version",
+      "partial_commit": "forbidden"
+    },
+    "authority_data_classification": {
+      "authority_revalidation": "effect_boundary_only",
+      "secret_custody": "never_in_commit",
+      "data_classes": [
+        "program_state",
+        "canonical_evidence",
+        "usage_fact",
+        "session_output_ref"
+      ],
+      "redaction": "owning_serialization_boundary"
+    },
+    "feature_vocabulary": [
+      "compare_and_commit",
+      "idempotent_replay",
+      "reconciliation"
+    ],
+    "configuration_contract": {
+      "sensitive_fields": [],
+      "limits": {
+        "atomic_write_set_members": 5
+      }
+    }
+  },
+  "conformance_vectors": [
+    {
+      "schema_id": "apxm.frontend-graph.v1",
+      "path": "vectors/apxm.frontend-graph.v1.json",
+      "digest": "sha256:20461ec657f95bb124030a26aa47bb81aeb29d9abebc37526bac25f882b0a5c6",
+      "coverage": [
+        "positive",
+        "unknown_discriminant",
+        "mutation"
+      ]
+    },
+    {
+      "schema_id": "apxm.air.v1",
+      "path": "vectors/apxm.air.v1.json",
+      "digest": "sha256:aed01939a8131531af2213deece7d6ce7a969e5c05d4e63fc8770cc64d4a82bd",
+      "coverage": [
+        "positive",
+        "unknown_discriminant"
+      ]
+    },
+    {
+      "schema_id": "apxm.executable-artifact.v1",
+      "path": "vectors/apxm.executable-artifact.v1.json",
+      "digest": "sha256:305d41a97b081cc22e1fe2fb8b6bb52439c6155469fd48853fbb43354436c485",
+      "coverage": [
+        "positive",
+        "abstraction",
+        "mutation",
+        "unknown_discriminant"
+      ]
+    },
+    {
+      "schema_id": "apxm.runtime-evidence.v1",
+      "path": "vectors/apxm.runtime-evidence.v1.json",
+      "digest": "sha256:ad5e8f8d37315d73af0ab009f3f443814feb17b2b79f8248b94ff9cdb10b98e0",
+      "coverage": [
+        "positive",
+        "skew",
+        "mutation",
+        "unknown_discriminant"
+      ]
+    },
+    {
+      "schema_id": "apxm.source-map.v1",
+      "path": "vectors/apxm.source-map.v1.json",
+      "digest": "sha256:7eda1d56ff4304cb509486acf50bc0e83242ad2f33587de186940cc46066e843",
+      "coverage": [
+        "positive",
+        "unknown_discriminant"
+      ]
+    },
+    {
+      "schema_id": "apxm.execution-commit.v1",
+      "path": "vectors/apxm.execution-commit.v1.json",
+      "digest": "sha256:918fa75f97b5f0bd9419b0f06d79e6d900f62e895ff8b4f51b2f5356bf293d7a",
+      "coverage": [
+        "positive",
+        "atomicity",
+        "mutation",
+        "unknown_discriminant"
+      ]
+    },
+    {
+      "schema_id": "apxm.port-contract.v1",
+      "path": "vectors/apxm.port-contract.v1.json",
+      "digest": "sha256:e422907f9843a58ad4c44b590950099dd6804076c0f25b46d120d0f41f735ee6",
+      "coverage": [
+        "positive",
+        "mutation"
+      ]
+    }
+  ],
+  "signing": {
+    "algorithm": "ed25519",
+    "status": "signing_pending_no_key"
+  },
+  "descriptor_digest": "sha256:18bd523399ebcb2aa41a91815ec1e588f06022f7471c4826327c38faee3fe777"
+}
