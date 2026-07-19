@@ -49,6 +49,16 @@
       "schema_id": "apxm.source-map.v1",
       "path": "schemas/apxm.source-map.v1.json",
       "digest": "sha256:8a146d35673e91f57b4c5623712dcc685dde7c19d8b1430f9c6cb6a4f91b5f49"
+    },
+    {
+      "schema_id": "apxm.external-agent-session.v1",
+      "path": "schemas/apxm.external-agent-session.v1.json",
+      "digest": "sha256:f196c2b425aee0fefdf85ee49a75dfab45e939278750dc3ba86c4d68444b8d7e"
+    },
+    {
+      "schema_id": "apxm.external-agent-evidence.v1",
+      "path": "schemas/apxm.external-agent-evidence.v1.json",
+      "digest": "sha256:179da5ded8f7eb1e43491b3db9be3f2228a4951c40e2aa984df03176b4aceb9e"
     }
   ],
   "owned_port_contracts": [
@@ -292,11 +302,32 @@
         "positive",
         "mutation"
       ]
+    },
+    {
+      "schema_id": "apxm.external-agent-session.v1",
+      "path": "vectors/apxm.external-agent-session.v1.json",
+      "digest": "sha256:fb0f49c01484d8d45f110970659036f59db6c7231a8aa74331f3e7d56f5e83ac",
+      "coverage": [
+        "positive",
+        "unknown_discriminant",
+        "mutation"
+      ]
+    },
+    {
+      "schema_id": "apxm.external-agent-evidence.v1",
+      "path": "vectors/apxm.external-agent-evidence.v1.json",
+      "digest": "sha256:987983eb60b450df231172b5723288b38f58ba11206eed859bdc4cbe4817327b",
+      "coverage": [
+        "positive",
+        "skew",
+        "mutation",
+        "unknown_discriminant"
+      ]
     }
   ],
   "signing": {
     "algorithm": "ed25519",
     "status": "signing_pending_no_key"
   },
-  "descriptor_digest": "sha256:18bd523399ebcb2aa41a91815ec1e588f06022f7471c4826327c38faee3fe777"
+  "descriptor_digest": "sha256:a3ffe046eacc9c537da35544466cfaa5eb9c62aa7684b4fa77e5f9574af9e7e1"
 }

@@ -13,6 +13,7 @@ pub mod artifact;
 pub mod common;
 pub mod diagnostic;
 pub mod execution_commit;
+pub mod external_agent;
 pub mod frontend_graph;
 pub mod grammar;
 pub mod lower;
@@ -28,6 +29,10 @@ pub use diagnostic::{Diagnostic, DiagnosticCode, Verdict};
 pub use execution_commit::{
     AtomicWriteSetMember, CommitResult, ExecutionCommit, CANONICAL_ATOMIC_WRITE_SET,
     verify_execution_commit_json,
+};
+pub use external_agent::{
+    ExternalAgentEvidence, ExternalAgentSession, verify_external_agent_evidence_json,
+    verify_external_agent_session_json,
 };
 pub use frontend_graph::{FrontendGraph, verify_frontend_graph_json};
 pub use lower::{frontend_graph_to_air, lower_frontend_graph_json};

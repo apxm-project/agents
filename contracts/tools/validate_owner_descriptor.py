@@ -50,6 +50,8 @@ VECTOR_SCHEMA = {
     "apxm.runtime-evidence.v1.json": "apxm.runtime-evidence.v1",
     "apxm.source-map.v1.json": "apxm.source-map.v1",
     "apxm.execution-commit.v1.json": "apxm.execution-commit.v1",
+    "apxm.external-agent-session.v1.json": "apxm.external-agent-session.v1",
+    "apxm.external-agent-evidence.v1.json": "apxm.external-agent-evidence.v1",
     "apxm.port-contract.v1.json": "apxm.port-contract.v1",
 }
 
@@ -218,6 +220,37 @@ def semantic_errors(schema_id: str, instance: object) -> list[str]:
         return execution_commit_atomicity_errors(instance)
     if schema_id == "apxm.runtime-evidence.v1":
         return runtime_evidence_errors(instance)
+    if schema_id == "apxm.external-agent-evidence.v1":
+        return external_agent_evidence_errors(instance)
+    return []
+
+
+def external_agent_evidence_errors(instance: dict[str, Any]) -> list[str]:
+    events = instance.get("attributed_events")
+    if not isinstance(events, list):
+        return []
+    reverse_fields = ("reverse_operation", "reverse_target", "reverse_decision")
+    last_sequence: int | None = None
+    for index, event in enumerate(events):
+        if not isinstance(event, dict):
+            continue
+        sequence = event.get("event_sequence")
+        if isinstance(sequence, int):
+            if last_sequence is not None and sequence <= last_sequence:
+                return [f"attributed_events[{index}]: event_sequence must be strictly monotonic"]
+            last_sequence = sequence
+        kind = event.get("kind")
+        present = [field for field in reverse_fields if field in event]
+        if kind == "reverse_request":
+            missing = [field for field in reverse_fields if field not in event]
+            if missing:
+                return [
+                    f"attributed_events[{index}]: a reverse_request records {missing[0]}"
+                ]
+        elif present:
+            return [
+                f"attributed_events[{index}]: {present[0]} belongs only to a reverse_request"
+            ]
     return []
 
 

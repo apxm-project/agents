@@ -33,6 +33,8 @@ pub enum DiagnosticCode {
     OutcomeUnknownClaimsSuccess,
     /// An atomic write set was not the exact canonical five-member set.
     NonAtomicWriteSet,
+    /// An attributed ACP event carried reverse fields inconsistent with its kind.
+    AttributedEventInconsistent,
 }
 
 impl DiagnosticCode {
@@ -50,6 +52,7 @@ impl DiagnosticCode {
             Self::NonMonotonicEvidence => "non_monotonic_evidence",
             Self::OutcomeUnknownClaimsSuccess => "outcome_unknown_claims_success",
             Self::NonAtomicWriteSet => "non_atomic_write_set",
+            Self::AttributedEventInconsistent => "attributed_event_inconsistent",
         }
     }
 }

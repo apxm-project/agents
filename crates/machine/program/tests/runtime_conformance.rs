@@ -3,7 +3,10 @@
 
 mod common;
 
-use apxm_program::{verify_execution_commit_json, verify_runtime_evidence_json};
+use apxm_program::{
+    verify_execution_commit_json, verify_external_agent_evidence_json,
+    verify_external_agent_session_json, verify_runtime_evidence_json,
+};
 use common::{load_vectors, Vector};
 use serde_json::Value;
 
@@ -33,5 +36,19 @@ fn runtime_evidence_vectors_match_verifier() {
 fn execution_commit_vectors_match_verifier() {
     check("apxm.execution-commit.v1.json", |v| {
         verify_execution_commit_json(v).is_accepted()
+    });
+}
+
+#[test]
+fn external_agent_session_vectors_match_verifier() {
+    check("apxm.external-agent-session.v1.json", |v| {
+        verify_external_agent_session_json(v).is_accepted()
+    });
+}
+
+#[test]
+fn external_agent_evidence_vectors_match_verifier() {
+    check("apxm.external-agent-evidence.v1.json", |v| {
+        verify_external_agent_evidence_json(v).is_accepted()
     });
 }
