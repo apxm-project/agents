@@ -53,3 +53,29 @@ def specialist_graph() -> dict[str, Any]:
     builder.capability_requirement("cap.search")
     builder.model_requirement("model.default")
     return builder.build()
+
+
+def external_agent_graph() -> dict[str, Any]:
+    """A program that delegates to an External Agent over ACP.
+
+    The peer runs its own private model/tool loop, but the program authors a
+    single External Agent capability, so the AIR carries only one
+    `capability.invoke` and no `model.call`.
+    """
+    builder = GraphBuilder(source_language="python")
+    builder.program(
+        program_id="Delegator",
+        entrypoint="run",
+        input_type_ref="DelegatorInput",
+        output_type_ref="DelegatorOutput",
+        has_default_context=True,
+        context_type_ref="DelegatorContext",
+    )
+    builder.external_agent_capability(
+        "node.acp.1",
+        profile_ref="acp:claude-code",
+        session_ref="session.acp.1",
+    )
+    builder.region("region.return.1", "return")
+    builder.capability_requirement("external-agent:acp:claude-code")
+    return builder.build()
