@@ -438,6 +438,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "apxm-program"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "apxm-rollout"
 version = "0.1.0"
 dependencies = [
