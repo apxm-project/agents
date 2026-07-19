@@ -7,12 +7,18 @@ import json
 from pathlib import Path
 
 import apxm_program
-from apxm_program.example import external_agent_graph, specialist_graph
+from apxm_program.example import (
+    external_agent_graph,
+    gao_conversational_graph,
+    specialist_graph,
+)
 
 PARITY_DIR = Path(__file__).resolve().parents[4] / "compiler" / "frontend" / "native" / "parity"
 GOLDEN_GRAPH = PARITY_DIR / "frontend-graph.example.json"
 GOLDEN_AIR = PARITY_DIR / "air.expected.json"
 GOLDEN_ACP_AIR = PARITY_DIR / "air.external-agent.expected.json"
+GOLDEN_GAO_AIR = PARITY_DIR / "air.gao.expected.json"
+FIVE_OPS = {"model.call", "capability.invoke", "program.new", "program.invoke", "await.event"}
 
 
 def test_authored_graph_matches_golden_input():
@@ -48,6 +54,16 @@ def test_external_agent_capability_lowers_only_to_capability_invoke():
 
 def test_external_agent_air_matches_golden():
     assert apxm_program.canonical_air_json(external_agent_graph()) == GOLDEN_ACP_AIR.read_text().strip()
+
+
+def test_gao_conversational_agent_lowers_to_only_five_ops():
+    air = apxm_program.lower(gao_conversational_graph())
+    for op in air["semantic_operations"]:
+        assert op["op"] in FIVE_OPS, op["op"]
+
+
+def test_gao_air_matches_golden():
+    assert apxm_program.canonical_air_json(gao_conversational_graph()) == GOLDEN_GAO_AIR.read_text().strip()
 
 
 def test_lower_rejects_unknown_operation():

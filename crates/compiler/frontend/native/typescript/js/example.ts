@@ -48,6 +48,66 @@ export function specialistGraph(): Record<string, unknown> {
   return builder.build();
 }
 
+export function gaoConversationalGraph(): Record<string, unknown> {
+  // A Gao-style Conversational Agent authored on public constructs: a structural
+  // loop region for the conversational loop, a Hook-guarded model.call Turn with
+  // explicit context flow, a specialist composed through program.new/
+  // program.invoke, and an await.event. Lowers to only the five semantic ops.
+  const builder = new GraphBuilder("python");
+  builder.program({
+    program_id: "Gao",
+    entrypoint: "run",
+    input_type_ref: "GaoInput",
+    output_type_ref: "GaoOutput",
+    has_default_context: true,
+    context_type_ref: "GaoContext",
+  });
+  builder.importProgram({
+    program_ref: "Specialist",
+    artifact_digest: "sha256:" + "c".repeat(64),
+    entrypoint: "run",
+    target_agent_identity_requirement: "specialist-identity",
+  });
+  builder.modelCall("node.turn.model", "model.default");
+  builder.capabilityInvoke("node.turn.tool", "cap.search");
+  builder.programNew("node.specialist.new");
+  builder.programInvoke("node.specialist.invoke");
+  builder.awaitEvent("node.turn.await");
+  builder.region("region.loop.turn", "loop");
+  builder.region("region.return", "return");
+  builder.contextEdge("node.turn.model", "node.turn.tool", "GaoContext");
+  builder.hook({
+    hook_id: "hook.before.turn",
+    scope: "loop",
+    phase: "before",
+    target_selector: "region.loop.turn",
+    declaration_order: 0,
+    handler_ref: "hooks.before_turn",
+    handler_digest: "sha256:" + "d".repeat(64),
+    input_type_ref: "GaoContext",
+    output_type_ref: "GaoContext",
+    return_mode: "observe",
+  });
+  builder.hook({
+    hook_id: "hook.after.model",
+    scope: "model",
+    phase: "after",
+    target_selector: "node.turn.model",
+    declaration_order: 1,
+    handler_ref: "hooks.after_model",
+    handler_digest: "sha256:" + "e".repeat(64),
+    input_type_ref: "ModelResult",
+    output_type_ref: "ModelResult",
+    return_mode: "replace_result",
+  });
+  builder.capabilityRequirement("cap.search");
+  builder.modelRequirement("model.default");
+  const graph = builder.build() as Record<string, unknown>;
+  const sourceMap = graph.source_map as { region_annotations: unknown[] };
+  sourceMap.region_annotations.push({ region_id: "region.loop.turn", annotation: "conversational_loop" });
+  return graph;
+}
+
 export function externalAgentGraph(): Record<string, unknown> {
   const builder = new GraphBuilder("python");
   builder.program({
