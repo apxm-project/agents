@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.executable-artifact.v1",
+  "title": "ExecutableArtifact",
+  "description": "Digest-bound executable contract. It pins the AIR, source bundle, source map, and entrypoints, and emits only artifact_semantic Port Requirements. It carries no deployment implementation, Exact Port Binding, Runtime Profile, root-admission fact, authority grant, endpoint, credential, or executable placement.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "artifact_digest",
+    "air_digest",
+    "source_bundle_digest",
+    "source_map",
+    "entrypoints",
+    "artifact_semantic_requirements",
+    "integrity_algorithm"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "apxm.executable-artifact.v1"
+    },
+    "artifact_digest": {
+      "$ref": "apxm.contract-common.v1#/$defs/Digest"
+    },
+    "air_digest": {
+      "$ref": "apxm.contract-common.v1#/$defs/Digest"
+    },
+    "source_bundle_digest": {
+      "$ref": "apxm.contract-common.v1#/$defs/Digest"
+    },
+    "source_map": {
+      "$ref": "apxm.source-map.v1#/$defs/SourceMapBody"
+    },
+    "entrypoints": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/Entrypoint"
+      }
+    },
+    "artifact_semantic_requirements": {
+      "type": "array",
+      "items": {
+        "$ref": "apxm.port-requirement.v1"
+      }
+    },
+    "integrity_algorithm": {
+      "const": "sha256"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "Entrypoint": {
+      "type": "object",
+      "required": [
+        "entrypoint",
+        "program_id",
+        "input_type_ref",
+        "output_type_ref"
+      ],
+      "properties": {
+        "entrypoint": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "program_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "input_type_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "output_type_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "context_type_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

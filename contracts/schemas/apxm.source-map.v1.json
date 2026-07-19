@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.source-map.v1",
+  "title": "SourceMap",
+  "description": "Non-executable mapping from AIR semantic operations, structural regions, and region occurrences back to authored Python or TypeScript source spans. Consumed by evidence and Studio projections; it carries no runtime placement, endpoint, credential, or executable behavior.",
+  "allOf": [
+    {
+      "$ref": "#/$defs/SourceMapBody"
+    }
+  ],
+  "$defs": {
+    "SourceMapBody": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_language",
+        "node_spans",
+        "region_annotations"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "apxm.source-map.v1"
+        },
+        "source_language": {
+          "type": "string",
+          "enum": [
+            "python",
+            "typescript"
+          ]
+        },
+        "node_spans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NodeSpan"
+          }
+        },
+        "region_annotations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RegionAnnotation"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "NodeSpan": {
+      "type": "object",
+      "required": [
+        "node_id",
+        "source_file",
+        "span"
+      ],
+      "properties": {
+        "node_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "source_file": {
+          "$ref": "apxm.contract-common.v1#/$defs/NonEmptyReference"
+        },
+        "span": {
+          "$ref": "#/$defs/Span"
+        },
+        "semantic_annotation": {
+          "type": "string",
+          "maxLength": 1024
+        }
+      },
+      "additionalProperties": false
+    },
+    "RegionAnnotation": {
+      "type": "object",
+      "required": [
+        "region_id",
+        "annotation"
+      ],
+      "properties": {
+        "region_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "annotation": {
+          "type": "string",
+          "enum": [
+            "none",
+            "conversational_loop"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "Span": {
+      "type": "object",
+      "required": [
+        "start_line",
+        "start_column",
+        "end_line",
+        "end_column"
+      ],
+      "properties": {
+        "start_line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "start_column": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end_line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "end_column": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
