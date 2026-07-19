@@ -238,6 +238,18 @@ pub enum Commands {
         /// Frontend graph JSON file. Omit to read stdin.
         input: Option<PathBuf>,
     },
+    /// Emit canonical AIR from a canonical FrontendGraph via the native bridge.
+    ///
+    /// Reads an `apxm.frontend-graph.v1` document from a file or stdin and lowers
+    /// it in-process. Prints canonical AIR JSON, or deterministic MLIR with
+    /// `--mlir`.
+    CanonicalAir {
+        /// Canonical frontend graph JSON file. Omit to read stdin.
+        input: Option<PathBuf>,
+        /// Emit deterministic MLIR verified by the real toolchain instead of AIR JSON.
+        #[arg(long)]
+        mlir: bool,
+    },
     /// Replay a session trace as a timeline
     Replay {
         /// Session directory path

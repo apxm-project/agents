@@ -48,3 +48,28 @@ pub fn frontend_graph_to_air(graph: &FrontendGraph) -> Result<AirModule, Verdict
         source_map: graph.source_map.clone(),
     })
 }
+
+/// Lower a FrontendGraph JSON document to canonical AIR JSON.
+///
+/// This is the shared, deterministic entry point used by the native authoring
+/// bridges: a decode failure or a verification rejection returns a stable error
+/// string, and a valid graph returns the canonical AIR as serialized JSON.
+///
+/// # Errors
+///
+/// Returns a diagnostic string when the graph does not decode or does not
+/// verify, or when serialization fails.
+pub fn lower_frontend_graph_json(graph_json: &str) -> Result<String, String> {
+    let graph: FrontendGraph = serde_json::from_str(graph_json).map_err(|e| e.to_string())?;
+    let air = frontend_graph_to_air(&graph).map_err(format_verdict)?;
+    serde_json::to_string(&air).map_err(|e| e.to_string())
+}
+
+fn format_verdict(verdict: Verdict) -> String {
+    let rendered: Vec<String> = verdict
+        .into_diagnostics()
+        .into_iter()
+        .map(|d| format!("{}:{}:{}", d.code.slug(), d.location, d.message))
+        .collect();
+    format!("frontend graph rejected: [{}]", rendered.join("; "))
+}
