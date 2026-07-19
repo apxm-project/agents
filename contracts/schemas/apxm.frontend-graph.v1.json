@@ -1,0 +1,307 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.frontend-graph.v1",
+  "title": "FrontendGraph",
+  "description": "Language-neutral typed graph recorded equivalently by Python, TypeScript, and generated Studio source. It records program definitions, imported program references, the five semantic operations, structural control-flow records, explicit context flow, static Hook bindings, and a source map. It never records raw AIR text, runtime placement, credentials, or dynamic registration.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "source_language",
+    "program_definitions",
+    "imported_program_refs",
+    "semantic_operations",
+    "structural_regions",
+    "context_flow",
+    "hook_bindings",
+    "capability_requirements",
+    "model_requirements",
+    "source_map"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "apxm.frontend-graph.v1"
+    },
+    "source_language": {
+      "type": "string",
+      "enum": [
+        "python",
+        "typescript"
+      ]
+    },
+    "program_definitions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/ProgramDefinition"
+      }
+    },
+    "imported_program_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ImportedProgramRef"
+      }
+    },
+    "semantic_operations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SemanticOperation"
+      }
+    },
+    "structural_regions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/StructuralRegion"
+      }
+    },
+    "context_flow": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ContextEdge"
+      }
+    },
+    "hook_bindings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/HookBinding"
+      }
+    },
+    "capability_requirements": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/CapabilityRequirement"
+      }
+    },
+    "model_requirements": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ModelRequirement"
+      }
+    },
+    "source_map": {
+      "$ref": "apxm.source-map.v1#/$defs/SourceMapBody"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "ProgramDefinition": {
+      "type": "object",
+      "required": [
+        "program_id",
+        "entrypoint",
+        "input_type_ref",
+        "output_type_ref",
+        "has_default_context"
+      ],
+      "properties": {
+        "program_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "entrypoint": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "input_type_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "output_type_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "context_type_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "has_default_context": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ImportedProgramRef": {
+      "type": "object",
+      "required": [
+        "program_ref",
+        "artifact_digest",
+        "entrypoint",
+        "target_agent_identity_requirement"
+      ],
+      "properties": {
+        "program_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "artifact_digest": {
+          "$ref": "apxm.contract-common.v1#/$defs/Digest"
+        },
+        "entrypoint": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "target_agent_identity_requirement": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        }
+      },
+      "additionalProperties": false
+    },
+    "SemanticOperation": {
+      "type": "object",
+      "required": [
+        "node_id",
+        "op"
+      ],
+      "properties": {
+        "node_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "model.call",
+            "capability.invoke",
+            "program.new",
+            "program.invoke",
+            "await.event"
+          ]
+        },
+        "operands": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "StructuralRegion": {
+      "type": "object",
+      "required": [
+        "region_id",
+        "kind"
+      ],
+      "properties": {
+        "region_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "function",
+            "region",
+            "block",
+            "value",
+            "branch",
+            "switch",
+            "loop",
+            "parallel_join",
+            "try",
+            "throw",
+            "catch",
+            "return",
+            "yield"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ContextEdge": {
+      "type": "object",
+      "required": [
+        "from_node",
+        "to_node",
+        "context_type_ref"
+      ],
+      "properties": {
+        "from_node": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "to_node": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "context_type_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        }
+      },
+      "additionalProperties": false
+    },
+    "HookBinding": {
+      "type": "object",
+      "required": [
+        "hook_id",
+        "scope",
+        "phase",
+        "target_selector",
+        "declaration_order",
+        "handler_ref",
+        "handler_digest",
+        "input_type_ref",
+        "output_type_ref",
+        "return_mode"
+      ],
+      "properties": {
+        "hook_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "agent",
+            "loop",
+            "node",
+            "model",
+            "capability"
+          ]
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "before",
+            "after"
+          ]
+        },
+        "target_selector": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "declaration_order": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "handler_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "handler_digest": {
+          "$ref": "apxm.contract-common.v1#/$defs/Digest"
+        },
+        "input_type_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "output_type_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "return_mode": {
+          "type": "string",
+          "enum": [
+            "observe",
+            "replace_result"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "CapabilityRequirement": {
+      "type": "object",
+      "required": [
+        "capability_ref"
+      ],
+      "properties": {
+        "capability_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ModelRequirement": {
+      "type": "object",
+      "required": [
+        "model_target_ref"
+      ],
+      "properties": {
+        "model_target_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
