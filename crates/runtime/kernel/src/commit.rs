@@ -10,6 +10,7 @@
 //! shape is kept consistent with the runtime-side adapter crate.
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use apxm_program::runtime_evidence::Fact;
@@ -25,7 +26,7 @@ pub const ATOMIC_WRITE_SET: [&str; 5] = [
 
 /// The six digest members published by one atomic commit. Every member is
 /// required at the type level, so a partial/split write set cannot be built.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AtomicWriteSet {
     pub next_program_state_digest: String,
     pub continuation_digest: String,
