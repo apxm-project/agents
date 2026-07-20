@@ -11,6 +11,13 @@
 //! fallback, and no first-available selection: a model effect receives one
 //! materialized binding and fails closed if it does not match the authored
 //! target.
+//!
+//! Two entry points share one op-dispatch core ([`drive_from`]):
+//! [`execute`] walks once and commits (single-shot); [`execute_resumable`] and
+//! [`resume`] add durable park/resume so a conversational session can suspend at
+//! an `await.event` and continue when input is delivered. The suspend/resume
+//! behavior is the only difference — effect dispatch, hooks, and the one atomic
+//! commit are identical.
 
 use std::sync::Arc;
 
@@ -32,6 +39,7 @@ use crate::ports::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
     CompositionRequest, EventAwait, EventOutcome, EventPort,
 };
+use crate::resume::{Continuation, ContinuationError, ContinuationPort, RunOutcome};
 
 /// The exact set of injected ports the driver drives. Every port is a single
 /// admitted implementation; the driver holds no registry and does no discovery.
@@ -106,6 +114,7 @@ pub enum ExecutionError {
         operand: &'static str,
     },
     Binding(BindingError),
+    Continuation(ContinuationError),
 }
 
 impl std::fmt::Display for ExecutionError {
@@ -115,6 +124,7 @@ impl std::fmt::Display for ExecutionError {
                 write!(f, "node {node_id} is missing operand {operand}")
             }
             Self::Binding(error) => write!(f, "model binding error: {error}"),
+            Self::Continuation(error) => write!(f, "continuation error: {error}"),
         }
     }
 }
@@ -162,48 +172,68 @@ fn fact(
     }
 }
 
-/// Execute a canonical AIR program and commit its effects atomically.
-///
-/// # Errors
-///
-/// Returns [`ExecutionError`] if an operation is missing a required operand or a
-/// model effect receives a mismatched admitted binding.
-pub async fn execute(
-    ports: &ExecutionPorts,
-    request: ExecutionRequest,
-    initial_context: Value,
-    model_hooks: &[Hook<Value, Value>],
-) -> Result<RunReport, ExecutionError> {
-    let mut node_outcomes = Vec::new();
-    let mut native_usage = Usage::default();
-    let mut external_agent_evidence = Vec::new();
-    let mut context = initial_context;
-    let mut batch: Vec<Fact> = Vec::new();
-    let mut seq = 0u64;
+/// The mutable run accumulators threaded through op dispatch. Shared by the
+/// single-shot and resumable paths so both build identical evidence.
+struct DriveState {
+    node_outcomes: Vec<NodeOutcome>,
+    native_usage: Usage,
+    external_agent_evidence: Vec<ExternalAgentEvidence>,
+    context: Value,
+    batch: Vec<Fact>,
+    seq: u64,
+}
 
-    seq += 1;
-    batch.push(fact(
-        seq,
-        FactKind::InstanceCreated,
-        Some(InstanceState::Ready),
-        None,
-        None,
-        None,
-    ));
-    seq += 1;
-    batch.push(fact(
-        seq,
-        FactKind::InvocationAdmitted,
-        None,
-        Some(InvocationState::Running),
-        None,
-        None,
-    ));
-
-    for op in &request.air.semantic_operations {
+impl DriveState {
+    /// A fresh run: emit the instance-created and invocation-admitted lifecycle
+    /// facts (sequences 1 and 2), exactly as the single-shot path always has.
+    fn new(initial_context: Value) -> Self {
+        let mut batch = Vec::new();
+        let mut seq = 0u64;
         seq += 1;
-        batch.push(fact(
+        batch.push(fact(seq, FactKind::InstanceCreated, Some(InstanceState::Ready), None, None, None));
+        seq += 1;
+        batch.push(fact(seq, FactKind::InvocationAdmitted, None, Some(InvocationState::Running), None, None));
+        Self {
+            node_outcomes: Vec::new(),
+            native_usage: Usage::default(),
+            external_agent_evidence: Vec::new(),
+            context: initial_context,
+            batch,
             seq,
+        }
+    }
+}
+
+/// The result of driving the op loop from a start index: either it reached the
+/// end, or it parked at an `await.event` (only when `suspend_on_park`).
+enum DriveEnd {
+    RanToEnd(DriveState),
+    Parked {
+        state: DriveState,
+        wait_key: String,
+        next_op_index: usize,
+    },
+}
+
+/// Walk `air.semantic_operations[start_index..]`, dispatching each op to its
+/// exact injected port and threading Context through the model Hooks. When
+/// `suspend_on_park` is set, a parked `await.event` stops the walk and returns
+/// [`DriveEnd::Parked`]; otherwise a parked outcome is recorded and the walk
+/// continues (the single-shot contract).
+async fn drive_from(
+    ports: &ExecutionPorts,
+    air: &AirModule,
+    model_admission: &ModelBindingAdmission,
+    start_index: usize,
+    mut state: DriveState,
+    model_hooks: &[Hook<Value, Value>],
+    suspend_on_park: bool,
+) -> Result<DriveEnd, ExecutionError> {
+    for index in start_index..air.semantic_operations.len() {
+        let op = &air.semantic_operations[index];
+        state.seq += 1;
+        state.batch.push(fact(
+            state.seq,
             FactKind::AttemptRecorded,
             None,
             None,
@@ -223,17 +253,17 @@ pub async fn execute(
                     op.node_id.clone(),
                     op.node_id.clone(),
                     &ModelTargetRef(target),
-                    &request.model_admission,
+                    model_admission,
                 )
                 .map_err(ExecutionError::Binding)?;
                 let outcome = run_model(&*ports.model_inference, &call, RetryPolicy::default());
                 if let ModelOutcome::CommittedSuccess { usage } = &outcome {
-                    native_usage.input_tokens += usage.input_tokens;
-                    native_usage.output_tokens += usage.output_tokens;
+                    state.native_usage.input_tokens += usage.input_tokens;
+                    state.native_usage.output_tokens += usage.output_tokens;
                 }
-                let effect = apply_hooks(context, model_result_value(&outcome), model_hooks);
-                context = effect.context;
-                node_outcomes.push(NodeOutcome::Model {
+                let effect = apply_hooks(state.context, model_result_value(&outcome), model_hooks);
+                state.context = effect.context;
+                state.node_outcomes.push(NodeOutcome::Model {
                     node_id: op.node_id.clone(),
                     outcome,
                     result: effect.result,
@@ -259,8 +289,8 @@ pub async fn execute(
                         })
                         .await;
                     let evidence = assemble_evidence(op.node_id.clone(), &outcome);
-                    external_agent_evidence.push(evidence.clone());
-                    node_outcomes.push(NodeOutcome::ExternalAgent {
+                    state.external_agent_evidence.push(evidence.clone());
+                    state.node_outcomes.push(NodeOutcome::ExternalAgent {
                         node_id: op.node_id.clone(),
                         evidence,
                     });
@@ -272,7 +302,7 @@ pub async fn execute(
                             capability_ref,
                         })
                         .await;
-                    node_outcomes.push(NodeOutcome::Capability {
+                    state.node_outcomes.push(NodeOutcome::Capability {
                         node_id: op.node_id.clone(),
                         outcome,
                     });
@@ -287,7 +317,7 @@ pub async fn execute(
                             .unwrap_or_else(|| op.node_id.clone()),
                     })
                     .await;
-                node_outcomes.push(NodeOutcome::ProgramNew {
+                state.node_outcomes.push(NodeOutcome::ProgramNew {
                     node_id: op.node_id.clone(),
                     outcome,
                 });
@@ -301,34 +331,51 @@ pub async fn execute(
                             .unwrap_or_else(|| op.node_id.clone()),
                     })
                     .await;
-                node_outcomes.push(NodeOutcome::ProgramInvoke {
+                state.node_outcomes.push(NodeOutcome::ProgramInvoke {
                     node_id: op.node_id.clone(),
                     outcome,
                 });
             }
             SemanticOpKind::AwaitEvent => {
+                let selector = operand_str(op, "event_selector").unwrap_or_default();
                 let outcome = ports
                     .events
                     .await_event(EventAwait {
                         node_id: op.node_id.clone(),
-                        selector: operand_str(op, "event_selector").unwrap_or_default(),
+                        selector: selector.clone(),
                     })
                     .await;
-                node_outcomes.push(NodeOutcome::AwaitEvent {
+                if suspend_on_park && matches!(outcome, EventOutcome::Parked) {
+                    return Ok(DriveEnd::Parked {
+                        state,
+                        wait_key: selector,
+                        next_op_index: index + 1,
+                    });
+                }
+                state.node_outcomes.push(NodeOutcome::AwaitEvent {
                     node_id: op.node_id.clone(),
                     outcome,
                 });
             }
         }
     }
+    Ok(DriveEnd::RanToEnd(state))
+}
 
-    let expected = ports
-        .execution_commit
-        .current_version(&request.version_scope)
-        .await;
-    seq += 1;
-    batch.push(fact(
-        seq,
+/// Perform the one atomic commit for a completed run and build its report. The
+/// invocation-committed fact is appended just before the commit, exactly as the
+/// single-shot path has always done.
+async fn commit_and_report(
+    ports: &ExecutionPorts,
+    version_scope: &str,
+    commit_id: &str,
+    write_set: AtomicWriteSet,
+    mut state: DriveState,
+) -> RunReport {
+    let expected = ports.execution_commit.current_version(version_scope).await;
+    state.seq += 1;
+    state.batch.push(fact(
+        state.seq,
         FactKind::InvocationCommitted,
         None,
         Some(InvocationState::CommittedReturn),
@@ -339,20 +386,242 @@ pub async fn execute(
     let commit = ports
         .execution_commit
         .commit(ExecutionCommitRequest {
-            commit_id: request.commit_id.clone(),
-            invocation_ref: request.version_scope.clone(),
-            idempotency_key: format!("idem.{}", request.commit_id),
+            commit_id: commit_id.to_string(),
+            invocation_ref: version_scope.to_string(),
+            idempotency_key: format!("idem.{commit_id}"),
             expected_program_state_version: expected,
-            write_set: request.write_set,
-            evidence_batch: batch,
+            write_set,
+            evidence_batch: state.batch,
         })
         .await;
 
-    Ok(RunReport {
-        node_outcomes,
+    RunReport {
+        node_outcomes: state.node_outcomes,
+        native_usage: state.native_usage,
+        external_agent_evidence: state.external_agent_evidence,
+        final_context: state.context,
+        commit,
+    }
+}
+
+/// Execute a canonical AIR program single-shot and commit its effects
+/// atomically. A parked `await.event` is recorded and the walk continues; this
+/// path never suspends.
+///
+/// # Errors
+///
+/// Returns [`ExecutionError`] if an operation is missing a required operand or a
+/// model effect receives a mismatched admitted binding.
+pub async fn execute(
+    ports: &ExecutionPorts,
+    request: ExecutionRequest,
+    initial_context: Value,
+    model_hooks: &[Hook<Value, Value>],
+) -> Result<RunReport, ExecutionError> {
+    let state = DriveState::new(initial_context);
+    let end = drive_from(
+        ports,
+        &request.air,
+        &request.model_admission,
+        0,
+        state,
+        model_hooks,
+        false,
+    )
+    .await?;
+    let DriveEnd::RanToEnd(state) = end else {
+        unreachable!("single-shot execute never suspends (suspend_on_park = false)");
+    };
+    Ok(commit_and_report(
+        ports,
+        &request.version_scope,
+        &request.commit_id,
+        request.write_set,
+        state,
+    )
+    .await)
+}
+
+/// Execute a canonical AIR program with durable park/resume. It behaves exactly
+/// like [`execute`] until it reaches a parked `await.event`, at which point it
+/// persists a [`Continuation`] through `continuation` and returns
+/// [`RunOutcome::Suspended`] without committing. When it runs to the end it
+/// commits atomically and returns [`RunOutcome::Completed`].
+///
+/// # Errors
+///
+/// Returns [`ExecutionError`] on a missing operand, a mismatched model binding,
+/// or a continuation-store failure.
+pub async fn execute_resumable(
+    ports: &ExecutionPorts,
+    continuation: &dyn ContinuationPort,
+    request: ExecutionRequest,
+    initial_context: Value,
+    model_hooks: &[Hook<Value, Value>],
+) -> Result<RunOutcome, ExecutionError> {
+    let state = DriveState::new(initial_context);
+    let end = drive_from(
+        ports,
+        &request.air,
+        &request.model_admission,
+        0,
+        state,
+        model_hooks,
+        true,
+    )
+    .await?;
+    finish(ports, continuation, request_parts(request), end).await
+}
+
+/// Resume a parked execution: take the continuation for `wait_key`, record the
+/// delivered value as the parked `await.event`'s fulfillment, and continue from
+/// the next operation. Completing commits atomically; parking again re-persists.
+///
+/// # Errors
+///
+/// Returns [`ExecutionError::Continuation`] when no continuation is parked on
+/// `wait_key`, plus the same operand/binding/store errors as
+/// [`execute_resumable`].
+pub async fn resume(
+    ports: &ExecutionPorts,
+    continuation: &dyn ContinuationPort,
+    wait_key: &str,
+    delivered: Value,
+    model_hooks: &[Hook<Value, Value>],
+) -> Result<RunOutcome, ExecutionError> {
+    let parked = continuation
+        .take(wait_key)
+        .await
+        .map_err(ExecutionError::Continuation)?
+        .ok_or_else(|| {
+            ExecutionError::Continuation(ContinuationError::NotParked {
+                wait_key: wait_key.to_string(),
+            })
+        })?;
+
+    let Continuation {
+        air,
+        model_admission,
+        next_op_index,
+        context,
         native_usage,
         external_agent_evidence,
-        final_context: context,
-        commit,
-    })
+        evidence_batch,
+        event_sequence,
+        version_scope,
+        commit_id,
+        write_set,
+        wait_key: _,
+    } = parked;
+
+    let mut state = DriveState {
+        node_outcomes: Vec::new(),
+        native_usage,
+        external_agent_evidence,
+        context,
+        batch: evidence_batch,
+        seq: event_sequence,
+    };
+
+    // Record the delivered input as the parked `await.event`'s fulfillment so
+    // the resumed run's evidence includes the turn the wake delivered.
+    if next_op_index > 0
+        && let Some(op) = air.semantic_operations.get(next_op_index - 1)
+    {
+        let payload = match &delivered {
+            Value::String(text) => text.clone(),
+            other => other.to_string(),
+        };
+        state.node_outcomes.push(NodeOutcome::AwaitEvent {
+            node_id: op.node_id.clone(),
+            outcome: EventOutcome::Fulfilled { payload },
+        });
+    }
+
+    let end = drive_from(
+        ports,
+        &air,
+        &model_admission,
+        next_op_index,
+        state,
+        model_hooks,
+        true,
+    )
+    .await?;
+    let parts = CommitParts {
+        air,
+        model_admission,
+        version_scope,
+        commit_id,
+        write_set,
+    };
+    finish(ports, continuation, parts, end).await
+}
+
+/// The commit-scope parts carried from a request or a resumed continuation,
+/// reused to build the next continuation on a re-park.
+struct CommitParts {
+    air: AirModule,
+    model_admission: ModelBindingAdmission,
+    version_scope: String,
+    commit_id: String,
+    write_set: AtomicWriteSet,
+}
+
+fn request_parts(request: ExecutionRequest) -> CommitParts {
+    CommitParts {
+        air: request.air,
+        model_admission: request.model_admission,
+        version_scope: request.version_scope,
+        commit_id: request.commit_id,
+        write_set: request.write_set,
+    }
+}
+
+/// Complete a resumable drive: commit when it ran to the end, or persist a fresh
+/// continuation and report suspension when it parked.
+async fn finish(
+    ports: &ExecutionPorts,
+    continuation: &dyn ContinuationPort,
+    parts: CommitParts,
+    end: DriveEnd,
+) -> Result<RunOutcome, ExecutionError> {
+    match end {
+        DriveEnd::RanToEnd(state) => {
+            let report = commit_and_report(
+                ports,
+                &parts.version_scope,
+                &parts.commit_id,
+                parts.write_set,
+                state,
+            )
+            .await;
+            Ok(RunOutcome::Completed(report))
+        }
+        DriveEnd::Parked {
+            state,
+            wait_key,
+            next_op_index,
+        } => {
+            let cont = Continuation {
+                air: parts.air,
+                model_admission: parts.model_admission,
+                next_op_index,
+                context: state.context,
+                native_usage: state.native_usage,
+                external_agent_evidence: state.external_agent_evidence,
+                evidence_batch: state.batch,
+                event_sequence: state.seq,
+                version_scope: parts.version_scope,
+                commit_id: parts.commit_id,
+                write_set: parts.write_set,
+                wait_key: wait_key.clone(),
+            };
+            continuation
+                .persist(cont)
+                .await
+                .map_err(ExecutionError::Continuation)?;
+            Ok(RunOutcome::Suspended { wait_key })
+        }
+    }
 }
