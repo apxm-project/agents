@@ -151,6 +151,9 @@ async fn run_cli(cli: Cli) -> Result<()> {
             cli.config,
         ),
         Commands::CompileService { agent_dir } => compile_service_command(agent_dir, cli.config),
+        Commands::CompileServiceCanonical { agent_dir } => {
+            compile_service_canonical_command(agent_dir, cli.config)
+        }
         Commands::Decompile { artifact, output } => decompile_command(artifact, output),
         Commands::Execute {
             input,

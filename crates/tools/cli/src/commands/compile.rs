@@ -352,6 +352,138 @@ pub(crate) fn emit_air_from_agent(agent_dir: &Path) -> Result<String> {
     append_handler_manifest_sidecar(air, &manifest)
 }
 
+// ---------------------------------------------------------------------------
+// `apxm compile-service-canonical` — compile an agent package's session source
+// through the CANONICAL Python authoring frontend (`apxm_program`) and emit
+// canonical `apxm.air.v1` (`AirModule`) JSON on stdout. Unlike `compile-service`
+// (which emits legacy AIR text through the legacy frontend/printer), this drives
+// the five-operation canonical AIR the resumable runtime executes. It is not a
+// legacy↔canonical translator: the package source is authored on the canonical
+// frontend and recorded/lowered by `apxm_program` itself.
+// ---------------------------------------------------------------------------
+
+/// Compile a canonical-authored agent package to canonical `apxm.air.v1` text.
+///
+/// # Cross-repo I/O contract
+///
+/// - **Input**: a single positional argument, the agent directory containing
+///   `agent.toml` with `[compile].entry` (a Python source authored on the
+///   canonical `apxm_program` frontend) and `[compile].frontend = "python"`.
+/// - **stdout**: on success, ONLY the canonical `apxm.air.v1` JSON, exactly as
+///   the frontend emitted it. Diagnostics go to stderr.
+/// - **Exit code**: `0` on success; nonzero with a stderr message on failure.
+#[cfg(feature = "driver")]
+pub fn compile_service_canonical_command(agent_dir: PathBuf, config: Option<PathBuf>) -> Result<()> {
+    let air_json = emit_canonical_air_from_agent(&agent_dir, config.as_deref())?;
+    use std::io::Write;
+    let stdout = std::io::stdout();
+    let mut handle = stdout.lock();
+    handle.write_all(air_json.as_bytes())?;
+    Ok(())
+}
+
+/// Core logic behind `apxm compile-service-canonical`, factored out from the
+/// stdout-writing wrapper so it can be exercised directly by tests.
+#[cfg(feature = "driver")]
+pub(crate) fn emit_canonical_air_from_agent(
+    agent_dir: &Path,
+    config_path: Option<&Path>,
+) -> Result<String> {
+    if !agent_dir.is_dir() {
+        return Err(anyhow::anyhow!("'{}' is not a directory", agent_dir.display()));
+    }
+    let entry = declared_agent_package_entry(agent_dir)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "{} must declare [compile].entry and [compile].frontend",
+            agent_dir.join("agent.toml").display()
+        )
+    })?;
+    super::agent::verify_agent_integrity(agent_dir)?;
+    if !is_python_graph_input(&entry) {
+        return Err(anyhow::anyhow!(
+            "canonical compile-service currently supports a Python [compile].entry authored on the apxm_program frontend"
+        ));
+    }
+    let air_json = run_canonical_python_entry(&entry, config_path)?;
+    // Fail closed unless the frontend emitted valid canonical AIR.
+    let _module: apxm_program::air::AirModule = serde_json::from_str(&air_json).with_context(|| {
+        format!(
+            "canonical entry {} did not emit valid apxm.air.v1 AIR JSON on stdout",
+            entry.display()
+        )
+    })?;
+    Ok(air_json)
+}
+
+/// Run a canonical-frontend Python entry and capture its canonical AIR JSON.
+///
+/// The entry authors its FrontendGraph on `apxm_program` and prints
+/// `apxm_program.canonical_air_json(...)` to stdout; the in-process native
+/// bridge does the lowering, so no `apxm emit-air` subprocess is involved.
+#[cfg(feature = "driver")]
+fn run_canonical_python_entry(input: &Path, config_path: Option<&Path>) -> Result<String> {
+    let mut pythonpath_entries = Vec::new();
+    if let Some(parent) = input.parent() {
+        pythonpath_entries.push(parent.to_path_buf());
+    }
+    if let Some(existing) = env::var_os(apxm_env::PYTHONPATH) {
+        pythonpath_entries.extend(env::split_paths(&existing));
+    }
+    let pythonpath = (!pythonpath_entries.is_empty())
+        .then(|| env::join_paths(pythonpath_entries))
+        .transpose()
+        .context("Failed to build PYTHONPATH for the canonical APXM Python frontend")?;
+
+    let mut output = None;
+    for candidate in ["python3", "python"] {
+        let mut command = std::process::Command::new(candidate);
+        command.arg(input);
+        if let Some(pythonpath) = pythonpath.as_ref() {
+            command.env(apxm_env::PYTHONPATH, pythonpath);
+        }
+        if let Some(config_path) = config_path {
+            command.env(apxm_env::APXM_CONFIG, config_path);
+        }
+        match command.output() {
+            Ok(result) => {
+                output = Some(result);
+                break;
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to run canonical Python entry {} with {}: {}",
+                    input.display(),
+                    candidate,
+                    err
+                ));
+            }
+        }
+    }
+    let output = output.ok_or_else(|| {
+        anyhow::anyhow!("Python interpreter not found on PATH (tried python3, python)")
+    })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!(
+            "canonical Python entry {} failed: {}",
+            input.display(),
+            stderr.trim()
+        ));
+    }
+    let air = String::from_utf8(output.stdout).with_context(|| {
+        format!("canonical entry {} did not emit valid UTF-8", input.display())
+    })?;
+    let trimmed = air.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow::anyhow!(
+            "canonical entry {} produced no AIR output on stdout",
+            input.display()
+        ));
+    }
+    Ok(trimmed.to_string())
+}
+
 /// The only package-level source declaration accepted by `apxm compile`.
 ///
 /// A package that names executable source must declare both the relative entry

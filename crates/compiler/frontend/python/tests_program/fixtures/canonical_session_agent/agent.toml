@@ -1,0 +1,8 @@
+# A minimal canonical-authored session agent package. Its session source is
+# authored on the canonical `apxm_program` frontend and emits canonical
+# `apxm.air.v1` — the exact shape `apxm compile-service-canonical` compiles and
+# the Server session family drives through the canonical resumable runtime.
+
+[compile]
+entry = "session.py"
+frontend = "python"
