@@ -346,7 +346,7 @@ _client: Any = None  # httpx.AsyncClient | None
 _CLI_APXM_BINARY = "apxm"
 _CLI_CONFIG_FLAG = "--config"
 _CLI_JSON_FLAG = "--json"
-_CLI_EXECUTE_SUBCOMMAND = "execute"
+_CLI_EXECUTE_SUBCOMMAND = "execute-canonical"
 _CLI_WORKFLOW_SUBCOMMAND = "workflow"
 _CLI_RUN_SUBCOMMAND = "run"
 _CLI_EMIT_SESSION_FLAG = "--emit-session"
@@ -538,6 +538,15 @@ def _find_apxm_binary() -> str:
     )
 
 
+def _validate_canonical_air_json(air_text: str) -> None:
+    try:
+        payload = json.loads(air_text)
+    except json.JSONDecodeError as exc:
+        raise ValueError("CompiledFlow expects canonical apxm.air.v1 JSON") from exc
+    if not isinstance(payload, dict) or payload.get("schema_version") != "apxm.air.v1":
+        raise ValueError("CompiledFlow expects canonical apxm.air.v1 JSON")
+
+
 # ---------------------------------------------------------------------------
 # CompiledFlow
 # ---------------------------------------------------------------------------
@@ -567,15 +576,13 @@ class CompiledFlow:
     # -- persistence --------------------------------------------------------
 
     def save(self, path: str | os.PathLike[str]) -> None:
-        air_text = self._air_text if self._air_text else self._graph.to_air()
-        Path(path).write_text(air_text, encoding="utf-8")
+        Path(path).write_text(self._canonical_air_json(), encoding="utf-8")
 
     @classmethod
     def load(cls, path: str | os.PathLike[str]) -> "CompiledFlow":
         path = Path(path)
         air_text = path.read_text(encoding="utf-8")
-        if not air_text.lstrip().startswith("module"):
-            raise ValueError("CompiledFlow.load expects canonical AIR text")
+        _validate_canonical_air_json(air_text)
         return cls(
             ApxmGraph(name=path.stem),
             mode=ExecutionMode.AOT,
@@ -730,16 +737,18 @@ class CompiledFlow:
 
         apxm_bin = _find_apxm_binary()
         execution = execution or ExecutionOptions()
+        if args:
+            raise ExecutionError(
+                "canonical local execution currently accepts only canonical AIR JSON; "
+                "runtime input must be represented in the program source"
+            )
+        if execution.session_root is not None:
+            raise ExecutionError(
+                "execute-canonical does not emit legacy session folders; query runtime evidence from the typed result"
+            )
 
-        runtime_graph = _graph_with_execution_overrides(self._graph, execution)
-        if runtime_graph is self._graph:
-            air_text = self._air_text if self._air_text else self._graph.to_air()
-        else:
-            air_text = runtime_graph.to_air()
+        air_text = self._canonical_air_json()
 
-        # Write AIR text to a tempfile (.air) so the compiler can parse it
-        # directly. Using AIR preserves the graph form the runtime executes,
-        # including named parameter references and operation attributes.
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".air", delete=False
         ) as tmp:
@@ -762,14 +771,6 @@ class CompiledFlow:
                 cmd.extend([_CLI_CONFIG_FLAG, config_path])
 
             cmd.extend([_CLI_JSON_FLAG, _CLI_EXECUTE_SUBCOMMAND, tmp_path])
-            _append_session_root_flag(
-                cmd,
-                target=_CLI_EXECUTE_SUBCOMMAND,
-                session_root=execution.session_root,
-            )
-
-            for arg in args:
-                cmd.append(str(arg))
 
             result = subprocess.run(
                 cmd,
@@ -785,7 +786,7 @@ class CompiledFlow:
 
         if result.returncode != 0:
             raise ExecutionError(
-                f"apxm execute failed (exit {result.returncode}): "
+                f"apxm execute-canonical failed (exit {result.returncode}): "
                 f"{_cli_error_message(result.stdout, result.stderr, 'unknown cli error')}"
             )
 
@@ -793,20 +794,30 @@ class CompiledFlow:
             payload = json.loads(result.stdout)
         except json.JSONDecodeError as exc:
             raise ExecutionError(
-                "apxm execute --json returned invalid JSON output"
+                "apxm execute-canonical --json returned invalid JSON output"
             ) from exc
 
         if not isinstance(payload, dict):
             raise ExecutionError(
-                "apxm execute --json returned a non-object payload"
+                "apxm execute-canonical --json returned a non-object payload"
             )
 
         try:
             return ExecutionResult.from_response(payload)
         except (TypeError, ValueError, AttributeError) as exc:
             raise ExecutionError(
-                "apxm execute --json returned an unexpected response shape"
+                "apxm execute-canonical --json returned an unexpected response shape"
             ) from exc
+
+    def _canonical_air_json(self) -> str:
+        from .errors import ExecutionError
+
+        if self._air_text is None:
+            raise ExecutionError(
+                "local execution requires canonical apxm.air.v1 JSON; compile canonical source with apxm compile-service-canonical"
+            )
+        _validate_canonical_air_json(self._air_text)
+        return self._air_text
 
 
 def _merge_execution_options(

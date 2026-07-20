@@ -1,18 +1,15 @@
-//! Validate, analyze, explain commands.
+//! Validate, analyze, explain commands for canonical `apxm.air.v1`.
 
-use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use colored::Colorize;
 
-#[cfg(feature = "driver")]
-use super::compile::air_graph_from_source;
 use super::implementations::{
     Status, category_str, find_op_spec, op_latency_ms, print_section_header, print_status_line,
 };
-use apxm_core::constants::graph::attrs as graph_attrs;
-use apxm_core::types::{AISOperationType, ApxmPathFormat};
+use apxm_core::types::ApxmPathFormat;
+use apxm_program::air::{AirModule, SemanticOp, StructuralNode};
 
 pub fn validate_command(
     input: PathBuf,
@@ -23,27 +20,28 @@ pub fn validate_command(
     let mut warnings: Vec<String> = Vec::new();
 
     if ApxmPathFormat::from_path(&input).is_air_source() {
-        match load_air_graph_for_analysis(&input) {
-            Ok(graph) => {
-                if let Err(err) = graph.validate() {
-                    errors.push(err.to_string());
+        match load_air_module_for_analysis(&input) {
+            Ok(module) => {
+                let verdict = module.verify();
+                if !verdict.is_accepted() {
+                    errors.extend(
+                        verdict
+                            .into_diagnostics()
+                            .into_iter()
+                            .map(|diagnostic| diagnostic.message),
+                    );
+                }
+                if module.semantic_operations.is_empty() {
+                    warnings.push("canonical AIR contains no semantic operations".to_string());
                 }
             }
             Err(err) => errors.push(err.to_string()),
         }
     } else {
         errors.push(
-            "workflow source must be canonical .air; JSON is reserved for structured data outputs"
+            "workflow source must be canonical .air JSON; other JSON is reserved for structured data outputs"
                 .to_string(),
         );
-    }
-
-    if warnings.is_empty()
-        && errors.is_empty()
-        && let Ok(graph) = load_air_graph_for_analysis(&input)
-        && graph.nodes.is_empty()
-    {
-        warnings.push("compiled AIR contains no executable nodes".to_string());
     }
 
     let valid = errors.is_empty();
@@ -61,25 +59,27 @@ pub fn validate_command(
         }
     } else if valid {
         print_status_line(&input.display().to_string(), Status::Ok, "valid");
-        if !warnings.is_empty() {
-            for w in &warnings {
-                println!(
-                    "  {} {}",
-                    apxm_core::constants::ui::icons::CAUTION.yellow(),
-                    w
-                );
-            }
-        }
-    } else {
-        print_status_line(&input.display().to_string(), Status::Error, "invalid");
-        for e in &errors {
-            println!("  {} {}", apxm_core::constants::ui::icons::FAILED.red(), e);
-        }
-        for w in &warnings {
+        for warning in &warnings {
             println!(
                 "  {} {}",
                 apxm_core::constants::ui::icons::CAUTION.yellow(),
-                w
+                warning
+            );
+        }
+    } else {
+        print_status_line(&input.display().to_string(), Status::Error, "invalid");
+        for error in &errors {
+            println!(
+                "  {} {}",
+                apxm_core::constants::ui::icons::FAILED.red(),
+                error
+            );
+        }
+        for warning in &warnings {
+            println!(
+                "  {} {}",
+                apxm_core::constants::ui::icons::CAUTION.yellow(),
+                warning
             );
         }
         return Err(anyhow::anyhow!("{} error(s) found", errors.len()));
@@ -88,134 +88,54 @@ pub fn validate_command(
     Ok(())
 }
 
-fn load_air_graph_for_analysis(input: &PathBuf) -> Result<apxm_compiler::AirModule> {
-    #[cfg(feature = "driver")]
-    {
-        return air_graph_from_source(input);
-    }
-
-    #[cfg(not(feature = "driver"))]
-    {
-        let _ = input;
-        Err(anyhow::anyhow!(
-            "AIR validation and analysis require the APXM driver feature"
-        ))
-    }
+fn load_air_module_for_analysis(input: &PathBuf) -> Result<AirModule> {
+    let text = std::fs::read_to_string(input)
+        .with_context(|| format!("failed to read canonical AIR from {}", input.display()))?;
+    serde_json::from_str(&text).with_context(|| {
+        format!(
+            "{} must contain canonical apxm.air.v1 JSON",
+            input.display()
+        )
+    })
 }
 
-/// Parsed graph topology for analyze and explain commands.
+/// Parsed canonical AIR sequence for analyze and explain commands.
 pub(crate) struct GraphAnalysis<'a> {
-    pub(crate) graph: &'a apxm_compiler::AirModule,
-    pub(crate) node_index: HashMap<u64, usize>,
-    pub(crate) edge_count: usize,
-    pub(crate) node_ids: HashSet<u64>,
-    pub(crate) successors: HashMap<u64, Vec<u64>>,
-    pub(crate) predecessors: HashMap<u64, Vec<u64>>,
-    pub(crate) entry_nodes: Vec<u64>,
-    pub(crate) exit_nodes: Vec<u64>,
-    pub(crate) phases: Vec<Vec<u64>>,
+    pub(crate) graph: &'a AirModule,
+    pub(crate) phases: Vec<Vec<usize>>,
 }
 
 impl<'a> GraphAnalysis<'a> {
-    pub(crate) fn from_graph(graph: &'a apxm_compiler::AirModule) -> Self {
-        let node_index: HashMap<u64, usize> = graph
-            .nodes
+    pub(crate) fn from_graph(graph: &'a AirModule) -> Self {
+        let phases = graph
+            .semantic_operations
             .iter()
             .enumerate()
-            .map(|(i, n)| (n.id, i))
+            .map(|(index, _)| vec![index])
             .collect();
-        let node_ids: HashSet<u64> = graph.nodes.iter().map(|n| n.id).collect();
-        let edge_count = graph.edges.len();
-
-        let mut successors: HashMap<u64, Vec<u64>> = HashMap::new();
-        let mut predecessors: HashMap<u64, Vec<u64>> = HashMap::new();
-        let mut in_degree: HashMap<u64, usize> = node_ids.iter().map(|&id| (id, 0)).collect();
-
-        for edge in &graph.edges {
-            successors.entry(edge.from).or_default().push(edge.to);
-            predecessors.entry(edge.to).or_default().push(edge.from);
-            *in_degree.entry(edge.to).or_insert(0) += 1;
-        }
-
-        let entry_nodes: Vec<u64> = in_degree
-            .iter()
-            .filter_map(|(&id, &deg)| if deg == 0 { Some(id) } else { None })
-            .collect();
-
-        let exit_nodes: Vec<u64> = node_ids
-            .iter()
-            .filter(|&&id| successors.get(&id).is_none_or(|s| s.is_empty()))
-            .copied()
-            .collect();
-
-        let mut phases: Vec<Vec<u64>> = Vec::new();
-        let mut remaining_in: HashMap<u64, usize> = in_degree.clone();
-        let mut current_layer: Vec<u64> = entry_nodes.clone();
-        current_layer.sort_unstable();
-
-        while !current_layer.is_empty() {
-            phases.push(current_layer.clone());
-            let mut next_layer = Vec::new();
-            for &nid in &current_layer {
-                if let Some(succs) = successors.get(&nid) {
-                    for &succ in succs {
-                        if let Some(deg) = remaining_in.get_mut(&succ) {
-                            *deg = deg.saturating_sub(1);
-                            if *deg == 0 {
-                                next_layer.push(succ);
-                            }
-                        }
-                    }
-                }
-            }
-            next_layer.sort_unstable();
-            next_layer.dedup();
-            current_layer = next_layer;
-        }
-
-        Self {
-            graph,
-            node_index,
-            edge_count,
-            node_ids,
-            successors,
-            predecessors,
-            entry_nodes,
-            exit_nodes,
-            phases,
-        }
+        Self { graph, phases }
     }
 
-    fn node_by_id(&self, id: u64) -> Option<&apxm_compiler::AirNode> {
-        self.node_index.get(&id).map(|&i| &self.graph.nodes[i])
+    fn op_by_index(&self, index: usize) -> Option<&SemanticOp> {
+        self.graph.semantic_operations.get(index)
     }
 
-    pub(crate) fn node_op(&self, id: u64) -> String {
-        self.node_by_id(id)
-            .map_or_else(|| "?".to_string(), |n| n.op.to_string())
+    pub(crate) fn node_op(&self, index: usize) -> String {
+        self.op_by_index(index)
+            .map_or_else(|| "?".to_string(), |op| op.op.wire().to_string())
     }
 
-    fn node_latency_op(&self, id: u64) -> String {
-        let Some(node) = self.node_by_id(id) else {
-            return "?".to_string();
-        };
-        node.attributes
-            .get(graph_attrs::LLM_OPERATION)
-            .and_then(|value| value.as_str())
-            .and_then(|value| value.parse::<AISOperationType>().ok())
-            .map_or_else(|| node.op.to_string(), |operation| operation.to_string())
+    pub(crate) fn node_id(&self, index: usize) -> &str {
+        self.op_by_index(index)
+            .map_or("?", |op| op.node_id.as_str())
     }
 
-    pub(crate) fn node_name(&self, id: u64) -> &str {
-        self.node_by_id(id).map_or("?", |n| n.name.as_str())
-    }
-
-    fn node_latency_ms(&self, id: u64) -> u64 {
-        op_latency_ms(&self.node_latency_op(id))
+    fn node_latency_ms(&self, index: usize) -> u64 {
+        op_latency_ms(&self.node_op(index))
     }
 
     pub(crate) fn max_parallelism(&self) -> usize {
-        self.phases.iter().map(|p| p.len()).max().unwrap_or(1)
+        self.phases.iter().map(Vec::len).max().unwrap_or(1)
     }
 
     pub(crate) fn parallel_ms(&self) -> u64 {
@@ -224,7 +144,7 @@ impl<'a> GraphAnalysis<'a> {
             .map(|layer| {
                 layer
                     .iter()
-                    .map(|&id| self.node_latency_ms(id))
+                    .map(|&index| self.node_latency_ms(index))
                     .max()
                     .unwrap_or(0)
             })
@@ -232,135 +152,94 @@ impl<'a> GraphAnalysis<'a> {
     }
 
     pub(crate) fn sequential_ms(&self) -> u64 {
-        self.node_ids
-            .iter()
-            .map(|&id| self.node_latency_ms(id))
+        (0..self.graph.semantic_operations.len())
+            .map(|index| self.node_latency_ms(index))
             .sum()
     }
 
     pub(crate) fn speedup(&self) -> f64 {
-        let par = self.parallel_ms();
-        if par > 0 {
-            self.sequential_ms() as f64 / par as f64
+        let parallel = self.parallel_ms();
+        if parallel > 0 {
+            self.sequential_ms() as f64 / parallel as f64
         } else {
             1.0
         }
     }
 
-    pub(crate) fn critical_path(&self) -> (Vec<u64>, u64) {
-        let mut dist: HashMap<u64, u64> = HashMap::new();
-        let mut prev: HashMap<u64, u64> = HashMap::new();
-        for phase in &self.phases {
-            for &nid in phase {
-                let lat = self.node_latency_ms(nid);
-                let max_pred = self
-                    .predecessors
-                    .get(&nid)
-                    .and_then(|preds| preds.iter().filter_map(|&p| dist.get(&p)).max().copied())
-                    .unwrap_or(0);
-                dist.insert(nid, max_pred + lat);
-                if let Some(preds) = self.predecessors.get(&nid)
-                    && let Some(&best) = preds.iter().max_by_key(|&&p| dist.get(&p).unwrap_or(&0))
-                {
-                    prev.insert(nid, best);
-                }
-            }
-        }
-
-        let critical_end = dist.iter().max_by_key(|&(_, &d)| d).map(|(&id, _)| id);
-        let mut path = Vec::new();
-        if let Some(mut node) = critical_end {
-            path.push(node);
-            while let Some(&p) = prev.get(&node) {
-                path.push(p);
-                node = p;
-            }
-            path.reverse();
-        }
-        let ms = path.iter().map(|&id| self.node_latency_ms(id)).sum();
+    pub(crate) fn critical_path(&self) -> (Vec<String>, u64) {
+        let path: Vec<String> = self
+            .graph
+            .semantic_operations
+            .iter()
+            .map(|op| op.node_id.clone())
+            .collect();
+        let ms = self.sequential_ms();
         (path, ms)
+    }
+
+    fn structural_nodes(&self) -> &[StructuralNode] {
+        &self.graph.structural_ir
     }
 }
 
 pub fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
     if !ApxmPathFormat::from_path(&input).is_air_source() {
         return Err(anyhow::anyhow!(
-            "Analyze accepts canonical .air workflow source. JSON is reserved for structured data outputs."
+            "Analyze accepts canonical .air JSON. Other JSON is reserved for structured data outputs."
         ));
     }
-    let graph = load_air_graph_for_analysis(&input)?;
-
+    let graph = load_air_module_for_analysis(&input)?;
     let ga = GraphAnalysis::from_graph(&graph);
     let (critical_path, critical_ms) = ga.critical_path();
     let sequential_ms = ga.sequential_ms();
     let parallel_ms = ga.parallel_ms();
     let max_parallelism = ga.max_parallelism();
     let speedup = ga.speedup();
+    let suggestions = vec![
+        "Canonical apxm.air.v1 analysis is derived from semantic_operations and structural_ir; legacy ExecutionDag analysis is not used."
+            .to_string(),
+    ];
 
-    // Build suggestions shared by JSON and human-readable output.
-    let mut suggestions: Vec<String> = Vec::new();
-    if max_parallelism > 1 {
-        let parallel_phases: Vec<usize> = ga
+    if json_output {
+        let phase_json: Vec<serde_json::Value> = ga
             .phases
             .iter()
             .enumerate()
-            .filter(|(_, p)| p.len() > 1)
-            .map(|(i, _)| i + 1)
-            .collect();
-        suggestions.push(format!(
-            "Phases {:?} can execute in parallel (up to {} concurrent operations)",
-            parallel_phases, max_parallelism
-        ));
-    } else {
-        suggestions.push("Workflow is fully sequential; no parallelism opportunities".to_string());
-    }
-    if speedup > 1.2 {
-        suggestions.push(format!(
-            "Estimated {:.1}x speedup from parallel execution vs sequential",
-            speedup
-        ));
-    }
-    if critical_path.len() >= 3
-        && let Some(&bn) = critical_path
-            .iter()
-            .max_by_key(|&&id| ga.node_latency_ms(id))
-    {
-        suggestions.push(format!(
-            "Critical path bottleneck: node {} ('{}', op={})",
-            bn,
-            ga.node_name(bn),
-            ga.node_op(bn)
-        ));
-    }
-
-    if json_output {
-        let phase_json: Vec<serde_json::Value> = ga.phases.iter().enumerate().map(|(i, layer)| {
-            let max_lat = layer.iter().map(|&id| ga.node_latency_ms(id)).max().unwrap_or(0);
-            let node_details: Vec<serde_json::Value> = layer.iter().map(|&id| {
-                serde_json::json!({"id": id, "name": ga.node_name(id), "op": ga.node_op(id), "latency_ms": ga.node_latency_ms(id)})
-            }).collect();
-            serde_json::json!({
-                "phase": i + 1,
-                "parallel": layer.len() > 1,
-                "parallelism_degree": layer.len(),
-                "estimated_ms": max_lat,
-                "nodes": node_details,
+            .map(|(i, layer)| {
+                let node_details: Vec<serde_json::Value> = layer
+                    .iter()
+                    .map(|&index| {
+                        serde_json::json!({
+                            "id": ga.node_id(index),
+                            "op": ga.node_op(index),
+                            "latency_ms": ga.node_latency_ms(index),
+                        })
+                    })
+                    .collect();
+                serde_json::json!({
+                    "phase": i + 1,
+                    "parallel": layer.len() > 1,
+                    "parallelism_degree": layer.len(),
+                    "estimated_ms": layer.iter().map(|&index| ga.node_latency_ms(index)).max().unwrap_or(0),
+                    "nodes": node_details,
+                })
             })
-        }).collect();
+            .collect();
 
         let result = serde_json::json!({
             "file": input.display().to_string(),
-            "workflow_name": ga.graph.name,
-            "node_count": ga.graph.nodes.len(),
-            "edge_count": ga.edge_count,
-            "entry_nodes": ga.entry_nodes,
-            "exit_nodes": ga.exit_nodes,
+            "schema_version": "apxm.air.v1",
+            "semantic_operation_count": ga.graph.semantic_operations.len(),
+            "structural_ir_count": ga.graph.structural_ir.len(),
             "depth": ga.phases.len(),
             "max_parallelism": max_parallelism,
             "execution_phases": phase_json,
+            "structural_ir": ga.structural_nodes().iter().map(|node| {
+                serde_json::json!({"region_id": node.region_id, "kind": node.kind.wire()})
+            }).collect::<Vec<_>>(),
             "critical_path": {
                 "nodes": critical_path,
-                "length": critical_path.len(),
+                "length": ga.graph.semantic_operations.len(),
                 "estimated_ms": critical_ms,
             },
             "speedup": {
@@ -372,62 +251,153 @@ pub fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
         });
         println!("{}", serde_json::to_string_pretty(&result).unwrap());
     } else {
-        print_section_header(&format!("Analysis: {}", ga.graph.name));
+        print_section_header("Canonical AIR Analysis");
         println!(
-            "  {} nodes, {} edges, {} phases, max parallelism {}",
-            ga.graph.nodes.len(),
-            ga.edge_count,
+            "  {} semantic operation(s), {} structural region(s), {} phase(s)",
+            ga.graph.semantic_operations.len(),
+            ga.graph.structural_ir.len(),
             ga.phases.len(),
-            max_parallelism
         );
         println!();
 
         for (i, layer) in ga.phases.iter().enumerate() {
-            let tag = if layer.len() > 1 {
-                format!("({}x parallel)", layer.len()).green().to_string()
-            } else {
-                "(sequential)".dimmed().to_string()
-            };
             println!(
                 "  {} Phase {} {}",
                 apxm_core::constants::ui::icons::STARTED.cyan(),
                 i + 1,
-                tag
+                "(semantic operation)".dimmed()
             );
-            for &id in layer {
+            for &index in layer {
                 println!(
-                    "    {} {} {} [{}ms]",
-                    format!("#{id}").dimmed(),
-                    ga.node_name(id).bold(),
-                    ga.node_op(id).cyan(),
-                    ga.node_latency_ms(id)
+                    "    {} {} [{}ms]",
+                    ga.node_id(index).bold(),
+                    ga.node_op(index).cyan(),
+                    ga.node_latency_ms(index)
+                );
+            }
+        }
+
+        if !ga.graph.structural_ir.is_empty() {
+            println!();
+            println!("  {}", "Structural IR:".bold());
+            for node in ga.structural_nodes() {
+                println!(
+                    "    {} {}",
+                    node.region_id.as_str().bold(),
+                    node.kind.wire().cyan()
                 );
             }
         }
 
         println!();
         println!(
-            "  {} Critical path: {} nodes, ~{}ms",
+            "  {} Critical path: {} operation(s), ~{}ms",
             apxm_core::constants::ui::icons::LIGHTNING.yellow(),
-            critical_path.len(),
+            ga.graph.semantic_operations.len(),
             critical_ms
         );
-        println!(
-            "  {} Speedup: {:.2}x (sequential {}ms {} parallel {}ms)",
-            apxm_core::constants::ui::icons::ROCKET,
-            speedup,
-            sequential_ms,
-            apxm_core::constants::ui::icons::ARROW_RIGHT,
-            parallel_ms
-        );
+    }
 
-        if !suggestions.is_empty() {
+    Ok(())
+}
+
+pub fn explain_command(target: &str, json_output: bool) -> Result<()> {
+    let trimmed = target.trim();
+    let is_error_code = trimmed.starts_with('E')
+        || trimmed.starts_with('e')
+        || trimmed.chars().all(|c| c.is_ascii_digit());
+
+    if is_error_code {
+        return explain_error_code(target, json_output);
+    }
+
+    let file = PathBuf::from(target);
+    if !ApxmPathFormat::from_path(&file).is_air_source() {
+        return Err(anyhow::anyhow!(
+            "Explain accepts an error code or canonical .air JSON."
+        ));
+    }
+    let graph = load_air_module_for_analysis(&file)?;
+    let ga = GraphAnalysis::from_graph(&graph);
+
+    if json_output {
+        let operations: Vec<serde_json::Value> = graph
+            .semantic_operations
+            .iter()
+            .map(|op| {
+                serde_json::json!({
+                    "node_id": op.node_id,
+                    "op": op.op.wire(),
+                    "operands": op.operands,
+                })
+            })
+            .collect();
+        let structural_ir: Vec<serde_json::Value> = graph
+            .structural_ir
+            .iter()
+            .map(|node| {
+                serde_json::json!({
+                    "region_id": node.region_id,
+                    "kind": node.kind.wire(),
+                })
+            })
+            .collect();
+        let result = serde_json::json!({
+            "file": file.display().to_string(),
+            "schema_version": "apxm.air.v1",
+            "semantic_operations": operations,
+            "structural_ir": structural_ir,
+            "summary": {
+                "semantic_operation_count": graph.semantic_operations.len(),
+                "structural_ir_count": graph.structural_ir.len(),
+                "estimated_ms": ga.parallel_ms(),
+            },
+        });
+        println!("{}", serde_json::to_string_pretty(&result).unwrap());
+    } else {
+        println!();
+        println!("  {} {}", "AIR:".bold().cyan(), "apxm.air.v1".bold());
+        println!(
+            "  Semantic operations: {} | Structural regions: {}",
+            graph.semantic_operations.len(),
+            graph.structural_ir.len(),
+        );
+        println!();
+        println!("  {}", "Execution Flow:".bold().cyan());
+
+        for (index, op) in graph.semantic_operations.iter().enumerate() {
+            let op_name = op.op.wire();
+            let spec = find_op_spec(op_name);
+            let category = spec.map_or("unknown", |s| category_str(s.category));
+            let desc = spec.map_or("", |s| s.description);
             println!();
-            println!("  {}", "Suggestions:".bold());
-            for s in &suggestions {
+            println!(
+                "    {} \"{}\" {} {} ({}, ~{}ms)",
+                format!("[{}]", index + 1).dimmed(),
+                op.node_id.bold(),
+                apxm_core::constants::ui::icons::EM_DASH.dimmed(),
+                op_name.cyan().bold(),
+                category,
+                ga.node_latency_ms(index),
+            );
+            if !desc.is_empty() {
+                println!("        {}", desc.dimmed());
+            }
+            if let Some(operands) = &op.operands {
+                for (key, value) in operands {
+                    println!("        {}: {}", key.bold(), value);
+                }
+            }
+        }
+
+        if !graph.structural_ir.is_empty() {
+            println!();
+            println!("  {}", "Structural IR:".bold().cyan());
+            for node in &graph.structural_ir {
                 println!(
-                    "    {} {s}",
-                    apxm_core::constants::ui::icons::BULLET.dimmed()
+                    "    {} {}",
+                    node.region_id.as_str().bold(),
+                    node.kind.wire().cyan()
                 );
             }
         }
@@ -436,339 +406,58 @@ pub fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn explain_command(target: &str, json_output: bool) -> Result<()> {
-    // Check if target looks like an error code (e.g., E511, e511, 511)
+fn explain_error_code(target: &str, json_output: bool) -> Result<()> {
     let trimmed = target.trim();
-    let is_error_code = trimmed.starts_with('E')
-        || trimmed.starts_with('e')
-        || trimmed.chars().all(|c| c.is_ascii_digit());
+    let code_str = if trimmed.starts_with('E') || trimmed.starts_with('e') {
+        &trimmed[1..]
+    } else {
+        trimmed
+    };
 
-    if is_error_code {
-        // Extract the numeric part
-        let code_str = if trimmed.starts_with('E') || trimmed.starts_with('e') {
-            &trimmed[1..]
-        } else {
-            trimmed
-        };
+    let code_num: u32 = code_str
+        .parse()
+        .map_err(|_| anyhow::anyhow!("Invalid error code: {}", target))?;
 
-        let code_num: u32 = code_str
-            .parse()
-            .map_err(|_| anyhow::anyhow!("Invalid error code: {}", target))?;
+    let error_code = apxm_core::error::ErrorCode::from_u32(code_num)
+        .ok_or_else(|| anyhow::anyhow!("Unknown error code: E{}", code_num))?;
 
-        let error_code = apxm_core::error::ErrorCode::from_u32(code_num)
-            .ok_or_else(|| anyhow::anyhow!("Unknown error code: E{}", code_num))?;
-
-        if json_output {
-            let output = serde_json::json!({
-                "code": error_code.as_str(),
-                "component": error_code.component(),
-                "is_warning": error_code.is_warning(),
-                "documentation_url": error_code.documentation_url(),
-            });
-            println!("{}", serde_json::to_string_pretty(&output)?);
-        } else {
-            println!("{}", "=".repeat(70).bright_cyan());
-            println!(
-                "{} {}",
-                "Error Code:".bright_yellow(),
-                error_code.as_str().bright_white().bold()
-            );
-            println!(
-                "{} {}",
-                "Component:".bright_yellow(),
-                error_code.component().bright_white()
-            );
-            println!(
-                "{} {}",
-                "Severity:".bright_yellow(),
-                if error_code.is_warning() {
-                    "Warning".bright_yellow()
-                } else {
-                    "Error".bright_red()
-                }
-            );
-            println!("{}", "=".repeat(70).bright_cyan());
-            println!();
-
-            // Print description based on the error code
-            match error_code {
-                apxm_core::error::ErrorCode::DeadNode => {
-                    println!("{}", "Description:".bright_blue().bold());
-                    println!("  A node produces output that is never used (no path to return).");
-                    println!();
-                    println!("{}", "How to fix:".bright_green().bold());
-                    println!("  - Remove the node if it's not needed, OR");
-                    println!("  - Connect it to the graph's output path");
-                }
-                apxm_core::error::ErrorCode::MissingReturnValue => {
-                    println!("{}", "Description:".bright_blue().bold());
-                    println!("  Graph has no exit node (all nodes have outgoing edges).");
-                    println!();
-                    println!("{}", "How to fix:".bright_green().bold());
-                    println!(
-                        "  Ensure at least one node has zero outgoing edges to serve as the return value."
-                    );
-                }
-                apxm_core::error::ErrorCode::CommunicateBeforeSpawn => {
-                    println!("{}", "Description:".bright_blue().bold());
-                    println!("  COMMUNICATE node does not consume the matching SPAWN_AGENT token.");
-                    println!();
-                    println!("{}", "Why this is a problem:".bright_blue().bold());
-                    println!("  COMMUNICATE is the session transport. It needs a structural Data");
-                    println!(
-                        "  dependency from SPAWN_AGENT so the spawned session token is an operand."
-                    );
-                    println!();
-                    println!("{}", "How to fix:".bright_green().bold());
-                    println!("  Use the agent handle API, or add a Data dependency from the");
-                    println!(
-                        "  SPAWN_AGENT chain to COMMUNICATE. Control edges are not sufficient."
-                    );
-                }
-                apxm_core::error::ErrorCode::EmptyTemplate => {
-                    println!("{}", "Description:".bright_blue().bold());
-                    println!(
-                        "  ASK/THINK/REASON node has an empty or whitespace-only template_str."
-                    );
-                    println!();
-                    println!("{}", "How to fix:".bright_green().bold());
-                    println!("  Provide a non-empty template string.");
-                }
-                _ => {
-                    println!("{}", "Description:".bright_blue().bold());
-                    println!("  See documentation for details.");
-                }
-            }
-            println!();
-            println!(
-                "{} {}",
-                "Documentation:".bright_yellow(),
-                error_code.documentation_url()
-            );
-        }
-
+    if json_output {
+        let output = serde_json::json!({
+            "code": error_code.as_str(),
+            "component": error_code.component(),
+            "is_warning": error_code.is_warning(),
+            "documentation_url": error_code.documentation_url(),
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
         return Ok(());
     }
 
-    // Otherwise, treat as a workflow file path
-    let file = PathBuf::from(target);
-    if !ApxmPathFormat::from_path(&file).is_air_source() {
-        return Err(anyhow::anyhow!(
-            "Explain accepts an error code or canonical .air workflow source. JSON is reserved for structured data outputs."
-        ));
-    }
-    let graph = load_air_graph_for_analysis(&file)?;
-
-    let ga = GraphAnalysis::from_graph(&graph);
-    let critical_ms = ga.parallel_ms();
-    let max_parallelism = ga.max_parallelism();
-    let depth = ga.phases.len();
-    let parallelizable = max_parallelism > 1;
-
-    let notable_attrs = |id: u64| -> Vec<(String, String)> {
-        let mut attrs = Vec::new();
-        if let Some(node) = ga.node_by_id(id) {
-            let interesting = [
-                "template_str",
-                "capability",
-                "claim",
-                "evidence",
-                "token",
-                "value",
-                "true_label",
-                "false_label",
-                "key",
-                "tokens",
-                "flow_name",
-                "budget",
-                "store",
-                "namespace",
-                "target_task",
-            ];
-            for &key in &interesting {
-                if let Some(val) = node.attributes.get(key) {
-                    let display = match val {
-                        apxm_core::types::Value::String(s) => {
-                            if s.len() > 60 {
-                                format!("{}...", &s[..57])
-                            } else {
-                                s.clone()
-                            }
-                        }
-                        other => other.to_string(),
-                    };
-                    attrs.push((key.to_string(), display));
-                }
-            }
+    println!("{}", "=".repeat(70).bright_cyan());
+    println!(
+        "{} {}",
+        "Error Code:".bright_yellow(),
+        error_code.as_str().bright_white().bold()
+    );
+    println!(
+        "{} {}",
+        "Component:".bright_yellow(),
+        error_code.component().bright_white()
+    );
+    println!(
+        "{} {}",
+        "Severity:".bright_yellow(),
+        if error_code.is_warning() {
+            "Warning".bright_yellow()
+        } else {
+            "Error".bright_red()
         }
-        attrs
-    };
-
-    if json_output {
-        let phase_json: Vec<serde_json::Value> = ga
-            .phases
-            .iter()
-            .enumerate()
-            .map(|(i, layer)| {
-                let node_details: Vec<serde_json::Value> = layer
-                    .iter()
-                    .map(|&id| {
-                        let op = ga.node_op(id);
-                        let spec = find_op_spec(&op);
-                        let required_attrs: Vec<String> = spec
-                            .map(|s| {
-                                s.fields
-                                    .iter()
-                                    .filter(|f| f.required)
-                                    .map(|f| f.name.to_string())
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        let feeds: Vec<u64> = ga.successors.get(&id).cloned().unwrap_or_default();
-                        let depends_on: Vec<u64> =
-                            ga.predecessors.get(&id).cloned().unwrap_or_default();
-
-                        serde_json::json!({
-                            "id": id,
-                            "name": ga.node_name(id),
-                            "op": op,
-                            "category": spec.map_or("unknown", |s| category_str(s.category)),
-                            "description": spec.map_or("", |s| s.description),
-                            "latency": spec.map_or("unknown", |s| s.latency.as_str()),
-                            "latency_ms": ga.node_latency_ms(id),
-                            "produces_output": spec.is_some_and(|s| s.produces_output),
-                            "required_attributes": required_attrs,
-                            "feeds": feeds,
-                            "depends_on": depends_on,
-                        })
-                    })
-                    .collect();
-                serde_json::json!({
-                    "phase": i + 1,
-                    "parallel": layer.len() > 1,
-                    "nodes": node_details,
-                })
-            })
-            .collect();
-
-        let result = serde_json::json!({
-            "file": file.display().to_string(),
-            "workflow_name": ga.graph.name,
-            "node_count": ga.graph.nodes.len(),
-            "edge_count": ga.edge_count,
-            "depth": depth,
-            "execution_flow": phase_json,
-            "summary": {
-                "max_parallelism": max_parallelism,
-                "critical_path_steps": depth,
-                "estimated_ms": critical_ms,
-            },
-        });
-        println!("{}", serde_json::to_string_pretty(&result).unwrap());
-    } else {
-        println!();
-        println!("  {} {}", "Workflow:".bold().cyan(), ga.graph.name.bold());
-        println!(
-            "  Nodes: {} | Edges: {} | Depth: {}",
-            ga.graph.nodes.len(),
-            ga.edge_count,
-            depth,
-        );
-        println!();
-        println!("  {}", "Execution Flow:".bold().cyan());
-        println!(
-            "  {}",
-            apxm_core::constants::ui::icons::HRULE_DOUBLE
-                .repeat(15)
-                .dimmed()
-        );
-
-        for (i, layer) in ga.phases.iter().enumerate() {
-            println!();
-            if layer.len() > 1 {
-                println!(
-                    "  {} ({} parallel):",
-                    format!("Phase {}", i + 1).bold(),
-                    layer.len(),
-                );
-            } else {
-                println!("  {}:", format!("Phase {}", i + 1).bold());
-            }
-
-            for &id in layer {
-                let op = ga.node_op(id);
-                let spec = find_op_spec(&op);
-                let cat = spec.map_or("unknown", |s| category_str(s.category));
-                let lat_val = ga.node_latency_ms(id);
-                let desc = spec.map_or("", |s| s.description);
-
-                println!();
-                println!(
-                    "    {} \"{}\" {} {} ({}, ~{}ms)",
-                    format!("[{}]", id).dimmed(),
-                    ga.node_name(id).bold(),
-                    apxm_core::constants::ui::icons::EM_DASH.dimmed(),
-                    op.cyan().bold(),
-                    cat,
-                    lat_val,
-                );
-                println!("        {}", desc.dimmed());
-
-                // Show notable attributes
-                for (key, val) in notable_attrs(id) {
-                    let label = key.chars().next().unwrap_or(' ').to_uppercase().to_string()
-                        + &key[1..].replace('_', " ");
-                    println!("        {}: \"{}\"", label.bold(), val);
-                }
-
-                // Dependency info
-                let deps: Vec<u64> = ga.predecessors.get(&id).cloned().unwrap_or_default();
-                let feeds: Vec<u64> = ga.successors.get(&id).cloned().unwrap_or_default();
-                if !deps.is_empty() {
-                    let dep_strs: Vec<String> = deps.iter().map(|d| d.to_string()).collect();
-                    println!(
-                        "        {} depends on: [{}]",
-                        apxm_core::constants::ui::icons::ARROW_LEFT.dimmed(),
-                        dep_strs.join(", "),
-                    );
-                }
-                if !feeds.is_empty() {
-                    let feed_strs: Vec<String> = feeds.iter().map(|f| f.to_string()).collect();
-                    println!(
-                        "        {} feeds: [{}]",
-                        apxm_core::constants::ui::icons::ARROW_RIGHT.dimmed(),
-                        feed_strs.join(", "),
-                    );
-                }
-            }
-        }
-
-        println!();
-        println!("  {}", "Summary:".bold().cyan());
-        println!(
-            "    Max parallelism: {}{}",
-            max_parallelism,
-            if parallelizable {
-                format!(
-                    " (phase {})",
-                    ga.phases
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, p)| p.len() > 1)
-                        .map(|(i, _)| (i + 1).to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            } else {
-                String::new()
-            },
-        );
-        println!("    Critical path: {} steps (~{}ms)", depth, critical_ms);
-        println!(
-            "    Parallelizable: {}",
-            if parallelizable { "yes" } else { "no" }
-        );
-    }
-
+    );
+    println!("{}", "=".repeat(70).bright_cyan());
+    println!();
+    println!(
+        "{} {}",
+        "Documentation:".bright_yellow(),
+        error_code.documentation_url()
+    );
     Ok(())
 }
