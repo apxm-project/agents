@@ -59,6 +59,21 @@
       "schema_id": "apxm.external-agent-evidence.v1",
       "path": "schemas/apxm.external-agent-evidence.v1.json",
       "digest": "sha256:179da5ded8f7eb1e43491b3db9be3f2228a4951c40e2aa984df03176b4aceb9e"
+    },
+    {
+      "schema_id": "apxm.model-context-envelope.v1",
+      "path": "schemas/apxm.model-context-envelope.v1.json",
+      "digest": "sha256:c9aea883e43edf497fb1c1ea00690e2e44b98288774faf59de5da7e6fc17bc46"
+    },
+    {
+      "schema_id": "apxm.model-target.v1",
+      "path": "schemas/apxm.model-target.v1.json",
+      "digest": "sha256:99bfbd58f4d9bf339dbf591986f6ed2d1ae07a32f63bbdce98741728c05c0959"
+    },
+    {
+      "schema_id": "apxm.model-binding.v1",
+      "path": "schemas/apxm.model-binding.v1.json",
+      "digest": "sha256:9a3a2d047b50ff9d8f33d18d9f3a605e31d97366a3cb102f83d01e849d4c8fbe"
     }
   ],
   "owned_port_contracts": [
@@ -323,11 +338,39 @@
         "mutation",
         "unknown_discriminant"
       ]
+    },
+    {
+      "schema_id": "apxm.model-context-envelope.v1",
+      "path": "vectors/apxm.model-context-envelope.v1.json",
+      "digest": "sha256:ecc81c0382186ed8db81aef0c0ad7c5ae10445cdedc652fe886454fec98adbeb",
+      "coverage": [
+        "positive",
+        "mutation"
+      ]
+    },
+    {
+      "schema_id": "apxm.model-target.v1",
+      "path": "vectors/apxm.model-target.v1.json",
+      "digest": "sha256:713f04a9f910af84defb3b16ec5ed009a4804ff6aa1c666cab017923556196b3",
+      "coverage": [
+        "positive",
+        "unknown_discriminant",
+        "mutation"
+      ]
+    },
+    {
+      "schema_id": "apxm.model-binding.v1",
+      "path": "vectors/apxm.model-binding.v1.json",
+      "digest": "sha256:06a56086cab86651aa34110515fa475879ddc68d287379480e57ad14715024ef",
+      "coverage": [
+        "positive",
+        "mutation"
+      ]
     }
   ],
   "signing": {
     "algorithm": "ed25519",
     "status": "signing_pending_no_key"
   },
-  "descriptor_digest": "sha256:a3ffe046eacc9c537da35544466cfaa5eb9c62aa7684b4fa77e5f9574af9e7e1"
+  "descriptor_digest": "sha256:0b64ff74d8bb96e5f9816cdd45ab346a8c53fafccf26c5d40582e1a8dbb95741"
 }
