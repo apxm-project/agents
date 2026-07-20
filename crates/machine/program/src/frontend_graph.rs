@@ -180,7 +180,11 @@ impl FrontendGraph {
 
         let mut seen_regions: HashSet<&str> = HashSet::new();
         for region in &self.structural_regions {
-            check_identifier(&mut verdict, &region.region_id, "structural region region_id");
+            check_identifier(
+                &mut verdict,
+                &region.region_id,
+                "structural region region_id",
+            );
             if !seen_regions.insert(region.region_id.as_str()) {
                 verdict.push(Diagnostic::new(
                     DiagnosticCode::DuplicateRegionId,

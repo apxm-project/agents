@@ -8,8 +8,9 @@
 //! event port — threading explicit Context through typed Hooks. It builds the
 //! runtime-evidence batch from the real effects and commits the whole write set
 //! atomically through the one Execution Commit port. There is no router, no
-//! fallback, and no first-available selection: a model effect resolves exactly
-//! one admitted binding or fails closed.
+//! fallback, and no first-available selection: a model effect receives one
+//! materialized binding and fails closed if it does not match the authored
+//! target.
 
 use std::sync::Arc;
 
@@ -43,8 +44,8 @@ pub struct ExecutionPorts {
     pub execution_commit: Arc<dyn ExecutionCommitPort>,
 }
 
-/// One canonical execution request: the AIR to run, the exact model-binding
-/// admission, and the commit scope and prepared write set.
+/// One canonical execution request: the AIR to run, the materialized
+/// model-binding admission, and the commit scope and prepared write set.
 pub struct ExecutionRequest {
     pub air: AirModule,
     pub model_admission: ModelBindingAdmission,
@@ -166,7 +167,7 @@ fn fact(
 /// # Errors
 ///
 /// Returns [`ExecutionError`] if an operation is missing a required operand or a
-/// model effect cannot resolve exactly one admitted binding.
+/// model effect receives a mismatched admitted binding.
 pub async fn execute(
     ports: &ExecutionPorts,
     request: ExecutionRequest,
@@ -181,13 +182,34 @@ pub async fn execute(
     let mut seq = 0u64;
 
     seq += 1;
-    batch.push(fact(seq, FactKind::InstanceCreated, Some(InstanceState::Ready), None, None, None));
+    batch.push(fact(
+        seq,
+        FactKind::InstanceCreated,
+        Some(InstanceState::Ready),
+        None,
+        None,
+        None,
+    ));
     seq += 1;
-    batch.push(fact(seq, FactKind::InvocationAdmitted, None, Some(InvocationState::Running), None, None));
+    batch.push(fact(
+        seq,
+        FactKind::InvocationAdmitted,
+        None,
+        Some(InvocationState::Running),
+        None,
+        None,
+    ));
 
     for op in &request.air.semantic_operations {
         seq += 1;
-        batch.push(fact(seq, FactKind::AttemptRecorded, None, None, Some(op.node_id.clone()), None));
+        batch.push(fact(
+            seq,
+            FactKind::AttemptRecorded,
+            None,
+            None,
+            Some(op.node_id.clone()),
+            None,
+        ));
 
         match op.op {
             SemanticOpKind::ModelCall => {
@@ -230,7 +252,8 @@ pub async fn execute(
                         .external_agent
                         .prompt(AcpPromptRequest {
                             effect_ref: op.node_id.clone(),
-                            session_ref: operand_str(op, "external_agent_session").unwrap_or_default(),
+                            session_ref: operand_str(op, "external_agent_session")
+                                .unwrap_or_default(),
                             profile_ref: profile.to_string(),
                             prompt: String::new(),
                         })
@@ -260,7 +283,8 @@ pub async fn execute(
                     .composition
                     .program_new(CompositionRequest {
                         node_id: op.node_id.clone(),
-                        program_ref: operand_str(op, "program_ref").unwrap_or_else(|| op.node_id.clone()),
+                        program_ref: operand_str(op, "program_ref")
+                            .unwrap_or_else(|| op.node_id.clone()),
                     })
                     .await;
                 node_outcomes.push(NodeOutcome::ProgramNew {
@@ -273,7 +297,8 @@ pub async fn execute(
                     .composition
                     .program_invoke(CompositionRequest {
                         node_id: op.node_id.clone(),
-                        program_ref: operand_str(op, "program_ref").unwrap_or_else(|| op.node_id.clone()),
+                        program_ref: operand_str(op, "program_ref")
+                            .unwrap_or_else(|| op.node_id.clone()),
                     })
                     .await;
                 node_outcomes.push(NodeOutcome::ProgramInvoke {

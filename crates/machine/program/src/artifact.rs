@@ -148,7 +148,11 @@ impl ExecutableArtifact {
 
         check_digest(&mut verdict, &self.artifact_digest, "artifact_digest");
         check_digest(&mut verdict, &self.air_digest, "air_digest");
-        check_digest(&mut verdict, &self.source_bundle_digest, "source_bundle_digest");
+        check_digest(
+            &mut verdict,
+            &self.source_bundle_digest,
+            "source_bundle_digest",
+        );
 
         if self.entrypoints.is_empty() {
             verdict.push(Diagnostic::new(
@@ -179,7 +183,11 @@ impl ExecutableArtifact {
                     "required_port_contract schema_id is not a contract schema id",
                 ));
             }
-            check_digest(&mut verdict, &requirement.required_port_contract.digest, slot);
+            check_digest(
+                &mut verdict,
+                &requirement.required_port_contract.digest,
+                slot,
+            );
             check_digest(&mut verdict, &requirement.semantic_limits_digest, slot);
             check_digest(&mut verdict, &requirement.source_digest, slot);
             check_digest(&mut verdict, &requirement.requirement_digest, slot);

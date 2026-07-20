@@ -26,7 +26,11 @@ impl std::fmt::Display for LoweringError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Rejected(verdict) => {
-                write!(f, "AIR rejected before lowering: {} diagnostic(s)", verdict.diagnostics().len())
+                write!(
+                    f,
+                    "AIR rejected before lowering: {} diagnostic(s)",
+                    verdict.diagnostics().len()
+                )
             }
             Self::Mlir(error) => write!(f, "MLIR lowering failed: {error}"),
         }
@@ -151,7 +155,10 @@ mod tests {
         let air = decode(&sample_air());
         let first = lower_air_to_mlir_text(&air).expect("lower");
         let second = lower_air_to_mlir_text(&air).expect("lower");
-        assert_eq!(first, second, "canonical MLIR lowering is not byte-identical");
+        assert_eq!(
+            first, second,
+            "canonical MLIR lowering is not byte-identical"
+        );
         assert!(first.contains("\"apxm.model.call\"() {apxm.node_id = \"node.model.1\"}"));
         assert!(first.contains("\"apxm.structural\"() {apxm.kind = \"function\""));
     }
@@ -172,7 +179,10 @@ mod tests {
             }
         });
         let air: AirModule = serde_json::from_value(bad).expect("decode");
-        assert!(lower_air_to_mlir_text(&air).is_err(), "duplicate node id must be rejected");
+        assert!(
+            lower_air_to_mlir_text(&air).is_err(),
+            "duplicate node id must be rejected"
+        );
     }
 
     #[cfg(feature = "mlir")]
@@ -185,7 +195,10 @@ mod tests {
         // The real toolchain re-prints the same module deterministically.
         let printed_once = verify_mlir_text(&text).expect("verify once");
         let printed_twice = verify_mlir_text(&text).expect("verify twice");
-        assert_eq!(printed_once, printed_twice, "MLIR round-trip is not deterministic");
+        assert_eq!(
+            printed_once, printed_twice,
+            "MLIR round-trip is not deterministic"
+        );
         assert!(printed_once.contains("apxm.model.call"));
     }
 }

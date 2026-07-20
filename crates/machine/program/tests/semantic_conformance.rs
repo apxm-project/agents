@@ -7,7 +7,7 @@ mod common;
 use apxm_program::air::{SemanticOpKind, StructuralKind};
 use apxm_program::source_map::{RegionAnnotationKind, SourceLanguage};
 use apxm_program::{verify_air_json, verify_frontend_graph_json, verify_source_map_json};
-use common::{load_contract, load_vectors, schema_enum, Vector};
+use common::{Vector, load_contract, load_vectors, schema_enum};
 use serde_json::Value;
 
 fn check(file: &str, verify: impl Fn(&Value) -> bool) {
@@ -71,8 +71,15 @@ fn air_semantic_op_enum_does_not_drift() {
         SemanticOpKind::ProgramInvoke,
         SemanticOpKind::AwaitEvent,
     ]);
-    assert_eq!(actual, expected, "AIR semantic op closure drifted from schema");
-    assert_eq!(actual.len(), 5, "AIR exposes exactly five semantic operations");
+    assert_eq!(
+        actual, expected,
+        "AIR semantic op closure drifted from schema"
+    );
+    assert_eq!(
+        actual.len(),
+        5,
+        "AIR exposes exactly five semantic operations"
+    );
 }
 
 #[test]
@@ -94,7 +101,10 @@ fn air_structural_kind_enum_does_not_drift() {
         StructuralKind::Return,
         StructuralKind::Yield,
     ]);
-    assert_eq!(actual, expected, "structural IR closure drifted from schema");
+    assert_eq!(
+        actual, expected,
+        "structural IR closure drifted from schema"
+    );
     assert!(
         !actual.iter().any(|k| k == "nop"),
         "a NOP is never serialized structural IR",
@@ -106,18 +116,21 @@ fn source_map_enums_do_not_drift() {
     let schema = load_contract("schemas/apxm.source-map.v1.json");
     let annotations = schema_enum(&schema, "RegionAnnotation", "annotation");
     assert_eq!(
-        wire_members(&[RegionAnnotationKind::None, RegionAnnotationKind::ConversationalLoop]),
+        wire_members(&[
+            RegionAnnotationKind::None,
+            RegionAnnotationKind::ConversationalLoop
+        ]),
         annotations,
         "region annotation closure drifted from schema",
     );
 
-    let mut languages: Vec<String> = schema["$defs"]["SourceMapBody"]["properties"]["source_language"]
-        ["enum"]
-        .as_array()
-        .expect("source_language enum")
-        .iter()
-        .map(|v| v.as_str().unwrap().to_string())
-        .collect();
+    let mut languages: Vec<String> =
+        schema["$defs"]["SourceMapBody"]["properties"]["source_language"]["enum"]
+            .as_array()
+            .expect("source_language enum")
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
     languages.sort();
     assert_eq!(
         wire_members(&[SourceLanguage::Python, SourceLanguage::Typescript]),

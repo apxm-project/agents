@@ -215,7 +215,9 @@ impl RuntimeEvidence {
 
             if fact.fact_kind == FactKind::EffectOutcomeUnknown {
                 let claims_success = fact.model_outcome == Some(ModelOutcome::CommittedSuccess)
-                    || fact.invocation_state.is_some_and(InvocationState::is_committed);
+                    || fact
+                        .invocation_state
+                        .is_some_and(InvocationState::is_committed);
                 if claims_success {
                     verdict.push(Diagnostic::new(
                         DiagnosticCode::OutcomeUnknownClaimsSuccess,

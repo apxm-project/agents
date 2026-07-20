@@ -50,7 +50,12 @@ pub fn assemble_bundle(
     bindings: [AdmittedBinding; 4],
     ports: &AdmittedPorts,
 ) -> Result<PortBundle, BundleError> {
-    let spec = PortBundleSpec::new(bindings.iter().map(|b| (b.slot, b.port_contract.clone())).collect());
+    let spec = PortBundleSpec::new(
+        bindings
+            .iter()
+            .map(|b| (b.slot, b.port_contract.clone()))
+            .collect(),
+    );
     let [commit_b, confine_b, model_b, acp_b] = bindings;
     PortBundle::construct(
         &spec,

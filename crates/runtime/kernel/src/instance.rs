@@ -83,7 +83,11 @@ impl ProgramInstance {
     /// Create a ready instance bound to an already-constructed, validated port
     /// bundle. The version scope keys the compare-and-commit for this instance.
     #[must_use]
-    pub fn new(identity: ProgramIdentity, version_scope: impl Into<String>, bundle: PortBundle) -> Self {
+    pub fn new(
+        identity: ProgramIdentity,
+        version_scope: impl Into<String>,
+        bundle: PortBundle,
+    ) -> Self {
         Self {
             identity,
             version_scope: version_scope.into(),
@@ -115,7 +119,12 @@ impl ProgramInstance {
         RuntimeEvidence {
             schema_version: RuntimeEvidenceVersion::V1,
             program_identity: self.identity.clone(),
-            facts: self.inner.lock().expect("instance inner").durable_facts.clone(),
+            facts: self
+                .inner
+                .lock()
+                .expect("instance inner")
+                .durable_facts
+                .clone(),
         }
     }
 
@@ -155,12 +164,30 @@ impl ProgramInstance {
         let mut batch: Vec<Fact> = Vec::new();
         if !created_recorded {
             seq += 1;
-            batch.push(lifecycle_fact(seq, FactKind::InstanceCreated, Some(InstanceState::Ready), None, None));
+            batch.push(lifecycle_fact(
+                seq,
+                FactKind::InstanceCreated,
+                Some(InstanceState::Ready),
+                None,
+                None,
+            ));
         }
         seq += 1;
-        batch.push(lifecycle_fact(seq, FactKind::InvocationAdmitted, None, Some(InvocationState::Running), None));
+        batch.push(lifecycle_fact(
+            seq,
+            FactKind::InvocationAdmitted,
+            None,
+            Some(InvocationState::Running),
+            None,
+        ));
         seq += 1;
-        batch.push(lifecycle_fact(seq, FactKind::AttemptRecorded, None, None, None));
+        batch.push(lifecycle_fact(
+            seq,
+            FactKind::AttemptRecorded,
+            None,
+            None,
+            None,
+        ));
         seq += 1;
         let last_seq = seq;
         batch.push(lifecycle_fact(
@@ -183,17 +210,26 @@ impl ProgramInstance {
         let result = self.bundle.execution_commit().commit(request).await;
 
         match result {
-            ExecutionCommitResult::Committed { new_program_state_version, .. } => {
+            ExecutionCommitResult::Committed {
+                new_program_state_version,
+                ..
+            } => {
                 let mut inner = self.inner.lock().expect("instance inner");
                 inner.created_recorded = true;
                 inner.durable_seq = last_seq;
                 inner.instance_state = InstanceState::Ready;
                 inner.durable_facts.extend(batch);
-                Ok(InvocationReport::Committed { new_program_state_version })
+                Ok(InvocationReport::Committed {
+                    new_program_state_version,
+                })
             }
-            ExecutionCommitResult::CompareConflict { current_program_state_version } => {
+            ExecutionCommitResult::CompareConflict {
+                current_program_state_version,
+            } => {
                 // Nothing durable: the prepared batch is discarded.
-                Ok(InvocationReport::CompareConflict { current_program_state_version })
+                Ok(InvocationReport::CompareConflict {
+                    current_program_state_version,
+                })
             }
             ExecutionCommitResult::OutcomeUnknown { reconciliation_ref } => {
                 // Nothing durable and never success: the caller reconciles.
@@ -208,7 +244,11 @@ impl ProgramInstance {
     /// # Errors
     ///
     /// Returns [`InstanceError::Busy`] if an invocation is already in flight.
-    pub async fn cancel(&self, commit_id: impl Into<String>, write_set: AtomicWriteSet) -> Result<InvocationReport, InstanceError> {
+    pub async fn cancel(
+        &self,
+        commit_id: impl Into<String>,
+        write_set: AtomicWriteSet,
+    ) -> Result<InvocationReport, InstanceError> {
         let _guard = self.acquire()?;
         let commit_id = commit_id.into();
         let expected = self
@@ -244,9 +284,11 @@ impl ProgramInstance {
                 inner.durable_facts.extend(batch);
                 Ok(InvocationReport::Cancelled)
             }
-            ExecutionCommitResult::CompareConflict { current_program_state_version } => {
-                Ok(InvocationReport::CompareConflict { current_program_state_version })
-            }
+            ExecutionCommitResult::CompareConflict {
+                current_program_state_version,
+            } => Ok(InvocationReport::CompareConflict {
+                current_program_state_version,
+            }),
             ExecutionCommitResult::OutcomeUnknown { reconciliation_ref } => {
                 Ok(InvocationReport::OutcomeUnknown { reconciliation_ref })
             }
@@ -315,15 +357,32 @@ impl ProgramInstance {
         let mut batch: Vec<Fact> = Vec::new();
         if !created_recorded {
             seq += 1;
-            batch.push(lifecycle_fact(seq, FactKind::InstanceCreated, Some(InstanceState::Ready), None, None));
+            batch.push(lifecycle_fact(
+                seq,
+                FactKind::InstanceCreated,
+                Some(InstanceState::Ready),
+                None,
+                None,
+            ));
         }
         seq += 1;
-        batch.push(lifecycle_fact(seq, FactKind::InvocationAdmitted, None, Some(InvocationState::Running), None));
+        batch.push(lifecycle_fact(
+            seq,
+            FactKind::InvocationAdmitted,
+            None,
+            Some(InvocationState::Running),
+            None,
+        ));
         seq += 1;
         batch.push(capability_attempt_fact(seq, &node_exec));
         seq += 1;
         let last_seq = seq;
-        batch.push(capability_terminal_fact(last_seq, &node_exec, &outcome.state, target_version));
+        batch.push(capability_terminal_fact(
+            last_seq,
+            &node_exec,
+            &outcome.state,
+            target_version,
+        ));
 
         let request = ExecutionCommitRequest {
             commit_id: invocation.commit_id.clone(),
@@ -335,27 +394,34 @@ impl ProgramInstance {
         };
 
         let commit = match self.bundle.execution_commit().commit(request).await {
-            ExecutionCommitResult::Committed { new_program_state_version, .. } => {
+            ExecutionCommitResult::Committed {
+                new_program_state_version,
+                ..
+            } => {
                 let mut inner = self.inner.lock().expect("instance inner");
                 inner.created_recorded = true;
                 inner.durable_seq = last_seq;
                 inner.durable_facts.extend(batch);
                 match &outcome.state {
-                    PromptEffectState::Completed { .. } => {
-                        InvocationReport::Committed { new_program_state_version }
-                    }
+                    PromptEffectState::Completed { .. } => InvocationReport::Committed {
+                        new_program_state_version,
+                    },
                     PromptEffectState::Cancelled => InvocationReport::Cancelled,
-                    PromptEffectState::Failed { message } => {
-                        InvocationReport::Failed { message: message.clone() }
-                    }
+                    PromptEffectState::Failed { message } => InvocationReport::Failed {
+                        message: message.clone(),
+                    },
                     PromptEffectState::OutcomeUnknown { message } => {
-                        InvocationReport::OutcomeUnknown { reconciliation_ref: message.clone() }
+                        InvocationReport::OutcomeUnknown {
+                            reconciliation_ref: message.clone(),
+                        }
                     }
                 }
             }
-            ExecutionCommitResult::CompareConflict { current_program_state_version } => {
-                InvocationReport::CompareConflict { current_program_state_version }
-            }
+            ExecutionCommitResult::CompareConflict {
+                current_program_state_version,
+            } => InvocationReport::CompareConflict {
+                current_program_state_version,
+            },
             ExecutionCommitResult::OutcomeUnknown { reconciliation_ref } => {
                 InvocationReport::OutcomeUnknown { reconciliation_ref }
             }
@@ -386,12 +452,21 @@ fn capability_terminal_fact(
             Some(InvocationState::CommittedReturn),
             Some(target_version),
         ),
-        PromptEffectState::Cancelled => {
-            lifecycle_fact(seq, FactKind::InvocationCancelled, None, Some(InvocationState::Cancelled), None)
-        }
+        PromptEffectState::Cancelled => lifecycle_fact(
+            seq,
+            FactKind::InvocationCancelled,
+            None,
+            Some(InvocationState::Cancelled),
+            None,
+        ),
         PromptEffectState::Failed { message } => {
-            let mut fact =
-                lifecycle_fact(seq, FactKind::InvocationFailed, None, Some(InvocationState::Failed), None);
+            let mut fact = lifecycle_fact(
+                seq,
+                FactKind::InvocationFailed,
+                None,
+                Some(InvocationState::Failed),
+                None,
+            );
             fact.typed_error = Some(apxm_program::common::TypedErrorEnvelope {
                 error_id: "agents.external_agent_failed".to_string(),
                 category: apxm_program::common::ErrorCategory::Unavailable,

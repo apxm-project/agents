@@ -34,7 +34,10 @@ fn committed_projection_is_a_valid_contract() {
         evidence_position_ref: "evidence:invoke.1:8".into(),
     });
     assert!(verify_execution_commit_json(&json).is_accepted());
-    assert!(json.get("state_commit_ref").is_none(), "no per-member split field");
+    assert!(
+        json.get("state_commit_ref").is_none(),
+        "no per-member split field"
+    );
 }
 
 #[test]

@@ -4,8 +4,8 @@
 //! cancelled stream stops requesting chunks and commits [`ModelOutcome::Cancelled`];
 //! it never fabricates a success or silently adapts a truncated stream into one.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 

@@ -7,15 +7,15 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
+use apxm_program::artifact::SchemaDigestRef;
 use apxm_program::external_agent::{AttributedEvent, AttributedEventKind, PeerUsage};
 use apxm_program::runtime_evidence::{Fact, FactKind, ProgramIdentity};
-use apxm_program::artifact::SchemaDigestRef;
 
 use apxm_kernel::{
-    reconstruct, AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, CapabilityInvocation,
-    ExactPortBinding, ExecutionCommitPort, ExecutionCommitRequest, ExecutionCommitResult,
+    AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, CapabilityInvocation, ExactPortBinding,
+    ExecutionCommitPort, ExecutionCommitRequest, ExecutionCommitResult,
     ExternalAgentCapabilityPort, InstanceError, InvocationReport, PortBundle, PortBundleSpec,
-    PortImplementation, PortSlot, ProgramInstance, PromptEffectState,
+    PortImplementation, PortSlot, ProgramInstance, PromptEffectState, reconstruct,
 };
 
 fn digest(c: char) -> String {
@@ -162,7 +162,9 @@ async fn run_profile(profile: &str, reported_value: &str) -> apxm_kernel::Capabi
     let peer = Arc::new(ScriptedAcpPeer {
         outcome: AcpPromptOutcome {
             session_ref: String::new(),
-            state: PromptEffectState::Completed { stop_reason: Some("end_turn".into()) },
+            state: PromptEffectState::Completed {
+                stop_reason: Some("end_turn".into()),
+            },
             nested_events: vec![
                 event(0, AttributedEventKind::Message),
                 event(1, AttributedEventKind::ToolCall),
@@ -178,7 +180,10 @@ async fn run_profile(profile: &str, reported_value: &str) -> apxm_kernel::Capabi
         },
     });
     let inst = instance(commit.clone(), peer);
-    let report = inst.invoke_capability(invocation(profile)).await.expect("capability runs");
+    let report = inst
+        .invoke_capability(invocation(profile))
+        .await
+        .expect("capability runs");
     // The durable runtime evidence carries the one Capability NodeExecution and
     // no native model outcome or native usage.
     let facts = commit.evidence();
@@ -198,21 +203,37 @@ async fn run_profile(profile: &str, reported_value: &str) -> apxm_kernel::Capabi
 #[tokio::test]
 async fn claude_code_prompt_is_one_capability_with_nested_peer_loop() {
     let report = run_profile("acp:claude-code", "12345").await;
-    assert_eq!(report.commit, InvocationReport::Committed { new_program_state_version: 1 });
+    assert_eq!(
+        report.commit,
+        InvocationReport::Committed {
+            new_program_state_version: 1
+        }
+    );
     // One outer capability, the peer loop nested under it.
-    assert_eq!(report.evidence.capability_node_execution_id, "nodeexec.cap.1");
+    assert_eq!(
+        report.evidence.capability_node_execution_id,
+        "nodeexec.cap.1"
+    );
     assert_eq!(report.evidence.attributed_events.len(), 4);
     assert!(report.evidence.verify().is_accepted());
     // Peer usage is provenance, preserved verbatim as an opaque string.
     assert_eq!(report.evidence.peer_usage.len(), 1);
     assert_eq!(report.evidence.peer_usage[0].reported_value, "12345");
-    assert_eq!(report.evidence.peer_usage[0].metric_scope, "peer.tokens.total");
+    assert_eq!(
+        report.evidence.peer_usage[0].metric_scope,
+        "peer.tokens.total"
+    );
 }
 
 #[tokio::test]
 async fn codex_prompt_is_one_capability_with_nested_peer_loop() {
     let report = run_profile("acp:codex", "67890").await;
-    assert_eq!(report.commit, InvocationReport::Committed { new_program_state_version: 1 });
+    assert_eq!(
+        report.commit,
+        InvocationReport::Committed {
+            new_program_state_version: 1
+        }
+    );
     assert_eq!(report.evidence.attributed_events.len(), 4);
     assert_eq!(report.evidence.peer_usage[0].reported_by, "acp:codex");
     assert_eq!(report.evidence.peer_usage[0].reported_value, "67890");
@@ -233,14 +254,22 @@ async fn outcome_unknown_transport_records_uncertain_not_success() {
     let peer = Arc::new(ScriptedAcpPeer {
         outcome: AcpPromptOutcome {
             session_ref: String::new(),
-            state: PromptEffectState::OutcomeUnknown { message: "reconcile:acp.1".into() },
+            state: PromptEffectState::OutcomeUnknown {
+                message: "reconcile:acp.1".into(),
+            },
             nested_events: vec![event(0, AttributedEventKind::Message)],
             peer_usage: vec![],
         },
     });
     let inst = instance(commit.clone(), peer);
-    let report = inst.invoke_capability(invocation("acp:codex")).await.expect("runs");
-    assert!(matches!(report.commit, InvocationReport::OutcomeUnknown { .. }));
+    let report = inst
+        .invoke_capability(invocation("acp:codex"))
+        .await
+        .expect("runs");
+    assert!(matches!(
+        report.commit,
+        InvocationReport::OutcomeUnknown { .. }
+    ));
 
     let evidence = apxm_program::runtime_evidence::RuntimeEvidence {
         schema_version: apxm_program::runtime_evidence::RuntimeEvidenceVersion::V1,
@@ -248,10 +277,16 @@ async fn outcome_unknown_transport_records_uncertain_not_success() {
         facts: commit.evidence(),
     };
     let view = reconstruct(&evidence);
-    assert!(!view.committed, "an uncertain transport never becomes a committed success");
+    assert!(
+        !view.committed,
+        "an uncertain transport never becomes a committed success"
+    );
     assert!(view.outcome_unknown);
     assert!(
-        commit.evidence().iter().any(|f| f.fact_kind == FactKind::EffectOutcomeUnknown),
+        commit
+            .evidence()
+            .iter()
+            .any(|f| f.fact_kind == FactKind::EffectOutcomeUnknown),
         "the uncertain effect is recorded honestly",
     );
 }
@@ -275,6 +310,12 @@ async fn missing_external_agent_port_fails_closed() {
     )
     .expect("valid bundle");
     let inst = ProgramInstance::new(identity(), "instance.1", bundle);
-    let err = inst.invoke_capability(invocation("acp:claude-code")).await.expect_err("no acp port");
-    assert_eq!(err, InstanceError::MissingPort(PortSlot::ExternalAgentCapability));
+    let err = inst
+        .invoke_capability(invocation("acp:claude-code"))
+        .await
+        .expect_err("no acp port");
+    assert_eq!(
+        err,
+        InstanceError::MissingPort(PortSlot::ExternalAgentCapability)
+    );
 }

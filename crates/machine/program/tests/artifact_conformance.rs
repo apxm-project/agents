@@ -5,8 +5,8 @@
 mod common;
 
 use apxm_program::artifact::PortSourceScope;
-use apxm_program::{validate_artifact_json, ExecutableArtifact};
-use common::{load_constitution, load_vectors, Vector};
+use apxm_program::{ExecutableArtifact, validate_artifact_json};
+use common::{Vector, load_constitution, load_vectors};
 
 #[test]
 fn artifact_vectors_match_validator() {
@@ -33,13 +33,15 @@ fn only_artifact_semantic_requirements_pass() {
         "abstraction-deployment-infrastructure-requirement-rejected",
         "abstraction-invocation-authority-requirement-rejected",
     ] {
-        let vector = vectors.iter().find(|v| v.name == name).expect("named vector");
+        let vector = vectors
+            .iter()
+            .find(|v| v.name == name)
+            .expect("named vector");
         let verdict = validate_artifact_json(&vector.input);
         assert!(
-            verdict
-                .diagnostics()
-                .iter()
-                .any(|d| d.code == apxm_program::DiagnosticCode::RequirementScopeNotArtifactSemantic),
+            verdict.diagnostics().iter().any(
+                |d| d.code == apxm_program::DiagnosticCode::RequirementScopeNotArtifactSemantic
+            ),
             "vector '{name}' should be rejected by the artifact_semantic scope rule",
         );
     }
@@ -56,7 +58,10 @@ fn codec_round_trips_valid_artifact() {
     assert!(artifact.validate().is_accepted());
     let reencoded = artifact.encode().expect("encode artifact");
     let redecoded = ExecutableArtifact::decode(&reencoded).expect("decode re-encoded artifact");
-    assert_eq!(artifact, redecoded, "artifact codec is not a stable round-trip");
+    assert_eq!(
+        artifact, redecoded,
+        "artifact codec is not a stable round-trip"
+    );
 }
 
 #[test]
@@ -76,9 +81,18 @@ fn source_scope_enum_does_not_drift() {
         PortSourceScope::InvocationAuthority,
     ]
     .iter()
-    .map(|v| serde_json::to_value(v).unwrap().as_str().unwrap().to_string())
+    .map(|v| {
+        serde_json::to_value(v)
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string()
+    })
     .collect();
     actual.sort();
 
-    assert_eq!(actual, expected, "port source-scope closure drifted from contract");
+    assert_eq!(
+        actual, expected,
+        "port source-scope closure drifted from contract"
+    );
 }

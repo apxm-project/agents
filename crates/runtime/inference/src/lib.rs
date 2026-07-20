@@ -13,11 +13,11 @@ pub mod identity;
 pub mod stream;
 
 pub use effect::{
-    execute, AttemptDisposition, ErrorCategory, ModelCallRequest, ModelInferencePort, ModelOutcome,
-    RetryPolicy, TypedError, Usage,
+    AttemptDisposition, ErrorCategory, ModelCallRequest, ModelInferencePort, ModelOutcome,
+    RetryPolicy, TypedError, Usage, execute,
 };
 pub use identity::{
-    AdmissionEntry, BindingError, ExactPortBindingRef, ModelBindingAdmission, ModelDeploymentRef,
-    ModelTargetRef, ResolvedModelBinding,
+    BindingError, ExactPortBindingRef, ModelBindingAdmission, ModelDeploymentRef, ModelTargetRef,
+    ResolvedModelBinding,
 };
-pub use stream::{stream, CancelToken, ModelStreamPort, StreamChunk, StreamResult};
+pub use stream::{CancelToken, ModelStreamPort, StreamChunk, StreamResult, stream};

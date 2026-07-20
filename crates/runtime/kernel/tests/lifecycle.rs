@@ -9,16 +9,16 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
+use apxm_program::artifact::SchemaDigestRef;
+use apxm_program::runtime_evidence::Fact;
 use apxm_program::runtime_evidence::{
     InvocationState, ProgramIdentity, RuntimeEvidence, RuntimeEvidenceVersion,
 };
-use apxm_program::runtime_evidence::Fact;
-use apxm_program::artifact::SchemaDigestRef;
 
 use apxm_kernel::{
-    reconstruct, AtomicWriteSet, ExactPortBinding, ExecutionCommitPort, ExecutionCommitRequest,
-    ExecutionCommitResult, Invocation, InvocationReport, InstanceError, PortBundle, PortBundleSpec,
-    PortImplementation, PortSlot, ProgramInstance,
+    AtomicWriteSet, ExactPortBinding, ExecutionCommitPort, ExecutionCommitRequest,
+    ExecutionCommitResult, InstanceError, Invocation, InvocationReport, PortBundle, PortBundleSpec,
+    PortImplementation, PortSlot, ProgramInstance, reconstruct,
 };
 
 fn digest(c: char) -> String {
@@ -60,8 +60,11 @@ fn bundle(port: Arc<dyn ExecutionCommitPort>) -> PortBundle {
         binding_digest: digest('b'),
         proof_digest: digest('c'),
     };
-    PortBundle::construct(&spec, vec![(binding, PortImplementation::ExecutionCommit(port))])
-        .expect("valid bundle")
+    PortBundle::construct(
+        &spec,
+        vec![(binding, PortImplementation::ExecutionCommit(port))],
+    )
+    .expect("valid bundle")
 }
 
 fn instance_on(port: Arc<dyn ExecutionCommitPort>, id: &str) -> ProgramInstance {
@@ -176,17 +179,28 @@ async fn atomic_commit_publishes_full_write_set_and_all_facts() {
         })
         .await
         .expect("invocation runs");
-    assert_eq!(report, InvocationReport::Committed { new_program_state_version: 1 });
+    assert_eq!(
+        report,
+        InvocationReport::Committed {
+            new_program_state_version: 1
+        }
+    );
 
     assert_eq!(port.version("instance.1"), 1);
     let evidence = port.evidence_for("instance.1");
     // instance.created + invocation.admitted + attempt.recorded + invocation.committed
     assert_eq!(evidence.facts.len(), 4);
-    assert!(evidence.verify().is_accepted(), "durable evidence must be valid");
+    assert!(
+        evidence.verify().is_accepted(),
+        "durable evidence must be valid"
+    );
 
     let view = reconstruct(&evidence);
     assert!(view.committed);
-    assert_eq!(view.invocation_state, Some(InvocationState::CommittedReturn));
+    assert_eq!(
+        view.invocation_state,
+        Some(InvocationState::CommittedReturn)
+    );
 }
 
 #[tokio::test]
@@ -204,7 +218,9 @@ async fn compare_conflict_publishes_nothing() {
     let result = port.commit(request).await;
     assert_eq!(
         result,
-        ExecutionCommitResult::CompareConflict { current_program_state_version: 0 }
+        ExecutionCommitResult::CompareConflict {
+            current_program_state_version: 0
+        }
     );
     assert_eq!(port.version("instance.1"), 0);
     assert!(port.committed_evidence("instance.1").is_empty());
@@ -228,7 +244,10 @@ async fn outcome_unknown_publishes_nothing_and_is_not_success() {
     assert_eq!(port.version("instance.1"), 0);
     assert!(port.committed_evidence("instance.1").is_empty());
     let view = reconstruct(&port.evidence_for("instance.1"));
-    assert!(!view.committed, "an uncertain outcome never becomes success");
+    assert!(
+        !view.committed,
+        "an uncertain outcome never becomes success"
+    );
     assert_eq!(view.invocation_state, None);
 }
 
@@ -238,7 +257,10 @@ async fn crash_after_commit_reconciles_to_committed() {
     {
         let instance = instance_on(port.clone(), "instance.1");
         instance
-            .invoke(Invocation { commit_id: "c1".into(), write_set: write_set() })
+            .invoke(Invocation {
+                commit_id: "c1".into(),
+                write_set: write_set(),
+            })
             .await
             .expect("commit");
         // Instance dropped: a crash loses the live instance, not the durable
@@ -254,7 +276,10 @@ async fn crash_before_commit_reconciles_to_uncommitted() {
     port.inject_outcome_unknown("c1");
     let instance = instance_on(port.clone(), "instance.1");
     let _ = instance
-        .invoke(Invocation { commit_id: "c1".into(), write_set: write_set() })
+        .invoke(Invocation {
+            commit_id: "c1".into(),
+            write_set: write_set(),
+        })
         .await;
     let view = reconstruct(&port.evidence_for("instance.1"));
     assert!(!view.committed);
@@ -266,15 +291,31 @@ async fn idempotent_recommit_applies_once() {
     let port = Arc::new(FixtureCommit::new());
     let instance = instance_on(port.clone(), "instance.1");
     let first = instance
-        .invoke(Invocation { commit_id: "c1".into(), write_set: write_set() })
+        .invoke(Invocation {
+            commit_id: "c1".into(),
+            write_set: write_set(),
+        })
         .await
         .unwrap();
     let second = instance
-        .invoke(Invocation { commit_id: "c1".into(), write_set: write_set() })
+        .invoke(Invocation {
+            commit_id: "c1".into(),
+            write_set: write_set(),
+        })
         .await
         .unwrap();
-    assert_eq!(first, InvocationReport::Committed { new_program_state_version: 1 });
-    assert_eq!(second, InvocationReport::Committed { new_program_state_version: 1 });
+    assert_eq!(
+        first,
+        InvocationReport::Committed {
+            new_program_state_version: 1
+        }
+    );
+    assert_eq!(
+        second,
+        InvocationReport::Committed {
+            new_program_state_version: 1
+        }
+    );
     // The atomic boundary applied exactly once: version and durable evidence
     // reflect a single commit.
     assert_eq!(port.version("instance.1"), 1);
@@ -286,11 +327,17 @@ async fn replay_from_durable_evidence_is_monotonic() {
     let port = Arc::new(FixtureCommit::new());
     let instance = instance_on(port.clone(), "instance.1");
     instance
-        .invoke(Invocation { commit_id: "c1".into(), write_set: write_set() })
+        .invoke(Invocation {
+            commit_id: "c1".into(),
+            write_set: write_set(),
+        })
         .await
         .unwrap();
     let evidence = port.evidence_for("instance.1");
-    assert!(evidence.verify().is_accepted(), "evidence is strictly monotonic");
+    assert!(
+        evidence.verify().is_accepted(),
+        "evidence is strictly monotonic"
+    );
 
     let prefix = RuntimeEvidence {
         schema_version: RuntimeEvidenceVersion::V1,
@@ -299,7 +346,10 @@ async fn replay_from_durable_evidence_is_monotonic() {
     };
     let replayed = reconstruct(&prefix);
     let live = reconstruct(&evidence);
-    assert!(!replayed.committed, "prefix before the commit fact is uncommitted");
+    assert!(
+        !replayed.committed,
+        "prefix before the commit fact is uncommitted"
+    );
     assert!(live.committed);
     assert!(live.last_event_sequence >= replayed.last_event_sequence);
 }
@@ -321,17 +371,23 @@ async fn instances_are_isolated() {
     let a = instance_on(port_a.clone(), "instance.a");
     let b = instance_on(port_b.clone(), "instance.b");
 
-    a.invoke(Invocation { commit_id: "c1".into(), write_set: write_set() })
-        .await
-        .unwrap();
+    a.invoke(Invocation {
+        commit_id: "c1".into(),
+        write_set: write_set(),
+    })
+    .await
+    .unwrap();
 
     // B shares no state with A.
     assert_eq!(port_b.version("instance.b"), 0);
     assert!(port_b.committed_evidence("instance.b").is_empty());
 
-    b.invoke(Invocation { commit_id: "c1".into(), write_set: write_set() })
-        .await
-        .unwrap();
+    b.invoke(Invocation {
+        commit_id: "c1".into(),
+        write_set: write_set(),
+    })
+    .await
+    .unwrap();
     assert_eq!(port_a.version("instance.a"), 1);
     assert_eq!(port_b.version("instance.b"), 1);
 }
@@ -370,7 +426,10 @@ async fn single_flight_rejects_concurrent_invocation() {
     let driver = instance.clone();
     let handle = tokio::spawn(async move {
         driver
-            .invoke(Invocation { commit_id: "c1".into(), write_set: write_set() })
+            .invoke(Invocation {
+                commit_id: "c1".into(),
+                write_set: write_set(),
+            })
             .await
     });
 
@@ -380,12 +439,20 @@ async fn single_flight_rejects_concurrent_invocation() {
     }
 
     let busy = instance
-        .invoke(Invocation { commit_id: "c2".into(), write_set: write_set() })
+        .invoke(Invocation {
+            commit_id: "c2".into(),
+            write_set: write_set(),
+        })
         .await;
     assert_eq!(busy, Err(InstanceError::Busy));
 
     released.store(true, Ordering::SeqCst);
     let first = handle.await.expect("join").expect("first invocation");
-    assert_eq!(first, InvocationReport::Committed { new_program_state_version: 1 });
+    assert_eq!(
+        first,
+        InvocationReport::Committed {
+            new_program_state_version: 1
+        }
+    );
     assert_eq!(inner.version("instance.1"), 1);
 }

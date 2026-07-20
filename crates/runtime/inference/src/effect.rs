@@ -44,12 +44,18 @@ pub struct Usage {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelOutcome {
-    CommittedSuccess { usage: Usage },
-    TypedFailure { error: TypedError },
+    CommittedSuccess {
+        usage: Usage,
+    },
+    TypedFailure {
+        error: TypedError,
+    },
     Cancelled,
     /// An uncertain external effect. Usage/cost is uncertain and the request is
     /// never silently retried or treated as success.
-    ModelOutcomeUnknown { uncertain_usage: Option<Usage> },
+    ModelOutcomeUnknown {
+        uncertain_usage: Option<Usage>,
+    },
 }
 
 /// A stable model-effect request identity plus its resolved binding.
@@ -61,20 +67,21 @@ pub struct ModelCallRequest {
 }
 
 impl ModelCallRequest {
-    /// Build a request for the authored target by resolving exactly one admitted
-    /// binding. The resolved binding always matches the authored target, so a
+    /// Build a request for the authored target from the already-materialized
+    /// admitted binding. The binding must match the authored target, so a
     /// request cannot substitute a different model.
     ///
     /// # Errors
     ///
-    /// Returns a [`BindingError`] when the target has no single admitted binding.
+    /// Returns a [`BindingError`] when the admitted binding does not match the
+    /// target or carries an invalid digest.
     pub fn authorize(
         effect_id: impl Into<String>,
         request_digest: impl Into<String>,
         authored_target: &ModelTargetRef,
         admission: &ModelBindingAdmission,
     ) -> Result<Self, BindingError> {
-        let resolved_binding = admission.resolve(authored_target)?;
+        let resolved_binding = admission.validate(authored_target)?;
         Ok(Self {
             effect_id: effect_id.into(),
             request_digest: request_digest.into(),

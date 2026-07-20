@@ -67,7 +67,10 @@ impl std::fmt::Display for ConfinementError {
             Self::UnadmittedSandbox {
                 confinement_type,
                 sandbox_digest,
-            } => write!(f, "no admitted {confinement_type} sandbox matches {sandbox_digest}"),
+            } => write!(
+                f,
+                "no admitted {confinement_type} sandbox matches {sandbox_digest}"
+            ),
             Self::MalformedSandboxDigest => write!(f, "malformed sandbox digest"),
         }
     }
