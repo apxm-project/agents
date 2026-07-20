@@ -80,6 +80,14 @@ pub enum Commands {
         /// Agent directory (contains agent.toml, integrity.toml, and capabilities/)
         agent_dir: PathBuf,
     },
+    /// Compile a canonical-authored agent session package to canonical
+    /// `apxm.air.v1` (`AirModule`) JSON on stdout, through the canonical
+    /// `apxm_program` frontend. Stdout contains only canonical AIR JSON;
+    /// diagnostics use stderr and failures are nonzero.
+    CompileServiceCanonical {
+        /// Agent directory (contains agent.toml with a canonical [compile].entry)
+        agent_dir: PathBuf,
+    },
     /// Decompile an artifact back to AIR
     Decompile {
         /// Input artifact file (.apxmobj)
