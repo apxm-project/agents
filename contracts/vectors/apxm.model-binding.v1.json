@@ -1,0 +1,61 @@
+[
+  {
+    "name": "valid_resolved_binding",
+    "input": {
+      "schema_version": "apxm.model-binding.v1",
+      "model_target_ref": {
+        "ref_type": "apxm.model-target.v1",
+        "ref": "model-target:qwen3-32b-instruct@2026-06-01"
+      },
+      "model_deployment_ref": {
+        "ref_type": "apxm.model-deployment.v1",
+        "ref": "model-deployment:qwen3-32b-vllm-us"
+      },
+      "exact_port_binding_ref": {
+        "ref_type": "apxm.port-binding.v1",
+        "ref": "port-binding:model-inference-primary"
+      },
+      "exact_port_binding_digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "rejects_missing_exact_port_binding_digest",
+    "input": {
+      "schema_version": "apxm.model-binding.v1",
+      "model_target_ref": {
+        "ref_type": "apxm.model-target.v1",
+        "ref": "model-target:qwen3-32b-instruct@2026-06-01"
+      },
+      "model_deployment_ref": {
+        "ref_type": "apxm.model-deployment.v1",
+        "ref": "model-deployment:qwen3-32b-vllm-us"
+      },
+      "exact_port_binding_ref": {
+        "ref_type": "apxm.port-binding.v1",
+        "ref": "port-binding:model-inference-primary"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "rejects_non_sha256_binding_digest",
+    "input": {
+      "schema_version": "apxm.model-binding.v1",
+      "model_target_ref": {
+        "ref_type": "apxm.model-target.v1",
+        "ref": "model-target:qwen3-32b-instruct@2026-06-01"
+      },
+      "model_deployment_ref": {
+        "ref_type": "apxm.model-deployment.v1",
+        "ref": "model-deployment:qwen3-32b-vllm-us"
+      },
+      "exact_port_binding_ref": {
+        "ref_type": "apxm.port-binding.v1",
+        "ref": "port-binding:model-inference-primary"
+      },
+      "exact_port_binding_digest": "not-a-digest"
+    },
+    "expected_valid": false
+  }
+]

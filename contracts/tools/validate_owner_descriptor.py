@@ -53,6 +53,9 @@ VECTOR_SCHEMA = {
     "apxm.external-agent-session.v1.json": "apxm.external-agent-session.v1",
     "apxm.external-agent-evidence.v1.json": "apxm.external-agent-evidence.v1",
     "apxm.port-contract.v1.json": "apxm.port-contract.v1",
+    "apxm.model-context-envelope.v1.json": "apxm.model-context-envelope.v1",
+    "apxm.model-target.v1.json": "apxm.model-target.v1",
+    "apxm.model-binding.v1.json": "apxm.model-binding.v1",
 }
 
 # Authoring rule: no product surface may cite the delivery plan or its

@@ -1,0 +1,63 @@
+[
+  {
+    "name": "valid_no_selected_instruction_layers",
+    "input": {
+      "schema_version": "apxm.model-context-envelope.v1",
+      "context_id": "context-200",
+      "invocation_id": "invoke-200",
+      "policy_ref": "policy://context/default",
+      "layers": [
+        {"kind":"platform_policy","position":0,"provenance_ref":"policy://platform/base","trust":"platform_instruction","redaction":"public","token_budget":0,"token_cost":0,"frame_ids":[]},
+        {"kind":"agent_instructions","position":1,"provenance_ref":"artifact://agent/program-200","trust":"agent_instruction","redaction":"sensitive","token_budget":0,"token_cost":0,"frame_ids":[]},
+        {"kind":"developer_instructions","position":2,"provenance_ref":"policy://developer/default","trust":"developer_instruction","redaction":"sensitive","token_budget":0,"token_cost":0,"frame_ids":[]},
+        {"kind":"selected_skill_instructions","position":3,"provenance_ref":"selection://none","trust":"selected_skill_instruction","redaction":"sensitive","token_budget":0,"token_cost":0,"frame_ids":[]},
+        {"kind":"session_and_memory_data","position":4,"provenance_ref":"context://memory/none","trust":"data","redaction":"sensitive","token_budget":0,"token_cost":0,"frame_ids":[]},
+        {"kind":"current_input","position":5,"provenance_ref":"input://invoke-200","trust":"data","redaction":"sensitive","token_budget":4096,"token_cost":0,"frame_ids":[]},
+        {"kind":"tool_results","position":6,"provenance_ref":"context://tool-results/none","trust":"tool_result","redaction":"sensitive","token_budget":0,"token_cost":0,"frame_ids":[]}
+      ],
+      "frames": [],
+      "tool_schemas": [{"grant_id":"grant-read","capability_id":"read_local_skill","schema_ref":"schema://capabilities/read-local-skill"}],
+      "model_requirements": {"tools":true,"structured_output":false,"thinking":false,"vision":false,"locality":"any","minimum_context_tokens":4096},
+      "sealed_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "valid_reference_only_current_input_frame",
+    "input": {
+      "schema_version": "apxm.model-context-envelope.v1",
+      "context_id": "context-201",
+      "invocation_id": "invoke-201",
+      "policy_ref": "policy://context/default",
+      "layers": [
+        {"kind":"platform_policy","position":0,"provenance_ref":"policy://platform/base","trust":"platform_instruction","redaction":"public","token_budget":0,"token_cost":0,"frame_ids":[]},
+        {"kind":"agent_instructions","position":1,"provenance_ref":"artifact://agent/program-201","trust":"agent_instruction","redaction":"sensitive","token_budget":0,"token_cost":0,"frame_ids":[]},
+        {"kind":"developer_instructions","position":2,"provenance_ref":"policy://developer/default","trust":"developer_instruction","redaction":"sensitive","token_budget":0,"token_cost":0,"frame_ids":[]},
+        {"kind":"selected_skill_instructions","position":3,"provenance_ref":"selection://none","trust":"selected_skill_instruction","redaction":"sensitive","token_budget":0,"token_cost":0,"frame_ids":[]},
+        {"kind":"session_and_memory_data","position":4,"provenance_ref":"context://memory/none","trust":"data","redaction":"sensitive","token_budget":0,"token_cost":0,"frame_ids":[]},
+        {"kind":"current_input","position":5,"provenance_ref":"input://invoke-201","trust":"data","redaction":"sensitive","token_budget":4096,"token_cost":1,"frame_ids":["frame-input"]},
+        {"kind":"tool_results","position":6,"provenance_ref":"context://tool-results/none","trust":"tool_result","redaction":"sensitive","token_budget":0,"token_cost":0,"frame_ids":[]}
+      ],
+      "frames": [{"frame_id":"frame-input","layer":"current_input","role":"user","source_ref":"input://invoke-201","digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444","trust":"data","redaction":"sensitive","scope":"turn","truncation":"deterministic_budget","token_cost":1,"content_ref":"input://invoke-201","disposition":"reference"}],
+      "tool_schemas": [],
+      "model_requirements": {"tools":false,"structured_output":false,"thinking":false,"vision":false,"locality":"any","minimum_context_tokens":0},
+      "sealed_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "rejects_frame_without_immutable_digest",
+    "input": {
+      "schema_version": "apxm.model-context-envelope.v1",
+      "context_id": "context-202",
+      "invocation_id": "invoke-202",
+      "policy_ref": "policy://context/default",
+      "layers": [],
+      "frames": [{"frame_id":"frame-system","layer":"platform_policy","role":"system","source_ref":"policy://platform/base","trust":"platform_instruction","redaction":"public","scope":"turn","truncation":"forbidden","token_cost":32,"content_ref":"context://frames/frame-system","disposition":"prompt"}],
+      "tool_schemas": [],
+      "model_requirements": {"tools":false,"structured_output":false,"thinking":false,"vision":false,"locality":"any","minimum_context_tokens":0},
+      "sealed_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    "expected_valid": false
+  }
+]
