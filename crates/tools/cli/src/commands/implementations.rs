@@ -10,17 +10,6 @@ use anyhow::Result;
 use apxm_driver::{ApXmConfig, ConfigError};
 use colored::Colorize;
 
-#[cfg(feature = "driver")]
-pub(super) fn parse_opt_level(level: u8) -> apxm_core::types::OptimizationLevel {
-    use apxm_core::types::OptimizationLevel;
-    match level {
-        0 => OptimizationLevel::O0,
-        1 => OptimizationLevel::O1,
-        2 => OptimizationLevel::O2,
-        _ => OptimizationLevel::O3,
-    }
-}
-
 pub(crate) fn category_str(cat: apxm_core::types::OperationCategory) -> &'static str {
     use apxm_core::types::OperationCategory;
     match cat {

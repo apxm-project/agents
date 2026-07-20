@@ -12,14 +12,13 @@ pub mod analysis;
 pub mod backend;
 pub mod cache;
 pub mod canonical_air;
+pub mod canonical_execute;
 #[cfg(feature = "driver")]
 pub mod chat;
 pub mod codegen;
 #[cfg(feature = "driver")]
-pub mod compile;
+pub mod compile_service_canonical;
 pub(crate) mod dekk_hints;
-#[cfg(feature = "driver")]
-pub mod execute;
 pub mod frontend_air;
 pub mod integration;
 pub mod ops;
@@ -39,7 +38,6 @@ pub mod tokenize;
 pub mod tool;
 #[cfg(feature = "driver")]
 pub mod watch;
-pub mod workflow;
 
 pub use cli::*;
 
@@ -50,11 +48,8 @@ pub use analysis::*;
 pub use backend::*;
 pub use cache::*;
 pub use canonical_air::*;
+pub use canonical_execute::*;
 pub use codegen::*;
-#[cfg(feature = "driver")]
-pub use compile::*;
-#[cfg(feature = "driver")]
-pub use execute::*;
 pub use frontend_air::*;
 pub use integration::*;
 pub use ops::*;
@@ -68,7 +63,6 @@ pub use tokenize::*;
 pub use tool::*;
 #[cfg(feature = "driver")]
 pub use watch::*;
-pub use workflow::*;
 
 #[derive(Debug)]
 pub struct OutputAlreadyEmitted;
