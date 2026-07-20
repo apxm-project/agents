@@ -3,8 +3,6 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use apxm_core::types::{MetricsLevel, OptimizationTarget};
-
 use super::implementations::parse_header;
 
 #[derive(Parser)]
@@ -34,52 +32,6 @@ pub enum Commands {
         /// Project name (creates a directory with this name)
         name: String,
     },
-    /// Compile canonical AIR or supported frontend source to an artifact
-    Compile {
-        /// Input source (.py, .ts, .air, or an agent package directory)
-        input: PathBuf,
-        /// Output artifact path
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-        /// Emit diagnostics JSON file with compilation statistics
-        #[arg(long)]
-        emit_diagnostics: Option<PathBuf>,
-        /// Emit unified metrics JSON (schema_version=2) with compiler section
-        #[arg(long)]
-        emit_metrics: Option<PathBuf>,
-        /// Optimization level (0 = no optimizations, 1-3 = increasing optimization)
-        #[arg(short = 'O', long = "opt-level", default_value = "2")]
-        opt_level: u8,
-        /// Optimization target: latency, cost, tokens, parallelism, balanced
-        #[arg(long, default_value_t = OptimizationTarget::Balanced)]
-        target: OptimizationTarget,
-        /// Skip CSE for LLM operations (useful with non-zero temperature)
-        #[arg(long)]
-        no_cse_llm: bool,
-        /// Profile-guided optimization: path to execution profile JSON
-        #[arg(long)]
-        profile: Option<PathBuf>,
-        /// Enable the diagnostic `unconsumed-value-warning` pass.
-        /// Off by default — the pass is purely diagnostic with no IR mutation.
-        #[arg(long, default_value_t = false)]
-        warn: bool,
-        /// Skip a named pass (repeatable). Useful for ablation studies.
-        /// Applied after --pass-list (if both are provided).
-        #[arg(long = "disable-pass", value_name = "PASS")]
-        disable_passes: Vec<String>,
-        /// Override the entire pass list with a comma-separated sequence.
-        /// When set, --opt-level / --target / --warn no longer determine pass
-        /// selection. --no-cse-llm and --disable-pass still filter the list.
-        #[arg(long = "pass-list", value_name = "A,B,C", value_delimiter = ',')]
-        pass_list_override: Option<Vec<String>>,
-    },
-    /// Compile an explicit agent ProgramPackage entry to AIR on stdout.
-    /// Stdout contains only AIR; diagnostics use stderr and failures are
-    /// nonzero so callers can consume the command as a process contract.
-    CompileService {
-        /// Agent directory (contains agent.toml, integrity.toml, and capabilities/)
-        agent_dir: PathBuf,
-    },
     /// Compile a canonical-authored agent session package to canonical
     /// `apxm.air.v1` (`AirModule`) JSON on stdout, through the canonical
     /// `apxm_program` frontend. Stdout contains only canonical AIR JSON;
@@ -88,85 +40,10 @@ pub enum Commands {
         /// Agent directory (contains agent.toml with a canonical [compile].entry)
         agent_dir: PathBuf,
     },
-    /// Decompile an artifact back to AIR
-    Decompile {
-        /// Input artifact file (.apxmobj)
-        artifact: PathBuf,
-        /// Output AIR file (defaults to stdout)
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-    },
-    /// Compile and execute canonical AIR or supported frontend source
-    #[command(trailing_var_arg = true)]
-    Execute {
-        /// Input source (.py, .ts, .air, or an agent package directory)
+    /// Execute canonical `apxm.air.v1` JSON through the canonical runtime.
+    ExecuteCanonical {
+        /// Canonical AIR JSON file.
         input: PathBuf,
-        /// Arguments to pass to the entry flow
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-        /// Optimization level (0 = no optimizations, 1-3 = increasing optimization)
-        #[arg(short = 'O', long = "opt-level", default_value = "2")]
-        opt_level: u8,
-        /// Optimization target: latency, cost, tokens, parallelism, balanced
-        #[arg(long, default_value_t = OptimizationTarget::Balanced)]
-        target: OptimizationTarget,
-        /// Emit metrics JSON file with runtime execution statistics
-        #[arg(long)]
-        emit_metrics: Option<PathBuf>,
-        /// Metrics emission tier (basic = aggregates only;
-        /// detailed = adds in-flight observers like per-workflow pin-peak polling)
-        #[arg(long, default_value_t = MetricsLevel::default())]
-        emit_metrics_level: MetricsLevel,
-        /// Emit session output folder with all node results, events, metrics.
-        /// Default: ON (auto-generates path under ApxmPaths::sessions_dir()).
-        /// Pass an explicit path to override, or use --no-emit-session to disable.
-        #[arg(long, value_name = "PATH", num_args = 0..=1, conflicts_with = "no_emit_session")]
-        emit_session: Option<Option<PathBuf>>,
-        /// Disable session output (opt-out of the default-on --emit-session behavior).
-        #[arg(long)]
-        no_emit_session: bool,
-        /// Emit execution profile JSON for profile-guided optimization
-        #[arg(long)]
-        emit_profile: Option<PathBuf>,
-    },
-    /// Run a pre-compiled artifact (.apxmobj)
-    Run {
-        /// Input artifact file (.apxmobj)
-        input: PathBuf,
-        /// Arguments to pass to the entry flow
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-        /// Runtime optimization target for artifact-level execution hints:
-        /// latency, cost, tokens, parallelism, balanced
-        #[arg(long, default_value_t = OptimizationTarget::Balanced)]
-        target: OptimizationTarget,
-        /// Emit metrics JSON file with runtime execution statistics
-        #[arg(long)]
-        emit_metrics: Option<PathBuf>,
-        /// Metrics emission tier (basic = aggregates only;
-        /// detailed = adds in-flight observers like per-workflow pin-peak polling)
-        #[arg(long, default_value_t = MetricsLevel::default())]
-        emit_metrics_level: MetricsLevel,
-        /// Emit session output folder with all node results, events, metrics.
-        /// Default: ON (auto-generates path under ApxmPaths::sessions_dir()).
-        /// Pass an explicit path to override, or use --no-emit-session to disable.
-        #[arg(long, value_name = "PATH", num_args = 0..=1, conflicts_with = "no_emit_session")]
-        emit_session: Option<Option<PathBuf>>,
-        /// Disable session output (opt-out of the default-on --emit-session behavior).
-        #[arg(long)]
-        no_emit_session: bool,
-        /// Emit execution profile JSON for profile-guided optimization
-        #[arg(long)]
-        emit_profile: Option<PathBuf>,
-        /// Reuse a stable session id across separate `apxm run` invocations of
-        /// the same artifact so session-scoped state that IS durable across a
-        /// process restart (the session ledger's turn/tool counters, restart-state reconstruction; a
-        /// compacted conversation summary's LTM copy, the runtime compaction mechanism) resumes instead of
-        /// resetting. Session-scoped in-memory state (STM) is deliberately
-        /// volatile and does NOT survive a restart even with the same id —
-        /// only the durable stores keyed by it do.
-        #[arg(long = "session-id", value_name = "ID")]
-        session_id: Option<String>,
     },
     /// Diagnose compiler/runtime dependencies
     Doctor,
@@ -263,11 +140,6 @@ pub enum Commands {
     Process {
         #[command(subcommand)]
         action: ProcessAction,
-    },
-    /// Manage multi-step workflow files
-    Workflow {
-        #[command(subcommand)]
-        action: WorkflowAction,
     },
     /// Manage the MemoCache (response memoization cache)
     Cache {
@@ -902,24 +774,37 @@ mod tests {
     use clap::Parser;
 
     #[test]
-    fn compile_service_accepts_explicit_package_path() {
-        let cli = Cli::try_parse_from(["apxm", "compile-service", "/tmp/agent"])
-            .expect("compile-service parses");
+    fn compile_service_canonical_accepts_explicit_package_path() {
+        let cli = Cli::try_parse_from(["apxm", "compile-service-canonical", "/tmp/agent"])
+            .expect("compile-service-canonical parses");
 
         match cli.command {
-            Commands::CompileService { agent_dir } => {
+            Commands::CompileServiceCanonical { agent_dir } => {
                 assert_eq!(agent_dir, PathBuf::from("/tmp/agent"));
             }
-            _ => panic!("expected compile-service command"),
+            _ => panic!("expected compile-service-canonical command"),
         }
     }
 
     #[test]
-    fn compile_service_rejects_missing_package_path() {
-        let err = match Cli::try_parse_from(["apxm", "compile-service"]) {
-            Ok(_) => panic!("compile-service requires an agent package path"),
+    fn compile_service_canonical_rejects_missing_package_path() {
+        let err = match Cli::try_parse_from(["apxm", "compile-service-canonical"]) {
+            Ok(_) => panic!("compile-service-canonical requires an agent package path"),
             Err(err) => err,
         };
         assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn execute_canonical_accepts_air_path() {
+        let cli = Cli::try_parse_from(["apxm", "execute-canonical", "/tmp/program.air"])
+            .expect("execute-canonical parses");
+
+        match cli.command {
+            Commands::ExecuteCanonical { input } => {
+                assert_eq!(input, PathBuf::from("/tmp/program.air"));
+            }
+            _ => panic!("expected execute-canonical command"),
+        }
     }
 }

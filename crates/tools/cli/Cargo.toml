@@ -27,12 +27,16 @@ apxm-backends.workspace = true
 apxm-driver = { workspace = true, optional = true }
 apxm-compiler.workspace = true
 apxm-program.workspace = true
+apxm-execution.workspace = true
+apxm-inference.workspace = true
+apxm-kernel.workspace = true
 apxm-artifact = { workspace = true, optional = true }
 apxm-backend-registry.workspace = true
 apxm-acp.workspace = true
 apxm-runtime.workspace = true
 clap.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+async-trait.workspace = true
 anyhow.workspace = true
 colored.workspace = true
 dirs.workspace = true
