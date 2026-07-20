@@ -26,24 +26,7 @@ mod frontend;
 use anyhow::Result;
 use commands::*;
 use serde_json::json;
-#[cfg(feature = "driver")]
-use std::path::PathBuf;
 use std::process::ExitCode;
-
-/// Resolve the --emit-session / --no-emit-session flag pair.
-///
-/// Default: emit-session ON (auto-path). Explicit --no-emit-session disables.
-#[cfg(feature = "driver")]
-fn resolve_emit_session(
-    emit_session: Option<Option<PathBuf>>,
-    no_emit_session: bool,
-) -> Option<Option<PathBuf>> {
-    if no_emit_session {
-        None
-    } else {
-        Some(emit_session.unwrap_or(None))
-    }
-}
 
 /// Initialize the tracing subscriber based on the --trace flag or RUST_LOG env var.
 /// If neither is provided, no subscriber is registered (zero overhead).
@@ -124,87 +107,12 @@ async fn run_cli(cli: Cli) -> Result<()> {
 
     match cli.command {
         Commands::Init { name } => init_command(&name),
-        Commands::Compile {
-            input,
-            output,
-            emit_diagnostics,
-            emit_metrics,
-            opt_level,
-            target,
-            no_cse_llm,
-            profile,
-            warn,
-            disable_passes,
-            pass_list_override,
-        } => compile_command(
-            input,
-            output,
-            emit_diagnostics,
-            emit_metrics,
-            opt_level,
-            target,
-            no_cse_llm,
-            profile,
-            warn,
-            disable_passes,
-            pass_list_override,
-            cli.config,
-        ),
-        Commands::CompileService { agent_dir } => compile_service_command(agent_dir, cli.config),
         Commands::CompileServiceCanonical { agent_dir } => {
-            compile_service_canonical_command(agent_dir, cli.config)
-        }
-        Commands::Decompile { artifact, output } => decompile_command(artifact, output),
-        Commands::Execute {
-            input,
-            args,
-            opt_level,
-            target,
-            emit_metrics,
-            emit_metrics_level,
-            emit_session,
-            no_emit_session,
-            emit_profile,
-        } => {
-            execute_command(
-                input,
-                args,
-                opt_level,
-                target,
-                cli.config,
-                cli.json,
-                emit_metrics,
-                emit_metrics_level,
-                resolve_emit_session(emit_session, no_emit_session),
-                emit_profile,
+            commands::compile_service_canonical::compile_service_canonical_command(
+                agent_dir, cli.config,
             )
-            .await
         }
-        Commands::Run {
-            input,
-            args,
-            target,
-            emit_metrics,
-            emit_metrics_level,
-            emit_session,
-            no_emit_session,
-            emit_profile,
-            session_id,
-        } => {
-            run_command(
-                input,
-                args,
-                target,
-                cli.config,
-                cli.json,
-                emit_metrics,
-                emit_metrics_level,
-                resolve_emit_session(emit_session, no_emit_session),
-                emit_profile,
-                session_id,
-            )
-            .await
-        }
+        Commands::ExecuteCanonical { input } => execute_canonical_command(input, cli.json).await,
         Commands::Doctor => doctor_command(cli.config, cli.json),
         Commands::Backend { action } => backend_command(action, cli.json).await,
         Commands::Tool { action } => tool_command(action, cli.json),
@@ -226,7 +134,6 @@ async fn run_cli(cli: Cli) -> Result<()> {
         Commands::CanonicalAir { input } => canonical_air_command(input),
         Commands::Session { action } => session_command(action, cli.json),
         Commands::Process { action } => process_command(action, cli.json),
-        Commands::Workflow { action } => workflow_command(action, cli.config, cli.json).await,
         Commands::Cache { action } => cache_command(action, cli.json),
         Commands::Tokenize { text, file, model } => tokenize_command(text, file, model, cli.json),
         Commands::Watch { thread_id, expand } => watch_command(thread_id, expand).await,
@@ -322,6 +229,7 @@ async fn rollout_action(action: commands::RolloutAction) -> Result<()> {
 async fn run_cli_no_driver(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Init { name } => init_command(&name),
+        Commands::ExecuteCanonical { input } => execute_canonical_command(input, cli.json).await,
         Commands::Doctor => doctor_command(cli.config, cli.json),
         Commands::Tool { action } => tool_command(action, cli.json),
         Commands::Acp { action } => acp_command(action, cli.json).await,
@@ -342,7 +250,6 @@ async fn run_cli_no_driver(cli: Cli) -> Result<()> {
         Commands::CanonicalAir { input } => canonical_air_command(input),
         Commands::Session { action } => session_command(action, cli.json),
         Commands::Process { action } => process_command(action, cli.json),
-        Commands::Workflow { action } => workflow_command_no_driver(action, cli.json),
         Commands::Cache { action } => cache_command(action, cli.json),
         Commands::Tokenize { text, file, model } => tokenize_command(text, file, model, cli.json),
         Commands::Watch { .. } | Commands::Rollout { .. } | Commands::Chat { .. } => {
@@ -351,6 +258,10 @@ async fn run_cli_no_driver(cli: Cli) -> Result<()> {
                 commands::dekk_hints::BUILD
             ))
         }
+        Commands::CompileServiceCanonical { .. } => Err(anyhow::anyhow!(
+            "apxm compile-service-canonical requires the `driver` feature. Rebuild through `{}`, then re-run the command.",
+            commands::dekk_hints::BUILD
+        )),
         _ => Err(anyhow::anyhow!(
             "Command requires the `driver` feature. Rebuild through `{}`, then re-run the command.",
             commands::dekk_hints::BUILD
