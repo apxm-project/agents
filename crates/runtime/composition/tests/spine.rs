@@ -6,23 +6,23 @@
 use std::sync::Arc;
 
 use apxm_adapter_acp::{
-    end_turn_exchange, AdmittedProfiles, CeilingAuthorizer, ExternalAgentCapabilityAdapter,
-    FakeAcpPeer, PeerEvent, PeerUsageEvidence, ReverseRequest,
+    AdmittedProfiles, CeilingAuthorizer, ExternalAgentCapabilityAdapter, FakeAcpPeer, PeerEvent,
+    PeerUsageEvidence, ReverseRequest, end_turn_exchange,
 };
 use apxm_adapter_runtime::{
     AdmittedSandboxConfinement, ConfinementType, FixedVllmTransport, InMemoryExecutionCommit,
     VllmHttpInferenceClient, VllmModelOutcome, VllmNativeUsage,
 };
 
-use apxm_composition::{assemble_bundle, execution_ports, AdmittedBinding, AdmittedPorts};
+use apxm_composition::{AdmittedBinding, AdmittedPorts, assemble_bundle, execution_ports};
 use apxm_execution::{
-    execute, CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome,
-    CompositionPort, CompositionRequest, EventAwait, EventOutcome, EventPort, ExecutionRequest,
-    NodeOutcome,
+    CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
+    CompositionRequest, EventAwait, EventOutcome, EventPort, ExecutionRequest, NodeOutcome,
+    execute,
 };
 use apxm_inference::{
-    AdmissionEntry, ExactPortBindingRef, ModelBindingAdmission, ModelDeploymentRef, ModelInferencePort,
-    ModelOutcome, ModelTargetRef,
+    ExactPortBindingRef, ModelBindingAdmission, ModelDeploymentRef, ModelInferencePort,
+    ModelOutcome, ModelTargetRef, ResolvedModelBinding,
 };
 use apxm_kernel::{
     AtomicWriteSet, ConfinementPort, ExactPortBinding, ExecutionCommitPort,
@@ -40,7 +40,10 @@ const DIGEST_C: &str = "sha256:ccccccccccccccccccccccccccccccccccccccccccccccccc
 const MODEL_TARGET: &str = "gpt-oss-120b";
 
 fn contract(schema_id: &str) -> SchemaDigestRef {
-    SchemaDigestRef { schema_id: schema_id.into(), digest: DIGEST_A.into() }
+    SchemaDigestRef {
+        schema_id: schema_id.into(),
+        digest: DIGEST_A.into(),
+    }
 }
 
 fn admitted_binding(slot: PortSlot, schema_id: &str) -> AdmittedBinding {
@@ -119,18 +122,22 @@ fn write_set() -> AtomicWriteSet {
 }
 
 fn model_admission() -> ModelBindingAdmission {
-    ModelBindingAdmission::new(vec![AdmissionEntry {
+    ModelBindingAdmission::new(ResolvedModelBinding {
         model_target_ref: ModelTargetRef(MODEL_TARGET.into()),
         model_deployment_ref: ModelDeploymentRef("vllm-deploy-1".into()),
-        exact_port_binding: ExactPortBindingRef { binding_digest: DIGEST_B.into() },
-    }])
+        exact_port_binding: ExactPortBindingRef {
+            binding_digest: DIGEST_B.into(),
+        },
+    })
 }
 
 struct TestCapability;
 #[async_trait::async_trait]
 impl CapabilityPort for TestCapability {
     async fn invoke(&self, request: CapabilityRequest) -> CapabilityOutcome {
-        CapabilityOutcome::Completed { result: format!("capability:{}", request.capability_ref) }
+        CapabilityOutcome::Completed {
+            result: format!("capability:{}", request.capability_ref),
+        }
     }
 }
 
@@ -138,7 +145,9 @@ struct TestEvents;
 #[async_trait::async_trait]
 impl EventPort for TestEvents {
     async fn await_event(&self, request: EventAwait) -> EventOutcome {
-        EventOutcome::Fulfilled { payload: format!("event:{}", request.selector) }
+        EventOutcome::Fulfilled {
+            payload: format!("event:{}", request.selector),
+        }
     }
 }
 
@@ -146,10 +155,14 @@ struct TestComposition;
 #[async_trait::async_trait]
 impl CompositionPort for TestComposition {
     async fn program_new(&self, request: CompositionRequest) -> CompositionOutcome {
-        CompositionOutcome::Created { child_instance_ref: format!("child:{}", request.program_ref) }
+        CompositionOutcome::Created {
+            child_instance_ref: format!("child:{}", request.program_ref),
+        }
     }
     async fn program_invoke(&self, request: CompositionRequest) -> CompositionOutcome {
-        CompositionOutcome::Invoked { child_instance_ref: format!("child:{}", request.program_ref) }
+        CompositionOutcome::Invoked {
+            child_instance_ref: format!("child:{}", request.program_ref),
+        }
     }
 }
 
@@ -163,21 +176,40 @@ fn admitted_ports() -> AdmittedPorts {
     let model_inference: Arc<dyn ModelInferencePort + Send + Sync> =
         Arc::new(VllmHttpInferenceClient::new(FixedVllmTransport::new(
             VllmModelOutcome::CommittedSuccess {
-                usage: VllmNativeUsage { native_input_tokens: 42, native_output_tokens: 100 },
+                usage: VllmNativeUsage {
+                    native_input_tokens: 42,
+                    native_output_tokens: 100,
+                },
             },
         )));
-    let profile = AdmittedProfiles::v1().get("acp:claude-code").expect("claude-code admitted").clone();
+    let profile = AdmittedProfiles::v1()
+        .get("acp:claude-code")
+        .expect("claude-code admitted")
+        .clone();
     let peer = FakeAcpPeer::new(end_turn_exchange(vec![
         PeerEvent::Message("planning".into()),
         PeerEvent::Reverse(ReverseRequest::PathRead("/workspace/src/lib.rs".into())),
-        PeerEvent::Usage(PeerUsageEvidence::new("acp:claude-code", "peer.tokens.total", "512")),
+        PeerEvent::Usage(PeerUsageEvidence::new(
+            "acp:claude-code",
+            "peer.tokens.total",
+            "512",
+        )),
     ]));
-    let ceiling =
-        CeilingAuthorizer::from_ceiling(&["/workspace"], &["git"], &["api.github.com"], &["read_file"]);
+    let ceiling = CeilingAuthorizer::from_ceiling(
+        &["/workspace"],
+        &["git"],
+        &["api.github.com"],
+        &["read_file"],
+    );
     let external_agent: Arc<dyn ExternalAgentCapabilityPort> =
         Arc::new(ExternalAgentCapabilityAdapter::new(peer, ceiling, profile));
 
-    AdmittedPorts { execution_commit, confinement, model_inference, external_agent }
+    AdmittedPorts {
+        execution_commit,
+        confinement,
+        model_inference,
+        external_agent,
+    }
 }
 
 #[test]
@@ -188,7 +220,10 @@ fn composition_root_assembles_a_real_kernel_bundle() {
             admitted_binding(PortSlot::ExecutionCommit, "apxm.execution-commit.v1"),
             admitted_binding(PortSlot::Confinement, "apxm.confinement-attestation.v1"),
             admitted_binding(PortSlot::ModelInference, "apxm.vllm-inference.v1"),
-            admitted_binding(PortSlot::ExternalAgentCapability, "apxm.external-agent-evidence.v1"),
+            admitted_binding(
+                PortSlot::ExternalAgentCapability,
+                "apxm.external-agent-evidence.v1",
+            ),
         ],
         &ports,
     )
@@ -226,15 +261,24 @@ async fn composition_root_drives_canonical_execution_end_to_end() {
     // All five operations executed through their exact injected ports.
     assert_eq!(report.node_outcomes.len(), 5);
     assert!(matches!(report.node_outcomes[0], NodeOutcome::Model { .. }));
-    assert!(matches!(report.node_outcomes[1], NodeOutcome::ExternalAgent { .. }));
-    assert!(matches!(report.node_outcomes[4], NodeOutcome::AwaitEvent { .. }));
+    assert!(matches!(
+        report.node_outcomes[1],
+        NodeOutcome::ExternalAgent { .. }
+    ));
+    assert!(matches!(
+        report.node_outcomes[4],
+        NodeOutcome::AwaitEvent { .. }
+    ));
 
     // Native model usage comes from the vLLM client; peer usage stays isolated
     // in External Agent evidence and never enters native accounting.
     assert_eq!(report.native_usage.input_tokens, 42);
     assert_eq!(report.native_usage.output_tokens, 100);
     assert_eq!(report.external_agent_evidence.len(), 1);
-    assert_eq!(report.external_agent_evidence[0].peer_usage[0].reported_value, "512");
+    assert_eq!(
+        report.external_agent_evidence[0].peer_usage[0].reported_value,
+        "512"
+    );
 
     // The whole run committed atomically through the one Execution Commit port.
     assert!(matches!(

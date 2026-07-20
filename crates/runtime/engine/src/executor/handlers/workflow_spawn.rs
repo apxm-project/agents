@@ -125,7 +125,7 @@ fn child_execution_admission(ctx: &ExecutionContext) -> Result<ChildExecutionAdm
             validate_child_execution_envelope(ctx, &envelope, &sealed_context)?;
             let runtime_capability_grants = delegated_runtime_capability_grants(ctx, &envelope)?;
             Ok(ChildExecutionAdmission::Delegated {
-                envelope,
+                envelope: Box::new(envelope),
                 sealed_context_transport: transport.clone(),
                 runtime_capability_grants,
             })

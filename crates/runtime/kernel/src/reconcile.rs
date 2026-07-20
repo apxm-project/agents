@@ -5,9 +5,7 @@
 //! never reconstructed as success, and an `effect.outcome_unknown` fact never
 //! upgrades to a committed outcome.
 
-use apxm_program::runtime_evidence::{
-    FactKind, InstanceState, InvocationState, RuntimeEvidence,
-};
+use apxm_program::runtime_evidence::{FactKind, InstanceState, InvocationState, RuntimeEvidence};
 
 /// The reconstructed view of an instance/invocation from evidence.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

@@ -1,7 +1,7 @@
 //! Hook ABI vectors: typed callbacks over the scoped Agent Facade thread context
 //! explicitly and either observe or return a statically declared replacement.
 
-use apxm_kernel::{apply_hooks, Hook, HookReturn};
+use apxm_kernel::{Hook, HookReturn, apply_hooks};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Context {
@@ -28,14 +28,18 @@ fn hook_changes_context_only_by_assigning_agent_context() {
     })];
     let effect = apply_hooks(Context { turns: 1 }, "answer".to_string(), &hooks);
     assert_eq!(effect.context, Context { turns: 2 });
-    assert_eq!(effect.result, "answer", "context change does not alter the result");
+    assert_eq!(
+        effect.result, "answer",
+        "context change does not alter the result"
+    );
     assert!(!effect.replaced);
 }
 
 #[test]
 fn replacement_hook_replaces_the_declared_result() {
-    let hooks: Vec<Hook<Context, String>> =
-        vec![Box::new(|_facade, _result| HookReturn::Replace("redacted".to_string()))];
+    let hooks: Vec<Hook<Context, String>> = vec![Box::new(|_facade, _result| {
+        HookReturn::Replace("redacted".to_string())
+    })];
     let effect = apply_hooks(Context { turns: 0 }, "secret".to_string(), &hooks);
     assert_eq!(effect.result, "redacted");
     assert!(effect.replaced);

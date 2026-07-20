@@ -7,7 +7,7 @@ use apxm_program::{
     verify_execution_commit_json, verify_external_agent_evidence_json,
     verify_external_agent_session_json, verify_runtime_evidence_json,
 };
-use common::{load_vectors, Vector};
+use common::{Vector, load_vectors};
 use serde_json::Value;
 
 fn check(file: &str, verify: impl Fn(&Value) -> bool) {

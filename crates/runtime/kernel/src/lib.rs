@@ -35,7 +35,7 @@ pub use external_agent::{
 };
 pub use hook::{AgentFacade, Hook, HookEffect, HookReturn, apply_hooks};
 pub use instance::{
-    CapabilityInvocation, CapabilityReport, Invocation, InvocationReport, InstanceError,
+    CapabilityInvocation, CapabilityReport, InstanceError, Invocation, InvocationReport,
     ProgramInstance,
 };
 pub use reconcile::{LifecycleView, reconstruct};

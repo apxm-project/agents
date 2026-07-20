@@ -21,13 +21,11 @@ pub mod runtime_evidence;
 pub mod source_map;
 
 pub use air::{AirModule, SemanticOpKind, StructuralKind, verify_air_json};
-pub use artifact::{
-    ExecutableArtifact, PortRequirement, PortSourceScope, validate_artifact_json,
-};
+pub use artifact::{ExecutableArtifact, PortRequirement, PortSourceScope, validate_artifact_json};
 pub use common::{IdempotencyKey, TypedErrorEnvelope, TypedRef};
 pub use diagnostic::{Diagnostic, DiagnosticCode, Verdict};
 pub use execution_commit::{
-    AtomicWriteSetMember, CommitResult, ExecutionCommit, CANONICAL_ATOMIC_WRITE_SET,
+    AtomicWriteSetMember, CANONICAL_ATOMIC_WRITE_SET, CommitResult, ExecutionCommit,
     verify_execution_commit_json,
 };
 pub use external_agent::{

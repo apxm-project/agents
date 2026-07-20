@@ -140,7 +140,10 @@ impl std::fmt::Debug for PortBundle {
             .field("execution_commit", &true)
             .field("confinement", &self.confinement.is_some())
             .field("model_inference", &self.model_inference.is_some())
-            .field("external_agent_capability", &self.external_agent_capability.is_some())
+            .field(
+                "external_agent_capability",
+                &self.external_agent_capability.is_some(),
+            )
             .finish()
     }
 }

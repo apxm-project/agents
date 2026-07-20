@@ -101,7 +101,7 @@ pub enum ChildExecutionAdmission {
     /// The host has admitted the exact envelope, sealed context transport, and
     /// runtime-grant projection for this one child execution.
     Delegated {
-        envelope: ChildExecutionEnvelope,
+        envelope: Box<ChildExecutionEnvelope>,
         sealed_context_transport: String,
         runtime_capability_grants: String,
     },
@@ -166,7 +166,7 @@ pub enum WorkflowNode {
     },
 
     /// Spawn another workflow/graph/artifact as a separate execution.
-    WorkflowSpawn { invocation: WorkflowInvocation },
+    WorkflowSpawn { invocation: Box<WorkflowInvocation> },
 
     /// An inline sub-workflow (recursive).
     SubWorkflow {

@@ -16,11 +16,17 @@ use apxm_program::external_agent::{
 /// The terminal state of the one outer effect an External Agent prompt produces.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PromptEffectState {
-    Completed { stop_reason: Option<String> },
+    Completed {
+        stop_reason: Option<String>,
+    },
     Cancelled,
-    Failed { message: String },
+    Failed {
+        message: String,
+    },
     /// An ambiguous transport failure the adapter cannot resolve truthfully.
-    OutcomeUnknown { message: String },
+    OutcomeUnknown {
+        message: String,
+    },
 }
 
 /// A request to run one prompt turn against an admitted External Agent.

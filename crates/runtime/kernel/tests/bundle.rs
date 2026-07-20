@@ -31,7 +31,9 @@ struct NoopCommit;
 #[async_trait]
 impl ExecutionCommitPort for NoopCommit {
     async fn commit(&self, _request: ExecutionCommitRequest) -> ExecutionCommitResult {
-        ExecutionCommitResult::CompareConflict { current_program_state_version: 0 }
+        ExecutionCommitResult::CompareConflict {
+            current_program_state_version: 0,
+        }
     }
     async fn current_version(&self, _invocation_ref: &str) -> u64 {
         0
@@ -147,7 +149,10 @@ fn slot_implementation_mismatch_fails_closed() {
         )],
     )
     .expect_err("slot/impl mismatch");
-    assert_eq!(err, BundleError::SlotImplementationMismatch(PortSlot::ExecutionCommit));
+    assert_eq!(
+        err,
+        BundleError::SlotImplementationMismatch(PortSlot::ExecutionCommit)
+    );
 }
 
 #[test]
@@ -160,7 +165,10 @@ fn malformed_binding_or_proof_digest_fails_closed() {
     };
     let err = PortBundle::construct(&commit_spec(), vec![(bad_binding, commit_impl())])
         .expect_err("bad binding digest");
-    assert_eq!(err, BundleError::InvalidBindingDigest(PortSlot::ExecutionCommit));
+    assert_eq!(
+        err,
+        BundleError::InvalidBindingDigest(PortSlot::ExecutionCommit)
+    );
 
     let bad_proof = ExactPortBinding {
         slot: PortSlot::ExecutionCommit,

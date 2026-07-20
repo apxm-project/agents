@@ -101,7 +101,10 @@ impl ExecutionCommit {
                 &self.runtime_evidence_batch_digest,
             ),
             ("usage_facts_digest", &self.usage_facts_digest),
-            ("session_output_refs_digest", &self.session_output_refs_digest),
+            (
+                "session_output_refs_digest",
+                &self.session_output_refs_digest,
+            ),
         ] {
             if !is_digest(digest) {
                 verdict.push(Diagnostic::new(

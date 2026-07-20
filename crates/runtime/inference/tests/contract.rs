@@ -6,17 +6,17 @@
 use std::cell::{Cell, RefCell};
 
 use apxm_inference::{
-    execute, stream, AdmissionEntry, AttemptDisposition, BindingError, CancelToken, ErrorCategory,
-    ExactPortBindingRef, ModelBindingAdmission, ModelCallRequest, ModelDeploymentRef,
-    ModelInferencePort, ModelOutcome, ModelStreamPort, ModelTargetRef, RetryPolicy, StreamChunk,
-    TypedError, Usage,
+    AttemptDisposition, BindingError, CancelToken, ErrorCategory, ExactPortBindingRef,
+    ModelBindingAdmission, ModelCallRequest, ModelDeploymentRef, ModelInferencePort, ModelOutcome,
+    ModelStreamPort, ModelTargetRef, ResolvedModelBinding, RetryPolicy, StreamChunk, TypedError,
+    Usage, execute, stream,
 };
 
 const DIGEST_A: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const DIGEST_B: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
-fn entry(target: &str, deployment: &str, digest: &str) -> AdmissionEntry {
-    AdmissionEntry {
+fn binding(target: &str, deployment: &str, digest: &str) -> ResolvedModelBinding {
+    ResolvedModelBinding {
         model_target_ref: ModelTargetRef(target.to_string()),
         model_deployment_ref: ModelDeploymentRef(deployment.to_string()),
         exact_port_binding: ExactPortBindingRef {
@@ -26,10 +26,7 @@ fn entry(target: &str, deployment: &str, digest: &str) -> AdmissionEntry {
 }
 
 fn admission() -> ModelBindingAdmission {
-    ModelBindingAdmission::new(vec![
-        entry("model.alpha", "deploy.alpha", DIGEST_A),
-        entry("model.beta", "deploy.beta", DIGEST_B),
-    ])
+    ModelBindingAdmission::new(binding("model.alpha", "deploy.alpha", DIGEST_A))
 }
 
 fn error() -> TypedError {
@@ -40,48 +37,38 @@ fn error() -> TypedError {
     }
 }
 
-// ── Exact binding resolution: no ambient/default/alias/first-available ──────
+// ── Exact binding validation: no ambient/default/alias/first-available ──────
 
 #[test]
-fn resolves_exactly_one_binding() {
+fn validates_the_materialized_binding() {
     let resolved = admission()
-        .resolve(&ModelTargetRef("model.alpha".to_string()))
-        .expect("exact binding");
+        .validate(&ModelTargetRef("model.alpha".to_string()))
+        .expect("validated binding");
     assert_eq!(resolved.model_deployment_ref.0, "deploy.alpha");
     assert_eq!(resolved.binding_digest(), DIGEST_A);
 }
 
 #[test]
-fn missing_target_fails_closed_with_no_fallback() {
+fn mismatched_target_fails_closed_with_no_substitution() {
     let err = admission()
-        .resolve(&ModelTargetRef("model.unknown".to_string()))
-        .expect_err("no first-available selection");
-    assert!(matches!(err, BindingError::NoBinding(_)));
+        .validate(&ModelTargetRef("model.beta".to_string()))
+        .expect_err("no target substitution");
+    assert!(matches!(err, BindingError::TargetMismatch { .. }));
 }
 
 #[test]
-fn empty_target_has_no_default() {
-    let err = admission()
-        .resolve(&ModelTargetRef(String::new()))
-        .expect_err("no default/ambient selection");
-    assert!(matches!(err, BindingError::NoBinding(_)));
-}
-
-#[test]
-fn duplicate_binding_fails_closed_with_no_tiebreak() {
-    let admission = ModelBindingAdmission::new(vec![
-        entry("model.alpha", "deploy.one", DIGEST_A),
-        entry("model.alpha", "deploy.two", DIGEST_B),
-    ]);
+fn invalid_binding_digest_fails_closed() {
+    let admission =
+        ModelBindingAdmission::new(binding("model.alpha", "deploy.alpha", "not-a-digest"));
     let err = admission
-        .resolve(&ModelTargetRef("model.alpha".to_string()))
-        .expect_err("no alias/first-match tie-break");
-    assert!(matches!(err, BindingError::AmbiguousBinding(_)));
+        .validate(&ModelTargetRef("model.alpha".to_string()))
+        .expect_err("invalid binding digest");
+    assert!(matches!(err, BindingError::InvalidBindingDigest(_)));
 }
 
 #[test]
 fn request_binds_only_its_authored_target() {
-    let admission = admission();
+    let admission = ModelBindingAdmission::new(binding("model.beta", "deploy.beta", DIGEST_B));
     let request = ModelCallRequest::authorize(
         "effect.1",
         "sha256:1111111111111111111111111111111111111111111111111111111111111111",
@@ -92,14 +79,15 @@ fn request_binds_only_its_authored_target() {
     assert_eq!(request.target().0, "model.beta");
     assert_eq!(request.resolved_binding.binding_digest(), DIGEST_B);
 
-    // A target with no admitted binding cannot produce a request at all.
-    assert!(ModelCallRequest::authorize(
-        "effect.2",
-        "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-        &ModelTargetRef("model.substitute".to_string()),
-        &admission,
-    )
-    .is_err());
+    assert!(
+        ModelCallRequest::authorize(
+            "effect.2",
+            "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            &ModelTargetRef("model.substitute".to_string()),
+            &admission,
+        )
+        .is_err()
+    );
 }
 
 // ── Deterministic fake backend ─────────────────────────────────────────────
@@ -229,7 +217,11 @@ fn post_send_idempotent_failure_may_retry() {
     );
     let outcome = execute(&backend, &request(), RetryPolicy { max_attempts: 3 });
     assert_eq!(outcome, ModelOutcome::CommittedSuccess { usage });
-    assert_eq!(backend.sends.get(), 2, "idempotent backend reconciles and retries");
+    assert_eq!(
+        backend.sends.get(),
+        2,
+        "idempotent backend reconciles and retries"
+    );
 }
 
 #[test]
@@ -284,7 +276,10 @@ fn stream_yields_ordered_chunks_then_terminal() {
     };
     let result = stream(&backend, &request(), &token);
     assert_eq!(result.chunks, vec![chunk(0, "he"), chunk(1, "llo")]);
-    assert!(matches!(result.terminal, ModelOutcome::CommittedSuccess { .. }));
+    assert!(matches!(
+        result.terminal,
+        ModelOutcome::CommittedSuccess { .. }
+    ));
 }
 
 #[test]

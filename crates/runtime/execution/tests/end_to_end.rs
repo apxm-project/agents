@@ -8,8 +8,9 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 
 use apxm_inference::{
-    AdmissionEntry, AttemptDisposition, ExactPortBindingRef, ModelBindingAdmission,
-    ModelCallRequest, ModelDeploymentRef, ModelInferencePort, ModelOutcome, ModelTargetRef, Usage,
+    AttemptDisposition, ExactPortBindingRef, ModelBindingAdmission, ModelCallRequest,
+    ModelDeploymentRef, ModelInferencePort, ModelOutcome, ModelTargetRef, ResolvedModelBinding,
+    Usage,
 };
 use apxm_kernel::{
     AcpPromptOutcome, AcpPromptRequest, AgentFacade, AtomicWriteSet, ExecutionCommitPort,
@@ -62,17 +63,22 @@ fn air() -> AirModule {
 }
 
 fn admission() -> ModelBindingAdmission {
-    ModelBindingAdmission::new(vec![AdmissionEntry {
+    ModelBindingAdmission::new(ResolvedModelBinding {
         model_target_ref: ModelTargetRef("model.default".into()),
         model_deployment_ref: ModelDeploymentRef("deploy.default".into()),
-        exact_port_binding: ExactPortBindingRef { binding_digest: digest('a') },
-    }])
+        exact_port_binding: ExactPortBindingRef {
+            binding_digest: digest('a'),
+        },
+    })
 }
 
 struct FakeModel;
 impl ModelInferencePort for FakeModel {
     fn attempt(&self, _request: &ModelCallRequest, _attempt: u32) -> AttemptDisposition {
-        AttemptDisposition::Success(Usage { input_tokens: 10, output_tokens: 20 })
+        AttemptDisposition::Success(Usage {
+            input_tokens: 10,
+            output_tokens: 20,
+        })
     }
 }
 
@@ -80,7 +86,9 @@ struct FakeCapability;
 #[async_trait]
 impl CapabilityPort for FakeCapability {
     async fn invoke(&self, _request: CapabilityRequest) -> CapabilityOutcome {
-        CapabilityOutcome::Completed { result: "ok".into() }
+        CapabilityOutcome::Completed {
+            result: "ok".into(),
+        }
     }
 }
 
@@ -90,7 +98,9 @@ impl ExternalAgentCapabilityPort for FakeAcpPeer {
     async fn prompt(&self, request: AcpPromptRequest) -> AcpPromptOutcome {
         AcpPromptOutcome {
             session_ref: request.session_ref,
-            state: PromptEffectState::Completed { stop_reason: Some("end_turn".into()) },
+            state: PromptEffectState::Completed {
+                stop_reason: Some("end_turn".into()),
+            },
             nested_events: vec![
                 AttributedEvent {
                     event_sequence: 0,
@@ -123,7 +133,9 @@ struct FakeEvents;
 #[async_trait]
 impl EventPort for FakeEvents {
     async fn await_event(&self, _request: EventAwait) -> EventOutcome {
-        EventOutcome::Fulfilled { payload: "done".into() }
+        EventOutcome::Fulfilled {
+            payload: "done".into(),
+        }
     }
 }
 
@@ -131,10 +143,14 @@ struct FakeComposition;
 #[async_trait]
 impl CompositionPort for FakeComposition {
     async fn program_new(&self, request: CompositionRequest) -> CompositionOutcome {
-        CompositionOutcome::Created { child_instance_ref: format!("child.{}", request.program_ref) }
+        CompositionOutcome::Created {
+            child_instance_ref: format!("child.{}", request.program_ref),
+        }
     }
     async fn program_invoke(&self, request: CompositionRequest) -> CompositionOutcome {
-        CompositionOutcome::Invoked { child_instance_ref: format!("child.{}", request.program_ref) }
+        CompositionOutcome::Invoked {
+            child_instance_ref: format!("child.{}", request.program_ref),
+        }
     }
 }
 
@@ -143,7 +159,9 @@ struct FakeCommit {
 }
 impl FakeCommit {
     fn new() -> Self {
-        Self { state: Mutex::new((0, Vec::new())) }
+        Self {
+            state: Mutex::new((0, Vec::new())),
+        }
     }
     fn facts(&self) -> Vec<Fact> {
         self.state.lock().unwrap().1.clone()
@@ -190,33 +208,69 @@ fn request() -> ExecutionRequest {
 async fn executes_all_five_ops_and_commits_atomically() {
     let commit = Arc::new(FakeCommit::new());
     // An after-model Hook threads context and replaces the model result.
-    let hooks: Vec<Hook<Value, Value>> = vec![Box::new(|facade: &mut AgentFacade<Value>, _result| {
-        facade.set_context(json!({"turns": 1}));
-        HookReturn::Replace(json!("hooked"))
-    })];
+    let hooks: Vec<Hook<Value, Value>> =
+        vec![Box::new(|facade: &mut AgentFacade<Value>, _result| {
+            facade.set_context(json!({"turns": 1}));
+            HookReturn::Replace(json!("hooked"))
+        })];
 
-    let report = execute(&ports(commit.clone()), request(), json!({"turns": 0}), &hooks)
-        .await
-        .expect("run");
+    let report = execute(
+        &ports(commit.clone()),
+        request(),
+        json!({"turns": 0}),
+        &hooks,
+    )
+    .await
+    .expect("run");
 
     // All six nodes executed through their exact ports.
     assert_eq!(report.node_outcomes.len(), 6);
     assert!(matches!(report.node_outcomes[0], NodeOutcome::Model { .. }));
-    assert!(matches!(report.node_outcomes[1], NodeOutcome::Capability { .. }));
-    assert!(matches!(report.node_outcomes[2], NodeOutcome::ExternalAgent { .. }));
-    assert!(matches!(report.node_outcomes[3], NodeOutcome::ProgramNew { .. }));
-    assert!(matches!(report.node_outcomes[4], NodeOutcome::ProgramInvoke { .. }));
-    assert!(matches!(report.node_outcomes[5], NodeOutcome::AwaitEvent { .. }));
+    assert!(matches!(
+        report.node_outcomes[1],
+        NodeOutcome::Capability { .. }
+    ));
+    assert!(matches!(
+        report.node_outcomes[2],
+        NodeOutcome::ExternalAgent { .. }
+    ));
+    assert!(matches!(
+        report.node_outcomes[3],
+        NodeOutcome::ProgramNew { .. }
+    ));
+    assert!(matches!(
+        report.node_outcomes[4],
+        NodeOutcome::ProgramInvoke { .. }
+    ));
+    assert!(matches!(
+        report.node_outcomes[5],
+        NodeOutcome::AwaitEvent { .. }
+    ));
 
     // One atomic commit for the whole run.
     assert_eq!(
         report.commit,
-        ExecutionCommitResult::Committed { new_program_state_version: 1, evidence_position_ref: "evidence:1".into() }
+        ExecutionCommitResult::Committed {
+            new_program_state_version: 1,
+            evidence_position_ref: "evidence:1".into()
+        }
     );
 
     // model.call produced native usage; the Hook replaced the result and set context.
-    assert_eq!(report.native_usage, Usage { input_tokens: 10, output_tokens: 20 });
-    if let NodeOutcome::Model { result, replaced, outcome, .. } = &report.node_outcomes[0] {
+    assert_eq!(
+        report.native_usage,
+        Usage {
+            input_tokens: 10,
+            output_tokens: 20
+        }
+    );
+    if let NodeOutcome::Model {
+        result,
+        replaced,
+        outcome,
+        ..
+    } = &report.node_outcomes[0]
+    {
         assert_eq!(*result, json!("hooked"));
         assert!(replaced);
         assert!(matches!(outcome, ModelOutcome::CommittedSuccess { .. }));
@@ -225,8 +279,14 @@ async fn executes_all_five_ops_and_commits_atomically() {
 
     // Peer usage is isolated in External Agent evidence, never in native usage.
     assert_eq!(report.external_agent_evidence.len(), 1);
-    assert_eq!(report.external_agent_evidence[0].peer_usage[0].reported_value, "555");
-    assert_eq!(report.native_usage.input_tokens, 10, "peer 555 never enters native usage");
+    assert_eq!(
+        report.external_agent_evidence[0].peer_usage[0].reported_value,
+        "555"
+    );
+    assert_eq!(
+        report.native_usage.input_tokens, 10,
+        "peer 555 never enters native usage"
+    );
 
     // The committed evidence records one attempt per node plus lifecycle facts.
     assert_eq!(commit.facts().len(), 2 + 6 + 1);
@@ -251,6 +311,8 @@ async fn unbound_model_target_fails_closed() {
         commit_id: "c1".into(),
         write_set: write_set(),
     };
-    let err = execute(&ports(commit), request, json!(null), &[]).await.expect_err("no binding");
+    let err = execute(&ports(commit), request, json!(null), &[])
+        .await
+        .expect_err("no binding");
     assert!(matches!(err, apxm_execution::ExecutionError::Binding(_)));
 }
