@@ -451,12 +451,22 @@ pub struct ServerAuthConfig {
     pub bearer_file: Option<String>,
 }
 
-/// Server-owned policy for model calls synthesized by the A2A endpoint.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+/// Server-owned policy for the A2A endpoint's canonical handler program.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(default)]
 pub struct ServerA2aConfig {
     /// Explicit output-token reservation for each A2A message execution.
     pub max_output_tokens: Option<usize>,
+    /// The canonical `apxm.air.v1` Agent Program (as JSON) that responds to
+    /// inbound A2A messages. Authored on the canonical frontend (e.g. via
+    /// `apxm compile-service-canonical`) and configured here; the Server never
+    /// synthesizes an A2A graph. Absent means the A2A execution surface is not
+    /// configured and message execution fails closed.
+    pub handler_air: Option<String>,
+    /// Digest of the verified Deployment Composition Manifest binding the A2A
+    /// handler program's `model.call` target. Required when the handler authors
+    /// a model effect; canonical admission fails closed on an unmapped target.
+    pub deployment_composition_digest: Option<String>,
 }
 
 /// Streaming LLM endpoint transport configuration.
