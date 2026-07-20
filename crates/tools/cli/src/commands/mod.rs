@@ -27,7 +27,6 @@ pub mod org;
 pub mod process;
 #[cfg(feature = "driver")]
 pub mod render;
-pub mod replay;
 #[cfg(feature = "driver")]
 pub mod rollout;
 pub mod session;
@@ -61,7 +60,6 @@ pub use integration::*;
 pub use ops::*;
 pub use org::*;
 pub use process::*;
-pub use replay::*;
 pub use session::*;
 pub use system::*;
 pub use team::*;
