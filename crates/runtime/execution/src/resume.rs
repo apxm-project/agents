@@ -14,6 +14,7 @@
 //! implementation is owned by the lifecycle/persistence plane (Server).
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use apxm_inference::{ModelBindingAdmission, Usage};
@@ -27,7 +28,7 @@ use apxm_program::runtime_evidence::Fact;
 /// threaded Context, the accumulated native usage and External Agent evidence,
 /// the in-progress evidence batch and sequence, and the commit scope/write-set
 /// used by the one atomic commit performed when the resumed run completes.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Continuation {
     pub air: AirModule,
     /// The exact admitted model binding for this invocation, so a `model.call`

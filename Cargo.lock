@@ -440,6 +440,7 @@ dependencies = [
  "apxm-kernel",
  "apxm-program",
  "async-trait",
+ "serde",
  "serde_json",
  "tokio",
 ]

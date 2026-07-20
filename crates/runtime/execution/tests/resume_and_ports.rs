@@ -290,6 +290,37 @@ async fn resumable_run_suspends_at_park_and_persists_continuation() {
 }
 
 #[tokio::test]
+async fn continuation_serializes_for_durable_storage() {
+    let commit = Arc::new(FakeCommit::new());
+    let continuations = InMemoryContinuations::default();
+    execute_resumable(
+        &ports(true, commit),
+        &continuations,
+        request("inv.serde", "c.serde"),
+        Value::Null,
+        &[],
+    )
+    .await
+    .expect("parks");
+
+    let cont = continuations
+        .parked
+        .lock()
+        .unwrap()
+        .get(WAIT_KEY)
+        .cloned()
+        .expect("continuation persisted");
+    // A durable ContinuationPort round-trips the continuation through serde; the
+    // resume-critical fields must survive intact.
+    let encoded = serde_json::to_string(&cont).expect("continuation serializes");
+    let decoded: Continuation = serde_json::from_str(&encoded).expect("continuation deserializes");
+    assert_eq!(decoded.wait_key, WAIT_KEY);
+    assert_eq!(decoded.next_op_index, cont.next_op_index);
+    assert_eq!(decoded.native_usage, cont.native_usage);
+    assert_eq!(decoded.write_set, cont.write_set);
+}
+
+#[tokio::test]
 async fn wake_then_resume_finishes_the_parked_run() {
     let commit = Arc::new(FakeCommit::new());
     let continuations = InMemoryContinuations::default();
