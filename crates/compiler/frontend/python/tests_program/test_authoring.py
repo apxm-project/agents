@@ -10,6 +10,7 @@ import apxm_program
 from apxm_program.example import (
     external_agent_graph,
     gao_conversational_graph,
+    session_agent_graph,
     specialist_graph,
 )
 
@@ -64,6 +65,25 @@ def test_gao_conversational_agent_lowers_to_only_five_ops():
 
 def test_gao_air_matches_golden():
     assert apxm_program.canonical_air_json(gao_conversational_graph()) == GOLDEN_GAO_AIR.read_text().strip()
+
+
+def test_session_agent_lowers_to_five_ops_with_await_event_park_point():
+    graph = session_agent_graph()
+    assert apxm_program.verify(graph) is None
+    air = apxm_program.lower(graph)
+    ops = [op["op"] for op in air["semantic_operations"]]
+    # Only the five canonical semantic operations, and the session must carry an
+    # await.event — the exact park point the canonical resumable driver suspends
+    # on for each conversational turn.
+    for op in ops:
+        assert op in FIVE_OPS, op
+    assert "await.event" in ops, ops
+    assert "model.call" in ops, ops
+
+
+def test_session_agent_lowering_is_deterministic():
+    graph = session_agent_graph()
+    assert apxm_program.canonical_air_json(graph) == apxm_program.canonical_air_json(graph)
 
 
 def test_lower_rejects_unknown_operation():

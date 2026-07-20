@@ -121,6 +121,39 @@ def gao_conversational_graph() -> dict[str, Any]:
     return graph
 
 
+def session_agent_graph() -> dict[str, Any]:
+    """A minimal canonical conversational-session Agent Program.
+
+    This is the shape the Server session family compiles and drives through the
+    canonical resumable driver: a conversational loop whose each Turn answers
+    with one `model.call` and then parks on `await.event` for the next user
+    turn. It lowers to only the five semantic operations plus structural IR — no
+    retired op, no runtime special case. The `await.event` is the exact park
+    point the durable ContinuationPort suspends on and the delivered turn
+    resumes.
+    """
+    builder = GraphBuilder(source_language="python")
+    builder.program(
+        program_id="SessionAgent",
+        entrypoint="run",
+        input_type_ref="SessionInput",
+        output_type_ref="SessionOutput",
+        has_default_context=True,
+        context_type_ref="SessionContext",
+    )
+    builder.model_call("node.turn.model", model_target_ref="model.default")
+    builder.await_event("node.turn.await")
+    builder.region("region.loop.session", "loop")
+    builder.region("region.return", "return")
+    builder.context_edge("node.turn.model", "node.turn.await", "SessionContext")
+    builder.model_requirement("model.default")
+    graph = builder.build()
+    graph["source_map"]["region_annotations"].append(
+        {"region_id": "region.loop.session", "annotation": "conversational_loop"}
+    )
+    return graph
+
+
 def external_agent_graph() -> dict[str, Any]:
     """A program that delegates to an External Agent over ACP.
 
