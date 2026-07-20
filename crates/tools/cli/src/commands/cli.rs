@@ -254,11 +254,6 @@ pub enum Commands {
         /// Canonical frontend graph JSON file. Omit to read stdin.
         input: Option<PathBuf>,
     },
-    /// Replay a session trace as a timeline
-    Replay {
-        /// Session directory path
-        session: PathBuf,
-    },
     /// Manage and inspect execution sessions
     Session {
         #[command(subcommand)]
