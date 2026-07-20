@@ -45,7 +45,7 @@ pub mod session_output;
 // --- Config ---
 pub use config::{
     ApXmConfig, ChatConfig, ConfigError, ExecutionStreamConfig, GenerateStreamConfig, HookConfig,
-    HookEvent, RunEventsConfig, ServerAuthConfig, ServerConfig, ServerExecutionsConfig,
+    HookEvent, RunEventsConfig, ServerA2aConfig, ServerAuthConfig, ServerConfig, ServerExecutionsConfig,
     ServerInferenceConfig, ServerInvocationAdmissionConfig, ServerMcpConfig,
     ServerObservabilityConfig, ServerProcessConfig, ServerRolloutConfig, ServerRuntimeConfig,
     ServerSafetyConfig, ServerShutdownConfig, ToolConfig,
