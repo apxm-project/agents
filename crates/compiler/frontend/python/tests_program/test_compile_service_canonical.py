@@ -14,7 +14,13 @@ from pathlib import Path
 
 FIVE_OPS = {"model.call", "capability.invoke", "program.new", "program.invoke", "await.event"}
 PACKAGE_DIR = Path(__file__).resolve().parents[1]
-SESSION_ENTRY = Path(__file__).resolve().parent / "fixtures" / "canonical_session_agent" / "session.py"
+SESSION_ENTRY = (
+    Path(__file__).resolve().parent
+    / "fixtures"
+    / "canonical_session_agent"
+    / "python"
+    / "session.py"
+)
 
 
 def _compile_session_package_air() -> dict:
