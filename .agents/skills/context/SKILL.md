@@ -27,8 +27,8 @@ for typo fixes or single-line edits.
      - Touching `~/.apxm/config.toml`, HF cache, zoo manifests, build
        paths → `_shared/apxm-storage-layout-rules.md`
      - Anything with a git mutation → `_shared/apxm-agent-operating-rules.md`
-   - For benchmark / evaluation / preregistration workflows, see the
-     companion repo `apxm-project/eval`.
+   - For owner-local prompt evaluation, read the checked-in bundle under
+     `evaluation/` and use its registered `dekk agents` surface.
 4. **Read the closest subsystem doc**:
    - Compiler/passes → `docs/compiler/pipeline.md`
    - Backends/zoo → `docs/backends/model-zoo.md`,

@@ -1,8 +1,7 @@
 # Domain — evaluation
 
 Owner-local offline and observed prompt evaluation lives under `evaluation/`
-in this repository. The retired `apxm-project/eval` plane is no longer a
-consumer or authority for this repo.
+in this repository.
 
 ## Surfaces
 
