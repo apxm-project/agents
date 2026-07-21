@@ -106,7 +106,7 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
     // --- Sandbox ---
     // The CLI does not construct confinement backends. Composition roots supply
     // admitted sandbox implementations when execution is prepared.
-    let sandbox_backends = Vec::<apxm_runtime::sandbox::SandboxCapabilities>::new();
+    let sandbox_backends = Vec::<String>::new();
 
     // --- Environment Variables ---
     let env_apxm_backend = env::var(apxm_env::APXM_BACKEND).ok();
@@ -207,32 +207,6 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
         print_hint(
             "Runtime composition must supply an admitted confinement backend before executing sandboxed effects.",
         );
-    } else {
-        for backend in &sandbox_backends {
-            let mut guarantees = Vec::new();
-            if backend.supports_filesystem_restriction {
-                guarantees.push("filesystem");
-            }
-            if backend.supports_network_restriction {
-                guarantees.push("network");
-            }
-            if backend.supports_syscall_filtering {
-                guarantees.push("syscall");
-            }
-            if backend.supports_resource_limits {
-                guarantees.push("resource");
-            }
-            let enforced = if guarantees.is_empty() {
-                "no declared restrictions".to_string()
-            } else {
-                format!("{} restrictions", guarantees.join(", "))
-            };
-            print_status_line(
-                &backend.name,
-                Status::Ok,
-                &format!("{}; {enforced}", backend.isolation_level),
-            );
-        }
     }
 
     // 4. Environment Variables

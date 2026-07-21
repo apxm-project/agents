@@ -30,7 +30,6 @@ apxm-inference.workspace = true
 apxm-kernel.workspace = true
 apxm-backend-registry.workspace = true
 apxm-acp.workspace = true
-apxm-runtime.workspace = true
 clap.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
 async-trait.workspace = true

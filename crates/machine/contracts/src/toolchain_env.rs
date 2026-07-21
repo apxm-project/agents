@@ -1,7 +1,7 @@
 //! Canonical environment keys for locating the MLIR/LLVM toolchain (conda, Dekk, custom prefixes).
 //!
-//! **Organization:** Runtime (`MlirEnvReport`), CLI (`apxm-cli`), driver (`apxm-driver`), and
-//! `build.rs` scripts (`apxm-compiler`, `apxm-cli`) should import names from here so spellings never
+//! **Organization:** Runtime (`MlirEnvReport`), CLI (`apxm-cli`), and `build.rs`
+//! scripts (`apxm-compiler`, `apxm-cli`) should import names from here so spellings never
 //! drift. Keep Dekk's `.dekk.toml` `[env]` table aligned when adding keys.
 //!
 //! Bindgen/`clang-sys` uses [`LIBCLANG_PATH`]; file naming patterns for `libclang` stay in

@@ -317,7 +317,6 @@ dependencies = [
  "apxm-kernel",
  "apxm-program",
  "apxm-rollout",
- "apxm-runtime",
  "async-trait",
  "chrono",
  "clap",
@@ -404,33 +403,6 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "which",
-]
-
-[[package]]
-name = "apxm-driver"
-version = "0.1.0"
-dependencies = [
- "apxm-acp",
- "apxm-artifact",
- "apxm-backend-registry",
- "apxm-backends",
- "apxm-compiler",
- "apxm-core",
- "apxm-runtime",
- "async-trait",
- "chrono",
- "dirs 5.0.1",
- "futures",
- "parking_lot",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "toml",
- "tracing",
- "uuid",
 ]
 
 [[package]]

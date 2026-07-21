@@ -40,7 +40,7 @@ fn initialize_tracing(level: &Option<String>, json_mode: bool) {
 
     let filter_str = match level {
         Some(lvl) => format!(
-            "apxm={lvl},apxm_runtime={lvl},apxm_core={lvl},apxm_acp={lvl},apxm_backends={lvl},apxm_server={lvl}"
+            "apxm={lvl},apxm_execution={lvl},apxm_kernel={lvl},apxm_core={lvl},apxm_acp={lvl},apxm_backends={lvl},apxm_server={lvl}"
         ),
         None => match std::env::var("RUST_LOG") {
             Ok(val) if !val.is_empty() => val,
