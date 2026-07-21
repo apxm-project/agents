@@ -59,8 +59,6 @@ dekk agents compile-service-canonical path/to/package
 
 ## Companion repos
 
-- [apxm-project/eval](https://github.com/apxm-project/eval) —
-  benchmark + evaluation harness, preregistrations, claim cards
 - [apxm-project/vllm](https://github.com/apxm-project/vllm) — graph-aware
   vLLM fork used by APXM-vLLM
 
