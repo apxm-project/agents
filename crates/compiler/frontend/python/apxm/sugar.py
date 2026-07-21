@@ -195,7 +195,7 @@ class Team:
 
         Args:
             agent_name: Name of the agent instance
-            profile: Agent profile from apxm._generated.agents
+            profile: Explicit AgentRef supplied by the caller
             mode: Agent mode
             model: Model name
             cwd: Working directory
@@ -260,7 +260,7 @@ def _spawn_with_handle(
 
     Args:
         agent_name: Name of the agent instance
-        profile: Agent profile from apxm._generated.agents
+        profile: Explicit AgentRef supplied by the caller
         mode: Agent mode
         model: Model name
         cwd: Working directory
@@ -324,11 +324,9 @@ def _create_team(self: GraphRecorder, name: str) -> Team:
     """Create a workflow-local team of agents.
 
     Example:
-        from apxm._generated.agents import claude, codex
-
         team = g.team("research_team")
-        alice = team.add("alice", profile=claude)
-        bob = team.add("bob", profile=codex)
+        alice = team.add("alice")
+        bob = team.add("bob")
         alice.ask("Research X")
         bob.ask("Research Y")
         results = team.merge()

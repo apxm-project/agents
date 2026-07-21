@@ -1,12 +1,47 @@
 //! External tool/capability registration.
 
+use std::path::PathBuf;
+
 use anyhow::Result;
 use colored::Colorize;
 
-use super::acp::{load_tools, save_tools};
 use super::cli::*;
 use super::dekk_hints;
 use super::implementations::{Status, print_section_header, print_status_line};
+
+fn tools_path() -> PathBuf {
+    let mut path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    path.push(".apxm");
+    path.push("tools.json");
+    path
+}
+
+fn load_tools() -> Result<ToolsFile> {
+    let path = tools_path();
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ToolsFile::default());
+        }
+        Err(error) => return Err(anyhow::anyhow!("Failed to read {}: {error}", path.display())),
+    };
+    let tools_file: ToolsFile = serde_json::from_str(&content)
+        .map_err(|error| anyhow::anyhow!("Failed to parse {}: {error}", path.display()))?;
+    Ok(tools_file)
+}
+
+fn save_tools(tools_file: &ToolsFile) -> Result<()> {
+    let path = tools_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| anyhow::anyhow!("Failed to create {}: {error}", parent.display()))?;
+    }
+    let content = serde_json::to_string_pretty(tools_file)
+        .map_err(|error| anyhow::anyhow!("Failed to serialize tools: {error}"))?;
+    std::fs::write(&path, content)
+        .map_err(|error| anyhow::anyhow!("Failed to write {}: {error}", path.display()))?;
+    Ok(())
+}
 
 pub fn tool_command(action: ToolAction, json_output: bool) -> Result<()> {
     match action {

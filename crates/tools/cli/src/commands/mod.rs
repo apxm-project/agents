@@ -5,7 +5,6 @@ use std::fmt;
 pub mod cli;
 pub mod implementations;
 
-pub mod acp;
 pub mod agent;
 pub mod analysis;
 #[cfg(feature = "driver")]
@@ -40,7 +39,6 @@ pub mod watch;
 
 pub use cli::*;
 
-pub use acp::*;
 pub use agent::*;
 pub use analysis::*;
 #[cfg(feature = "driver")]

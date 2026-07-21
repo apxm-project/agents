@@ -40,7 +40,7 @@ fn initialize_tracing(level: &Option<String>, json_mode: bool) {
 
     let filter_str = match level {
         Some(lvl) => format!(
-            "apxm={lvl},apxm_execution={lvl},apxm_kernel={lvl},apxm_core={lvl},apxm_acp={lvl},apxm_backends={lvl},apxm_server={lvl}"
+            "apxm={lvl},apxm_execution={lvl},apxm_kernel={lvl},apxm_core={lvl},apxm_backends={lvl},apxm_server={lvl}"
         ),
         None => match std::env::var("RUST_LOG") {
             Ok(val) if !val.is_empty() => val,
@@ -116,7 +116,6 @@ async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Doctor => doctor_command(cli.config, cli.json),
         Commands::Backend { action } => backend_command(action, cli.json).await,
         Commands::Tool { action } => tool_command(action, cli.json),
-        Commands::Acp { action } => acp_command(action, cli.json).await,
         Commands::Team { action } => team_command(action, cli.json),
         Commands::Agent { action } => agent_command(action, cli.json),
         Commands::Org { action } => org_command(action, cli.json),
@@ -231,7 +230,6 @@ async fn run_cli_no_driver(cli: Cli) -> Result<()> {
         Commands::ExecuteCanonical { input } => execute_canonical_command(input, cli.json).await,
         Commands::Doctor => doctor_command(cli.config, cli.json),
         Commands::Tool { action } => tool_command(action, cli.json),
-        Commands::Acp { action } => acp_command(action, cli.json).await,
         Commands::Team { action } => team_command(action, cli.json),
         Commands::Agent { action } => agent_command(action, cli.json),
         Commands::Org { action } => org_command(action, cli.json),

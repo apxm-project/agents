@@ -10,7 +10,6 @@ This example demonstrates:
 """
 
 from apxm import DependencyType, compile, GraphRecorder
-from apxm._generated.agents import claude
 
 
 @compile()
@@ -26,9 +25,9 @@ def research_workflow(g: GraphRecorder, topic: str):
     team = g.team("research_team")
 
     # Spawn specialized agents
-    researcher = team.add("researcher", profile=claude, mode="normal")
-    critic = team.add("critic", profile=claude, mode="extended")
-    synthesizer = team.add("synthesizer", profile=claude, mode="normal")
+    researcher = team.add("researcher", mode="normal")
+    critic = team.add("critic", mode="extended")
+    synthesizer = team.add("synthesizer", mode="normal")
 
     # Parallel research and critique
     researcher.ask("Research the topic: {topic}. Provide detailed findings.")
