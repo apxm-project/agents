@@ -2220,13 +2220,10 @@ mod tests {
         .unwrap();
         fs::write(
             root.join("python/main.py"),
-            "from apxm import GraphRecorder, compile, emit_air_if_requested\n\n\n\
-             @compile()\n\
-             def studio_workflow(g: GraphRecorder):\n\
-             \x20\x20\x20\x20ask = g.ask(name=\"respond\", prompt=\"Answer from Studio package metadata.\")\n\
-             \x20\x20\x20\x20g.done(source=ask)\n\n\n\
+            "import apxm_program\n\
+             from apxm_program.example import session_agent_graph\n\n\n\
              if __name__ == \"__main__\":\n\
-             \x20\x20\x20\x20emit_air_if_requested(studio_workflow)\n",
+             \x20\x20\x20\x20print(apxm_program.canonical_air_json(session_agent_graph()), end=\"\")\n",
         )
         .unwrap();
         agent_build(&root, true).expect("package with Server-selected skill policy must build");
@@ -2243,9 +2240,12 @@ mod tests {
             Some("python/main.py")
         );
 
-        let air = super::super::compile::emit_air_from_agent(&root)
-            .expect("compile-service must compile the package-level program entry");
-        assert!(air.contains("Answer from Studio package metadata."));
+        let air = super::super::compile_service_canonical::emit_canonical_air_from_agent(
+            &root, None,
+        )
+        .expect("canonical compile-service must compile the package-level program entry");
+        assert!(air.contains("\"schema_version\":\"apxm.air.v1\""));
+        assert!(air.contains("\"op\":\"model.call\""));
     }
 
     #[test]
