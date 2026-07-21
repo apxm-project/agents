@@ -1,13 +1,6 @@
 //! Shared helpers and small utilities used across command modules.
 
-#[cfg(feature = "driver")]
-use std::path::PathBuf;
-
-#[cfg(feature = "driver")]
-use anyhow::Context;
 use anyhow::Result;
-#[cfg(feature = "driver")]
-use apxm_driver::{ApXmConfig, ConfigError};
 use colored::Colorize;
 
 pub(crate) fn category_str(cat: apxm_core::types::OperationCategory) -> &'static str {
@@ -101,28 +94,5 @@ pub(super) fn parse_duration(s: &str) -> Result<chrono::Duration> {
         Err(anyhow::anyhow!(
             "Invalid duration format. Use '7d' or '24h'"
         ))
-    }
-}
-
-#[cfg(feature = "driver")]
-pub(super) fn load_config(config: Option<PathBuf>) -> Result<ApXmConfig> {
-    if let Some(path) = config {
-        return ApXmConfig::load_scoped_with_explicit(Some(path.clone()))
-            .map_err(|e| anyhow::anyhow!(e))
-            .with_context(|| {
-                format!(
-                    "Failed to load config hierarchy with explicit layer {}",
-                    path.display()
-                )
-            });
-    }
-
-    match ApXmConfig::load_scoped() {
-        Ok(config) => Ok(config),
-        Err(ConfigError::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => {
-            Ok(ApXmConfig::default())
-        }
-        Err(ConfigError::HomeDirMissing) => Ok(ApXmConfig::default()),
-        Err(err) => Err(anyhow::anyhow!(err)),
     }
 }

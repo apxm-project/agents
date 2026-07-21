@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 build = "build.rs"
 publish = false
-description = "APxM CLI - minimal compile/run wrapper for the driver"
+description = "APxM CLI - canonical local and remote APXM command surface"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
@@ -24,7 +24,6 @@ progenitor-client.workspace = true
 apxm-core.workspace = true
 apxm-ais.workspace = true
 apxm-backends.workspace = true
-apxm-driver = { workspace = true, optional = true }
 apxm-program.workspace = true
 apxm-execution.workspace = true
 apxm-inference.workspace = true
@@ -82,7 +81,6 @@ syn = "2.0"
 [features]
 default = []
 driver = [
-    "dep:apxm-driver",
     "tokio/rt-multi-thread",
     "tokio/io-std",
     "tokio/io-util",
@@ -96,5 +94,5 @@ driver = [
     "dep:flate2",
     "dep:crossterm",
 ]
-metrics = ["driver", "apxm-driver/metrics"]
-no-trace = ["apxm-driver/no-trace", "apxm-core/no-trace"]
+metrics = ["driver"]
+no-trace = ["apxm-core/no-trace"]

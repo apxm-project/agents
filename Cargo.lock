@@ -312,7 +312,6 @@ dependencies = [
  "apxm-backend-registry",
  "apxm-backends",
  "apxm-core",
- "apxm-driver",
  "apxm-execution",
  "apxm-inference",
  "apxm-kernel",
