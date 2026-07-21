@@ -1,9 +1,0 @@
-module {
-  func.func @synchronization_flow() -> !ais.token attributes {ais.entry} {
-    %n1 = ais.ask "Prepare the durable result" : !ais.token
-    %n2 = ais.checkpoint "after_answer" {node_name = "checkpoint"} : !ais.token
-    %n3 = ais.fence {node_name = "fence", ordering = "serial"} : !ais.token
-    %n4 = ais.merge %n2, %n3 : !ais.token, !ais.token {node_name = "merged"} -> !ais.token
-    ais.return %n4 {node_name = "out"} : !ais.token
-  }
-}

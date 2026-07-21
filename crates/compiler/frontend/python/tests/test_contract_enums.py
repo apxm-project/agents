@@ -21,7 +21,6 @@ from apxm.constants import (
     TOOL_GROUP_FILE_READ,
     TOOL_GROUP_WEB,
 )
-from apxm.ir import validate_against_apxm
 
 
 def test_dependency_type_normalizes_to_wire_value():
@@ -67,10 +66,13 @@ def test_register_hook_accepts_lifecycle_enums():
         return None
 
     g = GraphRecorder("typed_hooks")
-    g.register_hook(event=LifecycleEvent.PRE_ASK, mode=HookMode.OBSERVE, fn=before_ask)
+    hook_ref = g.register_hook(event=LifecycleEvent.PRE_ASK, mode=HookMode.OBSERVE, fn=before_ask)
 
-    result = validate_against_apxm(g.to_graph())
-    assert result.valid, result.errors
+    node = g.to_graph().nodes[hook_ref._node_id - 1]
+    assert node.op == "REGISTER_HOOK"
+    assert node.attributes["hook_event"] == "pre_ask"
+    assert node.attributes["hook_mode"] == "observe"
+    assert node.attributes["hook_handler_id"].startswith("sha256:")
 
 
 def test_skill_search_lowers_query_to_search_skills_request():

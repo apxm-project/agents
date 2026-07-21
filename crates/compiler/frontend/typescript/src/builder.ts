@@ -532,10 +532,6 @@ export class GraphBuilder {
     });
   }
 
-  /** Emit AIR for the recorded graph. */
-  toAir(): string {
-    return this.toGraph().toAir();
-  }
 }
 
 installGeneratedGraphBuilderOps(GraphBuilder);

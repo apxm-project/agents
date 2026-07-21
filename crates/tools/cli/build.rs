@@ -3,11 +3,8 @@
 //! Two unrelated jobs share this file because Cargo allows only one
 //! `build.rs` per crate:
 //!
-//! 1. Embed runpaths so the `apxm` executable resolves `libapxm_compiler_c`
-//!    and MLIR/LLVM dylibs at runtime. `apxm-compiler` links those libraries
-//!    with `@rpath/...`; Cargo does not reliably forward every link argument
-//!    from transitive build scripts to the final `apxm` binary, so this leaf
-//!    script applies the canonical rpaths explicitly.
+//! 1. Embed runpaths so optional driver-linked dylibs and MLIR/LLVM runtime
+//!    libraries resolve consistently for the final `apxm` binary.
 //! 2. Generate the typed HTTP client (`src/client/mod.rs`) from
 //!    `openapi/openapi-session-v1.yaml` via `progenitor` — folded in from the
 //!    former standalone `apxm-client` crate; it had no consumer

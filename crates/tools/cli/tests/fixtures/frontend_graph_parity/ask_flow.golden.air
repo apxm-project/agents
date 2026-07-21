@@ -1,6 +1,0 @@
-module {
-  func.func @ask_flow(%arg0: !ais.token {ais.param_name = "name", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
-    %n1 = ais.ask "Say hi to {name}" [%arg0 : !ais.token] : !ais.token
-    ais.return %n1 {node_name = "out"} : !ais.token
-  }
-}

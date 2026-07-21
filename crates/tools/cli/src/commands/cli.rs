@@ -115,14 +115,6 @@ pub enum Commands {
         #[command(subcommand)]
         action: CodegenAction,
     },
-    /// Emit canonical AIR from frontend graph JSON.
-    ///
-    /// Reads the shared FrontendGraph DTO shape from a file or stdin and prints
-    /// AIR through the Rust AirModule printer.
-    EmitAir {
-        /// Frontend graph JSON file. Omit to read stdin.
-        input: Option<PathBuf>,
-    },
     /// Emit canonical AIR from a canonical FrontendGraph via the native bridge.
     ///
     /// Reads an `apxm.frontend-graph.v1` document from a file or stdin and lowers

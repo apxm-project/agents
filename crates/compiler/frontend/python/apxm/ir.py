@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import json
-import subprocess
 from typing import Any
 
 from apxm._generated import operations
@@ -18,43 +16,14 @@ _DEPENDENCY_TYPES = {DEPENDENCY_DATA, DEPENDENCY_EFFECT, DEPENDENCY_CONTROL}
 
 
 class AirEmissionError(RuntimeError):
-    """Raised when the compiler-owned AIR emitter cannot produce AIR."""
+    """Raised when retired graph DTO AIR emission is requested."""
 
 
-@dataclass(frozen=True, slots=True)
-class AirEmitterCommand:
-    """Subprocess command that emits AIR from the shared frontend graph DTO."""
-
-    argv: tuple[str, ...]
-
-    @classmethod
-    def from_environment(cls) -> "AirEmitterCommand":
-        # APXM_BIN names the installed compiler CLI; otherwise it must be
-        # available as `apxm` on PATH. Lazy import breaks the ir <-> execution
-        # module cycle.
-        from apxm.execution import _find_apxm_binary
-
-        return cls((_find_apxm_binary(), "emit-air"))
-
-    def emit(self, payload: Any) -> str:
-        try:
-            result = subprocess.run(
-                self.argv,
-                input=json.dumps(payload),
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                check=False,
-            )
-        except OSError as exc:
-            command = " ".join(self.argv)
-            raise AirEmissionError(f"{command} could not be started: {exc}") from exc
-
-        if result.returncode != 0:
-            command = " ".join(self.argv)
-            detail = result.stderr.strip() or f"exit status {result.returncode}"
-            raise AirEmissionError(f"{command} failed: {detail}")
-        return result.stdout
+def _raise_retired_air_emission() -> str:
+    raise AirEmissionError(
+        "ApxmGraph is the retired frontend DTO; canonical AIR lowering requires "
+        "apxm_program.canonical_air_json over apxm.frontend-graph.v1"
+    )
 
 
 @dataclass(slots=True)
@@ -278,8 +247,8 @@ class ApxmGraph:
         }
 
     def to_air(self) -> str:
-        """Emit valid MLIR text for this graph through the Rust AIR builder."""
-        return AirEmitterCommand.from_environment().emit(self.to_dict())
+        """Fail closed because the retired graph DTO is not canonical source."""
+        return _raise_retired_air_emission()
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ApxmGraph":
@@ -377,8 +346,8 @@ class ApxmGraph:
 
 
 def emit_multi_flow_module(graphs: list["ApxmGraph"]) -> str:
-    """Serialize captured graphs into one AIR module through the Rust builder."""
-    return AirEmitterCommand.from_environment().emit([graph.to_dict() for graph in graphs])
+    """Fail closed because multi-flow DTO emission is retired."""
+    return _raise_retired_air_emission()
 
 
 @dataclass(slots=True)

@@ -311,7 +311,6 @@ dependencies = [
  "apxm-ais",
  "apxm-backend-registry",
  "apxm-backends",
- "apxm-compiler",
  "apxm-core",
  "apxm-driver",
  "apxm-execution",

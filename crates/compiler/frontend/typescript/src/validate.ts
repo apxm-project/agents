@@ -3,7 +3,7 @@
  * contracts, `workspace/contracts/schemas/workflow-draft.v1.json`). The
  * schema is vendored into `src/generated/workflow-draft-schema.ts` by
  * `npm run codegen`; this module wires it up to `ajv`. Compiler semantics are
- * checked by the Rust AIR builder reached through `ApxmGraph.toAir()`.
+ * checked after canonical FrontendGraph lowering.
  */
 // The workflow-draft.v1 schema declares `$schema:
 // https://json-schema.org/draft/2020-12/schema`; ajv's default export only

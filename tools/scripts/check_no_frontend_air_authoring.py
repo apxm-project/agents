@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Guard against a second frontend AIR text emitter.
 
-The canonical AIR contract requires frontend packages to delegate emission to
-the Rust printer through `apxm emit-air`. This script fails if any
-Python/TypeScript source under the frontend packages *constructs* AIR text
-(an MLIR `module { ... }` / `func.func @...` block, or a bare `ais.<op>`
-dialect string) via string literals/formatting instead of delegating to the
-single Rust printer through `apxm emit-air`.
+The canonical AIR contract requires frontend packages to lower
+`apxm.frontend-graph.v1` through the Rust-owned native bridge. This script fails
+if any Python/TypeScript source under the frontend packages *constructs* AIR
+text (an MLIR `module { ... }` / `func.func @...` block, or a bare `ais.<op>`
+dialect string) via string literals/formatting instead of using canonical
+lowering.
 
 It is intentionally conservative (string/regex-based, not a real parser) and
 allow-lists the known-safe patterns already in the tree:
@@ -28,8 +28,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# Only the frontend packages that must delegate to `apxm emit-air` — not the
-# Rust `air_builder` crate itself, which legitimately owns AIR text.
+# Only the frontend packages that must use canonical native lowering — not the
+# Rust AIR builders themselves, which legitimately own AIR text.
 SCAN_ROOTS = [
     REPO_ROOT / "crates" / "compiler" / "frontend" / "python" / "apxm",
     REPO_ROOT / "crates" / "compiler" / "frontend" / "typescript" / "src",
@@ -133,9 +133,9 @@ def main() -> int:
     violations = find_violations()
     if violations:
         print(
-            "Hand-authored AIR text detected outside the single Rust printer "
-            "(air_builder::emit::emit_air). Frontends must delegate to "
-            "`apxm emit-air`, not format AIR strings locally:\n",
+            "Hand-authored AIR text detected outside the Rust-owned lowering "
+            "path. Frontends must lower canonical FrontendGraph, not format "
+            "AIR strings locally:\n",
             file=sys.stderr,
         )
         for violation in violations:
