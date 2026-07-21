@@ -30,7 +30,6 @@ apxm-program.workspace = true
 apxm-execution.workspace = true
 apxm-inference.workspace = true
 apxm-kernel.workspace = true
-apxm-artifact = { workspace = true, optional = true }
 apxm-backend-registry.workspace = true
 apxm-acp.workspace = true
 apxm-runtime.workspace = true
@@ -89,7 +88,6 @@ driver = [
     "tokio/io-std",
     "tokio/io-util",
     "tokio/sync",
-    "dep:apxm-artifact",
     "dep:tracing-subscriber",
     "dep:rusqlite",
     "dep:apxm-rollout",

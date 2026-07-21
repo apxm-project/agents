@@ -309,7 +309,6 @@ dependencies = [
  "anyhow",
  "apxm-acp",
  "apxm-ais",
- "apxm-artifact",
  "apxm-backend-registry",
  "apxm-backends",
  "apxm-compiler",

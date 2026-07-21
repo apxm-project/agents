@@ -8,7 +8,6 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use crate::commands::compile::emit_air_from_agent;
 use tempfile::TempDir;
 
 use super::super::{agent_build, agent_lint, agent_sync, gao_example_agent_dir, IntegrityToml};
@@ -56,21 +55,6 @@ fn read_tools_manifest(root: &Path) -> Vec<serde_json::Value> {
         .unwrap_or_else(|| value.as_array().cloned().expect("tools.json handlers array"))
 }
 
-fn read_compile_service_manifest(root: &Path) -> Vec<serde_json::Value> {
-    let air = emit_air_from_agent(root)
-        .expect("compile-service AIR");
-    let sidecar = air
-        .lines()
-        .find_map(|line| line.strip_prefix("; __apxm_handler_manifest__ "))
-        .expect("compile-service handler sidecar");
-    let value: serde_json::Value = serde_json::from_str(sidecar).expect("parse handler sidecar");
-    value
-        .get("handlers")
-        .and_then(serde_json::Value::as_array)
-        .cloned()
-        .expect("handler sidecar array")
-}
-
 fn compile_source_manifest(root: &Path, source_file: &str) -> Vec<serde_json::Value> {
     let compiler = repo_root().join("crates/compiler/frontend/typescript/dist/compile-handlers.js");
     assert!(
@@ -109,16 +93,6 @@ fn repo_root() -> std::path::PathBuf {
 }
 
 fn worker_manifest_entry(root: &Path, selector: &str) -> serde_json::Value {
-    let sidecar_entry = read_compile_service_manifest(root)
-        .into_iter()
-        .find(|entry| {
-            entry.get("name").and_then(serde_json::Value::as_str) == Some(selector)
-                || entry.get("qualname").and_then(serde_json::Value::as_str) == Some(selector)
-        });
-    if let Some(entry) = sidecar_entry {
-        return entry;
-    }
-
     let manifest_entry = read_tools_manifest(root)
         .into_iter()
         .find(|entry| {
@@ -765,27 +739,6 @@ fn gao_post_cap_hook_recursively_scrubs_nested_results_without_losing_types() {
             .pointer("/nested/items/1/value")
             .and_then(serde_json::Value::as_i64),
         Some(7)
-    );
-}
-
-#[test]
-fn gao_compile_service_declarative_emits_recv_loop_air() {
-    if !node_available() || !npm_available() {
-        eprintln!("skipping gao_compile_service_emits_await_input_air: node/npm not on PATH");
-        return;
-    }
-    let tmp = copy_gao_example();
-    let root = tmp.path().join("gao");
-    agent_build(&root, true).expect("gao agent build must succeed before compile-service");
-
-    let air = emit_air_from_agent(&root)
-        .expect("declarative compile-service AIR for gao");
-
-    assert!(air.contains("ais.await_input"), "expected explicit input park");
-    assert!(air.contains("rearm = \"true\""), "expected re-arming input park");
-    assert!(
-        air.contains("__apxm_handler_manifest__"),
-        "gao AIR must carry the TypeScript handler manifest sidecar"
     );
 }
 
