@@ -10,11 +10,14 @@ use serde::Serialize;
 
 use super::cli::ProcessAction;
 
-const CORE_JOB_COMMANDS: &[&str] = &["compile", "execute", "run"];
-const WORKFLOW_COMMAND: &str = "workflow";
-const WORKFLOW_RUN_COMMAND: &str = "run";
+const CANONICAL_JOB_COMMANDS: &[&str] = &[
+    "canonical-air",
+    "compile-service-canonical",
+    "execute-canonical",
+];
 const APXM_BINARY: &str = "apxm";
 const DEKK_BINARY: &str = "dekk";
+const DEKK_AGENTS_SURFACE: &str = "agents";
 const APXM_SERVER_BINARY: &str = "apxm-server";
 const APXM_STUDIO_BINARY: &str = "apxm-studio";
 const VLLM_ENTRYPOINT: &str = "vllm.entrypoints.cli.main";
@@ -244,7 +247,11 @@ fn matches_dekk_apxm_job(cmdline: &[String]) -> bool {
             continue;
         }
         let rest = &cmdline[idx + 1..];
-        if rest.first().is_some_and(|arg| arg == APXM_BINARY) && is_apxm_job_command(&rest[1..]) {
+        if rest
+            .first()
+            .is_some_and(|arg| arg == DEKK_AGENTS_SURFACE)
+            && is_apxm_job_command(&rest[1..])
+        {
             return true;
         }
     }
@@ -255,13 +262,7 @@ fn is_apxm_job_command(args: &[String]) -> bool {
     let Some(command) = args.first().map(String::as_str) else {
         return false;
     };
-    if CORE_JOB_COMMANDS.contains(&command) {
-        return true;
-    }
-    command == WORKFLOW_COMMAND
-        && args
-            .get(1)
-            .is_some_and(|subcommand| subcommand == WORKFLOW_RUN_COMMAND)
+    CANONICAL_JOB_COMMANDS.contains(&command)
 }
 
 fn matches_apxm_service(cmdline: &[String]) -> bool {
@@ -386,4 +387,45 @@ fn signal_pid(pid: i32, signal: &str) -> Result<bool> {
 #[cfg(not(unix))]
 fn signal_pid(_pid: i32, _signal: &str) -> Result<bool> {
     anyhow::bail!("process cleanup is currently supported on Unix-like systems")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    #[test]
+    fn canonical_job_commands_are_matched() {
+        for command in CANONICAL_JOB_COMMANDS {
+            assert!(is_apxm_job_command(&args(&[command])));
+        }
+    }
+
+    #[test]
+    fn retired_job_commands_are_not_matched() {
+        for command in ["compile", "execute", "run"] {
+            assert!(!is_apxm_job_command(&args(&[command])));
+        }
+        assert!(!is_apxm_job_command(&args(&["workflow", "run"])));
+    }
+
+    #[test]
+    fn dekk_agents_canonical_job_is_matched() {
+        assert!(matches_dekk_apxm_job(&args(&[
+            "dekk",
+            "agents",
+            "execute-canonical",
+            "program.air"
+        ])));
+    }
+
+    #[test]
+    fn dekk_apxm_retired_surface_is_not_matched() {
+        assert!(!matches_dekk_apxm_job(&args(&[
+            "dekk", "apxm", "execute", "program.air"
+        ])));
+    }
 }
