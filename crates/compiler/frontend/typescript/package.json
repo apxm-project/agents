@@ -2,7 +2,7 @@
   "name": "@apxm/frontend",
   "version": "0.1.0",
   "type": "module",
-  "description": "TypeScript compiler frontend for APXM: records workflow graphs, emits AIR, and validates workflow-draft.v1 documents. Op tables in src/generated/ are code-generated from crates/machine/ais/generated/op-spec.v1.json.",
+  "description": "TypeScript compiler frontend for APXM: records workflow graphs and validates workflow-draft.v1 documents. Op tables in src/generated/ are code-generated from crates/machine/ais/generated/op-spec.v1.json.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

@@ -1,7 +1,0 @@
-module {
-  func.func @agent_flow() -> !ais.token attributes {ais.entry} {
-    %n1 = ais.spawn_agent "coder" {cwd = "/tmp/work", node_name = "coder_spawn", profile = "codex"} : !ais.token
-    %n3 = ais.communicate "Fix it" to "coder" (%n1 : !ais.token) {llm_operation = "ASK"} : !ais.token
-    ais.return %n3 {node_name = "out"} : !ais.token
-  }
-}

@@ -25,7 +25,6 @@ apxm-core.workspace = true
 apxm-ais.workspace = true
 apxm-backends.workspace = true
 apxm-driver = { workspace = true, optional = true }
-apxm-compiler.workspace = true
 apxm-program.workspace = true
 apxm-execution.workspace = true
 apxm-inference.workspace = true

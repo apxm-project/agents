@@ -10,7 +10,7 @@ export type {
   InvokeCapabilityOptions,
 } from "./builder.js";
 
-export { ApxmGraph, makeEdge, emitMultiFlowModule } from "./graph.js";
+export { ApxmGraph, makeEdge } from "./graph.js";
 export type { GraphNode, GraphEdge, Parameter, ApxmGraphData } from "./graph.js";
 
 export { validateWorkflowDraft } from "./validate.js";

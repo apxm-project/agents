@@ -19,7 +19,6 @@ pub mod codegen;
 #[cfg(feature = "driver")]
 pub mod compile_service_canonical;
 pub(crate) mod dekk_hints;
-pub mod frontend_air;
 pub mod integration;
 pub mod ops;
 pub mod org;
@@ -50,7 +49,6 @@ pub use cache::*;
 pub use canonical_air::*;
 pub use canonical_execute::*;
 pub use codegen::*;
-pub use frontend_air::*;
 pub use integration::*;
 pub use ops::*;
 pub use org::*;

@@ -20,5 +20,3 @@ const input = graph.awaitInput({
 });
 
 graph.done(input, "return_turn");
-
-console.log(graph.toAir());

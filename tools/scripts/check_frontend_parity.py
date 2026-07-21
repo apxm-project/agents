@@ -1,36 +1,36 @@
 #!/usr/bin/env python3
-"""`dekk agents check-frontend-parity` — frontend-graph DTO parity/drift gate.
+"""`dekk agents check-frontend-parity` — canonical frontend parity/drift gate.
 
-Runs every check `the frontend graph parity invariant` names so DTO/printer drift
-between Rust, Python, and TypeScript fails CI, not just local runs:
+Runs every check the canonical frontend parity invariant names so
+FrontendGraph/AIR drift between Rust, Python, and TypeScript fails CI, not just
+local runs:
 
-1. Rust `frontend_graph`/`frontend_air` unit tests (DTO conversion + CLI
-   surface, including the fixture-golden and wire-shape-parity tests).
-2. The direct-AIR typed prompt-role integration target, which parses the
-   shared role-bearing golden fixture and validates its artifact contract.
-3. Builds the `apxm` CLI (debug profile, fast) and points `APXM_BIN` at it
-   so the Python/TypeScript parity tests actually shell out and compare
-   real output instead of skipping.
-4. `test_air_parity.py` (pytest) and `emit-air.test.ts` (vitest) golden
-   comparisons, now un-skipped.
-5. The hand-authored-AIR regression guard
-   (`check_no_frontend_air_authoring.py`).
+1. Build and place the Python PyO3 canonical frontend bridge.
+2. Build and place the TypeScript Node-API canonical frontend bridge.
+3. Run the canonical Python and TypeScript authoring parity suites.
+4. Run the cross-language parity harness against shared golden AIR.
+5. Run the hand-authored-AIR regression guard.
 
 Exit 0 = clean. Exit 1 = any step failed.
 """
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+PYTHON_NATIVE_DEST = (
+    REPO_ROOT / "crates" / "compiler" / "frontend" / "python" / "apxm_program" / "_native.so"
+)
+TYPESCRIPT_NATIVE_DEST = (
+    REPO_ROOT / "crates" / "compiler" / "frontend" / "native" / "typescript" / "js" / "_native.node"
+)
 TYPESCRIPT_DIR = REPO_ROOT / "crates" / "compiler" / "frontend" / "typescript"
 TYPESCRIPT_DEPENDENCIES_DIR = TYPESCRIPT_DIR / "node_modules"
-TYPESCRIPT_PARITY_TEST = "test/emit-air.test.ts"
+TYPESCRIPT_PARITY_TEST = "test/canonical-air.test.ts"
 
 
 def _run(description: str, command: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> bool:
@@ -46,29 +46,8 @@ def main() -> int:
     ok = True
 
     ok &= _run(
-        "Rust frontend-graph DTO tests (apxm-compiler)",
-        [sys.executable, "tools/scripts/cargo.py", "test", "-p", "apxm-compiler", "frontend_graph::"],
-    )
-    ok &= _run(
-        "Rust frontend-air CLI + parity tests (apxm-cli)",
-        [sys.executable, "tools/scripts/cargo.py", "test", "-p", "apxm-cli", "--bin", "apxm", "frontend_air::"],
-    )
-    ok &= _run(
-        "Direct-AIR typed prompt-role integration tests (apxm-compiler)",
-        [
-            sys.executable,
-            "tools/scripts/cargo.py",
-            "test",
-            "-p",
-            "apxm-compiler",
-            "--test",
-            "direct_air_prompt_roles",
-        ],
-    )
-
-    ok &= _run(
-        "Build apxm CLI (debug) for live parity tests",
-        [sys.executable, "tools/scripts/cargo.py", "build", "-p", "apxm-cli", "--bin", "apxm"],
+        "Build Python canonical frontend bridge",
+        [sys.executable, "tools/scripts/cargo.py", "build", "-p", "apxm-frontend-python", "--release"],
     )
     target_dir_result = subprocess.run(
         [sys.executable, "tools/scripts/cargo.py", "target-dir"],
@@ -78,27 +57,33 @@ def main() -> int:
         check=True,
     )
     target_dir = Path(target_dir_result.stdout.strip())
-    apxm_bin = target_dir / "debug" / "apxm"
-    if not apxm_bin.is_file():
-        print(f"error: expected built apxm binary at {apxm_bin}", file=sys.stderr)
+    python_native = target_dir / "release" / "lib_native.so"
+    if not python_native.is_file():
+        print(f"error: expected built Python native bridge at {python_native}", file=sys.stderr)
         return 1
-
-    live_env = dict(os.environ)
-    live_env["APXM_BIN"] = str(apxm_bin)
+    shutil.copy2(python_native, PYTHON_NATIVE_DEST)
 
     python_bin = shutil.which("pytest") and sys.executable or sys.executable
     ok &= _run(
-        "Python frontend AIR parity tests (pytest, APXM_BIN set)",
+        "Python canonical frontend AIR parity tests",
         [python_bin, "-m", "pytest", "crates/compiler/frontend/python/tests/test_air_parity.py", "-q"],
-        env=live_env,
     )
+
+    ok &= _run(
+        "Build TypeScript canonical frontend bridge",
+        [sys.executable, "tools/scripts/cargo.py", "build", "-p", "apxm-frontend-typescript", "--release"],
+    )
+    typescript_native = target_dir / "release" / "libapxm_frontend_typescript.so"
+    if not typescript_native.is_file():
+        print(f"error: expected built TypeScript native bridge at {typescript_native}", file=sys.stderr)
+        return 1
+    shutil.copy2(typescript_native, TYPESCRIPT_NATIVE_DEST)
 
     if TYPESCRIPT_DIR.is_dir() and TYPESCRIPT_DEPENDENCIES_DIR.is_dir():
         ok &= _run(
-            "TypeScript frontend AIR parity tests (vitest, APXM_BIN set)",
+            "TypeScript canonical frontend AIR parity tests",
             ["npx", "vitest", "run", TYPESCRIPT_PARITY_TEST],
             cwd=TYPESCRIPT_DIR,
-            env=live_env,
         )
     else:
         print(
@@ -107,6 +92,11 @@ def main() -> int:
             file=sys.stderr,
         )
         ok = False
+
+    ok &= _run(
+        "Cross-language canonical AIR parity",
+        [sys.executable, "crates/compiler/frontend/native/parity/check_parity.py"],
+    )
 
     ok &= _run(
         "Hand-authored-AIR regression guard",

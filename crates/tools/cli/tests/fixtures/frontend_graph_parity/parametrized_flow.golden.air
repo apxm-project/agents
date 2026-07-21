@@ -1,6 +1,0 @@
-module {
-  func.func @parametrized_flow(%arg0: !ais.token {ais.param_name = "topic", ais.param_type = "str"}, %arg1: !ais.token {ais.param_name = "style", ais.param_type = "str"}) -> !ais.token attributes {ais.entry} {
-    %n1 = ais.ask "Research {topic} in the style of {style}" [%arg0, %arg1 : !ais.token, !ais.token] {token_budget = 256 : i64} : !ais.token
-    ais.return %n1 {node_name = "out"} : !ais.token
-  }
-}
