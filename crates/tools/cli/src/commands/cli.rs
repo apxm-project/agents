@@ -146,14 +146,14 @@ pub enum Commands {
         #[command(subcommand)]
         action: CacheAction,
     },
-    /// Count text with APXM's compiler-side tokenizer
+    /// Report standalone token-accounting availability for text
     Tokenize {
         /// Text to tokenize. Use --file for larger inputs.
         text: Option<String>,
         /// Read text from a file instead of the positional argument.
         #[arg(long, conflicts_with = "text")]
         file: Option<PathBuf>,
-        /// Model name used to select the tokenizer family.
+        /// Model name to echo in the diagnostic output.
         #[arg(long)]
         model: Option<String>,
     },
