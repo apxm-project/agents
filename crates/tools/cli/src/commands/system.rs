@@ -7,12 +7,8 @@ use anyhow::Result;
 use apxm_core::constants::env as apxm_env;
 use apxm_core::toolchain_env;
 use apxm_core::utils::build::MlirEnvReport;
-#[cfg(feature = "driver")]
-use apxm_driver::ApXmConfig;
 
 use super::dekk_hints;
-#[cfg(feature = "driver")]
-use super::implementations::load_config;
 use super::implementations::{
     Status, print_hint, print_section_header, print_status_line, print_subsection_header,
 };
@@ -108,15 +104,8 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
         };
 
     // --- Sandbox ---
-    // The runtime registry includes only backends that pass their functional
-    // isolation probes. Installed-but-unusable executables are excluded.
-    #[cfg(feature = "driver")]
-    let sandbox_backends = apxm_driver::runtime::sandbox::configure_sandbox_registry()
-        .list()
-        .into_iter()
-        .filter(|backend| backend.isolation_level >= apxm_runtime::sandbox::IsolationLevel::OsLevel)
-        .collect::<Vec<_>>();
-    #[cfg(not(feature = "driver"))]
+    // The CLI does not construct confinement backends. Composition roots supply
+    // admitted sandbox implementations when execution is prepared.
     let sandbox_backends = Vec::<apxm_runtime::sandbox::SandboxCapabilities>::new();
 
     // --- Environment Variables ---
@@ -124,30 +113,7 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
     let env_mlir_dir = env::var(apxm_env::MLIR_DIR).ok();
     let env_llvm_dir = env::var(apxm_env::LLVM_DIR).ok();
 
-    // --- Config (driver feature only) ---
-    #[cfg(feature = "driver")]
-    let (config_found, config_path, config_backends) = {
-        match load_config(config) {
-            Ok(cfg) => {
-                let path = ApXmConfig::default_path()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|_| "~/.apxm/config.toml".to_string());
-                let backends = cfg.backends.len();
-                (true, Some(path), backends)
-            }
-            Err(_) => {
-                let path = ApXmConfig::default_path()
-                    .map(|p| p.display().to_string())
-                    .ok();
-                (false, path, 0usize)
-            }
-        }
-    };
-    #[cfg(not(feature = "driver"))]
-    let (_config_found, _config_path, _config_backends) = {
-        let _ = config;
-        (false, None::<String>, 0usize)
-    };
+    let (config_found, config_path, config_backends) = inspect_backend_config(config);
 
     // --- JSON output mode ---
     if json_output {
@@ -173,15 +139,11 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
                 apxm_env::LLVM_DIR: env_llvm_dir,
             },
         });
-        // Only include config section when driver feature is available
-        #[cfg(feature = "driver")]
-        {
-            report_json["config"] = serde_json::json!({
-                "found": config_found,
-                "path": config_path,
-                "backends": config_backends,
-            });
-        }
+        report_json["config"] = serde_json::json!({
+            "found": config_found,
+            "path": config_path,
+            "backends": config_backends,
+        });
         println!("{}", serde_json::to_string_pretty(&report_json)?);
         return Ok(());
     }
@@ -241,13 +203,9 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
     // 3. Sandbox
     print_section_header("Sandbox");
     if sandbox_backends.is_empty() {
-        print_status_line(
-            "OS isolation",
-            Status::Warning,
-            "no functional backend available",
-        );
+        print_status_line("OS isolation", Status::Warning, "not constructed by CLI");
         print_hint(
-            "Configure a functional OS-isolation backend. On Linux, APXM probes bubblewrap user namespaces and systemd user-service network restrictions before registering either backend.",
+            "Runtime composition must supply an admitted confinement backend before executing sandboxed effects.",
         );
     } else {
         for backend in &sandbox_backends {
@@ -296,48 +254,43 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
         ));
     }
 
-    // 4. Config (driver feature only)
-    #[cfg(feature = "driver")]
-    {
-        print_section_header("Configuration");
-        if config_found {
-            let path_display = config_path.as_deref().unwrap_or("~/.apxm/config.toml");
-            print_status_line(
-                "Config file",
-                Status::Ok,
-                &format!("found at {}", path_display),
-            );
-            print_status_line(
-                "Configured backends",
-                if config_backends > 0 {
-                    Status::Ok
-                } else {
-                    Status::Warning
-                },
-                &format!("{} configured", config_backends),
-            );
-        } else {
-            let path_display = config_path.as_deref().unwrap_or("~/.apxm/config.toml");
-            print_status_line(
-                "Config file",
-                Status::Warning,
-                &format!("not found ({})", path_display),
-            );
-        }
+    print_section_header("Configuration");
+    if config_found {
+        let path_display = config_path.as_deref().unwrap_or("~/.apxm/config.toml");
+        print_status_line(
+            "Config file",
+            Status::Ok,
+            &format!("found at {}", path_display),
+        );
+        print_status_line(
+            "Configured backends",
+            if config_backends > 0 {
+                Status::Ok
+            } else {
+                Status::Warning
+            },
+            &format!("{} configured", config_backends),
+        );
+    } else {
+        let path_display = config_path.as_deref().unwrap_or("~/.apxm/config.toml");
+        print_status_line(
+            "Config file",
+            Status::Warning,
+            &format!("not found ({})", path_display),
+        );
+    }
 
-        // 5. Backend registration guidance
-        if !config_found {
-            print_section_header("Backend Registration");
-            print_status_line("Config file", Status::Warning, "not configured");
-            print_hint(&format!(
-                "Register a backend explicitly with `{}`.",
-                dekk_hints::BACKEND_ADD_GENERIC
-            ));
-            print_hint(&format!(
-                "Then rerun `{}` to verify the registered backend set.",
-                dekk_hints::DOCTOR
-            ));
-        }
+    if !config_found {
+        print_section_header("Backend Registration");
+        print_status_line("Config file", Status::Warning, "not configured");
+        print_hint(&format!(
+            "Register a backend explicitly with `{}`.",
+            dekk_hints::BACKEND_ADD_GENERIC
+        ));
+        print_hint(&format!(
+            "Then rerun `{}` to verify the registered backend set.",
+            dekk_hints::DOCTOR
+        ));
     }
 
     // Return error if MLIR is missing (critical dependency)
@@ -346,6 +299,32 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
     }
 
     Ok(())
+}
+
+fn inspect_backend_config(config: Option<PathBuf>) -> (bool, Option<String>, usize) {
+    if let Some(path) = config {
+        let backends = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|contents| contents.parse::<toml::Value>().ok())
+            .and_then(|document| {
+                document
+                    .get("backends")
+                    .and_then(toml::Value::as_array)
+                    .cloned()
+            })
+            .map_or(0, |backends| backends.len());
+        return (path.exists(), Some(path.display().to_string()), backends);
+    }
+
+    match apxm_backend_registry::BackendStore::open() {
+        Ok(store) => {
+            let path = store.path().display().to_string();
+            let found = store.path().exists();
+            let backends = store.list().map_or(0, |backends| backends.len());
+            (found, Some(path), backends)
+        }
+        Err(_) => (false, None, 0),
+    }
 }
 
 /// Auto-detect the conda prefix for the `apxm` environment.

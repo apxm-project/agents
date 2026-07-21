@@ -4,7 +4,7 @@ Command-line interface for the APXM workflow compiler and runtime toolchain.
 
 ## Overview
 
-`apxm-cli` provides the `apxm` binary with subcommands for compiling, executing, validating, and inspecting APXM AIR workflows. Invoke it through `dekk agents ...` so the managed environment, toolchain, and helper scripts stay consistent. The crate wraps `apxm-driver` for compile/run operations and uses dekk for environment detection.
+`apxm-cli` provides the `apxm` binary with subcommands for canonical authoring, execution, validation, and APXM operations. Invoke it through `dekk agents ...` so the managed environment, toolchain, and helper scripts stay consistent.
 
 ## Module Structure
 
@@ -69,6 +69,6 @@ Use `workflow run` for checked-in `.apxmw` files.
 
 | Crate | Purpose |
 |-------|---------|
-| apxm-driver | Compilation and execution coordination (behind `driver` feature) |
 | apxm-core | Shared workflow contract, types, and error codes |
-| apxm-compiler | `AirModule` for validation and codegen |
+| apxm-program | Canonical FrontendGraph, AIR, and executable artifact types |
+| apxm-execution | Canonical local execution driver |
