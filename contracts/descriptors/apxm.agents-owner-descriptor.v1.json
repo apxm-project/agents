@@ -9,7 +9,7 @@
   "referenced_common_envelopes": [
     {
       "schema_id": "apxm.contract-common.v1",
-      "digest": "sha256:e20f171121aa42afe52ebc8722ada247d835ba3f59c83d18e544d41e60e38067"
+      "digest": "sha256:eca067d94f8a359a31288a613c0662970336327e7800c4a035c6d6f30eba2b0f"
     },
     {
       "schema_id": "apxm.port-contract.v1",
@@ -372,5 +372,5 @@
     "algorithm": "ed25519",
     "status": "signing_pending_no_key"
   },
-  "descriptor_digest": "sha256:0b64ff74d8bb96e5f9816cdd45ab346a8c53fafccf26c5d40582e1a8dbb95741"
+  "descriptor_digest": "sha256:68c91c1201d9215d1fcb69f580c5f8706afac5e437166bfa5b168141da3af481"
 }

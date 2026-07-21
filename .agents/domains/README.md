@@ -13,8 +13,7 @@ cut across them.
 - [meta/](meta/README.md) — skill authoring, MCP server, agent
   contracts
 
-Benchmarks, preregistration, claim cards, and the paper live in the
-companion repo `apxm-project/eval`.
+Owner-local offline and observed prompt evaluation lives under `evaluation/`.
 
 The skills themselves live in flat layout under
 `.agents/skills/<name>/SKILL.md` (adapter-compatible). These

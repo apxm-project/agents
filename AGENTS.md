@@ -199,14 +199,14 @@ Promote contract strings (env var names, route paths, response markers)
 to constants. The `metrics_keys::*` and `graph_attrs::*` modules are the
 source of truth — refer to them, don't duplicate the literal.
 
-## 8. Preregistration before claims
+## 8. Owner-local evaluation
 
-The `finish` lifecycle skill in this repo does not enforce a
-preregistration check; quality and perf claim workflows (preregistrations,
-benchmarks, claim cards, write-ups) live with the consuming evaluation
-harness, not in the runtime. Claim-bearing runs against the core runtime
-should follow whatever preregistration template and evidence layout the
-consuming harness defines.
+Agents-owned offline and observed prompt evaluation lives under
+`evaluation/` and is driven through the `dekk agents
+offline-prompt-evaluation` and `dekk agents observed-prompt-evaluation`
+surfaces. Each bundle carries a `preregistration.json` recording disjoint
+case ids, digests, and provenance before execution. The retired external
+Eval plane is not a consumer or authority for this repo's evidence.
 
 ## 9. AIS dialect ownership
 

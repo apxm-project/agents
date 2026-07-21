@@ -7,7 +7,7 @@ use super::implementations::parse_header;
 
 #[derive(Parser)]
 #[command(name = "apxm")]
-#[command(about = "APxM CLI - compile AIR source and run APXM artifacts", long_about = None)]
+#[command(about = "APxM CLI - canonical AIR authoring, compilation, and execution", long_about = None)]
 pub struct Cli {
     /// Optional config path (defaults to .apxm/config.toml or ~/.apxm/config.toml)
     #[arg(long, global = true)]
@@ -448,7 +448,7 @@ pub enum OpsAction {
     /// Show accumulated op-usage counts from real executions
     ///
     /// Reports how many times each AIS operation has actually been
-    /// dispatched by `apxm execute` / `apxm run`, so drift between "ops
+    /// dispatched by `apxm execute-canonical`, so drift between "ops
     /// defined" (`apxm ops list`) and "ops actually used" is visible without
     /// a one-off corpus measurement.
     Usage,

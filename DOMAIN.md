@@ -32,9 +32,6 @@ not the repo identity. This repo is not the `apxm` coordinator, `server`,
   for the 15-minute walkthrough.
 - [`docs/vllm-fork.md`](docs/vllm-fork.md) — the
   fork integration contract.
-- `apxm-project/eval` — preregistrations, evaluation harness, claim
-  cards, paper drafts, and paper-bound evidence.
-
 ## Phase status
 
 Current phase status is tracked in agent memory
