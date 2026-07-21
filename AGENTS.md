@@ -205,8 +205,7 @@ Agents-owned offline and observed prompt evaluation lives under
 `evaluation/` and is driven through the `dekk agents
 offline-prompt-evaluation` and `dekk agents observed-prompt-evaluation`
 surfaces. Each bundle carries a `preregistration.json` recording disjoint
-case ids, digests, and provenance before execution. The retired external
-Eval plane is not a consumer or authority for this repo's evidence.
+case ids, digests, and provenance before execution.
 
 ## 9. AIS dialect ownership
 
