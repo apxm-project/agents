@@ -42,16 +42,14 @@ Run in order for any non-trivial session:
 - `mcp-server` — work on the APXM MCP server.
 - `design-docs` — gate overclaim/citation-drift in conceptual `docs/`.
 
-Benchmark, preregistration, claim-evidence, and evaluation-artifact
-skills live in the companion repo `apxm-project/eval`.
+Owner-local prompt evaluation uses the checked-in bundles under
+`evaluation/` and the `dekk agents offline-prompt-evaluation` and
+`dekk agents observed-prompt-evaluation` surfaces.
 
 ## Shared rules
 
 `.agents/skills/_shared/` here is the **canonical source** for shared
-rules. The cross-repo subset is mirrored byte-for-byte into
-`eval/.agents/skills/_shared/`; the rest are repo-local.
-
-Synced across apxm and eval (edit here, copy to eval):
+rules used by this repository.
 
 - `_shared/apxm-agent-operating-rules.md` — commit & push discipline
   (no auto-commit, no push without approval), Slurm safety, secrets.
@@ -63,15 +61,10 @@ Synced across apxm and eval (edit here, copy to eval):
 - `_shared/apxm-preregistration-rules.md` — preregistration discipline.
 - `_shared/apxm-storage-layout-rules.md` — `/home` is shared WekaFS,
   config-resolver first-wins, HF cache deletion.
-
-Repo-local (not synced):
-
 - `_shared/apxm-development-rules.md` — authority CLI, build env,
-  ownership, codegen cadence, reuse-first. (apxm only)
+  ownership, codegen cadence, reuse-first.
 - `_shared/apxm-self-host-rules.md` — contract for self-hosted dev
-  workflows (APXM builds itself). (apxm only)
-- `eval/.agents/skills/_shared/apxm-current-layout-rules.md` — eval-only
-  current-layout lint discipline. (eval only)
+  workflows (APXM builds itself).
 
 ## How to add a skill
 

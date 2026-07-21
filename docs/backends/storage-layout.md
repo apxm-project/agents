@@ -177,9 +177,9 @@ longer in `squeue`.
 ## 4. Evaluation and session artifacts (`.apxm/evaluation/`, `.apxm/sessions/`)
 
 Benchmark CSVs, compiler diagnostics, `.apxmobj` artifacts, and any
-other generated evidence go under `.apxm/`. The
-`apxm-evaluation-artifacts` skill enforces this — artifacts must not
-appear under `examples/` or in the docs source tree.
+other generated evidence go under `.apxm/`. The shared evaluation rules
+enforce this: artifacts must not appear under `examples/` or in the docs
+source tree.
 
 ## Free-space discipline
 
