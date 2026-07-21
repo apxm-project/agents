@@ -23,29 +23,29 @@ Command-line interface for the APXM workflow compiler and runtime toolchain.
 | Command | Description |
 |---------|-------------|
 | `init` | Scaffold project directories and `apxm.toml` |
-| `canonical-air` | Lower `apxm.frontend-graph.v1` JSON through the native compiler bridge |
 | `compile-service-canonical` | Compile a canonical source package to `apxm.air.v1` JSON |
 | `execute-canonical` | Execute canonical `apxm.air.v1` JSON through the canonical runtime |
-| `decompile` | Reverse-map artifact back to AIR |
-| `validate` | Check AIR against AIS contract |
-| `analyze` | Parallelism, critical path, speedup estimate |
-| `explain` | Human-readable summary of a workflow |
-| `replay` | Replay a session trace as timeline |
-| `process` | List or stop canonical APXM job processes (`canonical-air`, `compile-service-canonical`, `execute-canonical`) |
 | `doctor` | Diagnose MLIR/LLVM/conda dependencies |
-| `backend` | Add/list/remove/test LLM backends |
-| `agent` | Add/list/remove/test agent profiles |
+| `backend` | Manage registered inference backend endpoints |
 | `tool` | Register/list/remove external tools |
 | `team` | Manage multi-agent teams |
+| `agent` | Scaffold, sync, lint, build, and install agents |
+| `org` | Scaffold, lint, and install organization packages |
+| `integration` | Scaffold, lint, and install integration packages |
 | `ops` | List/show AIS operations |
+| `validate` | Check AIR against AIS contract |
+| `analyze` | Parallelism, critical path, speedup estimate |
 | `template` | List/show workflow templates |
+| `explain` | Human-readable summary of a workflow |
 | `codegen` | Generate frontend (Python) and TypeScript code from AIS definitions |
+| `canonical-air` | Lower `apxm.frontend-graph.v1` JSON through the native compiler bridge |
 | `session` | Session management |
-| `workflow` | `.apxmw` workflow-file management |
-| `goal` | Start, follow, inspect, or cancel a bounded APXM goal run |
-| `chat` | Interactive REPL over a running `apxm-server` |
-| `rollout` | Inspect, replay, and archive rollout transcripts |
+| `process` | List or stop canonical APXM job processes (`canonical-air`, `compile-service-canonical`, `execute-canonical`) |
 | `cache` | Cache management |
+| `tokenize` | Report standalone token-accounting availability for text |
+| `watch` | Stream a run's dispatch tree from `apxm-server` |
+| `rollout` | Inspect, replay, and archive rollout transcripts |
+| `chat` | Interactive REPL over a running `apxm-server` |
 
 ## Complex Work Paths
 
@@ -57,8 +57,6 @@ specific model when the selected ACP profile supports model control:
 ```bash
 dekk agents chat --agent claude --agent-model claude-3-5-haiku-latest
 ```
-
-Use `workflow run` for checked-in `.apxmw` files.
 
 ## Key Exports
 
