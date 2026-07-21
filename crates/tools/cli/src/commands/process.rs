@@ -234,7 +234,9 @@ fn classify_process(cmdline: &[String], scope: &ProcessScope) -> Option<String> 
 
 fn matches_direct_apxm_job(cmdline: &[String]) -> bool {
     for idx in 0..cmdline.len() {
-        if basename(&cmdline[idx]) == APXM_BINARY && is_apxm_job_command(&cmdline[idx + 1..]) {
+        if basename(&cmdline[idx]) == APXM_BINARY
+            && is_direct_apxm_job_command(&cmdline[idx + 1..])
+        {
             return true;
         }
     }
@@ -253,6 +255,19 @@ fn matches_dekk_apxm_job(cmdline: &[String]) -> bool {
             && is_apxm_job_command(&rest[1..])
         {
             return true;
+        }
+    }
+    false
+}
+
+fn is_direct_apxm_job_command(args: &[String]) -> bool {
+    let mut idx = 0;
+    while let Some(arg) = args.get(idx).map(String::as_str) {
+        match arg {
+            "--json" => idx += 1,
+            "--config" | "--trace" => idx += 2,
+            value if value.starts_with("--config=") || value.starts_with("--trace=") => idx += 1,
+            _ => return is_apxm_job_command(&args[idx..]),
         }
     }
     false
@@ -405,11 +420,72 @@ mod tests {
     }
 
     #[test]
+    fn direct_canonical_jobs_are_matched_after_global_options() {
+        let global_options: &[&[&str]] = &[
+            &[],
+            &["--json"],
+            &["--trace", "debug"],
+            &["--config", "/tmp/apxm.toml"],
+            &["--config=/tmp/apxm.toml"],
+            &["--config", "/tmp/apxm.toml", "--json"],
+        ];
+
+        for command in CANONICAL_JOB_COMMANDS {
+            for options in global_options {
+                let mut cmdline = args(&["/tmp/apxm-target/debug/apxm"]);
+                cmdline.extend(options.iter().map(|value| (*value).to_string()));
+                cmdline.extend(args(&[command, "program.air"]));
+
+                assert!(
+                    matches_direct_apxm_job(&cmdline),
+                    "failed to match {command} after {options:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn retired_job_commands_are_not_matched() {
         for command in ["compile", "execute", "run"] {
             assert!(!is_apxm_job_command(&args(&[command])));
         }
         assert!(!is_apxm_job_command(&args(&["workflow", "run"])));
+    }
+
+    #[test]
+    fn direct_retired_jobs_are_not_matched_after_global_options() {
+        for cmdline in [
+            args(&["apxm", "--json", "compile", "program.air"]),
+            args(&["apxm", "--trace", "debug", "execute", "program.air"]),
+            args(&["apxm", "--config", "/tmp/apxm.toml", "run", "program.air"]),
+            args(&[
+                "apxm",
+                "--config=/tmp/apxm.toml",
+                "workflow",
+                "run",
+                "program.apxmw",
+            ]),
+        ] {
+            assert!(!matches_direct_apxm_job(&cmdline), "{cmdline:?}");
+        }
+    }
+
+    #[test]
+    fn global_option_values_are_not_matched_as_commands() {
+        assert!(!matches_direct_apxm_job(&args(&[
+            "apxm",
+            "--config",
+            "execute-canonical",
+            "compile",
+            "program.air",
+        ])));
+        assert!(!matches_direct_apxm_job(&args(&[
+            "apxm",
+            "--trace",
+            "canonical-air",
+            "run",
+            "program.air",
+        ])));
     }
 
     #[test]
