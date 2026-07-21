@@ -1,4 +1,3 @@
-use apxm_acp::AgentRegistry;
 use apxm_backends::llm::ProviderProtocol;
 use apxm_backends::llm::catalog::{BUILTIN_MODELS, BUILTIN_PROVIDERS};
 use apxm_core::constants;
@@ -191,18 +190,7 @@ pub fn valid_param_types() -> &'static [&'static str] {
 }
 
 pub fn agent_templates() -> Vec<FrontendAgentTemplate> {
-    AgentRegistry::builtin_templates()
-        .into_iter()
-        .map(|(name, profile)| FrontendAgentTemplate {
-            name,
-            command: profile.command,
-            description: profile.description,
-            route_capabilities: profile.route_capabilities,
-            source: "template".to_string(),
-            default_mode: profile.default_mode,
-            default_model: profile.default_model,
-        })
-        .collect()
+    Vec::new()
 }
 
 fn category_label(category: OperationCategory) -> &'static str {

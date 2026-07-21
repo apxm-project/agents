@@ -35,7 +35,7 @@ operation vocabulary.
 |------|-------------|
 | `operations.py` | All AIS operation types and metadata from the shared contract |
 | `constants.py` | Graph attribute constants from the shared contract |
-| `agents.py` | Built-in agent profiles from `apxm-acp` |
+| `agents.py` | Generated `AgentRef` type and release-owned profile catalogue |
 | `providers.py` | Built-in provider specs and protocols from `apxm-backends` |
 | `models.py` | Built-in model metadata from `apxm-backends` |
 

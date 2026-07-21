@@ -57,11 +57,6 @@ pub enum Commands {
         #[command(subcommand)]
         action: ToolAction,
     },
-    /// Manage ACP profiles for INV(acp) nodes
-    Acp {
-        #[command(subcommand)]
-        action: AcpAction,
-    },
     /// Manage agent teams from ~/.apxm/teams.toml
     Team {
         #[command(subcommand)]
@@ -560,46 +555,6 @@ pub enum ToolAction {
         /// Tool name to remove
         name: String,
     },
-}
-
-#[derive(Subcommand)]
-pub enum AcpAction {
-    /// List available ACP agent profiles
-    List,
-    /// Register an agent profile (from template or custom command)
-    Add {
-        /// Agent profile name (e.g., "claude" or "my-agent")
-        name: String,
-        /// Agent command to spawn (e.g., "my-agent --acp"). Optional for known templates.
-        #[arg(long)]
-        command: Option<String>,
-        /// Permission mode (approve-all, approve-reads, deny-all)
-        #[arg(long, default_value_t)]
-        permissions: apxm_acp::PermissionMode,
-        /// Grace period in ms after closing stdin before SIGTERM
-        #[arg(long)]
-        close_grace_ms: Option<u64>,
-        /// Confine the agent (and any terminals it opens) under the host sandbox
-        /// backend. Requires a functional network-capable OS sandbox; spawning
-        /// fails closed if none is available.
-        #[arg(long)]
-        sandbox: bool,
-        /// Skip spawn test (register without verifying the agent is reachable)
-        #[arg(long)]
-        no_test: bool,
-    },
-    /// Remove a user agent profile
-    Remove {
-        /// Agent profile name to remove
-        name: String,
-    },
-    /// Test spawning an agent (runs initialize + session/new + close)
-    Test {
-        /// Agent profile name to test
-        name: String,
-    },
-    /// List available built-in agent templates
-    Templates,
 }
 
 #[derive(Subcommand)]

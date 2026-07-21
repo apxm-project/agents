@@ -1462,7 +1462,7 @@ class GraphRecorder:
         Args:
             name: Node name (auto-generated if not provided)
             agent_name: Name of the agent instance
-            profile: Agent profile from apxm._generated.agents
+            profile: Explicit AgentRef supplied by the caller
             agent_route: Set to "auto" to let APXM select an ACP profile
             required_capabilities: Abstract capabilities required from the selected profile
             preferred_profiles: Preferred profile names or AgentRef values

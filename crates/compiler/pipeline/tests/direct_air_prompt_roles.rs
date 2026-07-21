@@ -91,9 +91,19 @@ module {
 }
 "#;
 
-const SHARED_PROMPT_ROLE_FIXTURE_AIR: &str = include_str!(
-    "../../../tools/cli/tests/fixtures/frontend_graph_parity/prompt_role_flow.golden.air"
-);
+const SHARED_PROMPT_ROLE_FIXTURE_AIR: &str = r#"
+module {
+  func.func @prompt_role_flow() -> !ais.token attributes {ais.entry} {
+    %question = ais.ask "Question." : !ais.token
+    %policy = ais.ask "Policy." : !ais.token
+    %dependency = ais.ask "Dependency." : !ais.token
+    %tool_result = ais.ask "Tool result." : !ais.token
+    %guard = ais.ask "Guard." : !ais.token
+    %answer = ais.ask "Answer {question}" [%question, %policy, %dependency, %tool_result, %guard : !ais.token, !ais.token, !ais.token, !ais.token, !ais.token] {input_names = ["question", "policy", "dependency", "tool_result", "guard"], input_roles = ["user", "system", "dependency_only", "tool_context", "control"]} : !ais.token
+    func.return %answer : !ais.token
+  }
+}
+"#;
 
 #[test]
 fn shared_prompt_role_fixture_compiles_through_direct_air() {

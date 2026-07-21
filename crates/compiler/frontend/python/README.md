@@ -44,7 +44,7 @@ print(apxm_program.canonical_air_json(builder.build()), end="")
 | `apxm.data_config` | `.apxm/` data-bucket resolution against `.apxm/config.toml` |
 | `apxm.paths` | Path helpers for examples and local scripts (`find_repo_root`, `repo_path`) |
 | `apxm.constants` | Stable string constants re-exported from the typed enums in `_generated/` |
-| `apxm._generated.agents` | Generated agent profiles (Claude, Codex) |
+| `apxm._generated.agents` | Generated `AgentRef` type and release-owned profile catalogue (currently empty) |
 | `apxm._generated.models` | Generated model IDs |
 
 ## Compiling workflows

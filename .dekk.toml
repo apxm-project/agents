@@ -180,15 +180,6 @@ add = { run = "python tools/scripts/apxm_cli.py tool add", description = "Regist
 list = { run = "python tools/scripts/apxm_cli.py tool list", description = "List tools" }
 remove = { run = "python tools/scripts/apxm_cli.py tool remove", description = "Remove tool" }
 
-[commands.acp]
-description = "Manage ACP agent profiles"
-group = "Configuration"
-list = { run = "python tools/scripts/apxm_cli.py acp list", description = "List registered ACP profiles" }
-add = { run = "python tools/scripts/apxm_cli.py acp add", description = "Register ACP profile" }
-remove = { run = "python tools/scripts/apxm_cli.py acp remove", description = "Remove ACP profile" }
-test = { run = "python tools/scripts/apxm_cli.py acp test", description = "Test ACP profile" }
-templates = { run = "python tools/scripts/apxm_cli.py acp templates", description = "List built-in ACP templates" }
-
 [commands.agent]
 description = "Scaffold, sync, lint, build, and install agents"
 group = "Authoring"
