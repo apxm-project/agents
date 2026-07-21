@@ -1,5 +1,5 @@
 {
-  "project": "agents-eval-retirement-phase3",
+  "project": "agents",
   "source_of_truth": ".agents/",
   "agent_configs": {
     "claude": {
