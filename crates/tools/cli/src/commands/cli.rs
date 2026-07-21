@@ -363,7 +363,7 @@ pub enum ProcessAction {
         #[arg(long)]
         include_vllm: bool,
     },
-    /// Stop APXM compile/run/execute/workflow jobs
+    /// Stop canonical APXM CLI job processes
     Stop {
         /// Show matching processes without sending a signal
         #[arg(long)]
