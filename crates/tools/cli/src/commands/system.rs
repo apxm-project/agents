@@ -4,7 +4,6 @@ use std::env;
 use std::path::PathBuf;
 
 use anyhow::Result;
-use apxm_compiler::Context as CompilerContext;
 use apxm_core::constants::env as apxm_env;
 use apxm_core::toolchain_env;
 use apxm_core::utils::build::MlirEnvReport;
@@ -17,6 +16,33 @@ use super::implementations::load_config;
 use super::implementations::{
     Status, print_hint, print_section_header, print_status_line, print_subsection_header,
 };
+
+const DOCTOR_FRONTEND_GRAPH_PROBE: &str = r#"{
+  "schema_version": "apxm.frontend-graph.v1",
+  "source_language": "python",
+  "program_definitions": [
+    {
+      "program_id": "doctor_probe",
+      "entrypoint": "main",
+      "input_type_ref": "unit",
+      "output_type_ref": "unit",
+      "has_default_context": true
+    }
+  ],
+  "imported_program_refs": [],
+  "semantic_operations": [],
+  "structural_regions": [],
+  "context_flow": [],
+  "hook_bindings": [],
+  "capability_requirements": [],
+  "model_requirements": [],
+  "source_map": {
+    "schema_version": "apxm.source-map.v1",
+    "source_language": "python",
+    "node_spans": [],
+    "region_annotations": []
+  }
+}"#;
 
 pub fn init_command(name: &str) -> Result<()> {
     let base = PathBuf::from(name);
@@ -62,7 +88,7 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
         .as_ref()
         .map(|p| p.display().to_string());
     let mlir_version = report.llvm_version.clone();
-    let compiler_probe = CompilerContext::new()
+    let compiler_probe = apxm_program::lower_frontend_graph_json(DOCTOR_FRONTEND_GRAPH_PROBE)
         .map(|_| ())
         .map_err(|err| err.to_string());
     let compiler_ready = compiler_probe.is_ok();
@@ -178,17 +204,17 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
 
     if compiler_ready {
         print_status_line(
-            "APXM compiler",
+            "Canonical AIR lowerer",
             Status::Ok,
-            "context initialization succeeded",
+            "FrontendGraph probe lowered successfully",
         );
     } else {
         let detail = compiler_error
             .as_deref()
-            .unwrap_or("context initialization failed");
-        print_status_line("APXM compiler", Status::Error, detail);
+            .unwrap_or("FrontendGraph probe failed");
+        print_status_line("Canonical AIR lowerer", Status::Error, detail);
         print_hint(
-            "If MLIR is present but the compiler is unavailable, rebuild after the real toolchain is visible so apxm-compiler does not keep stub bindings.",
+            "If the canonical lowerer is unavailable, rebuild the APXM program surface before retrying CLI authoring commands.",
         );
     }
 

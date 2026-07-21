@@ -5,6 +5,9 @@ use std::path::PathBuf;
 use anyhow::Result;
 use serde_json::json;
 
+const TOKEN_ACCOUNTING_UNAVAILABLE: &str =
+    "standalone token accounting requires configured tokenizer evidence";
+
 pub fn tokenize_command(
     text: Option<String>,
     file: Option<PathBuf>,
@@ -19,23 +22,22 @@ pub fn tokenize_command(
         (Some(_), Some(_)) => anyhow::bail!("provide either text or --file, not both"),
     };
 
-    let tokenizer = apxm_compiler::token_estimate::tokenizer_name_for_model(model.as_deref());
-    let tokens = apxm_compiler::token_estimate::count_text_tokens(model.as_deref(), &input);
-
     if json_output {
         println!(
             "{}",
             serde_json::to_string_pretty(&json!({
                 "model": model,
-                "tokenizer": tokenizer,
-                "tokens": tokens,
+                "tokenizer": "unavailable",
+                "tokens": null,
+                "reason": TOKEN_ACCOUNTING_UNAVAILABLE,
                 "chars": input.chars().count(),
                 "bytes": input.len(),
             }))?
         );
     } else {
-        println!("tokens: {tokens}");
-        println!("tokenizer: {tokenizer}");
+        println!("tokens: unavailable");
+        println!("tokenizer: unavailable");
+        println!("reason: {TOKEN_ACCOUNTING_UNAVAILABLE}");
         if let Some(model) = model {
             println!("model: {model}");
         }

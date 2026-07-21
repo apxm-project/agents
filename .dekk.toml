@@ -82,13 +82,13 @@ codegen-typescript-frontend = { run = "python tools/scripts/apxm_cli.py codegen 
 codegen-event-kinds = { run = "python tools/scripts/apxm_cli.py codegen event-kinds", description = "Regenerate TypeScript event kind constants from Core definitions", skill = true, group = "Build & Test" }
 codegen-op-spec = { run = "python tools/scripts/apxm_cli.py codegen op-spec", description = "Regenerate the op-spec.v1 AIS operation catalog + vectors fixture", skill = true, group = "Build & Test" }
 emit-air = { run = "python tools/scripts/apxm_cli.py emit-air", description = "Emit canonical AIR from frontend graph JSON through the Rust AirModule printer", skill = true, group = "Authoring" }
-tokenize = { run = "python tools/scripts/apxm_cli.py tokenize", description = "Count text with APXM's compiler-side tokenizer", skill = true, group = "Discovery" }
+tokenize = { run = "python tools/scripts/apxm_cli.py tokenize", description = "Report standalone token-accounting availability for text", skill = true, group = "Discovery" }
 
 compile = { run = "python tools/scripts/apxm_cli.py compile", description = "Compile graph to .apxmobj artifact", skill = true, group = "Compilation" }
 execute = { run = "python tools/scripts/apxm_cli.py execute", description = "Compile and execute a graph", skill = true, group = "Compilation" }
 run = { run = "python tools/scripts/apxm_cli.py run", description = "Run a pre-compiled .apxmobj artifact", skill = true, group = "Compilation" }
 decompile = { run = "python tools/scripts/apxm_cli.py decompile", description = "Reverse-map artifact back to AIR", group = "Compilation" }
-doctor = { run = "python tools/scripts/apxm_cli.py doctor", description = "Diagnose the real APXM compiler/runtime environment", group = "Configuration" }
+doctor = { run = "python tools/scripts/apxm_cli.py doctor", description = "Diagnose the APXM toolchain and canonical authoring environment", group = "Configuration" }
 commit-lint = { run = "python tools/scripts/check_commit_message.py", description = "Lint a commit message file, --current (HEAD), or --range REV1..REV2", group = "Configuration" }
 
 gui = { run = "python tools/scripts/apxm_cli.py gui", description = "Launch the web-based GUI dashboard", skill = true, group = "Authoring" }
