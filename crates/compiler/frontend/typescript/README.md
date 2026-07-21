@@ -9,18 +9,17 @@ they do not format MLIR or own a second operation catalog.
 ```text
 GraphBuilder / ApxmGraph
   -> ApxmGraph.toDict()
-  -> apxm emit-air
-  -> Rust FrontendGraph validation and AIR printer
+  -> apxm canonical-air
+  -> Rust FrontendGraph validation and native AIR bridge
   -> canonical AIR
   -> MLIR compiler pipeline
   -> .apxmobj
 ```
 
-`ApxmGraph.toAir()` invokes `apxm emit-air`. Set `APXM_BIN` when a caller must
-select a specific installed CLI; otherwise `apxm` must be on `PATH`. Direct
-source compilation uses the installed package declared by
-`APXM_TYPESCRIPT_FRONTEND_PACKAGE` and fails if that package or Node.js is
-unavailable.
+The TypeScript frontend records a canonical `apxm.frontend-graph.v1` value. A
+caller that needs AIR passes that graph to the explicit native bridge (`apxm
+canonical-air`) or to an admitted remote compile client. The frontend package
+does not invoke the CLI, print AIR, or select a fallback compiler mode.
 
 ## Authoring
 
@@ -32,7 +31,7 @@ graph.param("name", "str");
 const greeting = graph.ask({ name: "greet", prompt: "Greet {name}." });
 graph.done(greeting, "out");
 
-console.log(graph.toAir());
+console.log(JSON.stringify(graph.toDict()));
 ```
 
 Entry metadata is explicit. Executable programs contain exactly one

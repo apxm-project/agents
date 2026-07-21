@@ -1,7 +1,7 @@
 # Compiler optimization pipeline — pre-canonical baseline
 
 > **Migration evidence, not target compiler authority.** Direct AIR/
-> `apxm emit-air` and current ASK/cognition-op behavior below describe the
+> `apxm canonical-air` and current ASK/cognition-op behavior below describe the
 > pre-canonical
 > compiler. FrontendGraph v1, AIR v1, and P3/P9 of the
 > [normative composition/AIR plan](../agents/agent-program-composition-and-air-full-replacement-plan.md)
@@ -21,7 +21,7 @@ The compiler accepts canonical AIR (the human-readable text IR), parses it into
 MLIR using the `ais` dialect, runs an optimization pipeline composed of
 MLIR-level transforms and Rust-side checks, and emits a `.apxmobj` artifact.
 Python and TypeScript never format AIR themselves: they send `FrontendGraph` to
-`apxm emit-air`, which invokes the Rust validator and printer.
+`apxm canonical-air`, which invokes the Rust validator and native bridge.
 
 There are two kinds of passes:
 

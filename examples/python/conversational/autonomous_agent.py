@@ -4,9 +4,8 @@
 `ais.autonomous` iterates plan → act → evaluate until the goal is satisfied or
 `max_iterations` is reached. Tools (web + skills) run inside each act step.
 
-Run (requires a running apxm-server):
-    dekk agents execute examples/python/conversational/autonomous_agent.py --emit-air > agent.air
-    apxm run agent.air --server http://127.0.0.1:18800
+Compile a canonical source package with:
+    dekk agents compile-service-canonical <source-package> > agent.air.json
 
 Validate without a server:
     PYTHONPATH=crates/compiler/frontend/python \\

@@ -7,8 +7,8 @@ in-memory result of recording a Python-authored flow (`@compile()` /
 `g.<op>()` calls) before it is lowered to `.air` text.
 
 Python and TypeScript both build this graph shape and hand it to the single
-Rust printer (`apxm emit-air`) to render AIR — neither frontend emits AIR text
-itself. TypeScript's `@apxm/frontend` package
+Rust native bridge (`apxm canonical-air`) to render AIR — neither frontend emits
+AIR text itself. TypeScript's `@apxm/frontend` package
 (`crates/compiler/frontend/typescript/src/graph.ts`) uses the same fields so
 each frontend can be verified against one shared contract without reading two
 implementations side by side.

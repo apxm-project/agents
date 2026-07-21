@@ -83,10 +83,8 @@ codegen-event-kinds = { run = "python tools/scripts/apxm_cli.py codegen event-ki
 codegen-op-spec = { run = "python tools/scripts/apxm_cli.py codegen op-spec", description = "Regenerate the op-spec.v1 AIS operation catalog + vectors fixture", skill = true, group = "Build & Test" }
 tokenize = { run = "python tools/scripts/apxm_cli.py tokenize", description = "Report standalone token-accounting availability for text", skill = true, group = "Discovery" }
 
-compile = { run = "python tools/scripts/apxm_cli.py compile", description = "Compile graph to .apxmobj artifact", skill = true, group = "Compilation" }
-execute = { run = "python tools/scripts/apxm_cli.py execute", description = "Compile and execute a graph", skill = true, group = "Compilation" }
-run = { run = "python tools/scripts/apxm_cli.py run", description = "Run a pre-compiled .apxmobj artifact", skill = true, group = "Compilation" }
-decompile = { run = "python tools/scripts/apxm_cli.py decompile", description = "Reverse-map artifact back to AIR", group = "Compilation" }
+canonical-air = { run = "python tools/scripts/cargo.py build -p apxm-cli --bin apxm >/dev/null && \"$(python tools/scripts/cargo.py target-dir)/debug/apxm\" canonical-air", description = "Lower apxm.frontend-graph.v1 JSON through the native compiler bridge", skill = true, group = "Compilation" }
+compile-service-canonical = { run = "python tools/scripts/cargo.py build -p apxm-cli --features driver --bin apxm >/dev/null && python tools/scripts/cargo.py build -p apxm-frontend-python --release >/dev/null && cp \"$(python tools/scripts/cargo.py target-dir)/release/lib_native.so\" crates/compiler/frontend/python/apxm_program/_native.so && \"$(python tools/scripts/cargo.py target-dir)/debug/apxm\" compile-service-canonical", description = "Compile a canonical source package to apxm.air.v1 JSON", skill = true, group = "Compilation" }
 doctor = { run = "python tools/scripts/apxm_cli.py doctor", description = "Diagnose the APXM toolchain and canonical authoring environment", group = "Configuration" }
 commit-lint = { run = "python tools/scripts/check_commit_message.py", description = "Lint a commit message file, --current (HEAD), or --range REV1..REV2", group = "Configuration" }
 
@@ -97,7 +95,6 @@ validate = { run = "python tools/scripts/apxm_cli.py validate", description = "V
 analyze = { run = "python tools/scripts/apxm_cli.py analyze", description = "Analyze parallelism and critical path", group = "Authoring" }
 explain = { run = "python tools/scripts/apxm_cli.py explain", description = "Human-readable summary of a graph", group = "Authoring" }
 goal = { run = "python tools/scripts/apxm_cli.py goal", description = "Start, follow, inspect, or cancel a bounded APXM goal run", group = "Goals & Workflows" }
-workflow = { run = "python tools/scripts/apxm_cli.py workflow", description = "Run, validate, analyze, and follow APXM workflow files", group = "Goals & Workflows" }
 offline-prompt-evaluation = { run = "python tools/scripts/offline_prompt_evaluation.py", description = "Validate preregistered prompt-output bundles with classified backend evidence", group = "Evaluation" }
 observed-prompt-evaluation = { run = "python tools/scripts/observed_prompt_evaluation.py", description = "Execute preregistered prompt arms and record portable backend evidence", group = "Evaluation" }
 test-offline-prompt-evaluation = { run = "python -m unittest discover -s tools/tests -p test_offline_prompt_evaluation.py", description = "Test offline prompt-evaluation evidence validation", group = "Evaluation" }

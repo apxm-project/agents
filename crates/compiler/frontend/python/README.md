@@ -4,10 +4,10 @@ The Python authoring frontend for
 [APXM](https://github.com/apxm-project/agents), the typed abstract machine,
 compiler, and runtime for agent programs.
 
-This package records APXM workflows as the compiler-owned `FrontendGraph` DTO.
-`apxm emit-air` validates that DTO and renders canonical AIR; the compiler then
-lowers AIR through MLIR into a `.apxmobj` artifact. TypeScript and Rust follow
-the same contract.
+This package records APXM workflows as the compiler-owned
+`apxm.frontend-graph.v1` DTO. The canonical Python bridge lowers that graph
+through the Rust compiler in-process and returns `apxm.air.v1`; TypeScript and
+Rust follow the same FrontendGraph contract.
 
 ## Quick start
 
@@ -16,22 +16,30 @@ pip install apxm
 ```
 
 ```python
-from apxm import compile, GraphRecorder
+import apxm_program
 
-@compile()
-def hello(g: GraphRecorder, name: str) -> dict:
-    """Say hello with an LLM."""
-    greeting = g.ask(name="greet", prompt="Greet {name} warmly.")
-    g.done(greeting)
+builder = apxm_program.GraphBuilder()
+builder.program(
+    "hello",
+    "run",
+    "Input",
+    "Output",
+    True,
+    "Context",
+)
+builder.model_call("node.greet", model_target_ref="model.default")
+builder.model_requirement("model.default")
+builder.region("region.return", "return")
 
-print(hello.to_air())
+print(apxm_program.canonical_air_json(builder.build()), end="")
 ```
 
 ## What's in the package
 
 | Module | What it does |
 | ------ | ------------ |
-| `apxm` (root) | Graph DSL: `GraphRecorder`, `compile`, `ApxmGraph`, `AgentHandle`, `Team` |
+| `apxm_program` | Canonical FrontendGraph recorder plus native bridge helpers |
+| `apxm` (root) | Prototype graph DSL retained as historical source evidence until deletion |
 | `apxm.contract` | APXM/vLLM operational names — env vars, route paths, `RepoLayout`, `build_layout()` |
 | `apxm.data_config` | `.apxm/` data-bucket resolution against `.apxm/config.toml` |
 | `apxm.paths` | Path helpers for examples and local scripts (`find_repo_root`, `repo_path`) |
@@ -39,18 +47,15 @@ print(hello.to_air())
 | `apxm._generated.agents` | Generated agent profiles (Claude, Codex) |
 | `apxm._generated.models` | Generated model IDs |
 
-## Running workflows
+## Compiling workflows
 
-The Python package emits AIR. Executing it requires the installed APXM
-runtime/compiler CLI:
+Source packages that declare a Python `[compile]` entry are compiled through the
+explicit Agents compiler bridge:
 
 ```bash
-apxm execute path/to/workflow.py
+dekk agents agent build path/to/package
+dekk agents compile-service-canonical path/to/package
 ```
-
-Set `APXM_BIN` when the CLI is not named `apxm` on `PATH`. See the main
-[APXM repo](https://github.com/apxm-project/agents) for the runtime, AIS
-dialect, and operator workflow.
 
 ## Companion repos
 

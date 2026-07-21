@@ -5,9 +5,8 @@
 (one DAG = one turn). It performs task-memory recall, description-based skill
 discovery, and a tool-using ASK, then records a fact before returning.
 
-Run (requires a running apxm-server):
-    dekk agents execute examples/python/conversational/conversational_agent.py --emit-air > agent.air
-    apxm chat --air agent.air --server http://127.0.0.1:18800
+Compile a canonical source package with:
+    dekk agents compile-service-canonical <source-package> > agent.air.json
 
 Validate without a server:
     PYTHONPATH=crates/compiler/frontend/python \\
