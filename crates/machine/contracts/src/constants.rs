@@ -24,9 +24,9 @@ pub mod env {
     pub const APXM_DISABLE_HINTS: &str = "APXM_DISABLE_HINTS";
     /// Makes Python graph files emit AIR to stdout for the Rust compiler driver.
     pub const APXM_EMIT_AIR: &str = "APXM_EMIT_AIR";
-    /// Path to the `apxm` binary a child frontend process invokes for AIR
-    /// emission (`emit-air`). The compile pipeline sets this to its own
-    /// executable so the frontend routes to the same single Rust printer.
+    /// Path to the `apxm` binary a child process uses for explicit compiler
+    /// bridge commands. The compile pipeline sets this to its own executable so
+    /// callers route to the same Rust printer.
     pub const APXM_BIN: &str = "APXM_BIN";
     /// Root of the installed TypeScript frontend package used for source
     /// execution and handler workers.

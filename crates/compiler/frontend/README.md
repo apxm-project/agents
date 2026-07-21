@@ -6,7 +6,7 @@ APXM supports three authoring frontends: Rust `AirModuleBuilder`/
 `FrontendGraph`, Python `GraphRecorder`/`ApxmGraph`, and TypeScript
 `GraphBuilder`/`ApxmGraph`. Each records the compiler-owned `FrontendGraph`
 shape, and only the Rust compiler validates and prints canonical AIR through
-`apxm emit-air`.
+the explicit native bridge exposed by `apxm canonical-air`.
 
 Python lives in [`python/`](python/); the public TypeScript package lives in
 [`typescript/`](typescript/) with its own [README](typescript/README.md).

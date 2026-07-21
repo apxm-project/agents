@@ -116,17 +116,17 @@ def main(g: GraphRecorder, message: str):
 ```
 
 TypeScript entries import `GraphBuilder` from `@apxm/frontend`, declare explicit
-entry metadata, and follow the same `FrontendGraph -> apxm emit-air` path.
+entry metadata, and follow the same `FrontendGraph -> apxm canonical-air` path.
 Neither frontend formats AIR itself. The target Hook API must preserve semantic
 parity across both languages before it is documented here as runnable.
 
-Validate, compile, and build with the authority CLI:
+Validate and build with the authority CLI:
 
 ```bash
-dekk agents compile <agent-id-or-path>
 dekk agents agent sync <agent-id-or-path>
 dekk agents agent lint <agent-id-or-path>
 dekk agents agent build <agent-id-or-path>
+dekk agents compile-service-canonical <agent-id-or-path>
 ```
 
 ## Capabilities

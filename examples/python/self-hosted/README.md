@@ -89,15 +89,12 @@ dekk agents execute examples/python/self-hosted/add_op.py \
   "MyNewOp" "A new operation that does X"
 ```
 
-### Compile an artifact
+### Compile canonical AIR
 
 ```bash
 RUN_DIR="$(mktemp -d)"
-dekk agents compile \
-  examples/python/self-hosted/add_op.py \
-  -o "${RUN_DIR}/add_op.apxmobj"
-dekk agents run "${RUN_DIR}/add_op.apxmobj" \
-  "MyNewOp" "A new operation that does X"
+dekk agents agent build <source-package>
+dekk agents compile-service-canonical <source-package> > "${RUN_DIR}/add_op.air.json"
 ```
 
 ### Capture a session

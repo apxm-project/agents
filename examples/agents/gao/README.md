@@ -94,6 +94,6 @@ dekk agents agent lint examples/agents/gao
 dekk agents agent build examples/agents/gao
 dekk agents test-cli gao_
 mkdir -p .apxm/compiled
-dekk agents compile examples/agents/gao -o .apxm/compiled/gao.apxmobj
+dekk agents compile-service-canonical examples/agents/gao > .apxm/compiled/gao.air.json
 git diff --check
 ```

@@ -169,8 +169,7 @@ impl SessionOutputWriter {
     ///
     /// Delegates to the single canonical printer (`AirModule::to_air()` ->
     /// `air_builder::emit::emit_air`) so `input.air` is real, re-parseable
-    /// MLIR text — the same output `apxm emit-air` and `dekk agents compile`
-    /// produce, not a private dialect.
+    /// MLIR text from the compiler-owned AIR printer, not a private dialect.
     pub fn write_input_air(&self, module: &AirModule) -> io::Result<()> {
         let air_text = module.to_air().map_err(io::Error::other)?;
         fs::write(

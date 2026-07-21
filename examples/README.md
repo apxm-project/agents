@@ -16,7 +16,8 @@ compiler figures out *how* to run it efficiently:
 ```bash
 # From project root
 dekk agents doctor
-dekk agents compile examples/python/getting-started/tool_use.py -o /tmp/apxm-tool-use.apxmobj
+dekk agents agent build <source-package>
+dekk agents compile-service-canonical <source-package> > /tmp/apxm-tool-use.air.json
 ```
 
 Use Dekk for normal runs. It sets up the APXM environment consistently across
@@ -49,11 +50,11 @@ For backend-free validation, prefer compile-only checks or examples that set
 backend with `dekk agents backend ...` and select it from the APXM backend
 registry.
 
-Most examples use the Python frontend. Dekk can compile Python examples directly:
+Canonical examples compile as source packages through the explicit bridge:
 
 ```bash
-dekk agents compile examples/python/getting-started/hello.py -o hello.apxmobj
-dekk agents run hello.apxmobj
+dekk agents agent build <source-package>
+dekk agents compile-service-canonical <source-package> > hello.air.json
 ```
 
 > **First time?** See the [docs/](../docs/README.md) overview, then run

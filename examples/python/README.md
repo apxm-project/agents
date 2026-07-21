@@ -72,9 +72,9 @@ examples/python/
 # Execute directly through the CLI
 dekk agents execute examples/python/getting-started/hello.py
 
-# Or compile and run separately
-dekk agents compile examples/python/getting-started/hello.py -O2 -o hello.apxmobj
-dekk agents run hello.apxmobj
+# Or compile a canonical source package separately
+dekk agents agent build <source-package>
+dekk agents compile-service-canonical <source-package> > hello.air.json
 
 # Compare optimization levels
 dekk agents execute examples/python/optimization/dead_context.py -O0

@@ -12,8 +12,7 @@ token accounting, and token-by-token streaming over SSE.
 Run it (requires a running apxm-server; see this dir's README for a mock-backed
 local server):
 
-    dekk agents execute examples/python/conversational/chat_agent.py --emit-air > chat.air
-    apxm chat --air chat.air --server http://127.0.0.1:18800
+    dekk agents compile-service-canonical <source-package> > chat.air.json
 
 Pipeline per turn:
   recall (qmem) -> plan (reason) -> tool-using answer (ask) ->

@@ -406,9 +406,9 @@ def main(payload: str) -> str:
     })
 ```
 
-Compile with: `dekk agents compile telegram_reply_skill.py` (no pack caps, so
-standalone compile works). Place result at
-`~/.apxm/skills/telegram-coding-bot/skill.apxmobj` with matching `skill.toml`.
+Compile packaged skill source with `dekk agents agent build <package>` followed
+by `dekk agents compile-service-canonical <package>`. Place the admitted result
+through the Server-owned install path with matching `skill.toml`.
 
 ### 6c. The detached coding agent skill (correct for long-running Codex)
 
