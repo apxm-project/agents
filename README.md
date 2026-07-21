@@ -101,16 +101,15 @@ storage/tooling swaps, not behavior gates on the observed path:
 
 | Feature | Crate(s) | Default | What it does |
 | --- | --- | --- | --- |
-| `metrics` | `apxm-backends`, `apxm-runtime`, `apxm-driver` | on | Request recording (`RequestMetrics`/`MetricsTracker`) for every LLM call. Made default-on by RT-8 so the observed path equals the default build — it is no longer possible to build apxm without request recording. |
+| `metrics` | `apxm-backends`, `apxm-runtime` | on | Request recording (`RequestMetrics`/`MetricsTracker`) for every LLM call. Made default-on by RT-8 so the observed path equals the default build — it is no longer possible to build apxm without request recording. |
 | `dashmap` / `sqlite` | `apxm-runtime` | on | Swap the concurrent-map / durable-storage backend implementation; both compiled in by default. |
-| `no-trace` | `apxm-core`, `apxm-runtime`, `apxm-driver` | off | Strips tracing instrumentation for a smaller/faster build; use only when tracing overhead is unacceptable and you don't need the spans. |
+| `no-trace` | `apxm-core`, `apxm-runtime` | off | Strips tracing instrumentation for a smaller/faster build; use only when tracing overhead is unacceptable and you don't need the spans. |
 | `python_tools_integration` | `apxm-runtime` | off | Compiles the Python `@tool` handler integration; off by default because it pulls in the Python bridge. |
 | `embeddings` | `apxm-backends` | off | Pulls in `fastembed` for local embedding generation; off by default (heavy dependency, not every deployment needs it). |
 | `test-utils` | `apxm-runtime` | off | Test-only helpers; never enable in a release build. |
 
 Enable a non-default feature with `cargo build --features <name>` (or via the
-dependent crate's own feature flags, e.g. `apxm-driver`'s `metrics`/`no-trace`
-passthroughs).
+dependent crate's own feature flags.
 
 ## Documentation
 

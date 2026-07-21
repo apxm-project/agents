@@ -1,5 +1,7 @@
 //! Browse AIS operations.
 
+use std::{collections::HashMap, io, path::Path};
+
 use anyhow::Result;
 use colored::Colorize;
 
@@ -184,7 +186,7 @@ pub fn ops_command(action: OpsAction, json_output: bool) -> Result<()> {
         OpsAction::Usage => {
             let paths = apxm_core::paths::ApxmPaths::discover()
                 .map_err(|e| anyhow::anyhow!("Failed to resolve APXM paths: {e}"))?;
-            let usage = apxm_runtime::executor::op_usage::read_persisted(&paths)
+            let usage = read_persisted_operation_usage(&paths)
                 .map_err(|e| anyhow::anyhow!("Failed to read op-usage stats: {e}"))?;
 
             let total_ops = AIS_OPERATIONS.len();
@@ -235,4 +237,47 @@ pub fn ops_command(action: OpsAction, json_output: bool) -> Result<()> {
         }
     }
     Ok(())
+}
+
+const OP_USAGE_FILE_NAME: &str = "op-usage.json";
+
+fn read_persisted_operation_usage(
+    paths: &apxm_core::paths::ApxmPaths,
+) -> io::Result<HashMap<String, u64>> {
+    let dir = paths.cache_component_dir("op-usage")?;
+    read_persisted_operation_usage_from_dir(&dir)
+}
+
+fn read_persisted_operation_usage_from_dir(dir: &Path) -> io::Result<HashMap<String, u64>> {
+    let path = dir.join(OP_USAGE_FILE_NAME);
+    match std::fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err)),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(HashMap::new()),
+        Err(err) => Err(err),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn persisted_operation_usage_missing_file_is_empty() {
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        let usage = read_persisted_operation_usage_from_dir(temp.path()).expect("usage");
+
+        assert!(usage.is_empty());
+    }
+
+    #[test]
+    fn persisted_operation_usage_rejects_invalid_json() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("op-usage.json"), "not json").expect("write");
+
+        let err = read_persisted_operation_usage_from_dir(temp.path()).expect_err("invalid json");
+
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
 }

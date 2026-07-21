@@ -133,14 +133,11 @@ For each risk, provide:
 Initial plan: {initial_plan}
 
 APXM crate dependency order (bottom-up):
-1. apxm-core (no dependencies on other APXM crates)
-2. apxm-events, apxm-ais, apxm-tools, apxm-sandbox
-3. apxm-backend-registry, apxm-backends
-4. apxm-graph, apxm-artifact
-5. apxm-compiler, apxm-acp
-6. apxm-runtime
-7. apxm-driver
-8. apxm-cli, apxm-server
+1. apxm-core and apxm-program own contracts and canonical FrontendGraph/AIR types
+2. apxm-inference and apxm-kernel define replaceable runtime ports
+3. apxm-execution executes canonical AIR through injected ports
+4. apxm-composition wires exact admitted adapters at the composition root
+5. apxm-cli and service clients call the canonical compiler/execution surfaces
 
 Output the implementation order:
 - Which crates to modify in which order

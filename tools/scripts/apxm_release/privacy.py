@@ -42,11 +42,12 @@ def _tracked_paths(*pathspecs: str) -> tuple[Path, ...]:
     if process.returncode != 0:
         detail = process.stderr.decode("utf-8", errors="replace").strip()
         raise RuntimeError(f"git ls-files failed: {detail or process.returncode}")
-    return tuple(
+    paths = tuple(
         REPO_ROOT / Path(raw.decode("utf-8"))
         for raw in process.stdout.split(b"\0")
         if raw
     )
+    return tuple(path for path in paths if path.is_file())
 
 
 def _audit_cargo_manifest(path: Path) -> list[str]:
