@@ -20,6 +20,11 @@ from apxm_release.constants import (
 )
 from apxm_release.util import load_toml, python_distribution_name, python_publish_enabled
 
+APPROVED_SETUP_PY_DIGESTS = {
+    "crates/compiler/frontend/python/setup.py":
+        "09420719e38852339ae03caebbc3dbbc9541c4e91858ca8d70760ac5c77286be",
+}
+
 
 @dataclass(frozen=True)
 class PrivatePythonRegistry:
@@ -105,6 +110,17 @@ def _audit_python_manifest(path: Path) -> list[str]:
     return violations
 
 
+def _audit_python_setup(path: Path) -> list[str]:
+    relative = path.relative_to(REPO_ROOT).as_posix()
+    expected = APPROVED_SETUP_PY_DIGESTS.get(relative)
+    if expected is None:
+        return [f"{relative}: unsupported Python packaging surface"]
+    actual = hashlib.sha256(path.read_bytes()).hexdigest()
+    if actual != expected:
+        return [f"{relative}: approved packaging shim digest mismatch"]
+    return []
+
+
 def _audit_release_commands() -> list[str]:
     paths = list(
         _tracked_paths(
@@ -153,6 +169,9 @@ def audit_release_privacy() -> tuple[str, ...]:
         "setup.cfg",
         "**/setup.cfg",
     ):
+        if path.name == "setup.py":
+            violations.extend(_audit_python_setup(path))
+            continue
         if path.name != "pyproject.toml":
             violations.append(
                 f"{path.relative_to(REPO_ROOT)}: unsupported Python packaging surface"

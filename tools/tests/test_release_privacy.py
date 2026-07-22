@@ -86,7 +86,7 @@ class ReleasePrivacyTests(unittest.TestCase):
             "setup.cfg",
             "**/setup.cfg",
         )
-        self.assertEqual(len(manifests), 27)
+        self.assertEqual(len(manifests), 29)
         self.assertEqual(privacy.audit_release_privacy(), ())
 
     def test_manifest_classification_matches_current_owner_boundaries(self) -> None:
@@ -107,6 +107,18 @@ class ReleasePrivacyTests(unittest.TestCase):
         self.assertNotIn("publishConfig", handwritten_client)
         self.assertEqual(python["project"]["name"], "apxm")
         self.assertIs(python["tool"]["apxm"]["release"]["publish"], False)
+
+    def test_binary_wheel_setup_shim_is_exactly_allowlisted(self) -> None:
+        setup = REPOSITORY_ROOT / "crates/compiler/frontend/python/setup.py"
+        self.assertEqual(privacy._audit_python_setup(setup), [])
+        with patch.object(Path, "read_bytes", return_value=b"tampered"):
+            self.assertEqual(
+                privacy._audit_python_setup(setup),
+                [
+                    "crates/compiler/frontend/python/setup.py: "
+                    "approved packaging shim digest mismatch"
+                ],
+            )
 
     def test_manifest_auditors_reject_public_or_default_publication(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
