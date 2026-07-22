@@ -224,6 +224,7 @@ fn model_result_value(outcome: &ModelOutcome) -> Value {
 }
 
 fn fact(
+    program_invocation_id: &str,
     seq: u64,
     kind: FactKind,
     instance_state: Option<InstanceState>,
@@ -232,7 +233,7 @@ fn fact(
     commit_sequence: Option<u64>,
 ) -> Fact {
     Fact::from_runtime(kind, RuntimeFact {
-        fact_id: format!("fact.{seq}"),
+        fact_id: format!("fact.{program_invocation_id}.{seq}"),
         event_sequence: seq,
         ownership_epoch: None,
         instance_state,
@@ -288,9 +289,25 @@ impl DriveState {
         let mut batch = Vec::new();
         let mut seq = 0u64;
         seq += 1;
-        batch.push(fact(seq, FactKind::InstanceCreated, Some(InstanceState::Ready), None, None, None));
+        batch.push(fact(
+            program_invocation_id,
+            seq,
+            FactKind::InstanceCreated,
+            Some(InstanceState::Ready),
+            None,
+            None,
+            None,
+        ));
         seq += 1;
-        batch.push(fact(seq, FactKind::InvocationAdmitted, None, Some(InvocationState::Running), None, None));
+        batch.push(fact(
+            program_invocation_id,
+            seq,
+            FactKind::InvocationAdmitted,
+            None,
+            Some(InvocationState::Running),
+            None,
+            None,
+        ));
         Self {
             node_outcomes: Vec::new(),
             native_usage: Usage::default(),
@@ -321,6 +338,7 @@ impl DriveState {
         }
         self.seq += 1;
         self.batch.push(join_fact(
+            &self.program_invocation_id,
             self.seq,
             FactKind::RegionOccurrenceStarted,
             Some(occurrence.clone()),
@@ -404,6 +422,7 @@ impl DriveState {
 }
 
 fn join_fact(
+    program_invocation_id: &str,
     seq: u64,
     kind: FactKind,
     region_occurrence_id: Option<String>,
@@ -412,7 +431,15 @@ fn join_fact(
     air_node_id: Option<String>,
     parent_node_execution_id: Option<String>,
 ) -> Fact {
-    let mut fact = fact(seq, kind, None, None, None, None);
+    let mut fact = fact(
+        program_invocation_id,
+        seq,
+        kind,
+        None,
+        None,
+        None,
+        None,
+    );
     let runtime = runtime_fact_mut(&mut fact);
     runtime.region_occurrence_id = region_occurrence_id;
     runtime.static_region_id = static_region_id;
@@ -485,7 +512,15 @@ async fn drive_from(
             ScheduleStep::HookBefore { binding } => {
                 let (before, after) = apply_static_hook(&mut state, ports, binding).await;
                 state.seq += 1;
-                let mut fact = fact(state.seq, FactKind::HookExecuted, None, None, None, None);
+                let mut fact = fact(
+                    &state.program_invocation_id,
+                    state.seq,
+                    FactKind::HookExecuted,
+                    None,
+                    None,
+                    None,
+                    None,
+                );
                 let runtime = runtime_fact_mut(&mut fact);
                 runtime.hook_execution_id =
                     Some(format!("hook-execution.{}.{}", binding.hook_id, state.seq));
@@ -499,14 +534,25 @@ async fn drive_from(
                 state.batch.push(fact);
                 if before != after {
                     state.seq += 1;
-                    state.batch.push(context_transition_fact(state.seq));
+                    state.batch.push(context_transition_fact(
+                        &state.program_invocation_id,
+                        state.seq,
+                    ));
                 }
             }
             ScheduleStep::HookAfter { binding } => {
                 if state.last_operation_succeeded {
                     let (before, after) = apply_static_hook(&mut state, ports, binding).await;
                     state.seq += 1;
-                    let mut fact = fact(state.seq, FactKind::HookExecuted, None, None, None, None);
+                    let mut fact = fact(
+                        &state.program_invocation_id,
+                        state.seq,
+                        FactKind::HookExecuted,
+                        None,
+                        None,
+                        None,
+                        None,
+                    );
                     let runtime = runtime_fact_mut(&mut fact);
                     runtime.hook_execution_id =
                         Some(format!("hook-execution.{}.{}", binding.hook_id, state.seq));
@@ -520,13 +566,17 @@ async fn drive_from(
                     state.batch.push(fact);
                     if before != after {
                         state.seq += 1;
-                        state.batch.push(context_transition_fact(state.seq));
+                        state.batch.push(context_transition_fact(
+                            &state.program_invocation_id,
+                            state.seq,
+                        ));
                     }
                 }
             }
             ScheduleStep::ContextEdge { from_node, to_node } => {
                 state.seq += 1;
-                let mut fact = context_transition_fact(state.seq);
+                let mut fact =
+                    context_transition_fact(&state.program_invocation_id, state.seq);
                 let runtime = runtime_fact_mut(&mut fact);
                 runtime.air_node_id = Some(to_node.clone());
                 runtime.parent_node_execution_id = Some(from_node.clone());
@@ -538,7 +588,10 @@ async fn drive_from(
             ScheduleStep::Semantic { index, loop_path } => {
                 let op = &air.semantic_operations[*index];
                 state.seq += 1;
-                let node_execution_id = format!("node-execution.{}.{}", op.node_id, state.seq);
+                let node_execution_id = format!(
+                    "node-execution.{}.{}.{}",
+                    state.program_invocation_id, op.node_id, state.seq
+                );
                 let innermost_loop = loop_path
                     .last()
                     .and_then(|loop_id| {
@@ -570,7 +623,10 @@ async fn drive_from(
                     _ => unreachable!("typed schedule loop path and active frames agree"),
                 };
                 let node_fact = Fact::NodeExecutionRecorded(NodeExecutionRecordedFact {
-                    fact_id: format!("fact.{}", state.seq),
+                    fact_id: format!(
+                        "fact.{}.{}",
+                        state.program_invocation_id, state.seq
+                    ),
                     event_sequence: state.seq,
                     node_execution_id: node_execution_id.clone(),
                     air_node_id: op.node_id.clone(),
@@ -763,6 +819,7 @@ async fn drive_from(
                             state.park_active_loops();
                             state.seq += 1;
                             state.batch.push(fact(
+                                &state.program_invocation_id,
                                 state.seq,
                                 FactKind::EventAwaitRegistered,
                                 None,
@@ -772,6 +829,7 @@ async fn drive_from(
                             ));
                             state.seq += 1;
                             state.batch.push(fact(
+                                &state.program_invocation_id,
                                 state.seq,
                                 FactKind::InvocationParked,
                                 None,
@@ -837,8 +895,16 @@ fn evidence_hook_scope(scope: apxm_program::frontend_graph::HookScope) -> Eviden
     }
 }
 
-fn context_transition_fact(seq: u64) -> Fact {
-    let mut fact = fact(seq, FactKind::ContextTransitioned, None, None, None, None);
+fn context_transition_fact(program_invocation_id: &str, seq: u64) -> Fact {
+    let mut fact = fact(
+        program_invocation_id,
+        seq,
+        FactKind::ContextTransitioned,
+        None,
+        None,
+        None,
+        None,
+    );
     let runtime = runtime_fact_mut(&mut fact);
     runtime.context_transition_id = Some(format!("context-transition.{seq}"));
     runtime.context_before_ref = Some(context_ref(format!("context.{}.before", seq)));
@@ -897,6 +963,7 @@ async fn commit_and_report(
     let expected = ports.execution_commit.current_version(version_scope).await;
     state.seq += 1;
     state.batch.push(fact(
+        &state.program_invocation_id,
         state.seq,
         FactKind::InvocationCommitted,
         None,
@@ -974,6 +1041,7 @@ async fn commit_suspension(
         .await;
     state.seq += 1;
     state.batch.push(fact(
+        &state.program_invocation_id,
         state.seq,
         FactKind::InvocationCommitted,
         None,
@@ -1019,7 +1087,7 @@ pub async fn execute(
     request: ExecutionRequest,
     initial_context: Value,
 ) -> Result<RunReport, ExecutionError> {
-    let state = DriveState::new(initial_context, &request.air, &request.version_scope);
+    let state = DriveState::new(initial_context, &request.air, &request.commit_id);
     let end = drive_from(
         ports,
         &request.air,
@@ -1061,7 +1129,7 @@ pub async fn execute_resumable(
     request: ExecutionRequest,
     initial_context: Value,
 ) -> Result<RunOutcome, ExecutionError> {
-    let state = DriveState::new(initial_context, &request.air, &request.version_scope);
+    let state = DriveState::new(initial_context, &request.air, &request.commit_id);
     let end = drive_from(
         ports,
         &request.air,
@@ -1183,7 +1251,7 @@ async fn resume_from_continuation(
         last_operation_succeeded: true,
         batch: Vec::new(),
         seq: event_sequence,
-        program_invocation_id: version_scope.clone(),
+        program_invocation_id: commit_id.clone(),
         active_loops: loop_frames,
         last_model_node_execution_id: None,
         last_program_new_node_execution_id: None,
