@@ -176,8 +176,8 @@ Two shipped patterns are valid; pick by lifecycle boundary:
 
 | Pattern | When to use | Source |
 |---------|-------------|--------|
-| `g.spawn_agent` + `g.delegate` | Explicit runtime-agent routing and delegation steps in one authored graph | [`chat_agent.py`](../../examples/python/conversational/chat_agent.py) |
-| `g.workflow_spawn` | A child AIR workflow executed with a separate session root | [`workflow_spawn.py`](../../examples/python/patterns/workflow_spawn.py) |
+| `g.spawn_agent` + `g.delegate` | Explicit runtime-agent routing and delegation steps in one authored graph | `SPAWN_AGENT`/`DELEGATE` AIS ops; see `dekk agents ops list` |
+| `g.workflow_spawn` | A child AIR workflow executed with a separate session root | [`agent-routing/`](../../examples/workflows/agent-routing/) |
 
 `Agent(sub_agents=[...])` and `.apxmw` are not current public frontend
 contracts and must not be presented as shipped APIs.

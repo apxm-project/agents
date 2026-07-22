@@ -58,9 +58,7 @@ capability fit, caller `preferred_profiles`, and registry order as tie-breakers.
 
 The `SPAWN_AGENT` result includes the selected `profile`, `route_source`,
 `route_selector`, `route_reason`, and compact route diagnostics for traces.
-For a runnable example, see
-[`runtime_agent_routing.py`](../../examples/python/multi-agent/runtime_agent_routing.py)
-or the native AIR companion
+For a runnable example, see the native AIR companion
 [`runtime_agent_routing.air`](../../examples/workflows/agent-routing/runtime_agent_routing.air).
 
 #### AAM scoping at spawn (today)

@@ -100,6 +100,6 @@ and the spec-field ↔ TableGen-attr parity test.
 
 ## Self-hosted workflow
 
-`dekk agents execute examples/python/self-hosted/add_op.py` runs the add-op
-procedure (architect → parallel compiler/runtime impl → reviewer).
-Execute, then verify against this skill. See `_shared/apxm-self-host-rules.md`.
+The add-op procedure (architect → parallel compiler/runtime impl → reviewer)
+is authored as an APXM graph / goal bundle, not ad-hoc Python. Follow this
+skill's steps, then verify against it. See `_shared/apxm-self-host-rules.md`.
