@@ -6,7 +6,7 @@ mod common;
 
 use apxm_program::artifact::PortSourceScope;
 use apxm_program::{ExecutableArtifact, validate_artifact_json};
-use common::{Vector, load_constitution, load_vectors};
+use common::{Vector, load_constitution, load_contract, load_vectors};
 
 #[test]
 fn artifact_vectors_match_validator() {
@@ -62,6 +62,41 @@ fn codec_round_trips_valid_artifact() {
         artifact, redecoded,
         "artifact codec is not a stable round-trip"
     );
+}
+
+#[test]
+fn example_artifacts_carry_no_field_the_schema_rejects() {
+    // The owner schema pins `additionalProperties: false`, so every top-level key
+    // a repository example emits must be a declared property. This guards the
+    // hook_bindings drift class: a field serialized by artifact.rs but absent
+    // from the schema would be silently accepted by the serde validator yet
+    // rejected by any strict JSON-schema consumer.
+    let schema = load_contract("schemas/apxm.executable-artifact.v1.json");
+    assert_eq!(
+        schema["additionalProperties"],
+        serde_json::Value::Bool(false),
+        "schema must stay closed for this guard to be meaningful"
+    );
+    let declared: std::collections::HashSet<String> = schema["properties"]
+        .as_object()
+        .expect("schema properties")
+        .keys()
+        .cloned()
+        .collect();
+
+    for example in [
+        "../examples/agents/gao/artifacts/executable-artifact.v1.json",
+        "../examples/agents/conversational/artifacts/executable-artifact.v1.json",
+    ] {
+        let artifact = load_contract(example);
+        for key in artifact.as_object().expect("artifact object").keys() {
+            assert!(
+                declared.contains(key),
+                "example '{example}' emits undeclared top-level field '{key}' \
+                 that a strict schema consumer would reject",
+            );
+        }
+    }
 }
 
 #[test]

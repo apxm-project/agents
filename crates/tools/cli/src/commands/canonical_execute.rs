@@ -9,7 +9,8 @@ use serde_json::{Value, json};
 
 use apxm_execution::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
-    CompositionRequest, EventAwait, EventOutcome, EventPort, ExecutionPorts, ExecutionRequest,
+    CompositionReceiver, CompositionRequest, EventAwait, EventOutcome, EventPort, ExecutionPorts,
+    ExecutionRequest,
     NodeOutcome, NoopStaticHookHandler, execute,
 };
 use apxm_inference::{
@@ -204,13 +205,21 @@ struct DevComposition;
 impl CompositionPort for DevComposition {
     async fn program_new(&self, request: CompositionRequest) -> CompositionOutcome {
         CompositionOutcome::Created {
-            child_instance_ref: format!("dev.child.{}", request.program_ref),
+            child_instance_ref: format!("dev.child.{}", request.receiver.reference()),
         }
     }
 
     async fn program_invoke(&self, request: CompositionRequest) -> CompositionOutcome {
+        // A stateful instance receiver resolves to the already-created child;
+        // a program receiver is a one-shot invocation.
+        let child = match &request.receiver {
+            CompositionReceiver::Instance {
+                program_instance_ref,
+            } => program_instance_ref.clone(),
+            CompositionReceiver::Program { program_ref } => format!("dev.child.{program_ref}"),
+        };
         CompositionOutcome::Invoked {
-            child_instance_ref: format!("dev.child.{}", request.program_ref),
+            child_instance_ref: child,
         }
     }
 }
@@ -389,7 +398,7 @@ mod tests {
                 {"node_id": "n.model", "op": "model.call", "parent_region_id": "r.root", "execution_order": 0, "operands": {"model_target_ref": "model.default"}},
                 {"node_id": "n.cap", "op": "capability.invoke", "parent_region_id": "r.root", "execution_order": 1, "operands": {"capability_ref": "cap.search"}},
                 {"node_id": "n.new", "op": "program.new", "parent_region_id": "r.root", "execution_order": 2, "operands": {"program_ref": "child"}},
-                {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.root", "execution_order": 3, "operands": {"program_ref": "child"}},
+                {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.root", "execution_order": 3, "operands": {"receiver": {"program_instance_ref": "n.new"}}},
                 {"node_id": "n.await", "op": "await.event", "parent_region_id": "r.root", "execution_order": 4, "operands": {"event_ref": "ready"}}
             ],
             "structural_ir": [{"region_id": "r.root", "kind": "function", "execution_order": 0}],

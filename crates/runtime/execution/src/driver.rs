@@ -46,7 +46,8 @@ use apxm_program::runtime_evidence::{
 
 use crate::ports::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
-    CompositionRequest, EventAwait, EventOutcome, EventPort, EventRef, EventRefError,
+    CompositionReceiver, CompositionRequest, EventAwait, EventOutcome, EventPort, EventRef,
+    EventRefError,
 };
 use crate::resume::{Continuation, ContinuationError, DurableLoopFrame, RunOutcome};
 use crate::structural::{ScheduleStep, build_schedule};
@@ -214,6 +215,38 @@ fn operand_str(op: &SemanticOp, key: &str) -> Option<String> {
         .get(key)
         .and_then(Value::as_str)
         .map(str::to_string)
+}
+
+/// Parse the typed `operands.receiver` union that compiled AIR encodes for a
+/// composition node: `{program_ref: ...}` targets a `ProgramRef`, while
+/// `{program_instance_ref: ...}` targets an already-created stateful instance.
+fn composition_receiver(op: &SemanticOp) -> Result<CompositionReceiver, ExecutionError> {
+    let receiver = op
+        .operands
+        .as_ref()
+        .and_then(|operands| operands.get("receiver"))
+        .and_then(Value::as_object)
+        .ok_or(ExecutionError::MissingOperand {
+            node_id: op.node_id.clone(),
+            operand: "receiver",
+        })?;
+
+    if let Some(program_ref) = receiver.get("program_ref").and_then(Value::as_str) {
+        Ok(CompositionReceiver::Program {
+            program_ref: program_ref.to_string(),
+        })
+    } else if let Some(program_instance_ref) =
+        receiver.get("program_instance_ref").and_then(Value::as_str)
+    {
+        Ok(CompositionReceiver::Instance {
+            program_instance_ref: program_instance_ref.to_string(),
+        })
+    } else {
+        Err(ExecutionError::MissingOperand {
+            node_id: op.node_id.clone(),
+            operand: "receiver",
+        })
+    }
 }
 
 fn model_result_value(outcome: &ModelOutcome) -> Value {
@@ -728,12 +761,17 @@ async fn drive_from(
                         }
                     }
                     SemanticOpKind::ProgramNew => {
+                        let program_ref = operand_str(op, "program_ref").ok_or(
+                            ExecutionError::MissingOperand {
+                                node_id: op.node_id.clone(),
+                                operand: "program_ref",
+                            },
+                        )?;
                         let outcome = ports
                             .composition
                             .program_new(CompositionRequest {
                                 node_id: op.node_id.clone(),
-                                program_ref: operand_str(op, "program_ref")
-                                    .unwrap_or_else(|| op.node_id.clone()),
+                                receiver: CompositionReceiver::Program { program_ref },
                             })
                             .await;
                         state.last_operation_succeeded =
@@ -745,6 +783,20 @@ async fn drive_from(
                             }
                             CompositionOutcome::Failed { message } => message.clone(),
                         });
+                        if state.last_operation_succeeded {
+                            state.seq += 1;
+                            let mut attached = fact(
+                                &state.program_invocation_id,
+                                state.seq,
+                                FactKind::ChildAttached,
+                                None,
+                                None,
+                                Some(node_execution_id.clone()),
+                                None,
+                            );
+                            runtime_fact_mut(&mut attached).air_node_id = Some(op.node_id.clone());
+                            state.batch.push(attached);
+                        }
                         state.node_outcomes.push(NodeOutcome::ProgramNew {
                             node_id: op.node_id.clone(),
                             outcome,
@@ -752,12 +804,12 @@ async fn drive_from(
                         state.last_program_new_node_execution_id = Some(node_execution_id.clone());
                     }
                     SemanticOpKind::ProgramInvoke => {
+                        let receiver = composition_receiver(op)?;
                         let outcome = ports
                             .composition
                             .program_invoke(CompositionRequest {
                                 node_id: op.node_id.clone(),
-                                program_ref: operand_str(op, "program_ref")
-                                    .unwrap_or_else(|| op.node_id.clone()),
+                                receiver,
                             })
                             .await;
                         state.last_operation_succeeded =
@@ -769,6 +821,23 @@ async fn drive_from(
                             }
                             CompositionOutcome::Failed { message } => message.clone(),
                         });
+                        if state.last_operation_succeeded {
+                            state.seq += 1;
+                            let mut attached = fact(
+                                &state.program_invocation_id,
+                                state.seq,
+                                FactKind::ChildAttached,
+                                None,
+                                None,
+                                Some(node_execution_id.clone()),
+                                None,
+                            );
+                            let attached_fact = runtime_fact_mut(&mut attached);
+                            attached_fact.air_node_id = Some(op.node_id.clone());
+                            attached_fact.parent_node_execution_id =
+                                state.last_program_new_node_execution_id.clone();
+                            state.batch.push(attached);
+                        }
                         state.node_outcomes.push(NodeOutcome::ProgramInvoke {
                             node_id: op.node_id.clone(),
                             outcome,

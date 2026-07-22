@@ -102,7 +102,16 @@ fn five_op_air() -> AirModule {
                 op: SemanticOpKind::ProgramInvoke,
                 parent_region_id: "r_root".into(),
                 execution_order: 3,
-                operands: operands(&[("program_ref", "child_program")]),
+                operands: {
+                    let mut receiver = Map::new();
+                    receiver.insert(
+                        "program_instance_ref".to_string(),
+                        Value::String("n_program_new".to_string()),
+                    );
+                    let mut map = Map::new();
+                    map.insert("receiver".to_string(), Value::Object(receiver));
+                    Some(map)
+                },
             },
             SemanticOp {
                 node_id: "n_await".into(),
@@ -175,12 +184,12 @@ struct TestComposition;
 impl CompositionPort for TestComposition {
     async fn program_new(&self, request: CompositionRequest) -> CompositionOutcome {
         CompositionOutcome::Created {
-            child_instance_ref: format!("child:{}", request.program_ref),
+            child_instance_ref: format!("child:{}", request.receiver.reference()),
         }
     }
     async fn program_invoke(&self, request: CompositionRequest) -> CompositionOutcome {
         CompositionOutcome::Invoked {
-            child_instance_ref: format!("child:{}", request.program_ref),
+            child_instance_ref: format!("child:{}", request.receiver.reference()),
         }
     }
 }
