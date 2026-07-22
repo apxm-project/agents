@@ -327,6 +327,31 @@ async fn executes_all_five_ops_and_commits_atomically() {
 }
 
 #[tokio::test]
+async fn repeated_instance_invocations_keep_evidence_identities_disjoint() {
+    let commit = Arc::new(FakeCommit::new());
+    execute(&ports(commit.clone()), request(), json!({"invocation": 1}))
+        .await
+        .expect("first invocation");
+
+    let mut second = request();
+    second.commit_id = "c2".into();
+    execute(
+        &ports(commit.clone()),
+        second,
+        json!({"invocation": 2}),
+    )
+    .await
+    .expect("second invocation");
+
+    let facts = commit.facts();
+    let fact_ids: std::collections::HashSet<_> =
+        facts.iter().map(Fact::fact_id).collect();
+    assert_eq!(fact_ids.len(), facts.len());
+    assert!(fact_ids.iter().any(|fact_id| fact_id.contains(".c1.")));
+    assert!(fact_ids.iter().any(|fact_id| fact_id.contains(".c2.")));
+}
+
+#[tokio::test]
 async fn unbound_model_target_fails_closed() {
     let commit = Arc::new(FakeCommit::new());
     let bad_air: AirModule = serde_json::from_value(json!({
