@@ -122,5 +122,76 @@
       ]
     },
     "expected_valid": false
+  },
+  {
+    "name": "turn-projection-joins-are-owner-typed",
+    "input": {
+      "schema_version": "apxm.runtime-evidence.v1",
+      "program_identity": {
+        "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "entrypoint": "run",
+        "agent_identity_binding": "agent-identity.1"
+      },
+      "facts": [
+        {
+          "fact_id": "region.1",
+          "event_sequence": 1,
+          "fact_kind": "region.occurrence_started",
+          "region_occurrence_id": "turn.1",
+          "static_region_id": "region.turn"
+        },
+        {
+          "fact_id": "model.1",
+          "event_sequence": 2,
+          "fact_kind": "node_execution.recorded",
+          "region_occurrence_id": "turn.1",
+          "static_region_id": "region.turn",
+          "node_execution_id": "node-execution.model.1",
+          "air_node_id": "node.model"
+        },
+        {
+          "fact_id": "hook.1",
+          "event_sequence": 3,
+          "fact_kind": "hook.executed",
+          "hook_execution_id": "hook-execution.1",
+          "hook_id": "hook.model.after",
+          "hook_scope": "model",
+          "hook_phase": "after",
+          "context_before_ref": {"ref_type": "ProgramContextEvidenceRef", "ref": "context.before"},
+          "context_after_ref": {"ref_type": "ProgramContextEvidenceRef", "ref": "context.after"}
+        },
+        {
+          "fact_id": "context.1",
+          "event_sequence": 4,
+          "fact_kind": "context.transitioned",
+          "context_transition_id": "context-transition.1",
+          "context_before_ref": {"ref_type": "ProgramContextEvidenceRef", "ref": "context.before"},
+          "context_after_ref": {"ref_type": "ProgramContextEvidenceRef", "ref": "context.after"}
+        }
+      ]
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "node-execution-without-air-join-rejected",
+    "input": {
+      "schema_version": "apxm.runtime-evidence.v1",
+      "program_identity": {
+        "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "entrypoint": "run",
+        "agent_identity_binding": "agent-identity.1"
+      },
+      "facts": [
+        {
+          "fact_id": "model.1",
+          "event_sequence": 1,
+          "fact_kind": "node_execution.recorded",
+          "region_occurrence_id": "turn.1",
+          "static_region_id": "region.turn",
+          "node_execution_id": "node-execution.model.1"
+        }
+      ]
+    },
+    "expected_valid": false
   }
 ]

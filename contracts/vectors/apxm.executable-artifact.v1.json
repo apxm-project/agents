@@ -4,7 +4,18 @@
     "input": {
       "schema_version": "apxm.executable-artifact.v1",
       "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-      "air_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "air_digest": "sha256:af5a16012a5cef42c882316702d76acdda510c94ab55cbe4c7b6d4f9907641d5",
+      "air": {
+        "schema_version": "apxm.air.v1",
+        "semantic_operations": [],
+        "structural_ir": [],
+        "source_map": {
+          "schema_version": "apxm.source-map.v1",
+          "source_language": "python",
+          "node_spans": [],
+          "region_annotations": []
+        }
+      },
       "source_bundle_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
       "source_map": {
         "schema_version": "apxm.source-map.v1",
@@ -47,7 +58,18 @@
     "input": {
       "schema_version": "apxm.executable-artifact.v1",
       "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-      "air_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "air_digest": "sha256:af5a16012a5cef42c882316702d76acdda510c94ab55cbe4c7b6d4f9907641d5",
+      "air": {
+        "schema_version": "apxm.air.v1",
+        "semantic_operations": [],
+        "structural_ir": [],
+        "source_map": {
+          "schema_version": "apxm.source-map.v1",
+          "source_language": "python",
+          "node_spans": [],
+          "region_annotations": []
+        }
+      },
       "source_bundle_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
       "source_map": {
         "schema_version": "apxm.source-map.v1",
@@ -88,7 +110,18 @@
     "input": {
       "schema_version": "apxm.executable-artifact.v1",
       "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-      "air_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "air_digest": "sha256:af5a16012a5cef42c882316702d76acdda510c94ab55cbe4c7b6d4f9907641d5",
+      "air": {
+        "schema_version": "apxm.air.v1",
+        "semantic_operations": [],
+        "structural_ir": [],
+        "source_map": {
+          "schema_version": "apxm.source-map.v1",
+          "source_language": "python",
+          "node_spans": [],
+          "region_annotations": []
+        }
+      },
       "source_bundle_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
       "source_map": {
         "schema_version": "apxm.source-map.v1",
@@ -129,7 +162,18 @@
     "input": {
       "schema_version": "apxm.executable-artifact.v1",
       "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-      "air_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "air_digest": "sha256:af5a16012a5cef42c882316702d76acdda510c94ab55cbe4c7b6d4f9907641d5",
+      "air": {
+        "schema_version": "apxm.air.v1",
+        "semantic_operations": [],
+        "structural_ir": [],
+        "source_map": {
+          "schema_version": "apxm.source-map.v1",
+          "source_language": "python",
+          "node_spans": [],
+          "region_annotations": []
+        }
+      },
       "source_bundle_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
       "source_map": {
         "schema_version": "apxm.source-map.v1",
@@ -158,7 +202,18 @@
     "input": {
       "schema_version": "apxm.executable-artifact.v1",
       "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-      "air_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "air_digest": "sha256:af5a16012a5cef42c882316702d76acdda510c94ab55cbe4c7b6d4f9907641d5",
+      "air": {
+        "schema_version": "apxm.air.v1",
+        "semantic_operations": [],
+        "structural_ir": [],
+        "source_map": {
+          "schema_version": "apxm.source-map.v1",
+          "source_language": "python",
+          "node_spans": [],
+          "region_annotations": []
+        }
+      },
       "source_bundle_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
       "source_map": {
         "schema_version": "apxm.source-map.v1",

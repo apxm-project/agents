@@ -24,6 +24,20 @@ const FIVE_OPS = new Set([
   "await.event",
 ]);
 
+function normalizeFrontendSource(air: Record<string, unknown>): Record<string, unknown> {
+  const value = structuredClone(air) as {
+    source_map: {
+      source_language: string;
+      node_spans: Array<{ source_file: string }>;
+    };
+  };
+  value.source_map.source_language = "frontend";
+  value.source_map.node_spans.forEach((span) => {
+    span.source_file = "frontend";
+  });
+  return value as unknown as Record<string, unknown>;
+}
+
 test("authored graph matches golden input", () => {
   assert.deepStrictEqual(specialistGraph(), goldenGraph);
 });
@@ -64,8 +78,18 @@ test("gao conversational agent lowers to only the five semantic ops", () => {
   }
 });
 
-test("gao AIR matches golden", () => {
-  assert.strictEqual(canonicalAirJson(gaoConversationalGraph()), goldenGaoAir);
+test("gao AIR matches semantics and retains TypeScript source identity", () => {
+  const actual = lower(gaoConversationalGraph()) as Record<string, unknown>;
+  const sourceMap = actual.source_map as {
+    source_language: string;
+    node_spans: Array<{ source_file: string }>;
+  };
+  assert.equal(sourceMap.source_language, "typescript");
+  assert.ok(sourceMap.node_spans.every((span) => span.source_file.endsWith(".ts")));
+  assert.deepStrictEqual(
+    normalizeFrontendSource(actual),
+    normalizeFrontendSource(JSON.parse(goldenGaoAir) as Record<string, unknown>),
+  );
 });
 
 test("lower rejects an unknown operation", () => {

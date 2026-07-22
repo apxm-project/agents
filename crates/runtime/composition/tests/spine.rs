@@ -18,7 +18,7 @@ use apxm_composition::{AdmittedBinding, AdmittedPorts, assemble_bundle, executio
 use apxm_execution::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
     CompositionRequest, EventAwait, EventOutcome, EventPort, ExecutionRequest, NodeOutcome,
-    execute,
+    NoopStaticHookHandler, execute,
 };
 use apxm_inference::{
     ExactPortBindingRef, ModelBindingAdmission, ModelDeploymentRef, ModelInferencePort,
@@ -97,7 +97,7 @@ fn five_op_air() -> AirModule {
             SemanticOp {
                 node_id: "n_await".into(),
                 op: SemanticOpKind::AwaitEvent,
-                operands: operands(&[("event_selector", "webhook_ready")]),
+                operands: operands(&[("event_ref", "webhook_ready")]),
             },
         ],
         structural_ir: vec![],
@@ -146,7 +146,8 @@ struct TestEvents;
 impl EventPort for TestEvents {
     async fn await_event(&self, request: EventAwait) -> EventOutcome {
         EventOutcome::Fulfilled {
-            payload: format!("event:{}", request.selector),
+            payload: format!("event:{}", request.event_ref),
+            event_ref: request.event_ref,
         }
     }
 }
@@ -209,6 +210,7 @@ fn admitted_ports() -> AdmittedPorts {
         confinement,
         model_inference,
         external_agent,
+        hook_handlers: Arc::new(NoopStaticHookHandler),
     }
 }
 
@@ -247,13 +249,13 @@ async fn composition_root_drives_canonical_execution_end_to_end() {
         &ports,
         ExecutionRequest {
             air: five_op_air(),
+            hook_bindings: Vec::new(),
             model_admission: model_admission(),
             version_scope: "invoke_1".into(),
             commit_id: "commit_1".into(),
             write_set: write_set(),
         },
         Value::Null,
-        &[],
     )
     .await
     .expect("canonical execution runs end-to-end through the real adapters");

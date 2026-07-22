@@ -3,6 +3,7 @@
 //! implementation; the driver never discovers, ranks, or falls back.
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// A request to invoke one non-model Capability.
@@ -27,19 +28,67 @@ pub trait CapabilityPort: Send + Sync {
     async fn invoke(&self, request: CapabilityRequest) -> CapabilityOutcome;
 }
 
+/// The opaque identity of one OS-minted durable event.
+///
+/// Runtime code compares this identity exactly. It never interprets a selector,
+/// route, or provider-specific payload to decide which parked invocation to
+/// resume.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct EventRef(String);
+
+impl EventRef {
+    /// Construct one non-empty durable event identity.
+    pub fn new(value: impl Into<String>) -> Result<Self, EventRefError> {
+        let value = value.into();
+        if value.trim().is_empty() {
+            return Err(EventRefError::Empty);
+        }
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for EventRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// An invalid runtime event identity.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EventRefError {
+    Empty,
+}
+
+impl std::fmt::Display for EventRefError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => f.write_str("event reference must not be empty"),
+        }
+    }
+}
+
+impl std::error::Error for EventRefError {}
+
 /// A request to await one external event.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EventAwait {
     pub node_id: String,
-    pub selector: String,
+    pub event_ref: EventRef,
 }
 
 /// The typed outcome of an `await.event` effect.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EventOutcome {
-    Fulfilled { payload: String },
+    Fulfilled { event_ref: EventRef, payload: String },
     Parked,
     Expired,
+    Mismatched { delivered_event_ref: EventRef },
 }
 
 /// The event port for `await.event` effects.

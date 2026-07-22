@@ -34,9 +34,9 @@ def specialist_graph() -> dict[str, Any]:
     builder.capability_invoke("node.cap.1", capability_ref="cap.search")
     builder.program_new("node.new.1")
     builder.program_invoke("node.invoke.1")
-    builder.await_event("node.await.1")
+    builder.await_event("node.await.1", event_ref="event.specialist.await")
     builder.region("region.loop.1", "loop")
-    builder.region("region.return.1", "return")
+    builder.return_region("region.return.1")
     builder.context_edge("node.model.1", "node.cap.1", "SpecialistContext")
     builder.hook(
         hook_id="hook.before.model",
@@ -56,69 +56,10 @@ def specialist_graph() -> dict[str, Any]:
 
 
 def gao_conversational_graph() -> dict[str, Any]:
-    """A Gao-style Conversational Agent authored entirely on public constructs.
+    """Re-export the Gao graph authored through ConversationalAgent."""
+    from .gao import gao_conversational_graph as _gao_graph
 
-    The conversational loop is a structural loop region annotated as a
-    conversational loop; each Turn issues a `model.call` guarded by before/after
-    Hooks with explicit context flow. The agent composes a specialist through
-    `program.new`/`program.invoke` and waits for an external event with
-    `await.event`. It lowers to only the five semantic operations plus structural
-    IR — no retired op and no runtime special case.
-    """
-    builder = GraphBuilder(source_language="python")
-    builder.program(
-        program_id="Gao",
-        entrypoint="run",
-        input_type_ref="GaoInput",
-        output_type_ref="GaoOutput",
-        has_default_context=True,
-        context_type_ref="GaoContext",
-    )
-    builder.import_program(
-        program_ref="Specialist",
-        artifact_digest="sha256:" + "c" * 64,
-        entrypoint="run",
-        target_agent_identity_requirement="specialist-identity",
-    )
-    builder.model_call("node.turn.model", model_target_ref="model.default")
-    builder.capability_invoke("node.turn.tool", capability_ref="cap.search")
-    builder.program_new("node.specialist.new")
-    builder.program_invoke("node.specialist.invoke")
-    builder.await_event("node.turn.await")
-    builder.region("region.loop.turn", "loop")
-    builder.region("region.return", "return")
-    builder.context_edge("node.turn.model", "node.turn.tool", "GaoContext")
-    builder.hook(
-        hook_id="hook.before.turn",
-        scope="loop",
-        phase="before",
-        target_selector="region.loop.turn",
-        declaration_order=0,
-        handler_ref="hooks.before_turn",
-        handler_digest="sha256:" + "d" * 64,
-        input_type_ref="GaoContext",
-        output_type_ref="GaoContext",
-        return_mode="observe",
-    )
-    builder.hook(
-        hook_id="hook.after.model",
-        scope="model",
-        phase="after",
-        target_selector="node.turn.model",
-        declaration_order=1,
-        handler_ref="hooks.after_model",
-        handler_digest="sha256:" + "e" * 64,
-        input_type_ref="ModelResult",
-        output_type_ref="ModelResult",
-        return_mode="replace_result",
-    )
-    builder.capability_requirement("cap.search")
-    builder.model_requirement("model.default")
-    graph = builder.build()
-    graph["source_map"]["region_annotations"].append(
-        {"region_id": "region.loop.turn", "annotation": "conversational_loop"}
-    )
-    return graph
+    return _gao_graph()
 
 
 def session_agent_graph() -> dict[str, Any]:
@@ -142,9 +83,9 @@ def session_agent_graph() -> dict[str, Any]:
         context_type_ref="SessionContext",
     )
     builder.model_call("node.turn.model", model_target_ref="model.default")
-    builder.await_event("node.turn.await")
+    builder.await_event("node.turn.await", event_ref="event.session.turn")
     builder.region("region.loop.session", "loop")
-    builder.region("region.return", "return")
+    builder.return_region("region.return")
     builder.context_edge("node.turn.model", "node.turn.await", "SessionContext")
     builder.model_requirement("model.default")
     graph = builder.build()
@@ -175,6 +116,6 @@ def external_agent_graph() -> dict[str, Any]:
         profile_ref="acp:claude-code",
         session_ref="session.acp.1",
     )
-    builder.region("region.return.1", "return")
+    builder.return_region("region.return.1")
     builder.capability_requirement("external-agent:acp:claude-code")
     return builder.build()

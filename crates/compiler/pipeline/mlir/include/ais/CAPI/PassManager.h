@@ -21,22 +21,6 @@ bool apxm_pass_manager_run(ApxmPassManager *pm, ApxmModule *module);
 bool apxm_pass_manager_add_pass_by_name(ApxmPassManager *pm, const char *pass_name);
 bool apxm_pass_manager_has_pass(ApxmPassManager *pm, const char *pass_name);
 
-// Specific pass additions (grouped by category)
-// Analysis passes
-void apxm_pass_manager_add_unconsumed_value_warning(ApxmPassManager *pm);
-
-// Transform passes
-void apxm_pass_manager_add_normalize(ApxmPassManager *pm);
-void apxm_pass_manager_add_build_prompt(ApxmPassManager *pm);
-void apxm_pass_manager_add_fuse_ask_ops(ApxmPassManager *pm);
-void apxm_pass_manager_add_condense_ops(ApxmPassManager *pm);
-void apxm_pass_manager_add_scheduling(ApxmPassManager *pm);
-
-// Optimization passes
-void apxm_pass_manager_add_canonicalizer(ApxmPassManager *pm);  // Includes DCE
-void apxm_pass_manager_add_cse(ApxmPassManager *pm);
-void apxm_pass_manager_add_symbol_dce(ApxmPassManager *pm);
-
 // Read and erase a pass's per-run stat attributes from a module.
 //
 // Looks up `ais.<pass_name>_fired_count` and `ais.<pass_name>_ir_size_delta`

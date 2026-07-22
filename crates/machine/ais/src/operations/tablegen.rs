@@ -1,564 +1,70 @@
-//! TableGen Generator - Generates MLIR TableGen from Rust definitions.
-//!
-//! This module generates `.td` files from Rust operation definitions,
-//! enabling Rust to be the single source of truth for AIS operations.
+//! TableGen declarations for the canonical five-operation AIS surface.
 
-use super::OperationCategory;
-use super::definitions::{AISOperationType, OperationSpec, get_all_operations};
+use super::definitions::{OperationSpec, get_all_operations};
 use std::fmt::Write;
 
-// ============================================================================
-// MLIR-Specific Types for TableGen Generation
-// ============================================================================
+/// Filename for the checked-in semantic TableGen declarations consumed by MLIR.
+pub const SEMANTIC_TABLEGEN_DECLARATIONS_FILE: &str = "AISOps.semantic.generated.td";
 
-/// MLIR traits that can be applied to operations.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MlirTrait {
-    /// Pure operation (no side effects).
-    Pure,
-    /// Operation is a terminator.
-    Terminator,
-    /// Operation must have a specific parent.
-    HasParent(&'static str),
-    /// Custom trait string (for complex traits).
-    Custom(&'static str),
-}
-
-impl MlirTrait {
-    /// Convert to TableGen format.
-    pub fn to_tablegen(&self) -> String {
-        match self {
-            MlirTrait::Pure => "Pure".to_string(),
-            MlirTrait::Terminator => "Terminator".to_string(),
-            MlirTrait::HasParent(parent) => format!("HasParent<\"{}\">", parent),
-            MlirTrait::Custom(s) => s.to_string(),
-        }
-    }
-}
-
-/// Memory resources for side effect tracking.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AISResource {
-    /// Belief memory resource.
-    Belief,
-    /// Goal memory resource.
-    Goal,
-    /// Capability resource.
-    Capability,
-    /// Episodic memory resource.
-    Episodic,
-}
-
-impl AISResource {
-    /// Convert to TableGen resource name.
-    pub fn to_tablegen(&self) -> &'static str {
-        match self {
-            AISResource::Belief => "AIS_BeliefResource",
-            AISResource::Goal => "AIS_GoalResource",
-            AISResource::Capability => "AIS_CapabilityResource",
-            AISResource::Episodic => "AIS_EpisodicResource",
-        }
-    }
-}
-
-/// Memory effect for an operation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MemoryEffect {
-    /// Read from a resource.
-    MemRead(AISResource),
-    /// Write to a resource.
-    MemWrite(AISResource),
-}
-
-impl MemoryEffect {
-    /// Convert to TableGen format.
-    pub fn to_tablegen(&self) -> String {
-        match self {
-            MemoryEffect::MemRead(r) => format!("MemRead<{}>", r.to_tablegen()),
-            MemoryEffect::MemWrite(r) => format!("MemWrite<{}>", r.to_tablegen()),
-        }
-    }
-}
-
-/// MLIR argument type for TableGen.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MlirArgType {
-    /// String attribute.
-    StrAttr,
-    /// Optional string attribute.
-    OptionalStrAttr,
-    /// Integer attribute.
-    I64Attr,
-    /// Optional integer attribute.
-    OptionalI64Attr,
-    /// Token type.
-    Token,
-    /// Optional token type.
-    OptionalToken,
-    /// Variadic tokens.
-    VariadicTokens,
-    /// Handle type.
-    Handle,
-    /// Any token or handle.
-    AnyTokenOrHandle,
-    /// Any token, handle, or goal.
-    AnyTokenHandleOrGoal,
-    /// Variadic any token, handle, or goal.
-    VariadicAnyTokenHandleOrGoal,
-    /// Custom type string.
-    Custom(&'static str),
-}
-
-impl MlirArgType {
-    /// Convert to TableGen format.
-    pub fn to_tablegen(&self) -> &'static str {
-        match self {
-            MlirArgType::StrAttr => "StrAttr",
-            MlirArgType::OptionalStrAttr => "OptionalAttr<StrAttr>",
-            MlirArgType::I64Attr => "I64Attr",
-            MlirArgType::OptionalI64Attr => "OptionalAttr<I64Attr>",
-            MlirArgType::Token => "AIS_TokenType",
-            MlirArgType::OptionalToken => "Optional<AIS_TokenType>",
-            MlirArgType::VariadicTokens => "Variadic<AIS_TokenType>",
-            MlirArgType::Handle => "AIS_HandleType",
-            MlirArgType::AnyTokenOrHandle => "AIS_AnyTokenOrHandle",
-            MlirArgType::AnyTokenHandleOrGoal => "AIS_AnyTokenHandleOrGoal",
-            MlirArgType::VariadicAnyTokenHandleOrGoal => "Variadic<AIS_AnyTokenHandleOrGoal>",
-            MlirArgType::Custom(s) => s,
-        }
-    }
-}
-
-/// An MLIR operation argument.
-#[derive(Debug, Clone)]
-pub struct MlirArgument {
-    /// Argument name (will become $name in TableGen).
-    pub name: &'static str,
-    /// Argument type.
-    pub arg_type: MlirArgType,
-}
-
-impl MlirArgument {
-    /// Create a new argument.
-    pub const fn new(name: &'static str, arg_type: MlirArgType) -> Self {
-        Self { name, arg_type }
-    }
-
-    /// Convert to TableGen format.
-    pub fn to_tablegen(&self) -> String {
-        format!("{}:${}", self.arg_type.to_tablegen(), self.name)
-    }
-}
-
-/// MLIR result type for TableGen.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MlirResultType {
-    /// Token type.
-    Token,
-    /// Handle type.
-    Handle,
-    /// Goal type.
-    Goal,
-    /// Custom type.
-    Custom(&'static str),
-}
-
-impl MlirResultType {
-    /// Convert to TableGen format.
-    pub fn to_tablegen(&self) -> &'static str {
-        match self {
-            MlirResultType::Token => "AIS_TokenType",
-            MlirResultType::Handle => "AIS_HandleType",
-            MlirResultType::Goal => "AIS_GoalType",
-            MlirResultType::Custom(s) => s,
-        }
-    }
-}
-
-/// An MLIR operation result.
-#[derive(Debug, Clone)]
-pub struct MlirResult {
-    /// Result name.
-    pub name: &'static str,
-    /// Result type.
-    pub result_type: MlirResultType,
-}
-
-impl MlirResult {
-    /// Create a new result.
-    pub const fn new(name: &'static str, result_type: MlirResultType) -> Self {
-        Self { name, result_type }
-    }
-
-    /// Convert to TableGen format.
-    pub fn to_tablegen(&self) -> String {
-        format!("{}:${}", self.result_type.to_tablegen(), self.name)
-    }
-}
-
-/// Region definition for operations with nested regions.
-#[derive(Debug, Clone)]
-pub struct MlirRegion {
-    /// Region name.
-    pub name: &'static str,
-    /// Region type (usually "AnyRegion").
-    pub region_type: &'static str,
-}
-
-impl MlirRegion {
-    /// Create a new region.
-    pub const fn new(name: &'static str) -> Self {
-        Self {
-            name,
-            region_type: "AnyRegion",
-        }
-    }
-}
-
-// ============================================================================
-// Extended Operation Specification for TableGen
-// ============================================================================
-
-/// Extended operation specification with MLIR-specific fields.
-///
-/// This extends the base OperationSpec with fields needed for TableGen generation.
-pub struct MlirOperationSpec {
-    /// Base operation spec (from definitions.rs).
-    pub base: &'static OperationSpec,
-
-    /// MLIR traits for the operation.
-    pub traits: &'static [MlirTrait],
-
-    /// Memory effects (reads/writes).
-    pub memory_effects: &'static [MemoryEffect],
-
-    /// MLIR arguments (ins).
-    pub arguments: &'static [MlirArgument],
-
-    /// MLIR results (outs).
-    pub results: &'static [MlirResult],
-
-    /// Assembly format string.
-    pub assembly_format: Option<&'static str>,
-
-    /// Nested regions.
-    pub regions: &'static [MlirRegion],
-
-    /// Has custom verifier.
-    pub has_verifier: bool,
-
-    /// Has canonicalizer.
-    pub has_canonicalizer: bool,
-
-    /// Has folder for constant folding.
-    pub has_folder: bool,
-}
-
-// ============================================================================
-// TableGen Generation
-// ============================================================================
-
-/// TableGen file header.
-const TABLEGEN_HEADER: &str = r#"/**
- * @file  AISOps.generated.td
- * @brief GENERATED from Rust - DO NOT EDIT MANUALLY
- *
- * This file is generated by crates/machine/ais/src/operations/tablegen.rs
- * To modify operations, edit crates/machine/ais/src/operations/definitions.rs
- */
-
-#ifndef APXM_AIS_OPS_GENERATED
-#define APXM_AIS_OPS_GENERATED
-
-include "apxm/Dialect/AIS/IR/AISDialect.td"
-include "apxm/Dialect/AIS/IR/AISTypes.td"
-include "mlir/IR/CommonTypeConstraints.td"
-include "mlir/Interfaces/ControlFlowInterfaces.td"
-include "mlir/Interfaces/SideEffectInterfaces.td"
-
-"#;
-
-/// TableGen file footer.
-const TABLEGEN_FOOTER: &str = "\n#endif // APXM_AIS_OPS_GENERATED\n";
-
-/// Generate a TableGen operation definition.
-fn generate_op_def(spec: &MlirOperationSpec) -> String {
-    let base = spec.base;
-    let op_name = to_tablegen_name(base.op_type);
-    let mnemonic = base.op_type.mlir_mnemonic();
-
-    // Build traits list
-    let mut traits = Vec::new();
-
-    // Add explicit traits
-    for t in spec.traits {
-        traits.push(t.to_tablegen());
-    }
-
-    // Add memory effects as a trait
-    if !spec.memory_effects.is_empty() {
-        let effects: Vec<String> = spec
-            .memory_effects
-            .iter()
-            .map(|e| e.to_tablegen())
-            .collect();
-        traits.push(format!("MemoryEffects<[{}]>", effects.join(", ")));
-    }
-
-    let traits_str = if traits.is_empty() {
-        String::new()
-    } else {
-        traits.join(", ")
-    };
-
-    // Build arguments
-    let args_str = if spec.arguments.is_empty() {
-        String::new()
-    } else {
-        let args: Vec<String> = spec.arguments.iter().map(|a| a.to_tablegen()).collect();
-        format!("  let arguments = (ins\n    {}\n  );", args.join(",\n    "))
-    };
-
-    // Build results
-    let results_str = if spec.results.is_empty() {
-        String::new()
-    } else {
-        let results: Vec<String> = spec.results.iter().map(|r| r.to_tablegen()).collect();
-        format!("  let results = (outs {});", results.join(", "))
-    };
-
-    // Build regions
-    let regions_str = if spec.regions.is_empty() {
-        String::new()
-    } else {
-        let regions: Vec<String> = spec
-            .regions
-            .iter()
-            .map(|r| format!("{}:${}", r.region_type, r.name))
-            .collect();
-        format!("  let regions = (region {});", regions.join(", "))
-    };
-
-    // Assembly format
-    let format_str = spec
-        .assembly_format
-        .map(|f| format!("  let assemblyFormat = [{{{}}}];", f))
-        .unwrap_or_default();
-
-    // Flags
-    let mut flags = Vec::new();
-    if spec.has_verifier {
-        flags.push("  let hasVerifier = 1;".to_string());
-    }
-    if spec.has_canonicalizer {
-        flags.push("  let hasCanonicalizer = 1;".to_string());
-    }
-    if spec.has_folder {
-        flags.push("  let hasFolder = 1;".to_string());
-    }
-
-    // Combine all parts
-    let mut parts = vec![
-        format!(
-            "def {} : AIS_Op<\"{}\", [{}]> {{",
-            op_name, mnemonic, traits_str
-        ),
-        format!("  let summary = \"{}\";", base.name),
-        format!(
-            "  let description = [{{{}}}];",
-            base.description.replace('\n', "\\n")
-        ),
-    ];
-
-    if !args_str.is_empty() {
-        parts.push(args_str);
-    }
-    if !results_str.is_empty() {
-        parts.push(results_str);
-    }
-    if !regions_str.is_empty() {
-        parts.push(regions_str);
-    }
-    if !format_str.is_empty() {
-        parts.push(format_str);
-    }
-    for flag in flags {
-        parts.push(flag);
-    }
-    parts.push("}".to_string());
-
-    parts.join("\n")
-}
-
-/// Convert operation type to TableGen definition name.
-fn to_tablegen_name(op_type: AISOperationType) -> String {
-    let name = match op_type {
-        AISOperationType::Agent => "Agent",
-        AISOperationType::QMem => "QMem",
-        AISOperationType::UMem => "UMem",
-        AISOperationType::Ask => "Ask",
-        AISOperationType::Think => "Think",
-        AISOperationType::Reason => "Reason",
-        AISOperationType::Plan => "Plan",
-        AISOperationType::Reflect => "Reflect",
-        AISOperationType::Verify => "Verify",
-        AISOperationType::InvCap => "InvCap",
-        AISOperationType::Exc => "Exc",
-        AISOperationType::Print => "Print",
-        AISOperationType::Jump => "Jump",
-        AISOperationType::BranchOnValue => "BranchOnValue",
-        AISOperationType::Return => "Return",
-        AISOperationType::Switch => "Switch",
-        AISOperationType::FlowCall => "FlowCall",
-        AISOperationType::WorkflowSpawn => "WorkflowSpawn",
-        AISOperationType::Merge => "Merge",
-        AISOperationType::Fence => "Fence",
-        AISOperationType::WaitAll => "WaitAll",
-        AISOperationType::AwaitInput => "AwaitInput",
-        AISOperationType::TryCatch => "TryCatch",
-        AISOperationType::Err => "Err",
-        AISOperationType::Communicate => "Communicate",
-        AISOperationType::Handoff => "Handoff",
-        AISOperationType::UpdateGoal => "UpdateGoal",
-        AISOperationType::Pause => "Pause",
-        AISOperationType::Resume => "Resume",
-        AISOperationType::Delegate => "Delegate",
-        AISOperationType::Nop => "Nop",
-        AISOperationType::Identity => "Identity",
-        AISOperationType::SpawnAgent => "SpawnAgent",
-        AISOperationType::RegisterCapability => "RegisterCapability",
-        AISOperationType::RegisterHook => "RegisterHook",
-        AISOperationType::Autonomous => "Autonomous",
-        AISOperationType::Checkpoint => "Checkpoint",
-        AISOperationType::ConstStr => "ConstStr",
-        AISOperationType::Yield => "Yield",
-    };
-    format!("AIS_{}Op", name)
-}
-
-/// Get the category comment for a section.
-fn get_category_comment(category: OperationCategory) -> &'static str {
-    match category {
-        OperationCategory::Metadata => "Agent Metadata",
-        OperationCategory::Memory => "Memory Operations",
-        OperationCategory::Reasoning => "Reasoning Operations",
-        OperationCategory::Tools => "Tool Operations",
-        OperationCategory::ControlFlow => "Control Flow Operations",
-        OperationCategory::Synchronization => "Synchronization Operations",
-        OperationCategory::ErrorHandling => "Error Handling Operations",
-        OperationCategory::Communication => "Communication Operations",
-        OperationCategory::Coordination => "Coordination Operations",
-        OperationCategory::Identity => "Identity Operations",
-        OperationCategory::Internal => "Internal Operations",
-    }
-}
-
-// ============================================================================
-// Public API
-// ============================================================================
-
-/// Generate complete TableGen file content.
-///
-/// This is the main entry point for TableGen generation.
-/// It generates a complete .td file that can be used with mlir-tblgen.
-pub fn generate_tablegen() -> String {
-    let mut output = String::new();
-    output.push_str(TABLEGEN_HEADER);
-
-    // Get all operations and convert to MLIR specs
-    let specs = get_mlir_operation_specs();
-
-    // Group by category
-    let mut current_category: Option<OperationCategory> = None;
-
-    for spec in &specs {
-        let category = spec.base.category;
-
-        // Add section comment if category changed
-        if current_category != Some(category) {
-            current_category = Some(category);
-            let comment = get_category_comment(category);
-            let _ = write!(
-                output,
-                "\n//===----------------------------------------------------------------------===//\n\
-                 // {}\n\
-                 //===----------------------------------------------------------------------===//\n\n",
-                comment
-            );
-        }
-
-        output.push_str(&generate_op_def(spec));
-        output.push_str("\n\n");
-    }
-
-    output.push_str(TABLEGEN_FOOTER);
+/// Render the canonical semantic declarations consumed by MLIR TableGen.
+pub fn generate_semantic_tablegen_declarations() -> String {
+    let mut output = String::from(
+        "/*\n\
+         * @file  AISOps.semantic.generated.td\n\
+         * @brief GENERATED from Rust AIS semantic operation definitions - DO NOT EDIT MANUALLY\n\
+         *\n\
+         * Source of truth: crates/machine/ais/src/operations/definitions.rs\n\
+         */\n\n\
+         // Canonical five public semantic operations.\n\n",
+    );
+    append_semantic_ops(&mut output);
     output
 }
 
-/// Get MLIR operation specs for all operations.
-///
-/// This returns the extended specs with MLIR-specific metadata derived from the
-/// base specs.
-pub fn get_mlir_operation_specs() -> Vec<MlirOperationSpec> {
-    // Create basic specs from the base definitions.
-    // This will be expanded to include full MLIR metadata.
-    get_all_operations().map(derive_mlir_spec).collect()
+/// Render the standalone canonical AIS TableGen document.
+pub fn generate_tablegen() -> String {
+    generate_semantic_tablegen_declarations()
 }
 
-/// Derive MLIR spec from base operation spec.
-///
-/// This creates a basic MLIR spec with reasonable defaults.
-/// Eventually, this should be replaced with explicit definitions.
-fn derive_mlir_spec(base: &'static OperationSpec) -> MlirOperationSpec {
-    use AISOperationType::*;
-
-    // Derive traits based on operation type and category
-    let traits: &'static [MlirTrait] = match base.op_type {
-        Agent => &[MlirTrait::HasParent("mlir::ModuleOp")],
-        Return => &[MlirTrait::Terminator],
-        ConstStr | WaitAll | Merge => &[MlirTrait::Pure],
-        _ => &[],
-    };
-
-    // Derive memory effects based on category
-    let memory_effects: &'static [MemoryEffect] = match base.op_type {
-        QMem | Ask | Think | Verify => &[MemoryEffect::MemRead(AISResource::Belief)],
-        UMem => &[MemoryEffect::MemWrite(AISResource::Belief)],
-        // Reason: reads AND writes beliefs + goals (structured reasoning updates)
-        Reason => &[
-            MemoryEffect::MemRead(AISResource::Belief),
-            MemoryEffect::MemWrite(AISResource::Belief),
-            MemoryEffect::MemWrite(AISResource::Goal),
-        ],
-        Reflect => &[
-            MemoryEffect::MemRead(AISResource::Episodic),
-            MemoryEffect::MemWrite(AISResource::Belief),
-        ],
-        Plan => &[MemoryEffect::MemWrite(AISResource::Goal)],
-        InvCap => &[MemoryEffect::MemRead(AISResource::Capability)],
-        _ => &[],
-    };
-
-    // Determine which ops have verifiers/canonicalizers
-    let has_verifier = !matches!(base.op_type, Agent | ConstStr);
-    // Ask ops are fusible and have canonicalizers
-    let has_canonicalizer = matches!(base.op_type, Ask | WaitAll | Merge);
-    let has_folder = matches!(base.op_type, ConstStr);
-
-    MlirOperationSpec {
-        base,
-        traits,
-        memory_effects,
-        arguments: &[], // Will be derived from fields
-        results: &[],   // Will be derived from produces_output
-        assembly_format: None,
-        regions: &[],
-        has_verifier,
-        has_canonicalizer,
-        has_folder,
+fn append_semantic_ops(output: &mut String) {
+    let _ = write!(
+        output,
+        "\n//===----------------------------------------------------------------------===//\n\
+         // Canonical Semantic Operations (generated from definitions.rs)\n\
+         //===----------------------------------------------------------------------===//\n\n"
+    );
+    for spec in get_all_operations() {
+        output.push_str(&generate_semantic_op_def(spec));
+        output.push_str("\n\n");
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
+fn generate_semantic_op_def(spec: &OperationSpec) -> String {
+    let op_class = spec.op_type.mlir_cpp_class();
+    let op_name = op_class.strip_suffix("Op").expect("MLIR class name ends in Op");
+    let mnemonic = spec.op_type.wire().replace('.', "_");
+    format!(
+        "def AIS_{op_name}Op : AIS_Op<\"{mnemonic}\", []> {{\n  let summary = \"{summary}\";\n  let results = (outs AIS_TokenType:$result);\n  let assemblyFormat = \"attr-dict `:` type($result)\";\n}}\n",
+        summary = spec.description.replace('"', "\\\"")
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{generate_semantic_tablegen_declarations, generate_tablegen};
+
+    #[test]
+    fn generated_declarations_expose_only_canonical_operations() {
+        let declarations = generate_semantic_tablegen_declarations();
+        for op in [
+            "model_call",
+            "capability_invoke",
+            "program_new",
+            "program_invoke",
+            "await_event",
+        ] {
+            assert!(declarations.contains(op));
+        }
+        assert_eq!(declarations, generate_tablegen());
+    }
+}

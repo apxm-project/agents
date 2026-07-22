@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use apxm_execution::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
     CompositionRequest, EventAwait, EventOutcome, EventPort, ExecutionPorts, ExecutionRequest,
-    NodeOutcome, execute,
+    NodeOutcome, NoopStaticHookHandler, execute,
 };
 use apxm_inference::{
     AttemptDisposition, ExactPortBindingRef, ModelBindingAdmission, ModelCallRequest,
@@ -32,13 +32,14 @@ pub async fn execute_canonical_command(input: PathBuf, _json_output: bool) -> Re
     let target = first_model_target(&air).unwrap_or_else(|| "model.default".to_string());
     let request = ExecutionRequest {
         air,
+        hook_bindings: Vec::new(),
         model_admission: dev_model_admission(target),
         version_scope: "dev.instance".to_string(),
         commit_id: "dev.commit.1".to_string(),
         write_set: dev_write_set(),
     };
     let commit = Arc::new(DevCommit::default());
-    let report = execute(&dev_ports(commit), request, Value::Null, &[])
+    let report = execute(&dev_ports(commit), request, Value::Null)
         .await
         .map_err(|err| anyhow::anyhow!(err))?;
 
@@ -192,7 +193,8 @@ struct DevEvents;
 impl EventPort for DevEvents {
     async fn await_event(&self, request: EventAwait) -> EventOutcome {
         EventOutcome::Fulfilled {
-            payload: format!("event:{}", request.selector),
+            payload: format!("event:{}", request.event_ref),
+            event_ref: request.event_ref,
         }
     }
 }
@@ -247,6 +249,7 @@ fn dev_ports(commit: Arc<DevCommit>) -> ExecutionPorts {
         events: Arc::new(DevEvents),
         composition: Arc::new(DevComposition),
         execution_commit: commit,
+        hook_handlers: Arc::new(NoopStaticHookHandler),
     }
 }
 
@@ -337,9 +340,17 @@ fn composition_outcome_json(outcome: &CompositionOutcome) -> Value {
 
 fn event_outcome_json(outcome: &EventOutcome) -> Value {
     match outcome {
-        EventOutcome::Fulfilled { payload } => json!({"status": "fulfilled", "payload": payload}),
+        EventOutcome::Fulfilled { event_ref, payload } => {
+            json!({"status": "fulfilled", "event_ref": event_ref, "payload": payload})
+        }
         EventOutcome::Parked => json!({"status": "parked"}),
         EventOutcome::Expired => json!({"status": "expired"}),
+        EventOutcome::Mismatched {
+            delivered_event_ref,
+        } => json!({
+            "status": "mismatched",
+            "delivered_event_ref": delivered_event_ref,
+        }),
     }
 }
 
@@ -379,7 +390,7 @@ mod tests {
                 {"node_id": "n.cap", "op": "capability.invoke", "operands": {"capability_ref": "cap.search"}},
                 {"node_id": "n.new", "op": "program.new", "operands": {"program_ref": "child"}},
                 {"node_id": "n.invoke", "op": "program.invoke", "operands": {"program_ref": "child"}},
-                {"node_id": "n.await", "op": "await.event", "operands": {"event_selector": "ready"}}
+                {"node_id": "n.await", "op": "await.event", "operands": {"event_ref": "ready"}}
             ],
             "structural_ir": [{"region_id": "r.return", "kind": "return"}],
             "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
@@ -391,13 +402,13 @@ mod tests {
             &dev_ports(commit),
             ExecutionRequest {
                 air,
+                hook_bindings: Vec::new(),
                 model_admission: dev_model_admission("model.default".into()),
                 version_scope: "test.instance".into(),
                 commit_id: "test.commit".into(),
                 write_set: dev_write_set(),
             },
             Value::Null,
-            &[],
         )
         .await
         .expect("canonical execution");

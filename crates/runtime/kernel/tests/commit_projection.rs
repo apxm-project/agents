@@ -2,7 +2,9 @@
 //! object — the exact five-member write set, no split field — accepted by the
 //! owned contract verifier.
 
-use apxm_kernel::{AtomicWriteSet, ExecutionCommitRequest, ExecutionCommitResult};
+use apxm_kernel::{
+    AtomicWriteSet, ExecutionCommitRequest, ExecutionCommitResult, ExecutionCommitTuple,
+};
 use apxm_program::verify_execution_commit_json;
 
 fn digest(c: char) -> String {
@@ -23,6 +25,7 @@ fn request() -> ExecutionCommitRequest {
             usage_facts_digest: digest('5'),
             session_output_refs_digest: digest('6'),
         },
+        tuple: ExecutionCommitTuple::empty(vec![]),
         evidence_batch: vec![],
     }
 }

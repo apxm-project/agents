@@ -1,7 +1,7 @@
 ---
 name: frontend-implementation
 group: Domain
-description: Use when changing APXM compiler frontends: Rust AirModule, TypeScript @apxm/frontend, Python apxm, frontend codegen, or Studio/source lowering into AIR.
+description: Use when changing APXM compiler frontends: Rust FrontendGraph lowering, TypeScript @apxm/frontend, Python apxm_program, frontend codegen, or Studio/source lowering into AIR.
 user-invocable: true
 ---
 
@@ -16,21 +16,21 @@ load `_shared/apxm-comment-rules.md`; when writing tests load
 - The AIS op catalog is the single source of operations:
   `crates/machine/ais/generated/op-spec.v1.json`, generated from Rust-owned
   AIS definitions.
-- The Rust compiler owns AIR text printing:
-  `crates/compiler/pipeline/src/air_builder/`.
+- The Rust compiler owns canonical FrontendGraph validation and AIR lowering in
+  `crates/machine/program/src/lower.rs`.
 - TypeScript and Python frontends own authoring ergonomics, graph recording,
-  validation, and handler sidecars. They must lower to the compiler
-  `FrontendGraph`/`AirModule` shape before AIR text exists.
+  validation, and handler sidecars. They submit FrontendGraph to the compiler
+  before AIR exists.
 - Studio and other authoring surfaces generate TypeScript or Python frontend
   source, then invoke the frontend path. They do not keep private AIR emitters.
 
 ## Rules
 
-- Every supported frontend must produce AIR: Rust, TypeScript, and Python.
+- Every supported frontend must produce FrontendGraph: Rust, TypeScript, and Python.
 - Frontends consume the op catalog; no local op lists, aliases, retired names,
   or compatibility vocabularies.
-- No direct MLIR string printers in TypeScript or Python. The only AIR text
-  assembly path is Rust `AirModule::to_air()` / `AirProgram::to_air()`.
+- No direct MLIR string printers or raw AIR builders in TypeScript or Python.
+  Rust lowers verified FrontendGraph through `apxm_program::lower`.
 - Keep graph DTOs plain JSON: `name`, `nodes`, `edges`, `parameters`,
   `metadata`; node attributes are JSON-plain values.
 - Handler sidecars are metadata comments only at the process boundary; strip
@@ -43,7 +43,7 @@ load `_shared/apxm-comment-rules.md`; when writing tests load
 ## Standard workflow
 
 1. Identify which frontend surface owns the change:
-   - Rust printer / validation: `crates/compiler/pipeline/src/air_builder/**`
+   - Rust validation/lowering: `crates/machine/program/src/{frontend_graph,lower}.rs`
    - TypeScript frontend: `crates/compiler/frontend/typescript/**`
    - Python frontend: `crates/compiler/frontend/python/**`
    - CLI source lowering: `crates/tools/cli/src/commands/compile.rs`
@@ -58,7 +58,7 @@ load `_shared/apxm-comment-rules.md`; when writing tests load
 
 ## Verification
 
-- Rust AIR builder changed: `dekk agents test -p apxm-compiler`.
+- Rust FrontendGraph lowering changed: `dekk agents test -p apxm-program`.
 - TypeScript frontend changed:
   `npm --prefix crates/compiler/frontend/typescript run typecheck` and
   `npm --prefix crates/compiler/frontend/typescript test`.

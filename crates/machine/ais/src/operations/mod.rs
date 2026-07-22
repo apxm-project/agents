@@ -1,11 +1,6 @@
 //! AIS Operations - Single Source of Truth
 //!
-//! This module contains the complete specification for all 41 AIS operations
-//! (38 public + 1 metadata + 2 internal). Both the compiler and runtime use
-//! these definitions to ensure consistent semantics.
-//!
-//! The `tablegen` submodule generates MLIR TableGen files from these definitions,
-//! enabling Rust to be the single source of truth for operation metadata.
+//! The canonical five public semantic operations live in [`definitions`].
 
 mod artifact_wire;
 mod category;
@@ -21,11 +16,14 @@ pub use artifact_wire::{
 pub use category::OperationCategory;
 pub use definitions::{
     AIS_OPERATIONS, AISOperationType, ContextStyle, MlirEmissionSpec, MlirResultType,
-    OperationField, OperationLatency, OperationSpec, ReferenceType, WIRE_INDEXED_OPERATIONS,
-    get_all_operations, get_operation_spec,
+    OperationField, OperationLatency, OperationSpec, ReferenceType, SemanticOpKind,
+    WIRE_INDEXED_OPERATIONS, get_all_operations, get_operation_spec,
 };
 pub use op_spec::{
     OP_SPEC_CATALOG_FILE, OP_SPEC_SCHEMA_VERSION, OP_SPEC_VECTORS_FILE,
     OP_SPEC_VECTORS_SCHEMA_VERSION, generate_op_spec_catalog, generate_op_spec_vectors,
     render_op_spec_files,
+};
+pub use tablegen::{
+    SEMANTIC_TABLEGEN_DECLARATIONS_FILE, generate_semantic_tablegen_declarations,
 };

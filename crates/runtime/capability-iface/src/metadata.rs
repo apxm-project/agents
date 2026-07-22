@@ -1,17 +1,5 @@
-//! Execution-time capability metadata — moved here (from `apxm-runtime`'s
-//! `capability::metadata`) because it is the return type of
-//! [`crate::CapabilityFacade::get_metadata`]/`list_capabilities`.
-//!
-//! `impl From<&RuntimeCapability> for apxm_aam::CapabilityRecord` lives here
-//! too (rather than in `apxm-runtime`, where it lived before the move):
-//! neither `RuntimeCapability` nor `apxm_aam::CapabilityRecord` is local to
-//! `apxm-runtime` once `RuntimeCapability` moves, so the orphan rule no
-//! longer permits the impl there. It's legal here because `RuntimeCapability`
-//! is local to this crate, and `apxm-aam` (a small, dependency-free leaf
-//! crate) becomes a dependency of this crate rather than the other way
-//! around — no cycle.
+//! Execution-time capability metadata.
 
-use apxm_aam::CapabilityRecord as AamCapabilityRecord;
 use apxm_core::types::capability::{CapabilityDefinition, PermissionOperation, PromptMode};
 use apxm_core::types::values::Value;
 use serde::{Deserialize, Serialize};
@@ -257,17 +245,6 @@ impl From<CapabilityDefinition> for RuntimeCapability {
     }
 }
 
-impl From<&RuntimeCapability> for AamCapabilityRecord {
-    fn from(meta: &RuntimeCapability) -> Self {
-        AamCapabilityRecord {
-            name: meta.name.clone(),
-            description: meta.description.clone(),
-            schema: meta.parameters_schema.clone(),
-            cost_estimate: meta.cost_estimate,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -353,19 +330,4 @@ mod tests {
         assert!(!runtime.requires_approval);
     }
 
-    #[test]
-    fn runtime_capability_projects_to_aam_capability_record() {
-        let runtime = RuntimeCapability::new(
-            "files.read",
-            "Read a file",
-            serde_json::json!({"type": "object"}),
-        )
-        .with_cost(2.5);
-
-        let record: AamCapabilityRecord = (&runtime).into();
-        assert_eq!(record.name, runtime.name);
-        assert_eq!(record.description, runtime.description);
-        assert_eq!(record.schema, runtime.parameters_schema);
-        assert_eq!(record.cost_estimate, runtime.cost_estimate);
-    }
 }

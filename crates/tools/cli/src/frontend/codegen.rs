@@ -238,7 +238,7 @@ fn render_operations_module() -> String {
     buf.push('\n');
     for spec in &ops {
         let op = spec.op.to_string();
-        let const_name = format!("OP_{op}");
+        let const_name = format!("OP_{}", py_identifier(&op).to_ascii_uppercase());
         buf.push_str(&format!("{const_name}: Final[str] = {}\n", py_string(&op)));
     }
 

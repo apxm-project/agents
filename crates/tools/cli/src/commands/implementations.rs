@@ -6,6 +6,7 @@ use colored::Colorize;
 pub(crate) fn category_str(cat: apxm_core::types::OperationCategory) -> &'static str {
     use apxm_core::types::OperationCategory;
     match cat {
+        OperationCategory::Semantic => "semantic",
         OperationCategory::Metadata => "metadata",
         OperationCategory::Memory => "memory",
         OperationCategory::Reasoning => "reasoning",

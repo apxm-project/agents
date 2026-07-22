@@ -84,7 +84,11 @@
             "instance.closed",
             "instance.cancelled",
             "effect.outcome_unknown",
-            "delivery.recorded"
+            "delivery.recorded",
+            "region.occurrence_started",
+            "node_execution.recorded",
+            "hook.executed",
+            "context.transitioned"
           ]
         },
         "ownership_epoch": {
@@ -148,6 +152,47 @@
         },
         "region_occurrence_id": {
           "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "static_region_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "air_node_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "parent_node_execution_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "hook_execution_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "hook_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "hook_scope": {
+          "type": "string",
+          "enum": [
+            "agent",
+            "loop",
+            "node",
+            "model",
+            "capability"
+          ]
+        },
+        "hook_phase": {
+          "type": "string",
+          "enum": [
+            "before",
+            "after"
+          ]
+        },
+        "context_transition_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "context_before_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/TypedRef"
+        },
+        "context_after_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/TypedRef"
         },
         "effect_outcome_ref": {
           "$ref": "apxm.contract-common.v1#/$defs/TypedRef"

@@ -30,6 +30,20 @@ function readGolden(name: string): string {
   return readFileSync(join(PARITY_DIR, name), "utf8").trim();
 }
 
+function normalizeFrontendSource(air: Record<string, unknown>): Record<string, unknown> {
+  const value = structuredClone(air) as {
+    source_map: {
+      source_language: string;
+      node_spans: Array<{ source_file: string }>;
+    };
+  };
+  value.source_map.source_language = "frontend";
+  value.source_map.node_spans.forEach((span) => {
+    span.source_file = "frontend";
+  });
+  return value as unknown as Record<string, unknown>;
+}
+
 describe("canonical TypeScript FrontendGraph parity", () => {
   it("matches the canonical shared FrontendGraph fixture", () => {
     expect(specialistGraph()).toEqual(readFixture("frontend-graph.example.json"));
@@ -68,7 +82,16 @@ describe("canonical TypeScript FrontendGraph parity", () => {
     }
   });
 
-  it("matches the Gao canonical AIR fixture", () => {
-    expect(canonicalAirJson(gaoConversationalGraph())).toBe(readGolden("air.gao.expected.json"));
+  it("matches Gao semantics while retaining TypeScript source identity", () => {
+    const actual = lower(gaoConversationalGraph()) as Record<string, unknown>;
+    const sourceMap = actual.source_map as {
+      source_language: string;
+      node_spans: Array<{ source_file: string }>;
+    };
+    expect(sourceMap.source_language).toBe("typescript");
+    expect(sourceMap.node_spans.every((span) => span.source_file.endsWith(".ts"))).toBe(true);
+    expect(normalizeFrontendSource(actual)).toEqual(
+      normalizeFrontendSource(JSON.parse(readGolden("air.gao.expected.json"))),
+    );
   });
 });

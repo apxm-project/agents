@@ -15,40 +15,13 @@ use crate::diagnostic::{Diagnostic, DiagnosticCode, Verdict, schema_violation};
 use crate::grammar::is_identifier;
 use crate::source_map::SourceMap;
 
+pub use apxm_ais::SemanticOpKind;
+
 /// The single accepted `schema_version` for AIR.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AirVersion {
     #[serde(rename = "apxm.air.v1")]
     V1,
-}
-
-/// The five — and only five — public semantic operations.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SemanticOpKind {
-    #[serde(rename = "model.call")]
-    ModelCall,
-    #[serde(rename = "capability.invoke")]
-    CapabilityInvoke,
-    #[serde(rename = "program.new")]
-    ProgramNew,
-    #[serde(rename = "program.invoke")]
-    ProgramInvoke,
-    #[serde(rename = "await.event")]
-    AwaitEvent,
-}
-
-impl SemanticOpKind {
-    /// The canonical wire string, identical to the `apxm.air.v1` op enum member.
-    #[must_use]
-    pub const fn wire(self) -> &'static str {
-        match self {
-            Self::ModelCall => "model.call",
-            Self::CapabilityInvoke => "capability.invoke",
-            Self::ProgramNew => "program.new",
-            Self::ProgramInvoke => "program.invoke",
-            Self::AwaitEvent => "await.event",
-        }
-    }
 }
 
 /// The closed compiler-owned structural IR kinds. `nop` is intentionally absent:

@@ -33,7 +33,7 @@ The crate has two layers:
 
 | Module | Description |
 |--------|-------------|
-| `air_builder/` | `AirModule`, `AirNode`, `AirEdge`, `AirParam` graph builder and emitter |
+| `canonical.rs` | Verified `apxm.air.v1` to deterministic MLIR lowering |
 | `api/context` | `Context` wrapping MLIR context and dialect registration |
 | `api/module` | `Module` for parsed MLIR modules |
 | `api/pipeline` | `Pipeline` orchestrating parse, optimize, and codegen stages |

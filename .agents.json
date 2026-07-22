@@ -57,7 +57,7 @@
     },
     {
       "name": "frontend-implementation",
-      "description": "Use when changing APXM compiler frontends: Rust AirModule, TypeScript @apxm/frontend, Python apxm, frontend codegen, or Studio/source lowering into AIR."
+      "description": "Use when changing APXM compiler frontends: Rust FrontendGraph lowering, TypeScript @apxm/frontend, Python apxm_program, frontend codegen, or Studio/source lowering into AIR."
     },
     {
       "name": "mcp-server",

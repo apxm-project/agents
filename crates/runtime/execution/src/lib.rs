@@ -16,17 +16,19 @@ pub mod driver;
 pub mod ports;
 pub mod resume;
 pub mod session_ledger;
+pub mod structural;
 
 pub use driver::{
-    ExecutionError, ExecutionPorts, ExecutionRequest, NodeOutcome, RunReport, execute,
-    execute_resumable, resume,
+    ExecutionError, ExecutionPorts, ExecutionRequest, NodeOutcome, NoopStaticHookHandler,
+    RunReport, StaticHookHandlerPort, StaticHookResult, execute, execute_resumable, resume,
+    resume_event,
 };
 pub use ports::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
-    CompositionRequest, EventAwait, EventOutcome, EventPort, MemoryError, MemorySpace,
-    ScopedMemoryPort,
+    CompositionRequest, EventAwait, EventOutcome, EventPort, EventRef, EventRefError, MemoryError,
+    MemorySpace, ScopedMemoryPort,
 };
 pub use resume::{
-    Continuation, ContinuationError, ContinuationPort, NoResume, RunOutcome, WakeOutcome,
+    Continuation, ContinuationError, RunOutcome,
 };
 pub use session_ledger::{LedgerState, SessionLedger, SessionLedgerError, SessionLedgerStore};

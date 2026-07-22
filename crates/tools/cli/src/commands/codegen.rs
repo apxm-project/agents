@@ -144,19 +144,28 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
         CodegenAction::OpSpec { output_dir, check } => {
             let output_dir = output_dir.unwrap_or_else(default_op_spec_codegen_dir);
             let rendered = apxm_ais::render_op_spec_files();
+            let semantic_tablegen_path = default_semantic_tablegen_declarations_path();
+            let semantic_tablegen = apxm_ais::generate_semantic_tablegen_declarations();
             let mut files: Vec<String> = rendered
                 .iter()
                 .map(|(name, _)| (*name).to_string())
                 .collect();
+            files.push(apxm_ais::SEMANTIC_TABLEGEN_DECLARATIONS_FILE.to_string());
             files.sort();
 
             if check {
                 check_generated_json_dir(&output_dir, &rendered, "op-spec")?;
+                check_generated_file(
+                    &semantic_tablegen_path,
+                    &semantic_tablegen,
+                    "semantic TableGen declarations",
+                )?;
             } else {
                 fs::create_dir_all(&output_dir)?;
                 for (name, content) in &rendered {
                     fs::write(output_dir.join(name), content)?;
                 }
+                fs::write(&semantic_tablegen_path, semantic_tablegen)?;
             }
 
             if json_output {
@@ -299,6 +308,12 @@ fn default_op_spec_codegen_dir() -> PathBuf {
     // in-crate drift-gate tests (`crates/machine/ais/src/operations/op_spec.rs`)
     // and this CLI command always point at the same committed files.
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../machine/ais/generated")
+}
+
+fn default_semantic_tablegen_declarations_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../compiler/pipeline/mlir/include/ais/Dialect/AIS/IR")
+        .join(apxm_ais::SEMANTIC_TABLEGEN_DECLARATIONS_FILE)
 }
 
 fn default_typescript_codegen_path() -> PathBuf {

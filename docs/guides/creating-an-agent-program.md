@@ -18,18 +18,19 @@ Neither language executes the Agent Program in production.
 The intended Python shape is:
 
 ```python
-from apxm import agent_program, model
-from app.models import ExactSupportModel
+import apxm_program
 
+program = apxm_program.AgentProgram(
+    program_id="summarize",
+    input_type_ref="SummaryRequest",
+    output_type_ref="Summary",
+    context_type_ref="SummaryContext",
+)
+program.builder.model_call("node.summarize", model_target_ref="model.support")
+program.builder.model_requirement("model.support")
+program.builder.return_region("region.return")
 
-@agent_program
-async def summarize(request: SummaryRequest) -> Summary:
-    response = await model.call(
-        model=ExactSupportModel,
-        messages=[{"role": "user", "content": request.text}],
-        response_type=Summary,
-    )
-    return response
+air = program.lower()
 ```
 
 The equivalent TypeScript shape is:

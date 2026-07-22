@@ -36,6 +36,7 @@ SCHEMAS_DIR = CONTRACTS_DIR / "schemas"
 VECTORS_DIR = CONTRACTS_DIR / "vectors"
 PORT_CONTRACTS_DIR = CONTRACTS_DIR / "port-contracts"
 DESCRIPTOR_PATH = CONTRACTS_DIR / "descriptors" / "apxm.agents-owner-descriptor.v1.json"
+DESCRIPTOR_SIDECAR_PATH = DESCRIPTOR_PATH.with_suffix(".sha256")
 PORT_CONTRACT_PATH = PORT_CONTRACTS_DIR / "apxm.execution-commit.port-contract.v1.json"
 
 EXECUTION_COMMIT_ENVELOPE = CONSTITUTION_SCHEMAS_DIR / "execution-commit.v1.json"
@@ -320,6 +321,43 @@ def runtime_evidence_errors(instance: dict[str, Any]) -> list[str]:
                 return [
                     f"facts[{index}]: an uncertain effect fact cannot also record committed success"
                 ]
+        if fact.get("fact_kind") == "region.occurrence_started":
+            if not fact.get("region_occurrence_id") or not fact.get("static_region_id"):
+                return [
+                    f"facts[{index}]: a region occurrence requires dynamic and static region ids"
+                ]
+        if fact.get("fact_kind") == "node_execution.recorded":
+            required = (
+                "node_execution_id",
+                "air_node_id",
+                "region_occurrence_id",
+                "static_region_id",
+            )
+            if any(not fact.get(field) for field in required):
+                return [
+                    f"facts[{index}]: a NodeExecution requires exact AIR and region joins"
+                ]
+        if fact.get("fact_kind") == "hook.executed":
+            required = (
+                "hook_execution_id",
+                "hook_id",
+                "context_before_ref",
+                "context_after_ref",
+            )
+            if any(not fact.get(field) for field in required):
+                return [
+                    f"facts[{index}]: a Hook execution requires exact Hook and Context joins"
+                ]
+        if fact.get("fact_kind") == "context.transitioned":
+            required = (
+                "context_transition_id",
+                "context_before_ref",
+                "context_after_ref",
+            )
+            if any(not fact.get(field) for field in required):
+                return [
+                    f"facts[{index}]: a Context transition requires exact before/after joins"
+                ]
     return []
 
 
@@ -415,6 +453,12 @@ def write_digests() -> None:
     PORT_CONTRACT_PATH.write_text(json.dumps(new_instance, indent=2) + "\n", encoding="utf-8")
     new_descriptor = compute_descriptor(descriptor)
     DESCRIPTOR_PATH.write_text(json.dumps(new_descriptor, indent=2) + "\n", encoding="utf-8")
+    DESCRIPTOR_SIDECAR_PATH.write_text(
+        f"{file_digest(DESCRIPTOR_PATH)}  contracts/descriptors/{DESCRIPTOR_PATH.name}\n"
+        "signature_status: signing pending (no key)\n"
+        "digest_scope: exact repository bytes\n",
+        encoding="utf-8",
+    )
     print(f"descriptor_digest: {new_descriptor['descriptor_digest']}")
     print(f"port_contract_digest: {new_instance['port_contract_digest']}")
 

@@ -1,7 +1,6 @@
 //! Capability executor trait and execution infrastructure
 
 use super::metadata::RuntimeCapability;
-use apxm_aam::Aam;
 use apxm_capability_iface::CapabilityInvocation;
 use apxm_capability_iface::sandbox::{ExecRequest, ExecResult};
 use apxm_core::events::payload::CapabilityEffectReceiptPayload;
@@ -107,13 +106,6 @@ pub trait CapabilityExecutor: Send + Sync {
         None
     }
 
-    /// Create an execution-local variant bound to a supplied AAM, when this
-    /// capability owns AAM state directly. Stateless capabilities retain their
-    /// registered instance; AAM-aware capabilities must opt in so concurrent
-    /// sessions cannot mutate the runtime-global AAM through a captured handle.
-    fn bind_aam(&self, _aam: Aam) -> Option<std::sync::Arc<dyn CapabilityExecutor>> {
-        None
-    }
 }
 
 /// Convert a sandbox [`ExecResult`] into a [`Value`] suitable for

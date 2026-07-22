@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OperationCategory {
+    /// Canonical public semantic operations (`model.call`, etc.).
+    Semantic,
     /// Metadata operations.
     Metadata,
     /// Memory operations.

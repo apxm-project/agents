@@ -23,7 +23,7 @@ pub use bundle::{
 };
 pub use commit::{
     ATOMIC_WRITE_SET, AtomicWriteSet, ExecutionCommitPort, ExecutionCommitRequest,
-    ExecutionCommitResult,
+    ExecutionCommitResult, ExecutionCommitTuple,
 };
 pub use confinement::{
     ConfinementAttestation, ConfinementError, ConfinementPort, ConfinementRequest, ConfinementType,

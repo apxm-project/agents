@@ -1,8 +1,8 @@
-# apxm — Python frontend for APXM
+# apxm_program — Python frontend for APXM
 
 The Python authoring frontend for
-[APXM](https://github.com/apxm-project/agents), the typed abstract machine,
-compiler, and runtime for agent programs.
+[APXM](https://github.com/apxm-project/agents), the canonical compiler and
+runtime for Agent Programs.
 
 This package records APXM workflows as the compiler-owned
 `apxm.frontend-graph.v1` DTO. The canonical Python bridge lowers that graph
@@ -38,14 +38,7 @@ print(apxm_program.canonical_air_json(builder.build()), end="")
 
 | Module | What it does |
 | ------ | ------------ |
-| `apxm_program` | Canonical FrontendGraph recorder plus native bridge helpers |
-| `apxm` (root) | Prototype graph DSL retained as historical source evidence until deletion |
-| `apxm.contract` | APXM/vLLM operational names — env vars, route paths, `RepoLayout`, `build_layout()` |
-| `apxm.data_config` | `.apxm/` data-bucket resolution against `.apxm/config.toml` |
-| `apxm.paths` | Path helpers for examples and local scripts (`find_repo_root`, `repo_path`) |
-| `apxm.constants` | Stable string constants re-exported from the typed enums in `_generated/` |
-| `apxm._generated.agents` | Generated `AgentRef` type and release-owned profile catalogue (currently empty) |
-| `apxm._generated.models` | Generated model IDs |
+| `apxm_program` | Canonical FrontendGraph recorder, program constructs, and native bridge helpers |
 
 ## Compiling workflows
 

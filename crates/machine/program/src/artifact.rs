@@ -13,16 +13,67 @@ use sha2::{Digest, Sha256};
 
 use crate::air::{AirModule, SemanticOpKind};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Verdict, schema_violation};
+use crate::frontend_graph::FrontendGraph;
 use crate::grammar::{is_digest, is_identifier, is_schema_id};
+use crate::lower::frontend_graph_to_air;
 use crate::source_map::SourceMap;
 
 /// The canonical model-target Port contract an artifact's `model.call` binds to.
 const MODEL_TARGET_PORT_CONTRACT: &str = "apxm.model-target.v1";
 
+/// The canonical Capability Port contract an artifact's `capability.invoke` binds to.
+const CAPABILITY_PORT_CONTRACT: &str = "apxm.port-contract.v1";
+
 /// Lowercase `sha256:<hex>` digest of `bytes`, matching the contract Digest
 /// grammar (`^sha256:[0-9a-f]{64}$`).
 fn sha256_digest(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
+}
+
+/// Digest-bound source bundle content lowered from a FrontendGraph.
+///
+/// The bundle pins program definitions, imports, static Hook bindings and handler
+/// refs, and declared model/Capability requirements. It is not executable AIR.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceBundle {
+    pub program_definitions: Vec<crate::frontend_graph::ProgramDefinition>,
+    pub imported_program_refs: Vec<crate::frontend_graph::ImportedProgramRef>,
+    pub hook_bindings: Vec<crate::frontend_graph::HookBinding>,
+    pub capability_requirements: Vec<crate::frontend_graph::CapabilityRequirement>,
+    pub model_requirements: Vec<crate::frontend_graph::ModelRequirement>,
+}
+
+impl SourceBundle {
+    /// Build the canonical source bundle for a verified FrontendGraph.
+    #[must_use]
+    pub fn from_graph(graph: &FrontendGraph) -> Self {
+        Self {
+            program_definitions: graph.program_definitions.clone(),
+            imported_program_refs: graph.imported_program_refs.clone(),
+            hook_bindings: graph.hook_bindings.clone(),
+            capability_requirements: graph.capability_requirements.clone(),
+            model_requirements: graph.model_requirements.clone(),
+        }
+    }
+
+    /// Canonical JSON bytes for digesting.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CodecError`] when serialization fails.
+    pub fn encode(&self) -> Result<Vec<u8>, CodecError> {
+        serde_json::to_vec(self).map_err(CodecError)
+    }
+
+    /// Content address of the canonical source bundle.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CodecError`] when serialization fails.
+    pub fn digest(&self) -> Result<String, CodecError> {
+        Ok(sha256_digest(&self.encode()?))
+    }
 }
 
 /// The single accepted `schema_version` for an executable artifact.
@@ -118,7 +169,11 @@ pub struct ExecutableArtifact {
     pub schema_version: ArtifactVersion,
     pub artifact_digest: String,
     pub air_digest: String,
+    pub air: AirModule,
     pub source_bundle_digest: String,
+    /// Exact static Hook bindings and handler identities executed by the runtime.
+    #[serde(default)]
+    pub hook_bindings: Vec<crate::frontend_graph::HookBinding>,
     pub source_map: SourceMap,
     pub entrypoints: Vec<Entrypoint>,
     pub artifact_semantic_requirements: Vec<PortRequirement>,
@@ -138,14 +193,80 @@ impl std::fmt::Display for CodecError {
 impl std::error::Error for CodecError {}
 
 impl ExecutableArtifact {
+    /// Derive the canonical executable artifact for a verified FrontendGraph.
+    ///
+    /// Lowers structural AIR, digest-binds the source bundle (programs, imports,
+    /// Hook bindings/handlers, requirements), copies entrypoints and the source
+    /// map, and emits only `artifact_semantic` Port Requirements.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CodecError`] on serialization failure. Lowering and graph
+    /// verification failures surface as [`ArtifactBuildError`].
+    pub fn from_frontend_graph(graph: &FrontendGraph) -> Result<Self, ArtifactBuildError> {
+        let air = frontend_graph_to_air(graph).map_err(ArtifactBuildError::Lowering)?;
+        Self::from_graph_and_air(graph, &air)
+    }
+
+    /// Bind a lowered AIR module and its originating FrontendGraph into an artifact.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CodecError`] when the module or artifact cannot be serialized
+    /// for digesting.
+    pub fn from_graph_and_air(
+        graph: &FrontendGraph,
+        air: &AirModule,
+    ) -> Result<Self, ArtifactBuildError> {
+        let bundle = SourceBundle::from_graph(graph);
+        let source_bundle_digest = bundle.digest().map_err(ArtifactBuildError::Codec)?;
+        let air_bytes = serde_json::to_vec(air).map_err(|error| ArtifactBuildError::Codec(CodecError(error)))?;
+        let air_digest = sha256_digest(&air_bytes);
+
+        let entrypoints = graph
+            .program_definitions
+            .iter()
+            .map(entrypoint_from_definition)
+            .collect();
+
+        let mut artifact_semantic_requirements = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for requirement in &graph.model_requirements {
+            if seen.insert(requirement.model_target_ref.clone()) {
+                artifact_semantic_requirements
+                    .push(model_target_requirement(&requirement.model_target_ref));
+            }
+        }
+        for requirement in &graph.capability_requirements {
+            if seen.insert(requirement.capability_ref.clone()) {
+                artifact_semantic_requirements
+                    .push(capability_requirement(&requirement.capability_ref));
+            }
+        }
+
+        let mut artifact = Self {
+            schema_version: ArtifactVersion::V1,
+            artifact_digest: String::new(),
+            air_digest,
+            air: air.clone(),
+            source_bundle_digest,
+            hook_bindings: graph.hook_bindings.clone(),
+            source_map: air.source_map.clone(),
+            entrypoints,
+            artifact_semantic_requirements,
+            integrity_algorithm: IntegrityAlgorithm::Sha256,
+        };
+        let content = serde_json::to_vec(&artifact).map_err(|error| ArtifactBuildError::Codec(CodecError(error)))?;
+        artifact.artifact_digest = sha256_digest(&content);
+        Ok(artifact)
+    }
+
     /// Derive the canonical `apxm.executable-artifact.v1` for a compiled
-    /// `apxm.air.v1` module: the digest-bound AIR + source bundle, the AIR's
-    /// source map, a single `main` entrypoint, and one `artifact_semantic` Port
-    /// Requirement per distinct `model.call` model target (bound to the
-    /// `apxm.model-target.v1` port contract). The artifact carries no deployment
-    /// implementation, Exact Port Binding, or authority — only the semantic
-    /// requirements the program declares. `artifact_digest` binds every other
-    /// field, so the encoding is a stable content address.
+    /// `apxm.air.v1` module when no FrontendGraph is available.
+    ///
+    /// Requirements are inferred only from embedded `model.call` operands. Prefer
+    /// [`Self::from_frontend_graph`] for complete source-bundle and requirement
+    /// binding.
     ///
     /// # Errors
     ///
@@ -188,14 +309,14 @@ impl ExecutableArtifact {
             schema_version: ArtifactVersion::V1,
             artifact_digest: String::new(),
             air_digest,
+            air: air.clone(),
             source_bundle_digest,
+            hook_bindings: Vec::new(),
             source_map: air.source_map.clone(),
             entrypoints,
             artifact_semantic_requirements,
             integrity_algorithm: IntegrityAlgorithm::Sha256,
         };
-        // The content address binds every other field; hash with the digest
-        // field blanked so it is reproducible from the artifact content.
         let content = serde_json::to_vec(&artifact).map_err(CodecError)?;
         artifact.artifact_digest = sha256_digest(&content);
         Ok(artifact)
@@ -222,6 +343,26 @@ impl ExecutableArtifact {
 
         check_digest(&mut verdict, &self.artifact_digest, "artifact_digest");
         check_digest(&mut verdict, &self.air_digest, "air_digest");
+        match serde_json::to_vec(&self.air) {
+            Ok(air_bytes) if sha256_digest(&air_bytes) == self.air_digest => {}
+            Ok(_) => verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                "air_digest",
+                "embedded AIR bytes match air_digest",
+            )),
+            Err(error) => verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                "air",
+                format!("embedded AIR serializes canonically: {error}"),
+            )),
+        }
+        if self.source_map != self.air.source_map {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                "source_map",
+                "artifact source map matches embedded AIR source map",
+            ));
+        }
         check_digest(
             &mut verdict,
             &self.source_bundle_digest,
@@ -272,32 +413,91 @@ impl ExecutableArtifact {
     }
 }
 
+/// Compile serialized `apxm.frontend-graph.v1` into one complete executable
+/// artifact containing the exact structural AIR the artifact digest binds.
+pub fn compile_frontend_graph_artifact_json(graph_json: &str) -> Result<String, String> {
+    let graph: FrontendGraph =
+        serde_json::from_str(graph_json).map_err(|error| error.to_string())?;
+    let artifact =
+        ExecutableArtifact::from_frontend_graph(&graph).map_err(|error| error.to_string())?;
+    serde_json::to_string(&artifact).map_err(|error| error.to_string())
+}
+
+/// Failure to derive an artifact from a FrontendGraph.
+#[derive(Debug)]
+pub enum ArtifactBuildError {
+    Lowering(Verdict),
+    Codec(CodecError),
+}
+
+impl std::fmt::Display for ArtifactBuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Lowering(verdict) => write!(f, "artifact lowering failed: {verdict:?}"),
+            Self::Codec(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for ArtifactBuildError {}
+
+fn entrypoint_from_definition(
+    program: &crate::frontend_graph::ProgramDefinition,
+) -> Entrypoint {
+    Entrypoint {
+        entrypoint: program.entrypoint.clone(),
+        program_id: program.program_id.clone(),
+        input_type_ref: program.input_type_ref.clone(),
+        output_type_ref: program.output_type_ref.clone(),
+        context_type_ref: program.context_type_ref.clone(),
+    }
+}
+
 /// Build the `artifact_semantic` Port Requirement a `model.call` declares for
-/// its model target, bound to the `apxm.model-target.v1` port contract. It
-/// selects no implementation and carries no authority — only the typed slot and
-/// content digests.
+/// its model target, bound to the `apxm.model-target.v1` port contract.
 fn model_target_requirement(target: &str) -> PortRequirement {
+    port_requirement(
+        target,
+        MODEL_TARGET_PORT_CONTRACT,
+        sha256_digest(MODEL_TARGET_PORT_CONTRACT.as_bytes()),
+    )
+}
+
+/// Build the `artifact_semantic` Port Requirement a `capability.invoke` declares.
+fn capability_requirement(capability_ref: &str) -> PortRequirement {
+    port_requirement(
+        capability_ref,
+        CAPABILITY_PORT_CONTRACT,
+        sha256_digest(CAPABILITY_PORT_CONTRACT.as_bytes()),
+    )
+}
+
+fn port_requirement(
+    typed_port_slot: &str,
+    contract_schema_id: &str,
+    contract_digest: String,
+) -> PortRequirement {
     let contract = SchemaDigestRef {
-        schema_id: MODEL_TARGET_PORT_CONTRACT.to_string(),
-        digest: sha256_digest(MODEL_TARGET_PORT_CONTRACT.as_bytes()),
+        schema_id: contract_schema_id.to_string(),
+        digest: contract_digest,
     };
-    let source_digest = sha256_digest(target.as_bytes());
+    let source_digest = sha256_digest(typed_port_slot.as_bytes());
     let semantic_limits_digest = sha256_digest(b"");
     let requirement_digest = sha256_digest(
         format!(
-            "{target}|{}|{}|{source_digest}",
+            "{typed_port_slot}|{}|{}|{source_digest}",
             contract.schema_id, contract.digest
         )
         .as_bytes(),
     );
     PortRequirement {
         schema_version: PortRequirementVersion::V1,
-        typed_port_slot: target.to_string(),
+        typed_port_slot: typed_port_slot.to_string(),
         required_port_contract: contract,
         required_feature_set: Vec::new(),
         semantic_limits_digest,
-        source_scope: PortSourceScope::ArtifactSemantic,
         source_owner: SemanticOwner::Agents,
+        source_scope: PortSourceScope::ArtifactSemantic,
         source_digest,
         requirement_digest,
     }
@@ -323,10 +523,7 @@ fn check_digest(verdict: &mut Verdict, value: &str, location: &str) {
     }
 }
 
-/// Validate an artifact presented as JSON, failing closed on decode errors. An
-/// Exact Port Binding, deployment field, or authority content in the document is
-/// an unknown field and is rejected here; a non-`artifact_semantic` requirement
-/// is rejected by [`ExecutableArtifact::validate`].
+/// Validate an artifact presented as JSON, failing closed on decode errors.
 #[must_use]
 pub fn validate_artifact_json(value: &serde_json::Value) -> Verdict {
     match serde_json::from_value::<ExecutableArtifact>(value.clone()) {
@@ -353,7 +550,7 @@ mod from_air_tests {
             .chain(std::iter::once(serde_json::json!({
                 "node_id": "node.await",
                 "op": "await.event",
-                "operands": { "event_selector": "session-input" }
+                "operands": { "event_ref": "session-input" }
             })))
             .collect();
         serde_json::from_value(serde_json::json!({
@@ -379,7 +576,6 @@ mod from_air_tests {
         assert!(is_digest(&artifact.air_digest));
         assert!(is_digest(&artifact.source_bundle_digest));
         assert_eq!(artifact.entrypoints.len(), 1);
-        // The verdict is the real conformance consumer: validate accepts it.
         assert!(
             artifact.validate().is_accepted(),
             "from_air artifact must validate: {:?}",
@@ -414,7 +610,6 @@ mod from_air_tests {
         let a = ExecutableArtifact::from_air(&air(&["model.default"])).expect("from_air");
         let b = ExecutableArtifact::from_air(&air(&["model.default"])).expect("from_air");
         assert_eq!(a, b, "from_air is a deterministic content address");
-        // A different program yields a different artifact digest.
         let c = ExecutableArtifact::from_air(&air(&["model.other"])).expect("from_air");
         assert_ne!(a.artifact_digest, c.artifact_digest);
     }
@@ -424,5 +619,93 @@ mod from_air_tests {
         let artifact = ExecutableArtifact::from_air(&air(&[])).expect("from_air");
         assert!(artifact.artifact_semantic_requirements.is_empty());
         assert!(artifact.validate().is_accepted());
+    }
+}
+
+#[cfg(test)]
+mod from_graph_tests {
+    use super::*;
+    use crate::frontend_graph::FrontendGraph;
+
+    fn specialist_graph() -> FrontendGraph {
+        serde_json::from_value(serde_json::json!({
+            "schema_version": "apxm.frontend-graph.v1",
+            "source_language": "python",
+            "program_definitions": [{
+                "program_id": "Specialist",
+                "entrypoint": "run",
+                "input_type_ref": "SpecialistInput",
+                "output_type_ref": "SpecialistOutput",
+                "context_type_ref": "SpecialistContext",
+                "has_default_context": true
+            }],
+            "imported_program_refs": [{
+                "program_ref": "Summarizer",
+                "artifact_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "entrypoint": "run",
+                "target_agent_identity_requirement": "summarizer-identity"
+            }],
+            "semantic_operations": [
+                { "node_id": "node.model.1", "op": "model.call", "operands": { "model_target_ref": "model.default" } },
+                { "node_id": "node.cap.1", "op": "capability.invoke", "operands": { "capability_ref": "cap.search" } }
+            ],
+            "structural_regions": [
+                { "region_id": "region.loop.1", "kind": "loop" },
+                { "region_id": "region.return.1", "kind": "return" }
+            ],
+            "context_flow": [],
+            "hook_bindings": [],
+            "capability_requirements": [{ "capability_ref": "cap.search" }],
+            "model_requirements": [{ "model_target_ref": "model.default" }],
+            "source_map": {
+                "schema_version": "apxm.source-map.v1",
+                "source_language": "python",
+                "node_spans": [],
+                "region_annotations": []
+            }
+        }))
+        .expect("fixture graph")
+    }
+
+    #[test]
+    fn from_frontend_graph_binds_entrypoints_handlers_and_requirements() {
+        let graph = specialist_graph();
+        let artifact =
+            ExecutableArtifact::from_frontend_graph(&graph).expect("artifact from graph");
+        assert_eq!(artifact.entrypoints.len(), 1);
+        assert_eq!(artifact.entrypoints[0].program_id, "Specialist");
+        assert_eq!(artifact.entrypoints[0].entrypoint, "run");
+        assert_eq!(artifact.artifact_semantic_requirements.len(), 2);
+        assert_eq!(artifact.hook_bindings.len(), graph.hook_bindings.len());
+        assert!(artifact.validate().is_accepted());
+        let bundle = SourceBundle::from_graph(&graph);
+        assert_eq!(artifact.source_bundle_digest, bundle.digest().expect("bundle digest"));
+    }
+
+    #[test]
+    fn rejects_mixed_requirement_scope_in_validation() {
+        let mut artifact =
+            ExecutableArtifact::from_frontend_graph(&specialist_graph()).expect("artifact");
+        artifact.artifact_semantic_requirements.push(PortRequirement {
+            schema_version: PortRequirementVersion::V1,
+            typed_port_slot: "deployment".to_string(),
+            required_port_contract: SchemaDigestRef {
+                schema_id: "apxm.execution-commit.v1".to_string(),
+                digest: sha256_digest(b"apxm.execution-commit.v1"),
+            },
+            required_feature_set: Vec::new(),
+            semantic_limits_digest: sha256_digest(b""),
+            source_scope: PortSourceScope::DeploymentInfrastructure,
+            source_owner: SemanticOwner::Server,
+            source_digest: sha256_digest(b"deployment"),
+            requirement_digest: sha256_digest(b"deployment-req"),
+        });
+        assert!(
+            artifact
+                .validate()
+                .diagnostics()
+                .iter()
+                .any(|d| d.code == DiagnosticCode::RequirementScopeNotArtifactSemantic)
+        );
     }
 }

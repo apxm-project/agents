@@ -40,7 +40,6 @@ pub mod registry;
 pub mod tool_write_lock;
 
 use approval::ApprovalStore;
-use apxm_aam::{Aam, TransitionLabel};
 use apxm_capability_iface::sandbox::{SandboxRegistry, ValidationResult};
 use apxm_capability_iface::{ApprovalContext, CapabilityFacade, CapabilityInvocation};
 use apxm_core::{error::RuntimeError, types::values::Value};
@@ -72,7 +71,6 @@ pub use apxm_capability_iface::CapabilitySandboxPreflight;
 pub struct CapabilitySystem {
     registry: Arc<CapabilityRegistry>,
     default_timeout: Duration,
-    aam: Option<Aam>,
     interceptors: Arc<RwLock<Vec<Arc<dyn CapabilityInterceptor>>>>,
     approval_store: Arc<ApprovalStore>,
     sandbox_registry: Arc<RwLock<Option<Arc<SandboxRegistry>>>>,
@@ -84,7 +82,6 @@ impl CapabilitySystem {
         Self {
             registry: Arc::new(CapabilityRegistry::new()),
             default_timeout: Duration::from_secs(30),
-            aam: None,
             interceptors: Arc::new(RwLock::new(Vec::new())),
             approval_store: Arc::new(ApprovalStore::new()),
             sandbox_registry: Arc::new(RwLock::new(None)),
@@ -98,48 +95,9 @@ impl CapabilitySystem {
         sys
     }
 
-    /// Create with AAM integration (default timeout)
-    pub fn with_aam(aam: Aam) -> Self {
-        let mut sys = Self::new();
-        sys.aam = Some(aam);
-        sys
-    }
-
     /// Get a reference to the approval store.
     pub fn approval_store(&self) -> &ApprovalStore {
         &self.approval_store
-    }
-
-    /// The AAM handle this system was built with, if any.
-    ///
-    /// Native tools that mutate goal state (e.g. `manage_task`) are constructed
-    /// with this handle so they share the runtime's single goal tree.
-    pub fn aam(&self) -> Option<&Aam> {
-        self.aam.as_ref()
-    }
-
-    /// Build a facade for one execution-local AAM.
-    ///
-    /// The registered capability set, approvals, interceptors, and sandbox
-    /// policy are shared with the host runtime. Any capability that captures
-    /// AAM state must explicitly supply a bound variant through
-    /// [`CapabilityExecutor::bind_aam`], so no session can route task or goal
-    /// mutations through the process-global AAM.
-    pub fn session_bound(&self, aam: Aam) -> Result<Self, RuntimeError> {
-        let scoped = Self {
-            registry: Arc::new(CapabilityRegistry::new()),
-            default_timeout: self.default_timeout,
-            aam: Some(aam.clone()),
-            interceptors: Arc::clone(&self.interceptors),
-            approval_store: Arc::clone(&self.approval_store),
-            sandbox_registry: Arc::clone(&self.sandbox_registry),
-        };
-
-        for capability in self.registry.list_capabilities() {
-            let capability = capability.bind_aam(aam.clone()).unwrap_or(capability);
-            scoped.register(capability)?;
-        }
-        Ok(scoped)
     }
 
     /// Set the sandbox registry for routing capability execution through
@@ -196,14 +154,7 @@ impl CapabilitySystem {
     ///
     /// Returns error if capability is already registered or has invalid schema
     pub fn register(&self, capability: Arc<dyn CapabilityExecutor>) -> CapabilityResult<()> {
-        let metadata = capability.metadata().clone();
         self.registry.register(Arc::clone(&capability))?;
-
-        if let Some(aam) = &self.aam {
-            let label = TransitionLabel::custom(format!("register_capability:{}", metadata.name));
-            aam.register_capability(metadata.name.clone(), (&metadata).into(), label);
-        }
-
         Ok(())
     }
 
@@ -214,14 +165,7 @@ impl CapabilitySystem {
         &self,
         capability: Arc<dyn CapabilityExecutor>,
     ) -> CapabilityResult<()> {
-        let metadata = capability.metadata().clone();
         self.registry.register_or_replace(Arc::clone(&capability))?;
-
-        if let Some(aam) = &self.aam {
-            let label = TransitionLabel::custom(format!("register_capability:{}", metadata.name));
-            aam.register_capability(metadata.name.clone(), (&metadata).into(), label);
-        }
-
         Ok(())
     }
 

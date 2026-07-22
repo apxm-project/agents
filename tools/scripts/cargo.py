@@ -41,6 +41,7 @@ PACKAGE_FLAG = "-p"
 FEATURES_FLAG = "--features"
 DRIVER_METRICS_FEATURES = "driver,metrics"
 APXM_CLI_PACKAGE = "apxm-cli"
+APXM_COMPILER_PACKAGE = "apxm-compiler"
 TARGET_ROOT_NAME = "apxm-cargo-targets"
 PROJECT_TARGET_DIR_NAME = "target"
 DEBUG_PROFILE_DIR_NAME = "debug"
@@ -223,10 +224,24 @@ def _build_cli(project_root: Path, target_dir: Path) -> int:
     )
 
 
+def _build_compiler(project_root: Path, target_dir: Path) -> int:
+    return _run(
+        [
+            CARGO,
+            CargoCommand.BUILD.value,
+            PACKAGE_FLAG,
+            APXM_COMPILER_PACKAGE,
+            RELEASE_FLAG,
+        ],
+        project_root=project_root,
+        target_dir=target_dir,
+    )
+
+
 def _build_dialect(project_root: Path, target_dir: Path) -> int:
     build_dir = _find_compiler_build_dir(target_dir)
     if build_dir is None:
-        result = _build_cli(project_root, target_dir)
+        result = _build_compiler(project_root, target_dir)
         if result != 0:
             return result
         build_dir = _find_compiler_build_dir(target_dir)

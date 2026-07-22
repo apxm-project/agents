@@ -59,6 +59,14 @@ pub enum FactKind {
     EffectOutcomeUnknown,
     #[serde(rename = "delivery.recorded")]
     DeliveryRecorded,
+    #[serde(rename = "region.occurrence_started")]
+    RegionOccurrenceStarted,
+    #[serde(rename = "node_execution.recorded")]
+    NodeExecutionRecorded,
+    #[serde(rename = "hook.executed")]
+    HookExecuted,
+    #[serde(rename = "context.transitioned")]
+    ContextTransitioned,
 }
 
 /// The closed Program Instance state set.
@@ -154,10 +162,52 @@ pub struct Fact {
     pub attempt_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub region_occurrence_id: Option<String>,
+    /// Compiler-owned static region joined to one dynamic occurrence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub static_region_id: Option<String>,
+    /// The exact static AIR node visited by this dynamic NodeExecution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub air_node_id: Option<String>,
+    /// The authored parent NodeExecution for explicitly nested work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_node_execution_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hook_execution_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hook_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hook_scope: Option<HookScope>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hook_phase: Option<HookPhase>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_transition_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_before_ref: Option<TypedRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_after_ref: Option<TypedRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effect_outcome_ref: Option<TypedRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub typed_error: Option<TypedErrorEnvelope>,
+}
+
+/// The static scope of a Hook execution.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookScope {
+    Agent,
+    Loop,
+    Node,
+    Model,
+    Capability,
+}
+
+/// The closed before/after Hook phase.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookPhase {
+    Before,
+    After,
 }
 
 /// A decoded runtime-evidence sequence.
@@ -225,6 +275,38 @@ impl RuntimeEvidence {
                         "an uncertain effect must not claim a committed/success outcome",
                     ));
                 }
+            }
+            let missing = match fact.fact_kind {
+                FactKind::RegionOccurrenceStarted => {
+                    fact.region_occurrence_id.is_none() || fact.static_region_id.is_none()
+                }
+                FactKind::NodeExecutionRecorded => {
+                    fact.node_execution_id.is_none()
+                        || fact.air_node_id.is_none()
+                        || fact.region_occurrence_id.is_none()
+                        || fact.static_region_id.is_none()
+                }
+                FactKind::HookExecuted => {
+                    fact.hook_execution_id.is_none()
+                        || fact.hook_id.is_none()
+                        || fact.hook_scope.is_none()
+                        || fact.hook_phase.is_none()
+                        || fact.context_before_ref.is_none()
+                        || fact.context_after_ref.is_none()
+                }
+                FactKind::ContextTransitioned => {
+                    fact.context_transition_id.is_none()
+                        || fact.context_before_ref.is_none()
+                        || fact.context_after_ref.is_none()
+                }
+                _ => false,
+            };
+            if missing {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    fact.fact_id.clone(),
+                    "evidence join fact is missing a required typed join",
+                ));
             }
         }
 

@@ -1,13 +1,12 @@
 /**
  * Graph IR for the TypeScript frontend: nodes, edges, parameters, metadata.
  */
-import type { OpName } from "./generated/ops.js";
 import { type DependencyType, normalizeDependencyType, type ParamType } from "./types.js";
 
 export interface GraphNode {
   readonly id: number;
   readonly name: string;
-  readonly op: OpName;
+  readonly op: string;
   readonly attributes: Record<string, unknown>;
 }
 

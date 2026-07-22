@@ -19,6 +19,13 @@ fn lower_frontend_graph(graph_json: &str) -> PyResult<String> {
     apxm_program::lower_frontend_graph_json(graph_json).map_err(PyValueError::new_err)
 }
 
+/// Compile a FrontendGraph JSON string into a complete executable artifact.
+#[pyfunction]
+fn compile_frontend_graph_artifact(graph_json: &str) -> PyResult<String> {
+    apxm_program::compile_frontend_graph_artifact_json(graph_json)
+        .map_err(PyValueError::new_err)
+}
+
 /// Return `None` if the FrontendGraph JSON verifies, otherwise a diagnostic
 /// string describing why it was rejected.
 #[pyfunction]
@@ -40,6 +47,7 @@ fn verify_frontend_graph(graph_json: &str) -> PyResult<Option<String>> {
 
 #[pymodule]
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_function(wrap_pyfunction!(compile_frontend_graph_artifact, module)?)?;
     module.add_function(wrap_pyfunction!(lower_frontend_graph, module)?)?;
     module.add_function(wrap_pyfunction!(verify_frontend_graph, module)?)?;
     Ok(())

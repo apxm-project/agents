@@ -38,12 +38,12 @@
     {
       "schema_id": "apxm.executable-artifact.v1",
       "path": "schemas/apxm.executable-artifact.v1.json",
-      "digest": "sha256:c5187793ffe7e66972cac8e10d3155354f58ffd49a9006ba641562870706d716"
+      "digest": "sha256:9c004a16138ebad9c7e97d083c5cd35d40fe349fdcb7d5ef76227de26d347691"
     },
     {
       "schema_id": "apxm.runtime-evidence.v1",
       "path": "schemas/apxm.runtime-evidence.v1.json",
-      "digest": "sha256:8460a2d6e9b67c04860b01fe0c2a5ee093716e02cf0c764500e35046b5f6dd3d"
+      "digest": "sha256:ac9fa56933a8202e933b17e208ef17e70c73b9d228ddc2b3a9e9e40b319492a2"
     },
     {
       "schema_id": "apxm.source-map.v1",
@@ -270,7 +270,7 @@
     {
       "schema_id": "apxm.executable-artifact.v1",
       "path": "vectors/apxm.executable-artifact.v1.json",
-      "digest": "sha256:305d41a97b081cc22e1fe2fb8b6bb52439c6155469fd48853fbb43354436c485",
+      "digest": "sha256:0d67432054194489d862900e44fff4e70c48d009e5c48b50c0de6553fd5f01dc",
       "coverage": [
         "positive",
         "abstraction",
@@ -281,7 +281,7 @@
     {
       "schema_id": "apxm.runtime-evidence.v1",
       "path": "vectors/apxm.runtime-evidence.v1.json",
-      "digest": "sha256:ad5e8f8d37315d73af0ab009f3f443814feb17b2b79f8248b94ff9cdb10b98e0",
+      "digest": "sha256:6d2b7d24ad81dfc417dfffc09d746e0aec89d58d9c09c8ce0e64888e4baeadca",
       "coverage": [
         "positive",
         "skew",
@@ -372,5 +372,5 @@
     "algorithm": "ed25519",
     "status": "signing_pending_no_key"
   },
-  "descriptor_digest": "sha256:68c91c1201d9215d1fcb69f580c5f8706afac5e437166bfa5b168141da3af481"
+  "descriptor_digest": "sha256:fab55bc8e07715a210c093c6f91c584ed66142dfe7e7ce9bbc3c6a507282a79e"
 }

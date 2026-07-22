@@ -14,7 +14,9 @@
 
 use std::sync::Arc;
 
-use apxm_execution::{CapabilityPort, CompositionPort, EventPort, ExecutionPorts};
+use apxm_execution::{
+    CapabilityPort, CompositionPort, EventPort, ExecutionPorts, StaticHookHandlerPort,
+};
 use apxm_inference::ModelInferencePort;
 use apxm_kernel::{
     BundleError, ConfinementPort, ExactPortBinding, ExecutionCommitPort,
@@ -30,6 +32,7 @@ pub struct AdmittedPorts {
     pub confinement: Arc<dyn ConfinementPort>,
     pub model_inference: Arc<dyn ModelInferencePort + Send + Sync>,
     pub external_agent: Arc<dyn ExternalAgentCapabilityPort>,
+    pub hook_handlers: Arc<dyn StaticHookHandlerPort>,
 }
 
 /// One admitted binding descriptor paired with the port contract it satisfies.
@@ -96,5 +99,6 @@ pub fn execution_ports(
         events,
         composition,
         execution_commit: admitted.execution_commit.clone(),
+        hook_handlers: admitted.hook_handlers.clone(),
     }
 }
