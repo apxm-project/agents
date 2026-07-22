@@ -53,6 +53,28 @@ fn decode_air(value: Value) -> AirModule {
     serde_json::from_value(value).expect("typed generic AIR")
 }
 
+fn example_artifact_air(artifact: &str) -> AirModule {
+    let value: Value = serde_json::from_str(artifact).expect("example-built executable artifact");
+    assert_eq!(
+        value["schema_version"],
+        "apxm.executable-artifact.v1",
+        "runtime proof consumes the immutable artifact, not handwritten AIR",
+    );
+    decode_air(value["air"].clone())
+}
+
+fn conversational_example_air() -> AirModule {
+    example_artifact_air(include_str!(
+        "../../../../examples/agents/conversational/artifacts/executable-artifact.v1.json"
+    ))
+}
+
+fn gao_example_air() -> AirModule {
+    example_artifact_air(include_str!(
+        "../../../../examples/agents/gao/artifacts/executable-artifact.v1.json"
+    ))
+}
+
 fn request(air: AirModule, commit_id: &str) -> ExecutionRequest {
     ExecutionRequest {
         air,
@@ -377,6 +399,42 @@ fn ports(
         composition: Arc::new(Composition),
         execution_commit: commit,
         hook_handlers: Arc::new(NoopStaticHookHandler),
+    }
+}
+
+#[tokio::test]
+async fn repository_example_artifacts_execute_only_generic_structural_semantics() {
+    for (commit_id, air) in [
+        ("example.conversational", conversational_example_air()),
+        ("example.gao", gao_example_air()),
+    ] {
+        assert!(
+            air.structural_ir
+                .iter()
+                .any(|region| region.kind.wire() == "ais.loop"),
+            "{commit_id} must contain compiler-emitted ais.loop",
+        );
+        let encoded = serde_json::to_string(&air).expect("AIR JSON");
+        assert!(!encoded.contains("conversational_loop"));
+
+        let commit = Arc::new(RecordingCommit::new(false));
+        let report = execute(
+            &ports(Arc::new(SequencedModel::successful()), commit.clone(), false),
+            request(air, commit_id),
+            Value::Null,
+        )
+        .await
+        .expect("execute example-built artifact");
+
+        assert!(
+            report
+                .node_outcomes
+                .iter()
+                .any(|outcome| matches!(outcome, apxm_execution::NodeOutcome::AwaitEvent { .. })),
+            "{commit_id} executes the ordinary await.event operation",
+        );
+        assert_eq!(commit.completions().len(), 1);
+        assert!(commit.evidence().verify().is_accepted());
     }
 }
 

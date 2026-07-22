@@ -16,8 +16,27 @@ RETIRED_DIRECTORIES = (
 )
 RETIRED_FILES = (
     Path("crates/compiler/frontend/python/apxm/proxy.py"),
+    Path("crates/compiler/frontend/python/apxm_program/conversational.py"),
     Path("crates/compiler/frontend/python/apxm_program/gao.py"),
+    Path("crates/compiler/frontend/native/typescript/js/conversational.ts"),
     Path("crates/compiler/frontend/native/typescript/js/gao.ts"),
+)
+GENERIC_SEMANTIC_ROOTS = (
+    Path("crates/compiler/frontend/python/apxm_program"),
+    Path("crates/compiler/frontend/typescript/src"),
+    Path("crates/compiler/pipeline/src"),
+    Path("crates/machine/program/src"),
+    Path("crates/runtime/execution/src"),
+)
+FORBIDDEN_NAMED_SEMANTICS = (
+    "ConversationalAgent",
+    "SpecialistComposition",
+    "TurnSpec",
+    "conversational_loop",
+)
+EXAMPLE_ARTIFACTS = (
+    Path("examples/agents/conversational/artifacts/executable-artifact.v1.json"),
+    Path("examples/agents/gao/artifacts/executable-artifact.v1.json"),
 )
 RETIRED_OPERATION_MARKERS = (
     "prototype_retired",
@@ -43,6 +62,36 @@ class CanonicalOnlyReachabilityTests(unittest.TestCase):
                 (REPOSITORY_ROOT / path).exists(),
                 f"retired frontend builder remains reachable: {path}",
             )
+
+    def test_generic_compiler_and_runtime_sources_have_no_named_example_semantics(self) -> None:
+        offenders: list[str] = []
+        for root in GENERIC_SEMANTIC_ROOTS:
+            for path in (REPOSITORY_ROOT / root).rglob("*"):
+                if not path.is_file() or path.suffix not in {".py", ".rs", ".ts"}:
+                    continue
+                text = path.read_text(errors="ignore")
+                markers = [marker for marker in FORBIDDEN_NAMED_SEMANTICS if marker in text]
+                if markers:
+                    offenders.append(f"{path.relative_to(REPOSITORY_ROOT)}: {', '.join(markers)}")
+        self.assertEqual(offenders, [], "\n".join(offenders))
+
+    def test_repository_examples_publish_immutable_generic_artifacts(self) -> None:
+        for path in EXAMPLE_ARTIFACTS:
+            artifact = REPOSITORY_ROOT / path
+            self.assertTrue(artifact.is_file(), f"missing example-built artifact: {path}")
+            text = artifact.read_text()
+            self.assertIn('"schema_version":"apxm.executable-artifact.v1"', text)
+            self.assertIn('"kind":"ais.loop"', text)
+            self.assertNotIn("conversational_loop", text)
+
+    def test_example_local_named_sources_remain_allowed(self) -> None:
+        conversational = (
+            REPOSITORY_ROOT
+            / "examples/agents/conversational/src/conversational-agent.ts"
+        ).read_text()
+        gao = (REPOSITORY_ROOT / "examples/agents/gao/src/gao.ts").read_text()
+        self.assertIn("ConversationalAgent", conversational)
+        self.assertIn("Gao", gao)
 
     def test_workspace_has_no_retired_execution_members(self) -> None:
         cargo_toml = tomllib.loads((REPOSITORY_ROOT / "Cargo.toml").read_text())
