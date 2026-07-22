@@ -9,7 +9,19 @@ as an ``AirModule`` before the Server session family drives it.
 from __future__ import annotations
 
 import apxm_program
-from apxm_program.example import session_agent_graph
 
 if __name__ == "__main__":
-    print(apxm_program.canonical_air_json(session_agent_graph()), end="")
+    program = apxm_program.AgentProgram(
+        program_id="SessionAgent",
+        input_type_ref="SessionInput",
+        output_type_ref="SessionOutput",
+        context_type_ref="SessionContext",
+    )
+    program.loop(
+        "region.loop.session",
+        lambda body: body.model_call("node.model", "model.default").await_event(
+            "node.await", "event.session.input"
+        ),
+    )
+    program.return_region("region.return")
+    print(program.canonical_air_json(), end="")

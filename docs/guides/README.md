@@ -10,10 +10,14 @@ they do not claim the prototype packages already expose the final spelling.
 Generated reference documentation becomes the syntax authority when the
 frontend contract is implemented.
 
+Installable frontends expose generic Agent Program APIs only. Conversational
+Agent and Gao are repository examples; an example-local helper is not a package
+export or core contract.
+
 Reading order:
 
 1. [Create an Agent Program](creating-an-agent-program.md)
-2. [Create a Conversational Agent](creating-a-conversational-agent.md)
+2. [Build the conversational repository example](creating-a-conversational-agent.md)
 3. [Compose Agent Programs](composing-agent-programs.md)
 4. [Use external coding agents through ACP](using-external-coding-agents-over-acp.md)
 5. [Choose models and understand future routing](model-selection-and-future-routing.md)

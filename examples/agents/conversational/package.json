@@ -1,5 +1,28 @@
 {
   "name": "@apxm/example-agent-conversational",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:python": "PYTHONPYCACHEPREFIX=../../../.apxm/example-python-cache python -m py_compile python/agent.py",
+    "compile": "node --input-type=module -e \"import { buildConversational } from './dist/index.js'; console.log(buildConversational().canonicalAir())\"",
+    "compile:python": "python python/agent.py --air",
+    "run": "node --input-type=module -e \"import { buildConversational } from './dist/index.js'; console.log(JSON.stringify(buildConversational().buildGraph()))\"",
+    "run:python": "python python/agent.py"
+  },
+  "dependencies": {
+    "@apxm/frontend": "file:../../../crates/compiler/frontend/typescript"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "typescript": "^5.6.3"
+  }
 }

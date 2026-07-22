@@ -94,8 +94,10 @@ new content. Skills inside the lifecycle can invoke domain skills (e.g.
 ## 4. Repo layout
 
 - **`crates/`** — Rust workspace.
-  - `crates/core/` — APXM core: AIS dialect definitions (the public IR
-    contract), graph types, attribute taxonomy.
+  - `crates/machine/ais/` — AIS-owned closed effect/composition and structural
+    operation definitions and generated catalogue.
+  - `crates/machine/program/` — FrontendGraph, AIR structure, verification,
+    and Rust lowering that consume the AIS catalogue.
   - `crates/compiler/` — passes pipeline, frontend Python bindings,
     TableGen-driven MLIR.
   - `crates/runtime/` — executor, handlers, backend adapters (LLM, local,
@@ -207,12 +209,22 @@ offline-prompt-evaluation` and `dekk agents observed-prompt-evaluation`
 surfaces. Each bundle carries a `preregistration.json` recording disjoint
 case ids, digests, and provenance before execution.
 
-## 9. AIS dialect ownership
+## 9. AIS operation ownership
 
-**`apxm-core` is the only crate that defines AIS ops.** Compiler passes,
-runtime handlers, the Python frontend, and the vLLM fork are all
-consumers. After editing any `.td` file (TableGen op definition) or a
-TableGen-emitted C++ shim:
+**`crates/machine/ais` is the sole operation-definition owner.** It defines a
+closed five-operation effect/composition family and a separate closed
+structural family including compiler-emitted `ais.loop`. Program lowering,
+compiler passes, runtime handlers, frontends, and inference backends are
+consumers. `ais.loop` is not a sixth effect/composition operation, and no
+frontend exposes a raw operation builder.
+
+`ConversationalAgent` and Gao are repository-example constructs only. They are
+not installable frontend exports or core compiler/runtime/Server/Studio
+concepts. Runtime evidence records committed loop iterations through generic
+`LoopIterationCompleted` facts; core has no `Turn` type.
+
+After editing any `.td` file (TableGen op definition) or a TableGen-emitted C++
+shim:
 
 ```bash
 dekk agents build-dialect   # rebuild MLIR (TableGen + C++ + Rust)
@@ -227,8 +239,8 @@ The canonical pass list lives at
 Add new passes there (and only there) so the pipeline stays in one place.
 
 Attribute names must be a single source of truth — see the
-`feedback_attribute_dual_naming` incident: the canonical enum lives in
-`apxm-core`; Python kwargs, MLIR attrs, and Rust executors must all
+`feedback_attribute_dual_naming` incident: the canonical enum lives in the AIS
+owner; Python kwargs, MLIR attrs, and Rust executors must all
 resolve through it, never via duplicated string literals.
 
 ## 10. Capability abstract machine vocabulary
@@ -314,6 +326,8 @@ push, an overwritten branch, or a tainted benchmark.
 
 <!-- BEGIN SKILLS INVENTORY -->
 ## Available Skills
+
+Before editing CARTS sources, scan the Skills inventory below and read the SKILL.md for any whose description matches your task.
 
 ### Other
 

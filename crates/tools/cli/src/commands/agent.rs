@@ -23,7 +23,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
-use apxm_core::constants::env as apxm_env;
 use apxm_core::types::{HandlerKind, HandlerLanguage, HandlerManifest};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -181,19 +180,19 @@ impl fmt::Display for FrontendLanguage {
     }
 }
 
-/// Resolve an entry from the installed TypeScript frontend package.
-pub(super) fn installed_typescript_frontend_entry(relative: &str) -> Result<PathBuf> {
-    let package =
-        std::env::var_os(apxm_env::APXM_TYPESCRIPT_FRONTEND_PACKAGE).ok_or_else(|| {
-            anyhow!(
-                "{} must point to the installed @apxm/frontend package",
-                apxm_env::APXM_TYPESCRIPT_FRONTEND_PACKAGE,
-            )
-        })?;
+const TYPESCRIPT_AGENT_PACKAGING_PACKAGE: &str =
+    "APXM_TYPESCRIPT_AGENT_PACKAGING_PACKAGE";
+
+fn installed_typescript_agent_packaging_entry(relative: &str) -> Result<PathBuf> {
+    let package = std::env::var_os(TYPESCRIPT_AGENT_PACKAGING_PACKAGE).ok_or_else(|| {
+        anyhow!(
+            "{TYPESCRIPT_AGENT_PACKAGING_PACKAGE} must point to the installed @apxm/agent-packaging package"
+        )
+    })?;
     let entry = PathBuf::from(package).join(relative);
     if !entry.is_file() {
         bail!(
-            "installed @apxm/frontend entry is missing: {}",
+            "installed @apxm/agent-packaging entry is missing: {}",
             entry.display()
         );
     }
@@ -1654,7 +1653,7 @@ fn compile_agent_handlers(root: &Path) -> Result<()> {
         .map(|source| source.to_string_lossy().into_owned())
         .collect();
 
-    let compiler = installed_typescript_frontend_entry("dist/compile-handlers.js")?;
+    let compiler = installed_typescript_agent_packaging_entry("compile-handlers.mjs")?;
     let status = std::process::Command::new("node")
         .arg("--input-type=module")
         .arg("--eval")
@@ -1668,13 +1667,13 @@ fn compile_agent_handlers(root: &Path) -> Result<()> {
         .status()
         .with_context(|| {
             format!(
-                "Failed to run installed @apxm/frontend handler compiler {} (set {} to its package root)",
+                "Failed to run installed @apxm/agent-packaging handler compiler {} (set {} to its package root)",
                 compiler.display(),
-                apxm_env::APXM_TYPESCRIPT_FRONTEND_PACKAGE,
+                TYPESCRIPT_AGENT_PACKAGING_PACKAGE,
             )
         })?;
     if !status.success() {
-        bail!("installed @apxm/frontend handler compiler failed for agent handlers");
+        bail!("installed @apxm/agent-packaging handler compiler failed for agent handlers");
     }
     Ok(())
 }
@@ -2163,9 +2162,12 @@ mod tests {
         fs::write(
             root.join("python/main.py"),
             "import apxm_program\n\
-             from apxm_program.example import session_agent_graph\n\n\n\
+             \n\
+             program = apxm_program.AgentProgram(program_id=\"studio-generated\", input_type_ref=\"Input\", output_type_ref=\"Output\")\n\
+             program.loop(\"region.loop\", lambda body: body.model_call(\"node.model\", \"model.default\"))\n\
+             program.return_region(\"region.return\")\n\n\
              if __name__ == \"__main__\":\n\
-             \x20\x20\x20\x20print(apxm_program.canonical_air_json(session_agent_graph()), end=\"\")\n",
+             \x20\x20\x20\x20print(program.canonical_air_json(), end=\"\")\n",
         )
         .unwrap();
         agent_build(&root, true).expect("package with Server-selected skill policy must build");

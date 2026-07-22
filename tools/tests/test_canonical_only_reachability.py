@@ -16,6 +16,8 @@ RETIRED_DIRECTORIES = (
 )
 RETIRED_FILES = (
     Path("crates/compiler/frontend/python/apxm/proxy.py"),
+    Path("crates/compiler/frontend/python/apxm_program/gao.py"),
+    Path("crates/compiler/frontend/native/typescript/js/gao.ts"),
 )
 RETIRED_OPERATION_MARKERS = (
     "prototype_retired",
@@ -72,9 +74,7 @@ class CanonicalOnlyReachabilityTests(unittest.TestCase):
     def test_gao_has_no_builder_or_special_semantic_path(self) -> None:
         gao_sources = (
             REPOSITORY_ROOT
-            / "crates/compiler/frontend/python/apxm_program/gao.py",
-            REPOSITORY_ROOT
-            / "crates/compiler/frontend/native/typescript/js/gao.ts",
+            / "examples/agents/gao/src/gao.ts",
         )
         for path in gao_sources:
             text = path.read_text()

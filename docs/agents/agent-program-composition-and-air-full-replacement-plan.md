@@ -3,7 +3,7 @@
 - Status: canonical APXM v1 owner plan
 - Approved: 2026-07-16
 - Owner: APXM `agents`
-- Decisions: [ADR-0008](../adr/0008-agent-programs-compose-through-new-and-invoke.md), [ADR-0009](../adr/0009-air-has-five-public-semantic-operations.md), [ADR-0010](../adr/0010-agent-program-source-owns-context-hooks-and-conversational-loops.md), [ADR-0011](../adr/0011-agent-program-execution-is-one-end-to-end-spine.md), [ADR-0003](../adr/0003-agent-program-contract-migrations-remove-old-semantics.md)
+- Decisions: [ADR-0008](../adr/0008-agent-programs-compose-through-new-and-invoke.md), [ADR-0009](../adr/0009-air-has-five-public-semantic-operations.md), [ADR-0010](../adr/0010-agent-program-source-owns-context-hooks-and-conversational-loops.md), [ADR-0011](../adr/0011-agent-program-execution-is-one-end-to-end-spine.md), [ADR-0014](../adr/0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md), [ADR-0003](../adr/0003-agent-program-contract-migrations-remove-old-semantics.md)
 - Normative contract: [Agent Program composition and AIR contract](agent-program-composition-and-air-contract.md)
 - Baseline: `agents@9e26a62adebb`
 
@@ -12,8 +12,8 @@
 Replace the current overlapping Agent Program, operation, loop, context, Hook,
 and coordination semantics with one canonical Python/TypeScript →
 FrontendGraph v1 → AIR v1 → artifact v1 → runtime → inference-backend path built around
-`program.new`, `program.invoke`, `instance.invoke`, and five public semantic AIR
-operations.
+`program.new`, `program.invoke`, `instance.invoke`, a closed five-operation
+effect/composition family, and a separate closed structural AIS family.
 
 This plan is the reference owner plan. Other APXM repositories consume its
 released contracts and evidence; they do not duplicate its implementation.
@@ -32,13 +32,14 @@ owner for every v1 contract, and zero pending or deferred v1 decisions.
 
 - `apxm.frontend-graph.v1`, `apxm.air.v1`,
   `apxm.executable-artifact.v1`, and `apxm.runtime-evidence.v1`;
-- equivalent Python and TypeScript composition, context, Hook, and
-  Conversational Agent frontends;
+- equivalent generic Python and TypeScript Agent Program composition, context,
+  Hook, structured-control-flow, source-map, and compiler-bridge frontends;
 - Rust-owned schema generation, verification, lowering, printer, artifact
   admission, and runtime handlers;
 - Program Instance state, invocation, cancellation, structured children,
   replay, state commit, and generic checkpointing;
-- Gao migration as the TypeScript reference Agent Program;
+- runnable conversational and Gao repository examples using only packed
+  generic frontend APIs;
 - local embedding, CLI/application, Server, and OS consumer cutover; and
 - deletion and absence proof for every retired operation and old semantic path.
 
@@ -87,10 +88,12 @@ handler.
    handlers, source maps, and compatibility evidence.
 6. Runtime provides isolated Program Instances, atomic invocation state
    commits, structured children, generic durability, and typed evidence.
-7. Conversational Agent and Gao are frontend-authored programs; Turn exists
-   only as a Studio projection.
-8. All first-party consumers move in one Compatibility Set.
-9. Every retired builder, operation id, handler, parser, artifact, fallback,
+7. Conversational Agent and Gao are repository examples; no named construct is
+   a package, compiler/runtime, Server, contract, or Studio concept.
+8. Every atomically committed loop body/back-edge emits generic
+   `LoopIterationCompleted`; failed or rolled-back bodies emit no completion.
+9. All first-party consumers move in one Compatibility Set.
+10. Every retired builder, operation id, handler, parser, artifact, fallback,
    alias, and documentation claim is deleted or clearly frozen as historical
    evidence.
 
@@ -113,14 +116,15 @@ Deliverables:
 - define the Program Instance/yield/return/event state machines, deterministic
   creation/call identities, atomic commit tuple, and authoritative lifecycle
   fact/outbox schema; and
-- define source-map annotations that let Studio project loops as Turns without
-  changing runtime semantics.
+- define generic loop-region source maps and `LoopIterationCompleted` facts
+  with static/dynamic loop ids, iteration index, causal execution ids, and
+  atomic commit/replay semantics.
 
 Gate P0:
 
 - every semantic field has one owner and compatibility rule;
 - no target vector contains a legacy op, runtime path, dynamic registration,
-  HookContext/HookResult, or Turn runtime entity;
+  HookContext/HookResult, named conversational discriminant, or `Turn` entity;
 - yield/return, Agent Identity, event, Hook ABI/order, task-scope, replay
   identity, and lifecycle-fact semantics have positive and negative vectors;
 - Python/TypeScript/runtime teams can implement without inventing a contract.
@@ -158,9 +162,11 @@ Deliverables:
 - implement explicit `agent.context` state flow and projections;
 - implement frontend helpers for ask/think/reason/plan/reflect/verify as
   patterns over `model.call` rather than separate runtime ops;
-- implement Conversational Agent as a frontend standard-library pattern over
-  structured loop/yield; and
-- keep Python/TypeScript as authoring-only packages.
+- keep Python/TypeScript as authoring-only packages exposing generic
+  `AgentProgram`, Hook, Context, composition, structured-control-flow,
+  source-map, and compiler-bridge APIs; and
+- add packed clean-consumer negatives proving `ConversationalAgent`, Gao,
+  `TurnSpec`, `SpecialistComposition`, and equivalent subpaths are absent.
 
 Gate P2:
 
@@ -171,13 +177,14 @@ Gate P2:
 - Python and TypeScript cannot derive different child-start behavior from raw
   coroutine/Promise semantics.
 
-### P3 — Compiler, structured IR, and canonical AIR
+### P3 — Compiler, structural AIS, and canonical AIR
 
 Deliverables:
 
-- add the five new semantic operations under the single AIS owner;
-- implement typed structured functions, branches, loops, parallel joins,
-  try/catch, return, and program/region yield;
+- keep the five effect/composition operations under the single AIS owner;
+- define a separate closed AIS-owned structural family with typed functions,
+  branches, `ais.loop`, parallel joins, try/catch, return, and program/region
+  yield;
 - lower source control flow and state to SSA/region-carried values;
 - distinguish `ProgramRef` and `ProgramInstanceRef` at verification and
   lowering;
@@ -194,7 +201,9 @@ Gate P3:
 - golden AIR proves each public op and structural construct;
 - no compiler pass expands `AGENT` into spawn/communicate, inserts autonomous
   loops, performs graph splicing, or accepts runtime paths;
-- op inventory reports exactly five public semantic operations.
+- op inventory reports exactly five effect/composition operations and the exact
+  closed structural family; `ais.loop` cannot validate as a sixth
+  effect/composition operation.
 
 ### P4 — Artifact v1 and admission
 
@@ -253,7 +262,7 @@ Gate P5:
   state, meters, or cancellation between them;
 - placement changes produce equivalent program semantics.
 
-### P6 — Model, Capability, Hook, context, loop, and Gao cutover
+### P6 — Model, Capability, Hook, context, loop, and examples cutover
 
 Deliverables:
 
@@ -272,8 +281,11 @@ Deliverables:
 - replace dynamic Hook registration with artifact bindings and compiled calls;
 - delete runtime-controlled conversation/autonomous loops and graph splicing;
 - implement discovery-only Skills behavior and explicit context updates;
-- migrate Gao to the public TypeScript Conversational Agent, Agent Facade,
-  `program.new`, and `program.invoke` APIs; and
+- implement equivalent Python/TypeScript conversational examples using only
+  packed generic APIs and ordinary structured loops;
+- implement Gao under repository examples as a TypeScript specialization of
+  the example-local `ConversationalAgent`, using only generic Agent Facade,
+  Context, `program.new`, and `program.invoke` APIs; and
 - preserve provider-returned output/reasoning summaries without claiming
   hidden chain of thought.
 
@@ -286,10 +298,11 @@ Gate P6:
 - equivalent admitted backends pass the same request/output/streaming/usage/
   cancellation/evidence vectors, and replica load balancing preserves one
   exact deployment digest;
-- Gao contains no direct GraphBuilder/AUTONOMOUS loop or privileged runtime
-  branch;
+- packed frontends contain no named conversational/Gao exports or subpaths;
+- examples contain no direct AIR builder, compiler-private import,
+  GraphBuilder/AUTONOMOUS loop, or privileged runtime branch;
 - Skills are found only through admitted discovery Capabilities;
-- runtime contains no hidden model/tool/reasoning/Turn loop.
+- runtime contains no hidden model/tool/reasoning/conversation loop.
 
 ### P7 — Root APIs and cross-plane consumers
 
@@ -338,15 +351,19 @@ Deliverables:
 - emit source/artifact/program/instance/invocation lineage;
 - record exact allowed model request/output, Capability request/result, Hook
   execution, context refs, cost inputs, placement, and output refs;
-- define per-NodeExecution Session Output folder identity; and
-- provide projection fixtures by which Studio labels a loop occurrence as a
-  Turn without a runtime Turn schema.
+- define per-NodeExecution Session Output folder identity;
+- emit one `LoopIterationCompleted` in the atomic Execution Commit for each
+  committed body/back-edge and none for failed or rolled-back bodies; and
+- provide generic loop-iteration projection fixtures keyed by static loop and
+  dynamic occurrence ids, with no core `Turn` schema.
 
 Gate P8:
 
 - every actual visit to a static node has a unique NodeExecution;
 - lifecycle projections reconstruct exactly from monotonic authoritative facts
   and the commit outbox after crash/replay;
+- loop-iteration completion identity and ordering are replay-stable, and no
+  trace/region-start inference can manufacture completion;
 - terminal-event crash recovery always consumes or reconciles one idempotent
   wake, and cursor tests prove order, replay dedupe, watermark, permission
   re-check, and typed retention gaps;
@@ -361,8 +378,10 @@ Gate P8:
 
 Deliverables:
 
-- migrate every example, Gao, fixture, CLI flow, Server/OS consumer, Studio
-  adapter, and release descriptor to canonical v1;
+- migrate every example, fixture, CLI flow, Server/OS consumer, Studio adapter,
+  and release descriptor to generic canonical v1 contracts;
+- remove named Gao presets/routes/OpenAPI/client surfaces and core `Turn`
+  projections from Studio;
 - delete retired frontend methods, generated APIs, validators, compiler
   expansions, runtime handlers, scheduler branches, constants, events, tests,
   docs, and artifact acceptance;
@@ -381,8 +400,9 @@ Mandatory deletion families include:
   `TRY_CATCH`, `ERR`, `UPDATE_GOAL`, `NOP`, `IDENTITY`, and `CONST_STR` wire
   ids/builders/validators/handlers; canonical v1 structural equivalents use distinct
   generated identities;
-- old graph-splicing/rearm/session-loop paths, direct Gao builder, raw op
-  builder, HookContext/HookResult, Context Delta/Merge authoring APIs; and
+- old graph-splicing/rearm/session-loop paths, package-level
+  `ConversationalAgent`, direct Gao builder, `Turn` contracts, raw op builder,
+  HookContext/HookResult, Context Delta/Merge authoring APIs; and
 - pre-canonical graph/AIR/artifact readers, aliases, fallback compiler/runtime
   or inference paths, and
   mixed release documentation.
@@ -393,7 +413,8 @@ Gate P9:
   semantic contract outside named historical evidence;
 - old artifacts fail admission before runtime;
 - one Compatibility Set passes Python, TypeScript, compiler, artifact,
-  embedding, CLI, Server, OS, Gao, and Studio-projection conformance;
+  embedding, CLI, Server, OS, repository-example, and generic Studio-projection
+  conformance;
 - the candidate contains no translator, alias, fallback, dual path, or legacy
   feature switch.
 
@@ -408,7 +429,7 @@ flowchart LR
     P1 --> P3["P3 Compiler + AIR"]
     P4 --> P5["P5 Instance runtime"]
     P3 --> P5
-    P2 --> P6["P6 Hooks + loops + Gao"]
+    P2 --> P6["P6 Hooks + loops + examples"]
     P3 --> P6
     P5 --> P6
     P5 --> P7["P7 Root APIs"]
@@ -465,7 +486,10 @@ This plan completes only when:
 - Python and TypeScript are semantically equivalent;
 - `program.new`, `program.invoke`, and `instance.invoke` pass state,
   structured-concurrency, authority, crash, and replay vectors;
-- AIR reports exactly five public semantic operations;
-- Gao and Conversational Agent use ordinary frontend composition;
-- Studio builds Turn/node inspection solely from generic evidence; and
+- AIR reports exactly five effect/composition operations and a separate closed
+  structural AIS family including `ais.loop`;
+- conversational and Gao repository examples use only packed generic frontend
+  composition;
+- Studio builds generic loop-iteration/node inspection solely from
+  `LoopIterationCompleted` and related authoritative evidence; and
 - every retired semantic path is absent from the target release.

@@ -99,8 +99,8 @@ pub use models::{
 };
 pub use operations::metadata::{
     AIS_OPERATIONS, ContextStyle, MlirEmissionSpec, MlirResultType, OperationField,
-    OperationLatency, OperationSpec, ReferenceType, SemanticOpKind, ValidationError,
-    WIRE_INDEXED_OPERATIONS, get_all_operations, get_operation_spec,
+    OperationLatency, OperationSpec, ReferenceType, SemanticOpKind, StructuralOpKind,
+    ValidationError, WIRE_INDEXED_OPERATIONS, get_all_operations, get_operation_spec,
 };
 pub use operations::{AISOperation, AISOperationType, OperationCategory, validate_operation};
 

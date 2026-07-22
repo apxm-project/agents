@@ -6,18 +6,19 @@ only and cannot be used as implementation authority.
 | ADR | Status | Decision | Plan |
 | --- | --- | --- | --- |
 | [0001](0001-hooks-are-typed-callbacks-over-scoped-context.md) | Superseded by 0010 | Historical HookContext/HookResult model | — |
-| [0002](0002-gao-specializes-the-conversational-agent-construct.md) | Accepted | Gao specializes the standard Conversational Agent | Common P6 lane |
-| [0003](0003-agent-program-contract-migrations-remove-old-semantics.md) | Accepted | Full replacement without compatibility runtime | Agent Program portfolio |
+| [0002](0002-gao-specializes-the-conversational-agent-construct.md) | Superseded by 0014 | Historical package-level Conversational Agent/Gao specialization | — |
+| [0003](0003-agent-program-contract-migrations-remove-old-semantics.md) | Accepted; amended by 0014 | Full replacement through generic frontend APIs, two closed AIS families, generic loop evidence, and examples without compatibility runtime | Agent Program portfolio |
 | [0004](0004-agents-publishes-focused-surfaces-in-the-apxm-release-family.md) | Accepted | Focused release-family surfaces | Distribution/bridge/library plans |
 | [0005](0005-conversational-agent-lowers-to-a-structured-ais-loop.md) | Superseded by 0010 | Historical runtime Turn lifecycle | — |
 | [0006](0006-authoring-frontends-use-explicit-compiler-bridges.md) | Accepted | Explicit local/remote compiler bridges | Compiler bridge plan |
 | [0007](0007-rust-embedding-uses-focused-libraries-and-injected-adapters.md) | Accepted; amended by 0009, 0010, 0013 | Focused Rust libraries and injected adapters | Rust embedding plan |
 | [0008](0008-agent-programs-compose-through-new-and-invoke.md) | Accepted | `program.new`, `program.invoke`, `instance.invoke` | Composition/AIR plan |
 | [0009](0009-air-has-five-public-semantic-operations.md) | Accepted | Five-operation AIR and 38-op disposition | Composition/AIR plan |
-| [0010](0010-agent-program-source-owns-context-hooks-and-conversational-loops.md) | Accepted | Explicit context, Agent Facade Hooks, program-authored loops | Composition/AIR plan |
+| [0010](0010-agent-program-source-owns-context-hooks-and-conversational-loops.md) | Accepted; amended by 0014 | Explicit context, Agent Facade Hooks, discovery-only Skills, and generic program-authored loops | Composition/AIR plan |
 | [0011](0011-agent-program-execution-is-one-end-to-end-spine.md) | Accepted; amended by 0013 | One frontend/compiler/runtime/inference/evidence execution spine | APXM master and composition/AIR plans |
 | [0012](0012-acp-uses-explicit-capabilities-selection-is-not-runtime-semantics.md) | Accepted; amended by 0013 | ACP is an external Capability; v1 selection is exact; APXM-owned routing is future work | ACP/exact-selection plan and future-routing plan |
 | [0013](0013-core-semantics-are-closed-and-implementations-enter-through-exact-port-bindings.md) | Accepted | Closed semantic types, narrow Port Contracts, exact implementation bindings, and no first-party bypass | Portable core contract, Rust embedding plan, and APXM portability plan |
+| [0014](0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md) | Accepted | Conversational Agent and Gao are examples; AIS owns separate closed effect/composition and structural operation families; completed-loop evidence is generic | Composition/AIR contract and plan |
 
 Canonical owner contract and plan:
 

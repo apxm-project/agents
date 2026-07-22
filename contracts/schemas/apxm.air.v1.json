@@ -2,12 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "apxm.air.v1",
   "title": "AgentIR",
-  "description": "Canonical Agent IR with exactly five public semantic operations (model.call, capability.invoke, program.new, program.invoke, await.event) and compiler-owned structural IR (functions, regions, blocks, values, branches, switches, loops, parallel joins, try/throw/catch, return, yield). Branch, loop, task, try, yield, and return are structural, never public semantic operations; a transient NOP is compiler machinery that is never serialized.",
+  "description": "Canonical Agent IR with exactly five public semantic operations (model.call, capability.invoke, program.new, program.invoke, await.event) and the closed AIS-owned compiler-emitted structural family. ais.loop is structural, never a sixth public semantic operation; a transient NOP is compiler machinery that is never serialized.",
   "type": "object",
   "required": [
     "schema_version",
     "semantic_operations",
     "structural_ir",
+    "context_flow",
     "source_map"
   ],
   "properties": {
@@ -26,6 +27,12 @@
         "$ref": "#/$defs/StructuralNode"
       }
     },
+    "context_flow": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ContextEdge"
+      }
+    },
     "source_map": {
       "$ref": "apxm.source-map.v1#/$defs/SourceMapBody"
     }
@@ -36,7 +43,9 @@
       "type": "object",
       "required": [
         "node_id",
-        "op"
+        "op",
+        "parent_region_id",
+        "execution_order"
       ],
       "properties": {
         "node_id": {
@@ -52,6 +61,13 @@
             "await.event"
           ]
         },
+        "parent_region_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "execution_order": {
+          "type": "integer",
+          "minimum": 0
+        },
         "operands": {
           "type": "object"
         }
@@ -62,7 +78,8 @@
       "type": "object",
       "required": [
         "region_id",
-        "kind"
+        "kind",
+        "execution_order"
       ],
       "properties": {
         "region_id": {
@@ -77,7 +94,7 @@
             "value",
             "branch",
             "switch",
-            "loop",
+            "ais.loop",
             "parallel_join",
             "try",
             "throw",
@@ -85,6 +102,33 @@
             "return",
             "yield"
           ]
+        },
+        "parent_region_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "execution_order": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "ContextEdge": {
+      "type": "object",
+      "required": [
+        "from_node",
+        "to_node",
+        "context_type_ref"
+      ],
+      "properties": {
+        "from_node": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "to_node": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "context_type_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
         }
       },
       "additionalProperties": false

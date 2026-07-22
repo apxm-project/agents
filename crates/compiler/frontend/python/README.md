@@ -1,13 +1,13 @@
-# apxm_program — Python frontend for APXM
+# apxm_program — generic Python Agent Program frontend
 
-The Python authoring frontend for
-[APXM](https://github.com/apxm-project/agents), the canonical compiler and
-runtime for Agent Programs.
+`apxm_program` exposes generic Agent Program, Hook, Context, composition,
+structured-control-flow, source-map, and native compiler-bridge APIs. It
+records `apxm.frontend-graph.v1`; the Rust compiler alone validates and lowers
+that graph to AIR.
 
-This package records APXM workflows as the compiler-owned
-`apxm.frontend-graph.v1` DTO. The canonical Python bridge lowers that graph
-through the Rust compiler in-process and returns `apxm.air.v1`; TypeScript and
-Rust follow the same FrontendGraph contract.
+Structured authoring uses `branch`, `switch`, `loop`, `parallel`,
+`try_catch`, `throw_region`, `return_region`, `yield_region`, and joined
+`structured_task` scopes.
 
 ## Quick start
 
@@ -18,27 +18,19 @@ pip install apxm
 ```python
 import apxm_program
 
-builder = apxm_program.GraphBuilder()
-builder.program(
-    "hello",
-    "run",
-    "Input",
-    "Output",
-    True,
-    "Context",
+program = apxm_program.AgentProgram(
+    program_id="hello",
+    input_type_ref="Input",
+    output_type_ref="Output",
+    context_type_ref="Context",
 )
-builder.model_call("node.greet", model_target_ref="model.default")
-builder.model_requirement("model.default")
-builder.region("region.return", "return")
-
-print(apxm_program.canonical_air_json(builder.build()), end="")
+program.loop(
+    "region.loop",
+    lambda body: body.model_call("node.greet", "model.default"),
+)
+program.return_region("region.return")
+print(program.canonical_air_json(), end="")
 ```
-
-## What's in the package
-
-| Module | What it does |
-| ------ | ------------ |
-| `apxm_program` | Canonical FrontendGraph recorder, program constructs, and native bridge helpers |
 
 ## Compiling workflows
 
@@ -49,16 +41,3 @@ explicit Agents compiler bridge:
 dekk agents agent build path/to/package
 dekk agents compile-service-canonical path/to/package
 ```
-
-## Companion repos
-
-- [apxm-project/vllm](https://github.com/apxm-project/vllm) — graph-aware
-  vLLM fork used by APXM-vLLM
-
-Provider-agnostic operating skills loaded by `apxm-server` are builtin under
-`crates/server/skills/`; deployment-specific skills should be
-installed through explicit skill roots.
-
-## License
-
-MIT. See [LICENSE](https://github.com/apxm-project/agents/blob/main/LICENSE).

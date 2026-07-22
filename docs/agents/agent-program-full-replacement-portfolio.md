@@ -9,14 +9,14 @@
 
 Coordinate the APXM-owned Agent Program work as parallel target-only plans,
 then cut over one Python/TypeScript/compiler/artifact/runtime Compatibility Set
-without legacy operations, composition, Hook, Context, Conversational Agent,
-or Gao semantics.
+without legacy operations, composition, Hook, Context, named conversational,
+or Gao core/package/product semantics.
 
 ## Owning plans
 
 | Plan | Owner | Parallel work | Synchronization gate |
 | --- | --- | --- | --- |
-| [Agent Program composition and AIR full replacement](agent-program-composition-and-air-full-replacement-plan.md) | APXM contracts, frontends, `apxm-core`, compiler, artifact, runtime, Gao, cross-plane consumers | `program.new`/`program.invoke`, five-op AIR, Agent Facade, explicit context, structured loops, Program Instances, evidence, deletion | P0-P9 |
+| [Agent Program composition and AIR full replacement](agent-program-composition-and-air-full-replacement-plan.md) | APXM contracts, frontends, AIS, compiler, artifact, runtime, examples, cross-plane consumers | `program.new`/`program.invoke`, two closed AIS families, Agent Facade, explicit context, structured loops, generic iteration evidence, Program Instances, deletion | P0-P9 |
 | [Rust embedding library hardening](rust-embedding-library-hardening-plan.md) | APXM contracts, AIS, artifact, compiler, runtime, adapter owners | Public role vectors, acyclic dependencies, injected runtime interfaces, adapters, profiles, clean consumers | RLIB-1-RLIB-9 |
 | [Compiler bridge delivery](compiler-bridge-delivery-plan.md) | APXM graph contracts, compiler, Python/Node bridges, compile service/client | FrontendGraph v1 vectors, pure frontends, native bridges, remote boundary, build tools | B1-B9; B1 consumes P0-P1 and B2 consumes RLIB-1-RLIB-4 |
 
@@ -37,8 +37,9 @@ After P0 versioned schema vectors exist:
    the Rust-owned contract.
 4. Runtime Program Instance, invocation, generic durability, and evidence
    behavior is implemented against the same contract.
-5. Gao and product projection fixtures are prepared while the common
-   Conversational Agent API is built.
+5. Conversational and Gao repository examples are prepared against packed
+   generic frontend APIs while generic loop-iteration projection fixtures are
+   built.
 
 Lanes exchange schemas, generated code, FrontendGraph DTOs, artifacts, and
 conformance vectors. They do not call or retain the old semantic engine.
@@ -52,7 +53,7 @@ flowchart LR
     C --> F["Python + TypeScript frontends"]
     C --> P["Compiler + AIR"]
     C --> R["Runtime + artifacts"]
-    F --> P6["P6 Conversational Agent + Gao"]
+    F --> P6["P6 Generic loops + examples"]
     P --> P6
     R --> P6
     P6 --> P8["P8 evidence + Studio projection"]
@@ -71,11 +72,15 @@ The APXM candidate must prove:
   AIR, artifact, and lifecycle evidence;
 - `program.new`, `program.invoke`, and `instance.invoke` obey one state and
   structured-concurrency contract;
-- AIR contains exactly five public semantic operations;
+- AIR contains exactly five effect/composition operations and a separate
+  closed structural family including `ais.loop`;
 - one Agent Facade callback and explicit Program Context implementation execute;
-- Gao uses only the public TypeScript Conversational Agent construct;
-- direct Gao loop, unversioned Hook types, broad decision union, duplicate
-  dispatch, alias fields/events, and old artifact acceptance are absent;
+- conversational and Gao examples use only packed generic frontend APIs;
+- named package exports/product surfaces, direct Gao core branches, unversioned
+  Hook types, broad decision union, duplicate dispatch, alias fields/events,
+  and old artifact acceptance are absent;
+- committed loop iterations emit replay-stable `LoopIterationCompleted`, while
+  failed or rolled-back bodies emit none;
 - local, CLI, Server, and OS-hosted execution use the same contract versions;
 - old/unknown versions fail before runtime execution;
 - release and repository scans find no legacy semantic feature switch.

@@ -58,6 +58,225 @@
     "expected_valid": true
   },
   {
+    "name": "completed-loop-iteration-has-generic-causal-identity",
+    "input": {
+      "schema_version": "apxm.runtime-evidence.v1",
+      "program_identity": {
+        "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "entrypoint": "run",
+        "agent_identity_binding": "agent-identity.1",
+        "program_instance_id": "instance.1"
+      },
+      "facts": [
+        {
+          "fact_id": "node.1",
+          "event_sequence": 1,
+          "fact_kind": "node_execution.recorded",
+          "node_execution_id": "node-execution.1",
+          "air_node_id": "node.model",
+          "execution_scope": {
+            "scope_kind": "loop",
+            "region_occurrence_id": "loop-occurrence.1",
+            "static_region_id": "loop.1",
+            "loop_memberships": [
+              {
+                "static_loop_id": "loop.1",
+                "loop_occurrence_id": "loop-occurrence.1"
+              }
+            ]
+          }
+        },
+        {
+          "fact_id": "loop-iteration.1.0",
+          "event_sequence": 2,
+          "fact_kind": "LoopIterationCompleted",
+          "static_loop_id": "loop.1",
+          "loop_occurrence_id": "loop-occurrence.1",
+          "iteration_index": 0,
+          "program_invocation_id": "invocation.1",
+          "causal_node_execution_ids": [
+            "node-execution.1"
+          ]
+        }
+      ]
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "completed-loop-iteration-missing-causal-identity-rejected",
+    "input": {
+      "schema_version": "apxm.runtime-evidence.v1",
+      "program_identity": {
+        "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "entrypoint": "run",
+        "agent_identity_binding": "agent-identity.1"
+      },
+      "facts": [
+        {
+          "fact_id": "loop-iteration.1.0",
+          "event_sequence": 1,
+          "fact_kind": "LoopIterationCompleted",
+          "static_loop_id": "loop.1",
+          "loop_occurrence_id": "loop-occurrence.1",
+          "iteration_index": 0,
+          "program_invocation_id": "invocation.1"
+        }
+      ]
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "completed-loop-iteration-empty-causality-rejected",
+    "input": {
+      "schema_version": "apxm.runtime-evidence.v1",
+      "program_identity": {
+        "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "entrypoint": "run",
+        "agent_identity_binding": "agent-identity.1"
+      },
+      "facts": [
+        {
+          "fact_id": "loop-iteration.1.0",
+          "event_sequence": 1,
+          "fact_kind": "LoopIterationCompleted",
+          "static_loop_id": "loop.1",
+          "loop_occurrence_id": "loop-occurrence.1",
+          "iteration_index": 0,
+          "program_invocation_id": "invocation.1",
+          "causal_node_execution_ids": []
+        }
+      ]
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "completed-loop-iteration-foreign-causality-rejected",
+    "input": {
+      "schema_version": "apxm.runtime-evidence.v1",
+      "program_identity": {
+        "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "entrypoint": "run",
+        "agent_identity_binding": "agent-identity.1"
+      },
+      "facts": [
+        {
+          "fact_id": "node.foreign",
+          "event_sequence": 1,
+          "fact_kind": "node_execution.recorded",
+          "node_execution_id": "node-execution.foreign",
+          "air_node_id": "node.foreign",
+          "execution_scope": {
+            "scope_kind": "loop",
+            "region_occurrence_id": "loop-occurrence.foreign",
+            "static_region_id": "loop.foreign",
+            "loop_memberships": [
+              {
+                "static_loop_id": "loop.foreign",
+                "loop_occurrence_id": "loop-occurrence.foreign"
+              }
+            ]
+          }
+        },
+        {
+          "fact_id": "loop-iteration.1.0",
+          "event_sequence": 2,
+          "fact_kind": "LoopIterationCompleted",
+          "static_loop_id": "loop.1",
+          "loop_occurrence_id": "loop-occurrence.1",
+          "iteration_index": 0,
+          "program_invocation_id": "invocation.1",
+          "causal_node_execution_ids": [
+            "node-execution.foreign"
+          ]
+        }
+      ]
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "completed-loop-iteration-unknown-field-rejected",
+    "input": {
+      "schema_version": "apxm.runtime-evidence.v1",
+      "program_identity": {
+        "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "entrypoint": "run",
+        "agent_identity_binding": "agent-identity.1"
+      },
+      "facts": [
+        {
+          "fact_id": "loop-iteration.1.0",
+          "event_sequence": 1,
+          "fact_kind": "LoopIterationCompleted",
+          "static_loop_id": "loop.1",
+          "loop_occurrence_id": "loop-occurrence.1",
+          "iteration_index": 0,
+          "program_invocation_id": "invocation.1",
+          "causal_node_execution_ids": [
+            "node-execution.1"
+          ],
+          "turn_id": "turn.1"
+        }
+      ]
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "completed-loop-iteration-replay-conflict-rejected",
+    "input": {
+      "schema_version": "apxm.runtime-evidence.v1",
+      "program_identity": {
+        "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "entrypoint": "run",
+        "agent_identity_binding": "agent-identity.1"
+      },
+      "facts": [
+        {
+          "fact_id": "node.1",
+          "event_sequence": 1,
+          "fact_kind": "node_execution.recorded",
+          "node_execution_id": "node-execution.1",
+          "air_node_id": "node.model",
+          "execution_scope": {
+            "scope_kind": "loop",
+            "region_occurrence_id": "loop-occurrence.1",
+            "static_region_id": "loop.1",
+            "loop_memberships": [
+              {
+                "static_loop_id": "loop.1",
+                "loop_occurrence_id": "loop-occurrence.1"
+              }
+            ]
+          }
+        },
+        {
+          "fact_id": "loop-iteration.1.0",
+          "event_sequence": 2,
+          "fact_kind": "LoopIterationCompleted",
+          "static_loop_id": "loop.1",
+          "loop_occurrence_id": "loop-occurrence.1",
+          "iteration_index": 0,
+          "program_invocation_id": "invocation.1",
+          "causal_node_execution_ids": [
+            "node-execution.1"
+          ]
+        },
+        {
+          "fact_id": "loop-iteration.1.0.replayed-differently",
+          "event_sequence": 3,
+          "fact_kind": "LoopIterationCompleted",
+          "static_loop_id": "loop.1",
+          "loop_occurrence_id": "loop-occurrence.1",
+          "iteration_index": 0,
+          "program_invocation_id": "invocation.1",
+          "causal_node_execution_ids": [
+            "node-execution.1"
+          ]
+        }
+      ]
+    },
+    "expected_valid": false
+  },
+  {
     "name": "non-monotonic-sequence-rejected",
     "input": {
       "schema_version": "apxm.runtime-evidence.v1",
@@ -124,7 +343,7 @@
     "expected_valid": false
   },
   {
-    "name": "turn-projection-joins-are-owner-typed",
+    "name": "loop-region-joins-are-owner-typed",
     "input": {
       "schema_version": "apxm.runtime-evidence.v1",
       "program_identity": {
@@ -137,17 +356,26 @@
           "fact_id": "region.1",
           "event_sequence": 1,
           "fact_kind": "region.occurrence_started",
-          "region_occurrence_id": "turn.1",
-          "static_region_id": "region.turn"
+          "region_occurrence_id": "loop-occurrence.1",
+          "static_region_id": "loop.1"
         },
         {
           "fact_id": "model.1",
           "event_sequence": 2,
           "fact_kind": "node_execution.recorded",
-          "region_occurrence_id": "turn.1",
-          "static_region_id": "region.turn",
           "node_execution_id": "node-execution.model.1",
-          "air_node_id": "node.model"
+          "air_node_id": "node.model",
+          "execution_scope": {
+            "scope_kind": "loop",
+            "region_occurrence_id": "loop-occurrence.1",
+            "static_region_id": "loop.1",
+            "loop_memberships": [
+              {
+                "static_loop_id": "loop.1",
+                "loop_occurrence_id": "loop-occurrence.1"
+              }
+            ]
+          }
         },
         {
           "fact_id": "hook.1",
@@ -173,6 +401,66 @@
     "expected_valid": true
   },
   {
+    "name": "non-loop-node-execution-is-valid",
+    "input": {
+      "schema_version": "apxm.runtime-evidence.v1",
+      "program_identity": {
+        "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "entrypoint": "run",
+        "agent_identity_binding": "agent-identity.1"
+      },
+      "facts": [
+        {
+          "fact_id": "node.non-loop",
+          "event_sequence": 1,
+          "fact_kind": "node_execution.recorded",
+          "node_execution_id": "node-execution.non-loop",
+          "air_node_id": "node.root",
+          "execution_scope": {
+            "scope_kind": "non_loop"
+          }
+        },
+        {
+          "fact_id": "node.non-loop.replay",
+          "event_sequence": 2,
+          "fact_kind": "node_execution.recorded",
+          "node_execution_id": "node-execution.non-loop.replay",
+          "air_node_id": "node.root",
+          "execution_scope": {
+            "scope_kind": "non_loop"
+          }
+        }
+      ]
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "half-present-loop-node-scope-rejected",
+    "input": {
+      "schema_version": "apxm.runtime-evidence.v1",
+      "program_identity": {
+        "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "entrypoint": "run",
+        "agent_identity_binding": "agent-identity.1"
+      },
+      "facts": [
+        {
+          "fact_id": "node.half-loop",
+          "event_sequence": 1,
+          "fact_kind": "node_execution.recorded",
+          "node_execution_id": "node-execution.half-loop",
+          "air_node_id": "node.loop",
+          "execution_scope": {
+            "scope_kind": "loop",
+            "region_occurrence_id": "loop-occurrence.1",
+            "loop_memberships": []
+          }
+        }
+      ]
+    },
+    "expected_valid": false
+  },
+  {
     "name": "node-execution-without-air-join-rejected",
     "input": {
       "schema_version": "apxm.runtime-evidence.v1",
@@ -186,8 +474,8 @@
           "fact_id": "model.1",
           "event_sequence": 1,
           "fact_kind": "node_execution.recorded",
-          "region_occurrence_id": "turn.1",
-          "static_region_id": "region.turn",
+          "region_occurrence_id": "loop-occurrence.1",
+          "static_region_id": "loop.1",
           "node_execution_id": "node-execution.model.1"
         }
       ]

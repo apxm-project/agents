@@ -28,7 +28,5 @@ pub use ports::{
     CompositionRequest, EventAwait, EventOutcome, EventPort, EventRef, EventRefError, MemoryError,
     MemorySpace, ScopedMemoryPort,
 };
-pub use resume::{
-    Continuation, ContinuationError, RunOutcome,
-};
+pub use resume::{Continuation, ContinuationError, DurableLoopFrame, RunOutcome};
 pub use session_ledger::{LedgerState, SessionLedger, SessionLedgerError, SessionLedgerStore};

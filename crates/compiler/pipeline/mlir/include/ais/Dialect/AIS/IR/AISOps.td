@@ -13,5 +13,6 @@ include "mlir/IR/CommonTypeConstraints.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "ais/Dialect/AIS/IR/AISOps.semantic.generated.td"
+include "ais/Dialect/AIS/IR/AISOps.structural.generated.td"
 
 #endif // APXM_AIS_OPS

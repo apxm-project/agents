@@ -55,79 +55,18 @@ fn read_tools_manifest(root: &Path) -> Vec<serde_json::Value> {
         .unwrap_or_else(|| value.as_array().cloned().expect("tools.json handlers array"))
 }
 
-fn compile_source_manifest(root: &Path, source_file: &str) -> Vec<serde_json::Value> {
-    let compiler = repo_root().join("crates/compiler/frontend/typescript/dist/compile-handlers.js");
-    assert!(
-        compiler.is_file(),
-        "TypeScript frontend compile-handlers entry missing at {}",
-        compiler.display()
-    );
-    let source = root.join(source_file);
-    let output = Command::new("node")
-        .arg("--input-type=module")
-        .arg("--eval")
-        .arg(
-            "import { pathToFileURL } from 'node:url'; import(pathToFileURL(process.argv[1]).href).then(async ({ compileHandlers }) => { const manifest = await compileHandlers([process.argv[2]], { rootDir: process.argv[3] }); console.log(JSON.stringify(manifest)); })",
-        )
-        .arg(&compiler)
-        .arg(&source)
-        .arg(root)
-        .output()
-        .expect("run compile-handlers");
-    assert!(
-        output.status.success(),
-        "compile-handlers failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let value: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("parse compile-handlers output");
-    value
-        .get("handlers")
-        .and_then(serde_json::Value::as_array)
-        .cloned()
-        .expect("compiled handler array")
-}
-
 fn repo_root() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
 }
 
 fn worker_manifest_entry(root: &Path, selector: &str) -> serde_json::Value {
-    let manifest_entry = read_tools_manifest(root)
+    read_tools_manifest(root)
         .into_iter()
         .find(|entry| {
             entry.get("name").and_then(serde_json::Value::as_str) == Some(selector)
                 || entry.get("qualname").and_then(serde_json::Value::as_str) == Some(selector)
         })
-        .unwrap_or_else(|| panic!("missing Gao worker entry {selector}"));
-    if manifest_entry.get("source").is_some() {
-        return manifest_entry;
-    }
-    let source_file = manifest_entry
-        .get("source_file")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_else(|| panic!("Gao worker entry {selector} has no source_file"));
-    let mut entry = compile_source_manifest(root, source_file)
-        .into_iter()
-        .find(|entry| {
-            entry.get("name").and_then(serde_json::Value::as_str) == Some(selector)
-                || entry.get("qualname").and_then(serde_json::Value::as_str) == Some(selector)
-        })
-        .unwrap_or_else(|| panic!("compiled Gao worker entry {selector} missing"));
-    if let Some(source_file) = entry
-        .get("source_file")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
-    {
-        entry
-            .as_object_mut()
-            .expect("worker manifest object")
-            .insert(
-                "source_file".to_string(),
-                serde_json::Value::String(root.join(source_file).to_string_lossy().into_owned()),
-            );
-    }
-    entry
+        .unwrap_or_else(|| panic!("missing Gao worker entry {selector}"))
 }
 
 fn run_typescript_worker(
@@ -146,7 +85,7 @@ fn run_typescript_worker(
     )
     .expect("write focused worker manifest");
 
-    let worker = repo_root().join("crates/compiler/frontend/typescript/scripts/tool-worker.mjs");
+    let worker = repo_root().join("crates/tools/cli/agent-packaging/tool-worker.mjs");
     let mut child = Command::new("node")
         .arg(worker)
         .arg(&manifest_path)
@@ -292,8 +231,7 @@ fn gao_uses_generic_host_input_without_package_context_injection() {
     let root = require_gao_example();
     let context = fs::read_to_string(root.join("capabilities/handlers/context.ts"))
         .expect("read Gao context handler");
-    let entry = fs::read_to_string(root.join("capabilities/handlers/main.ts"))
-        .expect("read Gao entry source");
+    let entry = fs::read_to_string(root.join("src/gao.ts")).expect("read Gao entry source");
 
     assert!(
         !context.contains("fetch("),
@@ -308,12 +246,12 @@ fn gao_uses_generic_host_input_without_package_context_injection() {
         "Gao must not carry a hand-maintained Studio node-kind snapshot"
     );
     assert!(
-        entry.contains("graph.awaitInput"),
-        "Gao must receive turns through the generic AWAIT_INPUT primitive"
+        entry.contains("extends ConversationalAgent"),
+        "Gao must extend the example-local ConversationalAgent"
     );
     assert!(
-        entry.contains("rearm: true"),
-        "Gao must explicitly re-arm its generic host-input boundary"
+        entry.contains("programNew") && entry.contains("programInvoke"),
+        "Gao must use generic program composition"
     );
 }
 
@@ -326,6 +264,12 @@ fn gao_package_is_typescript_only() {
             let entry = entry.expect("read gao package entry");
             let path = entry.path();
             if path.is_dir() {
+                if matches!(
+                    entry.file_name().to_str(),
+                    Some("node_modules" | "dist")
+                ) {
+                    continue;
+                }
                 pending.push(path);
                 continue;
             }
@@ -399,43 +343,16 @@ fn gao_example_build_writes_tools_json_manifest() {
         &fs::read_to_string(root.join("agent.toml")).expect("read gao agent.toml"),
     )
     .expect("parse gao agent.toml");
-    let declared_hooks = agent
-        .get("hooks")
-        .and_then(toml::Value::as_array)
-        .expect("Gao agent manifest must declare hooks");
-    let hook_entries = manifest
-        .iter()
-        .filter(|entry| entry.get("kind").and_then(serde_json::Value::as_str) == Some("hook"))
-        .collect::<Vec<_>>();
-    assert!(!hook_entries.is_empty(), "tools.json must include Gao hook handlers");
-    for hook in declared_hooks {
-        let handler = hook
-            .get("handler")
-            .and_then(toml::Value::as_str)
-            .expect("declared hook handler");
-        let qualname = handler.rsplit('.').next().expect("hook handler qualname");
-        let event = hook
-            .get("event")
-            .and_then(toml::Value::as_str)
-            .expect("declared hook event");
-        let match_value = hook
-            .get("match")
-            .and_then(toml::Value::as_str)
-            .unwrap_or("*");
-        let mode = hook
-            .get("mode")
-            .and_then(toml::Value::as_str)
-            .expect("declared hook mode");
-        assert!(
-            hook_entries.iter().any(|entry| {
-                entry.get("qualname").and_then(serde_json::Value::as_str) == Some(qualname)
-                    && entry.get("event").and_then(serde_json::Value::as_str) == Some(event)
-                    && entry.get("match").and_then(serde_json::Value::as_str) == Some(match_value)
-                    && entry.get("mode").and_then(serde_json::Value::as_str) == Some(mode)
-            }),
-            "tools.json must contain the declared hook {handler}"
-        );
-    }
+    assert!(
+        agent.get("hooks").is_none(),
+        "Gao behavior Hooks are authored in Agent Program source"
+    );
+    assert!(
+        manifest
+            .iter()
+            .all(|entry| entry.get("kind").and_then(serde_json::Value::as_str) == Some("tool")),
+        "tools.json contains only package-local Capability handlers"
+    );
     for entry in &manifest {
         for key in ["module"] {
             let value = entry.get(key).and_then(|v| v.as_str()).unwrap_or("");
@@ -614,135 +531,6 @@ fn gao_semantic_tools_derive_typed_outputs_from_inputs() {
 }
 
 #[test]
-fn gao_compose_gate_defers_valid_input_and_denies_missing_input_in_real_worker() {
-    if !node_available() || !npm_available() {
-        eprintln!("skipping gao_compose_gate_defers_valid_input_and_denies_missing_input_in_real_worker: node/npm not on PATH");
-        return;
-    }
-    let tmp = copy_gao_example();
-    let root = tmp.path().join("gao");
-    agent_build(&root, true).expect("gao agent build");
-    let gate = worker_manifest_entry(&root, "gate_compose_workflow");
-    let handler_id = gate
-        .get("handler_id")
-        .and_then(serde_json::Value::as_str)
-        .unwrap();
-    let hook_call = |req_id: &str, args: serde_json::Value| {
-        serde_json::json!({
-            "v": 1,
-            "type": "call",
-            "req_id": req_id,
-            "tool_id": handler_id,
-            "args": {"__apxm_hook__": {"event": "pre_cap", "call": {"name": "compose_workflow", "args": args}}},
-            "deadline_ms": 5_000
-        })
-    };
-    let frames = vec![
-        hook_call(
-            "valid",
-            serde_json::json!({"name": "approved-flow", "air": "module { func.func @main() }"}),
-        ),
-        hook_call(
-            "missing-name",
-            serde_json::json!({"air": "module { func.func @main() }"}),
-        ),
-        hook_call(
-            "missing-air",
-            serde_json::json!({"name": "incomplete-flow"}),
-        ),
-    ];
-    let results = run_typescript_worker(&tmp, vec![gate], &frames);
-    let valid = worker_value(&results, "valid");
-    assert_eq!(
-        valid.get("decision").and_then(serde_json::Value::as_str),
-        Some("defer")
-    );
-    assert_eq!(
-        worker_result(&results, "missing-name")
-            .pointer("/value/decision")
-            .and_then(serde_json::Value::as_str),
-        Some("deny")
-    );
-    assert_eq!(
-        worker_result(&results, "missing-air")
-            .pointer("/value/decision")
-            .and_then(serde_json::Value::as_str),
-        Some("deny")
-    );
-}
-
-#[test]
-fn gao_post_cap_hook_recursively_scrubs_nested_results_without_losing_types() {
-    if !node_available() || !npm_available() {
-        eprintln!("skipping gao_post_cap_hook_recursively_scrubs_nested_results_without_losing_types: node/npm not on PATH");
-        return;
-    }
-    let tmp = copy_gao_example();
-    let root = tmp.path().join("gao");
-    agent_build(&root, true).expect("gao agent build");
-    let redactor = worker_manifest_entry(&root, "redact_tool_results");
-    let handler_id = redactor
-        .get("handler_id")
-        .and_then(serde_json::Value::as_str)
-        .unwrap();
-    let frame = serde_json::json!({
-        "v": 1,
-        "type": "call",
-        "req_id": "nested-redaction",
-        "tool_id": handler_id,
-        "args": {"__apxm_hook__": {
-            "event": "post_cap",
-            "call": {"name": "nested_result"},
-            "result": {
-                "count": 3,
-                "ok": true,
-                "nested": {
-                    "token": "top-secret",
-                    "items": ["Authorization: Bearer abc.def", {"note": "api_key=visible-secret", "value": 7}]
-                }
-            }
-        }},
-        "deadline_ms": 5_000
-    });
-    let results = run_typescript_worker(&tmp, vec![redactor], &[frame]);
-    let scrubbed = worker_value(&results, "nested-redaction")
-        .get("result")
-        .unwrap();
-    assert_eq!(
-        scrubbed.get("count").and_then(serde_json::Value::as_i64),
-        Some(3)
-    );
-    assert_eq!(
-        scrubbed.get("ok").and_then(serde_json::Value::as_bool),
-        Some(true)
-    );
-    assert_eq!(
-        scrubbed
-            .pointer("/nested/token")
-            .and_then(serde_json::Value::as_str),
-        Some("<redacted>")
-    );
-    assert_eq!(
-        scrubbed
-            .pointer("/nested/items/0")
-            .and_then(serde_json::Value::as_str),
-        Some("Authorization: <redacted>")
-    );
-    assert_eq!(
-        scrubbed
-            .pointer("/nested/items/1/note")
-            .and_then(serde_json::Value::as_str),
-        Some("api_key=<redacted>")
-    );
-    assert_eq!(
-        scrubbed
-            .pointer("/nested/items/1/value")
-            .and_then(serde_json::Value::as_i64),
-        Some(7)
-    );
-}
-
-#[test]
 fn gao_sync_rejects_package_prefixed_capability_id() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("gao-bad-cap");
@@ -802,6 +590,13 @@ fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
     for entry in fs::read_dir(src)? {
         let entry = entry?;
         let file_type = entry.file_type()?;
+        if matches!(
+            entry.file_name().to_str(),
+            Some("node_modules" | "dist" | "__pycache__")
+        ) || file_type.is_symlink()
+        {
+            continue;
+        }
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
         if file_type.is_dir() {

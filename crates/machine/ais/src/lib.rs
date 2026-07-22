@@ -1,8 +1,8 @@
 //! # Agent Instruction Set (AIS)
 //!
 //! This crate provides the **single source of truth** for the five canonical
-//! public semantic AIS operations. Structural control flow is owned by
-//! `apxm-program` structural IR.
+//! public semantic AIS operations and the closed compiler-emitted structural
+//! AIS operation family.
 
 pub mod aam;
 pub mod attrs;
@@ -23,11 +23,12 @@ pub use operations::{
     ARTIFACT_OPERATION_KIND_ENTRIES_FILE, ContextStyle, MlirEmissionSpec, MlirResultType,
     OP_SPEC_CATALOG_FILE, OP_SPEC_SCHEMA_VERSION, OP_SPEC_VECTORS_FILE,
     OP_SPEC_VECTORS_SCHEMA_VERSION, OperationCategory, OperationField, OperationLatency,
-    OperationSpec, SemanticOpKind, WIRE_INDEXED_OPERATIONS,
+    OperationSpec, SEMANTIC_TABLEGEN_DECLARATIONS_FILE, STRUCTURAL_TABLEGEN_DECLARATIONS_FILE,
+    SemanticOpKind, StructuralOpKind, WIRE_INDEXED_OPERATIONS,
     generate_artifact_operation_kind_cases, generate_artifact_operation_kind_entries,
     generate_op_spec_catalog, generate_op_spec_vectors, generate_semantic_tablegen_declarations,
-    get_all_operations, get_operation_spec, render_op_spec_files,
-    SEMANTIC_TABLEGEN_DECLARATIONS_FILE,
+    generate_structural_tablegen_declarations, get_all_operations, get_operation_spec,
+    render_op_spec_files,
 };
 pub use types::Value;
 pub use validation::{

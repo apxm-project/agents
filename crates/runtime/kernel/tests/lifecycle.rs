@@ -12,7 +12,8 @@ use async_trait::async_trait;
 use apxm_program::artifact::SchemaDigestRef;
 use apxm_program::runtime_evidence::Fact;
 use apxm_program::runtime_evidence::{
-    InvocationState, ProgramIdentity, RuntimeEvidence, RuntimeEvidenceVersion,
+    InvocationState, LoopIterationCompletedFact, ProgramIdentity, RuntimeEvidence,
+    RuntimeEvidenceVersion,
 };
 
 use apxm_kernel::{
@@ -166,6 +167,58 @@ impl ExecutionCommitPort for FixtureCommit {
 }
 
 // ── Vectors ────────────────────────────────────────────────────────────────
+
+fn completed_loop_iteration() -> Fact {
+    Fact::LoopIterationCompleted(LoopIterationCompletedFact::new(
+        "loop-iteration.loop-occurrence.1.0".into(),
+        1,
+        "loop.1".into(),
+        "loop-occurrence.1".into(),
+        0,
+        "invocation.1".into(),
+        vec!["node-execution.1".into()],
+    ))
+}
+
+#[tokio::test]
+async fn rolled_back_loop_body_publishes_no_completion_and_replay_is_idempotent() {
+    let port = FixtureCommit::new();
+    let completion = completed_loop_iteration();
+    let request = |expected_program_state_version, commit_id: &str| ExecutionCommitRequest {
+        commit_id: commit_id.into(),
+        invocation_ref: "invocation.1".into(),
+        idempotency_key: format!("idem.{commit_id}"),
+        expected_program_state_version,
+        write_set: write_set(),
+        tuple: ExecutionCommitTuple::empty(vec![completion.clone()]),
+        evidence_batch: vec![completion.clone()],
+    };
+
+    let conflict = port.commit(request(1, "conflict")).await;
+    assert!(matches!(
+        conflict,
+        ExecutionCommitResult::CompareConflict {
+            current_program_state_version: 0
+        }
+    ));
+    assert!(port.committed_evidence("invocation.1").is_empty());
+
+    let committed = port.commit(request(0, "commit.1")).await;
+    assert!(matches!(
+        committed,
+        ExecutionCommitResult::Committed {
+            new_program_state_version: 1,
+            ..
+        }
+    ));
+    let replayed = port.commit(request(0, "commit.1")).await;
+    assert_eq!(replayed, committed);
+    assert_eq!(
+        port.committed_evidence("invocation.1"),
+        vec![completion],
+        "replay never duplicates the authoritative completion fact"
+    );
+}
 
 #[tokio::test]
 async fn atomic_commit_publishes_full_write_set_and_all_facts() {

@@ -126,7 +126,8 @@ several booleans or strings. Configuration does not accept generic
 These are fixed semantic ownership, not ports:
 
 - FrontendGraph validation and source-map meaning;
-- the five AIR operations and structural IR contract;
+- the closed five-operation effect/composition family and separate closed
+  AIS-owned structural family including `ais.loop`;
 - canonical compiler pass ordering and deterministic optimization behavior;
 - artifact encoding/admission invariants;
 - graph scheduling and dependency semantics;
@@ -134,7 +135,7 @@ These are fixed semantic ownership, not ports:
 - NodeExecution and attempt identity;
 - static Hook callback placement, Agent Facade and context flow;
 - Capability Grant validation/enforcement and effect commit protocol;
-- authored loop/Turn-region mapping;
+- authored loop identity and committed-iteration evidence meaning;
 - canonical cancellation and terminal-commit rules; and
 - canonical evidence meaning.
 

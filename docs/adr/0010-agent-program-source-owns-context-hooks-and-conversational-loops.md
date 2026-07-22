@@ -5,9 +5,16 @@ decision: D-001A, D-001B, D-001C
 owner: APXM agents
 supersedes: ADR-0001, ADR-0005
 amends: ADR-0007
+amended_by: ADR-0014
 ---
 
 # Agent Program source owns context, Hooks, and conversational loops
+
+ADR-0014 preserves source-owned behavior, explicit Context, Agent Facade Hooks,
+discovery-only Skills, and generic authored loops. It replaces this decision's
+package-level `ConversationalAgent`, Gao, conversational source-map, and
+Studio `Turn` provisions with repository examples and generic loop-iteration
+evidence.
 
 ## Context
 

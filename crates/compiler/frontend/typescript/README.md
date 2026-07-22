@@ -1,68 +1,44 @@
-# @apxm/frontend — TypeScript authoring frontend
+# @apxm/frontend — generic TypeScript Agent Program frontend
 
-`@apxm/frontend` is one of APXM's three supported authoring frontends. Its
-`GraphBuilder` and `ApxmGraph` record the compiler-owned `FrontendGraph` DTO;
-they do not format MLIR or own a second operation catalog.
+`@apxm/frontend` exposes generic Agent Program, Hook, Context, composition,
+structured-control-flow, source-map, and native compiler-bridge APIs. It
+records `apxm.frontend-graph.v1`; the Rust compiler alone validates and lowers
+that graph to AIR.
+
+Structured authoring uses `branch`, `switch`, `loop`, `parallel`, `tryCatch`,
+`throwRegion`, `returnRegion`, `yieldRegion`, and joined `structuredTask`
+scopes.
 
 ## Compilation contract
 
 ```text
-GraphBuilder / ApxmGraph
-  -> ApxmGraph.toDict()
-  -> apxm canonical-air
-  -> Rust FrontendGraph validation and native AIR bridge
+AgentProgram
+  -> FrontendGraph
+  -> explicit native compiler bridge
   -> canonical AIR
-  -> MLIR compiler pipeline
-  -> .apxmobj
 ```
-
-The TypeScript frontend records a canonical `apxm.frontend-graph.v1` value. A
-caller that needs AIR passes that graph to the explicit native bridge (`apxm
-canonical-air`) or to an admitted remote compile client. The frontend package
-does not invoke the CLI, print AIR, or select a fallback compiler mode.
 
 ## Authoring
 
 ```ts
-import { GraphBuilder } from "@apxm/frontend";
+import { AgentProgram } from "@apxm/frontend";
 
-const graph = new GraphBuilder("hello", { metadata: { is_entry: true } });
-graph.param("name", "str");
-const greeting = graph.ask({ name: "greet", prompt: "Greet {name}." });
-graph.done(greeting, "out");
+const program = new AgentProgram({
+  program_id: "hello",
+  input_type_ref: "Input",
+  output_type_ref: "Output",
+  context_type_ref: "Context",
+});
+program.loop("region.loop", (body) =>
+  body.modelCall("node.greet", "model.default"),
+);
+program.returnRegion("region.return");
 
-console.log(JSON.stringify(graph.toDict()));
+console.log(program.canonicalAir());
 ```
 
-Entry metadata is explicit. Executable programs contain exactly one
-`metadata.is_entry: true` flow; multi-flow programs mark every other flow
-`false`.
+## Checks
 
-Operation names and required attributes are generated from Rust-owned AIS
-definitions. `GraphBuilder` uses the generated `REQUIRED_ATTRS` table for early
-authoring errors, and the Rust `FrontendGraph` boundary validates again before
-printing AIR.
-
-## Tools and hooks
-
-`compileHandlers()` creates the versioned `HandlerManifest` sidecar used by
-both Python and TypeScript. Each descriptor carries a kind (`tool` or `hook`),
-stable handler ID, language, typed hook fields where applicable, and
-artifact-local bundled source. The runtime indexes tools by capability name and
-all handlers by handler ID.
-
-## Generated code and checks
-
-`src/generated/` is generated from the Rust AIS operation definitions. Do not
-edit it directly. Regenerate through the owning Dekk command:
-
-```bash
-dekk agents codegen
+```sh
 dekk agents test-typescript-frontend
-dekk agents check-frontend-codegen
-dekk agents check-frontend-parity
 ```
-
-The parity command builds a real `apxm` binary and executes both Python and
-TypeScript native-authoring vectors against the same DTO and canonical AIR
-fixtures. It fails if either supported frontend cannot run.

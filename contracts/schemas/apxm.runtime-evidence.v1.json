@@ -50,6 +50,66 @@
       "additionalProperties": false
     },
     "Fact": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/LoopIterationCompletedFact"
+        },
+        {
+          "$ref": "#/$defs/NodeExecutionRecordedFact"
+        },
+        {
+          "$ref": "#/$defs/RuntimeFact"
+        }
+      ]
+    },
+    "LoopIterationCompletedFact": {
+      "type": "object",
+      "required": [
+        "fact_id",
+        "event_sequence",
+        "fact_kind",
+        "static_loop_id",
+        "loop_occurrence_id",
+        "iteration_index",
+        "program_invocation_id",
+        "causal_node_execution_ids"
+      ],
+      "properties": {
+        "fact_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "event_sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fact_kind": {
+          "const": "LoopIterationCompleted"
+        },
+        "static_loop_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "loop_occurrence_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "iteration_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "program_invocation_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "causal_node_execution_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimeFact": {
       "type": "object",
       "required": [
         "fact_id",
@@ -86,7 +146,6 @@
             "effect.outcome_unknown",
             "delivery.recorded",
             "region.occurrence_started",
-            "node_execution.recorded",
             "hook.executed",
             "context.transitioned"
           ]
@@ -156,6 +215,13 @@
         "static_region_id": {
           "$ref": "apxm.contract-common.v1#/$defs/Identifier"
         },
+        "loop_memberships": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LoopMembership"
+          },
+          "uniqueItems": true
+        },
         "air_node_id": {
           "$ref": "apxm.contract-common.v1#/$defs/Identifier"
         },
@@ -199,6 +265,103 @@
         },
         "typed_error": {
           "$ref": "apxm.contract-common.v1#/$defs/TypedErrorEnvelope"
+        }
+      },
+      "additionalProperties": false
+    },
+    "NodeExecutionRecordedFact": {
+      "type": "object",
+      "required": [
+        "fact_id",
+        "event_sequence",
+        "fact_kind",
+        "node_execution_id",
+        "air_node_id",
+        "execution_scope"
+      ],
+      "properties": {
+        "fact_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "event_sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fact_kind": {
+          "const": "node_execution.recorded"
+        },
+        "node_execution_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "air_node_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "parent_node_execution_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "execution_scope": {
+          "$ref": "#/$defs/NodeExecutionScope"
+        }
+      },
+      "additionalProperties": false
+    },
+    "NodeExecutionScope": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "scope_kind"
+          ],
+          "properties": {
+            "scope_kind": {
+              "const": "non_loop"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "scope_kind",
+            "region_occurrence_id",
+            "static_region_id",
+            "loop_memberships"
+          ],
+          "properties": {
+            "scope_kind": {
+              "const": "loop"
+            },
+            "region_occurrence_id": {
+              "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+            },
+            "static_region_id": {
+              "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+            },
+            "loop_memberships": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/LoopMembership"
+              },
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "LoopMembership": {
+      "type": "object",
+      "required": [
+        "static_loop_id",
+        "loop_occurrence_id"
+      ],
+      "properties": {
+        "static_loop_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "loop_occurrence_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
         }
       },
       "additionalProperties": false

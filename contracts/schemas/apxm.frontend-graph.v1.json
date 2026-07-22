@@ -142,7 +142,9 @@
       "type": "object",
       "required": [
         "node_id",
-        "op"
+        "op",
+        "parent_region_id",
+        "execution_order"
       ],
       "properties": {
         "node_id": {
@@ -158,6 +160,13 @@
             "await.event"
           ]
         },
+        "parent_region_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "execution_order": {
+          "type": "integer",
+          "minimum": 0
+        },
         "operands": {
           "type": "object"
         }
@@ -168,7 +177,8 @@
       "type": "object",
       "required": [
         "region_id",
-        "kind"
+        "kind",
+        "execution_order"
       ],
       "properties": {
         "region_id": {
@@ -183,7 +193,7 @@
             "value",
             "branch",
             "switch",
-            "loop",
+            "ais.loop",
             "parallel_join",
             "try",
             "throw",
@@ -191,6 +201,13 @@
             "return",
             "yield"
           ]
+        },
+        "parent_region_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "execution_order": {
+          "type": "integer",
+          "minimum": 0
         }
       },
       "additionalProperties": false

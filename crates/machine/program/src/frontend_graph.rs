@@ -12,10 +12,10 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 use serde_json::Map;
 
-use crate::air::{SemanticOpKind, StructuralKind};
+use crate::air::{SemanticOpKind, StructuralOpKind};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Verdict, schema_violation};
 use crate::grammar::{is_digest, is_identifier};
-use crate::source_map::{SourceLanguage, SourceMap};
+use crate::source_map::{RegionAnnotationKind, SourceLanguage, SourceMap};
 
 /// The single accepted `schema_version` for a FrontendGraph.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,6 +82,8 @@ pub struct ImportedProgramRef {
 pub struct SemanticOperation {
     pub node_id: String,
     pub op: SemanticOpKind,
+    pub parent_region_id: String,
+    pub execution_order: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operands: Option<Map<String, serde_json::Value>>,
 }
@@ -91,7 +93,10 @@ pub struct SemanticOperation {
 #[serde(deny_unknown_fields)]
 pub struct StructuralRegion {
     pub region_id: String,
-    pub kind: StructuralKind,
+    pub kind: StructuralOpKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_region_id: Option<String>,
+    pub execution_order: u32,
 }
 
 /// One explicit context-flow edge.
@@ -194,6 +199,7 @@ impl FrontendGraph {
             }
         }
 
+        collect_containment_diagnostics(&mut verdict, self);
         for import in &self.imported_program_refs {
             check_identifier(&mut verdict, &import.program_ref, "imported program_ref");
             check_digest(&mut verdict, &import.artifact_digest, &import.program_ref);
@@ -206,6 +212,104 @@ impl FrontendGraph {
 
         self.source_map.collect(&mut verdict);
         verdict.finish()
+    }
+}
+
+fn collect_containment_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph) {
+    let regions: HashSet<&str> = graph
+        .structural_regions
+        .iter()
+        .map(|region| region.region_id.as_str())
+        .collect();
+    let mut positions: HashSet<(Option<&str>, u32)> = HashSet::new();
+
+    for region in &graph.structural_regions {
+        if let Some(parent) = region.parent_region_id.as_deref()
+            && !regions.contains(parent)
+        {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                region.region_id.clone(),
+                "structural parent_region_id does not reference a declared region",
+            ));
+        }
+        if !positions.insert((region.parent_region_id.as_deref(), region.execution_order)) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                region.region_id.clone(),
+                "structural siblings have duplicate execution_order",
+            ));
+        }
+
+        let mut cursor = region.parent_region_id.as_deref();
+        let mut ancestors = HashSet::new();
+        ancestors.insert(region.region_id.as_str());
+        while let Some(parent) = cursor {
+            if !ancestors.insert(parent) {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    region.region_id.clone(),
+                    "structural containment contains a cycle",
+                ));
+                break;
+            }
+            cursor = graph
+                .structural_regions
+                .iter()
+                .find(|candidate| candidate.region_id == parent)
+                .and_then(|candidate| candidate.parent_region_id.as_deref());
+        }
+    }
+
+    for operation in &graph.semantic_operations {
+        if !regions.contains(operation.parent_region_id.as_str()) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                operation.node_id.clone(),
+                "semantic parent_region_id does not reference a declared region",
+            ));
+        }
+        if !positions.insert((
+            Some(operation.parent_region_id.as_str()),
+            operation.execution_order,
+        )) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                operation.node_id.clone(),
+                "structural and semantic siblings have duplicate execution_order",
+            ));
+        }
+    }
+
+    let loop_ids: HashSet<&str> = graph
+        .structural_regions
+        .iter()
+        .filter(|region| region.kind == StructuralOpKind::Loop)
+        .map(|region| region.region_id.as_str())
+        .collect();
+    let mut annotated_loop_ids = HashSet::new();
+    for annotation in &graph.source_map.region_annotations {
+        if annotation.annotation != RegionAnnotationKind::StructuralLoop {
+            continue;
+        }
+        if !loop_ids.contains(annotation.region_id.as_str())
+            || !annotated_loop_ids.insert(annotation.region_id.as_str())
+        {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                annotation.region_id.clone(),
+                "structural_loop annotation must identify exactly one declared loop",
+            ));
+        }
+    }
+    for loop_id in loop_ids {
+        if !annotated_loop_ids.contains(loop_id) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                loop_id,
+                "structural loop is missing its generic source-map identity",
+            ));
+        }
     }
 }
 

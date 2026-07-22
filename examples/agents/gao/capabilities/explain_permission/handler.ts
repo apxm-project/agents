@@ -1,5 +1,5 @@
 // Explains the approval posture of one capability request.
-import { tool } from "@apxm/frontend";
+import { tool } from "@apxm/agent-packaging";
 
 import {
   type CapabilityCatalogEntry,

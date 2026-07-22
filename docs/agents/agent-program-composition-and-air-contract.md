@@ -2,7 +2,7 @@
 
 - Status: canonical APXM v1 contract
 - Owner: APXM `agents`
-- Decisions: [ADR-0008](../adr/0008-agent-programs-compose-through-new-and-invoke.md), [ADR-0009](../adr/0009-air-has-five-public-semantic-operations.md), [ADR-0010](../adr/0010-agent-program-source-owns-context-hooks-and-conversational-loops.md), [ADR-0011](../adr/0011-agent-program-execution-is-one-end-to-end-spine.md)
+- Decisions: [ADR-0008](../adr/0008-agent-programs-compose-through-new-and-invoke.md), [ADR-0009](../adr/0009-air-has-five-public-semantic-operations.md), [ADR-0010](../adr/0010-agent-program-source-owns-context-hooks-and-conversational-loops.md), [ADR-0011](../adr/0011-agent-program-execution-is-one-end-to-end-spine.md), [ADR-0014](../adr/0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md)
 - Canonical contracts: `apxm.frontend-graph.v1`, `apxm.air.v1`, `apxm.executable-artifact.v1`, `apxm.runtime-evidence.v1`
 - Baseline evidence: `agents@9e26a62adebb`
 
@@ -16,7 +16,8 @@ not the current implementation.
 The `agents` repository owns:
 
 - Python and TypeScript Agent Program authoring semantics;
-- the canonical `FrontendGraph` and AIR schemas;
+- the canonical `FrontendGraph` and the closed AIS effect/composition and
+  structural operation families;
 - the compiler verifier, lowering, source map, and printer;
 - executable artifact admission;
 - Program Instance state, invocation, structured children, Hooks, context,
@@ -27,7 +28,11 @@ The `agents` repository owns:
 
 Other APXM planes may expose root instance/run APIs, create and publish Agent
 Programs, or visualize their evidence. They may not redefine `.new`,
-`.invoke`, context, Hooks, loops, AIR, runtime, or model-backend semantics.
+`.invoke`, context, Hooks, loops, AIS/AIR, runtime, or model-backend semantics.
+
+Installable frontends expose generic Agent Program APIs only.
+`ConversationalAgent` and Gao are repository-example constructs, not package
+exports or core contract names.
 
 This contract does not define user administration, Agent Definition lifecycle,
 company hierarchy, Skill catalogue policy, product billing, provider-specific
@@ -340,7 +345,7 @@ program definitions and typed entrypoints
 exact imported ProgramRefs
 typed values, blocks, regions, functions, and data edges
 five semantic operation records
-structured control-flow records
+closed structural operation records
 explicit context/state flow
 static Hook bindings
 Capability and model requirements
@@ -355,12 +360,12 @@ The graph MUST NOT contain:
 - runtime endpoint/path/profile/process/worker choices;
 - credentials, bearer grants, or provider secrets;
 - dynamic Hook/Capability registration; or
-- a runtime `ConversationalAgent`, Turn, memory tier, or autonomous-loop mode.
+- a conversation-specific runtime type, memory tier, or autonomous-loop mode.
 
 Unknown semantic fields fail closed. Descriptive source-map extensions may be
 ignored only when the contract marks them non-semantic.
 
-## 8. AIR v1
+## 8. AIR effect/composition operations
 
 ### 8.1 `model.call`
 
@@ -490,11 +495,14 @@ AIR contains no polling URL, notification target, store, backend TTL, or
 `resume` operation. Approval products fulfill this APXM contract rather than
 defining another event state machine.
 
-## 9. Structural IR and durability
+## 9. Structural AIS and durability
 
-Structural IR provides ordinary functions, regions, blocks, values, branches,
-switches, loops, parallel joins, try/throw/catch, return, and yield. It is
-versioned as part of AIR but is not exposed as an agent operation builder.
+The second closed AIS family provides ordinary functions, regions, blocks,
+values, branches, switches, loops including `ais.loop`, parallel joins,
+try/throw/catch, return, and yield. It is versioned and generated as part of
+AIR but is not exposed as an agent operation builder. The five operations in
+section 8 remain the complete effect/composition family; `ais.loop` is not a
+sixth member.
 
 - The frontend standard library's structured task scope lowers to parallel
   regions whose exit joins all children; there is no detach or language-native
@@ -513,22 +521,37 @@ versioned as part of AIR but is not exposed as an agent operation builder.
 - Runtime retry remains an attempt under one NodeExecution. Source-authored
   repetition creates a new NodeExecution occurrence.
 
-## 10. Conversational Agent and Turn projection
+## 10. Generic loop iteration contract
 
-A frontend Conversational Agent authors a structured loop and yield points. An
-invocation of its Program Instance resumes one loop occurrence and returns at
-the next program yield/return. The runtime sees only generic typed program
-semantics.
+Source authors ordinary structured loops and yield points through generic
+Agent Program APIs. Rust emits `ais.loop` and related structural AIS; source
+maps identify static loop regions without a conversation-specific annotation.
 
-The compiler source map MAY annotate a loop region as conversational. The
-runtime records a generic region occurrence. Studio joins those records and
-labels the occurrence **Turn N**. Queue acceptance before region entry and
-delivery after yield are not part of the Turn projection.
+When one loop body and its back-edge commit atomically, runtime MUST emit one
+`LoopIterationCompleted` fact in the same Execution Commit. The fact MUST
+contain:
+
+```text
+static_loop_id
+loop_occurrence_id
+iteration_index
+program_invocation_id
+causal_node_execution_ids
+```
+
+`iteration_index` is zero-based within the dynamic loop occurrence. Fact
+identity and ordering MUST be replay-stable. A failed, cancelled, or rolled-back
+body MUST NOT emit completion. A trace, region-start fact, or Studio projection
+cannot substitute for the committed fact.
+
+Studio projects generic loop iterations and has no core `Turn` type. Repository
+examples may label a conversational iteration as a “turn” in example-local
+documentation.
 
 ### 10.1 External agents are Capability effects
 
-An ACP peer's prompt loop is not a Conversational Agent loop and its prompt
-turn is not an APXM Turn. Source uses the typed External Agent Capability
+An ACP peer's prompt loop is not an APXM structural loop occurrence. Source
+uses the typed External Agent Capability
 surface; every operation lowers to `capability.invoke`. The outer occurrence is
 one Capability NodeExecution whose ordered ACP messages, plans, diffs, tools,
 terminal activity, reverse requests and usage are nested attributed evidence.
@@ -553,6 +576,7 @@ static program_node_id
 node_execution_id per actual visit
 attempt_id per runtime retry
 region occurrence ids
+static loop ids, dynamic loop occurrence ids, and iteration indexes
 status, timestamps, cancellation, and typed errors
 model/capability/program operation evidence, including model/effect ids
 Hook executions and context before/after refs
@@ -571,6 +595,7 @@ span or client projection:
 | `invocation.admitted` | instance/invocation/parent/callsite/occurrence, input digest, authority/admission refs |
 | `child.attached` | parent and child identities, owner, target identity/artifact, structured-scope identity |
 | `attempt.recorded` | NodeExecution, attempt number, retry cause, timestamps |
+| `LoopIterationCompleted` | static loop id, dynamic occurrence id, zero-based iteration index, Program Invocation id, causal NodeExecution ids |
 | `invocation.committed` | monotonic commit sequence, `yielded` or `returned`, output/context/continuation refs, resolved-child set |
 | `invocation.failed` / `invocation.cancelled` | typed cause, last commit sequence, effect outcome refs |
 | `event.created` | event id/schema/scope/creator, idempotency identity, expiry policy |
@@ -582,8 +607,9 @@ span or client projection:
 | `delivery.recorded` | external consumer/delivery status, always separate from execution success |
 
 Every authoritative state transition above—creation, admission, child attach,
-attempt state, park/event registration, event terminal, successful commit,
-failure/cancellation, instance terminal, and delivery—MUST share one
+attempt state, completed loop iteration, park/event registration, event
+terminal, successful commit, failure/cancellation, instance terminal, and
+delivery—MUST share one
 transaction with its corresponding fact/outbox row. Evidence publication is
 idempotent and reconstructable from those outboxes. A trace, socket close,
 token stream, or delivery record cannot override lifecycle truth. Uncertain
@@ -597,9 +623,9 @@ cannot contradict the state fact.
 
 A Session Output folder belongs to each actual NodeExecution occurrence, not
 only to the static node. Admin-authorized Studio inspection can drill from a
-Turn projection to each NodeExecution and its evidence. Access and content
-capture remain governed by APXM Studio access, retention, and observability
-policy.
+loop-iteration projection to each NodeExecution and its evidence. Access and
+content capture remain governed by APXM Studio access, retention, and
+observability policy.
 
 ## 12. Failure contract
 
@@ -746,8 +772,8 @@ Positive vectors MUST cover:
 - model pre-send retry, backend-idempotent retry/reconciliation, and
   post-send `ModelOutcomeUnknown` without duplicate work;
 - Skill discovery without automatic Skill injection;
-- generic loop/yield, region occurrence, Turn projection, and NodeExecution
-  evidence; and
+- generic loop/yield, `LoopIterationCompleted`, replay-stable iteration
+  projection, and NodeExecution evidence; and
 - local embedded and Server-hosted execution equivalence.
 
 Negative vectors MUST cover:
@@ -768,5 +794,5 @@ Negative vectors MUST cover:
 - parent-to-child context/Skill/authority inheritance not explicitly admitted;
 - Capability result automatically entering context;
 - Hook access to runtime internals or illegal result replacement;
-- runtime-created model/tool loop or Turn entity; and
+- runtime-created model/tool loop or conversation-specific entity; and
 - alias, fallback, translator, or mixed artifact acceptance.

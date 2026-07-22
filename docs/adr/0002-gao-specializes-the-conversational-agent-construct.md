@@ -1,9 +1,14 @@
 ---
-status: accepted
+status: superseded by ADR-0014
 date: 2026-07-15
+superseded_by: ADR-0014
 ---
 
 # Gao specializes the Conversational Agent construct
+
+This decision is preserved as historical rationale. ADR-0014 replaces its
+package-level `ConversationalAgent` and named Gao target with repository
+examples built only from generic Agent Program APIs.
 
 Gao will be implemented as a named TypeScript specialization of APXM's
 standard Conversational Agent frontend construct. Gao may compose prompts,

@@ -1,13 +1,119 @@
-//! Canonical five-operation AIS semantic specification.
+//! Canonical closed AIS operation families.
 //!
 //! This module is the single source of truth for the five public semantic
-//! operations accepted by `apxm.air.v1` and `apxm.frontend-graph.v1`. Structural
-//! control flow (branch, loop, yield, return, try/catch, etc.) is compiler-owned
-//! IR and is intentionally absent here.
+//! operations and the compiler-emitted structural operations accepted by
+//! `apxm.air.v1` and `apxm.frontend-graph.v1`.
 
 use super::category::OperationCategory;
 use serde::{Deserialize, Serialize};
 use std::fmt;
+
+/// The closed compiler-emitted structural AIS operation family.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum StructuralOpKind {
+    #[serde(rename = "function")]
+    Function,
+    #[serde(rename = "region")]
+    Region,
+    #[serde(rename = "block")]
+    Block,
+    #[serde(rename = "value")]
+    Value,
+    #[serde(rename = "branch")]
+    Branch,
+    #[serde(rename = "switch")]
+    Switch,
+    #[serde(rename = "ais.loop")]
+    Loop,
+    #[serde(rename = "parallel_join")]
+    ParallelJoin,
+    #[serde(rename = "try")]
+    Try,
+    #[serde(rename = "throw")]
+    Throw,
+    #[serde(rename = "catch")]
+    Catch,
+    #[serde(rename = "return")]
+    Return,
+    #[serde(rename = "yield")]
+    Yield,
+}
+
+impl StructuralOpKind {
+    #[must_use]
+    pub const fn wire(self) -> &'static str {
+        match self {
+            Self::Function => "function",
+            Self::Region => "region",
+            Self::Block => "block",
+            Self::Value => "value",
+            Self::Branch => "branch",
+            Self::Switch => "switch",
+            Self::Loop => "ais.loop",
+            Self::ParallelJoin => "parallel_join",
+            Self::Try => "try",
+            Self::Throw => "throw",
+            Self::Catch => "catch",
+            Self::Return => "return",
+            Self::Yield => "yield",
+        }
+    }
+
+    #[must_use]
+    pub const fn mlir_cpp_class(self) -> &'static str {
+        match self {
+            Self::Function => "StructuralFunctionOp",
+            Self::Region => "StructuralRegionOp",
+            Self::Block => "StructuralBlockOp",
+            Self::Value => "StructuralValueOp",
+            Self::Branch => "StructuralBranchOp",
+            Self::Switch => "StructuralSwitchOp",
+            Self::Loop => "LoopOp",
+            Self::ParallelJoin => "StructuralParallelJoinOp",
+            Self::Try => "StructuralTryOp",
+            Self::Throw => "StructuralThrowOp",
+            Self::Catch => "StructuralCatchOp",
+            Self::Return => "StructuralReturnOp",
+            Self::Yield => "StructuralYieldOp",
+        }
+    }
+
+    #[must_use]
+    pub const fn all() -> [Self; 13] {
+        [
+            Self::Function,
+            Self::Region,
+            Self::Block,
+            Self::Value,
+            Self::Branch,
+            Self::Switch,
+            Self::Loop,
+            Self::ParallelJoin,
+            Self::Try,
+            Self::Throw,
+            Self::Catch,
+            Self::Return,
+            Self::Yield,
+        ]
+    }
+}
+
+impl fmt::Display for StructuralOpKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.wire())
+    }
+}
+
+impl std::str::FromStr for StructuralOpKind {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, String> {
+        Self::all()
+            .into_iter()
+            .find(|kind| kind.wire() == value.trim())
+            .ok_or_else(|| format!("Unknown structural AIS operation: '{value}'"))
+    }
+}
 
 /// The five — and only five — public semantic AIS operations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -90,15 +90,35 @@ fn emit_module(air: &AirModule) -> String {
         out.push_str(op.op.wire());
         out.push_str("\"() {apxm.node_id = \"");
         push_escaped(&mut out, &op.node_id);
-        out.push_str("\"} : () -> ()\n");
+        out.push_str("\", apxm.parent_region_id = \"");
+        push_escaped(&mut out, &op.parent_region_id);
+        out.push_str("\", apxm.execution_order = ");
+        out.push_str(&op.execution_order.to_string());
+        out.push_str(" : i64} : () -> ()\n");
     }
 
-    for region in &air.structural_ir {
-        out.push_str("    \"apxm.structural\"() {apxm.kind = \"");
-        out.push_str(region.kind.wire());
-        out.push_str("\", apxm.region_id = \"");
+    for (index, region) in air.structural_ir.iter().enumerate() {
+        out.push_str("    %structural");
+        out.push_str(&index.to_string());
+        out.push_str(" = \"ais.");
+        out.push_str(
+            region
+                .kind
+                .wire()
+                .strip_prefix("ais.")
+                .unwrap_or(region.kind.wire()),
+        );
+        out.push_str("\"() {apxm.region_id = \"");
         push_escaped(&mut out, &region.region_id);
-        out.push_str("\"} : () -> ()\n");
+        out.push('"');
+        if let Some(parent_region_id) = &region.parent_region_id {
+            out.push_str(", apxm.parent_region_id = \"");
+            push_escaped(&mut out, parent_region_id);
+            out.push('"');
+        }
+        out.push_str(", apxm.execution_order = ");
+        out.push_str(&region.execution_order.to_string());
+        out.push_str(" : i64} : () -> !ais.token\n");
     }
 
     out.push_str("    func.return\n  }\n}\n");
@@ -125,22 +145,25 @@ mod tests {
         json!({
             "schema_version": "apxm.air.v1",
             "semantic_operations": [
-                {"node_id": "node.model.1", "op": "model.call"},
-                {"node_id": "node.cap.1", "op": "capability.invoke"},
-                {"node_id": "node.new.1", "op": "program.new"},
-                {"node_id": "node.invoke.1", "op": "program.invoke"},
-                {"node_id": "node.await.1", "op": "await.event"}
+                {"node_id": "node.model.1", "op": "model.call", "parent_region_id": "region.loop.1", "execution_order": 0},
+                {"node_id": "node.cap.1", "op": "capability.invoke", "parent_region_id": "region.loop.1", "execution_order": 1},
+                {"node_id": "node.new.1", "op": "program.new", "parent_region_id": "region.loop.1", "execution_order": 2},
+                {"node_id": "node.invoke.1", "op": "program.invoke", "parent_region_id": "region.loop.1", "execution_order": 3},
+                {"node_id": "node.await.1", "op": "await.event", "parent_region_id": "region.loop.1", "execution_order": 4}
             ],
             "structural_ir": [
-                {"region_id": "region.fn.1", "kind": "function"},
-                {"region_id": "region.loop.1", "kind": "loop"},
-                {"region_id": "region.return.1", "kind": "return"}
+                {"region_id": "region.fn.1", "kind": "function", "execution_order": 0},
+                {"region_id": "region.loop.1", "kind": "ais.loop", "parent_region_id": "region.fn.1", "execution_order": 0},
+                {"region_id": "region.return.1", "kind": "return", "parent_region_id": "region.fn.1", "execution_order": 1}
             ],
+            "context_flow": [],
             "source_map": {
                 "schema_version": "apxm.source-map.v1",
                 "source_language": "python",
                 "node_spans": [],
-                "region_annotations": []
+                "region_annotations": [
+                    {"region_id": "region.loop.1", "annotation": "structural_loop"}
+                ]
             }
         })
     }
@@ -159,8 +182,9 @@ mod tests {
             first, second,
             "canonical MLIR lowering is not byte-identical"
         );
-        assert!(first.contains("\"apxm.model.call\"() {apxm.node_id = \"node.model.1\"}"));
-        assert!(first.contains("\"apxm.structural\"() {apxm.kind = \"function\""));
+        assert!(first.contains("apxm.parent_region_id = \"region.loop.1\""));
+        assert!(first.contains("apxm.execution_order = 0 : i64"));
+        assert!(first.contains("\"ais.loop\"()"));
     }
 
     #[test]
@@ -169,8 +193,14 @@ mod tests {
         // must not reach MLIR.
         let bad = json!({
             "schema_version": "apxm.air.v1",
-            "semantic_operations": [{"node_id": "node.dup", "op": "model.call"}, {"node_id": "node.dup", "op": "model.call"}],
-            "structural_ir": [],
+            "semantic_operations": [
+                {"node_id": "node.dup", "op": "model.call", "parent_region_id": "region.root", "execution_order": 0},
+                {"node_id": "node.dup", "op": "model.call", "parent_region_id": "region.root", "execution_order": 1}
+            ],
+            "structural_ir": [
+                {"region_id": "region.root", "kind": "region", "execution_order": 0}
+            ],
+            "context_flow": [],
             "source_map": {
                 "schema_version": "apxm.source-map.v1",
                 "source_language": "python",

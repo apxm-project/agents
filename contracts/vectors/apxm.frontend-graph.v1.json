@@ -26,6 +26,8 @@
         {
           "node_id": "node.model.1",
           "op": "model.call",
+          "parent_region_id": "region.loop.1",
+          "execution_order": 0,
           "operands": {
             "model_target_ref": "model.default"
           }
@@ -33,31 +35,48 @@
         {
           "node_id": "node.cap.1",
           "op": "capability.invoke",
+          "parent_region_id": "region.loop.1",
+          "execution_order": 1,
           "operands": {
             "capability_ref": "cap.search"
           }
         },
         {
           "node_id": "node.new.1",
-          "op": "program.new"
+          "op": "program.new",
+          "parent_region_id": "region.loop.1",
+          "execution_order": 2
         },
         {
           "node_id": "node.invoke.1",
-          "op": "program.invoke"
+          "op": "program.invoke",
+          "parent_region_id": "region.loop.1",
+          "execution_order": 3
         },
         {
           "node_id": "node.await.1",
-          "op": "await.event"
+          "op": "await.event",
+          "parent_region_id": "region.loop.1",
+          "execution_order": 4
         }
       ],
       "structural_regions": [
         {
+          "region_id": "region.root",
+          "kind": "region",
+          "execution_order": 0
+        },
+        {
           "region_id": "region.loop.1",
-          "kind": "loop"
+          "kind": "ais.loop",
+          "parent_region_id": "region.root",
+          "execution_order": 0
         },
         {
           "region_id": "region.return.1",
-          "kind": "return"
+          "kind": "return",
+          "parent_region_id": "region.root",
+          "execution_order": 1
         }
       ],
       "context_flow": [
@@ -95,7 +114,12 @@
         "schema_version": "apxm.source-map.v1",
         "source_language": "python",
         "node_spans": [],
-        "region_annotations": []
+        "region_annotations": [
+          {
+            "region_id": "region.loop.1",
+            "annotation": "structural_loop"
+          }
+        ]
       }
     },
     "expected_valid": true

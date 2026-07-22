@@ -1,9 +1,8 @@
-//! Structural AIR schedule: derive hook, context, and loop-boundary steps from
-//! `AirModule::structural_ir` instead of walking semantic operations alone.
+//! Structural AIR schedule derived only from typed containment and sibling order.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
-use apxm_program::air::{AirModule, SemanticOpKind, StructuralKind, StructuralNode};
+use apxm_program::air::{AirModule, SemanticOpKind, StructuralOpKind};
 use apxm_program::frontend_graph::{HookBinding, HookPhase, HookScope};
 
 /// One runtime step derived from structural AIR plus the flat semantic op list.
@@ -16,84 +15,203 @@ pub enum ScheduleStep {
     /// Commit explicit Context along a recorded context-flow edge.
     ContextEdge { from_node: String, to_node: String },
     /// Dispatch semantic operation at `index` in `air.semantic_operations`.
-    Semantic { index: usize },
-    /// Suspend at a compiler-provided loop continuation identity.
-    LoopYield {
-        continuation_id: String,
-        resume_semantic_index: usize,
+    Semantic {
+        index: usize,
+        loop_path: Vec<String>,
     },
+    EnterLoop { static_loop_id: String },
+    LoopBackEdge { static_loop_id: String },
+    ProgramYield { region_id: String },
+    ProgramReturn { region_id: String },
+    ProgramExit { region_id: String },
 }
 
 /// Build the deterministic execution schedule for `air`.
-///
-/// When `structural_ir` is empty the schedule is a straight semantic walk, preserving
-/// the legacy single-shot/resumable behavior. When structural nodes are present the
-/// schedule interleaves compiled Hook callsites and explicit Context commits around
-/// the authored semantic operation order and ends conversational loops with yield.
 #[must_use]
 pub fn build_schedule(air: &AirModule, hook_bindings: &[HookBinding]) -> Vec<ScheduleStep> {
-    if air.structural_ir.is_empty() {
-        return (0..air.semantic_operations.len())
-            .map(|index| ScheduleStep::Semantic { index })
-            .collect();
-    }
-
-    let context_edges = parse_context_edges(&air.structural_ir);
-    let loop_yields = loop_yields(&air.structural_ir);
-
+    let context_edges: BTreeMap<&str, &str> = air
+        .context_flow
+        .iter()
+        .map(|edge| (edge.from_node.as_str(), edge.to_node.as_str()))
+        .collect();
     let mut schedule = Vec::new();
-    let mut seen_context: BTreeSet<(String, String)> = BTreeSet::new();
 
     for binding in ordered_hooks(hook_bindings, HookPhase::Before, |hook| {
-        hook.scope == HookScope::Agent || hook.scope == HookScope::Loop
+        hook.scope == HookScope::Agent
     }) {
         schedule.push(ScheduleStep::HookBefore {
             binding: binding.clone(),
         });
     }
 
-    for (index, op) in air.semantic_operations.iter().enumerate() {
-        for binding in ordered_hooks(hook_bindings, HookPhase::Before, |hook| {
-            hook_targets_operation(hook, &op.node_id, op.op)
-        }) {
-            schedule.push(ScheduleStep::HookBefore {
-                binding: binding.clone(),
-            });
-        }
-        schedule.push(ScheduleStep::Semantic { index });
-        if let Some(to_node) = context_edges.get(&op.node_id) {
-            let key = (op.node_id.clone(), to_node.clone());
-            if seen_context.insert(key.clone()) {
-                schedule.push(ScheduleStep::ContextEdge {
-                    from_node: key.0,
-                    to_node: key.1,
-                });
-            }
-        }
-        for binding in ordered_hooks(hook_bindings, HookPhase::After, |hook| {
-            hook_targets_operation(hook, &op.node_id, op.op)
-        }) {
-            schedule.push(ScheduleStep::HookAfter {
-                binding: binding.clone(),
-            });
-        }
-    }
+    emit_children(
+        air,
+        hook_bindings,
+        &context_edges,
+        None,
+        &[],
+        &mut schedule,
+    );
 
     for binding in ordered_hooks(hook_bindings, HookPhase::After, |hook| {
-        hook.scope == HookScope::Loop || hook.scope == HookScope::Agent
+        hook.scope == HookScope::Agent
     }) {
         schedule.push(ScheduleStep::HookAfter {
             binding: binding.clone(),
         });
     }
+    schedule
+}
 
-    for continuation_id in loop_yields {
-        schedule.push(ScheduleStep::LoopYield {
-            continuation_id,
-            resume_semantic_index: 0,
+fn emit_children(
+    air: &AirModule,
+    hook_bindings: &[HookBinding],
+    context_edges: &BTreeMap<&str, &str>,
+    parent_region_id: Option<&str>,
+    loop_path: &[String],
+    schedule: &mut Vec<ScheduleStep>,
+) {
+    enum Child {
+        Structural(usize),
+        Semantic(usize),
+    }
+
+    let mut children = Vec::new();
+    for (index, region) in air.structural_ir.iter().enumerate() {
+        if region.parent_region_id.as_deref() == parent_region_id {
+            children.push((region.execution_order, Child::Structural(index)));
+        }
+    }
+    if let Some(parent_region_id) = parent_region_id {
+        for (index, operation) in air.semantic_operations.iter().enumerate() {
+            if operation.parent_region_id == parent_region_id {
+                children.push((operation.execution_order, Child::Semantic(index)));
+            }
+        }
+    }
+    children.sort_by_key(|(order, _)| *order);
+
+    for (_, child) in children {
+        match child {
+            Child::Semantic(index) => {
+                emit_semantic(
+                    air,
+                    hook_bindings,
+                    context_edges,
+                    index,
+                    loop_path,
+                    schedule,
+                );
+            }
+            Child::Structural(index) => {
+                let region = &air.structural_ir[index];
+                match region.kind {
+                    StructuralOpKind::Loop => {
+                        schedule.push(ScheduleStep::EnterLoop {
+                            static_loop_id: region.region_id.clone(),
+                        });
+                        for binding in ordered_hooks(
+                            hook_bindings,
+                            HookPhase::Before,
+                            |hook| {
+                                hook.scope == HookScope::Loop
+                                    && hook.target_selector == region.region_id
+                            },
+                        ) {
+                            schedule.push(ScheduleStep::HookBefore {
+                                binding: binding.clone(),
+                            });
+                        }
+                        let mut nested_path = loop_path.to_vec();
+                        nested_path.push(region.region_id.clone());
+                        emit_children(
+                            air,
+                            hook_bindings,
+                            context_edges,
+                            Some(&region.region_id),
+                            &nested_path,
+                            schedule,
+                        );
+                        for binding in ordered_hooks(
+                            hook_bindings,
+                            HookPhase::After,
+                            |hook| {
+                                hook.scope == HookScope::Loop
+                                    && hook.target_selector == region.region_id
+                            },
+                        ) {
+                            schedule.push(ScheduleStep::HookAfter {
+                                binding: binding.clone(),
+                            });
+                        }
+                        schedule.push(ScheduleStep::LoopBackEdge {
+                            static_loop_id: region.region_id.clone(),
+                        });
+                    }
+                    StructuralOpKind::Yield => schedule.push(ScheduleStep::ProgramYield {
+                        region_id: region.region_id.clone(),
+                    }),
+                    StructuralOpKind::Return => schedule.push(ScheduleStep::ProgramReturn {
+                        region_id: region.region_id.clone(),
+                    }),
+                    StructuralOpKind::Throw => schedule.push(ScheduleStep::ProgramExit {
+                        region_id: region.region_id.clone(),
+                    }),
+                    StructuralOpKind::Function
+                    | StructuralOpKind::Region
+                    | StructuralOpKind::Block
+                    | StructuralOpKind::Branch
+                    | StructuralOpKind::Switch
+                    | StructuralOpKind::ParallelJoin
+                    | StructuralOpKind::Try
+                    | StructuralOpKind::Catch => emit_children(
+                        air,
+                        hook_bindings,
+                        context_edges,
+                        Some(&region.region_id),
+                        loop_path,
+                        schedule,
+                    ),
+                    StructuralOpKind::Value => {}
+                }
+            }
+        }
+    }
+}
+
+fn emit_semantic(
+    air: &AirModule,
+    hook_bindings: &[HookBinding],
+    context_edges: &BTreeMap<&str, &str>,
+    index: usize,
+    loop_path: &[String],
+    schedule: &mut Vec<ScheduleStep>,
+) {
+    let operation = &air.semantic_operations[index];
+    for binding in ordered_hooks(hook_bindings, HookPhase::Before, |hook| {
+        hook_targets_operation(hook, &operation.node_id, operation.op)
+    }) {
+        schedule.push(ScheduleStep::HookBefore {
+            binding: binding.clone(),
         });
     }
-    schedule
+    schedule.push(ScheduleStep::Semantic {
+        index,
+        loop_path: loop_path.to_vec(),
+    });
+    if let Some(to_node) = context_edges.get(operation.node_id.as_str()) {
+        schedule.push(ScheduleStep::ContextEdge {
+            from_node: operation.node_id.clone(),
+            to_node: (*to_node).to_string(),
+        });
+    }
+    for binding in ordered_hooks(hook_bindings, HookPhase::After, |hook| {
+        hook_targets_operation(hook, &operation.node_id, operation.op)
+    }) {
+        schedule.push(ScheduleStep::HookAfter {
+            binding: binding.clone(),
+        });
+    }
 }
 
 fn ordered_hooks(
@@ -139,151 +257,142 @@ const fn scope_rank(scope: HookScope) -> u8 {
     }
 }
 
-fn parse_context_edges(structural_ir: &[StructuralNode]) -> BTreeMap<String, String> {
-    let mut edges = BTreeMap::new();
-    for node in structural_ir {
-        if node.kind != StructuralKind::Value {
-            continue;
-        }
-        let Some((from_node, to_node)) = parse_context_value_id(&node.region_id) else {
-            continue;
-        };
-        edges.insert(from_node.clone(), to_node);
-    }
-    edges
-}
-
-fn parse_context_value_id(region_id: &str) -> Option<(String, String)> {
-    let rest = region_id.strip_prefix("value.context.")?;
-    let positions: Vec<usize> = rest.match_indices(".node.").map(|(pos, _)| pos).collect();
-    for &pos in positions.iter().rev() {
-        if pos == 0 {
-            continue;
-        }
-        let from_node = rest[..pos].to_string();
-        let to_node = rest[pos + 1..].to_string();
-        if from_node.starts_with("node.") && to_node.starts_with("node.") {
-            return Some((from_node, to_node));
-        }
-    }
-    None
-}
-
-fn loop_yields(structural_ir: &[StructuralNode]) -> Vec<String> {
-    structural_ir
-        .iter()
-        .filter(|node| node.kind == StructuralKind::Yield)
-        .map(|node| node.region_id.clone())
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use apxm_program::air::AirModule;
-    use apxm_program::frontend_graph::{HookBinding, HookPhase, HookReturnMode, HookScope};
     use serde_json::json;
 
-    fn gao_air() -> AirModule {
-        serde_json::from_value(json!({
+    #[test]
+    fn non_loop_yield_is_not_scheduled_as_a_committed_back_edge() {
+        let air: AirModule = serde_json::from_value(json!({
             "schema_version": "apxm.air.v1",
-            "semantic_operations": [
-                {"node_id": "node.turn.model", "op": "model.call", "operands": {"model_target_ref": "model.default"}},
-                {"node_id": "node.turn.tool", "op": "capability.invoke", "operands": {"capability_ref": "cap.search"}},
-                {"node_id": "node.turn.await", "op": "await.event", "operands": {"event_ref": "session-input:s1"}}
-            ],
+            "semantic_operations": [],
             "structural_ir": [
-                {"region_id": "region.loop.turn", "kind": "loop"},
-                {"region_id": "region.region.loop.turn.yield", "kind": "yield"},
-                {"region_id": "value.hook.before.hook.before.turn", "kind": "value"},
-                {"region_id": "value.context.node.turn.model.node.turn.tool", "kind": "value"},
-                {"region_id": "value.hook.after.hook.after.model", "kind": "value"}
+                {
+                    "region_id": "region.program.yield",
+                    "kind": "yield",
+                    "execution_order": 0
+                }
             ],
-            "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
+            "context_flow": [],
+            "source_map": {
+                "schema_version": "apxm.source-map.v1",
+                "source_language": "python",
+                "node_spans": [],
+                "region_annotations": []
+            }
         }))
-        .expect("gao air")
+        .expect("program yield AIR");
+
+        assert!(
+            build_schedule(&air, &[])
+                .iter()
+                .all(|step| !matches!(step, ScheduleStep::LoopBackEdge { .. }))
+        );
+        assert!(matches!(
+            build_schedule(&air, &[]).as_slice(),
+            [ScheduleStep::ProgramYield { .. }]
+        ));
     }
 
     #[test]
-    fn schedule_interleaves_hooks_context_and_yield() {
-        let hooks = vec![
-            hook("hook.agent.before", HookScope::Agent, HookPhase::Before, "region.fn.Gao", 0),
-            hook("hook.loop.before", HookScope::Loop, HookPhase::Before, "region.loop.turn", 1),
-            hook("hook.node.before", HookScope::Node, HookPhase::Before, "node.turn.model", 2),
-            hook("hook.model.before", HookScope::Model, HookPhase::Before, "node.turn.model", 3),
-            hook("hook.node.after", HookScope::Node, HookPhase::After, "node.turn.model", 4),
-            hook("hook.model.after", HookScope::Model, HookPhase::After, "node.turn.model", 5),
-            hook("hook.loop.after", HookScope::Loop, HookPhase::After, "region.loop.turn", 6),
-            hook("hook.agent.after", HookScope::Agent, HookPhase::After, "region.fn.Gao", 7),
-        ];
-        let schedule = build_schedule(&gao_air(), &hooks);
-        let hook_ids: Vec<_> = schedule
+    fn sibling_and_nested_loops_have_independent_ordered_back_edges() {
+        let air: AirModule = serde_json::from_value(json!({
+            "schema_version": "apxm.air.v1",
+            "semantic_operations": [
+                {
+                    "node_id": "node.outer.before",
+                    "op": "model.call",
+                    "parent_region_id": "loop.outer",
+                    "execution_order": 0
+                },
+                {
+                    "node_id": "node.inner",
+                    "op": "capability.invoke",
+                    "parent_region_id": "loop.inner",
+                    "execution_order": 0
+                },
+                {
+                    "node_id": "node.outer.after",
+                    "op": "model.call",
+                    "parent_region_id": "loop.outer",
+                    "execution_order": 2
+                },
+                {
+                    "node_id": "node.sibling",
+                    "op": "model.call",
+                    "parent_region_id": "loop.sibling",
+                    "execution_order": 0
+                }
+            ],
+            "structural_ir": [
+                {"region_id": "region.root", "kind": "region", "execution_order": 0},
+                {
+                    "region_id": "loop.outer",
+                    "kind": "ais.loop",
+                    "parent_region_id": "region.root",
+                    "execution_order": 0
+                },
+                {
+                    "region_id": "loop.inner",
+                    "kind": "ais.loop",
+                    "parent_region_id": "loop.outer",
+                    "execution_order": 1
+                },
+                {
+                    "region_id": "loop.sibling",
+                    "kind": "ais.loop",
+                    "parent_region_id": "region.root",
+                    "execution_order": 1
+                }
+            ],
+            "context_flow": [],
+            "source_map": {
+                "schema_version": "apxm.source-map.v1",
+                "source_language": "python",
+                "node_spans": [],
+                "region_annotations": [
+                    {"region_id": "loop.outer", "annotation": "structural_loop"},
+                    {"region_id": "loop.inner", "annotation": "structural_loop"},
+                    {"region_id": "loop.sibling", "annotation": "structural_loop"}
+                ]
+            }
+        }))
+        .expect("nested loop AIR");
+
+        let schedule = build_schedule(&air, &[]);
+        let control: Vec<String> = schedule
             .iter()
             .filter_map(|step| match step {
-                ScheduleStep::HookBefore { binding } | ScheduleStep::HookAfter { binding } => {
-                    Some(binding.hook_id.as_str())
+                ScheduleStep::EnterLoop { static_loop_id } => {
+                    Some(format!("enter:{static_loop_id}"))
+                }
+                ScheduleStep::Semantic { index, loop_path } => Some(format!(
+                    "node:{}:{}",
+                    air.semantic_operations[*index].node_id,
+                    loop_path.join(">")
+                )),
+                ScheduleStep::LoopBackEdge { static_loop_id } => {
+                    Some(format!("back:{static_loop_id}"))
                 }
                 _ => None,
             })
             .collect();
         assert_eq!(
-            hook_ids,
-            vec![
-                "hook.agent.before",
-                "hook.loop.before",
-                "hook.node.before",
-                "hook.model.before",
-                "hook.model.after",
-                "hook.node.after",
-                "hook.loop.after",
-                "hook.agent.after",
+            control,
+            [
+                "enter:loop.outer",
+                "node:node.outer.before:loop.outer",
+                "enter:loop.inner",
+                "node:node.inner:loop.outer>loop.inner",
+                "back:loop.inner",
+                "node:node.outer.after:loop.outer",
+                "back:loop.outer",
+                "enter:loop.sibling",
+                "node:node.sibling:loop.sibling",
+                "back:loop.sibling",
             ]
         );
-        assert!(schedule.iter().any(|step| matches!(step, ScheduleStep::ContextEdge { .. })));
-        assert!(schedule.iter().any(|step| matches!(step, ScheduleStep::LoopYield { .. })));
-        assert_eq!(
-            schedule
-                .iter()
-                .filter(|step| matches!(step, ScheduleStep::Semantic { .. }))
-                .count(),
-            3
-        );
-    }
-
-    #[test]
-    fn empty_structural_ir_preserves_linear_semantic_walk() {
-        let mut air = gao_air();
-        air.structural_ir.clear();
-        let schedule = build_schedule(&air, &[]);
-        assert_eq!(
-            schedule,
-            vec![
-                ScheduleStep::Semantic { index: 0 },
-                ScheduleStep::Semantic { index: 1 },
-                ScheduleStep::Semantic { index: 2 },
-            ]
-        );
-    }
-
-    fn hook(
-        hook_id: &str,
-        scope: HookScope,
-        phase: HookPhase,
-        target_selector: &str,
-        declaration_order: u32,
-    ) -> HookBinding {
-        HookBinding {
-            hook_id: hook_id.to_string(),
-            scope,
-            phase,
-            target_selector: target_selector.to_string(),
-            declaration_order,
-            handler_ref: format!("handlers.{hook_id}"),
-            handler_digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                .to_string(),
-            input_type_ref: "Context".to_string(),
-            output_type_ref: "Context".to_string(),
-            return_mode: HookReturnMode::Observe,
-        }
     }
 }

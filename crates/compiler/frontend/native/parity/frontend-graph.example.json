@@ -1,100 +1,126 @@
 {
-  "schema_version": "apxm.frontend-graph.v1",
-  "source_language": "python",
-  "program_definitions": [
-    {
-      "program_id": "Specialist",
-      "entrypoint": "run",
-      "input_type_ref": "SpecialistInput",
-      "output_type_ref": "SpecialistOutput",
-      "context_type_ref": "SpecialistContext",
-      "has_default_context": true
-    }
-  ],
-  "imported_program_refs": [
-    {
-      "program_ref": "Summarizer",
-      "artifact_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "entrypoint": "run",
-      "target_agent_identity_requirement": "summarizer-identity"
-    }
-  ],
-  "semantic_operations": [
-    {
-      "node_id": "node.model.1",
-      "op": "model.call",
-      "operands": {
-        "model_target_ref": "model.default"
-      }
-    },
-    {
-      "node_id": "node.cap.1",
-      "op": "capability.invoke",
-      "operands": {
-        "capability_ref": "cap.search"
-      }
-    },
-    {
-      "node_id": "node.new.1",
-      "op": "program.new"
-    },
-    {
-      "node_id": "node.invoke.1",
-      "op": "program.invoke"
-    },
-    {
-      "node_id": "node.await.1",
-      "op": "await.event",
-      "operands": {
-        "event_ref": "event.specialist.await"
-      }
-    }
-  ],
-  "structural_regions": [
-    {
-      "region_id": "region.loop.1",
-      "kind": "loop"
-    },
-    {
-      "region_id": "region.return.1",
-      "kind": "return"
-    }
-  ],
-  "context_flow": [
-    {
-      "from_node": "node.model.1",
-      "to_node": "node.cap.1",
-      "context_type_ref": "SpecialistContext"
-    }
-  ],
-  "hook_bindings": [
-    {
-      "hook_id": "hook.before.model",
-      "scope": "model",
-      "phase": "before",
-      "target_selector": "node.model.1",
-      "declaration_order": 0,
-      "handler_ref": "hooks.before_model",
-      "handler_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "input_type_ref": "ModelContext",
-      "output_type_ref": "ModelContext",
-      "return_mode": "observe"
-    }
-  ],
   "capability_requirements": [
     {
       "capability_ref": "cap.search"
     }
   ],
+  "context_flow": [
+    {
+      "context_type_ref": "ConversationContext",
+      "from_node": "node.model",
+      "to_node": "node.capability"
+    }
+  ],
+  "hook_bindings": [],
+  "imported_program_refs": [],
   "model_requirements": [
     {
       "model_target_ref": "model.default"
     }
   ],
+  "program_definitions": [
+    {
+      "context_type_ref": "ConversationContext",
+      "entrypoint": "run",
+      "has_default_context": true,
+      "input_type_ref": "ConversationInput",
+      "output_type_ref": "ConversationOutput",
+      "program_id": "ConversationalExample"
+    }
+  ],
+  "schema_version": "apxm.frontend-graph.v1",
+  "semantic_operations": [
+    {
+      "execution_order": 0,
+      "node_id": "node.model",
+      "op": "model.call",
+      "operands": {
+        "model_target_ref": "model.default"
+      },
+      "parent_region_id": "region.loop.conversation"
+    },
+    {
+      "execution_order": 1,
+      "node_id": "node.capability",
+      "op": "capability.invoke",
+      "operands": {
+        "capability_ref": "cap.search"
+      },
+      "parent_region_id": "region.loop.conversation"
+    },
+    {
+      "execution_order": 2,
+      "node_id": "node.await",
+      "op": "await.event",
+      "operands": {
+        "event_ref": "event.conversation.input"
+      },
+      "parent_region_id": "region.loop.conversation"
+    }
+  ],
+  "source_language": "python",
   "source_map": {
+    "node_spans": [
+      {
+        "node_id": "node.model",
+        "semantic_annotation": "model.call",
+        "source_file": "agent.py",
+        "span": {
+          "end_column": 44,
+          "end_line": 44,
+          "start_column": 20,
+          "start_line": 44
+        }
+      },
+      {
+        "node_id": "node.capability",
+        "semantic_annotation": "capability.invoke",
+        "source_file": "agent.py",
+        "span": {
+          "end_column": 52,
+          "end_line": 45,
+          "start_column": 16,
+          "start_line": 45
+        }
+      },
+      {
+        "node_id": "node.await",
+        "semantic_annotation": "await.event",
+        "source_file": "agent.py",
+        "span": {
+          "end_column": 41,
+          "end_line": 46,
+          "start_column": 16,
+          "start_line": 46
+        }
+      }
+    ],
+    "region_annotations": [
+      {
+        "annotation": "structural_loop",
+        "region_id": "region.loop.conversation"
+      }
+    ],
     "schema_version": "apxm.source-map.v1",
-    "source_language": "python",
-    "node_spans": [],
-    "region_annotations": []
-  }
+    "source_language": "python"
+  },
+  "structural_regions": [
+    {
+      "execution_order": 0,
+      "kind": "region",
+      "region_id": "region.ConversationalExample.body"
+    },
+    {
+      "execution_order": 0,
+      "kind": "ais.loop",
+      "parent_region_id": "region.ConversationalExample.body",
+      "region_id": "region.loop.conversation"
+    },
+    {
+      "execution_order": 1,
+      "kind": "return",
+      "parent_region_id": "region.ConversationalExample.body",
+      "region_id": "region.return"
+    }
+  ]
 }

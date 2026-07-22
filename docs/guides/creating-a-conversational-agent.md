@@ -1,25 +1,31 @@
-# Create a Conversational Agent
+# Build the conversational repository example
 
 - Status: canonical target guide
-- Decisions: [ADR-0010](../adr/0010-agent-program-source-owns-context-hooks-and-conversational-loops.md)
-- Contract: [composition and AIR §10](../agents/agent-program-composition-and-air-contract.md#10-conversational-agent-and-turn-projection)
+- Decisions: [ADR-0010](../adr/0010-agent-program-source-owns-context-hooks-and-conversational-loops.md), [ADR-0014](../adr/0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md)
+- Contract: [composition and AIR §10](../agents/agent-program-composition-and-air-contract.md#10-generic-loop-iteration-contract)
 
 ## 1. Mental model
 
-A Conversational Agent is a Python or TypeScript Agent Program that authors a
-loop. A Turn is one complete execution of one loop iteration. Runtime does not
-provide a conversation loop; AIS/AIR provides the structural loop and five
-effect operations compiled from source.
+The repository's conversational Agent is an example built with generic Python
+or TypeScript `AgentProgram` APIs. The example may define a local
+`ConversationalAgent` helper for its own source organization, but that name is
+not exported by an APXM package and has no compiler, runtime, Server, contract,
+or Studio meaning.
 
 Context is a typed local accumulated value. Each iteration explicitly decides
 what the model sees, which Skills are discovered/loaded, which Capabilities are
 offered, how outputs update context, and whether to continue, yield or return.
+Rust compiles the ordinary source loop to structural `ais.loop`; the five
+effect/composition operations remain unchanged.
 
 ## 2. Contract-shaped source
 
 ```python
-@conversational_agent(context=SupportContext)
-async def support(agent: Agent[SupportContext], incoming: UserMessage):
+from apxm_program import AgentProgram
+
+
+@AgentProgram(context=SupportContext)
+async def support(agent, incoming: UserMessage):
     while not agent.context.done:
         available = await skills.search(
             query=agent.context.current_need,
@@ -47,7 +53,9 @@ returns the plain output to the caller, and binds the next typed invocation
 input when the same Program Instance resumes.
 
 ```typescript
-const support = conversationalAgent(
+import { agentProgram } from "@apxm/frontend";
+
+const support = agentProgram(
   { context: SupportContext },
   async (
     agent: Agent<SupportContext>,
@@ -75,7 +83,12 @@ const support = conversationalAgent(
 ```
 
 Python and TypeScript goldens must compile to equivalent structured regions,
-resume-input bindings and five-operation AIR.
+resume-input bindings, `ais.loop`, and the same five-operation
+effect/composition family.
+
+The snippets fix the semantic shape, not final decorator or generic spelling.
+Packed-package declarations and clean-consumer tests become syntax authority
+when the frontend implementation lane lands.
 
 ## 3. Hooks as callbacks
 
@@ -113,12 +126,17 @@ Discovery is filtered by both association and the current principal/Agent
 policy. Knowing how to do something does not authorize the Capability that can
 do it.
 
-## 5. Evidence and Studio
+## 5. Generic iteration evidence
 
-Compiler source maps mark each loop occurrence. Studio calls it a Turn and
-shows the generic nodes within it. Double-clicking a node shows permitted
-request/response, explicit model-visible context, Hooks, Capability decisions,
-usage, output files, attempts and failures.
+Compiler source maps identify the static loop without a conversational
+annotation. Runtime emits `LoopIterationCompleted` only when the body and
+back-edge commit atomically. The fact carries the static loop id, dynamic
+occurrence id, zero-based iteration index, and causal execution ids. A failed
+or rolled-back body emits no completion.
+
+Studio shows generic loop iterations and the nodes within them. Example-local
+copy may call one completed conversational iteration a “turn,” but core Studio
+has no `Turn` model.
 
 If a model returns an attributed reasoning/thinking field, Studio may display
 it under provider and policy rules. It never fabricates hidden reasoning.
@@ -128,7 +146,6 @@ it under provider and policy rules. It never fabricates hidden reasoning.
 - A failed node follows authored try/catch or terminates with a typed failure.
 - A model send with uncertain result becomes `ModelOutcomeUnknown`; no second
   model is selected.
-- A cancelled Turn is the projection of cancelled nodes/regions, not a separate
-  runtime cancellation object.
+- A cancelled or rolled-back loop body emits no `LoopIterationCompleted`.
 - Yield preserves the compiler-owned continuation and explicit next context.
 - Return completes the Program Instance and returns a plain typed value.

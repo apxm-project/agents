@@ -234,7 +234,7 @@ Deliverables:
 - keep canonical APXM semantics—admission, generic scheduling, static Hook
   callback execution, explicit Program Context, region/yield/invocation
   ordering, grant enforcement, effect protocol, and typed evidence/failures—
-  inside the kernel without introducing a runtime Turn;
+  inside the kernel without introducing a conversation-specific runtime type;
 - specify ownership/borrowing, `Send`/`Sync`, backpressure, cancellation,
   drain, shutdown, panic, and adapter-timeout behavior; and
 - make the caller's async executor lifecycle explicit without nested hidden

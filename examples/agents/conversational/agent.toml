@@ -16,19 +16,9 @@ version = "0.1.0"
 entry = "python/agent.py"
 frontend = "python"
 
-[[hooks]]
-event = "post_cap"
-handler = "capabilities.handlers.hooks.redact_tool_results"
-match = "*"
-mode = "observe"
-
 [prompts]
 context = "prompts/context.md"
 persona = "prompts/persona.md"
-
-[runtime]
-memory_space = "stm"
-session_prefix = "conversational"
 
 [source]
 type = "local"

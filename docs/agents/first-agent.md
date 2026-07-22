@@ -4,7 +4,8 @@
 > supported v1 path is governed by the APXM master-plan baseline and exists
 > only after the P0-P9 composition/AIR gates pass. Do not copy `runtime.loop`, manifest Hooks,
 > subprocess compilation, or the current identity conflation into target work.
-> See the [canonical target contract](agent-program-composition-and-air-contract.md).
+> See the [canonical target contract](agent-program-composition-and-air-contract.md)
+> and [ADR-0014](../adr/0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md).
 
 The current implementation stores an Agent Program Source Bundle in one folder
 with an authored `agent.toml`, source files, and a generated `integrity.toml`
@@ -67,10 +68,12 @@ persona = "prompts/persona.md"
 
 `mode = "host"` documents the
 [current packaging surface](../../crates/tools/cli/src/commands/agent.rs) and is
-a read-only implementation-evidence path slated for deletion. The accepted
-[Conversational Agent loop contract](conversational-agent-loop-contract.md)
-requires frontend source to lower the complete Turn through APXM; the Source
-Bundle manifest must not retain `[runtime.loop]` or `[[hooks]]` as behavior.
+a read-only implementation-evidence path slated for deletion. The historical
+[Conversational Agent loop contract](conversational-agent-loop-contract.md) is
+a link-preserving tombstone, not current authority. The target requires generic
+frontend source to lower ordinary structured loops through AIS and forbids the
+Source Bundle manifest from retaining `[runtime.loop]` or `[[hooks]]` as
+behavior.
 
 Capabilities are flat ids. Their joined definitions live under
 `capabilities/<id>/capability.toml` and
@@ -85,12 +88,11 @@ Every executable package must declare an explicit entry; no graph is
 synthesized from manifest settings.
 
 The [current public Python frontend](../../crates/compiler/frontend/python/apxm/__init__.py)
-uses `@compile`, `GraphRecorder`, `Agent`, and `@tool`. The accepted design
-defines `ConversationalAgent` as a canonical v1 frontend construct, not a
-runtime type; the pre-canonical revision does not export it. See the
-[Hook and Context contract](hook-and-context-contract.md) and its
-[implementation plan](hook-and-context-implementation-plan.md) for the target
-API and its release gate.
+uses `@compile`, `GraphRecorder`, `Agent`, and `@tool`. These are
+pre-canonical implementation evidence. The accepted target exposes generic
+`AgentProgram`, Hook, Context, composition, structured-control-flow,
+source-map, and compiler-bridge APIs. `ConversationalAgent` is permitted only
+as an example-local helper and is not an installable frontend export.
 
 A current Python frontend entry looks like this:
 
@@ -189,14 +191,16 @@ Studio reads installed agent records through its server-backed registry:
 
 Chat selects an installed agent with `agent_preset: "<id>"`. The
 [current Studio dispatch](../../../studio/apxm-studio/crates/studio/src/chat.rs)
-validates the server-projected record and sends each Turn through APXM OS's
-`http_in` ingress; it does not own an alternate conversational runtime.
-Structured page/canvas context is forwarded as Turn input.
+validates the server-projected record and sends each legacy turn-shaped input
+through APXM OS's `http_in` ingress. This is current pre-canonical evidence, not
+the target Studio contract. The target submits declared typed Program inputs
+and projects generic loop-iteration evidence.
 
 Gao currently assembles a loop directly with
 [`GraphBuilder.autonomous`](../../examples/agents/gao/capabilities/handlers/main.ts).
-That is read-only implementation evidence, not the accepted end state. Gao must become an
-ordinary specialization of the standard Conversational Agent construct under
-[ADR-0002](../adr/0002-gao-specializes-the-conversational-agent-construct.md)
-and its
-[implementation plan](gao-conversational-agent-implementation-plan.md).
+That is read-only implementation evidence, not the accepted end state.
+[ADR-0014](../adr/0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md)
+makes Gao a repository example that may specialize an example-local
+Conversational Agent using only packed generic frontend APIs. ADR-0002 and the
+[superseded implementation plan](gao-conversational-agent-implementation-plan.md)
+are historical rationale only.

@@ -4,12 +4,11 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "strict": true,
+    "declaration": true,
+    "outDir": "dist",
+    "rootDir": "src",
     "skipLibCheck": true,
-    "types": ["node"],
-    "typeRoots": ["../../../crates/compiler/frontend/typescript/node_modules/@types"],
-    "paths": {
-      "@apxm/frontend": ["../../../crates/compiler/frontend/typescript/dist/index.d.ts"]
-    }
+    "types": ["node"]
   },
-  "include": ["capabilities/**/*.ts"]
+  "include": ["src/**/*.ts"]
 }

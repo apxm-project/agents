@@ -1,7 +1,7 @@
 {
   "schema_version": "apxm.agents-owner-descriptor.v1",
   "semantic_owner": "agents",
-  "primary_responsibility": "Agent Program authoring frontends, FrontendGraph, five-operation AIR, digest-bound executable artifacts with artifact_semantic requirements only, runtime evidence semantics, source maps, and the atomic execution-commit boundary.",
+  "primary_responsibility": "Agent Program authoring frontends, FrontendGraph, the closed five-operation effect/composition AIS family, the separate closed structural AIS family, digest-bound executable artifacts with artifact_semantic requirements only, generic loop-iteration runtime evidence, source maps, and the atomic execution-commit boundary.",
   "constitution": {
     "schema_id": "apxm.contract-constitution.v1",
     "digest": "sha256:ffe3a716c79b73a98ec5fbedf3249d8aa0fbb0d8525ca55dea63edfee2c3512a"
@@ -28,12 +28,12 @@
     {
       "schema_id": "apxm.frontend-graph.v1",
       "path": "schemas/apxm.frontend-graph.v1.json",
-      "digest": "sha256:299797c6bfadc2fbd3e6b42aaacfeab89068b768f9a5fbe079c7903c6e00ec43"
+      "digest": "sha256:47b7e4e22cf7094bc30f6721d11eed84eb54ee8840ffaaf480999ba093d2233f"
     },
     {
       "schema_id": "apxm.air.v1",
       "path": "schemas/apxm.air.v1.json",
-      "digest": "sha256:0f6c79135d10b1f3eefffeafac4e7eb72a4c5b4d526120ffefcb8751e43622b0"
+      "digest": "sha256:b4e5d6ec53533e31ac3ab704b1441d8fe69242920e81489c7c08dc063e3d3b0c"
     },
     {
       "schema_id": "apxm.executable-artifact.v1",
@@ -43,12 +43,12 @@
     {
       "schema_id": "apxm.runtime-evidence.v1",
       "path": "schemas/apxm.runtime-evidence.v1.json",
-      "digest": "sha256:ac9fa56933a8202e933b17e208ef17e70c73b9d228ddc2b3a9e9e40b319492a2"
+      "digest": "sha256:c83bf7888d7ca285132d0c29ef4ce8bf6e72df4f0a701115da8fd86912552665"
     },
     {
       "schema_id": "apxm.source-map.v1",
       "path": "schemas/apxm.source-map.v1.json",
-      "digest": "sha256:8a146d35673e91f57b4c5623712dcc685dde7c19d8b1430f9c6cb6a4f91b5f49"
+      "digest": "sha256:8918f79cd4fc52167eb388ab5a95958a71cd5fc30c174309b9aeeb24fb256628"
     },
     {
       "schema_id": "apxm.external-agent-session.v1",
@@ -251,7 +251,7 @@
     {
       "schema_id": "apxm.frontend-graph.v1",
       "path": "vectors/apxm.frontend-graph.v1.json",
-      "digest": "sha256:20461ec657f95bb124030a26aa47bb81aeb29d9abebc37526bac25f882b0a5c6",
+      "digest": "sha256:f2ea0f6d3f7effe4fef02202f63a5053d41ad2356510041e979dbcbfa7d27767",
       "coverage": [
         "positive",
         "unknown_discriminant",
@@ -261,7 +261,7 @@
     {
       "schema_id": "apxm.air.v1",
       "path": "vectors/apxm.air.v1.json",
-      "digest": "sha256:aed01939a8131531af2213deece7d6ce7a969e5c05d4e63fc8770cc64d4a82bd",
+      "digest": "sha256:47757426a653a95ca9095fc8aa4266a653b790a972637362627975834fe23fbb",
       "coverage": [
         "positive",
         "unknown_discriminant"
@@ -270,7 +270,7 @@
     {
       "schema_id": "apxm.executable-artifact.v1",
       "path": "vectors/apxm.executable-artifact.v1.json",
-      "digest": "sha256:0d67432054194489d862900e44fff4e70c48d009e5c48b50c0de6553fd5f01dc",
+      "digest": "sha256:0555b00f443ac2488712522b76934d35f57f58c1afd27c3529e778945476634d",
       "coverage": [
         "positive",
         "abstraction",
@@ -281,9 +281,11 @@
     {
       "schema_id": "apxm.runtime-evidence.v1",
       "path": "vectors/apxm.runtime-evidence.v1.json",
-      "digest": "sha256:6d2b7d24ad81dfc417dfffc09d746e0aec89d58d9c09c8ce0e64888e4baeadca",
+      "digest": "sha256:b8bec1549999933daa06fbaed5df335a888df5eae87f328732bcd45bf5eaf29e",
       "coverage": [
         "positive",
+        "replay",
+        "atomicity",
         "skew",
         "mutation",
         "unknown_discriminant"
@@ -292,7 +294,7 @@
     {
       "schema_id": "apxm.source-map.v1",
       "path": "vectors/apxm.source-map.v1.json",
-      "digest": "sha256:7eda1d56ff4304cb509486acf50bc0e83242ad2f33587de186940cc46066e843",
+      "digest": "sha256:828556bf8c959f766832abae74cc09afbee4d640e5109ecf0a2af13d79e295a6",
       "coverage": [
         "positive",
         "unknown_discriminant"
@@ -372,5 +374,5 @@
     "algorithm": "ed25519",
     "status": "signing_pending_no_key"
   },
-  "descriptor_digest": "sha256:fab55bc8e07715a210c093c6f91c584ed66142dfe7e7ce9bbc3c6a507282a79e"
+  "descriptor_digest": "sha256:9c786785174330d065680c17412ce72a605ce3683aa82f8bf1a8591431b37648"
 }

@@ -81,7 +81,7 @@
           "type": "string",
           "enum": [
             "none",
-            "conversational_loop"
+            "structural_loop"
           ]
         }
       },

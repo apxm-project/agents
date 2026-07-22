@@ -188,13 +188,15 @@ async fn run_profile(profile: &str, reported_value: &str) -> apxm_kernel::Capabi
     // no native model outcome or native usage.
     let facts = commit.evidence();
     assert!(
-        facts.iter().all(|f| f.model_outcome.is_none()),
+        facts
+            .iter()
+            .all(|fact| fact.runtime().is_none_or(|runtime| runtime.model_outcome.is_none())),
         "no native model outcome is fabricated for an ACP peer loop",
     );
     assert!(
         facts
             .iter()
-            .any(|f| f.node_execution_id.as_deref() == Some("nodeexec.cap.1")),
+            .any(|fact| fact.runtime().and_then(|runtime| runtime.node_execution_id.as_deref()) == Some("nodeexec.cap.1")),
         "the capability NodeExecution is recorded",
     );
     report
@@ -286,7 +288,7 @@ async fn outcome_unknown_transport_records_uncertain_not_success() {
         commit
             .evidence()
             .iter()
-            .any(|f| f.fact_kind == FactKind::EffectOutcomeUnknown),
+            .any(|fact| fact.is_kind(FactKind::EffectOutcomeUnknown)),
         "the uncertain effect is recorded honestly",
     );
 }
