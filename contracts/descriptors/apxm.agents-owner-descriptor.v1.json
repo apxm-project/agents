@@ -38,7 +38,7 @@
     {
       "schema_id": "apxm.executable-artifact.v1",
       "path": "schemas/apxm.executable-artifact.v1.json",
-      "digest": "sha256:9c004a16138ebad9c7e97d083c5cd35d40fe349fdcb7d5ef76227de26d347691"
+      "digest": "sha256:14ae660b948b301ad388aab673b93e6eb1cd1f9984938e2558330a67437ac0f9"
     },
     {
       "schema_id": "apxm.runtime-evidence.v1",
@@ -374,5 +374,5 @@
     "algorithm": "ed25519",
     "status": "signing_pending_no_key"
   },
-  "descriptor_digest": "sha256:9c786785174330d065680c17412ce72a605ce3683aa82f8bf1a8591431b37648"
+  "descriptor_digest": "sha256:90f35662c782a015cba8a8efc5b6d840f03bb7f288468dafc3d2901c75c08f68"
 }

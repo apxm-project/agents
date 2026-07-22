@@ -49,10 +49,68 @@
     },
     "integrity_algorithm": {
       "const": "sha256"
+    },
+    "hook_bindings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/HookBinding"
+      }
     }
   },
   "additionalProperties": false,
   "$defs": {
+    "HookBinding": {
+      "type": "object",
+      "required": [
+        "hook_id",
+        "scope",
+        "phase",
+        "target_selector",
+        "declaration_order",
+        "handler_ref",
+        "handler_digest",
+        "input_type_ref",
+        "output_type_ref",
+        "return_mode"
+      ],
+      "properties": {
+        "hook_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "scope": {
+          "type": "string",
+          "enum": ["agent", "loop", "node", "model", "capability"]
+        },
+        "phase": {
+          "type": "string",
+          "enum": ["before", "after"]
+        },
+        "target_selector": {
+          "type": "string"
+        },
+        "declaration_order": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "handler_ref": {
+          "type": "string"
+        },
+        "handler_digest": {
+          "$ref": "apxm.contract-common.v1#/$defs/Digest"
+        },
+        "input_type_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "output_type_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "return_mode": {
+          "type": "string",
+          "enum": ["observe", "replace_result"]
+        }
+      },
+      "additionalProperties": false
+    },
     "Entrypoint": {
       "type": "object",
       "required": [

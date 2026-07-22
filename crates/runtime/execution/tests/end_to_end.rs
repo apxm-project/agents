@@ -23,8 +23,8 @@ use apxm_program::runtime_evidence::Fact;
 
 use apxm_execution::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
-    CompositionRequest, EventAwait, EventOutcome, EventPort, ExecutionPorts, ExecutionRequest,
-    NodeOutcome, StaticHookHandlerPort, StaticHookResult, execute,
+    CompositionReceiver, CompositionRequest, EventAwait, EventOutcome, EventPort, ExecutionError,
+    ExecutionPorts, ExecutionRequest, NodeOutcome, StaticHookHandlerPort, StaticHookResult, execute,
 };
 
 fn digest(c: char) -> String {
@@ -50,7 +50,7 @@ fn air() -> AirModule {
             {"node_id": "n.cap", "op": "capability.invoke", "parent_region_id": "r.fn", "execution_order": 1, "operands": {"capability_ref": "cap.search"}},
             {"node_id": "n.acp", "op": "capability.invoke", "parent_region_id": "r.fn", "execution_order": 2, "operands": {"capability_ref": "external-agent:acp:claude-code", "external_agent_session": "session.1"}},
             {"node_id": "n.new", "op": "program.new", "parent_region_id": "r.fn", "execution_order": 3, "operands": {"program_ref": "Specialist"}},
-            {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.fn", "execution_order": 4, "operands": {"program_ref": "Specialist"}},
+            {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.fn", "execution_order": 4, "operands": {"receiver": {"program_instance_ref": "n.new"}}},
             {"node_id": "n.await", "op": "await.event", "parent_region_id": "r.fn", "execution_order": 5, "operands": {"event_ref": "evt.done"}}
         ],
         "structural_ir": [
@@ -146,12 +146,12 @@ struct FakeComposition;
 impl CompositionPort for FakeComposition {
     async fn program_new(&self, request: CompositionRequest) -> CompositionOutcome {
         CompositionOutcome::Created {
-            child_instance_ref: format!("child.{}", request.program_ref),
+            child_instance_ref: format!("child.{}", request.receiver.reference()),
         }
     }
     async fn program_invoke(&self, request: CompositionRequest) -> CompositionOutcome {
         CompositionOutcome::Invoked {
-            child_instance_ref: format!("child.{}", request.program_ref),
+            child_instance_ref: format!("child.{}", request.receiver.reference()),
         }
     }
 }
@@ -314,8 +314,9 @@ async fn executes_all_five_ops_and_commits_atomically() {
     );
 
     // The committed evidence records one attempt per node, the static handler,
-    // its explicit Context transition, and lifecycle facts.
-    assert_eq!(commit.facts().len(), 2 + 6 + 1 + 1 + 1);
+    // its explicit Context transition, lifecycle facts, and one ChildAttached
+    // lineage fact for each of program.new and program.invoke.
+    assert_eq!(commit.facts().len(), 2 + 6 + 1 + 1 + 1 + 2);
     assert!(commit
         .facts()
         .iter()
@@ -324,6 +325,21 @@ async fn executes_all_five_ops_and_commits_atomically() {
         .facts()
         .iter()
         .any(|fact| fact.is_kind(apxm_program::runtime_evidence::FactKind::ContextTransitioned)));
+    // Cross-instance lineage: program.new and program.invoke each emit a
+    // ChildAttached fact, and the invoke's fact carries parent lineage back to
+    // the created instance's NodeExecution.
+    let committed_facts = commit.facts();
+    let child_attached: Vec<_> = committed_facts
+        .iter()
+        .filter(|fact| fact.is_kind(apxm_program::runtime_evidence::FactKind::ChildAttached))
+        .collect();
+    assert_eq!(child_attached.len(), 2, "one ChildAttached per composition op");
+    assert!(
+        child_attached
+            .iter()
+            .any(|fact| fact.runtime().and_then(|r| r.parent_node_execution_id.as_ref()).is_some()),
+        "program.invoke ChildAttached carries parent lineage"
+    );
 }
 
 #[tokio::test]
@@ -349,6 +365,105 @@ async fn repeated_instance_invocations_keep_evidence_identities_disjoint() {
     assert_eq!(fact_ids.len(), facts.len());
     assert!(fact_ids.iter().any(|fact_id| fact_id.contains(".c1.")));
     assert!(fact_ids.iter().any(|fact_id| fact_id.contains(".c2.")));
+}
+
+/// A composition port that records every receiver it is handed, so a test can
+/// prove `program.invoke` dispatched against the created ProgramInstanceRef
+/// rather than the retired top-level `program_ref` operand or a node-id fallback.
+struct RecordingComposition {
+    receivers: Arc<Mutex<Vec<CompositionReceiver>>>,
+}
+#[async_trait]
+impl CompositionPort for RecordingComposition {
+    async fn program_new(&self, request: CompositionRequest) -> CompositionOutcome {
+        self.receivers.lock().unwrap().push(request.receiver.clone());
+        CompositionOutcome::Created {
+            child_instance_ref: format!("child.{}", request.receiver.reference()),
+        }
+    }
+    async fn program_invoke(&self, request: CompositionRequest) -> CompositionOutcome {
+        self.receivers.lock().unwrap().push(request.receiver.clone());
+        CompositionOutcome::Invoked {
+            child_instance_ref: request.receiver.reference().to_string(),
+        }
+    }
+}
+
+#[tokio::test]
+async fn program_invoke_dispatches_to_the_created_instance_receiver() {
+    let commit = Arc::new(FakeCommit::new());
+    let receivers = Arc::new(Mutex::new(Vec::new()));
+    let air: AirModule = serde_json::from_value(json!({
+        "schema_version": "apxm.air.v1",
+        "semantic_operations": [
+            {"node_id": "n.new", "op": "program.new", "parent_region_id": "r.fn", "execution_order": 0, "operands": {"program_ref": "Specialist"}},
+            {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.fn", "execution_order": 1, "operands": {"receiver": {"program_instance_ref": "n.new"}}}
+        ],
+        "structural_ir": [
+            {"region_id": "r.fn", "kind": "function", "execution_order": 0}
+        ],
+        "context_flow": [],
+        "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
+    }))
+    .unwrap();
+    let mut ports = ports(commit.clone());
+    ports.composition = Arc::new(RecordingComposition {
+        receivers: receivers.clone(),
+    });
+    let mut req = request();
+    req.air = air;
+    req.hook_bindings = Vec::new();
+    execute(&ports, req, json!({}))
+        .await
+        .expect("composition executes");
+
+    let seen = receivers.lock().unwrap();
+    assert_eq!(seen.len(), 2, "program.new then program.invoke");
+    assert_eq!(
+        seen[0],
+        CompositionReceiver::Program {
+            program_ref: "Specialist".into()
+        },
+        "program.new resolves its ProgramRef operand"
+    );
+    assert_eq!(
+        seen[1],
+        CompositionReceiver::Instance {
+            program_instance_ref: "n.new".into()
+        },
+        "program.invoke dispatches to the created instance, not a program_ref fallback"
+    );
+}
+
+#[tokio::test]
+async fn program_invoke_without_a_receiver_fails_closed() {
+    let commit = Arc::new(FakeCommit::new());
+    let air: AirModule = serde_json::from_value(json!({
+        "schema_version": "apxm.air.v1",
+        "semantic_operations": [
+            {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.fn", "execution_order": 0}
+        ],
+        "structural_ir": [
+            {"region_id": "r.fn", "kind": "function", "execution_order": 0}
+        ],
+        "context_flow": [],
+        "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
+    }))
+    .unwrap();
+    let mut req = request();
+    req.air = air;
+    req.hook_bindings = Vec::new();
+    let result = execute(&ports(commit.clone()), req, json!({})).await;
+    assert!(
+        matches!(
+            result,
+            Err(ExecutionError::MissingOperand {
+                operand: "receiver",
+                ..
+            })
+        ),
+        "a program.invoke with no receiver must fail closed, not fall back"
+    );
 }
 
 #[tokio::test]

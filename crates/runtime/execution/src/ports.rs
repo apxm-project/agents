@@ -97,11 +97,39 @@ pub trait EventPort: Send + Sync {
     async fn await_event(&self, request: EventAwait) -> EventOutcome;
 }
 
+/// The typed receiver of a composition. Compiled AIR encodes `program.invoke`
+/// as `operands.receiver.{program_ref | program_instance_ref}`; the union
+/// distinguishes a one-shot `ProgramRef` invocation from a stateful invocation
+/// of an already-created `ProgramInstanceRef`. `program.new` always carries a
+/// `Program` receiver.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CompositionReceiver {
+    Program { program_ref: String },
+    Instance { program_instance_ref: String },
+}
+
+impl CompositionReceiver {
+    /// The reference string this receiver resolves against, regardless of kind.
+    pub fn reference(&self) -> &str {
+        match self {
+            Self::Program { program_ref } => program_ref,
+            Self::Instance {
+                program_instance_ref,
+            } => program_instance_ref,
+        }
+    }
+
+    /// True when this receiver targets an existing stateful instance.
+    pub fn is_instance(&self) -> bool {
+        matches!(self, Self::Instance { .. })
+    }
+}
+
 /// A request to compose a child Program (`program.new`/`program.invoke`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CompositionRequest {
     pub node_id: String,
-    pub program_ref: String,
+    pub receiver: CompositionReceiver,
 }
 
 /// The typed outcome of composing or invoking a child Program.

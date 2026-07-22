@@ -294,13 +294,13 @@ struct Composition;
 impl CompositionPort for Composition {
     async fn program_new(&self, request: CompositionRequest) -> CompositionOutcome {
         CompositionOutcome::Created {
-            child_instance_ref: request.program_ref,
+            child_instance_ref: request.receiver.reference().to_string(),
         }
     }
 
     async fn program_invoke(&self, request: CompositionRequest) -> CompositionOutcome {
         CompositionOutcome::Invoked {
-            child_instance_ref: request.program_ref,
+            child_instance_ref: request.receiver.reference().to_string(),
         }
     }
 }
