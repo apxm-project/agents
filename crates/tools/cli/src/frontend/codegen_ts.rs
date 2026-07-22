@@ -84,11 +84,21 @@ fn render_runtime_evidence_typescript() -> String {
         .map(|kind| ts_string(kind.wire()))
         .collect::<Vec<_>>()
         .join(", ");
+    let runtime_schema = ts_string(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../contracts/schemas/apxm.runtime-evidence.v1.json"
+    )));
+    let common_schema = ts_string(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../../contracts/schemas/contract-common.v1.json"
+    )));
     format!(
-        r#"// AUTO-GENERATED from apxm.runtime-evidence.v1; DO NOT EDIT.
+        r##"// AUTO-GENERATED from apxm.runtime-evidence.v1; DO NOT EDIT.
 export const RUNTIME_FACT_KINDS = [{runtime_kinds}] as const;
 export const ALL_FACT_KINDS = [...RUNTIME_FACT_KINDS, "LoopIterationCompleted"] as const;
 export type RuntimeFactKind = (typeof RUNTIME_FACT_KINDS)[number];
+const runtimeSchema = JSON.parse({runtime_schema}) as Record<string, any>;
+const commonSchema = JSON.parse({common_schema}) as Record<string, any>;
 
 export type RuntimeFact = {{
   readonly fact_id: string;
@@ -119,32 +129,71 @@ export type LoopIterationCompletedFact = {{
 }};
 export type Fact = RuntimeFact | NodeExecutionRecordedFact | LoopIterationCompletedFact;
 
-const knownKinds = new Set<string>(ALL_FACT_KINDS);
-function exact(value: Record<string, unknown>, required: readonly string[], optional: readonly string[] = []): void {{
-  const allowed = new Set([...required, ...optional]);
-  for (const key of required) if (!(key in value)) throw new Error(`missing fact field: ${{key}}`);
-  for (const key of Object.keys(value)) if (!allowed.has(key)) throw new Error(`unknown fact field: ${{key}}`);
+function resolveRef(ref: string, root: Record<string, any>): [Record<string, any>, Record<string, any>] {{
+  if (ref.startsWith("#/$defs/")) return [root.$defs[ref.slice("#/$defs/".length)], root];
+  const marker = "apxm.contract-common.v1#/$defs/";
+  if (ref.startsWith(marker)) return [commonSchema.$defs[ref.slice(marker.length)], commonSchema];
+  throw new Error(`unsupported schema ref: ${{ref}}`);
+}}
+function stable(value: unknown): string {{
+  if (Array.isArray(value)) return `[${{value.map(stable).join(",")}}]`;
+  if (value !== null && typeof value === "object") {{
+    const record = value as Record<string, unknown>;
+    return `{{${{Object.keys(record).sort().map((key) => `${{JSON.stringify(key)}}:${{stable(record[key])}}`).join(",")}}}}`;
+  }}
+  return JSON.stringify(value);
+}}
+function validate(schema: Record<string, any>, value: unknown, root: Record<string, any>, path: string): string[] {{
+  if (schema.$ref) {{
+    const [target, targetRoot] = resolveRef(schema.$ref, root);
+    return validate(target, value, targetRoot, path);
+  }}
+  if (schema.oneOf) {{
+    const results = schema.oneOf.map((branch: Record<string, any>) => validate(branch, value, root, path));
+    const matches = results.filter((errors: string[]) => errors.length === 0).length;
+    if (matches !== 1) return [`${{path}}: expected exactly one oneOf branch, matched ${{matches}}`, ...results.flat()];
+  }}
+  const errors: string[] = [];
+  if ("const" in schema && value !== schema.const) errors.push(`${{path}}: const mismatch`);
+  if (schema.enum && !schema.enum.includes(value)) errors.push(`${{path}}: unknown enum value ${{String(value)}}`);
+  const typeMatches: Record<string, boolean> = {{
+    object: value !== null && typeof value === "object" && !Array.isArray(value),
+    array: Array.isArray(value), string: typeof value === "string",
+    integer: typeof value === "number" && Number.isInteger(value),
+    number: typeof value === "number", boolean: typeof value === "boolean", null: value === null,
+  }};
+  if (schema.type && !typeMatches[schema.type]) return [`${{path}}: expected ${{schema.type}}`];
+  if (typeof value === "string") {{
+    if (schema.minLength !== undefined && value.length < schema.minLength) errors.push(`${{path}}: shorter than minLength`);
+    if (schema.maxLength !== undefined && value.length > schema.maxLength) errors.push(`${{path}}: exceeds maxLength`);
+    if (schema.pattern && !(new RegExp(schema.pattern)).test(value)) errors.push(`${{path}}: pattern mismatch`);
+  }}
+  if (typeof value === "number") {{
+    if (schema.minimum !== undefined && value < schema.minimum) errors.push(`${{path}}: below minimum`);
+    if (schema.maximum !== undefined && value > schema.maximum) errors.push(`${{path}}: above maximum`);
+  }}
+  if (Array.isArray(value)) {{
+    if (schema.minItems !== undefined && value.length < schema.minItems) errors.push(`${{path}}: fewer than minItems`);
+    if (schema.maxItems !== undefined && value.length > schema.maxItems) errors.push(`${{path}}: exceeds maxItems`);
+    if (schema.uniqueItems && new Set(value.map(stable)).size !== value.length) errors.push(`${{path}}: duplicate items`);
+    if (schema.items) value.forEach((item, index) => errors.push(...validate(schema.items, item, root, `${{path}}[${{index}}]`)));
+  }}
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {{
+    const record = value as Record<string, unknown>;
+    for (const key of schema.required ?? []) if (!(key in record)) errors.push(`${{path}}.${{key}}: required`);
+    for (const [key, item] of Object.entries(record)) {{
+      if (schema.properties?.[key]) errors.push(...validate(schema.properties[key], item, root, `${{path}}.${{key}}`));
+      else if (schema.additionalProperties === false) errors.push(`${{path}}: unknown field ${{key}}`);
+    }}
+  }}
+  return errors;
 }}
 export function decodeFact(input: unknown): Fact {{
-  if (input === null || typeof input !== "object" || Array.isArray(input)) throw new Error("fact must be an object");
-  const value = input as Record<string, unknown>;
-  const kind = value.fact_kind;
-  if (typeof kind !== "string" || !knownKinds.has(kind)) throw new Error(`unknown fact_kind: ${{String(kind)}}`);
-  if (kind === "LoopIterationCompleted") {{
-    exact(value, ["fact_id", "event_sequence", "fact_kind", "static_loop_id", "loop_occurrence_id", "iteration_index", "program_invocation_id", "causal_node_execution_ids"]);
-    if (!Array.isArray(value.causal_node_execution_ids) || value.causal_node_execution_ids.length === 0) throw new Error("LoopIterationCompleted causality must be non-empty");
-  }} else if (kind === "node_execution.recorded") {{
-    exact(value, ["fact_id", "event_sequence", "fact_kind", "node_execution_id", "air_node_id", "execution_scope"], ["parent_node_execution_id"]);
-    const scope = value.execution_scope as Record<string, unknown>;
-    if (scope.scope_kind === "non_loop") exact(scope, ["scope_kind"]);
-    else if (scope.scope_kind === "loop") {{
-      exact(scope, ["scope_kind", "region_occurrence_id", "static_region_id", "loop_memberships"]);
-      if (!Array.isArray(scope.loop_memberships) || scope.loop_memberships.length === 0) throw new Error("loop scope memberships must be non-empty");
-    }} else throw new Error("unknown NodeExecution scope_kind");
-  }} else exact(value, ["fact_id", "event_sequence", "fact_kind"], ["ownership_epoch", "instance_state", "invocation_state", "event_state", "model_outcome", "commit_sequence", "node_execution_id", "attempt_id", "region_occurrence_id", "static_region_id", "loop_memberships", "air_node_id", "parent_node_execution_id", "hook_execution_id", "hook_id", "hook_scope", "hook_phase", "context_transition_id", "context_before_ref", "context_after_ref", "effect_outcome_ref", "typed_error"]);
-  return value as Fact;
+  const errors = validate(runtimeSchema.$defs.Fact, input, runtimeSchema, "$");
+  if (errors.length > 0) throw new Error(errors.join("; "));
+  return input as Fact;
 }}
-"#
+"##
     )
 }
 
@@ -490,7 +539,8 @@ mod tests {
             "LoopIterationCompletedFact",
             "NodeExecutionRecordedFact",
             "decodeFact",
-            "unknown fact_kind",
+            "runtimeSchema",
+            "unknown enum value",
         ] {
             assert!(evidence.contains(required), "{required}");
         }

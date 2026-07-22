@@ -1,4 +1,6 @@
 # AUTO-GENERATED from apxm.runtime-evidence.v1; DO NOT EDIT.
+import json
+import re
 from dataclasses import dataclass
 from typing import Any, Final, TypeAlias
 
@@ -6,12 +8,18 @@ RUNTIME_FACT_KINDS: Final[frozenset[str]] = frozenset(("instance.state_changed",
 LOOP_ITERATION_COMPLETED: Final[str] = "LoopIterationCompleted"
 NODE_EXECUTION_RECORDED: Final[str] = "node_execution.recorded"
 ALL_FACT_KINDS: Final[frozenset[str]] = RUNTIME_FACT_KINDS | frozenset((LOOP_ITERATION_COMPLETED,))
+_SCHEMA: Final[dict[str, Any]] = json.loads("{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"$id\": \"apxm.runtime-evidence.v1\",\n  \"title\": \"RuntimeEvidence\",\n  \"description\": \"Append-only sequence of monotonic authoritative facts for one Program Instance and its Invocations: creation, admission, child attach, attempt, park/event, commit, failure/cancellation, terminal, and delivery. Lifecycle truth is reconstructed from the latest scoped state fact; a trace, stream, socket close, or delivery record cannot override it, and an uncertain external effect never silently becomes success.\",\n  \"type\": \"object\",\n  \"required\": [\n    \"schema_version\",\n    \"program_identity\",\n    \"facts\"\n  ],\n  \"properties\": {\n    \"schema_version\": {\n      \"const\": \"apxm.runtime-evidence.v1\"\n    },\n    \"program_identity\": {\n      \"$ref\": \"#/$defs/ProgramIdentity\"\n    },\n    \"facts\": {\n      \"type\": \"array\",\n      \"minItems\": 1,\n      \"items\": {\n        \"$ref\": \"#/$defs/Fact\"\n      }\n    }\n  },\n  \"additionalProperties\": false,\n  \"$defs\": {\n    \"ProgramIdentity\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"artifact_digest\",\n        \"entrypoint\",\n        \"agent_identity_binding\"\n      ],\n      \"properties\": {\n        \"artifact_digest\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/Digest\"\n        },\n        \"entrypoint\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/Identifier\"\n        },\n        \"agent_identity_binding\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/Identifier\"\n        },\n        \"program_instance_id\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/Identifier\"\n        }\n      },\n      \"additionalProperties\": false\n    },\n    \"Fact\": {\n      \"oneOf\": [\n        {\n          \"$ref\": \"#/$defs/LoopIterationCompletedFact\"\n        },\n        {\n          \"$ref\": \"#/$defs/NodeExecutionRecordedFact\"\n        },\n        {\n          \"$ref\": \"#/$defs/RuntimeFact\"\n        }\n      ]\n    },\n    \"LoopIterationCompletedFact\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"fact_id\",\n        \"event_sequence\",\n        \"fact_kind\",\n        \"static_loop_id\",\n        \"loop_occurrence_id\",\n        \"iteration_index\",\n        \"program_invocation_id\",\n        \"causal_node_execution_ids\"\n      ],\n      \"properties\": {\n        \"fact_id\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/Identifier\"\n        },\n        \"event_sequence\": {\n          \"type\": \"integer\",\n          \"minimum\": 0\n        },\n        \"fact_kind\": {\n          \"const\": \"LoopIterationCompleted\"\n        },\n        \"static_loop_id\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/Identifier\"\n        },\n        \"loop_occurrence_id\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/Identifier\"\n        },\n        \"iteration_index\": {\n          \"type\": \"integer\",\n          \"minimum\": 0\n        },\n        \"program_invocation_id\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/Identifier\"\n        },\n        \"causal_node_execution_ids\": {\n          \"type\": \"array\",\n          \"minItems\": 1,\n          \"items\": {\n            \"$ref\": \"apxm.contract-common.v1#/$defs/Identifier\"\n          },\n          \"uniqueItems\": true\n        }\n      },\n      \"additionalProperties\": false\n    },\n    \"RuntimeFact\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"fact_id\",\n        \"event_sequence\",\n        \"fact_kind\"\n      ],\n      \"properties\": {\n        \"fact_id\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/Identifier\"\n        },\n        \"event_sequence\": {\n          \"type\": \"integer\",\n          \"minimum\": 0\n        },\n        \"fact_kind\": {\n          \"type\": \"string\",\n          \"enum\": [\n            \"instance.state_changed\",\n            \"invocation.state_changed\",\n            \"instance.created\",\n            \"invocation.admitted\",\n            \"child.attached\",\n            \"attempt.recorded\",\n            \"invocation.committed\",\n            \"invocation.failed\",\n            \"invocation.cancelled\",\n            \"event.created\",\n            \"event.await_registered\",\n            \"invocation.parked\",\n            \"event.terminal\",\n            \"invocation.resumed\",\n            \"instance.closed\",\n            \"instance.cancelled\",\n            \"effect.outcome_unknown\",\n            \"delivery.recorded\",\n            \"region.occurrence_started\",\n            \"hook.executed\",\n            \"context.transitioned\"\n          ]\n        },\n        \"ownership_epoch\": {\n          \"type\": \"integer\",\n          \"minimum\": 0\n        },\n        \"instance_state\": {\n          \"type\": \"string\",\n          \"enum\": [\n            \"admission_pending\",\n            \"ready\",\n            \"invoking\",\n            \"completed\",\n            \"closing\",\n            \"closed\",\n            \"cancelling\",\n            \"cancelled\"\n          ]\n        },\n        \"invocation_state\": {\n          \"type\": \"string\",\n          \"enum\": [\n            \"admission_pending\",\n            \"running\",\n            \"waiting_event\",\n            \"committed_yield\",\n            \"committed_return\",\n            \"failed\",\n            \"cancelling\",\n            \"cancelled\",\n            \"cancellation_unconfirmed\"\n          ]\n        },\n        \"event_state\": {\n          \"type\": \"string\",\n          \"enum\": [\n            \"pending\",\n            \"fulfilled\",\n            \"expired\",\n            \"cancelled\"\n          ]\n        },\n        \"model_outcome\": {\n          \"type\": \"string\",\n          \"enum\": [\n            \"committed_success\",\n            \"typed_failure\",\n            \"cancelled\",\n            \"model_outcome_unknown\"\n          ]\n        },\n        \"commit_sequence\": {\n          \"type\": \"integer\",\n          \"minimum\": 0\n        },\n        \"node_execution_id\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/Identifier\"\n        },\n        \"attempt_id\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/Identifier\"\n        },\n        \"region_occurrence_id\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/Identifier\"\n        },\n        \"static_region_id\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/Identifier\"\n        },\n        \"loop_memberships\": {\n          \"type\": \"array\",\n          \"items\": {\n            \"$ref\": \"#/$defs/LoopMembership\"\n          },\n          \"uniqueItems\": true\n        },\n        \"air_node_id\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/Identifier\"\n        },\n        \"parent_node_execution_id\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/Identifier\"\n        },\n        \"hook_execution_id\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/Identifier\"\n        },\n        \"hook_id\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/Identifier\"\n        },\n        \"hook_scope\": {\n          \"type\": \"string\",\n          \"enum\": [\n            \"agent\",\n            \"loop\",\n            \"node\",\n            \"model\",\n            \"capability\"\n          ]\n        },\n        \"hook_phase\": {\n          \"type\": \"string\",\n          \"enum\": [\n            \"before\",\n            \"after\"\n          ]\n        },\n        \"context_transition_id\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/Identifier\"\n        },\n        \"context_before_ref\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/TypedRef\"\n        },\n        \"context_after_ref\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/TypedRef\"\n        },\n        \"effect_outcome_ref\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/TypedRef\"\n        },\n        \"typed_error\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/TypedErrorEnvelope\"\n        }\n      },\n      \"additionalProperties\": false\n    },\n    \"NodeExecutionRecordedFact\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"fact_id\",\n        \"event_sequence\",\n        \"fact_kind\",\n        \"node_execution_id\",\n        \"air_node_id\",\n        \"execution_scope\"\n      ],\n      \"properties\": {\n        \"fact_id\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/Identifier\"\n        },\n        \"event_sequence\": {\n          \"type\": \"integer\",\n          \"minimum\": 0\n        },\n        \"fact_kind\": {\n          \"const\": \"node_execution.recorded\"\n        },\n        \"node_execution_id\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/Identifier\"\n        },\n        \"air_node_id\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/Identifier\"\n        },\n        \"parent_node_execution_id\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/Identifier\"\n        },\n        \"execution_scope\": {\n          \"$ref\": \"#/$defs/NodeExecutionScope\"\n        }\n      },\n      \"additionalProperties\": false\n    },\n    \"NodeExecutionScope\": {\n      \"oneOf\": [\n        {\n          \"type\": \"object\",\n          \"required\": [\n            \"scope_kind\"\n          ],\n          \"properties\": {\n            \"scope_kind\": {\n              \"const\": \"non_loop\"\n            }\n          },\n          \"additionalProperties\": false\n        },\n        {\n          \"type\": \"object\",\n          \"required\": [\n            \"scope_kind\",\n            \"region_occurrence_id\",\n            \"static_region_id\",\n            \"loop_memberships\"\n          ],\n          \"properties\": {\n            \"scope_kind\": {\n              \"const\": \"loop\"\n            },\n            \"region_occurrence_id\": {\n              \"$ref\": \"apxm.contract-common.v1#/$defs/Identifier\"\n            },\n            \"static_region_id\": {\n              \"$ref\": \"apxm.contract-common.v1#/$defs/Identifier\"\n            },\n            \"loop_memberships\": {\n              \"type\": \"array\",\n              \"minItems\": 1,\n              \"items\": {\n                \"$ref\": \"#/$defs/LoopMembership\"\n              },\n              \"uniqueItems\": true\n            }\n          },\n          \"additionalProperties\": false\n        }\n      ]\n    },\n    \"LoopMembership\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"static_loop_id\",\n        \"loop_occurrence_id\"\n      ],\n      \"properties\": {\n        \"static_loop_id\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/Identifier\"\n        },\n        \"loop_occurrence_id\": {\n          \"$ref\": \"apxm.contract-common.v1#/$defs/Identifier\"\n        }\n      },\n      \"additionalProperties\": false\n    }\n  }\n}\n")
+_COMMON: Final[dict[str, Any]] = json.loads("{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \"$id\": \"apxm.contract-common.v1\",\n  \"title\": \"ContractCommon\",\n  \"description\": \"Common APXM contract envelope primitives for ids, refs, digests, typed errors, and idempotency keys.\",\n  \"$defs\": {\n    \"SchemaId\": {\n      \"type\": \"string\",\n      \"pattern\": \"^apxm\\\\.[a-z0-9]+(?:-[a-z0-9]+)*\\\\.v[0-9]+$\"\n    },\n    \"Digest\": {\n      \"type\": \"string\",\n      \"pattern\": \"^sha256:[0-9a-f]{64}$\"\n    },\n    \"Identifier\": {\n      \"type\": \"string\",\n      \"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,255}$\"\n    },\n    \"NonEmptyReference\": {\n      \"type\": \"string\",\n      \"minLength\": 1,\n      \"maxLength\": 512\n    },\n    \"SemanticOwner\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"contracts\",\n        \"coordinator\",\n        \"agents\",\n        \"server\",\n        \"os\",\n        \"auth\",\n        \"studio\",\n        \"plugin\",\n        \"host-sdk\",\n        \"adapters\",\n        \"vllm\"\n      ]\n    },\n    \"TypedRef\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"ref_type\",\n        \"ref\"\n      ],\n      \"properties\": {\n        \"ref_type\": {\n          \"$ref\": \"#/$defs/Identifier\"\n        },\n        \"ref\": {\n          \"$ref\": \"#/$defs/Identifier\"\n        },\n        \"digest\": {\n          \"$ref\": \"#/$defs/Digest\"\n        }\n      },\n      \"additionalProperties\": false\n    },\n    \"SchemaDigestRef\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"schema_id\",\n        \"digest\"\n      ],\n      \"properties\": {\n        \"schema_id\": {\n          \"$ref\": \"#/$defs/SchemaId\"\n        },\n        \"digest\": {\n          \"$ref\": \"#/$defs/Digest\"\n        }\n      },\n      \"additionalProperties\": false\n    },\n    \"SignatureEnvelope\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"algorithm\",\n        \"key_ref\",\n        \"signature\"\n      ],\n      \"properties\": {\n        \"algorithm\": {\n          \"const\": \"ed25519\"\n        },\n        \"key_ref\": {\n          \"$ref\": \"#/$defs/Identifier\"\n        },\n        \"signature\": {\n          \"type\": \"string\",\n          \"minLength\": 1\n        }\n      },\n      \"additionalProperties\": false\n    },\n    \"TypedErrorEnvelope\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"error_id\",\n        \"category\",\n        \"code_ref\",\n        \"message\"\n      ],\n      \"properties\": {\n        \"error_id\": {\n          \"$ref\": \"#/$defs/Identifier\"\n        },\n        \"category\": {\n          \"type\": \"string\",\n          \"enum\": [\n            \"validation\",\n            \"admission\",\n            \"authority\",\n            \"configuration\",\n            \"unavailable\",\n            \"conflict\",\n            \"outcome_unknown\",\n            \"internal\"\n          ]\n        },\n        \"code_ref\": {\n          \"$ref\": \"#/$defs/Identifier\"\n        },\n        \"message\": {\n          \"type\": \"string\",\n          \"minLength\": 1,\n          \"maxLength\": 4096\n        },\n        \"details_digest\": {\n          \"$ref\": \"#/$defs/Digest\"\n        }\n      },\n      \"additionalProperties\": false\n    },\n    \"IdempotencyKey\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"key_id\",\n        \"scope_ref\",\n        \"request_digest\"\n      ],\n      \"properties\": {\n        \"key_id\": {\n          \"$ref\": \"#/$defs/Identifier\"\n        },\n        \"scope_ref\": {\n          \"$ref\": \"#/$defs/Identifier\"\n        },\n        \"request_digest\": {\n          \"$ref\": \"#/$defs/Digest\"\n        }\n      },\n      \"additionalProperties\": false\n    }\n  },\n  \"type\": \"object\",\n  \"additionalProperties\": false\n}\n")
 
 @dataclass(frozen=True)
 class RuntimeFact:
     fact_id: str
     event_sequence: int
     fact_kind: str
+    optional_fields: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"fact_id": self.fact_id, "event_sequence": self.event_sequence, "fact_kind": self.fact_kind, **self.optional_fields}
 
 @dataclass(frozen=True)
 class NodeExecutionRecordedFact:
@@ -34,38 +42,71 @@ class LoopIterationCompletedFact:
 
 Fact: TypeAlias = RuntimeFact | NodeExecutionRecordedFact | LoopIterationCompletedFact
 
-def _exact(value: dict[str, Any], required: set[str], optional: set[str] = set()) -> None:
-    missing = required - value.keys()
-    unknown = value.keys() - required - optional
-    if missing or unknown:
-        raise ValueError(f"invalid fact fields missing={sorted(missing)} unknown={sorted(unknown)}")
+def _resolve(ref: str, root: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    if ref.startswith("#/$defs/"):
+        return root["$defs"][ref.removeprefix("#/$defs/")], root
+    marker = "apxm.contract-common.v1#/$defs/"
+    if ref.startswith(marker):
+        return _COMMON["$defs"][ref.removeprefix(marker)], _COMMON
+    raise ValueError(f"unsupported schema ref: {ref}")
+
+def _validate(schema: dict[str, Any], value: Any, root: dict[str, Any], path: str) -> list[str]:
+    if "$ref" in schema:
+        target, target_root = _resolve(schema["$ref"], root)
+        return _validate(target, value, target_root, path)
+    if "oneOf" in schema:
+        results = [_validate(branch, value, root, path) for branch in schema["oneOf"]]
+        matches = sum(not errors for errors in results)
+        if matches != 1:
+            return [f"{path}: expected exactly one oneOf branch, matched {matches}", *[error for errors in results for error in errors]]
+    errors: list[str] = []
+    if "const" in schema and value != schema["const"]:
+        errors.append(f"{path}: const mismatch")
+    if "enum" in schema and value not in schema["enum"]:
+        errors.append(f"{path}: unknown enum value {value!r}")
+    declared = schema.get("type")
+    type_ok = {
+        "object": isinstance(value, dict),
+        "array": isinstance(value, list),
+        "string": isinstance(value, str),
+        "integer": isinstance(value, int) and not isinstance(value, bool),
+        "number": isinstance(value, (int, float)) and not isinstance(value, bool),
+        "boolean": isinstance(value, bool),
+        "null": value is None,
+    }
+    if isinstance(declared, str) and not type_ok.get(declared, True):
+        return [f"{path}: expected {declared}"]
+    if isinstance(value, str):
+        if "minLength" in schema and len(value) < schema["minLength"]: errors.append(f"{path}: shorter than minLength")
+        if "maxLength" in schema and len(value) > schema["maxLength"]: errors.append(f"{path}: exceeds maxLength")
+        if "pattern" in schema and re.fullmatch(schema["pattern"], value) is None: errors.append(f"{path}: pattern mismatch")
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if "minimum" in schema and value < schema["minimum"]: errors.append(f"{path}: below minimum")
+        if "maximum" in schema and value > schema["maximum"]: errors.append(f"{path}: above maximum")
+    if isinstance(value, list):
+        if "minItems" in schema and len(value) < schema["minItems"]: errors.append(f"{path}: fewer than minItems")
+        if "maxItems" in schema and len(value) > schema["maxItems"]: errors.append(f"{path}: exceeds maxItems")
+        if schema.get("uniqueItems") and len({json.dumps(item, sort_keys=True, separators=(',', ':')) for item in value}) != len(value): errors.append(f"{path}: duplicate items")
+        if "items" in schema:
+            for index, item in enumerate(value): errors.extend(_validate(schema["items"], item, root, f"{path}[{index}]"))
+    if isinstance(value, dict):
+        required = schema.get("required", [])
+        for key in required:
+            if key not in value: errors.append(f"{path}.{key}: required")
+        properties = schema.get("properties", {})
+        for key, item in value.items():
+            if key in properties: errors.extend(_validate(properties[key], item, root, f"{path}.{key}"))
+            elif schema.get("additionalProperties") is False: errors.append(f"{path}: unknown field {key}")
+    return errors
 
 def decode_fact(value: dict[str, Any]) -> Fact:
-    if not isinstance(value, dict):
-        raise ValueError("fact must be an object")
-    kind = value.get("fact_kind")
-    if kind not in ALL_FACT_KINDS:
-        raise ValueError(f"unknown fact_kind: {kind!r}")
+    errors = _validate(_SCHEMA["$defs"]["Fact"], value, _SCHEMA, "$")
+    if errors:
+        raise ValueError("; ".join(errors))
+    kind = value["fact_kind"]
     if kind == LOOP_ITERATION_COMPLETED:
-        required = {"fact_id", "event_sequence", "fact_kind", "static_loop_id", "loop_occurrence_id", "iteration_index", "program_invocation_id", "causal_node_execution_ids"}
-        _exact(value, required)
-        causal = tuple(value["causal_node_execution_ids"])
-        if not causal:
-            raise ValueError("LoopIterationCompleted causality must be non-empty")
-        return LoopIterationCompletedFact(value["fact_id"], value["event_sequence"], value["static_loop_id"], value["loop_occurrence_id"], value["iteration_index"], value["program_invocation_id"], causal)
+        return LoopIterationCompletedFact(value["fact_id"], value["event_sequence"], value["static_loop_id"], value["loop_occurrence_id"], value["iteration_index"], value["program_invocation_id"], tuple(value["causal_node_execution_ids"]))
     if kind == NODE_EXECUTION_RECORDED:
-        required = {"fact_id", "event_sequence", "fact_kind", "node_execution_id", "air_node_id", "execution_scope"}
-        _exact(value, required, {"parent_node_execution_id"})
-        scope = value["execution_scope"]
-        if scope.get("scope_kind") == "non_loop":
-            _exact(scope, {"scope_kind"})
-        elif scope.get("scope_kind") == "loop":
-            _exact(scope, {"scope_kind", "region_occurrence_id", "static_region_id", "loop_memberships"})
-            if not scope["loop_memberships"]:
-                raise ValueError("loop scope memberships must be non-empty")
-        else:
-            raise ValueError("unknown NodeExecution scope_kind")
-        return NodeExecutionRecordedFact(value["fact_id"], value["event_sequence"], value["node_execution_id"], value["air_node_id"], scope, value.get("parent_node_execution_id"))
-    runtime_optional = {"ownership_epoch", "instance_state", "invocation_state", "event_state", "model_outcome", "commit_sequence", "node_execution_id", "attempt_id", "region_occurrence_id", "static_region_id", "loop_memberships", "air_node_id", "parent_node_execution_id", "hook_execution_id", "hook_id", "hook_scope", "hook_phase", "context_transition_id", "context_before_ref", "context_after_ref", "effect_outcome_ref", "typed_error"}
-    _exact(value, {"fact_id", "event_sequence", "fact_kind"}, runtime_optional)
-    return RuntimeFact(value["fact_id"], value["event_sequence"], kind)
+        return NodeExecutionRecordedFact(value["fact_id"], value["event_sequence"], value["node_execution_id"], value["air_node_id"], value["execution_scope"], value.get("parent_node_execution_id"))
+    optional_fields = {key: item for key, item in value.items() if key not in {"fact_id", "event_sequence", "fact_kind"}}
+    return RuntimeFact(value["fact_id"], value["event_sequence"], kind, optional_fields)
