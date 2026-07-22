@@ -175,3 +175,95 @@ def test_generated_runtime_evidence_binding_is_closed() -> None:
         pass
     else:
         raise AssertionError("unknown fact kind must fail closed")
+
+    runtime_input = {
+        "fact_id": "runtime.1",
+        "event_sequence": 2,
+        "fact_kind": "invocation.committed",
+        "commit_sequence": 1,
+        "invocation_state": "committed_return",
+        "context_before_ref": {
+            "ref_type": "ContextRef",
+            "ref": "context.before",
+            "digest": f"sha256:{'a' * 64}",
+        },
+        "typed_error": {
+            "error_id": "error.1",
+            "category": "validation",
+            "code_ref": "InvalidInput",
+            "message": "invalid input",
+        },
+    }
+    runtime = decode_fact(runtime_input)
+    assert runtime.to_dict() == runtime_input
+
+    malformed = [
+        {**runtime_input, "event_sequence": "2"},
+        {**runtime_input, "invocation_state": "invented"},
+        {**runtime_input, "context_before_ref": {"ref_type": "ContextRef"}},
+        {
+            **runtime_input,
+            "context_before_ref": {
+                "ref_type": "ContextRef",
+                "ref": "context.before",
+                "extra": True,
+            },
+        },
+        {
+            **runtime_input,
+            "context_before_ref": {
+                "ref_type": "bad space",
+                "ref": "context.before",
+            },
+        },
+        {**runtime_input, "typed_error": {"error_id": "error.1"}},
+        {
+            **runtime_input,
+            "typed_error": {
+                "error_id": "error.1",
+                "category": "invented",
+                "code_ref": "InvalidInput",
+                "message": "invalid",
+            },
+        },
+        {
+            **runtime_input,
+            "typed_error": {
+                "error_id": "error.1",
+                "category": "validation",
+                "code_ref": "InvalidInput",
+                "message": "invalid",
+                "extra": True,
+            },
+        },
+        {
+            "fact_id": "loop.bad",
+            "event_sequence": 1,
+            "fact_kind": "LoopIterationCompleted",
+            "static_loop_id": "loop.main",
+            "loop_occurrence_id": "occurrence.1",
+            "iteration_index": 0,
+            "program_invocation_id": "invocation.1",
+            "causal_node_execution_ids": ["node.1", "node.1"],
+        },
+        {
+            "fact_id": "node.bad",
+            "event_sequence": 1,
+            "fact_kind": "node_execution.recorded",
+            "node_execution_id": "node.1",
+            "air_node_id": "air.1",
+            "execution_scope": {
+                "scope_kind": "loop",
+                "region_occurrence_id": "occurrence.1",
+                "static_region_id": "loop.main",
+                "loop_memberships": [{"static_loop_id": "loop.main"}],
+            },
+        },
+        {**runtime_input, "unknown": True},
+    ]
+    for value in malformed:
+        try:
+            decode_fact(value)
+        except ValueError:
+            continue
+        raise AssertionError(f"malformed fact accepted: {value}")
