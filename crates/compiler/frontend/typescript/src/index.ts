@@ -1,83 +1,46 @@
-export { GraphBuilder, NodeRef, promptInput, PROMPT_INPUT_ROLES } from "./builder.js";
-export type {
-  AskOptions,
-  CommunicateOptions,
-  DelegateOptions,
-  GenericOpOptions,
-  PromptInputBinding,
-  PromptInputRole,
-  SpawnAgentOptions,
-  InvokeCapabilityOptions,
-} from "./builder.js";
-
-export { ApxmGraph, makeEdge } from "./graph.js";
-export type { GraphNode, GraphEdge, Parameter, ApxmGraphData } from "./graph.js";
-
-export { validateWorkflowDraft } from "./validate.js";
-export type { WorkflowDraftValidationResult } from "./validate.js";
-
-// Vendored workflow-draft.v1 schema ( codegen). Exposed so consumers
-// (e.g. Studio's Gao package) can derive human/LLM-readable material — such
-// as an authoring rules section — from the same schema `validateWorkflowDraft`
-// checks against, instead of hand-maintaining a parallel description.
-export { WORKFLOW_DRAFT_V1_SCHEMA } from "./generated/workflow-draft-schema.js";
+// Publishes the generic TypeScript Agent Program authoring and compiler bridge APIs.
 
 export {
-  OP_SPECS,
-  ALL_OPERATIONS,
-  VOID_OPS,
-  REQUIRED_ATTRS,
-  OP_SPEC_SCHEMA_VERSION,
-  OP_SPEC_TOTAL_OPERATIONS,
-} from "./generated/ops.js";
-export type { OpName, OpSpec, OpField } from "./generated/ops.js";
-
-export type { DependencyType, ParamType } from "./types.js";
-export { normalizeDependencyType, VALID_PARAM_TYPES } from "./types.js";
-
-export { GENERATED_GRAPH_BUILDER_OP_METHODS } from "./generated/builder-ops.js";
-export type { GeneratedBuilderMethodName } from "./generated/builder-ops.js";
-
+  FIVE_OPS,
+  FRONTEND_GRAPH_VERSION,
+  OP_AWAIT_EVENT,
+  OP_CAPABILITY_INVOKE,
+  OP_MODEL_CALL,
+  OP_PROGRAM_INVOKE,
+  OP_PROGRAM_NEW,
+  SOURCE_MAP_VERSION,
+  canonicalAirJson,
+  compileArtifact,
+  lower,
+  verify,
+  type Json,
+  type OpName,
+} from "./frontend-graph.js";
 export {
-  TOOL_REGISTRY,
-  getHandlerModule,
-  makeHandlerId,
-  tool,
-  isFunctionTool,
-  hook,
-  hookDescriptor,
-  isHookFn,
-  normalizeHookMode,
-  normalizeLifecycleEvent,
-  LifecycleEvent,
-  HookMode,
-  LIFECYCLE_EVENTS,
-  GATE_LIFECYCLE_EVENTS,
-  HOOK_MODES,
-} from "./handlers/index.js";
-export type {
-  CapabilityHookFn,
-  CapabilityResultHookFn,
-  ContextHookFn,
-  HandlerFn,
-  HookCall,
-  HookContext,
-  HookDecision,
-  HookFnCallable,
-  HookResult,
-  JsonObject,
-  JsonPrimitive,
-  JsonSchema,
-  JsonValue,
-  ReplyHookFn,
-  ToolFn,
-  FunctionTool,
-  ToolBuilder,
-  ToolOptions,
-  HookBuilder,
-  HookFn,
-  HookOptions,
-} from "./handlers/index.js";
-
-export { compileHandlers } from "./compile-handlers.js";
-export type { HandlerManifestEntry } from "./compile-handlers.js";
+  AgentProgram,
+  type ContextEdge,
+  type HookBinding,
+  type ImportedProgram,
+} from "./agent-program.js";
+export { Hook, type AgentFacade, type HookHandler } from "./hook.js";
+export {
+  type ProgramInstanceRef,
+  type ProgramInvokeSpec,
+  type ProgramNewSpec,
+  type ProgramRef,
+  programInstanceReceiver,
+  programInvokeOperands,
+  programNewOperands,
+} from "./program-instance.js";
+export { StructuredTaskScope } from "./structured-task.js";
+export {
+  ALL_FACT_KINDS,
+  RUNTIME_FACT_KINDS,
+  decodeFact,
+  type Fact,
+  type LoopIterationCompletedFact,
+  type NodeExecutionRecordedFact,
+  type NodeExecutionScope,
+  type RuntimeFact,
+  type RuntimeFactKind,
+} from "./generated/runtime-evidence.js";

@@ -8,7 +8,7 @@
 APXM compiles and executes Agent Programs. Python and TypeScript are equivalent
 authoring frontends; neither is an execution runtime. The Rust compiler owns
 FrontendGraph/AIR verification and artifact production. The generic runtime
-executes admitted artifacts without assuming a conversation, Turn, company
+executes admitted artifacts without assuming a conversation, named example, company
 hierarchy, Skill injection, or model/tool loop.
 
 ## Canonical v1 pipeline
@@ -22,12 +22,12 @@ flowchart LR
     AIR --> A["Executable artifact v1"]
     A --> R["Generic APXM runtime"]
     R --> E["Runtime evidence v1"]
-    E --> S["Studio projections: run / Turn / node"]
+    E --> S["Studio projections: run / loop iteration / node"]
 ```
 
 Agent Programs compose only through `program.new`, one-shot
-`program.invoke`, and stateful `instance.invoke`. AIR v1 has exactly five
-public semantic operations:
+`program.invoke`, and stateful `instance.invoke`. AIR v1 has a closed
+five-operation effect/composition family:
 
 1. `model.call`
 2. `capability.invoke`
@@ -35,10 +35,12 @@ public semantic operations:
 4. `program.invoke`
 5. `await.event`
 
-Ordinary functions, branches, loops, structured task scopes, try/catch,
-return, program yield, and region yield are compiler-owned structural IR—not a
-raw public operation builder. Direct AIR authoring and pre-canonical operation
-builders are not v1 APIs.
+AIS separately owns the closed structural family: ordinary functions, regions,
+values/blocks, branches, loops including `ais.loop`, structured task scopes,
+try/catch, return, program yield, and region yield. Structural operations are
+compiler-emitted, not a raw public operation builder, and `ais.loop` is not a
+sixth effect/composition operation. Direct AIR authoring and pre-canonical
+operation builders are not v1 APIs.
 
 ## Canonical reading order
 
@@ -47,8 +49,9 @@ builders are not v1 APIs.
    return, events, and evidence.
 2. [Program Execution Model theory](pxm/theory.md) — the canonical layered
    sources of truth from source through evidence and Studio.
-3. [Agent Program guides](guides/README.md) — create, compose, converse, invoke
-   ACP agents, and select exact models.
+3. [Agent Program guides](guides/README.md) — create and compose generic
+   programs, build repository examples, invoke ACP agents, and select exact
+   models.
 4. [ADR index](adr/README.md) — accepted and superseded decisions.
 5. [ADR-0008](adr/0008-agent-programs-compose-through-new-and-invoke.md) —
    composition, state, ownership, isolation, identity, and failure semantics.
@@ -57,22 +60,26 @@ builders are not v1 APIs.
 7. [ADR-0010](adr/0010-agent-program-source-owns-context-hooks-and-conversational-loops.md)
    — explicit Program Context, Agent Facade callbacks, discovery-only Skills,
    and frontend-authored loops.
-8. [ADR-0011](adr/0011-agent-program-execution-is-one-end-to-end-spine.md) —
+8. [ADR-0014](adr/0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md)
+   — examples-only conversational/Gao ownership, two closed AIS operation
+   families, and generic completed-loop evidence.
+9. [ADR-0011](adr/0011-agent-program-execution-is-one-end-to-end-spine.md) —
    one frontend/compiler/runtime/inference/evidence execution spine.
-9. [Normative composition/AIR contract](agents/agent-program-composition-and-air-contract.md)
+10. [Normative composition/AIR contract](agents/agent-program-composition-and-air-contract.md)
    — frontend, compiler, artifact, runtime, event, identity, commit, and
    evidence requirements.
-10. [ADR-0013](adr/0013-core-semantics-are-closed-and-implementations-enter-through-exact-port-bindings.md)
+11. [ADR-0013](adr/0013-core-semantics-are-closed-and-implementations-enter-through-exact-port-bindings.md)
     and the [portable core interface contract](agents/portable-core-interface-contract.md)
     — closed semantics, narrow replaceable ports, exact bindings, confinement,
     and first-party conformance.
-11. [ACP interoperability and selection contract](agents/acp-and-routing-contract.md)
+12. [ACP interoperability and selection contract](agents/acp-and-routing-contract.md)
    — exact admitted Claude/Codex/ACP profiles and future routing boundary.
-12. [Full-replacement plan](agents/agent-program-composition-and-air-full-replacement-plan.md)
+13. [Full-replacement plan](agents/agent-program-composition-and-air-full-replacement-plan.md)
    — P0-P9 delivery, conformance gates, cutover, and absence proof.
 
-ADR-0001 and ADR-0005 are superseded historical rationale. Their callback and
-runtime-Turn models are not implementation authority.
+ADR-0001, ADR-0002, and ADR-0005 are superseded historical rationale. Their
+callback, package-level Conversational Agent/Gao, and runtime-Turn models are
+not implementation authority.
 
 ## Related target plans
 
@@ -87,8 +94,9 @@ runtime-Turn models are not implementation authority.
   ports, confinement law, and first-party equality.
 - [Agent Program replacement portfolio](agents/agent-program-full-replacement-portfolio.md)
   — cross-plan dependency and cutover view.
-- [Gao plan pointer](agents/gao-conversational-agent-implementation-plan.md) —
-  Gao migrates in common phase P6 as a normal TypeScript Conversational Agent.
+- [Gao plan tombstone](agents/gao-conversational-agent-implementation-plan.md) —
+  preserves the replaced named-specialization plan; Gao now lives only as a
+  repository example over generic APIs.
 - [Topology boundary](agent-topology-boundary.md) — Studio/control-plane policy
   becomes exact admission facts; runtime remains organization-agnostic.
 - [ACP and exact-selection replacement](agents/acp-and-routing-full-replacement-plan.md)
@@ -174,7 +182,8 @@ focused canonical adapters:
   artifact, and attenuated authority.
 - Program Instances are stateful, single-flight, and fail-busy. Yield retains
   continuation; return completes; `await.event` parks the same invocation.
-- Runtime evidence is generic monotonic lifecycle truth. Studio alone projects
-  conversational loop occurrences as Turns.
+- Runtime evidence is generic monotonic lifecycle truth.
+  `LoopIterationCompleted` is emitted only with an atomically committed
+  body/back-edge; Studio projects the generic fact without a `Turn` type.
 - Current operation names, session loops, graph splicing, runtime paths, and
   direct AIR builders are replacement evidence—not compatibility promises.

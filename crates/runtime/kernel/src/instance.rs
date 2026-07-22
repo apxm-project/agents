@@ -11,7 +11,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use apxm_program::runtime_evidence::{
-    Fact, FactKind, InstanceState, InvocationState, ProgramIdentity, RuntimeEvidence,
+    Fact, FactKind, InstanceState, InvocationState, ProgramIdentity, RuntimeEvidence, RuntimeFact,
     RuntimeEvidenceVersion,
 };
 
@@ -438,7 +438,7 @@ impl ProgramInstance {
 
 fn capability_attempt_fact(seq: u64, node_execution_id: &str) -> Fact {
     let mut fact = lifecycle_fact(seq, FactKind::AttemptRecorded, None, None, None);
-    fact.node_execution_id = Some(node_execution_id.to_string());
+    runtime_fact_mut(&mut fact).node_execution_id = Some(node_execution_id.to_string());
     fact
 }
 
@@ -472,7 +472,7 @@ fn capability_terminal_fact(
                 Some(InvocationState::Failed),
                 None,
             );
-            fact.typed_error = Some(apxm_program::common::TypedErrorEnvelope {
+            runtime_fact_mut(&mut fact).typed_error = Some(apxm_program::common::TypedErrorEnvelope {
                 error_id: "agents.external_agent_failed".to_string(),
                 category: apxm_program::common::ErrorCategory::Unavailable,
                 code_ref: "ExternalAgentFailed".to_string(),
@@ -483,7 +483,7 @@ fn capability_terminal_fact(
         }
         PromptEffectState::OutcomeUnknown { .. } => {
             let mut fact = lifecycle_fact(seq, FactKind::EffectOutcomeUnknown, None, None, None);
-            fact.effect_outcome_ref = Some(apxm_program::common::TypedRef {
+            runtime_fact_mut(&mut fact).effect_outcome_ref = Some(apxm_program::common::TypedRef {
                 ref_type: "ExternalAgentEffectRef".to_string(),
                 target: node_execution_id.to_string(),
                 digest: None,
@@ -491,7 +491,7 @@ fn capability_terminal_fact(
             fact
         }
     };
-    fact.node_execution_id = Some(node_execution_id.to_string());
+    runtime_fact_mut(&mut fact).node_execution_id = Some(node_execution_id.to_string());
     fact
 }
 
@@ -502,10 +502,9 @@ fn lifecycle_fact(
     invocation_state: Option<InvocationState>,
     commit_sequence: Option<u64>,
 ) -> Fact {
-    Fact {
+    Fact::from_runtime(kind, RuntimeFact {
         fact_id: format!("fact.{seq}"),
         event_sequence: seq,
-        fact_kind: kind,
         ownership_epoch: None,
         instance_state,
         invocation_state,
@@ -516,6 +515,7 @@ fn lifecycle_fact(
         attempt_id: None,
         region_occurrence_id: None,
         static_region_id: None,
+        loop_memberships: None,
         air_node_id: None,
         parent_node_execution_id: None,
         hook_execution_id: None,
@@ -527,5 +527,10 @@ fn lifecycle_fact(
         context_after_ref: None,
         effect_outcome_ref: None,
         typed_error: None,
-    }
+    })
+}
+
+fn runtime_fact_mut(fact: &mut Fact) -> &mut RuntimeFact {
+    fact.runtime_mut()
+        .expect("lifecycle helpers construct only runtime facts")
 }

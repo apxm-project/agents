@@ -1,5 +1,5 @@
 // Converts an operator request into a typed, reviewable workflow plan.
-import { tool } from "@apxm/frontend";
+import { tool } from "@apxm/agent-packaging";
 
 import {
   capabilitiesMentionedIn,

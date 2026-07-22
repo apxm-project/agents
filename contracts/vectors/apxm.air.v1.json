@@ -6,48 +6,71 @@
       "semantic_operations": [
         {
           "node_id": "node.model.1",
-          "op": "model.call"
+          "op": "model.call",
+          "parent_region_id": "region.loop.1",
+          "execution_order": 0
         },
         {
           "node_id": "node.cap.1",
-          "op": "capability.invoke"
+          "op": "capability.invoke",
+          "parent_region_id": "region.loop.1",
+          "execution_order": 1
         },
         {
           "node_id": "node.new.1",
-          "op": "program.new"
+          "op": "program.new",
+          "parent_region_id": "region.loop.1",
+          "execution_order": 2
         },
         {
           "node_id": "node.invoke.1",
-          "op": "program.invoke"
+          "op": "program.invoke",
+          "parent_region_id": "region.loop.1",
+          "execution_order": 3
         },
         {
           "node_id": "node.await.1",
-          "op": "await.event"
+          "op": "await.event",
+          "parent_region_id": "region.loop.1",
+          "execution_order": 4
         }
       ],
       "structural_ir": [
         {
-          "region_id": "region.fn.1",
-          "kind": "function"
+          "region_id": "region.root",
+          "kind": "region",
+          "execution_order": 0
         },
         {
           "region_id": "region.loop.1",
-          "kind": "loop"
+          "kind": "ais.loop",
+          "parent_region_id": "region.root",
+          "execution_order": 0
         },
         {
           "region_id": "region.yield.1",
-          "kind": "yield"
+          "kind": "yield",
+          "parent_region_id": "region.root",
+          "execution_order": 1
         },
         {
           "region_id": "region.return.1",
-          "kind": "return"
+          "kind": "return",
+          "parent_region_id": "region.root",
+          "execution_order": 2
         }
       ],
+      "context_flow": [],
       "source_map": {
         "schema_version": "apxm.source-map.v1",
         "source_language": "python",
         "node_spans": [],
-        "region_annotations": []
+        "region_annotations": [
+          {
+            "region_id": "region.loop.1",
+            "annotation": "structural_loop"
+          }
+        ]
       }
     },
     "expected_valid": true

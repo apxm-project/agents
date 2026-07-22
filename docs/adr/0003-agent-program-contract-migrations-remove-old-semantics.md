@@ -1,9 +1,16 @@
 ---
 status: accepted
 date: 2026-07-15
+owner: APXM agents
+amended_by: ADR-0014
+amended: 2026-07-22
 ---
 
 # Agent Program contract migrations remove old semantics
+
+ADR-0014 preserves this full-replacement decision while replacing its standard
+`ConversationalAgent` target with generic installable Agent Program APIs and
+repository-local conversational/Gao examples.
 
 APXM Agent Program semantic migrations are full replacements. The current
 unversioned Hook payload, broad decision union, implicit context behavior,
@@ -11,12 +18,14 @@ direct Gao loop, and any superseded artifact schema are implementation evidence
 only. They are not supported compatibility contracts for the target release.
 
 `apxm.frontend-graph.v1`, `apxm.air.v1`, `apxm.executable-artifact.v1`,
-`apxm.runtime-evidence.v1`, and the standard Conversational Agent construct
-will replace every prior semantic path. All
-first-party Python and TypeScript examples, Gao, artifacts, handlers, runtime
+`apxm.runtime-evidence.v1`, the generic installable Python/TypeScript
+`AgentProgram` surfaces, the two closed AIS operation families, and generic
+`LoopIterationCompleted` evidence will replace every prior semantic path. All
+first-party Python and TypeScript examples, artifacts, handlers, runtime
 dispatch, Server/OS consumers, generated declarations, tests, and product
-adapters move to the target contract in one APXM Compatibility Set. Admission
-rejects old or unknown semantic versions after cutover.
+adapters move to the target contract in one APXM Compatibility Set.
+Conversational and Gao examples use only packed generic APIs. Admission rejects
+old or unknown semantic versions after cutover.
 
 APXM will not ship:
 
@@ -71,7 +80,8 @@ the breaking change explicit.
 
 - Contract and public API changes are intentionally breaking.
 - Python and TypeScript move together and remain semantically equivalent.
-- Gao is a release-blocking conformance fixture, not a compatibility exception.
+- Conversational and Gao repository examples are release-blocking generic-API
+  conformance fixtures, not compatibility exceptions or package contracts.
 - Distribution remains governed by coordinator ADR-0001. The compiler bridge
   participates in the same full replacement and one APXM v1 Compatibility
   Set.

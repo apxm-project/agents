@@ -28,7 +28,9 @@ use apxm_kernel::{
     AtomicWriteSet, ConfinementPort, ExactPortBinding, ExecutionCommitPort,
     ExternalAgentCapabilityPort, PortSlot,
 };
-use apxm_program::air::{AirModule, AirVersion, SemanticOp, SemanticOpKind};
+use apxm_program::air::{
+    AirModule, AirVersion, SemanticOp, SemanticOpKind, StructuralNode, StructuralOpKind,
+};
 use apxm_program::artifact::SchemaDigestRef;
 use apxm_program::source_map::{SourceLanguage, SourceMap, SourceMapVersion};
 
@@ -74,11 +76,15 @@ fn five_op_air() -> AirModule {
             SemanticOp {
                 node_id: "n_model".into(),
                 op: SemanticOpKind::ModelCall,
+                parent_region_id: "r_root".into(),
+                execution_order: 0,
                 operands: operands(&[("model_target_ref", MODEL_TARGET)]),
             },
             SemanticOp {
                 node_id: "n_external_agent".into(),
                 op: SemanticOpKind::CapabilityInvoke,
+                parent_region_id: "r_root".into(),
+                execution_order: 1,
                 operands: operands(&[
                     ("capability_ref", "external-agent:acp:claude-code"),
                     ("external_agent_session", "conn_1"),
@@ -87,20 +93,32 @@ fn five_op_air() -> AirModule {
             SemanticOp {
                 node_id: "n_program_new".into(),
                 op: SemanticOpKind::ProgramNew,
+                parent_region_id: "r_root".into(),
+                execution_order: 2,
                 operands: operands(&[("program_ref", "child_program")]),
             },
             SemanticOp {
                 node_id: "n_program_invoke".into(),
                 op: SemanticOpKind::ProgramInvoke,
+                parent_region_id: "r_root".into(),
+                execution_order: 3,
                 operands: operands(&[("program_ref", "child_program")]),
             },
             SemanticOp {
                 node_id: "n_await".into(),
                 op: SemanticOpKind::AwaitEvent,
+                parent_region_id: "r_root".into(),
+                execution_order: 4,
                 operands: operands(&[("event_ref", "webhook_ready")]),
             },
         ],
-        structural_ir: vec![],
+        structural_ir: vec![StructuralNode {
+            region_id: "r_root".into(),
+            kind: StructuralOpKind::Function,
+            parent_region_id: None,
+            execution_order: 0,
+        }],
+        context_flow: vec![],
         source_map: SourceMap {
             schema_version: SourceMapVersion::V1,
             source_language: SourceLanguage::Python,

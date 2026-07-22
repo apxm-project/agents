@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "apxm"
 version = "0.1.0"
-description = "Python frontend for APXM graph construction and workflow execution"
+description = "Generic Python Agent Program authoring frontend for APXM"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -39,19 +39,17 @@ Changelog = "https://github.com/apxm-project/agents/releases"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pytest-asyncio>=0.21"]
-server = ["httpx>=0.25"]
-stream = ["httpx>=0.25", "httpx-sse>=0.4"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["apxm", "apxm.*"]
+include = ["apxm_program", "apxm_program.*"]
 
 [tool.setuptools.package-data]
-apxm = ["py.typed"]
+apxm_program = ["_native*.so", "py.typed"]
 
 [tool.apxm.release]
 publish = false
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
-testpaths = ["tests"]
+testpaths = ["tests_program"]

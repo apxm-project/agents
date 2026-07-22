@@ -13,14 +13,33 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
         CodegenAction::Frontend { output_dir, check } => {
             let output_dir = output_dir.unwrap_or_else(default_python_frontend_codegen_dir);
             let rendered = crate::frontend::render_generated_python();
+            let evidence_path = default_python_runtime_evidence_codegen_path();
+            let evidence_init_path = evidence_path.with_file_name("__init__.py");
+            let evidence = crate::frontend::codegen::render_runtime_evidence_python();
+            let evidence_init = "from .runtime_evidence import *\n";
             let mut files: Vec<String> =
                 rendered.iter().map(|(name, _)| name.to_string()).collect();
+            files.push("apxm_program/_generated/runtime_evidence.py".to_string());
+            files.push("apxm_program/_generated/__init__.py".to_string());
             files.sort();
 
             if check {
                 check_generated_python_dir(&output_dir, &rendered)?;
+                check_generated_file(&evidence_path, &evidence, "python runtime evidence")?;
+                check_generated_file(
+                    &evidence_init_path,
+                    evidence_init,
+                    "python runtime evidence init",
+                )?;
             } else {
                 crate::frontend::codegen::write_generated_python(&output_dir)?;
+                fs::create_dir_all(
+                    evidence_path
+                        .parent()
+                        .expect("runtime evidence output has a parent"),
+                )?;
+                fs::write(&evidence_path, evidence)?;
+                fs::write(&evidence_init_path, evidence_init)?;
             }
 
             if json_output {
@@ -74,10 +93,7 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
         }
         CodegenAction::TypescriptFrontend { output_dir, check } => {
             let output_dir = output_dir.unwrap_or_else(default_typescript_frontend_codegen_dir);
-            let workflow_schema_path = default_workflow_draft_schema_path();
-            let rendered = crate::frontend::codegen_ts::render_typescript_frontend_files(
-                &workflow_schema_path,
-            )?;
+            let rendered = crate::frontend::codegen_ts::render_typescript_frontend_files();
             let mut files: Vec<String> =
                 rendered.iter().map(|(name, _)| name.to_string()).collect();
             files.sort();
@@ -85,10 +101,7 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
             if check {
                 check_generated_named_files(&output_dir, &rendered, "typescript-frontend")?;
             } else {
-                crate::frontend::codegen_ts::write_typescript_frontend_generated(
-                    &output_dir,
-                    &workflow_schema_path,
-                )?;
+                crate::frontend::codegen_ts::write_typescript_frontend_generated(&output_dir)?;
             }
 
             if json_output {
@@ -146,11 +159,14 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
             let rendered = apxm_ais::render_op_spec_files();
             let semantic_tablegen_path = default_semantic_tablegen_declarations_path();
             let semantic_tablegen = apxm_ais::generate_semantic_tablegen_declarations();
+            let structural_tablegen_path = default_structural_tablegen_declarations_path();
+            let structural_tablegen = apxm_ais::generate_structural_tablegen_declarations();
             let mut files: Vec<String> = rendered
                 .iter()
                 .map(|(name, _)| (*name).to_string())
                 .collect();
             files.push(apxm_ais::SEMANTIC_TABLEGEN_DECLARATIONS_FILE.to_string());
+            files.push(apxm_ais::STRUCTURAL_TABLEGEN_DECLARATIONS_FILE.to_string());
             files.sort();
 
             if check {
@@ -160,12 +176,18 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
                     &semantic_tablegen,
                     "semantic TableGen declarations",
                 )?;
+                check_generated_file(
+                    &structural_tablegen_path,
+                    &structural_tablegen,
+                    "structural TableGen declarations",
+                )?;
             } else {
                 fs::create_dir_all(&output_dir)?;
                 for (name, content) in &rendered {
                     fs::write(output_dir.join(name), content)?;
                 }
                 fs::write(&semantic_tablegen_path, semantic_tablegen)?;
+                fs::write(&structural_tablegen_path, structural_tablegen)?;
             }
 
             if json_output {
@@ -281,6 +303,10 @@ fn check_generated_named_files(
     rendered: &[(&'static str, String)],
     target: &str,
 ) -> Result<()> {
+    let expected = rendered
+        .iter()
+        .map(|(filename, _)| *filename)
+        .collect::<BTreeSet<_>>();
     for (filename, content) in rendered {
         let output_path = output_dir.join(filename);
         let current = fs::read_to_string(&output_path).map_err(|error| {
@@ -296,11 +322,31 @@ fn check_generated_named_files(
             );
         }
     }
+    for entry in fs::read_dir(output_dir)? {
+        let entry = entry?;
+        if entry.file_type()?.is_file()
+            && entry.path().extension().and_then(|extension| extension.to_str()) == Some("ts")
+            && entry
+                .file_name()
+                .to_str()
+                .is_some_and(|filename| !expected.contains(filename))
+        {
+            bail!(
+                "{target} generated output has unexpected file: remove {} or rerun `apxm codegen {target}`",
+                entry.path().display()
+            );
+        }
+    }
     Ok(())
 }
 
 fn default_python_frontend_codegen_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../compiler/frontend/python/apxm/_generated")
+}
+
+fn default_python_runtime_evidence_codegen_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../compiler/frontend/python/apxm_program/_generated/runtime_evidence.py")
 }
 
 fn default_op_spec_codegen_dir() -> PathBuf {
@@ -316,6 +362,12 @@ fn default_semantic_tablegen_declarations_path() -> PathBuf {
         .join(apxm_ais::SEMANTIC_TABLEGEN_DECLARATIONS_FILE)
 }
 
+fn default_structural_tablegen_declarations_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../compiler/pipeline/mlir/include/ais/Dialect/AIS/IR")
+        .join(apxm_ais::STRUCTURAL_TABLEGEN_DECLARATIONS_FILE)
+}
+
 fn default_typescript_codegen_path() -> PathBuf {
     // Generated TS lives in-repo so APXM is self-contained. Consumers
     // (apxm-studio) vendor/import it.
@@ -324,11 +376,6 @@ fn default_typescript_codegen_path() -> PathBuf {
 
 fn default_typescript_frontend_codegen_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../compiler/frontend/typescript/src/generated")
-}
-
-fn default_workflow_draft_schema_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../../contracts/schemas/workflow-draft.v1.json")
 }
 
 fn default_event_kinds_codegen_path() -> PathBuf {

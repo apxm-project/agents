@@ -15,6 +15,18 @@ use apxm_program::frontend_graph::HookBinding;
 use apxm_program::runtime_evidence::Fact;
 use crate::ports::EventRef;
 
+/// One active structural loop frame persisted in exact nesting order.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DurableLoopFrame {
+    pub static_loop_id: String,
+    pub dynamic_occurrence_id: String,
+    pub iteration_index: u64,
+    pub causal_node_execution_ids: Vec<String>,
+    pub failed: bool,
+    pub parked: bool,
+}
+
 /// A suspended execution, captured at a parked `await.event`. It carries exactly
 /// the state required to resume: the AIR, the index of the next operation, the
 /// threaded Context, the accumulated native usage and External Agent evidence,
@@ -27,7 +39,10 @@ pub struct Continuation {
     /// The exact admitted model binding for this invocation, so a `model.call`
     /// after resume validates the same binding with no re-resolution.
     pub model_admission: ModelBindingAdmission,
-    pub next_op_index: usize,
+    pub next_schedule_position: usize,
+    pub loop_frames: Vec<DurableLoopFrame>,
+    pub parked_node_execution_id: Option<String>,
+    pub parked_loop_path: Vec<String>,
     pub context: Value,
     pub native_usage: Usage,
     pub external_agent_evidence: Vec<ExternalAgentEvidence>,

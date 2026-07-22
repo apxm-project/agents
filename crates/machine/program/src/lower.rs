@@ -1,21 +1,16 @@
 //! Deterministic FrontendGraph → AIR lowering.
 //!
-//! Typed regions lower to executable structural AIR/SSA: function shells, blocks,
-//! loop-carried context values, yield/resume boundaries, joins, try/catch, and
-//! compiled Hook callsites. Semantic operations preserve authored order; static
-//! Hook bindings become structural `value` nodes the runtime executes around
-//! their targets.
+//! Typed containment and sibling execution order lower without flattening or
+//! reconstructing control from names or source order.
 //!
 //! The native bridges and `dekk agents canonical-air` submit FrontendGraph to
 //! this owner path. No alternative graph-to-AIR builder is reachable.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::HashSet;
 
-use crate::air::{AirModule, AirVersion, SemanticOp, StructuralKind, StructuralNode};
+use crate::air::{AirModule, AirVersion, ContextEdge as AirContextEdge, SemanticOp, StructuralNode};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Verdict};
-use crate::frontend_graph::{
-    FrontendGraph, HookBinding, HookPhase, HookScope, ProgramDefinition, StructuralRegion,
-};
+use crate::frontend_graph::FrontendGraph;
 
 /// Lower a FrontendGraph to canonical AIR, failing closed with diagnostics when
 /// verification or lowering preconditions fail.
@@ -41,6 +36,8 @@ pub fn frontend_graph_to_air(graph: &FrontendGraph) -> Result<AirModule, Verdict
         .map(|op| SemanticOp {
             node_id: op.node_id.clone(),
             op: op.op,
+            parent_region_id: op.parent_region_id.clone(),
+            execution_order: op.execution_order,
             operands: op.operands.clone(),
         })
         .collect();
@@ -51,6 +48,15 @@ pub fn frontend_graph_to_air(graph: &FrontendGraph) -> Result<AirModule, Verdict
         schema_version: AirVersion::V1,
         semantic_operations,
         structural_ir,
+        context_flow: graph
+            .context_flow
+            .iter()
+            .map(|edge| AirContextEdge {
+                from_node: edge.from_node.clone(),
+                to_node: edge.to_node.clone(),
+                context_type_ref: edge.context_type_ref.clone(),
+            })
+            .collect(),
         source_map: graph.source_map.clone(),
     })
 }
@@ -117,206 +123,22 @@ fn validate_lowering(graph: &FrontendGraph, verdict: &mut Verdict) {
 }
 
 fn lower_structural_ir(graph: &FrontendGraph) -> Vec<StructuralNode> {
-    let mut out = Vec::new();
-    let mut seen = BTreeSet::new();
-
-    for program in &graph.program_definitions {
-        push_unique_many(
-            &mut out,
-            &mut seen,
-            [
-                function_shell(program),
-                entry_region(program),
-                entry_block(program),
-            ],
-        );
-    }
-
-    push_unique(&mut out, &mut seen, execution_block());
-
-    for region in &graph.structural_regions {
-        expand_authored_region(graph, region, &mut out, &mut seen);
-    }
-
-    for hook in sorted_hook_bindings(&graph.hook_bindings) {
-        if hook.phase == HookPhase::Before {
-            push_unique(&mut out, &mut seen, hook_callsite(hook));
-        }
-    }
-
-    for edge in &graph.context_flow {
-        push_unique(&mut out, &mut seen, context_value(edge));
-    }
-
-    for hook in sorted_hook_bindings(&graph.hook_bindings) {
-        if hook.phase == HookPhase::After {
-            push_unique(&mut out, &mut seen, hook_callsite(hook));
-        }
-    }
-
-    out
-}
-
-fn push_unique(out: &mut Vec<StructuralNode>, seen: &mut BTreeSet<String>, nodes: StructuralNode) {
-    if seen.insert(nodes.region_id.clone()) {
-        out.push(nodes);
-    }
-}
-
-fn push_unique_many(
-    out: &mut Vec<StructuralNode>,
-    seen: &mut BTreeSet<String>,
-    nodes: impl IntoIterator<Item = StructuralNode>,
-) {
-    for node in nodes {
-        push_unique(out, seen, node);
-    }
-}
-
-fn function_shell(program: &ProgramDefinition) -> StructuralNode {
-    structural_node(format!("region.fn.{}", program.program_id), StructuralKind::Function)
-}
-
-fn entry_region(program: &ProgramDefinition) -> StructuralNode {
-    structural_node(
-        format!("region.entry.{}", program.program_id),
-        StructuralKind::Region,
-    )
-}
-
-fn entry_block(program: &ProgramDefinition) -> StructuralNode {
-    structural_node(
-        format!("block.entry.{}", program.program_id),
-        StructuralKind::Block,
-    )
-}
-
-fn execution_block() -> StructuralNode {
-    structural_node("block.semantic.body", StructuralKind::Block)
-}
-
-fn expand_authored_region(
-    graph: &FrontendGraph,
-    region: &StructuralRegion,
-    out: &mut Vec<StructuralNode>,
-    seen: &mut BTreeSet<String>,
-) {
-    push_unique(out, seen, structural_node(region.region_id.clone(), region.kind));
-
-    match region.kind {
-        StructuralKind::Loop => {
-            push_unique_many(
-                out,
-                seen,
-                [
-                    structural_node(format!("block.{}.header", region.region_id), StructuralKind::Block),
-                    structural_node(format!("block.{}.body", region.region_id), StructuralKind::Block),
-                    structural_node(
-                        format!("value.{}.context.carry", region.region_id),
-                        StructuralKind::Value,
-                    ),
-                    structural_node(
-                        format!("value.{}.resume.input", region.region_id),
-                        StructuralKind::Value,
-                    ),
-                    structural_node(
-                        format!("region.{}.yield", region.region_id),
-                        StructuralKind::Yield,
-                    ),
-                ],
-            );
-        }
-        StructuralKind::Try => {
-            push_unique_many(
-                out,
-                seen,
-                [
-                    structural_node(format!("block.{}.try", region.region_id), StructuralKind::Block),
-                    structural_node(
-                        format!("region.{}.catch", region.region_id),
-                        StructuralKind::Catch,
-                    ),
-                ],
-            );
-        }
-        StructuralKind::ParallelJoin => {
-            push_unique(
-                out,
-                seen,
-                structural_node(format!("block.{}.join", region.region_id), StructuralKind::Block),
-            );
-        }
-        StructuralKind::Branch | StructuralKind::Switch => {
-            push_unique_many(
-                out,
-                seen,
-                [
-                    structural_node(format!("block.{}.then", region.region_id), StructuralKind::Block),
-                    structural_node(format!("block.{}.else", region.region_id), StructuralKind::Block),
-                ],
-            );
-        }
-        StructuralKind::Catch | StructuralKind::Throw | StructuralKind::Return | StructuralKind::Yield => {}
-        StructuralKind::Function | StructuralKind::Region | StructuralKind::Block | StructuralKind::Value => {}
-    }
-
-    // Join nodes referenced by parallel/task scopes when present in the graph.
-    if region.kind == StructuralKind::Loop {
-        let _ = graph;
-    }
-}
-
-fn hook_callsite(hook: &HookBinding) -> StructuralNode {
-    let phase = match hook.phase {
-        HookPhase::Before => "before",
-        HookPhase::After => "after",
-    };
-    structural_node(
-        format!("value.hook.{phase}.{}", hook.hook_id),
-        StructuralKind::Value,
-    )
-}
-
-fn context_value(edge: &crate::frontend_graph::ContextEdge) -> StructuralNode {
-    structural_node(
-        format!("value.context.{}.{}", edge.from_node, edge.to_node),
-        StructuralKind::Value,
-    )
-}
-
-fn structural_node(region_id: impl Into<String>, kind: StructuralKind) -> StructuralNode {
-    StructuralNode {
-        region_id: region_id.into(),
-        kind,
-    }
-}
-
-fn sorted_hook_bindings(bindings: &[HookBinding]) -> Vec<&HookBinding> {
-    let mut sorted: Vec<&HookBinding> = bindings.iter().collect();
-    sorted.sort_by(|left, right| {
-        scope_rank(left.scope)
-            .cmp(&scope_rank(right.scope))
-            .then_with(|| left.declaration_order.cmp(&right.declaration_order))
-            .then_with(|| left.hook_id.cmp(&right.hook_id))
-    });
-    sorted
-}
-
-const fn scope_rank(scope: HookScope) -> u8 {
-    match scope {
-        HookScope::Agent => 0,
-        HookScope::Loop => 1,
-        HookScope::Node => 2,
-        HookScope::Model => 3,
-        HookScope::Capability => 4,
-    }
+    graph
+        .structural_regions
+        .iter()
+        .map(|region| StructuralNode {
+            region_id: region.region_id.clone(),
+            kind: region.kind,
+            parent_region_id: region.parent_region_id.clone(),
+            execution_order: region.execution_order,
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::frontend_graph::verify_frontend_graph_json;
-    use std::collections::BTreeMap;
     use serde_json::json;
 
     fn graph(value: serde_json::Value) -> FrontendGraph {
@@ -338,11 +160,14 @@ mod tests {
             "imported_program_refs": [],
             "semantic_operations": [{
                 "node_id": "node.one",
-                "op": "model.call"
+                "op": "model.call",
+                "parent_region_id": "region.body",
+                "execution_order": 0
             }],
             "structural_regions": [{
-                "region_id": "region.return",
-                "kind": "return"
+                "region_id": "region.body",
+                "kind": "region",
+                "execution_order": 0
             }],
             "context_flow": [],
             "hook_bindings": [{
@@ -377,7 +202,7 @@ mod tests {
     }
 
     #[test]
-    fn lowers_loop_yield_and_hook_callsites() {
+    fn lowers_typed_containment_without_synthetic_nodes() {
         let graph = graph(json!({
             "schema_version": "apxm.frontend-graph.v1",
             "source_language": "python",
@@ -391,12 +216,27 @@ mod tests {
             }],
             "imported_program_refs": [],
             "semantic_operations": [
-                { "node_id": "node.model.1", "op": "model.call", "operands": { "model_target_ref": "model.default" } },
-                { "node_id": "node.cap.1", "op": "capability.invoke", "operands": { "capability_ref": "cap.search" } }
+                {
+                    "node_id": "node.model.1",
+                    "op": "model.call",
+                    "parent_region_id": "region.loop.1",
+                    "execution_order": 0,
+                    "operands": { "model_target_ref": "model.default" }
+                },
+                {
+                    "node_id": "node.cap.1",
+                    "op": "capability.invoke",
+                    "parent_region_id": "region.loop.1",
+                    "execution_order": 1,
+                    "operands": { "capability_ref": "cap.search" }
+                }
             ],
             "structural_regions": [
-                { "region_id": "region.loop.1", "kind": "loop" },
-                { "region_id": "region.return.1", "kind": "return" }
+                {
+                    "region_id": "region.loop.1",
+                    "kind": "ais.loop",
+                    "execution_order": 0
+                }
             ],
             "context_flow": [{
                 "from_node": "node.model.1",
@@ -421,20 +261,16 @@ mod tests {
                 "schema_version": "apxm.source-map.v1",
                 "source_language": "python",
                 "node_spans": [],
-                "region_annotations": []
+                "region_annotations": [
+                    {"region_id": "region.loop.1", "annotation": "structural_loop"}
+                ]
             }
         }));
         let air = frontend_graph_to_air(&graph).expect("lowering succeeds");
-        let kinds: BTreeMap<_, _> = air
-            .structural_ir
-            .iter()
-            .map(|node| (node.region_id.as_str(), node.kind))
-            .collect();
-        assert!(kinds.contains_key("region.fn.Specialist"));
-        assert!(kinds.contains_key("region.loop.1"));
-        assert!(kinds.contains_key("region.region.loop.1.yield"));
-        assert!(kinds.contains_key("value.hook.before.hook.before.model"));
-        assert!(kinds.contains_key("value.context.node.model.1.node.cap.1"));
+        assert_eq!(air.structural_ir.len(), 1);
+        assert_eq!(air.structural_ir[0].region_id, "region.loop.1");
+        assert_eq!(air.semantic_operations[0].parent_region_id, "region.loop.1");
+        assert_eq!(air.semantic_operations[1].execution_order, 1);
         assert_eq!(air.semantic_operations.len(), 2);
     }
 }

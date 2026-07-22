@@ -45,5 +45,3 @@ def AIS_AwaitEventOp : AIS_Op<"await_event", []> {
   let results = (outs AIS_TokenType:$result);
   let assemblyFormat = "attr-dict `:` type($result)";
 }
-
-

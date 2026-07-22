@@ -23,22 +23,24 @@ pub fn reconstruct(evidence: &RuntimeEvidence) -> LifecycleView {
     let mut view = LifecycleView::default();
 
     for fact in &evidence.facts {
-        view.last_event_sequence = fact.event_sequence;
+        view.last_event_sequence = fact.event_sequence();
 
-        if let Some(state) = fact.instance_state {
-            view.instance_state = Some(state);
-        }
-        if let Some(state) = fact.invocation_state {
-            view.invocation_state = Some(state);
-            if state.is_committed() {
+        if let Some(runtime) = fact.runtime() {
+            if let Some(state) = runtime.instance_state {
+                view.instance_state = Some(state);
+            }
+            if let Some(state) = runtime.invocation_state {
+                view.invocation_state = Some(state);
+                if state.is_committed() {
+                    view.committed = true;
+                }
+            }
+            if fact.is_kind(FactKind::EffectOutcomeUnknown) {
+                view.outcome_unknown = true;
+            }
+            if fact.is_kind(FactKind::InvocationCommitted) {
                 view.committed = true;
             }
-        }
-        if fact.fact_kind == FactKind::EffectOutcomeUnknown {
-            view.outcome_unknown = true;
-        }
-        if fact.fact_kind == FactKind::InvocationCommitted {
-            view.committed = true;
         }
     }
 

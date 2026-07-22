@@ -29,25 +29,8 @@ schema_version = "apxm.agent.v1"
 version = "0.1.0"
 
 [compile]
-entry = "capabilities/handlers/main.ts"
+entry = "src/index.ts"
 frontend = "typescript"
-
-[[hooks]]
-event = "pre_cap"
-handler = "capabilities.handlers.hooks.gate_compose_workflow"
-match = "compose_workflow"
-mode = "gate"
-
-[[hooks]]
-event = "post_cap"
-handler = "capabilities.handlers.hooks.redact_tool_results"
-match = "*"
-mode = "observe"
-
-[[hooks]]
-event = "post_turn"
-handler = "capabilities.handlers.hooks.compact_conversation"
-mode = "observe"
 
 [prompts]
 persona = "prompts/persona.md"
@@ -55,10 +38,6 @@ response_style = "prompts/response-style.md"
 safety = "prompts/safety.md"
 terminology = "prompts/apxm-terminology.md"
 workflow_authoring = "prompts/workflow-authoring.md"
-
-[runtime]
-memory_space = "stm"
-session_prefix = "gao"
 
 [source]
 type = "local"

@@ -6,6 +6,8 @@
 //! effect never silently becomes success. Decode fails closed on any unknown
 //! field or unknown enum member.
 
+use std::collections::{HashMap, HashSet};
+
 use serde::{Deserialize, Serialize};
 
 use crate::common::{TypedErrorEnvelope, TypedRef};
@@ -67,6 +69,64 @@ pub enum FactKind {
     HookExecuted,
     #[serde(rename = "context.transitioned")]
     ContextTransitioned,
+}
+
+impl FactKind {
+    #[must_use]
+    pub const fn all() -> [Self; 22] {
+        [
+            Self::InstanceStateChanged,
+            Self::InvocationStateChanged,
+            Self::InstanceCreated,
+            Self::InvocationAdmitted,
+            Self::ChildAttached,
+            Self::AttemptRecorded,
+            Self::InvocationCommitted,
+            Self::InvocationFailed,
+            Self::InvocationCancelled,
+            Self::EventCreated,
+            Self::EventAwaitRegistered,
+            Self::InvocationParked,
+            Self::EventTerminal,
+            Self::InvocationResumed,
+            Self::InstanceClosed,
+            Self::InstanceCancelled,
+            Self::EffectOutcomeUnknown,
+            Self::DeliveryRecorded,
+            Self::RegionOccurrenceStarted,
+            Self::NodeExecutionRecorded,
+            Self::HookExecuted,
+            Self::ContextTransitioned,
+        ]
+    }
+
+    #[must_use]
+    pub fn wire(self) -> &'static str {
+        match self {
+            Self::InstanceStateChanged => "instance.state_changed",
+            Self::InvocationStateChanged => "invocation.state_changed",
+            Self::InstanceCreated => "instance.created",
+            Self::InvocationAdmitted => "invocation.admitted",
+            Self::ChildAttached => "child.attached",
+            Self::AttemptRecorded => "attempt.recorded",
+            Self::InvocationCommitted => "invocation.committed",
+            Self::InvocationFailed => "invocation.failed",
+            Self::InvocationCancelled => "invocation.cancelled",
+            Self::EventCreated => "event.created",
+            Self::EventAwaitRegistered => "event.await_registered",
+            Self::InvocationParked => "invocation.parked",
+            Self::EventTerminal => "event.terminal",
+            Self::InvocationResumed => "invocation.resumed",
+            Self::InstanceClosed => "instance.closed",
+            Self::InstanceCancelled => "instance.cancelled",
+            Self::EffectOutcomeUnknown => "effect.outcome_unknown",
+            Self::DeliveryRecorded => "delivery.recorded",
+            Self::RegionOccurrenceStarted => "region.occurrence_started",
+            Self::NodeExecutionRecorded => "node_execution.recorded",
+            Self::HookExecuted => "hook.executed",
+            Self::ContextTransitioned => "context.transitioned",
+        }
+    }
 }
 
 /// The closed Program Instance state set.
@@ -137,13 +197,12 @@ pub struct ProgramIdentity {
     pub program_instance_id: Option<String>,
 }
 
-/// One authoritative fact.
+/// One authoritative non-loop fact.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Fact {
+pub struct RuntimeFact {
     pub fact_id: String,
     pub event_sequence: u64,
-    pub fact_kind: FactKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ownership_epoch: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -165,6 +224,8 @@ pub struct Fact {
     /// Compiler-owned static region joined to one dynamic occurrence.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub static_region_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loop_memberships: Option<Vec<LoopMembership>>,
     /// The exact static AIR node visited by this dynamic NodeExecution.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub air_node_id: Option<String>,
@@ -189,6 +250,291 @@ pub struct Fact {
     pub effect_outcome_ref: Option<TypedRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub typed_error: Option<TypedErrorEnvelope>,
+}
+
+/// One loop occurrence containing a NodeExecution.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LoopMembership {
+    pub static_loop_id: String,
+    pub loop_occurrence_id: String,
+}
+
+/// A committed loop back-edge. Every field is required at construction.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LoopIterationCompletedFact {
+    pub fact_id: String,
+    pub event_sequence: u64,
+    pub static_loop_id: String,
+    pub loop_occurrence_id: String,
+    pub iteration_index: u64,
+    pub program_invocation_id: String,
+    pub causal_node_execution_ids: Vec<String>,
+}
+
+impl LoopIterationCompletedFact {
+    #[must_use]
+    pub fn new(
+        fact_id: String,
+        event_sequence: u64,
+        static_loop_id: String,
+        loop_occurrence_id: String,
+        iteration_index: u64,
+        program_invocation_id: String,
+        causal_node_execution_ids: Vec<String>,
+    ) -> Self {
+        Self {
+            fact_id,
+            event_sequence,
+            static_loop_id,
+            loop_occurrence_id,
+            iteration_index,
+            program_invocation_id,
+            causal_node_execution_ids,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "scope_kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum NodeExecutionScope {
+    NonLoop,
+    Loop {
+        region_occurrence_id: String,
+        static_region_id: String,
+        loop_memberships: Vec<LoopMembership>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NodeExecutionRecordedFact {
+    pub fact_id: String,
+    pub event_sequence: u64,
+    pub node_execution_id: String,
+    pub air_node_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_node_execution_id: Option<String>,
+    pub execution_scope: NodeExecutionScope,
+}
+
+/// Closed runtime evidence variants.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "fact_kind")]
+pub enum Fact {
+    #[serde(rename = "instance.state_changed")]
+    InstanceStateChanged(RuntimeFact),
+    #[serde(rename = "invocation.state_changed")]
+    InvocationStateChanged(RuntimeFact),
+    #[serde(rename = "instance.created")]
+    InstanceCreated(RuntimeFact),
+    #[serde(rename = "invocation.admitted")]
+    InvocationAdmitted(RuntimeFact),
+    #[serde(rename = "child.attached")]
+    ChildAttached(RuntimeFact),
+    #[serde(rename = "attempt.recorded")]
+    AttemptRecorded(RuntimeFact),
+    #[serde(rename = "invocation.committed")]
+    InvocationCommitted(RuntimeFact),
+    #[serde(rename = "invocation.failed")]
+    InvocationFailed(RuntimeFact),
+    #[serde(rename = "invocation.cancelled")]
+    InvocationCancelled(RuntimeFact),
+    #[serde(rename = "event.created")]
+    EventCreated(RuntimeFact),
+    #[serde(rename = "event.await_registered")]
+    EventAwaitRegistered(RuntimeFact),
+    #[serde(rename = "invocation.parked")]
+    InvocationParked(RuntimeFact),
+    #[serde(rename = "event.terminal")]
+    EventTerminal(RuntimeFact),
+    #[serde(rename = "invocation.resumed")]
+    InvocationResumed(RuntimeFact),
+    #[serde(rename = "instance.closed")]
+    InstanceClosed(RuntimeFact),
+    #[serde(rename = "instance.cancelled")]
+    InstanceCancelled(RuntimeFact),
+    #[serde(rename = "effect.outcome_unknown")]
+    EffectOutcomeUnknown(RuntimeFact),
+    #[serde(rename = "delivery.recorded")]
+    DeliveryRecorded(RuntimeFact),
+    #[serde(rename = "region.occurrence_started")]
+    RegionOccurrenceStarted(RuntimeFact),
+    #[serde(rename = "node_execution.recorded")]
+    NodeExecutionRecorded(NodeExecutionRecordedFact),
+    #[serde(rename = "hook.executed")]
+    HookExecuted(RuntimeFact),
+    #[serde(rename = "context.transitioned")]
+    ContextTransitioned(RuntimeFact),
+    #[serde(rename = "LoopIterationCompleted")]
+    LoopIterationCompleted(LoopIterationCompletedFact),
+}
+
+impl Fact {
+    pub fn from_runtime(kind: FactKind, fact: RuntimeFact) -> Self {
+        match kind {
+            FactKind::InstanceStateChanged => Self::InstanceStateChanged(fact),
+            FactKind::InvocationStateChanged => Self::InvocationStateChanged(fact),
+            FactKind::InstanceCreated => Self::InstanceCreated(fact),
+            FactKind::InvocationAdmitted => Self::InvocationAdmitted(fact),
+            FactKind::ChildAttached => Self::ChildAttached(fact),
+            FactKind::AttemptRecorded => Self::AttemptRecorded(fact),
+            FactKind::InvocationCommitted => Self::InvocationCommitted(fact),
+            FactKind::InvocationFailed => Self::InvocationFailed(fact),
+            FactKind::InvocationCancelled => Self::InvocationCancelled(fact),
+            FactKind::EventCreated => Self::EventCreated(fact),
+            FactKind::EventAwaitRegistered => Self::EventAwaitRegistered(fact),
+            FactKind::InvocationParked => Self::InvocationParked(fact),
+            FactKind::EventTerminal => Self::EventTerminal(fact),
+            FactKind::InvocationResumed => Self::InvocationResumed(fact),
+            FactKind::InstanceClosed => Self::InstanceClosed(fact),
+            FactKind::InstanceCancelled => Self::InstanceCancelled(fact),
+            FactKind::EffectOutcomeUnknown => Self::EffectOutcomeUnknown(fact),
+            FactKind::DeliveryRecorded => Self::DeliveryRecorded(fact),
+            FactKind::RegionOccurrenceStarted => Self::RegionOccurrenceStarted(fact),
+            FactKind::HookExecuted => Self::HookExecuted(fact),
+            FactKind::ContextTransitioned => Self::ContextTransitioned(fact),
+            FactKind::NodeExecutionRecorded => {
+                panic!("NodeExecutionRecorded requires its typed constructor")
+            }
+        }
+    }
+
+    #[must_use]
+    pub fn fact_id(&self) -> &str {
+        match self {
+            Self::LoopIterationCompleted(fact) => &fact.fact_id,
+            Self::NodeExecutionRecorded(fact) => &fact.fact_id,
+            _ => &self.runtime().expect("runtime variant").fact_id,
+        }
+    }
+
+    #[must_use]
+    pub fn event_sequence(&self) -> u64 {
+        match self {
+            Self::LoopIterationCompleted(fact) => fact.event_sequence,
+            Self::NodeExecutionRecorded(fact) => fact.event_sequence,
+            _ => self.runtime().expect("runtime variant").event_sequence,
+        }
+    }
+
+    #[must_use]
+    pub fn runtime(&self) -> Option<&RuntimeFact> {
+        runtime_fact_ref(self)
+    }
+
+    #[must_use]
+    pub fn runtime_mut(&mut self) -> Option<&mut RuntimeFact> {
+        runtime_fact_mut(self)
+    }
+
+    #[must_use]
+    pub fn loop_iteration_completed(&self) -> Option<&LoopIterationCompletedFact> {
+        match self {
+            Self::LoopIterationCompleted(fact) => Some(fact),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn is_kind(&self, kind: FactKind) -> bool {
+        match self {
+            Self::LoopIterationCompleted(_) | Self::NodeExecutionRecorded(_) => false,
+            _ => self.kind() == Some(kind),
+        }
+    }
+
+    #[must_use]
+    pub fn node_execution_recorded(&self) -> Option<&NodeExecutionRecordedFact> {
+        match self {
+            Self::NodeExecutionRecorded(fact) => Some(fact),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn kind(&self) -> Option<FactKind> {
+        Some(match self {
+            Self::InstanceStateChanged(_) => FactKind::InstanceStateChanged,
+            Self::InvocationStateChanged(_) => FactKind::InvocationStateChanged,
+            Self::InstanceCreated(_) => FactKind::InstanceCreated,
+            Self::InvocationAdmitted(_) => FactKind::InvocationAdmitted,
+            Self::ChildAttached(_) => FactKind::ChildAttached,
+            Self::AttemptRecorded(_) => FactKind::AttemptRecorded,
+            Self::InvocationCommitted(_) => FactKind::InvocationCommitted,
+            Self::InvocationFailed(_) => FactKind::InvocationFailed,
+            Self::InvocationCancelled(_) => FactKind::InvocationCancelled,
+            Self::EventCreated(_) => FactKind::EventCreated,
+            Self::EventAwaitRegistered(_) => FactKind::EventAwaitRegistered,
+            Self::InvocationParked(_) => FactKind::InvocationParked,
+            Self::EventTerminal(_) => FactKind::EventTerminal,
+            Self::InvocationResumed(_) => FactKind::InvocationResumed,
+            Self::InstanceClosed(_) => FactKind::InstanceClosed,
+            Self::InstanceCancelled(_) => FactKind::InstanceCancelled,
+            Self::EffectOutcomeUnknown(_) => FactKind::EffectOutcomeUnknown,
+            Self::DeliveryRecorded(_) => FactKind::DeliveryRecorded,
+            Self::RegionOccurrenceStarted(_) => FactKind::RegionOccurrenceStarted,
+            Self::NodeExecutionRecorded(_) => FactKind::NodeExecutionRecorded,
+            Self::HookExecuted(_) => FactKind::HookExecuted,
+            Self::ContextTransitioned(_) => FactKind::ContextTransitioned,
+            Self::LoopIterationCompleted(_) => return None,
+        })
+    }
+}
+
+fn runtime_fact_ref(fact: &Fact) -> Option<&RuntimeFact> {
+    match fact {
+        Fact::InstanceStateChanged(value)
+        | Fact::InvocationStateChanged(value)
+        | Fact::InstanceCreated(value)
+        | Fact::InvocationAdmitted(value)
+        | Fact::ChildAttached(value)
+        | Fact::AttemptRecorded(value)
+        | Fact::InvocationCommitted(value)
+        | Fact::InvocationFailed(value)
+        | Fact::InvocationCancelled(value)
+        | Fact::EventCreated(value)
+        | Fact::EventAwaitRegistered(value)
+        | Fact::InvocationParked(value)
+        | Fact::EventTerminal(value)
+        | Fact::InvocationResumed(value)
+        | Fact::InstanceClosed(value)
+        | Fact::InstanceCancelled(value)
+        | Fact::EffectOutcomeUnknown(value)
+        | Fact::DeliveryRecorded(value)
+        | Fact::RegionOccurrenceStarted(value)
+        | Fact::HookExecuted(value)
+        | Fact::ContextTransitioned(value) => Some(value),
+        Fact::NodeExecutionRecorded(_) | Fact::LoopIterationCompleted(_) => None,
+    }
+}
+
+fn runtime_fact_mut(fact: &mut Fact) -> Option<&mut RuntimeFact> {
+    match fact {
+        Fact::InstanceStateChanged(value)
+        | Fact::InvocationStateChanged(value)
+        | Fact::InstanceCreated(value)
+        | Fact::InvocationAdmitted(value)
+        | Fact::ChildAttached(value)
+        | Fact::AttemptRecorded(value)
+        | Fact::InvocationCommitted(value)
+        | Fact::InvocationFailed(value)
+        | Fact::InvocationCancelled(value)
+        | Fact::EventCreated(value)
+        | Fact::EventAwaitRegistered(value)
+        | Fact::InvocationParked(value)
+        | Fact::EventTerminal(value)
+        | Fact::InvocationResumed(value)
+        | Fact::InstanceClosed(value)
+        | Fact::InstanceCancelled(value)
+        | Fact::EffectOutcomeUnknown(value)
+        | Fact::DeliveryRecorded(value)
+        | Fact::RegionOccurrenceStarted(value)
+        | Fact::HookExecuted(value)
+        | Fact::ContextTransitioned(value) => Some(value),
+        Fact::NodeExecutionRecorded(_) | Fact::LoopIterationCompleted(_) => None,
+    }
 }
 
 /// The static scope of a Hook execution.
@@ -251,62 +597,167 @@ impl RuntimeEvidence {
         }
 
         let mut previous: Option<u64> = None;
+        let mut seen_fact_ids = HashSet::new();
+        let mut seen_node_executions: HashMap<&str, HashSet<(&str, &str)>> = HashMap::new();
+        let mut completed_iterations = HashSet::new();
+        let mut next_iteration: HashMap<(String, String, String), u64> = HashMap::new();
         for fact in &self.facts {
+            if !seen_fact_ids.insert(fact.fact_id()) {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    fact.fact_id(),
+                    "fact_id is not replay-stable and unique",
+                ));
+            }
             if let Some(prev) = previous
-                && fact.event_sequence <= prev
+                && fact.event_sequence() <= prev
             {
                 verdict.push(Diagnostic::new(
                     DiagnosticCode::NonMonotonicEvidence,
-                    fact.fact_id.clone(),
+                    fact.fact_id(),
                     "event_sequence is not strictly increasing",
                 ));
             }
-            previous = Some(fact.event_sequence);
+            previous = Some(fact.event_sequence());
 
-            if fact.fact_kind == FactKind::EffectOutcomeUnknown {
-                let claims_success = fact.model_outcome == Some(ModelOutcome::CommittedSuccess)
-                    || fact
-                        .invocation_state
-                        .is_some_and(InvocationState::is_committed);
-                if claims_success {
-                    verdict.push(Diagnostic::new(
-                        DiagnosticCode::OutcomeUnknownClaimsSuccess,
-                        fact.fact_id.clone(),
-                        "an uncertain effect must not claim a committed/success outcome",
-                    ));
+            match fact {
+                Fact::LoopIterationCompleted(completed) => {
+                    if completed.causal_node_execution_ids.is_empty() {
+                        verdict.push(Diagnostic::new(
+                            DiagnosticCode::SchemaViolation,
+                            &completed.fact_id,
+                            "LoopIterationCompleted causality must be non-empty",
+                        ));
+                    }
+                    let mut unique_causal_ids = HashSet::new();
+                    for causal_id in &completed.causal_node_execution_ids {
+                        if !unique_causal_ids.insert(causal_id.as_str()) {
+                            verdict.push(Diagnostic::new(
+                                DiagnosticCode::SchemaViolation,
+                                &completed.fact_id,
+                                "LoopIterationCompleted causality contains a duplicate",
+                            ));
+                        }
+                        match seen_node_executions.get(causal_id.as_str()) {
+                            Some(memberships)
+                                if memberships.contains(&(
+                                    completed.static_loop_id.as_str(),
+                                    completed.loop_occurrence_id.as_str(),
+                                )) => {}
+                            _ => verdict.push(Diagnostic::new(
+                                DiagnosticCode::SchemaViolation,
+                                &completed.fact_id,
+                                "LoopIterationCompleted causality is foreign or uncommitted",
+                            )),
+                        }
+                    }
+                    let identity = (
+                        completed.static_loop_id.clone(),
+                        completed.loop_occurrence_id.clone(),
+                        completed.iteration_index,
+                    );
+                    if !completed_iterations.insert(identity) {
+                        verdict.push(Diagnostic::new(
+                            DiagnosticCode::SchemaViolation,
+                            &completed.fact_id,
+                            "loop iteration identity was replayed with a conflicting fact",
+                        ));
+                    }
+                    let sequence_key = (
+                        completed.static_loop_id.clone(),
+                        completed.loop_occurrence_id.clone(),
+                        completed.program_invocation_id.clone(),
+                    );
+                    let expected_index = next_iteration.entry(sequence_key).or_insert(0);
+                    if completed.iteration_index == *expected_index {
+                        *expected_index += 1;
+                    } else {
+                        verdict.push(Diagnostic::new(
+                            DiagnosticCode::SchemaViolation,
+                            &completed.fact_id,
+                            "loop iteration index is not zero-based and contiguous",
+                        ));
+                    }
                 }
-            }
-            let missing = match fact.fact_kind {
-                FactKind::RegionOccurrenceStarted => {
-                    fact.region_occurrence_id.is_none() || fact.static_region_id.is_none()
+                Fact::NodeExecutionRecorded(node) => {
+                    let memberships: HashSet<(&str, &str)> = match &node.execution_scope {
+                        NodeExecutionScope::NonLoop => HashSet::new(),
+                        NodeExecutionScope::Loop {
+                            region_occurrence_id,
+                            static_region_id,
+                            loop_memberships,
+                        } => {
+                            let memberships: HashSet<_> = loop_memberships
+                                .iter()
+                                .map(|membership| {
+                                    (
+                                        membership.static_loop_id.as_str(),
+                                        membership.loop_occurrence_id.as_str(),
+                                    )
+                                })
+                                .collect();
+                            if loop_memberships.is_empty()
+                                || !memberships.contains(&(
+                                    static_region_id.as_str(),
+                                    region_occurrence_id.as_str(),
+                                ))
+                            {
+                                verdict.push(Diagnostic::new(
+                                    DiagnosticCode::SchemaViolation,
+                                    &node.fact_id,
+                                    "loop NodeExecution scope must include its exact region occurrence",
+                                ));
+                            }
+                            memberships
+                        }
+                    };
+                    seen_node_executions.insert(&node.node_execution_id, memberships);
                 }
-                FactKind::NodeExecutionRecorded => {
-                    fact.node_execution_id.is_none()
-                        || fact.air_node_id.is_none()
-                        || fact.region_occurrence_id.is_none()
-                        || fact.static_region_id.is_none()
+                runtime_variant => {
+                    let runtime = runtime_variant.runtime().expect("exhaustive runtime variant");
+                    let kind = runtime_variant.kind().expect("runtime variant kind");
+                    if kind == FactKind::EffectOutcomeUnknown {
+                        let claims_success =
+                            runtime.model_outcome == Some(ModelOutcome::CommittedSuccess)
+                                || runtime
+                                    .invocation_state
+                                    .is_some_and(InvocationState::is_committed);
+                        if claims_success {
+                            verdict.push(Diagnostic::new(
+                                DiagnosticCode::OutcomeUnknownClaimsSuccess,
+                                &runtime.fact_id,
+                                "an uncertain effect must not claim a committed/success outcome",
+                            ));
+                        }
+                    }
+                    let missing = match kind {
+                        FactKind::RegionOccurrenceStarted => {
+                            runtime.region_occurrence_id.is_none()
+                                || runtime.static_region_id.is_none()
+                        }
+                        FactKind::HookExecuted => {
+                            runtime.hook_execution_id.is_none()
+                                || runtime.hook_id.is_none()
+                                || runtime.hook_scope.is_none()
+                                || runtime.hook_phase.is_none()
+                                || runtime.context_before_ref.is_none()
+                                || runtime.context_after_ref.is_none()
+                        }
+                        FactKind::ContextTransitioned => {
+                            runtime.context_transition_id.is_none()
+                                || runtime.context_before_ref.is_none()
+                                || runtime.context_after_ref.is_none()
+                        }
+                        _ => false,
+                    };
+                    if missing {
+                        verdict.push(Diagnostic::new(
+                            DiagnosticCode::SchemaViolation,
+                            &runtime.fact_id,
+                            "evidence join fact is missing a required typed join",
+                        ));
+                    }
                 }
-                FactKind::HookExecuted => {
-                    fact.hook_execution_id.is_none()
-                        || fact.hook_id.is_none()
-                        || fact.hook_scope.is_none()
-                        || fact.hook_phase.is_none()
-                        || fact.context_before_ref.is_none()
-                        || fact.context_after_ref.is_none()
-                }
-                FactKind::ContextTransitioned => {
-                    fact.context_transition_id.is_none()
-                        || fact.context_before_ref.is_none()
-                        || fact.context_after_ref.is_none()
-                }
-                _ => false,
-            };
-            if missing {
-                verdict.push(Diagnostic::new(
-                    DiagnosticCode::SchemaViolation,
-                    fact.fact_id.clone(),
-                    "evidence join fact is missing a required typed join",
-                ));
             }
         }
 

@@ -149,6 +149,18 @@ def schema_instance_errors(
             return [f"unresolved $ref {schema['$ref']!r}"]
         target, target_root = resolved
         return schema_instance_errors(target, instance, schema_ids, target_root)
+    if "oneOf" in schema:
+        branches = schema["oneOf"]
+        if not isinstance(branches, list):
+            return ["oneOf must be an array"]
+        matching = [
+            branch
+            for branch in branches
+            if not schema_instance_errors(branch, instance, schema_ids, root_schema)
+        ]
+        if len(matching) != 1:
+            return [f"expected exactly one oneOf branch, matched {len(matching)}"]
+        return []
 
     errors: list[str] = []
     if "const" in schema and instance != schema["const"]:
@@ -305,9 +317,18 @@ def runtime_evidence_errors(instance: dict[str, Any]) -> list[str]:
     if not isinstance(facts, list):
         return []
     last_sequence: int | None = None
+    seen_fact_ids: set[str] = set()
+    seen_node_executions: dict[str, set[tuple[str, str]]] = {}
+    seen_iterations: set[tuple[str, str, int]] = set()
+    next_iterations: dict[tuple[str, str, str], int] = {}
     for index, fact in enumerate(facts):
         if not isinstance(fact, dict):
             continue
+        fact_id = fact.get("fact_id")
+        if isinstance(fact_id, str):
+            if fact_id in seen_fact_ids:
+                return [f"facts[{index}]: fact_id must be replay-stable and unique"]
+            seen_fact_ids.add(fact_id)
         sequence = fact.get("event_sequence")
         if isinstance(sequence, int):
             if last_sequence is not None and sequence <= last_sequence:
@@ -330,13 +351,71 @@ def runtime_evidence_errors(instance: dict[str, Any]) -> list[str]:
             required = (
                 "node_execution_id",
                 "air_node_id",
-                "region_occurrence_id",
-                "static_region_id",
+                "execution_scope",
             )
             if any(not fact.get(field) for field in required):
                 return [
                     f"facts[{index}]: a NodeExecution requires exact AIR and region joins"
                 ]
+            scope = fact["execution_scope"]
+            memberships = scope.get("loop_memberships", []) if isinstance(scope, dict) else []
+            seen_node_executions[fact["node_execution_id"]] = {
+                (membership["static_loop_id"], membership["loop_occurrence_id"])
+                for membership in memberships
+                if isinstance(membership, dict)
+                and "static_loop_id" in membership
+                and "loop_occurrence_id" in membership
+            }
+        if fact.get("fact_kind") == "LoopIterationCompleted":
+            required = (
+                "static_loop_id",
+                "loop_occurrence_id",
+                "iteration_index",
+                "program_invocation_id",
+                "causal_node_execution_ids",
+            )
+            if any(field not in fact for field in required):
+                return [
+                    f"facts[{index}]: LoopIterationCompleted requires loop and causal identity"
+                ]
+            causal_ids = fact["causal_node_execution_ids"]
+            if (
+                not isinstance(causal_ids, list)
+                or not causal_ids
+                or len(set(causal_ids)) != len(causal_ids)
+                or any(
+                    (
+                        fact["static_loop_id"],
+                        fact["loop_occurrence_id"],
+                    )
+                    not in seen_node_executions.get(value, set())
+                    for value in causal_ids
+                )
+            ):
+                return [
+                    f"facts[{index}]: LoopIterationCompleted causality must be non-empty, unique, committed, and same-occurrence"
+                ]
+            identity = (
+                fact["static_loop_id"],
+                fact["loop_occurrence_id"],
+                fact["iteration_index"],
+            )
+            if identity in seen_iterations:
+                return [
+                    f"facts[{index}]: loop iteration identity conflicts with replay"
+                ]
+            seen_iterations.add(identity)
+            sequence_key = (
+                fact["static_loop_id"],
+                fact["loop_occurrence_id"],
+                fact["program_invocation_id"],
+            )
+            expected_iteration = next_iterations.get(sequence_key, 0)
+            if fact["iteration_index"] != expected_iteration:
+                return [
+                    f"facts[{index}]: iteration_index must be zero-based and contiguous"
+                ]
+            next_iterations[sequence_key] = expected_iteration + 1
         if fact.get("fact_kind") == "hook.executed":
             required = (
                 "hook_execution_id",

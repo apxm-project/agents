@@ -46,17 +46,18 @@ fn air() -> AirModule {
     serde_json::from_value(json!({
         "schema_version": "apxm.air.v1",
         "semantic_operations": [
-            {"node_id": "n.model", "op": "model.call", "operands": {"model_target_ref": "model.default"}},
-            {"node_id": "n.cap", "op": "capability.invoke", "operands": {"capability_ref": "cap.search"}},
-            {"node_id": "n.acp", "op": "capability.invoke", "operands": {"capability_ref": "external-agent:acp:claude-code", "external_agent_session": "session.1"}},
-            {"node_id": "n.new", "op": "program.new", "operands": {"program_ref": "Specialist"}},
-            {"node_id": "n.invoke", "op": "program.invoke", "operands": {"program_ref": "Specialist"}},
-            {"node_id": "n.await", "op": "await.event", "operands": {"event_ref": "evt.done"}}
+            {"node_id": "n.model", "op": "model.call", "parent_region_id": "r.fn", "execution_order": 0, "operands": {"model_target_ref": "model.default"}},
+            {"node_id": "n.cap", "op": "capability.invoke", "parent_region_id": "r.fn", "execution_order": 1, "operands": {"capability_ref": "cap.search"}},
+            {"node_id": "n.acp", "op": "capability.invoke", "parent_region_id": "r.fn", "execution_order": 2, "operands": {"capability_ref": "external-agent:acp:claude-code", "external_agent_session": "session.1"}},
+            {"node_id": "n.new", "op": "program.new", "parent_region_id": "r.fn", "execution_order": 3, "operands": {"program_ref": "Specialist"}},
+            {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.fn", "execution_order": 4, "operands": {"program_ref": "Specialist"}},
+            {"node_id": "n.await", "op": "await.event", "parent_region_id": "r.fn", "execution_order": 5, "operands": {"event_ref": "evt.done"}}
         ],
         "structural_ir": [
-            {"region_id": "r.fn", "kind": "function"},
-            {"region_id": "r.return", "kind": "return"}
+            {"region_id": "r.fn", "kind": "function", "execution_order": 0},
+            {"region_id": "r.return", "kind": "return", "parent_region_id": "r.fn", "execution_order": 6}
         ],
+        "context_flow": [],
         "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
     }))
     .expect("valid AIR")
@@ -318,11 +319,11 @@ async fn executes_all_five_ops_and_commits_atomically() {
     assert!(commit
         .facts()
         .iter()
-        .any(|fact| fact.fact_kind == apxm_program::runtime_evidence::FactKind::HookExecuted));
+        .any(|fact| fact.is_kind(apxm_program::runtime_evidence::FactKind::HookExecuted)));
     assert!(commit
         .facts()
         .iter()
-        .any(|fact| fact.fact_kind == apxm_program::runtime_evidence::FactKind::ContextTransitioned));
+        .any(|fact| fact.is_kind(apxm_program::runtime_evidence::FactKind::ContextTransitioned)));
 }
 
 #[tokio::test]
@@ -331,9 +332,12 @@ async fn unbound_model_target_fails_closed() {
     let bad_air: AirModule = serde_json::from_value(json!({
         "schema_version": "apxm.air.v1",
         "semantic_operations": [
-            {"node_id": "n.model", "op": "model.call", "operands": {"model_target_ref": "model.unbound"}}
+            {"node_id": "n.model", "op": "model.call", "parent_region_id": "r.fn", "execution_order": 0, "operands": {"model_target_ref": "model.unbound"}}
         ],
-        "structural_ir": [],
+        "structural_ir": [
+            {"region_id": "r.fn", "kind": "function", "execution_order": 0}
+        ],
+        "context_flow": [],
         "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
     }))
     .unwrap();

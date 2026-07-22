@@ -1,5 +1,5 @@
 // Builds a typed request for APXM's authoritative validation surfaces.
-import { tool } from "@apxm/frontend";
+import { tool } from "@apxm/agent-packaging";
 
 import {
   capabilitiesMentionedIn,

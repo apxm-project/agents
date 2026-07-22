@@ -544,19 +544,32 @@ mod from_air_tests {
                 serde_json::json!({
                     "node_id": format!("node.model.{i}"),
                     "op": "model.call",
+                    "parent_region_id": "region.body",
+                    "execution_order": i,
                     "operands": { "model_target_ref": target }
                 })
             })
             .chain(std::iter::once(serde_json::json!({
                 "node_id": "node.await",
                 "op": "await.event",
+                "parent_region_id": "region.body",
+                "execution_order": model_targets.len(),
                 "operands": { "event_ref": "session-input" }
             })))
             .collect();
         serde_json::from_value(serde_json::json!({
             "schema_version": "apxm.air.v1",
             "semantic_operations": ops,
-            "structural_ir": [{ "region_id": "region.return", "kind": "return" }],
+            "structural_ir": [
+                { "region_id": "region.body", "kind": "region", "execution_order": 0 },
+                {
+                    "region_id": "region.return",
+                    "kind": "return",
+                    "parent_region_id": "region.body",
+                    "execution_order": model_targets.len() + 1
+                }
+            ],
+            "context_flow": [],
             "source_map": {
                 "schema_version": "apxm.source-map.v1",
                 "source_language": "python",
@@ -646,12 +659,35 @@ mod from_graph_tests {
                 "target_agent_identity_requirement": "summarizer-identity"
             }],
             "semantic_operations": [
-                { "node_id": "node.model.1", "op": "model.call", "operands": { "model_target_ref": "model.default" } },
-                { "node_id": "node.cap.1", "op": "capability.invoke", "operands": { "capability_ref": "cap.search" } }
+                {
+                    "node_id": "node.model.1",
+                    "op": "model.call",
+                    "parent_region_id": "region.loop.1",
+                    "execution_order": 0,
+                    "operands": { "model_target_ref": "model.default" }
+                },
+                {
+                    "node_id": "node.cap.1",
+                    "op": "capability.invoke",
+                    "parent_region_id": "region.loop.1",
+                    "execution_order": 1,
+                    "operands": { "capability_ref": "cap.search" }
+                }
             ],
             "structural_regions": [
-                { "region_id": "region.loop.1", "kind": "loop" },
-                { "region_id": "region.return.1", "kind": "return" }
+                { "region_id": "region.root", "kind": "region", "execution_order": 0 },
+                {
+                    "region_id": "region.loop.1",
+                    "kind": "ais.loop",
+                    "parent_region_id": "region.root",
+                    "execution_order": 0
+                },
+                {
+                    "region_id": "region.return.1",
+                    "kind": "return",
+                    "parent_region_id": "region.root",
+                    "execution_order": 1
+                }
             ],
             "context_flow": [],
             "hook_bindings": [],
@@ -661,7 +697,9 @@ mod from_graph_tests {
                 "schema_version": "apxm.source-map.v1",
                 "source_language": "python",
                 "node_spans": [],
-                "region_annotations": []
+                "region_annotations": [
+                    {"region_id": "region.loop.1", "annotation": "structural_loop"}
+                ]
             }
         }))
         .expect("fixture graph")

@@ -32,6 +32,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # Rust AIR builders themselves, which legitimately own AIR text.
 SCAN_ROOTS = [
     REPO_ROOT / "crates" / "compiler" / "frontend" / "python" / "apxm",
+    REPO_ROOT / "crates" / "compiler" / "frontend" / "python" / "apxm_program",
     REPO_ROOT / "crates" / "compiler" / "frontend" / "typescript" / "src",
 ]
 
@@ -43,6 +44,8 @@ SAFE_LINE_PATTERNS = [
     re.compile(r'===\s*["\']module\s*\{["\']'),
     re.compile(r"toContain\("),  # vitest: asserting on real printer output
     re.compile(r"\.contains\("),  # generic "does output contain" checks
+    re.compile(r"\.region\(.*[\"'`]ais\."),  # FrontendGraph structural kind
+    re.compile(r"\._structured_region\(.*[\"'`]ais\."),  # authored loop helper
 ]
 
 # A candidate hand-authored AIR string: an opening quote directly followed by

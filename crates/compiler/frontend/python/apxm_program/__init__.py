@@ -28,11 +28,9 @@ SOURCE_MAP_VERSION = "apxm.source-map.v1"
 __all__ = [
     "AgentFacade",
     "AgentProgram",
-    "ConversationalAgent",
     "ContextEdge",
     "FIVE_OPS",
     "FRONTEND_GRAPH_VERSION",
-    "GraphBuilder",
     "Hook",
     "HookBinding",
     "ImportedProgram",
@@ -46,22 +44,20 @@ __all__ = [
     "ProgramNewSpec",
     "ProgramRef",
     "SOURCE_MAP_VERSION",
-    "SpecialistComposition",
     "StructuredTaskScope",
-    "TurnSpec",
-    "build_gao",
     "canonical_air_json",
     "compile_artifact",
-    "gao_conversational_graph",
     "lower",
     "verify",
 ]
 
 
-class GraphBuilder:
+class _FrontendGraphRecorder:
     """Record a language-neutral FrontendGraph."""
 
     def __init__(self, source_language: str = "python") -> None:
+        self._parent_region_id: Optional[str] = None
+        self._next_execution_order: dict[Optional[str], int] = {}
         self._graph: dict[str, Any] = {
             "schema_version": FRONTEND_GRAPH_VERSION,
             "source_language": source_language,
@@ -89,7 +85,7 @@ class GraphBuilder:
         output_type_ref: str,
         has_default_context: bool,
         context_type_ref: Optional[str] = None,
-    ) -> "GraphBuilder":
+    ) -> "_FrontendGraphRecorder":
         definition: dict[str, Any] = {
             "program_id": program_id,
             "entrypoint": entrypoint,
@@ -100,6 +96,9 @@ class GraphBuilder:
         if context_type_ref is not None:
             definition["context_type_ref"] = context_type_ref
         self._graph["program_definitions"].append(definition)
+        root_region_id = f"region.{program_id}.body"
+        self.region(root_region_id, "region")
+        self._parent_region_id = root_region_id
         return self
 
     def import_program(
@@ -108,7 +107,7 @@ class GraphBuilder:
         artifact_digest: str,
         entrypoint: str,
         target_agent_identity_requirement: str,
-    ) -> "GraphBuilder":
+    ) -> "_FrontendGraphRecorder":
         self._graph["imported_program_refs"].append(
             {
                 "program_ref": program_ref,
@@ -119,18 +118,31 @@ class GraphBuilder:
         )
         return self
 
-    def _op(self, node_id: str, op: str, operands: Optional[dict[str, Any]]) -> "GraphBuilder":
-        record: dict[str, Any] = {"node_id": node_id, "op": op}
+    def _op(
+        self, node_id: str, op: str, operands: Optional[dict[str, Any]]
+    ) -> "_FrontendGraphRecorder":
+        if self._parent_region_id is None:
+            raise RuntimeError("semantic operations require a program body region")
+        record: dict[str, Any] = {
+            "node_id": node_id,
+            "op": op,
+            "parent_region_id": self._parent_region_id,
+            "execution_order": self._take_execution_order(self._parent_region_id),
+        }
         if operands is not None:
             record["operands"] = operands
         self._graph["semantic_operations"].append(record)
         return self
 
-    def model_call(self, node_id: str, model_target_ref: Optional[str] = None) -> "GraphBuilder":
+    def model_call(
+        self, node_id: str, model_target_ref: Optional[str] = None
+    ) -> "_FrontendGraphRecorder":
         operands = {"model_target_ref": model_target_ref} if model_target_ref is not None else None
         return self._op(node_id, OP_MODEL_CALL, operands)
 
-    def capability_invoke(self, node_id: str, capability_ref: Optional[str] = None) -> "GraphBuilder":
+    def capability_invoke(
+        self, node_id: str, capability_ref: Optional[str] = None
+    ) -> "_FrontendGraphRecorder":
         operands = {"capability_ref": capability_ref} if capability_ref is not None else None
         return self._op(node_id, OP_CAPABILITY_INVOKE, operands)
 
@@ -139,7 +151,7 @@ class GraphBuilder:
         node_id: str,
         profile_ref: str,
         session_ref: str,
-    ) -> "GraphBuilder":
+    ) -> "_FrontendGraphRecorder":
         """Author an External Agent (ACP) capability.
 
         It lowers to exactly one `capability.invoke` semantic operation — no new
@@ -158,7 +170,7 @@ class GraphBuilder:
         node_id: str,
         *,
         operands: Optional[dict[str, Any]] = None,
-    ) -> "GraphBuilder":
+    ) -> "_FrontendGraphRecorder":
         return self._op(node_id, OP_PROGRAM_NEW, operands)
 
     def program_invoke(
@@ -166,43 +178,67 @@ class GraphBuilder:
         node_id: str,
         *,
         operands: Optional[dict[str, Any]] = None,
-    ) -> "GraphBuilder":
+    ) -> "_FrontendGraphRecorder":
         return self._op(node_id, OP_PROGRAM_INVOKE, operands)
 
-    def await_event(self, node_id: str, *, event_ref: str) -> "GraphBuilder":
+    def await_event(self, node_id: str, *, event_ref: str) -> "_FrontendGraphRecorder":
         if not event_ref.strip():
             raise ValueError("event_ref must not be empty")
         return self._op(node_id, OP_AWAIT_EVENT, {"event_ref": event_ref})
 
-    def yield_region(self, region_id: str) -> "GraphBuilder":
+    def yield_region(self, region_id: str) -> "_FrontendGraphRecorder":
         return self.region(region_id, "yield")
 
-    def return_region(self, region_id: str) -> "GraphBuilder":
+    def return_region(self, region_id: str) -> "_FrontendGraphRecorder":
         return self.region(region_id, "return")
 
-    def region(self, region_id: str, kind: str) -> "GraphBuilder":
-        self._graph["structural_regions"].append({"region_id": region_id, "kind": kind})
+    def region(self, region_id: str, kind: str) -> "_FrontendGraphRecorder":
+        record: dict[str, Any] = {
+            "region_id": region_id,
+            "kind": kind,
+            "execution_order": self._take_execution_order(self._parent_region_id),
+        }
+        if self._parent_region_id is not None:
+            record["parent_region_id"] = self._parent_region_id
+        self._graph["structural_regions"].append(record)
         return self
 
-    def context_edge(self, from_node: str, to_node: str, context_type_ref: str) -> "GraphBuilder":
+    def enter_region(self, region_id: str) -> Optional[str]:
+        previous = self._parent_region_id
+        self._parent_region_id = region_id
+        return previous
+
+    def leave_region(self, previous: Optional[str]) -> None:
+        self._parent_region_id = previous
+
+    def _take_execution_order(self, parent_region_id: Optional[str]) -> int:
+        order = self._next_execution_order.get(parent_region_id, 0)
+        self._next_execution_order[parent_region_id] = order + 1
+        return order
+
+    def context_edge(
+        self, from_node: str, to_node: str, context_type_ref: str
+    ) -> "_FrontendGraphRecorder":
         self._graph["context_flow"].append(
             {"from_node": from_node, "to_node": to_node, "context_type_ref": context_type_ref}
         )
         return self
 
-    def hook(self, **fields: Any) -> "GraphBuilder":
+    def hook(self, **fields: Any) -> "_FrontendGraphRecorder":
         self._graph["hook_bindings"].append(dict(fields))
         return self
 
-    def capability_requirement(self, capability_ref: str) -> "GraphBuilder":
+    def capability_requirement(self, capability_ref: str) -> "_FrontendGraphRecorder":
         self._graph["capability_requirements"].append({"capability_ref": capability_ref})
         return self
 
-    def model_requirement(self, model_target_ref: str) -> "GraphBuilder":
+    def model_requirement(self, model_target_ref: str) -> "_FrontendGraphRecorder":
         self._graph["model_requirements"].append({"model_target_ref": model_target_ref})
         return self
 
-    def annotate_region(self, region_id: str, annotation: str) -> "GraphBuilder":
+    def annotate_region(
+        self, region_id: str, annotation: str
+    ) -> "_FrontendGraphRecorder":
         self._graph["source_map"]["region_annotations"].append(
             {"region_id": region_id, "annotation": annotation}
         )
@@ -214,16 +250,19 @@ class GraphBuilder:
         source_file: str,
         line: int,
         semantic_annotation: str,
-    ) -> "GraphBuilder":
+        start_column: int = 0,
+        end_column: Optional[int] = None,
+    ) -> "_FrontendGraphRecorder":
+        resolved_end_column = start_column + 1 if end_column is None else end_column
         self._graph["source_map"]["node_spans"].append(
             {
                 "node_id": node_id,
                 "source_file": source_file,
                 "span": {
                     "start_line": line,
-                    "start_column": 0,
+                    "start_column": start_column,
                     "end_line": line,
-                    "end_column": 1,
+                    "end_column": resolved_end_column,
                 },
                 "semantic_annotation": semantic_annotation,
             }
@@ -258,8 +297,6 @@ def compile_artifact(graph: dict[str, Any]) -> dict[str, Any]:
 
 
 from .agent_program import AgentProgram, ContextEdge, HookBinding, ImportedProgram
-from .conversational import ConversationalAgent, SpecialistComposition, TurnSpec
-from .gao import build_gao, gao_conversational_graph
 from .hook import AgentFacade, Hook
 from .program_instance import (
     ProgramInstanceRef,

@@ -19,7 +19,7 @@
       "region_annotations": [
         {
           "region_id": "region.loop.1",
-          "annotation": "conversational_loop"
+          "annotation": "structural_loop"
         }
       ]
     },
@@ -36,7 +36,7 @@
     "expected_valid": true
   },
   {
-    "name": "unknown-region-annotation-rejected",
+    "name": "conversation-specific-region-annotation-rejected",
     "input": {
       "schema_version": "apxm.source-map.v1",
       "source_language": "python",
@@ -44,7 +44,7 @@
       "region_annotations": [
         {
           "region_id": "region.loop.1",
-          "annotation": "turn"
+          "annotation": "conversational_loop"
         }
       ]
     },

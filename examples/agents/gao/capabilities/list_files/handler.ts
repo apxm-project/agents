@@ -2,7 +2,7 @@
 import { readdirSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 
-import { tool } from "@apxm/frontend";
+import { tool } from "@apxm/agent-packaging";
 
 import { packageRoot } from "../handlers/context.js";
 

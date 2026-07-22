@@ -40,14 +40,15 @@ use apxm_program::external_agent::ExternalAgentEvidence;
 use apxm_program::frontend_graph::HookBinding;
 use apxm_program::runtime_evidence::{
     Fact, FactKind, HookPhase as EvidenceHookPhase, HookScope as EvidenceHookScope, InstanceState,
-    InvocationState,
+    InvocationState, LoopIterationCompletedFact, LoopMembership, NodeExecutionRecordedFact,
+    NodeExecutionScope, RuntimeFact,
 };
 
 use crate::ports::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
     CompositionRequest, EventAwait, EventOutcome, EventPort, EventRef, EventRefError,
 };
-use crate::resume::{Continuation, ContinuationError, RunOutcome};
+use crate::resume::{Continuation, ContinuationError, DurableLoopFrame, RunOutcome};
 use crate::structural::{ScheduleStep, build_schedule};
 
 /// The exact set of injected ports the driver drives. Every port is a single
@@ -230,10 +231,9 @@ fn fact(
     node_execution_id: Option<String>,
     commit_sequence: Option<u64>,
 ) -> Fact {
-    Fact {
+    Fact::from_runtime(kind, RuntimeFact {
         fact_id: format!("fact.{seq}"),
         event_sequence: seq,
-        fact_kind: kind,
         ownership_epoch: None,
         instance_state,
         invocation_state,
@@ -244,6 +244,7 @@ fn fact(
         attempt_id: None,
         region_occurrence_id: None,
         static_region_id: None,
+        loop_memberships: None,
         air_node_id: None,
         parent_node_execution_id: None,
         hook_execution_id: None,
@@ -255,7 +256,12 @@ fn fact(
         context_after_ref: None,
         effect_outcome_ref: None,
         typed_error: None,
-    }
+    })
+}
+
+fn runtime_fact_mut(fact: &mut Fact) -> &mut RuntimeFact {
+    fact.runtime_mut()
+        .expect("runtime helper constructed a non-loop fact")
 }
 
 /// The mutable run accumulators threaded through op dispatch. Shared by the
@@ -269,8 +275,8 @@ struct DriveState {
     last_operation_succeeded: bool,
     batch: Vec<Fact>,
     seq: u64,
-    static_region_id: Option<String>,
-    region_occurrence_id: Option<String>,
+    program_invocation_id: String,
+    active_loops: Vec<DurableLoopFrame>,
     last_model_node_execution_id: Option<String>,
     last_program_new_node_execution_id: Option<String>,
 }
@@ -278,14 +284,14 @@ struct DriveState {
 impl DriveState {
     /// A fresh run: emit the instance-created and invocation-admitted lifecycle
     /// facts (sequences 1 and 2), exactly as the single-shot path always has.
-    fn new(initial_context: Value, air: &AirModule) -> Self {
+    fn new(initial_context: Value, _air: &AirModule, program_invocation_id: &str) -> Self {
         let mut batch = Vec::new();
         let mut seq = 0u64;
         seq += 1;
         batch.push(fact(seq, FactKind::InstanceCreated, Some(InstanceState::Ready), None, None, None));
         seq += 1;
         batch.push(fact(seq, FactKind::InvocationAdmitted, None, Some(InvocationState::Running), None, None));
-        let mut state = Self {
+        Self {
             node_outcomes: Vec::new(),
             native_usage: Usage::default(),
             external_agent_evidence: Vec::new(),
@@ -294,42 +300,107 @@ impl DriveState {
             last_operation_succeeded: true,
             batch,
             seq,
-            static_region_id: conversational_region_id(air),
-            region_occurrence_id: None,
+            program_invocation_id: program_invocation_id.to_string(),
+            active_loops: Vec::new(),
             last_model_node_execution_id: None,
             last_program_new_node_execution_id: None,
-        };
-        state.begin_region_occurrence();
-        state
+        }
     }
 
-    fn begin_region_occurrence(&mut self) {
-        let Some(static_region_id) = self.static_region_id.clone() else {
+    fn enter_loop(&mut self, static_loop_id: &str) {
+        let occurrence = format!(
+            "loop-occurrence.{static_loop_id}.{}",
+            self.program_invocation_id
+        );
+        if self
+            .active_loops
+            .iter()
+            .any(|frame| frame.static_loop_id == static_loop_id)
+        {
             return;
-        };
+        }
         self.seq += 1;
-        let occurrence = format!("region-occurrence.{static_region_id}.{}", self.seq);
         self.batch.push(join_fact(
             self.seq,
             FactKind::RegionOccurrenceStarted,
             Some(occurrence.clone()),
-            Some(static_region_id),
+            Some(static_loop_id.to_string()),
             None,
             None,
             None,
         ));
-        self.region_occurrence_id = Some(occurrence);
-        self.last_model_node_execution_id = None;
-        self.last_program_new_node_execution_id = None;
+        self.active_loops.push(DurableLoopFrame {
+            static_loop_id: static_loop_id.to_string(),
+            dynamic_occurrence_id: occurrence,
+            iteration_index: 0,
+            failed: false,
+            parked: false,
+            causal_node_execution_ids: Vec::new(),
+        });
     }
-}
 
-fn conversational_region_id(air: &AirModule) -> Option<String> {
-    air.source_map
-        .region_annotations
-        .iter()
-        .find(|region| matches!(region.annotation, apxm_program::source_map::RegionAnnotationKind::ConversationalLoop))
-        .map(|region| region.region_id.clone())
+    fn record_node_outcome(
+        &mut self,
+        loop_path: &[String],
+        node_execution_id: &str,
+        succeeded: bool,
+    ) {
+        for static_loop_id in loop_path {
+            if let Some(active) = self
+                .active_loops
+                .iter_mut()
+                .find(|frame| frame.static_loop_id == *static_loop_id)
+            {
+                if succeeded {
+                    active
+                        .causal_node_execution_ids
+                        .push(node_execution_id.to_string());
+                } else {
+                    active.failed = true;
+                }
+            }
+        }
+    }
+
+    fn park_active_loops(&mut self) {
+        for active in &mut self.active_loops {
+            active.parked = true;
+        }
+    }
+
+    fn fail_active_loops(&mut self) {
+        for active in &mut self.active_loops {
+            active.failed = true;
+        }
+    }
+
+    fn complete_loop_iteration(&mut self, static_loop_id: &str) -> bool {
+        let Some(position) = self
+            .active_loops
+            .iter()
+            .position(|frame| frame.static_loop_id == static_loop_id)
+        else {
+            return false;
+        };
+        let active = self.active_loops.remove(position);
+        if active.failed || active.causal_node_execution_ids.is_empty() {
+            return false;
+        }
+        let loop_occurrence_id = active.dynamic_occurrence_id;
+        let iteration_index = active.iteration_index;
+        self.seq += 1;
+        let completed = Fact::LoopIterationCompleted(LoopIterationCompletedFact::new(
+            format!("loop-iteration.{loop_occurrence_id}.{iteration_index}"),
+            self.seq,
+            static_loop_id.to_string(),
+            loop_occurrence_id,
+            iteration_index,
+            self.program_invocation_id.clone(),
+            active.causal_node_execution_ids,
+        ));
+        self.batch.push(completed);
+        true
+    }
 }
 
 fn join_fact(
@@ -342,11 +413,12 @@ fn join_fact(
     parent_node_execution_id: Option<String>,
 ) -> Fact {
     let mut fact = fact(seq, kind, None, None, None, None);
-    fact.region_occurrence_id = region_occurrence_id;
-    fact.static_region_id = static_region_id;
-    fact.node_execution_id = node_execution_id;
-    fact.air_node_id = air_node_id;
-    fact.parent_node_execution_id = parent_node_execution_id;
+    let runtime = runtime_fact_mut(&mut fact);
+    runtime.region_occurrence_id = region_occurrence_id;
+    runtime.static_region_id = static_region_id;
+    runtime.node_execution_id = node_execution_id;
+    runtime.air_node_id = air_node_id;
+    runtime.parent_node_execution_id = parent_node_execution_id;
     fact
 }
 
@@ -366,8 +438,16 @@ enum DriveEnd {
         state: DriveState,
         continuation_id: String,
         event_ref: Option<EventRef>,
-        next_op_index: usize,
+        next_schedule_position: usize,
+        parked_node_execution_id: Option<String>,
+        parked_loop_path: Vec<String>,
     },
+}
+
+#[derive(Clone, Copy)]
+struct DriveOptions {
+    suspend_on_park: bool,
+    yield_at_loop: bool,
 }
 
 /// Walk the structural execution schedule from `start_index`, dispatching semantic
@@ -380,29 +460,42 @@ async fn drive_from(
     air: &AirModule,
     hook_bindings: &[HookBinding],
     model_admission: &ModelBindingAdmission,
-    start_index: usize,
+    start_schedule_position: usize,
     mut state: DriveState,
-    suspend_on_park: bool,
-    yield_at_loop: bool,
+    options: DriveOptions,
 ) -> Result<DriveEnd, ExecutionError> {
     let schedule = build_schedule(air, hook_bindings);
-    let start_pos = schedule
-        .iter()
-        .position(|step| matches!(step, ScheduleStep::Semantic { index } if *index == start_index))
-        .unwrap_or(0);
+    if start_schedule_position > schedule.len() {
+        return Err(ExecutionError::Continuation(
+            ContinuationError::InvalidCommittedState {
+                message: format!(
+                    "schedule position {start_schedule_position} exceeds {}",
+                    schedule.len()
+                ),
+            },
+        ));
+    }
 
-    for step in schedule.iter().skip(start_pos) {
+    for (schedule_position, step) in schedule
+        .iter()
+        .enumerate()
+        .skip(start_schedule_position)
+    {
         match step {
             ScheduleStep::HookBefore { binding } => {
                 let (before, after) = apply_static_hook(&mut state, ports, binding).await;
                 state.seq += 1;
                 let mut fact = fact(state.seq, FactKind::HookExecuted, None, None, None, None);
-                fact.hook_execution_id = Some(format!("hook-execution.{}.{}", binding.hook_id, state.seq));
-                fact.hook_id = Some(binding.hook_id.clone());
-                fact.hook_scope = Some(evidence_hook_scope(binding.scope));
-                fact.hook_phase = Some(EvidenceHookPhase::Before);
-                fact.context_before_ref = Some(context_ref(format!("context.{}.before", state.seq)));
-                fact.context_after_ref = Some(context_ref(format!("context.{}.after", state.seq)));
+                let runtime = runtime_fact_mut(&mut fact);
+                runtime.hook_execution_id =
+                    Some(format!("hook-execution.{}.{}", binding.hook_id, state.seq));
+                runtime.hook_id = Some(binding.hook_id.clone());
+                runtime.hook_scope = Some(evidence_hook_scope(binding.scope));
+                runtime.hook_phase = Some(EvidenceHookPhase::Before);
+                runtime.context_before_ref =
+                    Some(context_ref(format!("context.{}.before", state.seq)));
+                runtime.context_after_ref =
+                    Some(context_ref(format!("context.{}.after", state.seq)));
                 state.batch.push(fact);
                 if before != after {
                     state.seq += 1;
@@ -414,12 +507,16 @@ async fn drive_from(
                     let (before, after) = apply_static_hook(&mut state, ports, binding).await;
                     state.seq += 1;
                     let mut fact = fact(state.seq, FactKind::HookExecuted, None, None, None, None);
-                    fact.hook_execution_id = Some(format!("hook-execution.{}.{}", binding.hook_id, state.seq));
-                    fact.hook_id = Some(binding.hook_id.clone());
-                    fact.hook_scope = Some(evidence_hook_scope(binding.scope));
-                    fact.hook_phase = Some(EvidenceHookPhase::After);
-                    fact.context_before_ref = Some(context_ref(format!("context.{}.before", state.seq)));
-                    fact.context_after_ref = Some(context_ref(format!("context.{}.after", state.seq)));
+                    let runtime = runtime_fact_mut(&mut fact);
+                    runtime.hook_execution_id =
+                        Some(format!("hook-execution.{}.{}", binding.hook_id, state.seq));
+                    runtime.hook_id = Some(binding.hook_id.clone());
+                    runtime.hook_scope = Some(evidence_hook_scope(binding.scope));
+                    runtime.hook_phase = Some(EvidenceHookPhase::After);
+                    runtime.context_before_ref =
+                        Some(context_ref(format!("context.{}.before", state.seq)));
+                    runtime.context_after_ref =
+                        Some(context_ref(format!("context.{}.after", state.seq)));
                     state.batch.push(fact);
                     if before != after {
                         state.seq += 1;
@@ -430,44 +527,65 @@ async fn drive_from(
             ScheduleStep::ContextEdge { from_node, to_node } => {
                 state.seq += 1;
                 let mut fact = context_transition_fact(state.seq);
-                fact.air_node_id = Some(to_node.clone());
-                fact.parent_node_execution_id = Some(from_node.clone());
+                let runtime = runtime_fact_mut(&mut fact);
+                runtime.air_node_id = Some(to_node.clone());
+                runtime.parent_node_execution_id = Some(from_node.clone());
                 state.batch.push(fact);
             }
-            ScheduleStep::Semantic { index } => {
+            ScheduleStep::EnterLoop { static_loop_id } => {
+                state.enter_loop(static_loop_id);
+            }
+            ScheduleStep::Semantic { index, loop_path } => {
                 let op = &air.semantic_operations[*index];
                 state.seq += 1;
-                let node_execution_id = state.static_region_id.as_ref().map(|_| {
-                    format!("node-execution.{}.{}", op.node_id, state.seq)
+                let node_execution_id = format!("node-execution.{}.{}", op.node_id, state.seq);
+                let innermost_loop = loop_path
+                    .last()
+                    .and_then(|loop_id| {
+                        state
+                            .active_loops
+                            .iter()
+                            .find(|frame| frame.static_loop_id == *loop_id)
+                    });
+                let loop_memberships = loop_path
+                    .iter()
+                    .filter_map(|loop_id| {
+                        state
+                            .active_loops
+                            .iter()
+                            .find(|frame| frame.static_loop_id == *loop_id)
+                            .map(|active| LoopMembership {
+                                static_loop_id: loop_id.clone(),
+                                loop_occurrence_id: active.dynamic_occurrence_id.clone(),
+                            })
+                    })
+                    .collect();
+                let execution_scope = match (loop_path.last(), innermost_loop) {
+                    (Some(static_region_id), Some(active)) => NodeExecutionScope::Loop {
+                        region_occurrence_id: active.dynamic_occurrence_id.clone(),
+                        static_region_id: static_region_id.clone(),
+                        loop_memberships,
+                    },
+                    (None, None) => NodeExecutionScope::NonLoop,
+                    _ => unreachable!("typed schedule loop path and active frames agree"),
+                };
+                let node_fact = Fact::NodeExecutionRecorded(NodeExecutionRecordedFact {
+                    fact_id: format!("fact.{}", state.seq),
+                    event_sequence: state.seq,
+                    node_execution_id: node_execution_id.clone(),
+                    air_node_id: op.node_id.clone(),
+                    parent_node_execution_id: match op.op {
+                        SemanticOpKind::CapabilityInvoke => {
+                            state.last_model_node_execution_id.clone()
+                        }
+                        SemanticOpKind::ProgramInvoke => {
+                            state.last_program_new_node_execution_id.clone()
+                        }
+                        _ => None,
+                    },
+                    execution_scope,
                 });
-                if let Some(node_execution_id) = node_execution_id.clone() {
-                    state.batch.push(join_fact(
-                        state.seq,
-                        FactKind::NodeExecutionRecorded,
-                        state.region_occurrence_id.clone(),
-                        state.static_region_id.clone(),
-                        Some(node_execution_id),
-                        Some(op.node_id.clone()),
-                        match op.op {
-                            SemanticOpKind::CapabilityInvoke => {
-                                state.last_model_node_execution_id.clone()
-                            }
-                            SemanticOpKind::ProgramInvoke => {
-                                state.last_program_new_node_execution_id.clone()
-                            }
-                            _ => None,
-                        },
-                    ));
-                } else {
-                    state.batch.push(fact(
-                        state.seq,
-                        FactKind::AttemptRecorded,
-                        None,
-                        None,
-                        Some(op.node_id.clone()),
-                        None,
-                    ));
-                }
+                state.batch.push(node_fact);
 
                 match op.op {
                     SemanticOpKind::ModelCall => {
@@ -500,7 +618,7 @@ async fn drive_from(
                             result,
                             replaced: false,
                         });
-                        state.last_model_node_execution_id = node_execution_id;
+                        state.last_model_node_execution_id = Some(node_execution_id.clone());
                     }
                     SemanticOpKind::CapabilityInvoke => {
                         let capability_ref = operand_str(op, "capability_ref").ok_or_else(|| {
@@ -575,7 +693,7 @@ async fn drive_from(
                             node_id: op.node_id.clone(),
                             outcome,
                         });
-                        state.last_program_new_node_execution_id = node_execution_id;
+                        state.last_program_new_node_execution_id = Some(node_execution_id.clone());
                     }
                     SemanticOpKind::ProgramInvoke => {
                         let outcome = ports
@@ -641,7 +759,8 @@ async fn drive_from(
                         }
                         state.last_operation_succeeded =
                             matches!(&outcome, EventOutcome::Fulfilled { .. });
-                        if suspend_on_park && matches!(&outcome, EventOutcome::Parked) {
+                        if options.suspend_on_park && matches!(&outcome, EventOutcome::Parked) {
+                            state.park_active_loops();
                             state.seq += 1;
                             state.batch.push(fact(
                                 state.seq,
@@ -664,7 +783,9 @@ async fn drive_from(
                                 state,
                                 continuation_id: op.node_id.clone(),
                                 event_ref: Some(event_ref),
-                                next_op_index: *index + 1,
+                                next_schedule_position: schedule_position + 1,
+                                parked_node_execution_id: Some(node_execution_id),
+                                parked_loop_path: loop_path.clone(),
                             });
                         }
                         state.node_outcomes.push(NodeOutcome::AwaitEvent {
@@ -673,19 +794,32 @@ async fn drive_from(
                         });
                     }
                 }
+                state.record_node_outcome(
+                    loop_path,
+                    &node_execution_id,
+                    state.last_operation_succeeded,
+                );
             }
-            ScheduleStep::LoopYield {
-                continuation_id,
-                resume_semantic_index,
-            } => {
-                if suspend_on_park && yield_at_loop {
+            ScheduleStep::LoopBackEdge { static_loop_id } => {
+                state.complete_loop_iteration(static_loop_id);
+            }
+            ScheduleStep::ProgramYield { region_id } => {
+                state.fail_active_loops();
+                if options.suspend_on_park && options.yield_at_loop {
                     return Ok(DriveEnd::Parked {
                         state,
-                        continuation_id: continuation_id.clone(),
+                        continuation_id: region_id.clone(),
                         event_ref: None,
-                        next_op_index: *resume_semantic_index,
+                        next_schedule_position: schedule_position + 1,
+                        parked_node_execution_id: None,
+                        parked_loop_path: Vec::new(),
                     });
                 }
+                return Ok(DriveEnd::RanToEnd(state));
+            }
+            ScheduleStep::ProgramReturn { .. } | ScheduleStep::ProgramExit { .. } => {
+                state.fail_active_loops();
+                return Ok(DriveEnd::RanToEnd(state));
             }
         }
     }
@@ -705,9 +839,10 @@ fn evidence_hook_scope(scope: apxm_program::frontend_graph::HookScope) -> Eviden
 
 fn context_transition_fact(seq: u64) -> Fact {
     let mut fact = fact(seq, FactKind::ContextTransitioned, None, None, None, None);
-    fact.context_transition_id = Some(format!("context-transition.{seq}"));
-    fact.context_before_ref = Some(context_ref(format!("context.{}.before", seq)));
-    fact.context_after_ref = Some(context_ref(format!("context.{}.after", seq)));
+    let runtime = runtime_fact_mut(&mut fact);
+    runtime.context_transition_id = Some(format!("context-transition.{seq}"));
+    runtime.context_before_ref = Some(context_ref(format!("context.{}.before", seq)));
+    runtime.context_after_ref = Some(context_ref(format!("context.{}.after", seq)));
     fact
 }
 
@@ -884,7 +1019,7 @@ pub async fn execute(
     request: ExecutionRequest,
     initial_context: Value,
 ) -> Result<RunReport, ExecutionError> {
-    let state = DriveState::new(initial_context, &request.air);
+    let state = DriveState::new(initial_context, &request.air, &request.version_scope);
     let end = drive_from(
         ports,
         &request.air,
@@ -892,8 +1027,10 @@ pub async fn execute(
         &request.model_admission,
         0,
         state,
-        false,
-        false,
+        DriveOptions {
+            suspend_on_park: false,
+            yield_at_loop: false,
+        },
     )
     .await?;
     let DriveEnd::RanToEnd(state) = end else {
@@ -924,7 +1061,7 @@ pub async fn execute_resumable(
     request: ExecutionRequest,
     initial_context: Value,
 ) -> Result<RunOutcome, ExecutionError> {
-    let state = DriveState::new(initial_context, &request.air);
+    let state = DriveState::new(initial_context, &request.air, &request.version_scope);
     let end = drive_from(
         ports,
         &request.air,
@@ -932,8 +1069,10 @@ pub async fn execute_resumable(
         &request.model_admission,
         0,
         state,
-        true,
-        true,
+        DriveOptions {
+            suspend_on_park: true,
+            yield_at_loop: true,
+        },
     )
     .await?;
     finish(ports, request_parts(request), end).await
@@ -996,16 +1135,19 @@ async fn resume_from_continuation(
         air,
         hook_bindings,
         model_admission,
-        next_op_index,
+        next_schedule_position,
+        loop_frames,
+        parked_node_execution_id,
+        parked_loop_path,
         context,
         native_usage,
         external_agent_evidence,
-        evidence_batch,
+        evidence_batch: _,
         event_sequence,
         version_scope,
         commit_id,
         write_set,
-        continuation_id: _,
+        continuation_id,
         event_ref,
     } = parked;
 
@@ -1019,7 +1161,7 @@ async fn resume_from_continuation(
         }
         (Some(_), None) => {
             return Err(ExecutionError::EventDeliveryRequiresRef {
-                invocation_ref: version_scope.to_string(),
+                invocation_ref: version_scope.clone(),
             });
         }
         (None, Some(delivered_event_ref)) => {
@@ -1039,22 +1181,15 @@ async fn resume_from_continuation(
         context,
         last_result: Value::Null,
         last_operation_succeeded: true,
-        batch: evidence_batch,
+        batch: Vec::new(),
         seq: event_sequence,
-        static_region_id: conversational_region_id(&air),
-        region_occurrence_id: None,
+        program_invocation_id: version_scope.clone(),
+        active_loops: loop_frames,
         last_model_node_execution_id: None,
         last_program_new_node_execution_id: None,
     };
-    if next_op_index == 0 {
-        state.begin_region_occurrence();
-    }
 
-    // Record the delivered input as the parked `await.event`'s fulfillment so
-    // the resumed run's evidence includes the turn the wake delivered.
-    if next_op_index > 0
-        && let Some(op) = air.semantic_operations.get(next_op_index - 1)
-    {
+    if event_ref.is_some() {
         let event_ref = event_ref.clone().ok_or_else(|| {
             ExecutionError::EventDeliveryRequiresRef {
                 invocation_ref: version_scope.clone(),
@@ -1065,9 +1200,29 @@ async fn resume_from_continuation(
             other => other.to_string(),
         };
         state.node_outcomes.push(NodeOutcome::AwaitEvent {
-            node_id: op.node_id.clone(),
+            node_id: continuation_id,
             outcome: EventOutcome::Fulfilled { event_ref, payload },
         });
+        let parked_node_execution_id = parked_node_execution_id.ok_or_else(|| {
+            ExecutionError::Continuation(ContinuationError::InvalidCommittedState {
+                message: "event continuation is missing parked NodeExecution identity".into(),
+            })
+        })?;
+        for static_loop_id in &parked_loop_path {
+            let frame = state
+                .active_loops
+                .iter_mut()
+                .find(|frame| frame.static_loop_id == *static_loop_id)
+                .ok_or_else(|| {
+                    ExecutionError::Continuation(ContinuationError::InvalidCommittedState {
+                        message: format!("missing parked loop frame {static_loop_id}"),
+                    })
+                })?;
+            frame.parked = false;
+            frame
+                .causal_node_execution_ids
+                .push(parked_node_execution_id.clone());
+        }
     } else if event_ref.is_none() {
         state.context = delivered;
     }
@@ -1078,10 +1233,12 @@ async fn resume_from_continuation(
         &air,
         &hook_bindings,
         &model_admission,
-        next_op_index,
+        next_schedule_position,
         state,
-        true,
-        yield_at_loop,
+        DriveOptions {
+            suspend_on_park: true,
+            yield_at_loop,
+        },
     )
     .await?;
     let parts = CommitParts {
@@ -1140,15 +1297,20 @@ async fn finish(
             state,
             continuation_id,
             event_ref,
-            next_op_index,
+            next_schedule_position,
+            parked_node_execution_id,
+            parked_loop_path,
         } => {
             let cont = Continuation {
                 air: parts.air,
                 hook_bindings: parts.hook_bindings,
                 model_admission: parts.model_admission,
-                next_op_index,
+                next_schedule_position,
+                loop_frames: state.active_loops.clone(),
+                parked_node_execution_id,
+                parked_loop_path,
                 context: state.context.clone(),
-                native_usage: state.native_usage.clone(),
+                native_usage: state.native_usage,
                 external_agent_evidence: state.external_agent_evidence.clone(),
                 evidence_batch: state.batch.clone(),
                 event_sequence: state.seq,
@@ -1166,5 +1328,107 @@ async fn finish(
                 result => Err(ExecutionError::Commit(result)),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod loop_evidence_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn loop_air() -> AirModule {
+        serde_json::from_value(json!({
+            "schema_version": "apxm.air.v1",
+            "semantic_operations": [],
+            "structural_ir": [
+                {
+                    "region_id": "region.loop.main",
+                    "kind": "ais.loop",
+                    "execution_order": 0
+                }
+            ],
+            "context_flow": [],
+            "source_map": {
+                "schema_version": "apxm.source-map.v1",
+                "source_language": "python",
+                "node_spans": [],
+                "region_annotations": [
+                    {"region_id": "region.loop.main", "annotation": "structural_loop"}
+                ]
+            }
+        }))
+        .expect("generic loop AIR")
+    }
+
+    #[test]
+    fn completed_back_edge_adds_typed_fact_to_atomic_commit_tuple() {
+        let mut state = DriveState::new(Value::Null, &loop_air(), "invocation.1");
+        state.enter_loop("region.loop.main");
+        state.seq += 1;
+        let occurrence = state
+            .active_loops
+            .iter()
+            .find(|frame| frame.static_loop_id == "region.loop.main")
+            .unwrap()
+            .dynamic_occurrence_id
+            .clone();
+        state
+            .batch
+            .push(Fact::NodeExecutionRecorded(NodeExecutionRecordedFact {
+                fact_id: format!("fact.{}", state.seq),
+                event_sequence: state.seq,
+                node_execution_id: "node-execution.1".into(),
+                air_node_id: "node.1".into(),
+                parent_node_execution_id: None,
+                execution_scope: NodeExecutionScope::Loop {
+                    region_occurrence_id: occurrence.clone(),
+                    static_region_id: "region.loop.main".into(),
+                    loop_memberships: vec![LoopMembership {
+                        static_loop_id: "region.loop.main".into(),
+                        loop_occurrence_id: occurrence,
+                    }],
+                },
+            }));
+        state.record_node_outcome(
+            &["region.loop.main".into()],
+            "node-execution.1",
+            true,
+        );
+
+        assert!(state.complete_loop_iteration("region.loop.main"));
+        let tuple = commit_tuple(&state, None, None);
+        let completed = tuple
+            .evidence
+            .iter()
+            .find_map(Fact::loop_iteration_completed)
+            .expect("typed completion shares the atomic tuple");
+        assert_eq!(completed.static_loop_id, "region.loop.main");
+        assert_eq!(
+            completed.loop_occurrence_id,
+            "loop-occurrence.region.loop.main.invocation.1"
+        );
+        assert_eq!(completed.iteration_index, 0);
+        assert_eq!(completed.program_invocation_id, "invocation.1");
+        assert_eq!(
+            completed.causal_node_execution_ids,
+            ["node-execution.1".to_string()]
+        );
+    }
+
+    #[test]
+    fn earlier_failed_body_operation_is_sticky_after_later_success() {
+        let mut state = DriveState::new(Value::Null, &loop_air(), "invocation.1");
+        state.enter_loop("region.loop.main");
+        let loop_path = ["region.loop.main".to_string()];
+        state.record_node_outcome(&loop_path, "node-execution.failed", false);
+        state.record_node_outcome(&loop_path, "node-execution.succeeded", true);
+
+        assert!(!state.complete_loop_iteration("region.loop.main"));
+        assert!(
+            state
+                .batch
+                .iter()
+                .all(|fact| fact.loop_iteration_completed().is_none())
+        );
     }
 }

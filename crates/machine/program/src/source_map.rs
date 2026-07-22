@@ -35,13 +35,12 @@ impl SourceLanguage {
     }
 }
 
-/// The closed region-annotation set. `turn` and other invented labels are
-/// rejected at decode.
+/// The closed generic region-annotation set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RegionAnnotationKind {
     None,
-    ConversationalLoop,
+    StructuralLoop,
 }
 
 /// A forward source span. Column is 0-based; line is 1-based.

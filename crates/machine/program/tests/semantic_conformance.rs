@@ -4,7 +4,7 @@
 
 mod common;
 
-use apxm_program::air::{SemanticOpKind, StructuralKind};
+use apxm_program::air::{SemanticOpKind, StructuralOpKind};
 use apxm_program::source_map::{RegionAnnotationKind, SourceLanguage};
 use apxm_program::{verify_air_json, verify_frontend_graph_json, verify_source_map_json};
 use common::{Vector, load_contract, load_vectors, schema_enum};
@@ -87,19 +87,19 @@ fn air_structural_kind_enum_does_not_drift() {
     let schema = load_contract("schemas/apxm.air.v1.json");
     let expected = schema_enum(&schema, "StructuralNode", "kind");
     let actual = wire_members(&[
-        StructuralKind::Function,
-        StructuralKind::Region,
-        StructuralKind::Block,
-        StructuralKind::Value,
-        StructuralKind::Branch,
-        StructuralKind::Switch,
-        StructuralKind::Loop,
-        StructuralKind::ParallelJoin,
-        StructuralKind::Try,
-        StructuralKind::Throw,
-        StructuralKind::Catch,
-        StructuralKind::Return,
-        StructuralKind::Yield,
+        StructuralOpKind::Function,
+        StructuralOpKind::Region,
+        StructuralOpKind::Block,
+        StructuralOpKind::Value,
+        StructuralOpKind::Branch,
+        StructuralOpKind::Switch,
+        StructuralOpKind::Loop,
+        StructuralOpKind::ParallelJoin,
+        StructuralOpKind::Try,
+        StructuralOpKind::Throw,
+        StructuralOpKind::Catch,
+        StructuralOpKind::Return,
+        StructuralOpKind::Yield,
     ]);
     assert_eq!(
         actual, expected,
@@ -118,7 +118,7 @@ fn source_map_enums_do_not_drift() {
     assert_eq!(
         wire_members(&[
             RegionAnnotationKind::None,
-            RegionAnnotationKind::ConversationalLoop
+            RegionAnnotationKind::StructuralLoop
         ]),
         annotations,
         "region annotation closure drifted from schema",

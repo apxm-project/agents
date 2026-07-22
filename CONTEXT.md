@@ -27,13 +27,13 @@ _Avoid_: Runtime Instance, process, deployment, Agent version
 **Program Invocation**:
 One admitted execution or resumption of an Agent Program, either one-shot
 through `program.invoke` or stateful through `instance.invoke`.
-_Avoid_: Turn, HTTP request, process
+_Avoid_: conversation turn, HTTP request, process
 
 **Program Yield**:
 A typed invocation boundary that commits plain output, explicit next Program
 Context, and compiler-owned continuation. The next stateful invocation input
 resumes that continuation.
-_Avoid_: Turn, region yield, await event, final return
+_Avoid_: conversation turn, region yield, await event, final return
 
 **Program Return**:
 The final typed boundary that commits plain output and completes the Program
@@ -63,24 +63,25 @@ One embedded APXM runtime kernel constructed by an application with explicit
 adapters and resources.
 _Avoid_: Program Instance, agent process, session
 
-**Conversational Agent**:
-An Agent Program whose frontend authoring construct defines a conversational
-loop and controls context during every Turn. It is a frontend concept, not a
-distinct runtime type.
-_Avoid_: conversational runtime, chat service, host loop
+**Conversational Agent example**:
+A repository example that defines an example-local conversational Agent
+Program over the installable generic frontend APIs. It is not an APXM package
+API, contract type, compiler/runtime mode, Server route, or Studio feature.
+_Avoid_: standard `ConversationalAgent` export, conversational runtime, chat service
 
-**Gao**:
-The APXM workflow-authoring Agent Program implemented as a named TypeScript
-specialization of the standard Conversational Agent construct. Gao adds
-workflow-authoring Skills, Capabilities, prompts, and Hooks; it does not add a
-runtime, loop engine, compiler path, or privileged Studio callback system.
-_Avoid_: Gao runtime, Studio orchestrator, built-in chat engine
+**Gao example**:
+The repository's TypeScript workflow-authoring example. It may specialize the
+example-local Conversational Agent construct and use generic Agent Program,
+Hook, Context, Skill discovery, Capability, and composition APIs. Its name has
+no compiler, runtime, admission, Server, or Studio meaning.
+_Avoid_: Gao product feature, Gao runtime, privileged installed agent id
 
-**Turn**:
-The Studio projection of one dynamic occurrence of a Conversational Agent's
-annotated program-authored loop region, from input consumption to completion
-or yield. It is not an AIR or runtime entity.
-_Avoid_: model call, message, request, runtime type
+**Loop iteration**:
+One committed visit through a static structural loop body and its back-edge.
+Runtime records `LoopIterationCompleted` only when that transition commits
+atomically. Products may project the generic fact without changing its
+meaning; example documentation may call a conversational iteration a “turn.”
+_Avoid_: runtime Turn, inferred completion from traces, conversation-specific fact
 
 **Node**:
 One typed operation in the compiled execution graph of an Agent Program.
@@ -89,7 +90,7 @@ _Avoid_: hook, tool, arbitrary task
 **NodeExecution**:
 One actual visit to a static Node during a Program Invocation. Runtime retries
 are attempts under the same NodeExecution; authored repetition creates another.
-_Avoid_: static Node, retry attempt, Turn
+_Avoid_: static Node, retry attempt, loop iteration
 
 ## Context and memory
 
@@ -205,13 +206,13 @@ One adapter-owned ACP session correlated to the invoking Capability call and
 Program Invocation. Its peer/process state is external state, not Program
 Context or a Program Instance; source may retain only a typed opaque
 `ExternalAgentSessionRef` in explicit Context.
-_Avoid_: Turn, Program Instance, Agent version
+_Avoid_: loop iteration, Program Instance, Agent version
 
 **External Agent Evidence**:
 Closed ordered evidence nested beneath the outer Capability NodeExecution:
 session transition, wire message, peer content/plan/Tool state/session snapshot/
 measurement, reverse-Capability link, process-transport fact, or reconciliation
-fact. It never creates APXM Turns, child model nodes, or spend facts.
+fact. It never creates APXM loop iterations, child model nodes, or spend facts.
 _Avoid_: flattened peer log, native model evidence, trusted invoice
 
 **Peer Measurement**:
@@ -393,10 +394,11 @@ prototype evidence, not another supported version.
 _Avoid_: Python graph, TypeScript IR, handwritten AIR
 
 **AIR**:
-The compiler-owned portable execution representation. Target AIR exposes five
-public semantic operations: model call, Capability invocation, Program
-creation, Program invocation, and durable event wait.
-_Avoid_: frontend API, raw operation builder, runtime configuration
+The compiler-owned portable execution representation. AIS owns one closed
+effect/composition family (`model.call`, `capability.invoke`, `program.new`,
+`program.invoke`, `await.event`) and a separate closed structural family for
+compiler-emitted control flow including `ais.loop`.
+_Avoid_: frontend API, raw operation builder, sixth effect operation
 
 **Compiler Bridge**:
 An explicit local native binding or generated remote client that submits a

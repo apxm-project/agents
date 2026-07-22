@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Callable, Iterable, Optional
 
-from . import GraphBuilder, canonical_air_json, lower, verify
+from . import _FrontendGraphRecorder, canonical_air_json, lower, verify
 from .program_instance import ProgramInstanceRef, ProgramInvokeSpec, ProgramNewSpec, ProgramRef
 
 
@@ -59,7 +59,7 @@ class ImportedProgram:
 
 
 class AgentProgram:
-    """Language-native wrapper over GraphBuilder for one authored Agent Program."""
+    """Language-native recorder for one authored Agent Program."""
 
     def __init__(
         self,
@@ -74,7 +74,7 @@ class AgentProgram:
     ) -> None:
         self.program_id = program_id
         self.context_type_ref = context_type_ref
-        self._builder = GraphBuilder(source_language=source_language)
+        self._builder = _FrontendGraphRecorder(source_language=source_language)
         self._builder.program(
             program_id=program_id,
             entrypoint=entrypoint,
@@ -83,10 +83,6 @@ class AgentProgram:
             has_default_context=has_default_context,
             context_type_ref=context_type_ref,
         )
-
-    @property
-    def builder(self) -> GraphBuilder:
-        return self._builder
 
     def import_program(self, imported: ImportedProgram) -> "AgentProgram":
         self._builder.import_program(
@@ -131,6 +127,107 @@ class AgentProgram:
 
         return StructuredTaskScope(self, region_id)
 
+    def model_call(
+        self, node_id: str, model_target_ref: str | None = None
+    ) -> "AgentProgram":
+        self._builder.model_call(node_id, model_target_ref=model_target_ref)
+        if model_target_ref is not None:
+            self._builder.model_requirement(model_target_ref)
+        return self
+
+    def capability_invoke(
+        self, node_id: str, capability_ref: str | None = None
+    ) -> "AgentProgram":
+        self._builder.capability_invoke(node_id, capability_ref=capability_ref)
+        if capability_ref is not None:
+            self._builder.capability_requirement(capability_ref)
+        return self
+
+    def await_event(self, node_id: str, event_ref: str) -> "AgentProgram":
+        self._builder.await_event(node_id, event_ref=event_ref)
+        return self
+
+    def loop(
+        self,
+        region_id: str,
+        body: Callable[["AgentProgram"], object],
+    ) -> "AgentProgram":
+        self._builder.annotate_region(region_id, "structural_loop")
+        return self._structured_region(region_id, "ais.loop", body)
+
+    def branch(
+        self,
+        region_id: str,
+        then_body: Callable[["AgentProgram"], object],
+        else_body: Callable[["AgentProgram"], object] | None = None,
+    ) -> "AgentProgram":
+        def body(program: "AgentProgram") -> None:
+            then_body(program)
+            if else_body is not None:
+                else_body(program)
+
+        return self._structured_region(region_id, "branch", body)
+
+    def switch(
+        self,
+        region_id: str,
+        cases: Iterable[Callable[["AgentProgram"], object]],
+    ) -> "AgentProgram":
+        def body(program: "AgentProgram") -> None:
+            for case in cases:
+                case(program)
+
+        return self._structured_region(region_id, "switch", body)
+
+    def parallel(
+        self,
+        region_id: str,
+        body: Callable[["AgentProgram"], object],
+    ) -> "AgentProgram":
+        return self._structured_region(region_id, "parallel_join", body)
+
+    def try_catch(
+        self,
+        try_region_id: str,
+        catch_region_id: str,
+        try_body: Callable[["AgentProgram"], object],
+        catch_body: Callable[["AgentProgram"], object],
+    ) -> "AgentProgram":
+        self._structured_region(try_region_id, "try", try_body)
+        self._structured_region(catch_region_id, "catch", catch_body)
+        return self
+
+    def throw_region(self, region_id: str) -> "AgentProgram":
+        self._builder.region(region_id, "throw")
+        return self
+
+    def return_region(self, region_id: str) -> "AgentProgram":
+        self._builder.return_region(region_id)
+        return self
+
+    def yield_region(self, region_id: str) -> "AgentProgram":
+        self._builder.yield_region(region_id)
+        return self
+
+    def source_span(
+        self,
+        node_id: str,
+        source_file: str,
+        line: int,
+        semantic_annotation: str,
+        start_column: int = 0,
+        end_column: int | None = None,
+    ) -> "AgentProgram":
+        self._builder.node_span(
+            node_id,
+            source_file,
+            line,
+            semantic_annotation,
+            start_column,
+            end_column,
+        )
+        return self
+
     def context_flow(self, edge: ContextEdge) -> "AgentProgram":
         self._builder.context_edge(edge.from_node, edge.to_node, edge.context_type_ref)
         return self
@@ -138,6 +235,32 @@ class AgentProgram:
     def annotate_region(self, region_id: str, annotation: str) -> "AgentProgram":
         self._builder.annotate_region(region_id, annotation)
         return self
+
+    def _record_region(self, region_id: str, kind: str) -> None:
+        self._builder.region(region_id, kind)
+
+    def _enter_region(self, region_id: str) -> Optional[str]:
+        return self._builder.enter_region(region_id)
+
+    def _leave_region(self, previous: Optional[str]) -> None:
+        self._builder.leave_region(previous)
+
+    def _structured_region(
+        self,
+        region_id: str,
+        kind: str,
+        body: Callable[["AgentProgram"], object],
+    ) -> "AgentProgram":
+        self._builder.region(region_id, kind)
+        previous = self._builder.enter_region(region_id)
+        try:
+            body(self)
+        finally:
+            self._builder.leave_region(previous)
+        return self
+
+    def _record_program_invoke(self, node_id: str, spec: ProgramInvokeSpec) -> None:
+        self._builder.program_invoke(node_id, operands=spec.to_operands())
 
     def build_graph(self) -> dict[str, Any]:
         return self._builder.build()

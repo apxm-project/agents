@@ -7,8 +7,8 @@ use serde_json::{Value, json};
 
 use apxm_execution::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
-    CompositionRequest, EventAwait, EventOutcome, EventPort, ExecutionPorts, ExecutionRequest,
-    EventRef, NoopStaticHookHandler, RunOutcome, execute_resumable, resume_event,
+    CompositionRequest, Continuation, EventAwait, EventOutcome, EventPort, ExecutionPorts,
+    ExecutionRequest, EventRef, NoopStaticHookHandler, RunOutcome, execute_resumable, resume_event,
 };
 use apxm_inference::{
     AttemptDisposition, ExactPortBindingRef, ModelBindingAdmission, ModelCallRequest,
@@ -28,12 +28,16 @@ fn request(scope: &str) -> ExecutionRequest {
     let air = serde_json::from_value::<AirModule>(json!({
         "schema_version": "apxm.air.v1",
         "semantic_operations": [
-            {"node_id": "node.model", "op": "model.call", "operands": {"model_target_ref": "model.default"}},
-            {"node_id": "node.await", "op": "await.event", "operands": {"event_ref": "evt-atomic"}},
-            {"node_id": "node.capability", "op": "capability.invoke", "operands": {"capability_ref": "cap.finish"}}
+            {"node_id": "node.model", "op": "model.call", "parent_region_id": "loop.main", "execution_order": 0, "operands": {"model_target_ref": "model.default"}},
+            {"node_id": "node.await", "op": "await.event", "parent_region_id": "loop.main", "execution_order": 1, "operands": {"event_ref": "evt-atomic"}},
+            {"node_id": "node.capability", "op": "capability.invoke", "parent_region_id": "loop.main", "execution_order": 2, "operands": {"capability_ref": "cap.finish"}}
         ],
-        "structural_ir": [],
-        "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
+        "structural_ir": [
+            {"region_id": "region.root", "kind": "function", "execution_order": 0},
+            {"region_id": "loop.main", "kind": "ais.loop", "parent_region_id": "region.root", "execution_order": 0}
+        ],
+        "context_flow": [],
+        "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": [{"region_id": "loop.main", "annotation": "structural_loop"}]}
     }))
     .expect("canonical AIR");
     ExecutionRequest {
@@ -187,6 +191,18 @@ async fn park_commits_context_continuation_wait_effects_evidence_usage_and_outpu
     let tuple = &tuples[0];
     assert_eq!(tuple.context, json!({"turn": 1}));
     assert!(tuple.continuation.is_some());
+    let continuation: Continuation =
+        serde_json::from_value(tuple.continuation.clone().unwrap()).expect("typed continuation");
+    assert!(continuation.next_schedule_position > 0);
+    assert_eq!(continuation.loop_frames.len(), 1);
+    assert_eq!(continuation.loop_frames[0].static_loop_id, "loop.main");
+    assert_eq!(continuation.loop_frames[0].iteration_index, 0);
+    assert!(continuation.loop_frames[0].parked);
+    assert!(!continuation.loop_frames[0].failed);
+    assert_eq!(
+        continuation.loop_frames[0].causal_node_execution_ids.len(),
+        1
+    );
     assert_eq!(
         tuple.event_wait,
         Some(json!({
@@ -239,4 +255,152 @@ async fn resume_reads_the_committed_structural_continuation() {
     .expect("resume from committed state");
     assert!(matches!(resumed, RunOutcome::Completed(_)));
     assert_eq!(*commit.version.lock().unwrap(), 2);
+    let tuples = commit.tuples.lock().unwrap();
+    let completions = tuples
+        .iter()
+        .flat_map(|tuple| tuple.evidence.iter())
+        .filter(|fact| fact.loop_iteration_completed().is_some())
+        .count();
+    assert_eq!(completions, 1);
+}
+
+#[tokio::test]
+async fn final_await_resumes_directly_to_one_committed_back_edge() {
+    let commit = Arc::new(Commit::default());
+    let mut final_await = request("instance.final-await");
+    final_await
+        .air
+        .semantic_operations
+        .retain(|operation| operation.node_id != "node.capability");
+
+    execute_resumable(
+        &ports(commit.clone()),
+        final_await,
+        json!({"phase": "before"}),
+    )
+    .await
+    .expect("final await parks");
+    let continuation: Continuation = serde_json::from_value(
+        commit
+            .continuation
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("committed continuation"),
+    )
+    .expect("typed continuation");
+    assert_eq!(continuation.loop_frames.len(), 1);
+
+    resume_event(
+        &ports(commit.clone()),
+        "instance.final-await",
+        EventRef::new("evt-atomic").unwrap(),
+        json!({"phase": "after"}),
+    )
+    .await
+    .expect("resume final await");
+    let tuples = commit.tuples.lock().unwrap();
+    assert_eq!(
+        tuples
+            .iter()
+            .flat_map(|tuple| tuple.evidence.iter())
+            .filter(|fact| fact.loop_iteration_completed().is_some())
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn nested_loop_park_restores_exact_stack_without_duplicate_work() {
+    let commit = Arc::new(Commit::default());
+    let mut nested = request("instance.nested");
+    nested.air = serde_json::from_value(json!({
+        "schema_version": "apxm.air.v1",
+        "semantic_operations": [
+            {"node_id": "node.outer.before", "op": "model.call", "parent_region_id": "loop.outer", "execution_order": 0, "operands": {"model_target_ref": "model.default"}},
+            {"node_id": "node.inner.await", "op": "await.event", "parent_region_id": "loop.inner", "execution_order": 0, "operands": {"event_ref": "evt-atomic"}},
+            {"node_id": "node.outer.after", "op": "capability.invoke", "parent_region_id": "loop.outer", "execution_order": 2, "operands": {"capability_ref": "cap.finish"}}
+        ],
+        "structural_ir": [
+            {"region_id": "region.root", "kind": "function", "execution_order": 0},
+            {"region_id": "loop.outer", "kind": "ais.loop", "parent_region_id": "region.root", "execution_order": 0},
+            {"region_id": "loop.inner", "kind": "ais.loop", "parent_region_id": "loop.outer", "execution_order": 1}
+        ],
+        "context_flow": [],
+        "source_map": {
+            "schema_version": "apxm.source-map.v1",
+            "source_language": "python",
+            "node_spans": [],
+            "region_annotations": [
+                {"region_id": "loop.outer", "annotation": "structural_loop"},
+                {"region_id": "loop.inner", "annotation": "structural_loop"}
+            ]
+        }
+    }))
+    .expect("nested AIR");
+
+    execute_resumable(&ports(commit.clone()), nested, Value::Null)
+        .await
+        .expect("nested await parks");
+    let continuation: Continuation = serde_json::from_value(
+        commit.continuation.lock().unwrap().clone().unwrap(),
+    )
+    .expect("typed nested continuation");
+    assert_eq!(
+        continuation
+            .loop_frames
+            .iter()
+            .map(|frame| frame.static_loop_id.as_str())
+            .collect::<Vec<_>>(),
+        ["loop.outer", "loop.inner"]
+    );
+
+    resume_event(
+        &ports(commit.clone()),
+        "instance.nested",
+        EventRef::new("evt-atomic").unwrap(),
+        Value::Null,
+    )
+    .await
+    .expect("nested resume");
+
+    let tuples = commit.tuples.lock().unwrap();
+    let facts: Vec<_> = tuples
+        .iter()
+        .flat_map(|tuple| tuple.evidence.iter())
+        .collect();
+    assert_eq!(
+        facts
+            .iter()
+            .filter(|fact| {
+                fact.is_kind(
+                    apxm_program::runtime_evidence::FactKind::EventAwaitRegistered,
+                )
+            })
+            .count(),
+        1
+    );
+    assert_eq!(
+        facts
+            .iter()
+            .filter_map(|fact| fact.loop_iteration_completed())
+            .count(),
+        2
+    );
+    let mut node_ids = facts
+        .iter()
+        .filter_map(|fact| {
+            fact.node_execution_recorded()
+                .map(|node| node.node_execution_id.clone())
+        })
+        .collect::<Vec<_>>();
+    let observed_node_ids = node_ids.clone();
+    let total = node_ids.len();
+    node_ids.sort();
+    node_ids.dedup();
+    assert_eq!(
+        node_ids.len(),
+        total,
+        "resume duplicated a NodeExecution: {observed_node_ids:?}"
+    );
 }

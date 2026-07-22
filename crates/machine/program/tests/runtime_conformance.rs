@@ -4,7 +4,7 @@
 mod common;
 
 use apxm_program::{
-    verify_execution_commit_json, verify_external_agent_evidence_json,
+    Fact, verify_execution_commit_json, verify_external_agent_evidence_json,
     verify_external_agent_session_json, verify_runtime_evidence_json,
 };
 use common::{Vector, load_vectors};
@@ -51,4 +51,24 @@ fn external_agent_evidence_vectors_match_verifier() {
     check("apxm.external-agent-evidence.v1.json", |v| {
         verify_external_agent_evidence_json(v).is_accepted()
     });
+}
+
+#[test]
+fn loop_iteration_completion_deserializes_as_required_closed_variant() {
+    let fact: Fact = serde_json::from_value(serde_json::json!({
+        "fact_id": "loop-iteration.1",
+        "event_sequence": 2,
+        "fact_kind": "LoopIterationCompleted",
+        "static_loop_id": "loop.1",
+        "loop_occurrence_id": "loop-occurrence.1",
+        "iteration_index": 0,
+        "program_invocation_id": "invocation.1",
+        "causal_node_execution_ids": ["node-execution.1"]
+    }))
+    .expect("typed completion");
+    let Fact::LoopIterationCompleted(completed) = fact else {
+        panic!("completion decoded as a broad runtime fact");
+    };
+    assert_eq!(completed.iteration_index, 0);
+    assert_eq!(completed.causal_node_execution_ids, ["node-execution.1"]);
 }

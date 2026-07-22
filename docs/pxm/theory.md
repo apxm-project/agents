@@ -2,7 +2,7 @@
 
 - Status: normative APXM v1 theory
 - Owner: APXM `agents`
-- Binding decisions: [ADR-0008](../adr/0008-agent-programs-compose-through-new-and-invoke.md), [ADR-0009](../adr/0009-air-has-five-public-semantic-operations.md), [ADR-0010](../adr/0010-agent-program-source-owns-context-hooks-and-conversational-loops.md), [ADR-0011](../adr/0011-agent-program-execution-is-one-end-to-end-spine.md), and [ADR-0012](../adr/0012-acp-uses-explicit-capabilities-selection-is-not-runtime-semantics.md)
+- Binding decisions: [ADR-0008](../adr/0008-agent-programs-compose-through-new-and-invoke.md), [ADR-0009](../adr/0009-air-has-five-public-semantic-operations.md), [ADR-0010](../adr/0010-agent-program-source-owns-context-hooks-and-conversational-loops.md), [ADR-0011](../adr/0011-agent-program-execution-is-one-end-to-end-spine.md), [ADR-0012](../adr/0012-acp-uses-explicit-capabilities-selection-is-not-runtime-semantics.md), and [ADR-0014](../adr/0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md)
 
 ## 1. Thesis
 
@@ -13,10 +13,11 @@ without allowing any layer to invent behavior.
 An Agent Program is ordinary Python or TypeScript source that defines the
 behavior of an agent or workflow through an APXM authoring frontend. The source
 records one equivalent FrontendGraph. Rust verifies and lowers that graph to
-five-operation AIR and an immutable executable artifact. Server admits the
-artifact under current identity, authority, budget, profile, and event facts.
-The runtime executes the admitted artifact through exact injected adapters.
-Evidence reports what actually happened.
+AIR containing the closed five-operation effect/composition family and the
+closed structural family, then produces an immutable executable artifact.
+Server admits the artifact under current identity, authority, budget, profile,
+and event facts. The runtime executes the admitted artifact through exact
+injected adapters. Evidence reports what actually happened.
 
 The central rule is:
 
@@ -37,7 +38,7 @@ consumer follows the same digest-linked chain.
 | --- | --- | --- | --- |
 | behavior | Agent Program source | authored control flow, loops, context movement, Hooks, composition, model and Capability calls | grant authority or claim execution |
 | portable compiler input | FrontendGraph | deterministic language-neutral recording of the source-visible APXM constructs | redefine source behavior or execute |
-| semantic legality | Rust compiler/verifier | types, effects, structured regions, five-op AIR, source maps, artifact requirements | choose runtime providers or change source control flow |
+| semantic legality | Rust compiler/verifier over AIS-owned operation families | types, effects, closed structural operations, source maps, artifact requirements | choose runtime providers or change source control flow |
 | publication | immutable artifact digest | the exact admitted executable meaning and requirements | imply current authorization or successful execution |
 | authority | Auth facts and signed decisions | who may act, as which Agent Identity, on which resource, within which ceiling | select program behavior, models, or retries |
 | root admission and spend | Server | whether an Invocation may begin/resume; reservation, pricing and ledger facts | rewrite AIR or perform hidden effects |
@@ -83,9 +84,9 @@ Return values are plain typed program results. Runtime metadata, cost, trace,
 and source maps are queried through evidence APIs; they are not smuggled into a
 generic result envelope.
 
-### 3.2 Five semantic operations
+### 3.2 Two closed AIS operation families
 
-AIR exposes exactly:
+The effect/composition family exposes exactly:
 
 1. `model.call`
 2. `capability.invoke`
@@ -93,10 +94,14 @@ AIR exposes exactly:
 4. `program.invoke`
 5. `await.event`
 
-Functions, branches, loops, tasks, try/catch, yield, return, and region exits
-are compiler-owned structural IR. A frontend cannot publish raw AIR or create
-an ad hoc operation. External agents, integrations, storage, Tools, and
-provider actions are typed Capabilities, not new operation families.
+The separate structural family contains compiler-emitted functions, regions,
+typed values/blocks, branches, loops including `ais.loop`, task scopes,
+try/catch, yield, return, and region exits. Both families are AIS-owned,
+generated, and closed for an exact contract digest. Structural operations are
+not a public frontend operation API, and `ais.loop` is not a sixth
+effect/composition operation. A frontend cannot publish raw AIR or create an ad
+hoc operation. External agents, integrations, storage, Tools, and provider
+actions are typed Capabilities, not new operation families.
 
 ### 3.3 Composition
 
@@ -116,7 +121,7 @@ arbitrary executable name.
 
 ### 4.1 Context is a local accumulated value
 
-Program Context is an explicit typed local value. Conversational source reads
+Program Context is an explicit typed local value. Agent Program source reads
 and replaces `agent.context` as work progresses. The compiler threads the value
 through structured regions and makes every model-visible projection explicit.
 The runtime does not append messages, inject memory, trim history, load Skills,
@@ -157,28 +162,31 @@ Capabilities also have static Hooks, typed requests/results, effect classes,
 exact adapter requirements, grants, approvals, budgets, and evidence. Tool is a
 model-facing projection of selected Capabilities, not a separate authority.
 
-## 5. Conversational Agents and Turns
+## 5. Generic loops and conversational examples
 
-A Conversational Agent is a Python or TypeScript frontend construct that
-authors a loop. One **Turn** is one complete execution of one source-authored
-loop iteration. A Turn may include several nodes, Hooks, model calls,
-Capability calls, branches, nested Program invocations, context transitions,
-and a yield or return.
+Loops are ordinary authored structured control flow. The compiler emits
+AIS-owned structural operations, including `ais.loop`, and source maps identify
+the static loop without a conversation-specific annotation.
 
-Turn is not an AIR operation and the runtime does not manufacture it. Compiler
-source maps label the loop region, and Studio projects the generic region and
-its NodeExecutions as a Turn. Clicking a Turn shows its ordered nodes; opening
-a node shows the exact input/output, Hook/context transitions, attempts,
-authority, usage, files, events, and failures permitted to the viewer.
+When a loop body and its back-edge commit atomically, runtime emits one
+`LoopIterationCompleted` fact containing the static loop id, dynamic occurrence
+id, iteration index, and causal execution identities. Failed, cancelled, or
+rolled-back bodies emit no completion fact. Studio projects this generic
+evidence without defining a core `Turn` model.
+
+The repository's Python and TypeScript conversational examples may define an
+example-local `ConversationalAgent` and describe a completed iteration as a
+“turn.” Gao is a TypeScript example that may specialize that local construct.
+Neither name is an installable frontend API, contract, compiler/runtime branch,
+Server route, admission identity, or Studio product feature.
 
 The model's returned content may include a provider-supported reasoning or
 thinking field. Studio may display that attributed output when the provider
 made it available and policy permits. APXM never requests, reconstructs, or
 fabricates private chain-of-thought.
 
-Gao is implemented entirely as an ordinary TypeScript Conversational Agent and
-uses ordinary Program composition for specialists. It has no runtime opcode or
-privileged execution path.
+Those examples use only the public generic Agent Program, Hook, Context,
+composition, structured-control-flow, source-map, and compiler-bridge APIs.
 
 ## 6. Models and future routing
 
@@ -202,12 +210,12 @@ An External Agent is a non-APXM agent loop. APXM v1 acts as an outbound ACP
 Client through an exact admitted adapter. Agent Program source invokes typed
 external-agent session Capabilities, each of which lowers to
 `capability.invoke`. ACP adds no AIR operation and the ACP process is not a
-Program Instance, Conversational Agent, model backend, or runtime.
+Program Instance, APXM structural loop, model backend, or runtime.
 
 The external agent's prompt turn may contain its own model calls, Tool cycles,
 plans, diffs, and subprocess work. APXM records those as nested attributed ACP
 events under the outer Capability NodeExecution, not as fabricated APXM nodes
-or Turns. Peer-reported usage remains external evidence and cannot overwrite
+or loop iterations. Peer-reported usage remains external evidence and cannot overwrite
 Server's spend ledger.
 
 An `ExternalAgentSessionRef` is an opaque scoped reference bound to one Program
@@ -245,7 +253,7 @@ For every occurrence APXM preserves identifiers and causal links across:
 ```text
 Program Instance
   -> Program Invocation
-    -> structured region / Turn projection
+    -> structural loop occurrence / committed iteration
       -> NodeExecution
         -> attempt
           -> authority and budget decision
@@ -268,7 +276,8 @@ A proposal is compatible with PXM only if all answers are explicit:
 
 1. Which source construct authors the behavior?
 2. Which compiler rule gives it meaning?
-3. Which of the five AIR operations represents each effect?
+3. Which of the five effect/composition operations represents each effect, and
+   which closed structural operations represent authored control flow?
 4. Which exact owner admits identity, authority, budget, delivery, and target?
 5. Which adapter executes the effect, with what stable identity?
 6. What happens on cancellation, crash, retry, duplicate, and uncertain send?
