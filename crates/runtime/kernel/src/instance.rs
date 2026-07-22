@@ -16,7 +16,9 @@ use apxm_program::runtime_evidence::{
 };
 
 use crate::bundle::PortBundle;
-use crate::commit::{AtomicWriteSet, ExecutionCommitRequest, ExecutionCommitResult};
+use crate::commit::{
+    AtomicWriteSet, ExecutionCommitRequest, ExecutionCommitResult, ExecutionCommitTuple,
+};
 
 /// One invocation request against an instance.
 pub struct Invocation {
@@ -204,6 +206,7 @@ impl ProgramInstance {
             idempotency_key: format!("idem.{}", invocation.commit_id),
             expected_program_state_version: expected,
             write_set: invocation.write_set,
+            tuple: ExecutionCommitTuple::empty(batch.clone()),
             evidence_batch: batch.clone(),
         };
 
@@ -274,6 +277,7 @@ impl ProgramInstance {
             idempotency_key: format!("idem.{commit_id}"),
             expected_program_state_version: expected,
             write_set,
+            tuple: ExecutionCommitTuple::empty(batch.clone()),
             evidence_batch: batch.clone(),
         };
 
@@ -390,6 +394,7 @@ impl ProgramInstance {
             idempotency_key: format!("idem.{}", invocation.commit_id),
             expected_program_state_version: expected,
             write_set: invocation.write_set,
+            tuple: ExecutionCommitTuple::empty(batch.clone()),
             evidence_batch: batch.clone(),
         };
 
@@ -510,6 +515,16 @@ fn lifecycle_fact(
         node_execution_id: None,
         attempt_id: None,
         region_occurrence_id: None,
+        static_region_id: None,
+        air_node_id: None,
+        parent_node_execution_id: None,
+        hook_execution_id: None,
+        hook_id: None,
+        hook_scope: None,
+        hook_phase: None,
+        context_transition_id: None,
+        context_before_ref: None,
+        context_after_ref: None,
         effect_outcome_ref: None,
         typed_error: None,
     }

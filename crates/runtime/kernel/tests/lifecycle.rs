@@ -17,8 +17,8 @@ use apxm_program::runtime_evidence::{
 
 use apxm_kernel::{
     AtomicWriteSet, ExactPortBinding, ExecutionCommitPort, ExecutionCommitRequest,
-    ExecutionCommitResult, InstanceError, Invocation, InvocationReport, PortBundle, PortBundleSpec,
-    PortImplementation, PortSlot, ProgramInstance, reconstruct,
+    ExecutionCommitResult, ExecutionCommitTuple, InstanceError, Invocation, InvocationReport,
+    PortBundle, PortBundleSpec, PortImplementation, PortSlot, ProgramInstance, reconstruct,
 };
 
 fn digest(c: char) -> String {
@@ -213,6 +213,7 @@ async fn compare_conflict_publishes_nothing() {
         idempotency_key: "idem.c1".into(),
         expected_program_state_version: 5,
         write_set: write_set(),
+        tuple: ExecutionCommitTuple::empty(vec![]),
         evidence_batch: vec![],
     };
     let result = port.commit(request).await;

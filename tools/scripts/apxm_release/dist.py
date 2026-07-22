@@ -116,8 +116,8 @@ def _build_python_dist(output_dir: Path) -> list[Path]:
         if installed_wheel.returncode != 0:
             raise SystemExit("failed to install built Python wheel")
         smoke = (
-            "from apxm.contract import RepoLayout, build_layout; "
-            "from apxm import GraphRecorder, compile; "
+            "import apxm_program; "
+            "assert apxm_program.FIVE_OPS; "
             "print('OK')"
         )
         if run([str(smoke_python), "-c", smoke], env=smoke_env).returncode != 0:

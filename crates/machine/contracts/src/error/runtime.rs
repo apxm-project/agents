@@ -273,7 +273,7 @@ impl RuntimeError {
             "scheduler" => RuntimeError::Scheduler { message },
             "scheduler_cancelled" => RuntimeError::SchedulerCancelled,
             "operation" => RuntimeError::Operation {
-                op_type: AISOperationType::Nop,
+                op_type: AISOperationType::ModelCall,
                 message,
             },
             "capability" => RuntimeError::Capability {

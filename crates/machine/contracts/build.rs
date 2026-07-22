@@ -56,8 +56,8 @@ fn main() {
         &[
             ("use crate::attrs;", "use crate::constants::graph::attrs;"),
             (
-                "use crate::operations::{AISOperationType, get_operation_spec};",
-                "use super::definitions::{AISOperationType, get_operation_spec};",
+                "use crate::operations::{AISOperationType, OperationSpec, get_operation_spec};",
+                "use super::definitions::{AISOperationType, OperationSpec, get_operation_spec};",
             ),
         ],
         None,

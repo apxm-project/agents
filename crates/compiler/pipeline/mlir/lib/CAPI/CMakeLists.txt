@@ -2,12 +2,7 @@
 file(GLOB APXM_CAPI_SOURCES CONFIGURE_DEPENDS
   ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp
 )
-
-# Add artifact conversion sources
-file(GLOB APXM_ARTIFACT_CONVERSION_SOURCES CONFIGURE_DEPENDS
-  ${APXM_MLIR_DIR}/lib/Dialect/AIS/Conversion/Artifact/*.cpp
-)
-list(APPEND APXM_CAPI_SOURCES ${APXM_ARTIFACT_CONVERSION_SOURCES})
+list(REMOVE_ITEM APXM_CAPI_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/CodeGen.cpp)
 
 
 add_library(apxm_compiler_c SHARED ${APXM_CAPI_SOURCES})
@@ -30,7 +25,6 @@ target_include_directories(apxm_compiler_c
 target_link_libraries(apxm_compiler_c
   PRIVATE
   APXMAISIR
-  APXMAISTransforms
   MLIRArithDialect
   MLIRIR
   MLIRFuncDialect

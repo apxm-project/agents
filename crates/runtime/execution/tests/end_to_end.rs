@@ -13,18 +13,18 @@ use apxm_inference::{
     Usage,
 };
 use apxm_kernel::{
-    AcpPromptOutcome, AcpPromptRequest, AgentFacade, AtomicWriteSet, ExecutionCommitPort,
-    ExecutionCommitRequest, ExecutionCommitResult, ExternalAgentCapabilityPort, Hook, HookReturn,
-    PromptEffectState,
+    AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, ExecutionCommitPort,
+    ExecutionCommitRequest, ExecutionCommitResult, ExternalAgentCapabilityPort, PromptEffectState,
 };
 use apxm_program::air::AirModule;
 use apxm_program::external_agent::{AttributedEvent, AttributedEventKind, PeerUsage};
+use apxm_program::frontend_graph::{HookBinding, HookPhase, HookReturnMode, HookScope};
 use apxm_program::runtime_evidence::Fact;
 
 use apxm_execution::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
     CompositionRequest, EventAwait, EventOutcome, EventPort, ExecutionPorts, ExecutionRequest,
-    NodeOutcome, execute,
+    NodeOutcome, StaticHookHandlerPort, StaticHookResult, execute,
 };
 
 fn digest(c: char) -> String {
@@ -51,7 +51,7 @@ fn air() -> AirModule {
             {"node_id": "n.acp", "op": "capability.invoke", "operands": {"capability_ref": "external-agent:acp:claude-code", "external_agent_session": "session.1"}},
             {"node_id": "n.new", "op": "program.new", "operands": {"program_ref": "Specialist"}},
             {"node_id": "n.invoke", "op": "program.invoke", "operands": {"program_ref": "Specialist"}},
-            {"node_id": "n.await", "op": "await.event", "operands": {"event_selector": "evt.done"}}
+            {"node_id": "n.await", "op": "await.event", "operands": {"event_ref": "evt.done"}}
         ],
         "structural_ir": [
             {"region_id": "r.fn", "kind": "function"},
@@ -132,8 +132,9 @@ impl ExternalAgentCapabilityPort for FakeAcpPeer {
 struct FakeEvents;
 #[async_trait]
 impl EventPort for FakeEvents {
-    async fn await_event(&self, _request: EventAwait) -> EventOutcome {
+    async fn await_event(&self, request: EventAwait) -> EventOutcome {
         EventOutcome::Fulfilled {
+            event_ref: request.event_ref,
             payload: "done".into(),
         }
     }
@@ -150,6 +151,23 @@ impl CompositionPort for FakeComposition {
     async fn program_invoke(&self, request: CompositionRequest) -> CompositionOutcome {
         CompositionOutcome::Invoked {
             child_instance_ref: format!("child.{}", request.program_ref),
+        }
+    }
+}
+
+struct StaticHooks;
+#[async_trait]
+impl StaticHookHandlerPort for StaticHooks {
+    async fn execute(
+        &self,
+        binding: &HookBinding,
+        _context: &Value,
+        _result: &Value,
+    ) -> StaticHookResult {
+        assert_eq!(binding.handler_ref, "hooks.after_model");
+        StaticHookResult::Replace {
+            assigned_context: Some(json!({"turns": 1})),
+            result: json!("hooked"),
         }
     }
 }
@@ -191,12 +209,25 @@ fn ports(commit: Arc<FakeCommit>) -> ExecutionPorts {
         events: Arc::new(FakeEvents),
         composition: Arc::new(FakeComposition),
         execution_commit: commit,
+        hook_handlers: Arc::new(StaticHooks),
     }
 }
 
 fn request() -> ExecutionRequest {
     ExecutionRequest {
         air: air(),
+        hook_bindings: vec![HookBinding {
+            hook_id: "hook.after.model".into(),
+            scope: HookScope::Model,
+            phase: HookPhase::After,
+            target_selector: "n.model".into(),
+            declaration_order: 0,
+            handler_ref: "hooks.after_model".into(),
+            handler_digest: digest('b'),
+            input_type_ref: "ModelResult".into(),
+            output_type_ref: "ModelResult".into(),
+            return_mode: HookReturnMode::ReplaceResult,
+        }],
         model_admission: admission(),
         version_scope: "instance.1".into(),
         commit_id: "c1".into(),
@@ -207,18 +238,11 @@ fn request() -> ExecutionRequest {
 #[tokio::test]
 async fn executes_all_five_ops_and_commits_atomically() {
     let commit = Arc::new(FakeCommit::new());
-    // An after-model Hook threads context and replaces the model result.
-    let hooks: Vec<Hook<Value, Value>> =
-        vec![Box::new(|facade: &mut AgentFacade<Value>, _result| {
-            facade.set_context(json!({"turns": 1}));
-            HookReturn::Replace(json!("hooked"))
-        })];
 
     let report = execute(
         &ports(commit.clone()),
         request(),
         json!({"turns": 0}),
-        &hooks,
     )
     .await
     .expect("run");
@@ -288,8 +312,17 @@ async fn executes_all_five_ops_and_commits_atomically() {
         "peer 555 never enters native usage"
     );
 
-    // The committed evidence records one attempt per node plus lifecycle facts.
-    assert_eq!(commit.facts().len(), 2 + 6 + 1);
+    // The committed evidence records one attempt per node, the static handler,
+    // its explicit Context transition, and lifecycle facts.
+    assert_eq!(commit.facts().len(), 2 + 6 + 1 + 1 + 1);
+    assert!(commit
+        .facts()
+        .iter()
+        .any(|fact| fact.fact_kind == apxm_program::runtime_evidence::FactKind::HookExecuted));
+    assert!(commit
+        .facts()
+        .iter()
+        .any(|fact| fact.fact_kind == apxm_program::runtime_evidence::FactKind::ContextTransitioned));
 }
 
 #[tokio::test]
@@ -306,12 +339,13 @@ async fn unbound_model_target_fails_closed() {
     .unwrap();
     let request = ExecutionRequest {
         air: bad_air,
+        hook_bindings: Vec::new(),
         model_admission: admission(),
         version_scope: "instance.1".into(),
         commit_id: "c1".into(),
         write_set: write_set(),
     };
-    let err = execute(&ports(commit), request, json!(null), &[])
+    let err = execute(&ports(commit), request, json!(null))
         .await
         .expect_err("no binding");
     assert!(matches!(err, apxm_execution::ExecutionError::Binding(_)));

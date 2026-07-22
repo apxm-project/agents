@@ -8,6 +8,7 @@
     "schema_version",
     "artifact_digest",
     "air_digest",
+    "air",
     "source_bundle_digest",
     "source_map",
     "entrypoints",
@@ -23,6 +24,9 @@
     },
     "air_digest": {
       "$ref": "apxm.contract-common.v1#/$defs/Digest"
+    },
+    "air": {
+      "$ref": "apxm.air.v1"
     },
     "source_bundle_digest": {
       "$ref": "apxm.contract-common.v1#/$defs/Digest"

@@ -199,20 +199,23 @@ export class GraphBuilder {
     this.metadata = options.metadata ?? {};
   }
 
-  private autoName(opType: OpName): string {
+  private autoName(opType: string): string {
     const count = this.nameCounters.get(opType) ?? 0;
     this.nameCounters.set(opType, count + 1);
     return count === 0 ? opType.toLowerCase() : `${opType.toLowerCase()}_${count}`;
   }
 
-  private addNode(name: string, op: OpName, attributes: Attrs): NodeRef {
+  private addNode(name: string, op: string, attributes: Attrs): NodeRef {
     if (this.nodeIds.has(name)) {
       throw new Error(`workflow node '${name}' already exists`);
     }
     const normalizedAttributes = dropUndefined(attributes);
-    for (const field of REQUIRED_ATTRS[op]) {
-      if (normalizedAttributes[field] === undefined) {
-        throw new Error(`AIS operation '${op}' requires attribute '${field}'`);
+    const required = REQUIRED_ATTRS[op as OpName];
+    if (required) {
+      for (const field of required) {
+        if (normalizedAttributes[field] === undefined) {
+          throw new Error(`AIS operation '${op}' requires attribute '${field}'`);
+        }
       }
     }
     const id = this.nextId;
@@ -284,7 +287,7 @@ export class GraphBuilder {
     return bindings;
   }
 
-  private recordLlmNode(op: "ASK" | "THINK" | "REASON", options: AskOptions): NodeRef {
+  private recordLlmNode(op: string, options: AskOptions): NodeRef {
     const { name, prompt, model, temperature, systemPrompt, inputs, promptInputs, ...rest } = options;
     if ("input_names" in rest || "input_roles" in rest) {
       throw new Error("LLM input metadata is derived from promptInputs; do not set input_names or input_roles directly");

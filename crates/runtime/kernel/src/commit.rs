@@ -36,6 +36,38 @@ pub struct AtomicWriteSet {
     pub session_output_refs_digest: String,
 }
 
+/// The exact runtime values represented by one atomic write set.
+///
+/// The commit adapter publishes this tuple as one compare-and-commit unit. The
+/// opaque continuation payload is runtime-owned serialized state; it is read
+/// back only through this same port on a later invocation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutionCommitTuple {
+    pub context: Value,
+    pub continuation: Option<Value>,
+    pub event_wait: Option<Value>,
+    pub effect_outcomes: Vec<Value>,
+    pub evidence: Vec<Fact>,
+    pub usage: Value,
+    pub output_refs: Vec<Value>,
+}
+
+impl ExecutionCommitTuple {
+    /// Build an empty execution tuple with the supplied authoritative evidence.
+    #[must_use]
+    pub fn empty(evidence: Vec<Fact>) -> Self {
+        Self {
+            context: Value::Null,
+            continuation: None,
+            event_wait: None,
+            effect_outcomes: Vec::new(),
+            evidence,
+            usage: Value::Null,
+            output_refs: Vec::new(),
+        }
+    }
+}
+
 /// One atomic Execution Commit request. Carries the full write set, the
 /// canonical evidence batch published by that write set, and the expected
 /// program-state version for the compare-and-commit.
@@ -46,6 +78,8 @@ pub struct ExecutionCommitRequest {
     pub idempotency_key: String,
     pub expected_program_state_version: u64,
     pub write_set: AtomicWriteSet,
+    /// The full state/effect/evidence tuple whose digests appear in `write_set`.
+    pub tuple: ExecutionCommitTuple,
     /// The runtime-evidence facts published atomically with this commit; their
     /// content is summarized by `write_set.runtime_evidence_batch_digest`.
     pub evidence_batch: Vec<Fact>,
@@ -141,4 +175,11 @@ pub trait ExecutionCommitPort: Send + Sync {
 
     /// The current committed version for an invocation (0 before any commit).
     async fn current_version(&self, invocation_ref: &str) -> u64;
+
+    /// Read the current continuation payload from the same authoritative commit
+    /// record. Implementations that do not support resumption return `None`;
+    /// they never route execution through a secondary persistence authority.
+    async fn load_continuation(&self, _invocation_ref: &str) -> Option<Value> {
+        None
+    }
 }

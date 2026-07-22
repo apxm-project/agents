@@ -4,7 +4,7 @@
 //! operations have all required fields and correct types.
 
 use crate::attrs;
-use crate::operations::{AISOperationType, get_operation_spec};
+use crate::operations::{AISOperationType, OperationSpec, get_operation_spec};
 use crate::types::Value;
 use std::collections::HashMap;
 use thiserror::Error;
@@ -58,9 +58,8 @@ pub fn validate_operation(
     op_type: AISOperationType,
     attributes: &HashMap<String, Value>,
 ) -> Result<(), ValidationError> {
-    let spec = get_operation_spec(op_type);
+    let spec = require_spec(op_type)?;
 
-    // Check all required fields are present
     for field in spec.required_fields() {
         if !attributes.contains_key(field.name) {
             return Err(ValidationError::MissingField {
@@ -83,9 +82,8 @@ pub fn validate_operation_strict(
     op_type: AISOperationType,
     attributes: &HashMap<String, Value>,
 ) -> Result<(), ValidationError> {
-    let spec = get_operation_spec(op_type);
+    let spec = require_spec(op_type)?;
 
-    // Check all required fields are present
     for field in spec.required_fields() {
         if !attributes.contains_key(field.name) {
             return Err(ValidationError::MissingField {
@@ -116,7 +114,9 @@ pub fn validate_operation_strict(
 /// Returns true if validation would pass, false otherwise.
 /// Does not provide error details - use `validate_operation` for that.
 pub fn has_required_fields(op_type: AISOperationType, attributes: &HashMap<String, Value>) -> bool {
-    let spec = get_operation_spec(op_type);
+    let Some(spec) = get_operation_spec(op_type) else {
+        return false;
+    };
     spec.required_fields()
         .all(|f| attributes.contains_key(f.name))
 }
@@ -126,11 +126,20 @@ pub fn missing_required_fields(
     op_type: AISOperationType,
     attributes: &HashMap<String, Value>,
 ) -> Vec<&'static str> {
-    let spec = get_operation_spec(op_type);
+    let Some(spec) = get_operation_spec(op_type) else {
+        return Vec::new();
+    };
     spec.required_fields()
         .filter(|f| !attributes.contains_key(f.name))
         .map(|f| f.name)
         .collect()
+}
+
+fn require_spec(op_type: AISOperationType) -> Result<&'static OperationSpec, ValidationError> {
+    get_operation_spec(op_type).ok_or_else(|| ValidationError::OperationSpecific {
+        operation: op_type.to_string(),
+        message: "unknown semantic operation".to_string(),
+    })
 }
 
 /// Validates format constraints on specific fields (e.g. `python_handler_id`).

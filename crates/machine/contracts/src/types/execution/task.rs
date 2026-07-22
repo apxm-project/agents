@@ -245,7 +245,7 @@ impl TaskDag {
     /// edges are created between the last node of a dependency task and
     /// the first node of the dependent task.
     ///
-    /// Tasks without any underlying nodes get a synthetic `Ask` node
+    /// Tasks without any underlying nodes get a synthetic model call node
     /// created from their description.
     pub fn to_execution_dag(&self) -> Result<ExecutionDag, RuntimeError> {
         self.validate()?;
@@ -263,7 +263,7 @@ impl TaskDag {
             if task.nodes.is_empty() {
                 // Synthesize a node from the task description.
                 let node_id = task.id * 1000; // avoid collisions
-                let mut node = Node::new(node_id, AISOperationType::Ask);
+                let mut node = Node::new(node_id, AISOperationType::ModelCall);
                 node.set_attribute(
                     graph_attrs::PROMPT.to_string(),
                     crate::types::Value::String(task.description.clone()),
@@ -276,7 +276,7 @@ impl TaskDag {
             } else {
                 for &node_id in &task.nodes {
                     if dag.get_node(node_id).is_none() {
-                        let mut node = Node::new(node_id, AISOperationType::Ask);
+                        let mut node = Node::new(node_id, AISOperationType::ModelCall);
                         node.set_attribute(
                             graph_attrs::PROMPT.to_string(),
                             crate::types::Value::String(task.description.clone()),

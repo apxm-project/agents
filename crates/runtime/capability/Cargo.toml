@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 apxm-core.workspace = true
-apxm-aam.workspace = true
 apxm-backends.workspace = true
 apxm-capability-iface.workspace = true
 

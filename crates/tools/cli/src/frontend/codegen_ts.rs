@@ -322,8 +322,12 @@ fn builder_method_name(op: &str) -> String {
 }
 
 fn lower_camel_case(value: &str) -> String {
+    let parts = value
+        .split(|c| c == '_' || c == '.')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
     let mut out = String::new();
-    for (index, part) in value.split('_').enumerate() {
+    for (index, part) in parts.iter().enumerate() {
         let lower = part.to_ascii_lowercase();
         if index == 0 {
             out.push_str(&lower);

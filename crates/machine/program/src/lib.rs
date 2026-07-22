@@ -21,7 +21,10 @@ pub mod runtime_evidence;
 pub mod source_map;
 
 pub use air::{AirModule, SemanticOpKind, StructuralKind, verify_air_json};
-pub use artifact::{ExecutableArtifact, PortRequirement, PortSourceScope, validate_artifact_json};
+pub use artifact::{
+    ArtifactBuildError, ExecutableArtifact, PortRequirement, PortSourceScope, SourceBundle,
+    compile_frontend_graph_artifact_json, validate_artifact_json,
+};
 pub use common::{IdempotencyKey, TypedErrorEnvelope, TypedRef};
 pub use diagnostic::{Diagnostic, DiagnosticCode, Verdict};
 pub use execution_commit::{
@@ -35,7 +38,8 @@ pub use external_agent::{
 pub use frontend_graph::{FrontendGraph, verify_frontend_graph_json};
 pub use lower::{frontend_graph_to_air, lower_frontend_graph_json};
 pub use runtime_evidence::{
-    Fact, FactKind, InstanceState, InvocationState, ModelOutcome, ProgramIdentity, RuntimeEvidence,
+    Fact, FactKind, HookPhase as EvidenceHookPhase, HookScope as EvidenceHookScope, InstanceState,
+    InvocationState, ModelOutcome, ProgramIdentity, RuntimeEvidence,
     verify_runtime_evidence_json,
 };
 pub use source_map::{SourceLanguage, SourceMap, verify_source_map_json};

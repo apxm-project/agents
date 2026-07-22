@@ -13,7 +13,6 @@ use crate::client::{
     types::SessionStatus,
 };
 use anyhow::{Context, Result, anyhow};
-use apxm_ais::{AISOperationType, attrs::MLIR_ATTR_PREFIX};
 use futures::StreamExt;
 use serde_json::Value as JsonValue;
 
@@ -72,15 +71,9 @@ async fn resolve_execute_capability_grant_ids(
     Ok(grant_ids)
 }
 
-/// True when the package owns a typed host-input suspension point. The CLI
-/// treats this only as artifact validation; it does not infer any Agent Skill
-/// or conversational semantics from the op.
-fn air_has_await_input(air: &str) -> bool {
-    let operation = format!(
-        "{MLIR_ATTR_PREFIX}{}",
-        AISOperationType::AwaitInput.mlir_mnemonic()
-    );
-    air.contains(&operation)
+/// True when the artifact owns a typed host-input suspension point.
+fn artifact_has_await_event(air: &str) -> bool {
+    air.contains("\"await.event\"")
 }
 
 /// Dumb-pipe host (constitution #2): POST the artifact ONCE, pipe stdin lines to
@@ -352,9 +345,9 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
     let air = std::fs::read_to_string(air_path)
         .with_context(|| format!("failed to read AIR graph {}", air_path.display()))?;
 
-    if !air_has_await_input(&air) {
+    if !artifact_has_await_event(&air) {
         return Err(anyhow!(
-            "custom --air artifact must declare an explicit AWAIT_INPUT node"
+            "custom --air artifact must declare an explicit await.event operation"
         ));
     }
 
@@ -400,21 +393,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn air_has_await_input_detects_explicit_input_node() {
-        let air = format!(
-            "%input = {MLIR_ATTR_PREFIX}{} \"\" {{wait_key = \"session\"}} : !ais.token",
-            AISOperationType::AwaitInput.mlir_mnemonic()
-        );
-        assert!(air_has_await_input(&air));
+    fn artifact_has_await_event_detects_canonical_json() {
+        let air = r#"{"schema_version":"apxm.air.v1","semantic_operations":[{"node_id":"n1","op":"await.event"}],"structural_ir":[],"source_map":{"schema_version":"apxm.source-map.v1","source_language":"json","node_spans":[],"region_annotations":[]}}"#;
+        assert!(artifact_has_await_event(air));
     }
 
     #[test]
-    fn air_has_await_input_rejects_host_turn_flow() {
-        let air = format!(
-            "%run_turn = {MLIR_ATTR_PREFIX}{} \"conversation\" \"turn\" {{}} (%arg0 : !ais.token) : !ais.token",
-            AISOperationType::FlowCall.mlir_mnemonic()
-        );
-        assert!(!air_has_await_input(&air));
+    fn artifact_has_await_event_rejects_noncanonical_source() {
+        assert!(!artifact_has_await_event("ais.await_input"));
     }
 
     /// Positive: `token` still renders as raw text, matching the pre-fix

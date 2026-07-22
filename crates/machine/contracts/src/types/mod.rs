@@ -1,11 +1,10 @@
 //! Core type definitions for the APXM system, organized in three tiers.
 //!
-//! - **Foundation**: Primitive types, identifiers, and AAM model.
+//! - **Foundation**: Primitive types and identifiers.
 //! - **Execution**: DAG, node, edge, and task types for the scheduler.
 //! - **Domain**: Compiler, LLM models, backends, providers, and sessions.
 
 // ── Foundation ──────────────────────────────────────────────
-pub mod aam;
 pub mod agent_definition;
 pub mod capability;
 pub mod conformance;
@@ -36,10 +35,6 @@ pub mod models;
 pub mod session;
 pub mod source_format;
 
-pub use aam::{
-    AamContext, CapabilityProjection, CapabilityRecord, CompletionPolicy, GoalProjection, GoalTree,
-    ScopePolicy, ScopeSpec,
-};
 pub use agent_definition::{
     AGENT_DEFINITION_SCHEMA_V1, AgentDefinition, AgentDefinitionError, AgentEntry, AgentHierarchy,
     AgentHook, AgentRuntime, AgentTrigger,
@@ -104,8 +99,8 @@ pub use models::{
 };
 pub use operations::metadata::{
     AIS_OPERATIONS, ContextStyle, MlirEmissionSpec, MlirResultType, OperationField,
-    OperationLatency, OperationSpec, ReferenceType, ValidationError, WIRE_INDEXED_OPERATIONS,
-    get_all_operations, get_operation_spec,
+    OperationLatency, OperationSpec, ReferenceType, SemanticOpKind, ValidationError,
+    WIRE_INDEXED_OPERATIONS, get_all_operations, get_operation_spec,
 };
 pub use operations::{AISOperation, AISOperationType, OperationCategory, validate_operation};
 

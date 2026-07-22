@@ -44,7 +44,10 @@
     },
     {
       "node_id": "node.await.1",
-      "op": "await.event"
+      "op": "await.event",
+      "operands": {
+        "event_ref": "event.specialist.await"
+      }
     }
   ],
   "structural_regions": [

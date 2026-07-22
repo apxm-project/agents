@@ -11,7 +11,6 @@
 #include "ais/CAPI/PassManager.h"
 #include "ais/CAPI/Module.h"
 #include "ais/Common/Constants.h"
-#include "ais/Dialect/AIS/Transforms/Passes.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/Transforms/Passes.h"
 #include "mlir/Pass/PassInstrumentation.h"
@@ -112,21 +111,10 @@ bool apxm_pass_manager_run(ApxmPassManager* pm, ApxmModule* module) {
   return mlir::succeeded(pm->pass_manager->run(*module->module));
 }
 
-void apxm_pass_manager_add_inline(ApxmPassManager* pm);
-
 bool apxm_pass_manager_has_pass(ApxmPassManager* pm, const char* pass_name) {
   if (!pm || !pass_name) return false;
-  if (llvm::StringRef(pass_name) == "dspy-optimize") return false;
-
-  // Simple implementation - in real system would use pass registry
   static const char* known_passes[] = {
-    "normalize", "build-prompt",
-    "template-specialization", "dead-context-elimination",
-    "pure-dead-node-elimination",
-    "scheduling", "shared-prefix-analysis", "assign-priority",
-    "fuse-ask-ops", "condense-ops", "schema-narrowing",
-    "prompt-canonicalization", "canonicalizer", "cse",
-    "symbol-dce", "inline", "unconsumed-value-warning"
+    "canonicalizer", "cse", "symbol-dce", "inline"
   };
 
   for (auto name : known_passes) {
@@ -139,39 +127,19 @@ bool apxm_pass_manager_has_pass(ApxmPassManager* pm, const char* pass_name) {
 
 bool apxm_pass_manager_add_pass_by_name(ApxmPassManager* pm, const char* pass_name) {
   if (!pm || !pass_name) return false;
-
-  // Use generated dispatch from Rust pass definitions
   llvm::StringRef name(pass_name);
-  if (name == "dspy-optimize") return false;
-  #include "ais/CAPI/PassDispatch.inc"
-
-  return false;  // Unknown pass
-}
-
-// Analysis Passes
-void apxm_pass_manager_add_unconsumed_value_warning(ApxmPassManager* pm) {
-  if (pm) pm->pass_manager->addPass(mlir::ais::createUnconsumedValueWarningPass());
-}
-
-// Transform Passes
-void apxm_pass_manager_add_normalize(ApxmPassManager* pm) {
-  if (pm) pm->pass_manager->addPass(mlir::ais::createNormalizeAgentGraphPass());
-}
-
-void apxm_pass_manager_add_build_prompt(ApxmPassManager* pm) {
-  if (pm) pm->pass_manager->addPass(mlir::ais::createBuildPromptPass());
-}
-
-void apxm_pass_manager_add_fuse_ask_ops(ApxmPassManager* pm) {
-  if (pm) pm->pass_manager->addPass(mlir::ais::createFuseAskOpsPass());
-}
-
-void apxm_pass_manager_add_condense_ops(ApxmPassManager* pm) {
-  if (pm) pm->pass_manager->addPass(mlir::ais::createCondenseOpsPass());
-}
-
-void apxm_pass_manager_add_scheduling(ApxmPassManager* pm) {
-  if (pm) pm->pass_manager->addPass(mlir::ais::createCapabilitySchedulingPass());
+  if (name == "canonicalizer") {
+    pm->pass_manager->addPass(mlir::createCanonicalizerPass());
+  } else if (name == "cse") {
+    pm->pass_manager->addPass(mlir::createCSEPass());
+  } else if (name == "symbol-dce") {
+    pm->pass_manager->addPass(mlir::createSymbolDCEPass());
+  } else if (name == "inline") {
+    pm->pass_manager->addPass(mlir::createInlinerPass());
+  } else {
+    return false;
+  }
+  return true;
 }
 
 // Optimization Passes

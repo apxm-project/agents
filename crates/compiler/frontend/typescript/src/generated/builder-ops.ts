@@ -8,79 +8,24 @@ import type { GenericOpOptions, NodeRef } from "../builder.js";
 import type { OpName } from "./ops.js";
 
 /** Generated method names that expose the AIS catalog on GraphBuilder. */
-export type GeneratedBuilderMethodName = "agent" | "qmem" | "umem" | "ask" | "think" | "reason" | "plan" | "reflect" | "verify" | "invCap" | "exc" | "print" | "jump" | "branchOnValue" | "returnNode" | "switchNode" | "flowCall" | "workflowSpawn" | "merge" | "fence" | "waitAll" | "tryCatch" | "err" | "communicate" | "handoff" | "updateGoal" | "pause" | "resume" | "delegate" | "nop" | "identity" | "spawnAgent" | "registerCapability" | "registerHook" | "awaitInput" | "autonomous" | "checkpoint" | "constStr" | "yieldNode";
+export type GeneratedBuilderMethodName = "modelCall" | "capabilityInvoke" | "programNew" | "programInvoke" | "awaitEvent";
 
 /** Catalog operation to generated GraphBuilder method name. */
 export const GENERATED_GRAPH_BUILDER_OP_METHODS: Readonly<Record<OpName, GeneratedBuilderMethodName>> = {
-  "AGENT": "agent",
-  "QMEM": "qmem",
-  "UMEM": "umem",
-  "ASK": "ask",
-  "THINK": "think",
-  "REASON": "reason",
-  "PLAN": "plan",
-  "REFLECT": "reflect",
-  "VERIFY": "verify",
-  "INV_CAP": "invCap",
-  "EXC": "exc",
-  "PRINT": "print",
-  "JUMP": "jump",
-  "BRANCH_ON_VALUE": "branchOnValue",
-  "RETURN": "returnNode",
-  "SWITCH": "switchNode",
-  "FLOW_CALL": "flowCall",
-  "WORKFLOW_SPAWN": "workflowSpawn",
-  "MERGE": "merge",
-  "FENCE": "fence",
-  "WAIT_ALL": "waitAll",
-  "TRY_CATCH": "tryCatch",
-  "ERR": "err",
-  "COMMUNICATE": "communicate",
-  "HANDOFF": "handoff",
-  "UPDATE_GOAL": "updateGoal",
-  "PAUSE": "pause",
-  "RESUME": "resume",
-  "DELEGATE": "delegate",
-  "NOP": "nop",
-  "IDENTITY": "identity",
-  "SPAWN_AGENT": "spawnAgent",
-  "REGISTER_CAPABILITY": "registerCapability",
-  "REGISTER_HOOK": "registerHook",
-  "AWAIT_INPUT": "awaitInput",
-  "AUTONOMOUS": "autonomous",
-  "CHECKPOINT": "checkpoint",
-  "CONST_STR": "constStr",
-  "YIELD": "yieldNode",
+  "model.call": "modelCall",
+  "capability.invoke": "capabilityInvoke",
+  "program.new": "programNew",
+  "program.invoke": "programInvoke",
+  "await.event": "awaitEvent",
 };
 
 declare module "../builder.js" {
   interface GraphBuilder {
-    agent(options?: GenericOpOptions): NodeRef;
-    qmem(options?: GenericOpOptions): NodeRef;
-    umem(options?: GenericOpOptions): NodeRef;
-    reason(options?: GenericOpOptions): NodeRef;
-    plan(options?: GenericOpOptions): NodeRef;
-    reflect(options?: GenericOpOptions): NodeRef;
-    verify(options?: GenericOpOptions): NodeRef;
-    invCap(options?: GenericOpOptions): NodeRef;
-    exc(options?: GenericOpOptions): NodeRef;
-    print(options?: GenericOpOptions): NodeRef;
-    jump(options?: GenericOpOptions): NodeRef;
-    branchOnValue(options?: GenericOpOptions): NodeRef;
-    returnNode(options?: GenericOpOptions): NodeRef;
-    switchNode(options?: GenericOpOptions): NodeRef;
-    flowCall(options?: GenericOpOptions): NodeRef;
-    workflowSpawn(options?: GenericOpOptions): NodeRef;
-    fence(options?: GenericOpOptions): NodeRef;
-    tryCatch(options?: GenericOpOptions): NodeRef;
-    err(options?: GenericOpOptions): NodeRef;
-    handoff(options?: GenericOpOptions): NodeRef;
-    updateGoal(options?: GenericOpOptions): NodeRef;
-    identity(options?: GenericOpOptions): NodeRef;
-    registerHook(options?: GenericOpOptions): NodeRef;
-    awaitInput(options?: GenericOpOptions): NodeRef;
-    constStr(options?: GenericOpOptions): NodeRef;
-    yieldNode(options?: GenericOpOptions): NodeRef;
+    modelCall(options?: GenericOpOptions): NodeRef;
+    capabilityInvoke(options?: GenericOpOptions): NodeRef;
+    programNew(options?: GenericOpOptions): NodeRef;
+    programInvoke(options?: GenericOpOptions): NodeRef;
+    awaitEvent(options?: GenericOpOptions): NodeRef;
   }
 }
 

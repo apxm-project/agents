@@ -40,10 +40,6 @@ mlir_tablegen(${APXM_AIS_TABLEGEN_OUTPUT_PREFIX}/ais/Dialect/AIS/IR/AISAttribute
 mlir_tablegen(${APXM_AIS_TABLEGEN_OUTPUT_PREFIX}/ais/Dialect/AIS/IR/AISAttributes.cpp.inc -gen-attrdef-defs -attrdefs-dialect=ais)
 add_public_tablegen_target(AISAttrIncGen)
 
-set(LLVM_TARGET_DEFINITIONS ${APXM_INCLUDE_DIR}/ais/Dialect/AIS/Transforms/Passes.td)
-mlir_tablegen(${APXM_AIS_TABLEGEN_OUTPUT_PREFIX}/ais/Dialect/AIS/Transforms/Passes.h.inc -gen-pass-decls -name AIS)
-add_public_tablegen_target(AISPassIncGen)
-
 file(GLOB APXMAISIR_SOURCES CONFIGURE_DEPENDS
   ${CMAKE_CURRENT_SOURCE_DIR}/IR/*.cpp
 )
@@ -65,37 +61,4 @@ add_mlir_dialect_library(APXMAISIR
   MLIRSupport
 )
 
-file(GLOB APXMAISTRANS_SOURCES CONFIGURE_DEPENDS
-  ${CMAKE_CURRENT_SOURCE_DIR}/Transforms/*.cpp
-)
-
-add_mlir_library(APXMAISTransforms
-  ${APXMAISTRANS_SOURCES}
-
-  ADDITIONAL_HEADER_DIRS
-  ${APXM_INCLUDE_DIR}
-  ${APXM_AIS_GENERATED_INCLUDE_DIR}
-
-  DEPENDS
-  AISPassIncGen
-  AISIRIncGen
-
-  LINK_LIBS
-  APXMAISIR
-  MLIRIR
-  MLIRPass
-  MLIRTransforms
-)
-
 set_target_properties(APXMAISIR PROPERTIES POSITION_INDEPENDENT_CODE ON)
-set_target_properties(APXMAISTransforms PROPERTIES POSITION_INDEPENDENT_CODE ON)
-
-set(APXM_AIS_TRANSFORM_TARGETS APXMAISTransforms obj.APXMAISTransforms)
-foreach(target_name IN LISTS APXM_AIS_TRANSFORM_TARGETS)
-  if(TARGET ${target_name})
-    target_compile_definitions(${target_name}
-      PRIVATE
-      APXM_WORKSPACE_ROOT="${APXM_WORKSPACE_ROOT}"
-    )
-  endif()
-endforeach()

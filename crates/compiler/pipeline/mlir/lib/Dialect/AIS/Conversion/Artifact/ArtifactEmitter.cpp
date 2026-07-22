@@ -122,7 +122,7 @@ struct ArtifactNodeMetadata {
 
 struct ArtifactNode {
   uint64_t id = 0;
-  OperationKind opType = OperationKind::InvCap;
+  OperationKind opType = OperationKind::CapabilityInvoke;
   std::vector<std::pair<std::string, ArtifactValue>> attributes;
   std::vector<uint64_t> inputTokens;
   std::vector<uint64_t> outputTokens;
@@ -313,7 +313,6 @@ private:
 
 std::optional<OperationKind> mapOperation(Operation *op) {
   return TypeSwitch<Operation *, std::optional<OperationKind>>(op)
-      .Case<func::ReturnOp>([](auto) { return OperationKind::Return; })
 #include "ais/Dialect/AIS/Conversion/Artifact/OperationKindCases.generated.inc"
       .Case<YieldOp>([](auto) {
         return std::nullopt;
@@ -322,7 +321,9 @@ std::optional<OperationKind> mapOperation(Operation *op) {
 }
 
 /// Check if an operation is a region terminator that should be skipped
-bool isRegionTerminator(Operation *op) { return isa<YieldOp>(op); }
+bool isRegionTerminator(Operation *op) {
+  return isa<YieldOp, func::ReturnOp>(op);
+}
 
 ArtifactValue convertAttribute(Attribute attr) {
   if (!attr)
@@ -518,40 +519,6 @@ LogicalResult emitNode(Operation *op, DagBuildState &state, ArtifactDag &dag) {
                                  convertAttribute(named.getValue()));
   }
 
-  // UMemOp needs a key attribute - auto-generate from node ID
-  if (isa<UMemOp>(op)) {
-    node.attributes.emplace_back("key",
-        ArtifactValue::string("mem_" + std::to_string(node.id)));
-  }
-
-  // ReasonOp supports inner planning for structured reasoning
-  // Note: PlanOp has its own handler (plan.rs) that manages inner plans differently
-  if (isa<ais::ReasonOp>(op)) {
-    node.attributes.emplace_back("inner_plan_supported",
-                                 ArtifactValue::boolean(true));
-  }
-
-  // Special handling for SwitchOp: emit regions as sub-DAGs
-  if (auto switchOp = dyn_cast<SwitchOp>(op)) {
-    // Emit case regions as sub-DAGs
-    std::vector<ArtifactValue> caseRegionsArray;
-    for (Region &caseRegion : switchOp.getCaseRegions()) {
-      ArtifactValue subDag;
-      if (failed(emitRegionAsSubDag(caseRegion, state, subDag)))
-        return failure();
-      caseRegionsArray.push_back(std::move(subDag));
-    }
-    node.attributes.emplace_back(
-        "case_regions", ArtifactValue::array(std::move(caseRegionsArray)));
-
-    // Emit default region as sub-DAG
-    ArtifactValue defaultSubDag;
-    if (failed(emitRegionAsSubDag(switchOp.getDefaultRegion(), state,
-                                  defaultSubDag)))
-      return failure();
-    node.attributes.emplace_back("default_region", std::move(defaultSubDag));
-  }
-
   for (Value operand : op->getOperands()) {
     uint64_t tokenId = state.getTokenId(operand);
     node.inputTokens.push_back(tokenId);
@@ -575,16 +542,6 @@ LogicalResult emitNode(Operation *op, DagBuildState &state, ArtifactDag &dag) {
       }
       break;
     }
-  }
-
-  // Special handling for Return operations: create synthetic output token
-  // Return is a terminator so it has no SSA results, but we need output_tokens
-  // for the runtime to collect results from exit nodes
-  if (node.opType == OperationKind::Return && node.outputTokens.empty() &&
-      !node.inputTokens.empty()) {
-    // Create a synthetic output token ID for the return value
-    uint64_t syntheticTokenId = state.nextTokenId++;
-    node.outputTokens.push_back(syntheticTokenId);
   }
 
   dag.nodes.push_back(std::move(node));

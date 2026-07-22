@@ -227,12 +227,12 @@ fn representative_core_payloads() -> Vec<Box<dyn EventPayload>> {
         }),
         Box::new(OperationStartPayload {
             node_id: 1,
-            op_type: crate::types::operations::AISOperationType::Ask,
+            op_type: crate::types::operations::AISOperationType::ModelCall,
             context: Some(serde_json::json!({"x": 1})),
         }),
         Box::new(OperationEndPayload {
             node_id: 1,
-            op_type: crate::types::operations::AISOperationType::Ask,
+            op_type: crate::types::operations::AISOperationType::ModelCall,
             duration_ms: 100,
             success: true,
         }),

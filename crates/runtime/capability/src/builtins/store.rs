@@ -1,10 +1,8 @@
-//! Durable rusqlite backing for the `schedule` and `manage_task` native tools.
+//! Durable rusqlite backing for the scheduling capability.
 //!
 //! One SQLite file (see `apxm_core::constants::agent_tools::STORE_FILENAME`
-//! under the state home) holds two tables:
-//! `schedules` (armed one-shot / recurring wakeups) and `tasks` (a flat
-//! projection of the AAM goal tree so tasks survive a process restart). It uses
-//! a single `Connection` behind a `Mutex`,
+//! under the state home) holds armed one-shot and recurring schedules. It uses a
+//! single `Connection` behind a `Mutex`,
 //! `CREATE TABLE IF NOT EXISTS` at open, WAL journaling, and short synchronous
 //! statements that are never held across an `.await`.
 
@@ -36,23 +34,8 @@ pub struct ScheduleRow {
     pub last_fired_ms: Option<i64>,
 }
 
-/// A persisted task row (the indexable columns plus the full `Goal` JSON).
-#[derive(Debug, Clone, PartialEq)]
-pub struct TaskRow {
-    pub id: String,
-    pub parent_id: Option<String>,
-    pub description: String,
-    pub priority: i64,
-    pub status: String,
-    /// Explicitly-set completion policy wire token, if any.
-    pub policy: Option<String>,
-    /// Full serde-serialized `Goal`.
-    pub json: String,
-    pub updated_at_ms: i64,
-}
-
-/// Durable store shared by the schedule/manage_task capabilities and the
-/// schedule firer. Cloning shares the same underlying connection.
+/// Durable store shared by the schedule capability and its firer. Cloning
+/// shares the same underlying connection.
 #[derive(Clone)]
 pub struct ToolsStore {
     db: Arc<Mutex<Connection>>,
@@ -74,18 +57,6 @@ CREATE TABLE IF NOT EXISTS schedules (
 );
 CREATE INDEX IF NOT EXISTS idx_sched_next_fire ON schedules(next_fire_ms);
 CREATE INDEX IF NOT EXISTS idx_sched_status    ON schedules(status);
-CREATE TABLE IF NOT EXISTS tasks (
-    id            TEXT PRIMARY KEY,
-    parent_id     TEXT,
-    description   TEXT NOT NULL,
-    priority      INTEGER NOT NULL,
-    status        TEXT NOT NULL,
-    policy        TEXT,
-    json          TEXT NOT NULL,
-    updated_at_ms INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id);
-CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 ";
 
 impl ToolsStore {
@@ -255,72 +226,6 @@ impl ToolsStore {
         Ok(out)
     }
 
-    // ── tasks ───────────────────────────────────────────────────────────
-
-    /// Insert or replace a task row.
-    pub fn upsert_task(&self, row: &TaskRow) -> Result<(), String> {
-        let conn = self.lock()?;
-        conn.execute(
-            "INSERT INTO tasks (id, parent_id, description, priority, status, policy, json, updated_at_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-             ON CONFLICT(id) DO UPDATE SET
-                parent_id = excluded.parent_id,
-                description = excluded.description,
-                priority = excluded.priority,
-                status = excluded.status,
-                policy = excluded.policy,
-                json = excluded.json,
-                updated_at_ms = excluded.updated_at_ms",
-            rusqlite::params![
-                row.id,
-                row.parent_id,
-                row.description,
-                row.priority,
-                row.status,
-                row.policy,
-                row.json,
-                row.updated_at_ms,
-            ],
-        )
-        .map_err(|e| e.to_string())?;
-        Ok(())
-    }
-
-    /// Delete a task row. Returns true if a row was deleted.
-    pub fn delete_task(&self, id: &str) -> Result<bool, String> {
-        let conn = self.lock()?;
-        let n = conn
-            .execute("DELETE FROM tasks WHERE id = ?1", rusqlite::params![id])
-            .map_err(|e| e.to_string())?;
-        Ok(n > 0)
-    }
-
-    /// Load all task rows (used to rehydrate the AAM goal tree at boot).
-    pub fn load_tasks(&self) -> Result<Vec<TaskRow>, String> {
-        let conn = self.lock()?;
-        let mut stmt = conn
-            .prepare("SELECT id, parent_id, description, priority, status, policy, json, updated_at_ms FROM tasks")
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok(TaskRow {
-                    id: row.get(0)?,
-                    parent_id: row.get(1)?,
-                    description: row.get(2)?,
-                    priority: row.get(3)?,
-                    status: row.get(4)?,
-                    policy: row.get(5)?,
-                    json: row.get(6)?,
-                    updated_at_ms: row.get(7)?,
-                })
-            })
-            .map_err(|e| e.to_string())?;
-        let mut out = Vec::new();
-        for r in rows {
-            out.push(r.map_err(|e| e.to_string())?);
-        }
-        Ok(out)
-    }
 }
 
 fn map_schedule(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScheduleRow> {

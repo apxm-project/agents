@@ -41,762 +41,104 @@ export enum ToolGroup {
   AGENT_MANAGEMENT = "agent_management",
 }
 
-export const AGENT: OpSpec = {
-  op: "AGENT",
-  name: "Agent",
-  category: "metadata" as OpCategory,
-  description: "Agent structural declaration (memory, beliefs, goals, capabilities)",
-  longDescription: "Declares an agent's identity and initial AAM state. Every graph must have exactly one AGENT node. It configures memory tiers (STM/LTM/Episodic), initial beliefs and goals, and the capabilities the agent can invoke. The runtime uses this to initialize the agent's AAM before executing any other node.",
-  latency: "none",
+export const MODEL.CALL: OpSpec = {
+  op: "model.call",
+  name: "ModelCall",
+  category: "semantic" as OpCategory,
+  description: "Invoke an admitted model with explicit request and options",
+  longDescription: "Portable runtime effect that invokes exactly one admitted model binding. Returns typed model output; operational evidence is recorded separately. Does not mutate context or execute tool loops.",
+  latency: "medium",
   fields: [
-    { name: "memory", description: "Memory configuration", required: false, refType: null },
-    { name: "beliefs", description: "Initial beliefs", required: false, refType: null },
-    { name: "goals", description: "Initial goals", required: false, refType: null },
-    { name: "capabilities", description: "Available capabilities", required: false, refType: null },
+    { name: "model_ref", description: "Exact admitted model target reference", required: true, refType: "model" },
+    { name: "request", description: "Typed model request payload", required: true, refType: null },
+    { name: "options", description: "Explicit model call options", required: false, refType: null },
   ],
-  producesOutput: false,
-  needsSubmission: false,
+  producesOutput: true,
+  needsSubmission: true,
   minInputs: 0,
-  exampleJson: "{\"id\": 0, \"op\": \"AGENT\", \"attributes\": {\"memory\": {\"stm\": true}, \"beliefs\": {\"role\": \"analyst\"}, \"goals\": [\"summarize data\"], \"capabilities\": [\"search\", \"calculate\"]}}",
+  exampleJson: "{\"node_id\":\"model_1\",\"op\":\"model.call\",\"operands\":{\"model_ref\":\"summarizer_model\",\"request\":{\"messages\":[]},\"options\":{\"temperature\":0.2}}}",
 } as const;
 
-export const QMEM: OpSpec = {
-  op: "QMEM",
-  name: "QueryMemory",
-  category: "memory" as OpCategory,
-  description: "Retrieve data from memory (STM, LTM, or Episodic)",
-  longDescription: "Reads from the agent's memory system. Supports three tiers: STM (short-term, per-execution scratch), LTM (long-term, persists across runs), and Episodic (execution traces). The query string is matched against stored keys. Returns the stored value or null if not found.",
+export const CAPABILITY.INVOKE: OpSpec = {
+  op: "capability.invoke",
+  name: "CapabilityInvoke",
+  category: "semantic" as OpCategory,
+  description: "Invoke one admitted Capability through the authority/effect chokepoint",
+  longDescription: "The only executable Capability chokepoint. Admission, grant validation, effect identity, retry, cancellation, and audit apply here.",
+  latency: "medium",
+  fields: [
+    { name: "capability_ref", description: "Exact admitted capability reference", required: true, refType: "capability" },
+    { name: "arguments", description: "Typed capability input payload", required: true, refType: null },
+    { name: "context_projection", description: "Optional typed context projection for the capability call", required: false, refType: null },
+  ],
+  producesOutput: true,
+  needsSubmission: true,
+  minInputs: 0,
+  exampleJson: "{\"node_id\":\"cap_1\",\"op\":\"capability.invoke\",\"operands\":{\"capability_ref\":\"search_docs\",\"arguments\":{\"query\":\"release checklist\"}}}",
+} as const;
+
+export const PROGRAM.NEW: OpSpec = {
+  op: "program.new",
+  name: "ProgramNew",
+  category: "semantic" as OpCategory,
+  description: "Create a stateful Program Instance from an exact Program reference",
+  longDescription: "Records logical Program Instance creation against an exact imported ProgramRef and optional typed initial context.",
   latency: "low",
   fields: [
-    { name: "query", description: "Query string or key to search for", required: true, refType: null },
-    { name: "memory_tier", description: "Target memory tier: stm, ltm, or episodic", required: false, refType: null },
+    { name: "program_ref", description: "Exact imported program reference", required: true, refType: "program reference" },
+    { name: "initial_context", description: "Typed initial Program Context when the program requires construction", required: false, refType: null },
   ],
   producesOutput: true,
   needsSubmission: true,
   minInputs: 0,
-  exampleJson: "{\"id\": 2, \"op\": \"QMEM\", \"attributes\": {\"query\": \"user_name\", \"memory_tier\": \"stm\"}}",
+  exampleJson: "{\"node_id\":\"new_1\",\"op\":\"program.new\",\"operands\":{\"program_ref\":\"specialist\",\"initial_context\":{\"domain\":\"security\"}}}",
 } as const;
 
-export const UMEM: OpSpec = {
-  op: "UMEM",
-  name: "UpdateMemory",
-  category: "memory" as OpCategory,
-  description: "Persist or update data in memory",
-  longDescription: "Writes a key-value pair to the agent's memory system. If the key already exists, the value is overwritten. Supports the same three memory tiers as QMEM. Use FENCE after UMEM if subsequent QMEM nodes must see the write.",
-  latency: "low",
-  fields: [
-    { name: "key", description: "Key to store the value under", required: true, refType: null },
-    { name: "value", description: "Value to store", required: true, refType: null },
-    { name: "memory_tier", description: "Target memory tier: stm, ltm, or episodic", required: false, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: true,
-  minInputs: 0,
-  exampleJson: "{\"id\": 3, \"op\": \"UMEM\", \"attributes\": {\"key\": \"summary\", \"value\": \"Rust favors explicit ownership and borrowing.\", \"memory_tier\": \"stm\"}}",
-} as const;
-
-export const ASK: OpSpec = {
-  op: "ASK",
-  name: "Ask",
-  category: "reasoning" as OpCategory,
-  description: "Simple Q&A with LLM (no extended thinking)",
-  longDescription: "Sends a prompt to the configured LLM and returns the response. The lightest LLM operation — no chain-of-thought or extended thinking. Use for straightforward questions, classifications, extractions, or reformulations. Template strings support named `{input}` interpolation for dataflow inputs via the node's positional `input_names` array. Optional `input_roles` entries align with those names and context operands to distinguish user, system, dependency-only, tool-context, and control inputs.",
+export const PROGRAM.INVOKE: OpSpec = {
+  op: "program.invoke",
+  name: "ProgramInvoke",
+  category: "semantic" as OpCategory,
+  description: "Invoke a ProgramRef one-shot or a ProgramInstanceRef statefully",
+  longDescription: "Receiver union selects one-shot versus stateful semantics. The only caller-data operand is typed input `I`.",
   latency: "medium",
   fields: [
-    { name: "template_str", description: "Prompt template for the question", required: true, refType: null },
-    { name: "input_names", description: "Positional names for LLM context inputs referenced by template placeholders", required: false, refType: null },
-    { name: "input_roles", description: "Positional LLM context roles: user, system, dependency_only, tool_context, or control", required: false, refType: null },
-    { name: "temperature", description: "Sampling temperature (0.0-1.0)", required: false, refType: null },
-    { name: "model", description: "LLM model override (uses config default)", required: false, refType: "model" },
+    { name: "receiver", description: "ProgramRef or ProgramInstanceRef receiver union", required: true, refType: null },
+    { name: "input", description: "Typed invocation input", required: true, refType: null },
   ],
   producesOutput: true,
   needsSubmission: true,
   minInputs: 0,
-  exampleJson: "{\"id\": 1, \"op\": \"ASK\", \"attributes\": {\"template_str\": \"Summarize: {source}\", \"input_names\": [\"source\"]}}",
+  exampleJson: "{\"node_id\":\"invoke_1\",\"op\":\"program.invoke\",\"operands\":{\"receiver\":{\"program_instance_ref\":\"specialist_inst\"},\"input\":{\"question\":\"status?\"}}}",
 } as const;
 
-export const THINK: OpSpec = {
-  op: "THINK",
-  name: "Think",
-  category: "reasoning" as OpCategory,
-  description: "Extended thinking with token_budget",
-  longDescription: "Activates extended thinking (chain-of-thought) with a configurable token budget. The LLM produces internal reasoning before the final answer. Use for complex multi-step problems, math, code generation, or planning that benefits from deliberate reasoning. The budget controls how many tokens the model can spend thinking.",
+export const AWAIT.EVENT: OpSpec = {
+  op: "await.event",
+  name: "AwaitEvent",
+  category: "semantic" as OpCategory,
+  description: "Suspend on a typed durable external event or approval signal",
+  longDescription: "Parks the current Program Invocation until a typed EventRef terminal value is available. Does not commit an invocation boundary.",
   latency: "high",
   fields: [
-    { name: "template_str", description: "Prompt template for deep reasoning", required: true, refType: null },
-    { name: "input_names", description: "Positional names for LLM context inputs referenced by template placeholders", required: false, refType: null },
-    { name: "input_roles", description: "Positional LLM context roles: user, system, dependency_only, tool_context, or control", required: false, refType: null },
-    { name: "budget", description: "Token budget for extended thinking", required: false, refType: null },
-    { name: "temperature", description: "Sampling temperature (0.0-1.0)", required: false, refType: null },
-    { name: "model", description: "LLM model override (uses config default)", required: false, refType: "model" },
+    { name: "event_ref", description: "Typed durable event reference", required: true, refType: "event reference" },
+    { name: "timeout_ms", description: "Optional await timeout in milliseconds", required: false, refType: null },
+    { name: "cancellation", description: "Optional cancellation scope bound to the await occurrence", required: false, refType: null },
   ],
   producesOutput: true,
   needsSubmission: true,
   minInputs: 0,
-  exampleJson: "{\"id\": 1, \"op\": \"THINK\", \"attributes\": {\"template_str\": \"Solve step by step: {problem}\", \"input_names\": [\"problem\"], \"budget\": 4096}}",
-} as const;
-
-export const REASON: OpSpec = {
-  op: "REASON",
-  name: "Reason",
-  category: "reasoning" as OpCategory,
-  description: "Structured reasoning with belief/goal updates",
-  longDescription: "Performs structured reasoning that can update the agent's beliefs and goals (AAM state). Unlike ASK, the runtime parses the LLM response for belief and goal mutations. Use when the agent needs to update its internal state based on new information. Supports structured JSON output mode.",
-  latency: "medium",
-  fields: [
-    { name: "template_str", description: "Prompt template for structured reasoning", required: true, refType: null },
-    { name: "input_names", description: "Positional names for LLM context inputs referenced by template placeholders", required: false, refType: null },
-    { name: "input_roles", description: "Positional LLM context roles: user, system, dependency_only, tool_context, or control", required: false, refType: null },
-    { name: "temperature", description: "Sampling temperature (0.0-1.0)", required: false, refType: null },
-    { name: "model", description: "LLM model override (uses config default)", required: false, refType: "model" },
-    { name: "structured", description: "Enable structured JSON output", required: false, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: true,
-  minInputs: 0,
-  exampleJson: "{\"id\": 1, \"op\": \"REASON\", \"attributes\": {\"template_str\": \"Given {evidence}, update your analysis\", \"input_names\": [\"evidence\"], \"structured\": true}}",
-} as const;
-
-export const PLAN: OpSpec = {
-  op: "PLAN",
-  name: "Plan",
-  category: "reasoning" as OpCategory,
-  description: "Decompose goal into AIS subgraph",
-  longDescription: "Uses the LLM to decompose a high-level goal into a sequence of concrete steps. The output is a structured plan that can be used to drive subsequent nodes. Supports optional constraints to bound the plan space.",
-  latency: "high",
-  fields: [
-    { name: "goal", description: "Goal to decompose into steps", required: true, refType: null },
-    { name: "constraints", description: "Constraints on the plan", required: false, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: true,
-  minInputs: 0,
-  exampleJson: "{\"id\": 1, \"op\": \"PLAN\", \"attributes\": {\"goal\": \"Research and summarize recent AI papers\", \"constraints\": \"max 5 steps\"}}",
-} as const;
-
-export const REFLECT: OpSpec = {
-  op: "REFLECT",
-  name: "Reflect",
-  category: "reasoning" as OpCategory,
-  description: "Analyze execution trace for self-improvement",
-  longDescription: "Retrieves past execution traces and asks the LLM to analyze them for patterns, failures, or improvements. Useful for iterative refinement loops where the agent learns from its own execution history.",
-  latency: "medium",
-  fields: [
-    { name: "trace_query", description: "Query to retrieve trace for reflection", required: true, refType: null },
-    { name: "reflection_prompt", description: "Custom prompt for reflection", required: false, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: true,
-  minInputs: 0,
-  exampleJson: "{\"id\": 4, \"op\": \"REFLECT\", \"attributes\": {\"trace_query\": \"last_execution\"}}",
-} as const;
-
-export const VERIFY: OpSpec = {
-  op: "VERIFY",
-  name: "Verify",
-  category: "reasoning" as OpCategory,
-  description: "Fact-check outputs against evidence",
-  longDescription: "Cross-references a claim against provided evidence using the LLM. Returns a verification result with confidence score. Use after ASK/THINK/REASON nodes to validate outputs before acting on them. Evidence may be supplied either as a literal attribute or via an incoming Data edge.",
-  latency: "medium",
-  fields: [
-    { name: "claim", description: "Claim to verify", required: true, refType: null },
-    { name: "evidence", description: "Evidence to check against", required: false, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: true,
-  minInputs: 0,
-  exampleJson: "{\"id\": 5, \"op\": \"VERIFY\", \"attributes\": {\"claim\": \"The solar system has eight planets.\"}}",
-} as const;
-
-export const INV_CAP: OpSpec = {
-  op: "INV_CAP",
-  name: "InvokeTool",
-  category: "tools" as OpCategory,
-  description: "Call external tool with structured params; store result",
-  longDescription: "Invokes a registered capability (tool or function) by name. The capability must be declared in the AGENT node's capabilities list or registered in the runtime's CapabilityRegistry. Parameters are passed via the `params_json` attribute as a JSON object. The tool's return value becomes this node's output token.",
-  latency: "medium",
-  fields: [
-    { name: "capability", description: "Name of the capability/tool to invoke", required: true, refType: "capability" },
-    { name: "params_json", description: "JSON-encoded parameters to pass to the tool", required: false, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: true,
-  minInputs: 0,
-  exampleJson: "{\"id\": 2, \"op\": \"INV_CAP\", \"attributes\": {\"capability\": \"web_search\", \"params_json\": \"{\\\"query\\\":\\\"rust ownership\\\"}\"}}",
-} as const;
-
-export const EXC: OpSpec = {
-  op: "EXC",
-  name: "ExecuteCode",
-  category: "tools" as OpCategory,
-  description: "Run code in a sandboxed environment; update Beliefs",
-  longDescription: "Executes arbitrary code in a sandboxed environment. The sandbox prevents file system access, network calls, and other side effects unless explicitly allowed. The code's stdout/return value becomes the output token. Execution results are also written to the agent's beliefs.",
-  latency: "low",
-  fields: [
-    { name: "code", description: "Code to execute", required: true, refType: null },
-    { name: "sandbox_config", description: "Sandbox configuration", required: false, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: true,
-  minInputs: 0,
-  exampleJson: "{\"id\": 3, \"op\": \"EXC\", \"attributes\": {\"code\": \"print(2 + 2)\"}}",
-} as const;
-
-export const PRINT: OpSpec = {
-  op: "PRINT",
-  name: "PrintOutput",
-  category: "tools" as OpCategory,
-  description: "Print output to stdout for debugging or user display",
-  longDescription: "Writes a message to stdout. Supports named `{input}` template interpolation via `input_names`. Useful for debugging graphs during development or displaying final results to the user. The message is also stored as the output token.",
-  latency: "none",
-  fields: [
-    { name: "message", description: "Message to print", required: true, refType: null },
-  ],
-  producesOutput: false,
-  needsSubmission: true,
-  minInputs: 0,
-  exampleJson: "{\"id\": 4, \"op\": \"PRINT\", \"attributes\": {\"message\": \"Result: {result}\", \"input_names\": [\"result\"]}}",
-} as const;
-
-export const JUMP: OpSpec = {
-  op: "JUMP",
-  name: "Jump",
-  category: "control_flow" as OpCategory,
-  description: "Unconditional jump to a labeled instruction",
-  longDescription: "Transfers control flow unconditionally to a target label. The label must correspond to a node ID in the graph. Edges from this node use Control dependency type.",
-  latency: "none",
-  fields: [
-    { name: "label", description: "Target label to jump to", required: true, refType: null },
-  ],
-  producesOutput: false,
-  needsSubmission: false,
-  minInputs: 0,
-  exampleJson: "{\"id\": 5, \"op\": \"JUMP\", \"attributes\": {\"label\": \"7\"}}",
-} as const;
-
-export const BRANCH_ON_VALUE: OpSpec = {
-  op: "BRANCH_ON_VALUE",
-  name: "BranchOnValue",
-  category: "control_flow" as OpCategory,
-  description: "Conditional branch based on token value comparison",
-  longDescription: "Evaluates an input token against a value and branches to one of two labels. If the token matches the value, control goes to label_true; otherwise to label_false. Used for if/else patterns in agent workflows.",
-  latency: "none",
-  fields: [
-    { name: "value", description: "Value to compare against", required: true, refType: null },
-    { name: "true_label", description: "Label if comparison is true", required: true, refType: null },
-    { name: "false_label", description: "Label if comparison is false", required: true, refType: null },
-  ],
-  producesOutput: false,
-  needsSubmission: false,
-  minInputs: 1,
-  exampleJson: "{\"id\": 5, \"op\": \"BRANCH_ON_VALUE\", \"attributes\": {\"value\": \"yes\", \"true_label\": \"6\", \"false_label\": \"7\"}}",
-} as const;
-
-export const RETURN: OpSpec = {
-  op: "RETURN",
-  name: "Return",
-  category: "control_flow" as OpCategory,
-  description: "Return from subgraph with result token",
-  longDescription: "Returns a value from a subgraph or flow. The result value is provided via an incoming Data edge.",
-  latency: "none",
-  fields: [
-  ],
-  producesOutput: true,
-  needsSubmission: false,
-  minInputs: 1,
-  exampleJson: "{\"id\": 6, \"op\": \"RETURN\", \"attributes\": {}}",
-} as const;
-
-export const SWITCH: OpSpec = {
-  op: "SWITCH",
-  name: "Switch",
-  category: "control_flow" as OpCategory,
-  description: "Multi-way branch based on string value comparison",
-  longDescription: "Routes execution to one of several branches based on matching a discriminant token against case labels. Each case specifies a label string and a destination node. If no case matches, the default destination is used. The matched branch's result becomes the output token.",
-  latency: "none",
-  fields: [
-    { name: "discriminant", description: "Token to match against case labels", required: true, refType: null },
-    { name: "case_labels", description: "Ordered labels for switch case regions", required: true, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: false,
-  minInputs: 1,
-  exampleJson: "{\"id\": 3, \"op\": \"SWITCH\", \"attributes\": {\"discriminant\": \"topic_kind\", \"case_labels\": [\"math\", \"code\"]}}",
-} as const;
-
-export const FLOW_CALL: OpSpec = {
-  op: "FLOW_CALL",
-  name: "FlowCall",
-  category: "control_flow" as OpCategory,
-  description: "Call a flow on another agent with implicit parallelism",
-  longDescription: "Invokes a named flow on a target agent. The target agent executes its flow graph independently and returns the result. Multiple FLOW_CALL nodes can execute in parallel if they have no data dependencies between them. This is the primary mechanism for multi-agent composition.",
-  latency: "high",
-  fields: [
-    { name: "agent_name", description: "Name of the agent to call", required: true, refType: null },
-    { name: "flow_name", description: "Name of the flow to invoke", required: true, refType: null },
-    { name: "args", description: "Arguments to pass to the flow", required: false, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: true,
-  minInputs: 0,
-  exampleJson: "{\"id\": 4, \"op\": \"FLOW_CALL\", \"attributes\": {\"agent_name\": \"researcher\", \"flow_name\": \"analyze\", \"args\": {\"topic\": \"{topic}\"}, \"input_names\": [\"topic\"]}}",
-} as const;
-
-export const WORKFLOW_SPAWN: OpSpec = {
-  op: "WORKFLOW_SPAWN",
-  name: "WorkflowSpawn",
-  category: "control_flow" as OpCategory,
-  description: "Spawn an external AIR file, artifact, or workflow as a child execution",
-  longDescription: "Invokes an external AIR file, precompiled artifact, or workflow file as a child execution boundary. Arguments are passed by name through the args map. The child run resolves its session root from the explicit node attribute when present, otherwise it inherits the parent execution root.",
-  latency: "high",
-  fields: [
-    { name: "target_kind", description: "Invocation target kind: air_path, artifact_path, or workflow_path", required: true, refType: null },
-    { name: "target", description: "Path of the AIR file, artifact, or workflow to execute", required: true, refType: null },
-    { name: "args", description: "Arguments to pass to the child execution", required: false, refType: null },
-    { name: "session_root", description: "Explicit session root for the child execution", required: false, refType: null },
-    { name: "await_result", description: "Whether to wait for the child result (must be true in the current runtime)", required: false, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: true,
-  minInputs: 0,
-  exampleJson: "{\"id\": 5, \"op\": \"WORKFLOW_SPAWN\", \"attributes\": {\"target_kind\": \"workflow_path\", \"target\": \"workflows/review.apxmw\", \"args\": {\"topic\": \"{topic}\"}, \"input_names\": [\"topic\"], \"await_result\": true}}",
-} as const;
-
-export const MERGE: OpSpec = {
-  op: "MERGE",
-  name: "Merge",
-  category: "synchronization" as OpCategory,
-  description: "Sync parallel paths; aggregate tokens into one",
-  longDescription: "Waits for multiple parallel branches to complete and combines their output tokens into a single aggregated result. Inputs are provided via incoming Data edges.",
-  latency: "none",
-  fields: [
-  ],
-  producesOutput: true,
-  needsSubmission: true,
-  minInputs: 1,
-  exampleJson: "{\"id\": 6, \"op\": \"MERGE\", \"attributes\": {}}",
-} as const;
-
-export const FENCE: OpSpec = {
-  op: "FENCE",
-  name: "Fence",
-  category: "synchronization" as OpCategory,
-  description: "Memory barrier; order prior QMEM/UMEM operations",
-  longDescription: "Ensures all preceding memory operations (UMEM writes) are visible to subsequent QMEM reads. Without a FENCE, the scheduler may reorder memory operations for parallelism. Place between UMEM and QMEM when ordering matters.",
-  latency: "none",
-  fields: [
-    { name: "ordering", description: "Memory ordering constraint", required: false, refType: null },
-  ],
-  producesOutput: false,
-  needsSubmission: true,
-  minInputs: 0,
-  exampleJson: null,
-} as const;
-
-export const WAIT_ALL: OpSpec = {
-  op: "WAIT_ALL",
-  name: "WaitAll",
-  category: "synchronization" as OpCategory,
-  description: "Block until all specified tokens are available",
-  longDescription: "Blocks execution until all listed input tokens are ready. Unlike MERGE, it does not combine the tokens — it simply acts as a synchronization barrier. Inputs are provided via incoming Data edges.",
-  latency: "none",
-  fields: [
-  ],
-  producesOutput: true,
-  needsSubmission: true,
-  minInputs: 1,
-  exampleJson: "{\"id\": 5, \"op\": \"WAIT_ALL\", \"attributes\": {}}",
-} as const;
-
-export const TRY_CATCH: OpSpec = {
-  op: "TRY_CATCH",
-  name: "TryCatch",
-  category: "error_handling" as OpCategory,
-  description: "Structured exception handling with recovery subgraph",
-  longDescription: "Wraps a try subgraph with a catch recovery subgraph. If any node in the try subgraph fails, execution transfers to the catch subgraph. The catch subgraph receives the error context and can attempt recovery or graceful degradation.",
-  latency: "none",
-  fields: [
-    { name: "try_label", description: "Subgraph to try executing", required: true, refType: null },
-    { name: "catch_label", description: "Recovery subgraph on failure", required: true, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: true,
-  minInputs: 0,
-  exampleJson: "{\"id\": 2, \"op\": \"TRY_CATCH\", \"attributes\": {\"try_label\": \"3\", \"catch_label\": \"4\"}}",
-} as const;
-
-export const ERR: OpSpec = {
-  op: "ERR",
-  name: "HandleError",
-  category: "error_handling" as OpCategory,
-  description: "Invoke recovery template on failure; update Goals/Beliefs",
-  longDescription: "Handles an error by invoking a recovery template. The error handler can update the agent's goals and beliefs to reflect the failure and adapt the agent's strategy. Typically used inside TRY_CATCH catch subgraphs.",
-  latency: "medium",
-  fields: [
-    { name: "recovery_template", description: "Error handler / recovery template to invoke", required: true, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: true,
-  minInputs: 0,
-  exampleJson: "{\"id\": 4, \"op\": \"ERR\", \"attributes\": {\"recovery_template\": \"retry_with_fallback\"}}",
-} as const;
-
-export const COMMUNICATE: OpSpec = {
-  op: "COMMUNICATE",
-  name: "Communicate",
-  category: "communication" as OpCategory,
-  description: "Send message to recipient agent via selected protocol",
-  longDescription: "Sends a message from this agent to another agent. The message is received via input tokens from upstream edges. Supports four protocol dispatch modes: 'local' (default, in-process sub-flow), 'http'/'https' (external APXM agent), 'acp' (ACP subprocess via ProcessTable), and 'broadcast' (fan-out to all agents). The recipient attribute key is 'recipient'.",
-  latency: "medium",
-  fields: [
-    { name: "recipient", description: "Target agent name (or URL for http protocol)", required: true, refType: null },
-    { name: "message", description: "Message content to send", required: false, refType: null },
-    { name: "protocol", description: "Dispatch protocol: local (default), http, https, acp, broadcast", required: false, refType: null },
-    { name: "llm_operation", description: "Semantic LLM operation for analysis when this communication sends an agent prompt", required: false, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: true,
-  minInputs: 0,
-  exampleJson: "{\"id\": 3, \"op\": \"COMMUNICATE\", \"attributes\": {\"recipient\": \"reviewer\", \"protocol\": \"acp\"}}",
-} as const;
-
-export const HANDOFF: OpSpec = {
-  op: "HANDOFF",
-  name: "Handoff",
-  category: "communication" as OpCategory,
-  description: "Hand off execution to an isolated target agent",
-  longDescription: "Transfers execution control from a source agent to a target agent. An omitted or false transfer_state isolates the target. An explicit true permits only a snapshot of non-authority AAM beliefs and goals plus a rendered context-frame payload. Credentials, capability grants, budgets, Agent Skill selections, prompt defaults, session state, and caller metadata never cross the handoff boundary. Emits HANDOFF_START and HANDOFF_END events with span continuity for tracing. The target agent's response becomes this node's output token.",
-  latency: "medium",
-  fields: [
-    { name: "handoff_from", description: "Source agent name", required: true, refType: null },
-    { name: "handoff_to", description: "Target agent name", required: true, refType: null },
-    { name: "payload", description: "Message payload to pass to the target agent", required: false, refType: null },
-    { name: "transfer_state", description: "Whether to explicitly transfer non-authority AAM state and rendered context frames (default: false)", required: false, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: true,
-  minInputs: 1,
-  exampleJson: "{\"id\": 3, \"op\": \"HANDOFF\", \"attributes\": {\"handoff_from\": \"agent_a\", \"handoff_to\": \"agent_b\"}}",
-} as const;
-
-export const UPDATE_GOAL: OpSpec = {
-  op: "UPDATE_GOAL",
-  name: "UpdateGoal",
-  category: "memory" as OpCategory,
-  description: "Modify AAM goals at runtime: set, remove, or clear",
-  longDescription: "Dynamically modifies the agent's goal set during execution. Supports three actions: 'set' (upsert a goal with priority), 'remove' (delete a specific goal), and 'clear' (remove all goals). Goal changes are visible to subsequent REASON and REFLECT nodes.",
-  latency: "none",
-  fields: [
-    { name: "goal_id", description: "Goal identifier (used as description key for upsert/remove)", required: true, refType: null },
-    { name: "action", description: "Action to perform: set (default), remove, clear", required: false, refType: null },
-    { name: "priority", description: "Goal priority (u32, default: 1)", required: false, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: false,
-  minInputs: 0,
-  exampleJson: "{\"id\": 3, \"op\": \"UPDATE_GOAL\", \"attributes\": {\"goal_id\": \"optimize_latency\", \"action\": \"set\", \"priority\": 2}}",
-} as const;
-
-export const PAUSE: OpSpec = {
-  op: "PAUSE",
-  name: "Pause",
-  category: "communication" as OpCategory,
-  description: "Suspend execution pending human-in-the-loop review via checkpoint",
-  longDescription: "Creates a checkpoint and suspends execution until a human resumes it via the APXM server API. The pause message is displayed to the human reviewer. Optionally sends a webhook notification. The human can provide input that becomes this node's output token when RESUME is called.",
-  latency: "high",
-  fields: [
-    { name: "message", description: "Human-readable message explaining the pause", required: true, refType: null },
-    { name: "checkpoint_id", description: "Stable checkpoint ID (auto-generated if omitted)", required: false, refType: null },
-    { name: "timeout_ms", description: "Max wait in ms (0 = indefinite, default: 0)", required: false, refType: null },
-    { name: "poll_interval_ms", description: "Polling interval in ms (default: 2000)", required: false, refType: null },
-    { name: "notification_url", description: "Webhook URL to notify on pause creation", required: false, refType: null },
-    { name: "server_url", description: "Override APXM_SERVER_URL env var", required: false, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: true,
-  minInputs: 0,
-  exampleJson: "{\"id\": 5, \"op\": \"PAUSE\", \"attributes\": {\"message\": \"Please review the analysis before proceeding\"}}",
-} as const;
-
-export const RESUME: OpSpec = {
-  op: "RESUME",
-  name: "Resume",
-  category: "control_flow" as OpCategory,
-  description: "Resume a suspended PAUSE checkpoint; polls server until human resumes; returns human_input",
-  longDescription: "Polls the APXM server for a specific checkpoint until a human resumes it. When resumed, the human's input (if any) becomes this node's output token. Configurable polling interval and max attempts prevent indefinite blocking.",
-  latency: "high",
-  fields: [
-    { name: "checkpoint", description: "Checkpoint ID to resume from", required: true, refType: null },
-    { name: "poll_max_attempts", description: "Max polling attempts (default 60 × 5s = 5 min)", required: false, refType: null },
-    { name: "poll_interval_ms", description: "Interval between polls in ms (default 5000)", required: false, refType: null },
-    { name: "server_url", description: "Override APXM_SERVER_URL env var", required: false, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: true,
-  minInputs: 0,
-  exampleJson: "{\"id\": 6, \"op\": \"RESUME\", \"attributes\": {\"checkpoint\": \"review_checkpoint_1\"}}",
-} as const;
-
-export const DELEGATE: OpSpec = {
-  op: "DELEGATE",
-  name: "Delegate",
-  category: "coordination" as OpCategory,
-  description: "Delegate a task to a sub-agent for execution",
-  longDescription: "Creates a sub-task from a task specification and assigns it to a target agent. Returns a task handle that can be used to track the delegated work. The target agent executes the task independently and reports results back.",
-  latency: "medium",
-  fields: [
-    { name: "task_spec", description: "Description of the task to delegate", required: true, refType: null },
-    { name: "target_agent", description: "Name of the agent to delegate to", required: true, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: true,
-  minInputs: 0,
-  exampleJson: "{\\\"id\\\": 3, \\\"op\\\": \\\"DELEGATE\\\", \\\"attributes\\\": {\\\"task_spec\\\": \\\"Analyze the dataset\\\", \\\"target_agent\\\": \\\"analyst\\\"}}",
-} as const;
-
-export const NOP: OpSpec = {
-  op: "NOP",
-  name: "Nop",
-  category: "identity" as OpCategory,
-  description: "No-op passthrough with no side effects or AAM transition",
-  longDescription: "Pure passthrough operation with no side effects and no AAM state transition. Passes through its first input unchanged, or returns Null if no inputs. Useful as a placeholder, sync point, or structural node in graph composition.",
-  latency: "none",
-  fields: [
-  ],
-  producesOutput: true,
-  needsSubmission: false,
-  minInputs: 0,
-  exampleJson: "{\\\"id\\\": 2, \\\"op\\\": \\\"NOP\\\"}",
-} as const;
-
-export const IDENTITY: OpSpec = {
-  op: "IDENTITY",
-  name: "Identity",
-  category: "identity" as OpCategory,
-  description: "Identity passthrough that records an AAM identity transition",
-  longDescription: "Like NOP but produces an AAM identity transition (state unchanged but recorded in the execution trace). Useful for observability when you want to mark a point in the graph without changing state.",
-  latency: "none",
-  fields: [
-  ],
-  producesOutput: true,
-  needsSubmission: false,
-  minInputs: 0,
-  exampleJson: "{\\\"id\\\": 2, \\\"op\\\": \\\"IDENTITY\\\"}",
-} as const;
-
-export const SPAWN_AGENT: OpSpec = {
-  op: "SPAWN_AGENT",
-  name: "SpawnAgent",
-  category: "coordination" as OpCategory,
-  description: "Create a new agent instance at runtime, optionally as an ACP subprocess",
-  longDescription: "Spawns a new agent instance. Without profile or agent_route, registers a local process for flow-based agents. With profile, spawns that ACP profile. With agent_route='auto', APXM selects an ACP profile from host-supplied route candidates using required_capabilities and preferred_profiles. The agent can then receive COMMUNICATE (protocol 'acp' or 'local') or DELEGATE messages. Returns the agent's identifier and metadata.",
-  latency: "medium",
-  fields: [
-    { name: "agent_name", description: "Name for the new agent", required: true, refType: null },
-    { name: "profile", description: "APXM ACP agent profile. When present, spawns an ACP subprocess", required: false, refType: "agent profile" },
-    { name: "agent_route", description: "Set to 'auto' to let APXM select an ACP profile when profile is omitted", required: false, refType: null },
-    { name: "required_capabilities", description: "Abstract route capabilities required from the selected ACP profile", required: false, refType: null },
-    { name: "preferred_profiles", description: "Preferred APXM ACP profiles used as a tie-breaker after capability fit", required: false, refType: null },
-    { name: "mode", description: "Agent mode to set after spawn (e.g. 'architect', 'code')", required: false, refType: null },
-    { name: "model", description: "Agent-specific model hint accepted by the selected ACP profile", required: false, refType: null },
-    { name: "cwd", description: "Working directory for the agent subprocess (defaults to current dir)", required: false, refType: null },
-    { name: "capabilities", description: "List of capabilities for the new agent", required: false, refType: null },
-    { name: "goals", description: "Initial goals for the new agent", required: false, refType: null },
-    { name: "system_prompt", description: "System prompt / instructions for inline agents — enables HANDOFF/COMMUNICATE dispatch without registering the agent as a separate compiled flow", required: false, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: true,
-  minInputs: 0,
-  exampleJson: "{\"id\": 1, \"op\": \"SPAWN_AGENT\", \"attributes\": {\"agent_name\": \"worker\", \"profile\": \"example-acp-profile\", \"mode\": \"architect\"}}",
-} as const;
-
-export const REGISTER_CAPABILITY: OpSpec = {
-  op: "REGISTER_CAPABILITY",
-  name: "RegisterCapability",
-  category: "coordination" as OpCategory,
-  description: "Register a new capability (tool) in the runtime registry",
-  longDescription: "Dynamically registers a new capability in the runtime's capability registry. The capability becomes available for INV_CAP operations after registration. Returns a confirmation with the registered capability name.",
-  latency: "low",
-  fields: [
-    { name: "capability_name", description: "Name for the capability to register", required: true, refType: null },
-    { name: "description", description: "Human-readable description of the capability", required: false, refType: null },
-    { name: "parameters_schema", description: "JSON schema for capability parameters", required: false, refType: null },
-    { name: "python_handler_id", description: "Stable content-addressed id (sha256:<hex64>) for a Python-backed tool handler", required: false, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: true,
-  minInputs: 0,
-  exampleJson: "{\\\"id\\\": 3, \\\"op\\\": \\\"REGISTER_CAPABILITY\\\", \\\"attributes\\\": {\\\"capability_name\\\": \\\"custom_tool\\\", \\\"description\\\": \\\"A custom analysis tool\\\"}}",
-} as const;
-
-export const REGISTER_HOOK: OpSpec = {
-  op: "REGISTER_HOOK",
-  name: "RegisterHook",
-  category: "coordination" as OpCategory,
-  description: "Register an author lifecycle hook into the artifact hook registry",
-  longDescription: "Registers one typed author lifecycle hook into the per-artifact hook registry. The binding travels inside the AIR artifact and dispatches through the artifact's language-specific handler bridge. The runtime applies pre/post_cap hooks at the tool dispatch sites, pre/post_ask as Ask middleware, and session_start as an awaited pre-step.",
-  latency: "low",
-  fields: [
-    { name: "hook_event", description: "Lifecycle event the hook binds to", required: true, refType: null },
-    { name: "hook_match", description: "Glob over tool/op name the hook applies to (default *)", required: false, refType: null },
-    { name: "hook_mode", description: "Hook mode: observe or gate", required: false, refType: null },
-    { name: "hook_handler_id", description: "Stable content-addressed id (sha256:<hex64>) for the artifact hook handler", required: true, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: true,
-  minInputs: 0,
-  exampleJson: "{\\\"id\\\": 4, \\\"op\\\": \\\"REGISTER_HOOK\\\", \\\"attributes\\\": {\\\"hook_event\\\": \\\"pre_cap\\\", \\\"hook_match\\\": \\\"lookup\\\", \\\"hook_mode\\\": \\\"gate\\\", \\\"hook_handler_id\\\": \\\"sha256:...\\\"}}",
-} as const;
-
-export const AWAIT_INPUT: OpSpec = {
-  op: "AWAIT_INPUT",
-  name: "AwaitInput",
-  category: "synchronization" as OpCategory,
-  description: "Park until the host delivers one typed external input",
-  longDescription: "AWAIT_INPUT is a generic durable park/resume primitive. A seed input returns immediately; otherwise the runtime parks without consuming a worker or compute permit until the trusted host wakes its opaque wait key. It has no model, persona, transcript, capability, Agent Skill, or conversational semantics.",
-  latency: "low",
-  fields: [
-    { name: "wait_key", description: "Opaque host-owned external-input correlation key; defaults to the execution session input key", required: false, refType: null },
-    { name: "rearm", description: "When true, re-arm the explicit continuation flow after a host wake", required: false, refType: null },
-    { name: "agent_name", description: "Agent containing the continuation flow", required: false, refType: null },
-    { name: "flow_name", description: "Explicit continuation flow to invoke", required: false, refType: null },
-    { name: "input_names", description: "Single continuation parameter name bound to the delivered input", required: false, refType: null },
-    { name: "max_iterations", description: "Maximum number of generic wake/re-arm cycles for this session", required: false, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: false,
-  minInputs: 0,
-  exampleJson: "{\"id\": 3, \"op\": \"AWAIT_INPUT\", \"attributes\": {\"wait_key\": \"webhook:order-42\"}}",
-} as const;
-
-export const AUTONOMOUS: OpSpec = {
-  op: "AUTONOMOUS",
-  name: "Autonomous",
-  category: "coordination" as OpCategory,
-  description: "Macro-op: a fused goal-directed plan/act/evaluate loop, not the general iteration mechanism",
-  longDescription: "AUTONOMOUS is a macro-op — a single node that fuses an internal plan / act / evaluate loop against a goal prompt, implemented as a Rust loop inside the handler (not graph-level iteration). The node keeps calling the configured model until the goal is achieved or `max_iterations` is reached. It is independent of, and not a substitute for, the general in-graph iteration mechanism, which is splice-based (a fresh sub-DAG grafted into the live execution per turn/iteration via `splice_dag`/`rearm_session_turn`). Optional backend, model, system prompt, provider, and temperature attributes follow the same routing contract as the other LLM operations.",
-  latency: "high",
-  fields: [
-    { name: "prompt", description: "Goal or objective for the autonomous loop", required: true, refType: null },
-    { name: "max_iterations", description: "Maximum number of plan / act / evaluate iterations before stopping", required: false, refType: null },
-    { name: "backend", description: "Backend override for the autonomous loop", required: false, refType: "backend" },
-    { name: "model", description: "Model override for the autonomous loop", required: false, refType: "model" },
-    { name: "provider", description: "Provider override when backend routing is not used", required: false, refType: null },
-    { name: "system_prompt", description: "System prompt applied to each model call in the loop", required: false, refType: null },
-    { name: "temperature", description: "Sampling temperature for the loop's model calls", required: false, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: true,
-  minInputs: 0,
-  exampleJson: "{\"id\": 3, \"op\": \"AUTONOMOUS\", \"attributes\": {\"prompt\": \"Find the root cause and propose a fix\", \"max_iterations\": 6}}",
-} as const;
-
-export const CHECKPOINT: OpSpec = {
-  op: "CHECKPOINT",
-  name: "Checkpoint",
-  category: "synchronization" as OpCategory,
-  description: "Create a durable execution checkpoint and emit a manifest token",
-  longDescription: "Serializes execution state at a barrier point and persists it under a stable checkpoint identifier. The snapshot captures AAM state plus runtime checkpoint metadata, and emits a manifest token containing the checkpoint id, timestamp, and byte size so downstream nodes can reference the saved state. Execution continues immediately after the snapshot — this is NOT a suspend point (use PAUSE when you need human-gated suspension).",
-  latency: "low",
-  fields: [
-    { name: "checkpoint_id", description: "Stable identifier for this checkpoint", required: true, refType: null },
-    { name: "scope", description: "Snapshot scope: full (default) or local", required: false, refType: null },
-    { name: "storage", description: "Storage backend: fs (default), memory, or custom", required: false, refType: null },
-    { name: "ttl_seconds", description: "Time-to-live for the checkpoint in seconds", required: false, refType: null },
-    { name: "on_fail", description: "Failure mode: halt (default) or continue", required: false, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: false,
-  minInputs: 1,
-  exampleJson: "{\"id\": 4, \"op\": \"CHECKPOINT\", \"attributes\": {\"checkpoint_id\": \"before_analysis\"}}",
-} as const;
-
-export const CONST_STR: OpSpec = {
-  op: "CONST_STR",
-  name: "ConstStr",
-  category: "internal" as OpCategory,
-  description: "String constant (compiler internal for string literals)",
-  longDescription: "Compiler-internal operation that produces a constant string value. Not available in the public AIS. The compiler generates CONST_STR nodes when lowering template strings to explicit dataflow.",
-  latency: "none",
-  fields: [
-    { name: "value", description: "The string constant value", required: true, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: false,
-  minInputs: 0,
-  exampleJson: null,
-} as const;
-
-export const YIELD: OpSpec = {
-  op: "YIELD",
-  name: "Yield",
-  category: "internal" as OpCategory,
-  description: "Yield value from switch case region (terminates region)",
-  longDescription: "Compiler-internal operation that terminates a switch case region and yields a value to the parent SWITCH node. Not available in the public AIS.",
-  latency: "none",
-  fields: [
-    { name: "value", description: "Optional literal value when the yielded token does not arrive through the region input", required: false, refType: null },
-  ],
-  producesOutput: true,
-  needsSubmission: false,
-  minInputs: 1,
-  exampleJson: null,
+  exampleJson: "{\"node_id\":\"await_1\",\"op\":\"await.event\",\"operands\":{\"event_ref\":\"approval_42\",\"timeout_ms\":300000}}",
 } as const;
 
 export const ALL_OPERATIONS: readonly OpSpec[] = [
-  AGENT,
-  QMEM,
-  UMEM,
-  ASK,
-  THINK,
-  REASON,
-  PLAN,
-  REFLECT,
-  VERIFY,
-  INV_CAP,
-  EXC,
-  PRINT,
-  JUMP,
-  BRANCH_ON_VALUE,
-  RETURN,
-  SWITCH,
-  FLOW_CALL,
-  WORKFLOW_SPAWN,
-  MERGE,
-  FENCE,
-  WAIT_ALL,
-  TRY_CATCH,
-  ERR,
-  COMMUNICATE,
-  HANDOFF,
-  UPDATE_GOAL,
-  PAUSE,
-  RESUME,
-  DELEGATE,
-  NOP,
-  IDENTITY,
-  SPAWN_AGENT,
-  REGISTER_CAPABILITY,
-  REGISTER_HOOK,
-  AWAIT_INPUT,
-  AUTONOMOUS,
-  CHECKPOINT,
-  CONST_STR,
-  YIELD,
+  MODEL.CALL,
+  CAPABILITY.INVOKE,
+  PROGRAM.NEW,
+  PROGRAM.INVOKE,
+  AWAIT.EVENT,
 ] as const;
 
 export type OpCategory =
-  | "communication"
-  | "control_flow"
-  | "coordination"
-  | "error_handling"
-  | "identity"
-  | "internal"
-  | "memory"
-  | "metadata"
-  | "reasoning"
-  | "synchronization"
-  | "tools";
+  | "semantic";
 
 export const ATTR = {
   AGENT_NAME: "agent_name",

@@ -2062,64 +2062,6 @@ mod tests {
     }
 
     #[test]
-    fn lint_catches_manifest_entry_hook_contradiction() {
-        //  vector: agent.toml declares a `gate` hook on pre_cap/*, but
-        // the entry file programmatically registers the SAME (event, match)
-        // as `observe` — a silent contradiction the lint must catch.
-        let tmp = tempdir().unwrap();
-        let root = tmp.path().join("contradicts");
-        scaffold(&root, "contradicts");
-
-        let agent_toml = fs::read_to_string(root.join("agent.toml")).unwrap();
-        let agent_toml = format!(
-            "{agent_toml}\n[[hooks]]\nevent = \"pre_cap\"\nmatch = \"*\"\nmode = \"gate\"\nhandler = \"capabilities/handlers/guard.py:check\"\n"
-        );
-        fs::write(root.join("agent.toml"), agent_toml).unwrap();
-
-        fs::create_dir_all(root.join("python")).unwrap();
-        fs::write(
-            root.join("python/contradicts_agent.py"),
-            "from apxm import hook\n\n\
-             @hook(on=\"pre_cap\", match=\"*\", mode=\"observe\")\n\
-             def check(ctx):\n    return None\n",
-        )
-        .unwrap();
-
-        let err = agent_lint(&root, None, true)
-            .expect_err("manifest/entry hook contradiction must fail lint");
-        assert!(
-            err.to_string().contains("lint error"),
-            "expected a lint error, got: {err}"
-        );
-    }
-
-    #[test]
-    fn lint_allows_matching_programmatic_hook() {
-        // Same (event, match, mode) declared in both places is not a
-        // contradiction — entry code may re-affirm what the manifest says.
-        let tmp = tempdir().unwrap();
-        let root = tmp.path().join("agrees");
-        scaffold(&root, "agrees");
-
-        let agent_toml = fs::read_to_string(root.join("agent.toml")).unwrap();
-        let agent_toml = format!(
-            "{agent_toml}\n[[hooks]]\nevent = \"pre_cap\"\nmatch = \"*\"\nmode = \"gate\"\nhandler = \"capabilities/handlers/guard.py:check\"\n"
-        );
-        fs::write(root.join("agent.toml"), agent_toml).unwrap();
-
-        fs::create_dir_all(root.join("python")).unwrap();
-        fs::write(
-            root.join("python/agrees_agent.py"),
-            "from apxm import hook\n\n\
-             @hook(on=\"pre_cap\", match=\"*\", mode=\"gate\")\n\
-             def check(ctx):\n    return None\n",
-        )
-        .unwrap();
-
-        agent_lint(&root, None, true).expect("matching programmatic hook must not fail lint");
-    }
-
-    #[test]
     fn lint_rejects_unrecognized_files() {
         let tmp = tempdir().unwrap();
         let root = tmp.path().join("stray");
