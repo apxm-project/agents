@@ -60,18 +60,27 @@ dekk agents compile-service-canonical <source-package> > hello.air.json
 > **First time?** See the [docs/](../docs/README.md) overview, then run
 > `dekk agents doctor` to verify your environment.
 
-## Learning Path
+## Repository examples
 
-1. **[getting-started/](python/getting-started/)** -- First contact: hello world, tool use
-2. **[parallelism/](python/parallelism/)** -- Fan-out patterns, implicit DAG scheduling
-3. **[optimization/](python/optimization/)** -- Compiler passes, scheduling/backend hints, and metrics
-4. **[multi-agent/](python/multi-agent/)** -- Spawn, communicate, team coordination
-5. **[multi-provider/](python/multi-provider/)** -- Route tasks to different models
-6. **[memory/](python/memory/)** -- Three-tier memory and RAG
-7. **[patterns/](python/patterns/)** -- Reusable workflow patterns
-8. **[real-world/](python/real-world/)** -- Complete production workflows
-9. **[native-tools/](python/native-tools/)** -- Native Python agent/tool handoff
-10. **[workflows/](workflows/)** -- Native `.apxmw` workflow coordination, event loops, resume, and cancel
-11. **[self-hosted/](python/self-hosted/)** -- APXM building APXM and optional vLLM demos
+These author against the canonical `apxm_program` (Python) / `@apxm/frontend`
+(TypeScript) Agent Program APIs — `AgentProgram`, `ConversationalAgent`,
+Hooks, and Context:
 
-See [python/README.md](python/README.md) for the full API reference and structure.
+1. **[agents/conversational/](agents/conversational/)** -- Equivalent Python
+   and TypeScript `ConversationalAgent` programs over the installed generic
+   frontends; the parity high-water mark. Validate with
+   `dekk agents test-frontend-examples`.
+2. **[agents/gao/](agents/gao/)** -- TypeScript-only Agent Program example
+   that specializes `ConversationalAgent` with Capability calls, specialist
+   composition, static Hooks, and `await.event`.
+3. **[agents/coder/](agents/coder/)** and
+   **[agents/coder-fixture/](agents/coder-fixture/)** -- ACP coding-agent
+   integration examples.
+4. **[workflows/](workflows/)** -- Native `.apxmw` workflow coordination,
+   event loops, resume, and cancel.
+5. **[metrics/](metrics/)** -- APXM graph metrics hierarchy reference.
+
+A retired raw-authoring example corpus (`python/`, `agents/explorer/`) that
+imported removed `apxm` package symbols (`GraphRecorder`, `GraphBuilder`,
+`compile`, `Agent`) has been removed. It predated the canonical
+`apxm_program` API and could not run.

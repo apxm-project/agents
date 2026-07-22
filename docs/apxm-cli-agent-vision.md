@@ -53,7 +53,7 @@ boundary is.
 
 | Concern | In APXM today? | Evidence |
 |---|---|---|
-| **Turn body as a program** (QMEM→ASK→UMEM→FENCE, tools, skill calls) | ✅ YES — validated | prototype `conversational_agent.py` compiles to valid AIR; `examples/python/conversational/chat_agent.py` is the high-water mark |
+| **Turn body as a program** (QMEM→ASK→UMEM→FENCE, tools, skill calls) | ✅ YES — validated | `examples/agents/conversational/python/agent.py` (canonical `apxm_program` `ConversationalAgent`) is the high-water mark |
 | **Authoring it simply** | ✅ YES — ~5–15 lines | Python frontend `@compile` + `g.ask(...)` + `Agent(instructions=, tools=)`; template auto-wiring (`{var}` → data edge); `@tool` 1-liner (`crates/compiler/frontend/python/apxm/{proxy,agent}.py`) |
 | **Static system prompt** | ✅ YES | `system_prompt=` attr, read at `llm/mod.rs:114` |
 | **Tools in the ASK** | ✅ YES (native tool-calling loop, max 10 iters) | `tool_dispatch.rs:381`; `capability_groups=["web"]` |

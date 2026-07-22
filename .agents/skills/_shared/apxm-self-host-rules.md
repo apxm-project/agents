@@ -1,9 +1,9 @@
 # Shared rule — APXM self-hosting (APXM builds itself)
 
 Load this file before authoring or editing a self-hosted development
-workflow (`examples/python/self-hosted/*`, goal bundles, or any graph
-that spawns agents to modify APXM itself). The toolchain that coordinates
-agents modifying the toolchain must follow the project's own dev rules.
+workflow (goal bundles or any graph that spawns agents to modify APXM
+itself). The toolchain that coordinates agents modifying the toolchain
+must follow the project's own dev rules.
 
 Self-hosted dev tasks are authored as APXM graphs / goal bundles, never
 ad-hoc Python. The rule prose is the source of truth; the workflow is the

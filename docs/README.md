@@ -136,7 +136,6 @@ locally labelled historical/current baseline:
 | [Prototype ACP sandbox seam](integrations/sandbox-acp-seam.md) | Current `SandboxRegistry`/profile implementation |
 | [Sandbox interface investigation](integrations/sandbox-interface.md) | Superseded registry/mega-interface exploration |
 | [OpenShell investigation](integrations/openshell-integration.md) | Superseded sandbox/router comparison evidence |
-| [Python examples](../examples/python/README.md) | Current GraphRecorder and coordination APIs |
 | [Current AIS crate](../crates/machine/ais/README.md) | Prototype generated operation source |
 | [First agent](agents/first-agent.md) | Current executable journey, not target API |
 
@@ -157,8 +156,12 @@ dekk agents codegen
 dekk agents test
 ```
 
-Runnable prototype demos live under [`examples/python/`](../examples/python/). They
-must be migrated or deleted by P9 before target publication.
+The retired raw-authoring prototype demos that lived under `examples/python/`
+imported removed `apxm` package symbols (`GraphRecorder`, `GraphBuilder`,
+`compile`, `Agent`) and could not run; P9 removed that corpus. Canonical
+runnable examples now live under
+[`examples/agents/`](../examples/agents/) (`conversational/`, `gao/`) authored
+against `apxm_program` / `@apxm/frontend`.
 
 Backend/operator references remain useful for the current implementation and
 focused canonical adapters:
