@@ -31,7 +31,6 @@ Command-line interface for the APXM workflow compiler and runtime toolchain.
 | `team` | Manage multi-agent teams |
 | `agent` | Scaffold, sync, lint, build, and install agents |
 | `org` | Scaffold, lint, and install organization packages |
-| `integration` | Scaffold, lint, and install integration packages |
 | `ops` | List/show AIS operations |
 | `validate` | Check AIR against AIS contract |
 | `analyze` | Parallelism, critical path, speedup estimate |
