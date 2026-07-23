@@ -4,12 +4,12 @@
   "primary_responsibility": "Agent Program authoring frontends, FrontendGraph, the closed five-operation effect/composition AIS family, the separate closed structural AIS family, digest-bound executable artifacts with artifact_semantic requirements only, generic loop-iteration runtime evidence, source maps, and the atomic execution-commit boundary.",
   "constitution": {
     "schema_id": "apxm.contract-constitution.v1",
-    "digest": "sha256:ffe3a716c79b73a98ec5fbedf3249d8aa0fbb0d8525ca55dea63edfee2c3512a"
+    "digest": "sha256:40fbf36d809620dd0bfa4219eef7671227a8046d7a650bccc092444af0f5bbe2"
   },
   "referenced_common_envelopes": [
     {
       "schema_id": "apxm.contract-common.v1",
-      "digest": "sha256:eca067d94f8a359a31288a613c0662970336327e7800c4a035c6d6f30eba2b0f"
+      "digest": "sha256:97f38d2f19b60e964a3bc919ae5a92df76bcdbf673a9462aeb8fa7c1cf98570b"
     },
     {
       "schema_id": "apxm.port-contract.v1",
@@ -374,5 +374,5 @@
     "algorithm": "ed25519",
     "status": "signing_pending_no_key"
   },
-  "descriptor_digest": "sha256:90f35662c782a015cba8a8efc5b6d840f03bb7f288468dafc3d2901c75c08f68"
+  "descriptor_digest": "sha256:fc54cef35d7b6ff1bbd1848016fc734d29898eed81c3a7438e257fec8019716b"
 }
