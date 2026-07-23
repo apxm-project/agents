@@ -174,8 +174,8 @@ pub enum Commands {
         /// AIR graph with an in-program recv loop (path to a `.air` file).
         #[arg(long, conflicts_with = "agent")]
         air: Option<std::path::PathBuf>,
-        /// apxm-server base URL (default $APXM_SERVER_BASE or
-        /// http://127.0.0.1:18800).
+        /// apxm-server base URL. Required via this flag or $APXM_SERVER_BASE;
+        /// there is no hardcoded default.
         #[arg(long)]
         server: Option<String>,
         /// Reuse/resume a prior conversation by session id instead of minting
