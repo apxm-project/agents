@@ -198,13 +198,6 @@ lint = { run = "python tools/scripts/apxm_cli.py agent lint", description = "Val
 build = { run = "npm --prefix crates/tools/cli/agent-packaging ci --ignore-scripts --no-audit --no-fund && python tools/scripts/apxm_cli.py agent build", description = "Compile package handlers and recompute agent integrity", skill = true }
 install = { run = "python tools/scripts/apxm_cli.py agent install", description = "Install a built agent to APXM_HOME/agents/<id>" }
 
-[commands.integration]
-description = "Scaffold, lint, and install integration packages (apxm.integration-package.v1)"
-group = "Authoring"
-new = { run = "python tools/scripts/apxm_cli.py integration new", description = "Scaffold a new integration-package folder tree", skill = true }
-lint = { run = "python tools/scripts/apxm_cli.py integration lint", description = "Validate the six files + joined capability/permission policy", skill = true }
-install = { run = "python tools/scripts/apxm_cli.py integration install", description = "Install to APXM_HOME/integrations/<id> (+ best-effort workspace mirror)" }
-
 [commands.cache]
 description = "Manage the MemoCache (response memoization)"
 group = "Configuration"
