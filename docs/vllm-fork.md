@@ -1,5 +1,9 @@
 # vLLM Fork
 
+- Status: current fork and operator contract; not Agent Program semantics
+- Canonical model boundary:
+  [ADR-0011](adr/0011-agent-program-execution-is-one-end-to-end-spine.md)
+
 This note documents the source-level contract between APXM and the APXM
 graph-aware vLLM fork. In the APXM coordinator workspace, the source lives at
 `workspace/vllm`; standalone APXM checkouts can set `APXM_VLLM_DIR`.
@@ -8,9 +12,12 @@ Claim-bearing evaluation may also run an equivalent container image built from t
 
 ## Scope
 
-APXM is backend-agnostic. vLLM is an optional LLM backend registered through
-the normal backend registry. The fork is the `apxm-project/vllm` repo and adds
-graph-aware OpenAI-compatible endpoints that stock vLLM does not expose.
+APXM Agent source and AIR are backend-agnostic. vLLM is an optional exact
+inference implementation selected by admission through a Model binding, not by
+the Agent or runtime. The current operator tooling still uses the checkout's
+backend registration surface while the canonical exact-binding adapter path is
+completed. The fork is the `apxm-project/vllm` repo and adds graph-aware
+OpenAI-compatible endpoints that stock vLLM does not expose.
 
 Bring-up, container build, zoo reconciliation, and operator commands all live
 in [`backends/vllm.md`](backends/vllm.md) and [`backends/model-zoo.md`](backends/model-zoo.md).
@@ -26,8 +33,8 @@ already-owned allocation, `dekk agents vllm probe --endpoint ...` and
 
 - Workspace path: `workspace/vllm`
 - Override: `APXM_VLLM_DIR`
-- Expected fork branch: `main`; commit and router verification are the source of
-  truth for evaluation evidence.
+- Coordinator-resolved checkout revision; commit and router verification are
+  the source of truth for evaluation evidence, not a mutable branch name.
 - Operator runbook: `docs/backends/vllm.md`
 - Rust backend: `crates/runtime/backends/src/llm/backends/vllm/backend.rs`
 

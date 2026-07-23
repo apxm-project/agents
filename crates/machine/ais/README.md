@@ -1,74 +1,60 @@
 # apxm-ais
 
-Canonical AIS operation definitions shared by compiler and runtime.
+- Current role: Rust-owned AIS operation and code-generation source
+- Target contract:
+  [Agent Program composition and AIR](../../../docs/agents/agent-program-composition-and-air-contract.md)
+- Frontend/lowering plan:
+  [Simple source-first Agent frontend](../../../docs/agents/simple-agent-authoring-frontend-plan.md)
 
-## Overview
+`apxm-ais` owns the two closed canonical operation families consumed by the
+compiler and runtime. No frontend, Studio component, adapter, or runtime module
+may define another operation list.
 
-`apxm-ais` defines all 39 AIS operations, their metadata, 100+ attribute constants, validation rules, and MLIR pass descriptors. It is the single source of truth used to generate MLIR TableGen for the compiler and Rust metadata for the runtime dispatcher.
+## Canonical families
 
-## Module Structure
+The effect/composition family contains exactly five operations:
 
-| Module | Description |
-|--------|-------------|
-| `operations/` | `OperationSpec` definitions, categories, emission specs, TableGen generation |
-| `attrs` | 100+ canonical attribute name constants (`agent_name`, `template_str`, `model`, etc.) |
-| `passes/` | Pass descriptors and TableGen generation for MLIR optimization passes |
-| `aam` | Agent Abstract Machine types (`AAM`, `Beliefs`, `Goals`, `Capabilities`) |
-| `memory` | `MemoryTier` enum (STM, LTM, Episodic) |
-| `types` | `Value` type used in operation parameters |
-| `validation` | Operation field validation (`validate_operation`, `missing_required_fields`) |
+1. `model.call`
+2. `capability.invoke`
+3. `program.new`
+4. `program.invoke`
+5. `await.event`
 
-## Operations (38 total)
+The separate compiler-emitted structural family contains functions, regions,
+blocks, values, branch, switch, `ais.loop`, parallel join, try/throw/catch,
+return, and yield. Structural operations are not raw public Agent builders;
+`ais.loop` is not a sixth effect operation.
 
-| Category | Operations |
-|----------|------------|
-| Metadata | AGENT |
-| Memory | QMEM, UMEM, UPDATE_GOAL |
-| Reasoning | ASK, THINK, REASON, PLAN, REFLECT, VERIFY |
-| Tools | INV_CAP, EXC, PRINT |
-| Control Flow | JUMP, BRANCH_ON_VALUE, RETURN, SWITCH, FLOW_CALL, WORKFLOW_SPAWN, RESUME |
-| Synchronization | MERGE, FENCE, WAIT_ALL, CHECKPOINT |
-| Error Handling | TRY_CATCH, ERR |
-| Communication | COMMUNICATE, HANDOFF, PAUSE |
-| Coordination | DELEGATE, SPAWN_AGENT, REGISTER_CAPABILITY, REGISTER_HOOK, AUTONOMOUS |
-| Identity | NOP, IDENTITY |
-| Internal | CONST_STR, YIELD |
+The source of truth is
+[`src/operations/definitions.rs`](src/operations/definitions.rs). It generates
+the operation catalogue and TableGen inputs consumed by the compiler. Generated
+files are outputs and must not be edited to conceal source/generator drift.
 
-NEGOTIATE, SPAWN_TEAM, GUARD, and CLAIM were removed (RT-1): measured zero
-emissions across the example/test/studio-lowering corpus. LOOP_START and
-LOOP_END were removed because they compiled and verified but never
-re-executed at runtime. The one real in-graph iteration mechanism is graph
-splicing (`splice_dag`/`rearm_session_turn` in `apxm-runtime`'s scheduler);
-AUTONOMOUS is a documented macro-op with its own internal loop, not the
-general iteration mechanism; graph splicing provides the executable iteration path.
+## Frontend boundary
 
-## Key Exports
+Python and TypeScript understand typed source concepts—Agent, Context, Model,
+Tool/Capability, Event, Hook, and ordinary control flow—and emit FrontendGraph
+intent. Rust maps that intent to AIS. Author source and public frontend packages
+do not contain operation constants, raw `ais.*` kinds, or AIR/MLIR printers.
 
-- `AISOperationType` -- enum of all 41 operation types
-- `OperationSpec` -- full metadata for one operation (fields, latency, emission spec)
-- `get_operation_spec` / `get_all_operations` -- lookup functions
-- `generate_tablegen` -- generates MLIR `.td` files from Rust definitions
-- `generate_passes_tablegen` -- generates pass descriptors for the MLIR pipeline
-- `AAM` / `Beliefs` / `Goals` / `Capabilities` -- Agent Abstract Machine types
-- `Value` -- runtime value type
-- `validate_operation` -- validates operation fields against spec
+## Current completion gap
 
-## Attribute Reference
+The closed operation inventory is present, but the registered semantic
+TableGen operations currently expose only a token result and not the complete
+typed operands required by the owner contract. The frontend plan's P1/P2 gates
+complete signatures, CFG/SSA/region lowering, registered-only verification,
+and end-to-end artifact/evidence correlation without adding an operation.
 
-Every attribute name used in operation specs, MLIR TableGen, runtime handlers, and the Python frontend is defined in `attrs.rs`. The `ALL_ATTR_NAMES` array lists every constant for consistency checking.
+## Verification
 
-| Domain | Constants |
-|--------|-----------|
-| Agent/Identity | `agent_name`, `flow_name`, `profile`, `node_name`, `mode`, `cwd` |
-| LLM/Model | `model`, `provider`, `temperature`, `system_prompt`, `token_budget`, `output_schema`, `max_schema_retries`, `backend`, `max_tool_iterations`, `budget` |
-| Template/Prompt | `template_str`, `prompt`, `template` |
-| Memory | `query`, `memory_tier`, `key`, `value`, `limit` |
-| Capability/Tools | `capability`, `params_json`, `tools_enabled`, `tools`, `code`, `interpreter`, `capability_name`, `description`, `parameters_schema` |
-| Communication | `message`, `recipient`, `target`, `protocol` |
-| Goals/Reasoning | `goal`, `goal_id`, `priority`, `evidence`, `claim` |
-| Control Flow | `label`, `true_label`, `false_label`, `case_labels`, `try_label`, `catch_label`, `recovery_template` |
-| Optimization Hints | `cached_system_prompt`, `memoizable`, `warmup_candidate`, `shared_prefix_est_tokens`, `downstream_nodes`, `reuse_group`, `est_template_tokens` |
+```bash
+dekk agents ops list
+dekk agents check-frontend-codegen
+```
 
-## Dependencies
+After changing an AIS definition:
 
-This crate has no internal APXM dependencies.
+```bash
+dekk agents build-dialect
+dekk agents codegen
+```

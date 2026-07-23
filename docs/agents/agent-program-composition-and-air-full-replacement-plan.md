@@ -5,6 +5,9 @@
 - Owner: APXM `agents`
 - Decisions: [ADR-0008](../adr/0008-agent-programs-compose-through-new-and-invoke.md), [ADR-0009](../adr/0009-air-has-five-public-semantic-operations.md), [ADR-0010](../adr/0010-agent-program-source-owns-context-hooks-and-conversational-loops.md), [ADR-0011](../adr/0011-agent-program-execution-is-one-end-to-end-spine.md), [ADR-0014](../adr/0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md), [ADR-0003](../adr/0003-agent-program-contract-migrations-remove-old-semantics.md)
 - Normative contract: [Agent Program composition and AIR contract](agent-program-composition-and-air-contract.md)
+- Proposed frontend delivery subplan:
+  [Source-first Agent frontend master plan](simple-agent-authoring-frontend-plan.md)
+  (design only until its D0 owner decision)
 - Baseline: `agents@9e26a62adebb`
 
 ## Goal

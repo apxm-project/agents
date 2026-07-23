@@ -1,151 +1,388 @@
-# Build the conversational repository example
+# Build a conversational Agent
 
-- Status: canonical target guide
-- Decisions: [ADR-0010](../adr/0010-agent-program-source-owns-context-hooks-and-conversational-loops.md), [ADR-0014](../adr/0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md)
-- Contract: [composition and AIR §10](../agents/agent-program-composition-and-air-contract.md#10-generic-loop-iteration-contract)
+- Architectural status: canonical generic Agent Program behavior
+- Frontend syntax status: design proposal aligned with
+  [Author an Agent](creating-an-agent-program.md)
+- Implementation plan:
+  [Source-first Agent frontend master plan](../agents/simple-agent-authoring-frontend-plan.md)
+- Decisions:
+  [ADR-0010](../adr/0010-agent-program-source-owns-context-hooks-and-conversational-loops.md)
+  and
+  [ADR-0014](../adr/0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md)
 
 ## 1. Mental model
 
-The repository's conversational Agent is an example built with generic Python
-or TypeScript `AgentProgram` APIs. The example may define a local
-`ConversationalAgent` helper for its own source organization, but that name is
-not exported by an APXM package and has no compiler, runtime, Server, contract,
-or Studio meaning.
+A conversational Agent is an ordinary `Agent` with a typed `Context`, a source
+loop, explicit Model calls, explicit Tool calls, and a yield point. There is no
+package-level `ConversationalAgent`, conversation runtime, hidden model/Tool
+loop, or core `Turn` type.
 
-Context is a typed local accumulated value. Each iteration explicitly decides
-what the model sees, which Skills are discovered/loaded, which Capabilities are
-offered, how outputs update context, and whether to continue, yield or return.
-Rust compiles the ordinary source loop to structural `ais.loop`; the five
-effect/composition operations remain unchanged.
+The repository may organize its example with a local helper, but that helper
+has no compiler, runtime, Server, contract, or Studio meaning.
 
-## 2. Contract-shaped source
+Python's `@Agent`, `@Context`, local `@Tool`, and `@Hook` markers and
+TypeScript's equivalent `Agent(...)`, `Context(...)`, `Tool(...)`, and
+`Hook.before(...)` declarations all bind statically into the same semantic
+tree. None runs the conversational loop while compiling.
 
-```python
-from apxm_program import AgentProgram
+The loop is only the familiar center. The same generic frontend can add typed
+Events, before/after Hooks, specialist Agents, structured task groups, Skills
+discovery, try/catch, cancellation checks, and exact Model/Capability calls.
+That is why the conversational Agent is an example of APXM's power rather than
+a separate product abstraction.
 
-
-@AgentProgram(context=SupportContext)
-async def support(agent, incoming: UserMessage):
-    while not agent.context.done:
-        available = await skills.search(
-            query=agent.context.current_need,
-            limit=5,
-        )
-        selected = choose_relevant_skills(available)
-        skill_context = await skills.load(selected)
-
-        response = await model.call(
-            model=ExactSupportModel,
-            messages=build_messages(agent.context, incoming, skill_context),
-            tools=[crm.lookup, tickets.create],
-        )
-
-        agent.context = reduce_context(agent.context, response)
-        if agent.context.needs_user:
-            incoming = await agent.yield_(AgentReply(response.content))
-
-    return FinalAnswer.from_context(agent.context)
+```text
+readable Agent source
+  -> native AST + immutable bound/typed source tree
+  -> deterministic FrontendGraph emission
+  -> Rust CFG/SSA + AIR/AIS lowering and legal optimization
+  -> exact admitted runtime ports
+  -> authoritative evidence joined back to source
 ```
 
-`agent.yield_(output)` is a compiler-recognized structural frontend primitive,
-not a sixth AIR operation. It commits the already assigned `agent.context`,
-returns the plain output to the caller, and binds the next typed invocation
-input when the same Program Instance resumes.
-
-```typescript
-import { agentProgram } from "@apxm/frontend";
-
-const support = agentProgram(
-  { context: SupportContext },
-  async (
-    agent: Agent<SupportContext>,
-    incoming: UserMessage,
-  ): Promise<FinalAnswer> => {
-    while (!agent.context.done) {
-      const available = await skills.search({
-        query: agent.context.currentNeed,
-        limit: 5,
-      });
-      const skillContext = await skills.load(chooseRelevantSkills(available));
-      const response = await model.call({
-        model: ExactSupportModel,
-        messages: buildMessages(agent.context, incoming, skillContext),
-        tools: [crm.lookup, tickets.create],
-      });
-      agent.context = reduceContext(agent.context, response);
-      if (agent.context.needsUser) {
-        incoming = await agent.yield_(new AgentReply(response.content));
-      }
-    }
-    return FinalAnswer.fromContext(agent.context);
-  },
-);
-```
-
-Python and TypeScript goldens must compile to equivalent structured regions,
-resume-input bindings, `ais.loop`, and the same five-operation
-effect/composition family.
-
-The snippets fix the semantic shape, not final decorator or generic spelling.
-Packed-package declarations and clean-consumer tests become syntax authority
-when the frontend implementation lane lands.
-
-## 3. Hooks as callbacks
-
-Hooks are normal typed callbacks attached statically:
+## 2. Python
 
 ```python
-async def before_model(agent: Agent[SupportContext], request: ModelRequest):
-    agent.context = redact_context(agent.context)
+from apxm_program import Agent, Context, Model, Tool
 
 
-async def after_model(
-    agent: Agent[SupportContext],
-    response: ModelResponse,
-) -> ModelResponse:
-    agent.context = record_summary(agent.context, response)
+@Context
+class Conversation:
+    messages: tuple[Message, ...] = ()
+
+
+SearchSkills = Tool[SkillQuery, tuple[SkillSummary, ...]](SearchSkillsCapabilityRef)
+ReadSkill = Tool[SkillRef, SkillBody](ReadSkillCapabilityRef)
+CrmLookup = Tool[CrmLookupInput, CrmLookupResult](CrmLookupCapabilityRef)
+CreateTicket = Tool[CreateTicketInput, Ticket](CreateTicketCapabilityRef)
+SupportModel = Model[SupportRequest, SupportResponse](ExactSupportModelRef)
+
+
+@Agent(
+    input=UserMessage,
+    output=AgentReply,
+    context=Conversation,
+)
+async def Support(agent, incoming):
+    while True:
+        summaries = await SearchSkills(
+            SkillQuery.from_context(agent.context, incoming)
+        )
+        selected = choose_relevant_skills(summaries)
+        skill_context = []
+        for ref in selected:
+            skill_context.append(await ReadSkill(ref))
+
+        response = await SupportModel(
+            SupportRequest(
+                messages=agent.context.messages,
+                incoming=incoming,
+                skills=skill_context,
+                tools=(CrmLookup.schema, CreateTicket.schema),
+            )
+        )
+
+        response = await run_requested_tools(response)
+        agent.context = Conversation(
+            messages=(
+                *agent.context.messages,
+                incoming.as_message(),
+                response.message,
+            )
+        )
+        incoming = await agent.yield_(AgentReply(response.content))
+```
+
+`run_requested_tools` is ordinary authored source, not a runtime service. Its
+dispatch is closed and typed:
+
+```python
+async def run_requested_tools(response: SupportResponse) -> SupportResponse:
+    for request in response.tool_requests:
+        match request:
+            case CrmLookupRequest(arguments):
+                result = await CrmLookup(arguments)
+            case CreateTicketRequest(arguments):
+                result = await CreateTicket(arguments)
+        response = await SupportModel(response.with_tool_result(request, result))
     return response
 ```
 
-A Program, loop, node or Capability can bind its own before/after callbacks.
-The Agent Facade exposes only facts allowed at that boundary. Error recovery is
-ordinary source try/catch, not a magical error Hook or runtime retry.
+The Model returns Tool requests as data. Source chooses the Tool, invokes it,
+and decides whether another Model call is needed.
 
-Hooks cannot grant authority, hide evidence, mutate an undeclared global,
-select a fallback model, bulk-load Skills or perform an unrecorded effect.
+## 3. TypeScript
 
-## 4. Skills without context bloat
+```typescript
+import { Agent, Context, Model, Tool } from "@apxm/frontend";
 
-Associating Skills with the Agent, Company, Area/Department or Group only makes
-them discoverable. The initial prompt does not contain their bodies. It contains
-the minimal Skill-discovery Capability contract. The model or source searches,
-loads a small relevant set, and source explicitly projects selected content into
-the next model call.
+type Conversation = {
+  messages: readonly Message[];
+};
 
-Discovery is filtered by both association and the current principal/Agent
-policy. Knowing how to do something does not authorize the Capability that can
-do it.
+const ConversationContext = Context<Conversation>({ messages: [] });
+const SearchSkills = Tool<SkillQuery, readonly SkillSummary[]>(
+  SearchSkillsCapabilityRef,
+);
+const ReadSkill = Tool<SkillRef, SkillBody>(ReadSkillCapabilityRef);
+const CrmLookup = Tool<CrmLookupInput, CrmLookupResult>(CrmLookupCapabilityRef);
+const CreateTicket = Tool<CreateTicketInput, Ticket>(CreateTicketCapabilityRef);
+const SupportModel = Model<SupportRequest, SupportResponse>(
+  ExactSupportModelRef,
+);
 
-## 5. Generic iteration evidence
+export const Support = Agent<UserMessage, AgentReply, Conversation>({
+  context: ConversationContext,
+  async run(agent, incoming) {
+    for (;;) {
+      const summaries = await SearchSkills(
+        skillQueryFromContext(agent.context, incoming),
+      );
+      const selected = chooseRelevantSkills(summaries);
+      const skillContext: SkillBody[] = [];
+      for (const ref of selected) {
+        skillContext.push(await ReadSkill(ref));
+      }
 
-Compiler source maps identify the static loop without a conversational
+      let response = await SupportModel({
+        messages: agent.context.messages,
+        incoming,
+        skills: skillContext,
+        tools: [CrmLookup.schema, CreateTicket.schema],
+      });
+
+      response = await runRequestedTools(response);
+      agent.context = {
+        messages: [
+          ...agent.context.messages,
+          asMessage(incoming),
+          response.message,
+        ],
+      };
+      incoming = await agent.yield_({ content: response.content });
+    }
+  },
+});
+```
+
+The typed Tool dispatch is explicit:
+
+```typescript
+async function runRequestedTools(
+  initial: SupportResponse,
+): Promise<SupportResponse> {
+  let response = initial;
+  for (const request of response.toolRequests) {
+    let result: ToolResult;
+    switch (request.kind) {
+      case "crm.lookup":
+        result = await CrmLookup(request.arguments);
+        break;
+      case "ticket.create":
+        result = await CreateTicket(request.arguments);
+        break;
+    }
+    response = await SupportModel(withToolResult(response, request, result));
+  }
+  return response;
+}
+```
+
+Python and TypeScript goldens must capture equivalent typed loop intent, Tool
+dispatch, context flow, and yield/resume bindings. Rust must then select the
+same structural `ais.loop` and closed effect/composition operations for both.
+
+## 4. Context is explicit
+
+Each iteration explicitly decides:
+
+- what prior messages remain in `agent.context`;
+- which Skills are searched and read;
+- which selected Skill content reaches the Model;
+- which Tool schemas are offered;
+- which Tool requests are executed;
+- how Model and Tool results update Context; and
+- whether to yield, return, or continue.
+
+Context carries information, never grants. Associating Skills with an Agent,
+Company, Area/Department, or Group makes them discoverable; it does not inject
+their bodies. Tool calls still require complete Auth-owned Capability Grants.
+
+## 5. Why there is no `AgentLoop`
+
+The Python `while` and TypeScript `for (;;)` are the Agent loop. The frontend
+captures typed loop/CFG intent and Rust emits `ais.loop`. A separate
+`AgentLoop` import would expose lowering vocabulary and make ordinary control
+flow harder to read.
+
+`agent.yield_(output)` is the one explicit stateful boundary. It commits the
+already assigned `agent.context`, returns the plain output, and binds the next
+typed invocation input when the Program Instance resumes. It is compiler-
+recognized structural syntax, not a sixth effect operation.
+
+## 6. Events
+
+A Tool or Capability can return a typed `Event[T]`. Waiting on it parks the
+same Program Invocation; it does not yield a reply, start another loop, or ask
+the frontend runtime to poll.
+
+The proposed Python spelling is:
+
+```python
+from apxm_program import Event
+
+RequestApproval = Tool[ApprovalRequest, Event[Approval]](
+    RequestApprovalCapabilityRef
+)
+
+pending = await RequestApproval(ApprovalRequest(change=change))
+approval = await pending.wait(timeout=ApprovalTimeout)
+if approval.decision is Decision.DENIED:
+    return AgentReply("The requested change was not approved.")
+```
+
+The equivalent TypeScript spelling is:
+
+```typescript
+import { Event } from "@apxm/frontend";
+
+const RequestApproval = Tool<ApprovalRequest, Event<Approval>>(
+  RequestApprovalCapabilityRef,
+);
+
+const pending = await RequestApproval({ change });
+const approval = await pending.wait({ timeout: ApprovalTimeout });
+if (approval.decision === Decision.Denied) {
+  return { content: "The requested change was not approved." };
+}
+```
+
+The Tool call lowers through `capability.invoke`; `.wait(...)` lowers through
+`await.event`. Event creation, fulfillment, timeout, cancellation, and replay
+remain typed durable contracts rather than conversation-specific behavior.
+
+## 7. Hooks
+
+Hooks are statically bound typed callbacks. The callback parameter is still
+the inferred `agent`; ordinary source does not import `AgentFacade`. Context is
+updated by assigning `agent.context`, and error recovery remains authored
+try/catch rather than a special error Hook.
+
+The proposed focused Hook spelling keeps the target and owning Agent explicit:
+
+```python
+from apxm_program import Hook
+
+@Hook.before(agent=Support, target=SupportModel)
+async def AddCurrentPolicy(agent):
+    agent.context = agent.context.with_policy(current_policy(agent.identity))
+```
+
+```typescript
+import { Hook } from "@apxm/frontend";
+
+export const AddCurrentPolicy = Hook.before({
+  agent: Support,
+  target: SupportModel,
+  async run(agent) {
+    agent.context = withPolicy(
+      agent.context,
+      currentPolicy(agent.identity),
+    );
+  },
+});
+```
+
+The exact binding spelling is frozen with the frontend D0 decision. The
+semantics are already fixed: the binding is static, order is deterministic,
+Context changes are explicit values, and a Hook effect uses the same admitted
+Model/Capability path as ordinary source.
+
+Hooks cannot grant authority, hide evidence, mutate undeclared global state,
+select a fallback model, bulk-load Skills, or perform an unrecorded effect.
+
+## 8. Specialists and structured work
+
+Conversation does not change Agent composition. A loop may invoke one exact
+specialist or run independent attached specialists in a `TaskGroup`; every
+child is typed, joined, independently admitted, and visible in evidence.
+
+```python
+review = await SecurityReviewer.invoke(ReviewRequest(change=change))
+```
+
+```typescript
+const review = await SecurityReviewer.invoke({ change });
+```
+
+There is no implicit handoff of Context, Skills, grants, identity, or model
+history. The parent supplies typed input and explicitly uses the plain typed
+result.
+
+## 9. Exact model execution, including APXM-vLLM
+
+Agent source declares an exact portable `ModelTargetRef`; it does not import a
+provider SDK or name an endpoint. Admission binds that target to one exact
+deployment and inference-port implementation. If the admitted implementation
+is APXM-vLLM, one source Model call follows this path:
+
+```text
+SupportModel(request)
+  -> model.call / ais.model_call
+  -> Model NodeExecution and stable effect/request identity
+  -> exact admitted APXM-vLLM adapter
+  -> response or stream + provider-native usage
+  -> authoritative execution commit and evidence
+```
+
+The adapter may translate backend-neutral compiler/runtime analysis into
+supported vLLM graph, prefix-cache, or priority hints. It cannot change the
+request meaning, execute Tool requests, call the Model again, substitute a
+different deployment, or mutate Context. Tool requests return as typed data to
+the authored loop shown above.
+
+This separation gives APXM both portability and performance: the Agent remains
+provider-neutral, while an exact backend can exploit proven optimization hints
+without creating another programming model.
+
+## 10. Full observability
+
+Authors should not add logging calls to reconstruct program semantics. The
+compiler and runtime retain the correlation needed to inspect the execution:
+
+| Author concept | Inspectable execution evidence |
+| --- | --- |
+| Agent source and loop | source span, static region, dynamic loop occurrence, committed iteration |
+| Model call | NodeExecution, attempt, exact admitted binding, request/output refs, usage, latency, outcome |
+| Tool/Capability call | distinct NodeExecution, grant/effect identity, request/result refs, approval and failure |
+| Hook | binding, scope, phase, order, execution, Context before/after, replacement result |
+| Event wait | event ref, park, fulfillment/expiry/cancellation, wake and resume |
+| Context assignment | typed before/after refs and committed transition |
+| specialist invocation | parent/child instance and invocation lineage |
+| compiler optimization | input/output artifact identity, pass provenance, preserved source/static-node correlation |
+
+Authoritative Runtime Evidence owns execution history. Traces, streams, vLLM
+metrics, logs, and backend cache/scheduler telemetry may enrich inspection but
+cannot manufacture a completed iteration or override a committed outcome.
+Studio projects the allowed evidence back onto the same generated Python or
+TypeScript source; it does not invent conversational semantics.
+
+## 11. Generic iteration evidence
+
+Compiler source maps identify the static source loop without a conversational
 annotation. Runtime emits `LoopIterationCompleted` only when the body and
-back-edge commit atomically. The fact carries the static loop id, dynamic
-occurrence id, zero-based iteration index, and causal execution ids. A failed
-or rolled-back body emits no completion.
+back-edge commit atomically. The fact identifies the static loop, dynamic
+occurrence, zero-based iteration, Program Invocation, and causal node
+executions. Failed, cancelled, or rolled-back bodies emit no completion fact.
 
-Studio shows generic loop iterations and the nodes within them. Example-local
-copy may call one completed conversational iteration a “turn,” but core Studio
-has no `Turn` model.
+Studio may describe a completed example iteration as a “turn” in example copy,
+but APXM core and Studio have no `Turn` product model.
 
-If a model returns an attributed reasoning/thinking field, Studio may display
-it under provider and policy rules. It never fabricates hidden reasoning.
-
-## 6. Failure rules
+## 12. Failure rules
 
 - A failed node follows authored try/catch or terminates with a typed failure.
-- A model send with uncertain result becomes `ModelOutcomeUnknown`; no second
-  model is selected.
+- A Model send with uncertain outcome becomes `ModelOutcomeUnknown`; no second
+  Model is selected.
 - A cancelled or rolled-back loop body emits no `LoopIterationCompleted`.
-- Yield preserves the compiler-owned continuation and explicit next context.
+- Yield preserves the compiler-owned continuation and explicit next Context.
 - Return completes the Program Instance and returns a plain typed value.

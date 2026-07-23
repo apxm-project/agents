@@ -1,62 +1,34 @@
 # apxm-backends
 
-LLM providers, storage backends, and prompt templates.
+- Status: pre-canonical provider/backend implementation inventory
+- Canonical inference seam: [`apxm-inference`](../inference/)
+- Canonical execution boundary:
+  [ADR-0011](../../../docs/adr/0011-agent-program-execution-is-one-end-to-end-spine.md)
 
-## Overview
+This crate contains the current OpenAI, Anthropic, Google, Ollama, vLLM, mock,
+storage, prompt, registry, retry, and observability implementations. It is
+useful migration and adapter evidence, but its unified registry/provider
+routing model is not canonical Agent Program semantics.
 
-`apxm-backends` consolidates three backend systems used by the runtime: a unified LLM provider interface supporting 6 protocols, pluggable storage backends, and compile-time embedded prompt templates via MiniJinja.
+Canonical v1 source contains a typed `Model` bound to one exact
+`ModelTargetRef`. Server-owned admission materializes one exact
+target/deployment/port binding. Runtime calls the injected
+`ModelInferencePort`; it never searches this crate's registry, selects the
+first healthy provider, substitutes a model, or falls back after failure.
 
-## Module Structure
+Each production provider implementation must enter through its own exact
+Implementation Descriptor and Port Contract. It must preserve request/effect
+identity, typed Model Context, Tool schemas, streaming, cancellation, safe
+retry/reconciliation, outcome-unknown, native usage, and evidence semantics.
+Test mocks remain explicit dependencies and never become production fallbacks.
 
-| Module | Description |
-|--------|-------------|
-| `llm/` | Unified LLM provider interface |
-| `llm/backends/openai` | OpenAI-compatible API backend |
-| `llm/backends/anthropic` | Anthropic Messages API backend |
-| `llm/backends/google` | Google Gemini API backend |
-| `llm/backends/ollama` | Ollama local inference backend |
-| `llm/backends/vllm` | vLLM backend with graph-aware prefix hints |
-| `llm/backends/mock` | Deterministic mock backend for testing and benchmarks |
-| `llm/catalog` | Built-in provider and model metadata owned by the backend layer |
-| `llm/config` | Backend registration and model configuration types |
-| `llm/protocol` | Typed backend wire protocols and endpoint normalization |
-| `llm/registry/` | `LLMRegistry` with health monitoring and model resolution |
-| `llm/provider` | `Provider` enum plus `ProviderId` / `ProviderProtocol` routing |
-| `llm/assembler` | Request assembly and message formatting |
-| `llm/rate_limit` | Per-provider rate limiting |
-| `llm/retry/` | Exponential backoff with jitter and error classification |
-| `llm/schema/` | JSON schema validation and output parsing |
-| `llm/observability/` | `MetricsTracker`, `RequestTracer`, aggregated metrics |
-| `storage/` | Pluggable storage backends (SQLite, in-memory, KV, embedder) |
-| `prompts/` | MiniJinja template rendering from embedded templates |
+## APXM-vLLM
 
-## Provider Protocols (6)
+The current `llm/backends/vllm` module records graph-aware prefix and scheduling
+experiments. The canonical first-party adapter is owned by the adapters plane
+and implements `ModelInferencePort` for an exact APXM-vLLM binding. Agent
+source/AIR remains provider-neutral; backend-specific hints are admitted
+implementation metadata whose effect and telemetry must be observable.
 
-| Protocol | Description |
-|----------|-------------|
-| OpenAI | OpenAI Chat Completions API (and compatibles) |
-| Anthropic | Anthropic Messages API |
-| Google | Google Gemini API |
-| Ollama | Ollama local inference |
-| Vllm | vLLM with graph-aware prefix caching hints |
-| Mock | Deterministic responses for testing |
-
-## Key Exports
-
-- `LLMRegistry` -- provider registry with health monitoring
-- `BUILTIN_PROVIDERS` / `BUILTIN_MODELS` -- backend-owned provider and model catalogs for generated frontends
-- `Provider` / `ProviderId` / `ProviderProtocol` -- provider instances, built-in ids, and protocol routing
-- `LLMRequest` / `LLMResponse` -- request/response types
-- `RequestBuilder` -- fluent request construction
-- `GenerationConfig` -- temperature, max_tokens, top_p, etc.
-- `StreamChunk` -- streaming response chunks
-- `MetricsTracker` / `RequestTracer` -- observability
-- `BackendFactory` -- creates backends from `ProviderProtocol`
-- `StorageBackend` -- trait for pluggable storage
-- `render_prompt` / `render_inline` -- template rendering
-
-## Dependencies
-
-| Crate | Purpose |
-|-------|---------|
-| apxm-core | Error types, Value type, shared runtime primitives |
+See the [vLLM boundary](../../../docs/backends/vllm.md) and the
+[source-first Agent frontend master plan](../../../docs/agents/simple-agent-authoring-frontend-plan.md).

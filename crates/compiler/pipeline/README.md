@@ -1,159 +1,131 @@
 # apxm-compiler
 
-MLIR-based compiler for the APXM graph contract and AIS MLIR dialect.
+- Current status: canonical AIR verification slice plus pre-canonical MLIR/pass
+  infrastructure
+- Target status: design governed by the Agent Program contract and frontend
+  D0/P1/P2 gates
+- Target plan:
+  [Source-first Agent frontend master plan](../../../docs/agents/simple-agent-authoring-frontend-plan.md)
+- Normative execution boundary:
+  [ADR-0011](../../../docs/adr/0011-agent-program-execution-is-one-end-to-end-spine.md)
 
-## Overview
+`apxm-compiler` is the Rust owner of registered AIS MLIR lowering and compiler
+optimization. Python, TypeScript, Studio, CLI, and Server must not implement a
+second AIR printer, AIS selector, pass pipeline, or artifact builder.
 
-`apxm-compiler` compiles APXM workflows through an MLIR-based pipeline. Rust,
-Python, and TypeScript frontends converge on `FrontendGraph`; this crate
-validates that DTO and owns the sole AIR printer. Canonical AIR then lowers to
-the AIS MLIR dialect, runs the resolved pass pipeline, and produces executable
-`.apxmobj` artifacts.
+## Target compiler path
 
-```
-Rust / Python / TypeScript authoring
-     ↓ FrontendGraph
-Rust AirModule / AirProgram validator + printer
-     ↓ canonical .air text
-     ↓ Module::parse()
-MLIR in memory
-     ↓ PassManager::run() [configured pass list via FFI]
-Optimized MLIR
-     ↓ apxm_codegen_emit_artifact()
-ExecutionDag
-     ↓ Artifact::to_bytes()
-.apxmobj (binary)
-```
-
-The crate has two layers:
-- **Rust** (`src/`) -- FFI wrappers, `AirModule` builder, pass management, codegen
-- **C++/MLIR** (`mlir/`) -- AIS dialect definition, optimization passes, artifact emitter
-
-## Module Structure
-
-| Module | Description |
-|--------|-------------|
-| `canonical.rs` | Verified `apxm.air.v1` to deterministic MLIR lowering |
-| `api/context` | `Context` wrapping MLIR context and dialect registration |
-| `api/module` | `Module` for parsed MLIR modules |
-| `api/pipeline` | `Pipeline` orchestrating parse, optimize, and codegen stages |
-| `codegen/artifact` | Artifact generation from optimized MLIR |
-| `codegen/` | Code generation utilities |
-| `passes/pipeline` | Pass pipeline configuration and ordering |
-| `passes/manager` | `PassManager` for pass registration and execution |
-| `passes/profile` | `ExecutionProfile` / `NodeProfile` for profiling |
-| `passes/metrics` | `PassMetrics` / `PipelineDiagnostics` for compilation statistics |
-| `passes/registry` | Pass discovery (`list_passes`, `find_pass`, `get_pass_count`) |
-| `passes/validate_model_allowlist` | Model allowlist validation |
-| `token_estimate` | Token count estimation for prompt budgeting |
-| `ffi/` | Bindgen-generated FFI to the C++ MLIR library |
-
-## MLIR Passes
-
-The compiler exposes these MLIR passes. The default O-level pipelines only use
-the production-safe subset; semantic rewrites remain explicit until their typed
-contracts are enforced.
-
-- `normalize` -- canonical form normalization
-- `build-prompt` -- materializes templates only after explicit positional prompt roles establish input channels
-- `template-specialization` -- folds constant `user` prompt inputs without collapsing protected channels
-- `dead-context-elimination` -- removes only unused `user` context and retains protected channels
-- `scheduling` -- emits backend-agnostic scheduling metadata
-- `shared-prefix-analysis` -- annotates existing prefix-reuse opportunities
-- `assign-priority` -- priority annotation for scheduling
-- `dspy-optimize` -- fail-closed offline evaluation pass; public production compiler paths reject it
-- `unconsumed-value-warning` -- opt-in diagnostic for unused produced values
-- `fuse-ask-ops` -- explicit-only ASK fusion experiment; not a production claim
-- `prompt-canonicalization` -- explicit-only prefix-cache layout experiment
-- `condense-ops` -- explicit-only memory batching experiment
-- `schema-narrowing` -- explicit-only field narrowing experiment
-- canonicalizer and symbol-DCE (standard MLIR passes); generic CSE remains explicit-only
-
-## MLIR Dialect
-
-The AIS MLIR dialect is defined in `mlir/include/ais/Dialect/AIS/IR/`:
-
-| File | Defines |
-|------|---------|
-| `AISDialect.td` | Dialect registration (`ais` namespace) |
-| `AISOps.td` | AIS operations as MLIR ops |
-| `AISTypes.td` | Type system (`!ais.token`, `!ais.handle`) |
-| `AISAttributes.td` | Operation attributes |
-
-TableGen is generated from the AIS authoring/codegen source:
-``` 
-crates/machine/ais/src/operations/definitions.rs  →  tablegen.rs  →  AISOps.td
-crates/machine/ais/src/attrs.rs                   →                  AISAttributes.td
+```text
+typed Python / TypeScript / Studio-generated source
+  -> native AST + immutable bound/typed source tree
+  -> FrontendGraph
+  -> closed validation
+  -> typed CFG, SSA, regions, block arguments, and context flow
+  -> canonical AIR
+  -> registered ais.* MLIR operations with complete operands/results
+  -> semantics-preserving analyses and transformations
+  -> verified immutable artifact + diagnostics + optimization provenance
 ```
 
-### C++ Implementation
+The compiler may derive backend-neutral scheduling, prefix-reuse, cost, or
+resource analysis. It cannot select a provider, endpoint, credential,
+deployment, grant, Runtime Profile, or fallback. If admission later binds a
+Model target to APXM-vLLM, the admitted adapter may translate supported
+backend-neutral metadata into vLLM graph/prefix/priority hints without changing
+Agent semantics.
 
-| File | Purpose |
-|------|---------|
-| `mlir/lib/Dialect/AIS/IR/AISDialect.cpp` | Dialect registration |
-| `mlir/lib/Dialect/AIS/IR/AISOps.cpp` | Operation definitions and verifiers |
-| `mlir/lib/Dialect/AIS/IR/AISTypes.cpp` | Type system implementation |
+## Current baseline reality
 
-### C API (FFI Bridge)
+At the pinned frontend-plan baseline, the complete target path above is not yet
+wired:
 
-| File | Purpose |
-|------|---------|
-| `mlir/lib/CAPI/Module.cpp` | Parse / verify / to_string |
-| `mlir/lib/CAPI/PassManager.cpp` | Run passes |
-| `mlir/lib/CAPI/CodeGen.cpp` | Emit artifact |
+- [`apxm-program::lower`](../../machine/program/src/lower.rs) verifies the
+  current shallow FrontendGraph and copies semantic, structural, operand, and
+  context records almost field-for-field into AIR.
+- [`canonical.rs`](src/canonical.rs) proves deterministic AIR text emission and
+  MLIR parsing, but emits semantic operations as unregistered `apxm.*` records
+  with `() -> ()` and flat structural token records.
+- The compiler MLIR context currently
+  [permits unregistered dialects](mlir/include/ais/CAPI/Internal.h), so that
+  parse/verify test does not prove registered-AIS conformance.
+- The generated registered semantic operations in
+  [`AISOps.semantic.generated.td`](mlir/include/ais/Dialect/AIS/IR/AISOps.semantic.generated.td)
+  currently declare a result token and no complete semantic operands.
+- Native Python and Node bridges call `apxm-program` to return AIR JSON or an
+  artifact containing AIR; they do not yet drive this crate's registered AIS
+  emitter and optimized artifact path.
 
-Rust calls these via `src/ffi/raw.rs` (bindgen-generated).
+The remaining MLIR passes, legacy graph builders, `ExecutionDag` codegen, and
+prototype `.apxmobj` machinery are implementation evidence to reconcile or
+replace. Their presence is not proof that the target FrontendGraph → registered
+AIS → artifact spine is connected.
 
-## Codegen
+## Target responsibilities
 
-Lowers optimized MLIR into an `ExecutionDag`, then serializes as `.apxmobj`:
-```
-Optimized MLIR  →  apxm_codegen_emit_artifact() [FFI]  →  ExecutionDag  →  Artifact bytes
-```
+The completed compiler owns:
 
-`ArtifactEmitter.cpp` walks the MLIR and produces the DAG. `codegen/artifact.rs` handles wire format v3 serialization. `apxm-artifact` defines the binary container format.
+1. closed FrontendGraph decoding, type/effect verification, and canonicalization;
+2. deterministic CFG/SSA construction, including loop-carried Context,
+   structured joins, try/catch, yield/resume, return, and static Hook wrappers;
+3. selection of the five semantic AIR operations and construction of the
+   closed structural AIS family;
+4. registered AIS emission with every contract operand, result, attribute,
+   region, block argument, and source mapping preserved;
+5. optimization legality, analysis invalidation, deterministic pass order, and
+   inspectable provenance;
+6. artifact validation, digest binding, requirements, source maps, and typed
+   diagnostics; and
+7. stable correlation from authored source through static nodes to runtime
+   NodeExecution/effect evidence.
 
-## Prompt input roles
+## Optimization law
 
-Every ASK, THINK, or REASON node with prompt inputs carries an explicit
-`input_roles` array positional with `input_names` and context operands. The
-allowed roles are `user`, `system`, `dependency_only`, `tool_context`, and
-`control`. Compiler transformations do not infer roles from input names;
-they preserve protected roles and only specialize or prune `user` inputs.
-Frontend AIR validation rejects a context-bearing LLM node without this
-contract, and artifact validation rejects malformed role arrays before an
-artifact is published.
+An optimization is legal only when it preserves:
 
-DSPy prompt optimization is not available from public production compiler
-entry points. Offline evaluation owns the complete request, backend evidence,
-and optimizer response; missing or incomplete DSPy input fails closed.
+- typed inputs, outputs, Context, and control/data dependencies;
+- Model, Capability, Event, Hook, and composition effects and their order;
+- exact requirements, authority checks, budgets, cancellation, and durability;
+- retry/idempotency and outcome-unknown semantics;
+- source/static-node correlation and authoritative evidence meaning; and
+- the observable result under every admitted runtime profile.
 
-## Key Exports
+Parallel execution is derived only from proven independence or an authored
+structured task scope. The compiler never invents a model/Tool loop, Agent
+handoff, provider route, retry policy, or detached task.
 
-- `AirModule` / `AirNode` / `AirEdge` / `AirParam` -- graph builder types
-- `Context` -- MLIR context wrapper
-- `Module` -- parsed MLIR module
-- `Pipeline` -- configurable compilation pipeline
-- `PassManager` -- pass registration and execution
-- `ExecutionProfile` / `NodeProfile` -- profiling data
-- `PipelineDiagnostics` / `PassMetrics` -- compilation statistics
+## Primary modules
 
-## Dependencies
+| Path | Responsibility |
+| --- | --- |
+| `src/canonical.rs` | Current AIR → deterministic MLIR verification slice; target registered AIS emitter |
+| `src/api/` | MLIR context, module, and pipeline wrappers |
+| `src/passes/` | Pass planning, registration, diagnostics, and metrics |
+| `src/codegen/` | Prototype optimized-MLIR artifact machinery to reconcile with canonical artifact ownership |
+| `mlir/include/ais/Dialect/AIS/IR/` | Registered AIS dialect types, attributes, and generated operations |
+| `mlir/lib/Dialect/AIS/` | AIS operation/pass implementations |
+| `mlir/lib/CAPI/` | Focused Rust/C++ MLIR boundary |
 
-| Crate | Purpose |
-|-------|---------|
-| apxm-ais | Build-time authoring/codegen source for TableGen and pass descriptors |
-| apxm-core | Shared downstream graph contract, error types, compiler options, constants |
-| apxm-artifact | Artifact serialization |
+AIS operation definitions remain Rust-owned and generate TableGen. Do not edit
+generated operation files to conceal source/generator drift.
 
-## Requirements
+## Verification
 
-- LLVM 22 / MLIR 22 (managed by Dekk)
-- CMake 3.20+
-- C++17 compiler
-
-## Building
+Use the repository Dekk surface:
 
 ```bash
-dekk agents build
+dekk agents test-program
+dekk agents test-compiler
+dekk agents check-frontend-codegen
 ```
+
+After an AIS definition or TableGen signature change:
+
+```bash
+dekk agents build-dialect
+dekk agents codegen
+```
+
+Target completion additionally requires registered-only MLIR negative tests,
+FrontendGraph/AIR/AIS/artifact goldens, Python/TypeScript parity, optimization
+differential tests, runtime/evidence conformance, exact inference-adapter
+conformance, and absence scans for the retired frontend/compiler paths.

@@ -1,36 +1,35 @@
-# apxm_program — generic Python Agent Program frontend
+# apxm_program — Python Agent authoring frontend
 
-`apxm_program` exposes generic Agent Program, Hook, Context, composition,
-structured-control-flow, source-map, and native compiler-bridge APIs. It
-records `apxm.frontend-graph.v1`; the Rust compiler alone validates and lowers
-that graph to AIR.
+- Current implementation: low-level conformance recorder
+- Target syntax: design proposal; not implemented at the pinned frontend
+  baseline
+- Target guide:
+  [Author an Agent](../../../../docs/guides/creating-an-agent-program.md)
 
-Structured authoring uses `branch`, `switch`, `loop`, `parallel`,
-`try_catch`, `throw_region`, `return_region`, `yield_region`, and joined
-`structured_task` scopes.
-
-## Quick start
-
-```bash
-pip install apxm
-```
+The target Python experience uses decorators and typed values:
 
 ```python
-import apxm_program
+from apxm_program import Agent, Model
 
-program = apxm_program.AgentProgram(
-    program_id="hello",
-    input_type_ref="Input",
-    output_type_ref="Output",
-    context_type_ref="Context",
-)
-program.loop(
-    "region.loop",
-    lambda body: body.model_call("node.greet", "model.default"),
-)
-program.return_region("region.return")
-print(program.canonical_air_json(), end="")
+SummarizerModel = Model[SummaryRequest, Summary](ExactSummarizerModelRef)
+
+
+@Agent(input=SummaryRequest, output=Summary)
+async def Summarizer(agent, request):
+    return await SummarizerModel(request)
 ```
+
+`Agent`, `Context`, `Tool`, and `Model` cover ordinary programs;
+`Capability`, `Event`, `Hook`, and `TaskGroup` are focused extensions. Python
+parses the module with the host AST, binds recognized APXM symbols/types into
+an immutable frontend-internal typed source tree, and deterministically
+traverses it into FrontendGraph. It never executes the Agent body to discover
+behavior and never prints AIR/MLIR.
+
+The current package still exposes imperative `AgentProgram` and region/node
+recorders used by repository parity fixtures. Those APIs are baseline evidence,
+not the intended author surface, and the full replacement keeps no compatibility
+alias for them.
 
 ## Compiling workflows
 

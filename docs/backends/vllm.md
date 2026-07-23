@@ -1,14 +1,29 @@
 # vLLM backend (concept)
 
+- Status: current graph-aware fork/operator contract plus canonical adapter
+  boundary; not an Agent frontend or runtime contract
+- Canonical execution boundary:
+  [ADR-0011](../adr/0011-agent-program-execution-is-one-end-to-end-spine.md)
+- Frontend connection:
+  [Source-first Agent frontend master plan](../agents/simple-agent-authoring-frontend-plan.md#13-one-connected-execution-including-vllm)
+
 This document defines the **contract** between APXM and the `apxm-project/vllm`
 fork. In the coordinator workspace APXM resolves it at `workspace/vllm/`.
 It is intentionally not a runbook — operational procedures
 (start, scale, log, probe) live in
 [`docs/backends/model-zoo.md`](model-zoo.md).
 
+Agent source never names vLLM, an endpoint, or a backend registry. It names an
+exact portable Model target. Admission may bind that target to the first-party
+APXM-vLLM `ModelInferencePort` implementation; the runtime then carries stable
+NodeExecution/effect/request identity through the adapter and commits the
+result and native usage as canonical evidence. The graph-aware HTTP routes and
+hints described below are implementation/performance behavior, not AIR
+operations or permission to change Model semantics.
+
 ## What APXM gets from the fork
 
-The fork (`https://github.com/apxm-project/vllm`, branch `apxm`) is a
+The fork (`https://github.com/apxm-project/vllm`) is a
 thin patch stack on upstream vLLM that adds the **graph-aware HTTP
 surface** APXM dispatches against.
 

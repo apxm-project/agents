@@ -2,14 +2,27 @@
 
 ## Why APXM?
 
-APXM compiles agent workflows into optimized execution plans. Instead of writing
-imperative coordination code, you declare *what* your agents should do and the
-compiler figures out *how* to run it efficiently:
+APXM lets authors write readable typed Agents while retaining the complete
+structure needed to compile, optimize, govern, execute, and explain them:
 
-- **Implicit parallelism** -- independent nodes run concurrently without manual threading
-- **Compiler optimizations** -- prompt construction, dead context elimination, template specialization, scheduling hints, and execution metrics
-- **Multi-agent coordination** -- native spawn, communicate, and team primitives
-- **Multi-provider routing** -- assign the right model to each task (fast, powerful, local)
+- **Simple source** — Python and TypeScript use `Agent`, `Context`, `Tool`,
+  `Model`, Events, Hooks, typed composition, and ordinary control flow.
+- **Compiler understanding** — one FrontendGraph captures types, values,
+  dependencies, effects, Context flow, regions, loops, and source spans.
+- **Safe optimization** — the Rust/AIS pipeline may optimize only when program
+  meaning, authority, effect ordering, durability, and evidence correlation are
+  preserved.
+- **Exact execution** — Agent composition uses `new`/`invoke`; Models and
+  Capabilities execute only through exact admitted ports, without hidden
+  routing, fallback, or Tool loops.
+- **Full observability** — source, artifact, Program Invocation, loop
+  occurrence, NodeExecution, attempt, effect, Context, usage, output, and
+  failure evidence remain joinable.
+
+A conversational Agent is therefore just one repository example: an ordinary
+Agent with an authored loop, explicit Context, Model/Tool calls, and
+yield/resume. Events, Hooks, specialists, and structured task groups can be
+added using the same generic frontend.
 
 ## Quick Start
 
@@ -32,23 +45,23 @@ Required:
 
 Optional, depending on the example:
 
-- A registered LLM backend for examples that execute `ask`, `think`, or
-  `reason` nodes against a real model.
-- Generated typed ACP profile imports for examples that spawn coding agents. Verify
+- An exact admitted inference binding for an example that executes
+  `model.call` against a real model.
+- Generated typed ACP profile imports for examples that invoke external coding
+  agents through a Capability. Verify
   them with `dekk agents agent list` and `dekk agents agent test <name>`.
 - Node/npm plus the relevant authenticated agent CLI when using APXM ACP
   profiles. The checked-in `claude` profile launches
   `npx -y @agentclientprotocol/claude-agent-acp@^0.24.2`; the checked-in
   `codex` profile launches `npx -y @zed-industries/codex-acp@^0.16.0`.
-- The APXM vLLM fork for `self-hosted/vllm_graph_smoke.py`; see
-  `docs/backends/vllm.md`.
+- The APXM-vLLM implementation when an exact admitted Model binding selects it;
+  see `docs/backends/vllm.md`. Agent source remains provider-neutral.
 - `jq` and `rg` only for inspection/reporting commands that mention
   them.
 
-For backend-free validation, prefer compile-only checks or examples that set
-`mock=True` in Python. Do not bake a model id into a public example; register a
-backend with `dekk agents backend ...` and select it from the APXM backend
-registry.
+For backend-free validation, prefer compile-only checks and deterministic
+contract fakes. Test fakes are explicit test dependencies, never production
+fallbacks.
 
 Canonical examples compile as source packages through the explicit bridge:
 
@@ -62,17 +75,20 @@ dekk agents compile-service-canonical <source-package> > hello.air.json
 
 ## Repository examples
 
-These author against the canonical `apxm_program` (Python) / `@apxm/frontend`
-(TypeScript) Agent Program APIs — `AgentProgram`, `ConversationalAgent`,
-Hooks, and Context:
+The current `agents/conversational` and `agents/gao` sources are low-level
+conformance scaffolds over `apxm_program` (Python) and `@apxm/frontend`
+(TypeScript). They are executable baseline evidence, not the intended teaching
+API. The reviewed target is the paired
+[source-first guide](../docs/guides/creating-an-agent-program.md).
 
 1. **[agents/conversational/](agents/conversational/)** -- Equivalent Python
-   and TypeScript `ConversationalAgent` programs over the installed generic
-   frontends; the parity high-water mark. Validate with
+   and TypeScript generic Agent Programs organized by an example-local
+   `ConversationalAgent` helper. Validate parity with
    `dekk agents test-frontend-examples`.
 2. **[agents/gao/](agents/gao/)** -- TypeScript-only Agent Program example
-   that specializes `ConversationalAgent` with Capability calls, specialist
-   composition, static Hooks, and `await.event`.
+   that specializes the example-local helper with Capability calls, specialist
+   composition, static Hooks, and `await.event`. Gao has no package, compiler,
+   runtime, Server, or Studio meaning.
 3. **[agents/coder/](agents/coder/)** and
    **[agents/coder-fixture/](agents/coder-fixture/)** -- ACP coding-agent
    integration examples.
@@ -82,5 +98,5 @@ Hooks, and Context:
 
 A retired raw-authoring example corpus (`python/`, `agents/explorer/`) that
 imported removed `apxm` package symbols (`GraphRecorder`, `GraphBuilder`,
-`compile`, `Agent`) has been removed. It predated the canonical
-`apxm_program` API and could not run.
+`compile`, `Agent`) has been removed. It predated the current
+`apxm_program` conformance scaffold and could not run.
