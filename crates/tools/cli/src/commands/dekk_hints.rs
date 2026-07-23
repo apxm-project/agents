@@ -18,6 +18,4 @@ pub const BACKEND_ADD_OPENAI: &str =
     "dekk agents backend add openai --type cloud --protocol openai";
 pub const BACKEND_ADD_OLLAMA: &str = "dekk agents backend add ollama --protocol ollama";
 pub const TOOL_ADD_WITH_DESCRIPTION: &str = "dekk agents tool add <name> --description \"...\"";
-#[cfg(not(feature = "driver"))]
-pub const WORKFLOW_RUN: &str = "dekk agents workflow run ...";
 pub const VLLM_ENABLE_SERVED_MODEL: &str = "dekk agents vllm enable <SERVED_MODEL_ID>";

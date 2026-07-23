@@ -717,12 +717,17 @@ async fn drive_from(
                             }
                         })?;
                         if let Some(profile) = capability_ref.strip_prefix("external-agent:") {
+                            let session_ref = operand_str(op, "external_agent_session").ok_or_else(
+                                || ExecutionError::MissingOperand {
+                                    node_id: op.node_id.clone(),
+                                    operand: "external_agent_session",
+                                },
+                            )?;
                             let outcome = ports
                                 .external_agent
                                 .prompt(AcpPromptRequest {
                                     effect_ref: op.node_id.clone(),
-                                    session_ref: operand_str(op, "external_agent_session")
-                                        .unwrap_or_default(),
+                                    session_ref,
                                     profile_ref: profile.to_string(),
                                     prompt: String::new(),
                                 })
