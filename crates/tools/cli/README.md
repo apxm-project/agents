@@ -49,13 +49,13 @@ Command-line interface for the APXM workflow compiler and runtime toolchain.
 
 ## Complex Work Paths
 
-Use `chat` for a conversational loop over `apxm-server`. By default it runs a
-direct server-side ASK turn. Pass `--agent claude` to make each turn spawn and
-communicate with an ACP Claude profile instead; `--agent-model` requests a
-specific model when the selected ACP profile supports model control:
+Use `chat` for a conversational loop over `apxm-server`. Pass `--agent <id>` to
+open a server-backed session (`POST /v1/agents/{id}/sessions`) and pipe stdin
+turns to it. The server address must be given explicitly via `--server <URL>`
+or `APXM_SERVER_BASE` (there is no hardcoded default):
 
 ```bash
-dekk agents chat --agent claude --agent-model claude-3-5-haiku-latest
+dekk agents chat --agent my-agent --server "$APXM_SERVER_BASE"
 ```
 
 ## Key Exports
