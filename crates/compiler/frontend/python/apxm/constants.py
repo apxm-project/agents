@@ -149,10 +149,6 @@ PYTHON_TOOL_MANIFEST_SCHEMA = "schema"
 # Mirror of crates/machine/ais/src/attrs.rs.
 INPUT_ROLES = "input_roles"
 
-# Legacy input name for a dynamic system-prompt binding. GraphRecorder emits a
-# matching `input_roles` entry with the `system` role for this binding.
-SYSTEM_PROMPT_INPUT = "__system"
-
 _g = globals()
 for _spec in _ops.ALL_OPERATIONS:
     _g[f"OP_{_spec.op}"] = _spec.op
