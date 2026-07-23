@@ -7,17 +7,13 @@
 //!
 //! # Overview
 //!
-//! The compiler processes AI operations through several stages:
-//! - Parses AI operation definitions (AIS DSL)
-//! - Builds intermediate representations (AIS MLIR dialect)
-//! - Applies optimization passes
-//! - Generates binary artifacts for runtime execution
+//! The compiler lowers canonical `apxm.air.v1` modules to the AIS MLIR
+//! dialect text through the C++ FFI bridge, then verifies the result.
 //!
 //! # Components
 //!
 //! - [`api`]: Interfaces for compiler interaction
-//! - [`passes`]: Optimization and transformation passes
-//! - [`codegen`]: Artifact generation
+//! - [`canonical`]: AIR → AIS MLIR lowering and verification
 
 #![allow(unsafe_code)]
 

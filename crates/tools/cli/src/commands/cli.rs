@@ -381,40 +381,6 @@ pub enum ProcessAction {
 }
 
 #[derive(Subcommand)]
-pub enum WorkflowAction {
-    /// Run a workflow file
-    Run {
-        /// Workflow file (.apxmw)
-        file: PathBuf,
-        /// Start the workflow in a detached APXM child process and return follow handles
-        #[arg(long)]
-        background: bool,
-        /// Workflow arguments as a JSON object for machine callers
-        #[arg(long, conflicts_with = "args")]
-        args_json: Option<String>,
-        /// Workflow arguments (name=value format)
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-        /// Explicit sessions root for this workflow run
-        #[arg(long)]
-        session_root: Option<PathBuf>,
-        /// Internal: exact workflow session directory to use
-        #[arg(long, hide = true)]
-        session_dir: Option<PathBuf>,
-    },
-    /// Validate a workflow file
-    Validate {
-        /// Workflow file (.apxmw)
-        file: PathBuf,
-    },
-    /// Show execution phases and critical path for a workflow file
-    Analyze {
-        /// Workflow file (.apxmw)
-        file: PathBuf,
-    },
-}
-
-#[derive(Subcommand)]
 pub enum CacheAction {
     /// Show cache statistics (hit/miss rates, size, entries)
     Stats,
