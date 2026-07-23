@@ -1,14 +1,31 @@
 # APXM Agent Program guides
 
-- Status: canonical target guides
+- Architectural status: canonical target semantics
+- Frontend syntax status: design proposal pending the D0 owner decision in the
+  frontend plan
 - Normative theory: [Program Execution Model](../pxm/theory.md)
 - Normative contract: [Agent Program composition and AIR](../agents/agent-program-composition-and-air-contract.md)
+- Frontend master plan: [Source-first Agent frontend](../agents/simple-agent-authoring-frontend-plan.md)
 
-These guides describe the accepted v1 programming model. The examples are
-contract-shaped target source used to create Python/TypeScript golden fixtures;
-they do not claim the prototype packages already expose the final spelling.
+These guides distinguish the accepted v1 programming model from the proposed
+short frontend spelling. The examples are contract-shaped target source used
+to create Python/TypeScript golden fixtures; they do not claim the current
+packages already expose the proposed API.
 Generated reference documentation becomes the syntax authority when the
 frontend contract is implemented.
+
+The frontend is the coding face of APXM: readable typed source becomes one
+statically analyzable and optimizable program, exact admitted execution, and
+source-correlated evidence. A conversational Agent is simply one example—an
+ordinary Agent with an authored loop, explicit Context, Model/Tool calls, and
+yield/resume. Events, Hooks, composition, and structured work use the same
+generic vocabulary. Exact inference implementations such as APXM-vLLM remain
+behind admitted ports and never create a second frontend or runtime model.
+
+Python decorators and TypeScript typed declaration factories are
+language-native projections of the same reviewed surface matrix. They bind to
+equivalent semantic-tree nodes and FrontendGraph intents; individual guides do
+not define independent decorator names or behavior.
 
 Installable frontends expose generic Agent Program APIs only. Conversational
 Agent and Gao are repository examples; an example-local helper is not a package
@@ -16,8 +33,8 @@ export or core contract.
 
 Reading order:
 
-1. [Create an Agent Program](creating-an-agent-program.md)
-2. [Build the conversational repository example](creating-a-conversational-agent.md)
+1. [Author an Agent](creating-an-agent-program.md)
+2. [Build a conversational Agent](creating-a-conversational-agent.md)
 3. [Compose Agent Programs](composing-agent-programs.md)
 4. [Use external coding agents through ACP](using-external-coding-agents-over-acp.md)
 5. [Choose models and understand future routing](model-selection-and-future-routing.md)

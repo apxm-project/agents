@@ -6,6 +6,11 @@
 > subprocess compilation, or the current identity conflation into target work.
 > See the [canonical target contract](agent-program-composition-and-air-contract.md)
 > and [ADR-0014](../adr/0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md).
+> The proposed ergonomic `Agent`/`Context`/`Tool`/`Model` syntax, Python
+> decorators, TypeScript declaration factories, and compiler representation
+> stack are governed by the
+> [source-first frontend master plan](simple-agent-authoring-frontend-plan.md),
+> not by the current packaging walkthrough below.
 
 The current implementation stores an Agent Program Source Bundle in one folder
 with an authored `agent.toml`, source files, and a generated `integrity.toml`
@@ -170,17 +175,16 @@ dekk agents agent build <agent-id-or-path>
 `integrity.toml` itself, includes every recognized source file, and records the
 root `hash` served by installed-agent APIs.
 
-## Sub-Agents
+## Agent composition
 
-Two shipped patterns are valid; pick by lifecycle boundary:
-
-| Pattern | When to use | Source |
-|---------|-------------|--------|
-| `g.spawn_agent` + `g.delegate` | Explicit runtime-agent routing and delegation steps in one authored graph | `SPAWN_AGENT`/`DELEGATE` AIS ops; see `dekk agents ops list` |
-| `g.workflow_spawn` | A child AIR workflow executed with a separate session root | [`agent-routing/`](../../examples/workflows/agent-routing/) |
-
-`Agent(sub_agents=[...])` and `.apxmw` are not current public frontend
-contracts and must not be presented as shipped APIs.
+The canonical target has only `Agent.invoke(...)`, `Agent.new(...)`, and
+`instance.invoke(...)`. There is no separate sub-Agent, spawn, delegate,
+handoff, or workflow-spawn frontend primitive. The proposed short spelling is
+defined by the [frontend master plan](simple-agent-authoring-frontend-plan.md)
+and taught by the
+[composition guide](../guides/composing-agent-programs.md). Legacy graph
+coordination methods are implementation evidence slated for removal, not APIs
+to copy from this current-state walkthrough.
 
 ## Studio Integration
 
@@ -190,15 +194,16 @@ Studio reads installed agent records through its server-backed registry:
 - `GET /api/agents/{id}`
 
 Chat selects an installed agent with `agent_preset: "<id>"`. The
-[current Studio dispatch](../../../studio/apxm-studio/crates/studio/src/chat.rs)
+[current Studio dispatch](../../../studio/crates/studio/src/chat.rs)
 validates the server-projected record and sends each legacy turn-shaped input
 through APXM OS's `http_in` ingress. This is current pre-canonical evidence, not
 the target Studio contract. The target submits declared typed Program inputs
 and projects generic loop-iteration evidence.
 
-Gao currently assembles a loop directly with
-[`GraphBuilder.autonomous`](../../examples/agents/gao/capabilities/handlers/main.ts).
-That is read-only implementation evidence, not the accepted end state.
+Gao is currently a low-level TypeScript conformance scaffold using the
+[example-local conversational helper](../../examples/agents/gao/src/gao.ts)
+and explicit recorder details. That is read-only implementation evidence, not
+the accepted end state.
 [ADR-0014](../adr/0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md)
 makes Gao a repository example that may specialize an example-local
 Conversational Agent using only packed generic frontend APIs. ADR-0002 and the

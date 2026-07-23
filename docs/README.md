@@ -11,6 +11,12 @@ FrontendGraph/AIR verification and artifact production. The generic runtime
 executes admitted artifacts without assuming a conversation, named example, company
 hierarchy, Skill injection, or model/tool loop.
 
+The proposed short frontend spelling is documented in the
+[source-first Agent frontend master plan](agents/simple-agent-authoring-frontend-plan.md):
+`Agent`, `Context`, `Tool`, `Model`, and ordinary control flow, with focused
+`Capability`, `Event`, `Hook`, and `TaskGroup` extensions. That spelling remains
+a D0 design decision; the generic execution semantics below are already fixed.
+
 ## Canonical v1 pipeline
 
 ```mermaid
@@ -20,10 +26,23 @@ flowchart LR
     FG --> C["Rust compiler"]
     C --> AIR["AIR v1"]
     AIR --> A["Executable artifact v1"]
-    A --> R["Generic APXM runtime"]
-    R --> E["Runtime evidence v1"]
-    E --> S["Studio projections: run / loop iteration / node"]
+    A --> ADM["Exact admission and port bindings"]
+    ADM --> R["Generic APXM runtime"]
+    R --> M["Exact ModelInferencePort"]
+    M --> V["Admitted backend, optionally APXM-vLLM"]
+    R --> EC["Atomic Execution Commit"]
+    EC --> E["Authoritative runtime evidence v1"]
+    R --> T["Non-authoritative telemetry"]
+    E --> S["Studio source / run / loop / node projection"]
+    T --> S
 ```
+
+This is one correlated execution, not a collection of convenience layers.
+Source maps and artifact identities connect authored constructs to static AIS;
+runtime identities connect them to Program Invocations, loop occurrences,
+NodeExecutions, attempts, effects, Context transitions, usage, outputs, and
+failures. Backend telemetry—including APXM-vLLM cache/scheduler metrics—may
+enrich that view but cannot override authoritative execution evidence.
 
 Agent Programs compose only through `program.new`, one-shot
 `program.invoke`, and stateful `instance.invoke`. AIR v1 has a closed
@@ -52,29 +71,32 @@ operation builders are not v1 APIs.
 3. [Agent Program guides](guides/README.md) — create and compose generic
    programs, build repository examples, invoke ACP agents, and select exact
    models.
-4. [ADR index](adr/README.md) — accepted and superseded decisions.
-5. [ADR-0008](adr/0008-agent-programs-compose-through-new-and-invoke.md) —
+4. [Source-first Agent frontend master plan](agents/simple-agent-authoring-frontend-plan.md)
+   — proposed everyday API, typed FrontendGraph boundary, deterministic
+   lowering, optimization, vLLM connection, and completion gates.
+5. [ADR index](adr/README.md) — accepted and superseded decisions.
+6. [ADR-0008](adr/0008-agent-programs-compose-through-new-and-invoke.md) —
    composition, state, ownership, isolation, identity, and failure semantics.
-6. [ADR-0009](adr/0009-air-has-five-public-semantic-operations.md) — five-op
+7. [ADR-0009](adr/0009-air-has-five-public-semantic-operations.md) — five-op
    constitution and complete disposition of all 38 current operations.
-7. [ADR-0010](adr/0010-agent-program-source-owns-context-hooks-and-conversational-loops.md)
+8. [ADR-0010](adr/0010-agent-program-source-owns-context-hooks-and-conversational-loops.md)
    — explicit Program Context, Agent Facade callbacks, discovery-only Skills,
    and frontend-authored loops.
-8. [ADR-0014](adr/0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md)
+9. [ADR-0014](adr/0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md)
    — examples-only conversational/Gao ownership, two closed AIS operation
    families, and generic completed-loop evidence.
-9. [ADR-0011](adr/0011-agent-program-execution-is-one-end-to-end-spine.md) —
+10. [ADR-0011](adr/0011-agent-program-execution-is-one-end-to-end-spine.md) —
    one frontend/compiler/runtime/inference/evidence execution spine.
-10. [Normative composition/AIR contract](agents/agent-program-composition-and-air-contract.md)
+11. [Normative composition/AIR contract](agents/agent-program-composition-and-air-contract.md)
    — frontend, compiler, artifact, runtime, event, identity, commit, and
    evidence requirements.
-11. [ADR-0013](adr/0013-core-semantics-are-closed-and-implementations-enter-through-exact-port-bindings.md)
+12. [ADR-0013](adr/0013-core-semantics-are-closed-and-implementations-enter-through-exact-port-bindings.md)
     and the [portable core interface contract](agents/portable-core-interface-contract.md)
     — closed semantics, narrow replaceable ports, exact bindings, confinement,
     and first-party conformance.
-12. [ACP interoperability and selection contract](agents/acp-and-routing-contract.md)
+13. [ACP interoperability and selection contract](agents/acp-and-routing-contract.md)
    — exact admitted Claude/Codex/ACP profiles and future routing boundary.
-13. [Full-replacement plan](agents/agent-program-composition-and-air-full-replacement-plan.md)
+14. [Full-replacement plan](agents/agent-program-composition-and-air-full-replacement-plan.md)
    — P0-P9 delivery, conformance gates, cutover, and absence proof.
 
 ADR-0001, ADR-0002, and ADR-0005 are superseded historical rationale. Their
@@ -136,13 +158,14 @@ locally labelled historical/current baseline:
 | [Prototype ACP sandbox seam](integrations/sandbox-acp-seam.md) | Current `SandboxRegistry`/profile implementation |
 | [Sandbox interface investigation](integrations/sandbox-interface.md) | Superseded registry/mega-interface exploration |
 | [OpenShell investigation](integrations/openshell-integration.md) | Superseded sandbox/router comparison evidence |
-| [Current AIS crate](../crates/machine/ais/README.md) | Prototype generated operation source |
+| [Current AIS crate](../crates/machine/ais/README.md) | Closed five-op/structural catalogue and remaining registered-signature gap |
 | [First agent](agents/first-agent.md) | Current executable journey, not target API |
 
-The live current catalogue is always obtained with `dekk agents ops list`.
-Its 38 entries are all accounted for in ADR-0009. Historical evidence may
-remain during migration, but no prototype builder, reader, handler, alias, translator,
-or mixed Compatibility Set ships in the target release.
+The live checkout catalogue is always obtained with `dekk agents ops list`.
+ADR-0009 permanently accounts for the retired 38-operation prototype
+inventory. Historical evidence may remain during migration, but no prototype
+builder, reader, handler, alias, translator, or mixed Compatibility Set ships
+in the target release.
 
 ## Current repository operation
 

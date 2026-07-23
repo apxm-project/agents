@@ -1,13 +1,15 @@
 # Compose Agent Programs
 
-- Status: canonical target guide
+- Architectural status: canonical target guide
+- Frontend syntax status: design proposal aligned with
+  [Author an Agent](creating-an-agent-program.md)
 - Normative contract: [composition and AIR](../agents/agent-program-composition-and-air-contract.md)
 
 ## 1. Three explicit calls
 
-- `program.invoke(ref, input)` runs a one-shot or independently admitted child.
-- `program.new(ref, initial_state)` creates a stateful Program Instance.
-- `instance.invoke(instance_ref, input)` invokes that instance.
+- `Agent.invoke(input)` runs a one-shot or independently admitted child.
+- `Agent.new(context=...)` creates a stateful Program Instance.
+- `instance.invoke(input)` invokes that instance.
 
 These are the only Agent Program composition concepts. “Spawn,” “handoff,”
 “delegate,” “workflow,” and runtime Agent routing are not alternate semantics.
@@ -15,11 +17,11 @@ These are the only Agent Program composition concepts. “Spawn,” “handoff,�
 ## 2. One-shot specialist
 
 ```python
-review = await program.invoke(SecurityReviewer, ReviewRequest(diff=diff))
+review = await SecurityReviewer.invoke(ReviewRequest(diff=diff))
 ```
 
 ```typescript
-const review = await program.invoke(SecurityReviewer, { diff });
+const review = await SecurityReviewer.invoke({ diff });
 ```
 
 `SecurityReviewer` is a statically imported typed `ProgramRef`. Server admits
@@ -29,16 +31,15 @@ plain result, not the child's private Context or authority.
 ## 3. Stateful specialist
 
 ```python
-specialist = await program.new(
-    AccountSpecialist,
-    initial_state=AccountContext(account_id=request.account_id),
+specialist = AccountSpecialist.new(
+    context=AccountContext(account_id=request.account_id),
 )
 result = await specialist.invoke(request)
 ```
 
 ```typescript
-const specialist = await program.new(AccountSpecialist, {
-  initialState: new AccountContext({ accountId: request.accountId }),
+const specialist = AccountSpecialist.new({
+  context: { accountId: request.accountId },
 });
 const result = await specialist.invoke(request);
 ```
@@ -53,9 +54,9 @@ its continuation; return completes it.
 choice = classify_request(request)
 match choice:
     case Specialist.SECURITY:
-        return await program.invoke(SecurityReviewer, request)
+        return await SecurityReviewer.invoke(request)
     case Specialist.FINANCE:
-        return await program.invoke(FinanceReviewer, request)
+        return await FinanceReviewer.invoke(request)
 ```
 
 The closed enum may come from pure logic, a model call or an admitted

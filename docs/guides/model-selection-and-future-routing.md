@@ -1,6 +1,9 @@
 # Choose models and understand future routing
 
-- Status: exact selection is canonical v1; routing is planned future work
+- Architectural status: exact selection is canonical v1; routing is planned
+  future work
+- Frontend syntax status: design proposal aligned with
+  [Author an Agent](creating-an-agent-program.md)
 - Future plan: [APXM-owned routing](../agents/future-apxm-routing-plan.md)
 
 ## V1: choose exactly
@@ -17,6 +20,36 @@ call fails with a typed error. APXM does not choose a default, alias, first
 healthy target or fallback. If a send may have occurred, APXM never tries a
 second model; it reconciles the same target or returns
 `ModelOutcomeUnknown`.
+
+Python declares and calls the exact target through `Model`:
+
+```python
+from apxm_program import Model
+
+SupportModel = Model[SupportRequest, SupportResponse](ExactSupportModelRef)
+response = await SupportModel(request)
+```
+
+TypeScript uses the same source concept:
+
+```typescript
+import { Model } from "@apxm/frontend";
+
+const SupportModel = Model<SupportRequest, SupportResponse>(
+  ExactSupportModelRef,
+);
+const response = await SupportModel(request);
+```
+
+Calling the typed value records a typed Model-invocation intent. Rust selects
+`model.call`; the frontend does not connect to a provider or write the AIR/AIS
+operation name.
+
+Admission may bind the exact target to APXM-vLLM or another conforming
+`ModelInferencePort` implementation. That choice does not change source or
+AIR. Backend-specific graph/prefix/priority hints are admitted implementation
+metadata, while response, usage, cancellation, failure, and evidence retain the
+same provider-neutral contract.
 
 ## Future: APXM-owned policies
 
