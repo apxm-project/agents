@@ -63,9 +63,6 @@ pub const INPUT_NAMES: &str = "input_names";
 /// positional: it aligns with the corresponding [`INPUT_NAMES`] entry and
 /// context operand.
 pub const INPUT_ROLES: &str = "input_roles";
-/// Legacy input name whose role is safely normalized to [`PromptInputRole::System`]
-/// when no explicit [`INPUT_ROLES`] vector is present.
-pub const LEGACY_SYSTEM_PROMPT_INPUT_NAME: &str = "__system";
 
 /// Semantic channel assigned to an LLM context input.
 ///
@@ -134,15 +131,6 @@ impl PromptInputRole {
         !self.is_user()
     }
 
-    /// Normalize the legacy system input name when an explicit role is absent.
-    #[must_use]
-    pub fn from_legacy_input_name(input_name: &str) -> Self {
-        if input_name == LEGACY_SYSTEM_PROMPT_INPUT_NAME {
-            Self::System
-        } else {
-            Self::User
-        }
-    }
 }
 
 /// Exact serialized values accepted in an [`INPUT_ROLES`] vector.
@@ -624,8 +612,8 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use super::{
-        INPUT_ROLES, LEGACY_SYSTEM_PROMPT_INPUT_NAME, PROMPT_INPUT_ROLE_VALUES, PromptInputRole,
-        PromptInputRolesValidationError, parse_prompt_input_roles,
+        INPUT_ROLES, PROMPT_INPUT_ROLE_VALUES, PromptInputRole, PromptInputRolesValidationError,
+        parse_prompt_input_roles,
     };
 
     #[test]
@@ -673,15 +661,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_system_name_normalizes_only_when_roles_are_absent() {
-        assert_eq!(
-            PromptInputRole::from_legacy_input_name(LEGACY_SYSTEM_PROMPT_INPUT_NAME),
-            PromptInputRole::System
-        );
-        assert_eq!(
-            PromptInputRole::from_legacy_input_name("question"),
-            PromptInputRole::User
-        );
+    fn non_user_roles_are_protected_from_dead_context_pruning() {
         assert!(PromptInputRole::System.is_protected());
         assert!(!PromptInputRole::User.is_protected());
     }
