@@ -43,7 +43,6 @@ pub use llm::{
     BackendConfig,
     BackendConfigurationError,
     BackendFactory,
-    BackendFallback,
     BackendMetricsSource,
     BackendRegistration,
     BackendType,

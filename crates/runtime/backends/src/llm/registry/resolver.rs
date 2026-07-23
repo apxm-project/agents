@@ -103,9 +103,15 @@ pub fn resolve(
         }
     }
 
-    // Priority 5: Select across all backends based on strategy
-    let all: Vec<String> = backends.read().keys().cloned().collect();
-    select_by_strategy(&all, health_monitor, strategy, round_robin_counter, None)
+    // No explicit backend, no model route, no operation default, and no
+    // global default backend: fail closed. There is no router, no fallback,
+    // and no first-available selection across every registered backend — a
+    // request must resolve to a backend the caller or configured policy
+    // actually named.
+    anyhow::bail!(
+        "no backend selection evidence for request: no explicit backend, no model route, \
+         no operation default, and no default backend configured"
+    )
 }
 
 /// Collect every backend whose `model()` matches the requested model id.

@@ -422,14 +422,6 @@ pub struct ModelAliasRegistration {
     pub backend: Option<String>,
 }
 
-/// Backend fallback chain.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct BackendFallback {
-    pub backend: String,
-    #[serde(default)]
-    pub fallbacks: Vec<String>,
-}
-
 /// Typed registry policy applied after backend registration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RegistryPolicy {
@@ -439,8 +431,6 @@ pub struct RegistryPolicy {
     pub operation_routes: Vec<OperationRoute>,
     #[serde(default)]
     pub model_aliases: Vec<ModelAliasRegistration>,
-    #[serde(default)]
-    pub fallback_chains: Vec<BackendFallback>,
 }
 
 impl RegistryPolicy {
@@ -468,10 +458,6 @@ impl RegistryPolicy {
             if let Some(model) = &route.model {
                 registry.set_operation_model(route.operation, model.clone())?;
             }
-        }
-
-        for chain in &self.fallback_chains {
-            registry.set_fallback(chain.backend.clone(), chain.fallbacks.clone())?;
         }
 
         Ok(())

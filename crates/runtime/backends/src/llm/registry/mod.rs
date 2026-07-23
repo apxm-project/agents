@@ -54,8 +54,6 @@ pub struct LLMRegistry {
     operation_defaults: Arc<DashMap<AISOperationType, String>>,
     /// Operation-specific model defaults
     operation_models: Arc<DashMap<AISOperationType, String>>,
-    /// Fallback chains: backend -> list of fallback backends
-    fallback_chains: Arc<DashMap<String, Vec<String>>>,
     /// Named model aliases (e.g. "fast" -> "gpt-4o-mini")
     model_aliases: Arc<DashMap<String, String>>,
     /// Explicit model to backend routing (e.g. "claude-3-7" -> "anthropic")
@@ -227,7 +225,6 @@ impl LLMRegistry {
             default_model: Arc::new(parking_lot::RwLock::new(None)),
             operation_defaults: Arc::new(DashMap::new()),
             operation_models: Arc::new(DashMap::new()),
-            fallback_chains: Arc::new(DashMap::new()),
             model_aliases: Arc::new(DashMap::new()),
             model_routes: Arc::new(DashMap::new()),
             health_monitor: Arc::new(HealthMonitor::new()),
@@ -251,7 +248,6 @@ impl LLMRegistry {
             default_model: Arc::new(parking_lot::RwLock::new(None)),
             operation_defaults: Arc::new(DashMap::new()),
             operation_models: Arc::new(DashMap::new()),
-            fallback_chains: Arc::new(DashMap::new()),
             model_aliases: Arc::new(DashMap::new()),
             model_routes: Arc::new(DashMap::new()),
             health_monitor: Arc::new(HealthMonitor::new()),
@@ -439,27 +435,6 @@ impl LLMRegistry {
         Ok(())
     }
 
-    /// Set fallback chain for a backend.
-    pub fn set_fallback(&self, backend: impl Into<String>, fallbacks: Vec<String>) -> Result<()> {
-        let backend_name = backend.into();
-
-        // Verify all backends exist
-        {
-            let backends = self.backends.read();
-            if !backends.contains_key(&backend_name) {
-                anyhow::bail!("Backend '{}' not registered", backend_name);
-            }
-            for fallback in &fallbacks {
-                if !backends.contains_key(fallback) {
-                    anyhow::bail!("Fallback backend '{}' not registered", fallback);
-                }
-            }
-        }
-
-        self.fallback_chains.insert(backend_name, fallbacks);
-        Ok(())
-    }
-
     /// Register a named model alias.
     pub fn register_model_alias(&self, alias: impl Into<String>, model: impl Into<String>) {
         self.model_aliases.insert(alias.into(), model.into());
@@ -535,52 +510,6 @@ impl LLMRegistry {
         }
 
         prepared
-    }
-
-    /// Generate a response using intelligent routing.
-    pub async fn generate(&self, request: LLMRequest) -> Result<LLMResponse> {
-        let request = self.prepare_request(&request);
-        // Resolve which backend to use
-        let backend_name = self.resolve_backend(&request)?;
-
-        // Try primary backend
-        match self.try_generate(&backend_name, request.clone()).await {
-            Ok(response) => Ok(response),
-            Err(e) => {
-                // Check for fallback chain
-                if let Some(fallbacks) = self.fallback_chains.get(&backend_name) {
-                    for fallback_name in fallbacks.value() {
-                        match self.try_generate(fallback_name, request.clone()).await {
-                            Ok(response) => {
-                                tracing::info!(
-                                    "Fallback successful: {} -> {}",
-                                    backend_name,
-                                    fallback_name
-                                );
-                                return Ok(response);
-                            }
-                            Err(fallback_err) => {
-                                tracing::warn!(
-                                    "Fallback '{}' failed: {}",
-                                    fallback_name,
-                                    fallback_err
-                                );
-                            }
-                        }
-                    }
-                }
-
-                tracing::error!(
-                    backend = %backend_name,
-                    error = ?e,
-                    "LLM backend request failed"
-                );
-                let detail = e.to_string();
-                Err(e).context(format!(
-                    "Request failed on '{backend_name}' with no successful fallback: {detail}"
-                ))
-            }
-        }
     }
 
     /// Execute one compiler-approved, same-route request batch.
@@ -874,29 +803,13 @@ impl LLMRegistry {
         &'a self,
         request: &'a LLMRequest,
     ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + 'a>> {
-        self.generate_stream(request, false)
+        self.generate_stream(request)
     }
 
-    /// Generate streaming response with fallback on first-chunk error.
-    ///
-    /// Uses the same health and rate-limit admission as non-streaming calls.
-    /// If a backend fails before emitting a real chunk, the registry tries the
-    /// configured fallback chain. Once a backend emits a non-error chunk, the
-    /// stream is committed to that backend; mid-stream errors and EOF before a
-    /// terminal `Done` chunk are failures.
-    pub fn generate_stream_with_fallback<'a>(
-        &'a self,
-        request: &'a LLMRequest,
-    ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + 'a>> {
-        self.generate_stream(request, true)
-    }
-
-    /// Stream one request with either ordinary registry failover or an exact,
-    /// already-admitted route.
+    /// Stream one request against the exact resolved backend, already-admitted route.
     fn generate_stream<'a>(
         &'a self,
         request: &'a LLMRequest,
-        allow_configured_fallback: bool,
     ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + 'a>> {
         Box::pin(async_stream::try_stream! {
             let prepared = self.prepare_request(request);
@@ -908,140 +821,89 @@ impl LLMRegistry {
                 }
             };
 
-            let mut backend_names = vec![primary_backend.clone()];
-            if allow_configured_fallback
-                && let Some(fallback_chain) = self.fallback_chains.get(&primary_backend)
-            {
-                backend_names.extend(fallback_chain.value().iter().cloned());
-            }
+            let attempt = match self.begin_streaming_attempt(&primary_backend, &prepared) {
+                Ok(attempt) => attempt,
+                Err(error) => {
+                    Err(error)?;
+                    return;
+                }
+            };
 
-            let mut last_error: Option<anyhow::Error> = None;
-            for (attempt_index, backend_name) in backend_names.iter().enumerate() {
-                let attempt = match self.begin_streaming_attempt(backend_name, &prepared) {
-                    Ok(attempt) => attempt,
+            let started_at = Instant::now();
+            let mut stream = attempt.backend.generate_stream(prepared.clone());
+            let mut committed = false;
+
+            while let Some(chunk_result) = stream.next().await {
+                let chunk = match chunk_result {
+                    Ok(chunk) => chunk,
                     Err(error) => {
-                        last_error = Some(error);
-                        continue;
+                        self.finish_streaming_attempt(&attempt, started_at.elapsed(), None, false);
+                        Err(anyhow::Error::new(StreamingBackendError::new(
+                            attempt.backend_name.as_str(),
+                            StreamingFailureKind::BackendError,
+                            error.to_string(),
+                        )))?;
+                        return;
                     }
                 };
 
-                let started_at = Instant::now();
-                let mut stream = attempt.backend.generate_stream(prepared.clone());
-                let mut committed = false;
-                let mut logged_fallback_commit = false;
-                let mut failed_before_commit = false;
-
-                while let Some(chunk_result) = stream.next().await {
-                    let chunk = match chunk_result {
-                        Ok(chunk) => chunk,
-                        Err(error) => {
-                            self.finish_streaming_attempt(&attempt, started_at.elapsed(), None, false);
-                            if committed {
-                                Err(anyhow::Error::new(StreamingBackendError::new(
-                                    attempt.backend_name.as_str(),
-                                    StreamingFailureKind::BackendError,
-                                    error.to_string(),
-                                )))?;
-                                return;
-                            }
-                            last_error = Some(error);
-                            failed_before_commit = true;
-                            break;
-                        }
-                    };
-
-                    if let StreamChunk::Error(message) = &chunk {
-                        let error = anyhow::anyhow!(
-                            "Backend '{}' streaming error: {}",
-                            attempt.backend_name,
-                            message
-                        );
-                        self.finish_streaming_attempt(&attempt, started_at.elapsed(), None, false);
-                        if committed {
-                            Err(anyhow::Error::new(StreamingBackendError::new(
-                                attempt.backend_name.as_str(),
-                                StreamingFailureKind::ChunkError,
-                                message.as_str(),
-                            )))?;
-                            return;
-                        }
-                        last_error = Some(error);
-                        failed_before_commit = true;
-                        break;
-                    }
-
-                    if attempt_index > 0 && !logged_fallback_commit {
-                        tracing::info!(
-                            primary_backend = %primary_backend,
-                            fallback_backend = %attempt.backend_name,
-                            "Streaming fallback committed"
-                        );
-                        logged_fallback_commit = true;
-                    }
-                    committed = true;
-
-                    match chunk {
-                        StreamChunk::Done(mut response) => {
-                            self.finish_streaming_attempt(
-                                &attempt,
-                                started_at.elapsed(),
-                                Some(response.usage.clone()),
-                                true,
-                            );
-                            response = response
-                                .with_metadata(
-                                    response_metadata::APXM_BACKEND_NAME,
-                                    serde_json::json!(attempt.backend_name.as_str()),
-                                )
-                                .with_metadata(
-                                    response_metadata::APXM_BACKEND_MODEL,
-                                    serde_json::json!(attempt.backend_model.as_str()),
-                                )
-                                .with_metadata(
-                                    response_metadata::APXM_PRIMARY_BACKEND,
-                                    serde_json::json!(primary_backend.as_str()),
-                                )
-                                .with_metadata(
-                                    response_metadata::APXM_FALLBACK_USED,
-                                    serde_json::json!(attempt.backend_name != primary_backend),
-                                );
-                            yield StreamChunk::Done(response);
-                            return;
-                        }
-                        chunk => yield chunk,
-                    }
-                }
-
-                if committed {
+                if let StreamChunk::Error(message) = &chunk {
                     self.finish_streaming_attempt(&attempt, started_at.elapsed(), None, false);
                     Err(anyhow::Error::new(StreamingBackendError::new(
                         attempt.backend_name.as_str(),
-                        StreamingFailureKind::MissingDone,
-                        STREAM_ENDED_WITHOUT_DONE,
+                        StreamingFailureKind::ChunkError,
+                        message.as_str(),
                     )))?;
                     return;
                 }
 
-                if !failed_before_commit {
-                    self.finish_streaming_attempt(&attempt, started_at.elapsed(), None, false);
-                    last_error = Some(anyhow::anyhow!(
-                        "Backend '{}' returned an empty stream",
-                        attempt.backend_name
-                    ));
-                }
+                committed = true;
 
-                tracing::warn!(
-                    backend = %attempt.backend_name,
-                    error = ?last_error,
-                    "Streaming backend failed before first chunk; trying fallback"
-                );
+                match chunk {
+                    StreamChunk::Done(mut response) => {
+                        self.finish_streaming_attempt(
+                            &attempt,
+                            started_at.elapsed(),
+                            Some(response.usage.clone()),
+                            true,
+                        );
+                        response = response
+                            .with_metadata(
+                                response_metadata::APXM_BACKEND_NAME,
+                                serde_json::json!(attempt.backend_name.as_str()),
+                            )
+                            .with_metadata(
+                                response_metadata::APXM_BACKEND_MODEL,
+                                serde_json::json!(attempt.backend_model.as_str()),
+                            )
+                            .with_metadata(
+                                response_metadata::APXM_PRIMARY_BACKEND,
+                                serde_json::json!(primary_backend.as_str()),
+                            )
+                            .with_metadata(
+                                response_metadata::APXM_FALLBACK_USED,
+                                serde_json::json!(false),
+                            );
+                        yield StreamChunk::Done(response);
+                        return;
+                    }
+                    chunk => yield chunk,
+                }
             }
 
-            Err(anyhow::anyhow!(
-                "All streaming backends failed for request: {}",
-                last_error.map_or_else(|| "no backends available".to_string(), |error| error.to_string())
-            ))?;
-            return;
+            self.finish_streaming_attempt(&attempt, started_at.elapsed(), None, false);
+            if committed {
+                Err(anyhow::Error::new(StreamingBackendError::new(
+                    attempt.backend_name.as_str(),
+                    StreamingFailureKind::MissingDone,
+                    STREAM_ENDED_WITHOUT_DONE,
+                )))?;
+            } else {
+                Err(anyhow::anyhow!(
+                    "Backend '{}' returned an empty stream",
+                    attempt.backend_name
+                ))?;
+            }
         })
     }
 
@@ -1367,7 +1229,7 @@ mod request_recording_tests {
             .expect("register fixture model route");
 
         registry
-            .generate(LLMRequest::new("hi").with_model("fixture-model"))
+            .generate_with_backend("mock", LLMRequest::new("hi").with_model("fixture-model"))
             .await
             .expect("mock generate succeeds");
 
@@ -1391,7 +1253,8 @@ mod request_recording_tests {
             .expect("register fixture model route");
 
         let error = registry
-            .generate(
+            .generate_with_backend(
+                "mock",
                 LLMRequest::new("context evidence")
                     .with_model("fixture-model")
                     .with_max_tokens(1)
