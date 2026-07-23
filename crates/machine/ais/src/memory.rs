@@ -25,13 +25,11 @@ pub enum MemoryTierParseError {
 pub enum MemoryTier {
     /// Short-Term Memory: Fast access to recent context.
     /// Typically implemented as an LRU cache with O(1) access.
-    #[serde(alias = "STM")]
     #[default]
     Stm,
 
     /// Long-Term Memory: Persistent knowledge store.
     /// Typically backed by a database with vector similarity search.
-    #[serde(alias = "LTM")]
     Ltm,
 
     /// Episodic Memory: Execution traces for reflection.
