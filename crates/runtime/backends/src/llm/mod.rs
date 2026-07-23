@@ -226,8 +226,7 @@ pub use observability::{
 pub use provider::{Provider, ProviderId, RegisteredProvider};
 pub use rate_limit::{RateLimitConfig, RateLimitConfigError, RateLimitError};
 pub use registration::{
-    BackendFallback, BackendRegistration, ModelAliasRegistration, ModelRegistration,
-    OperationRoute, RegistryPolicy,
+    BackendRegistration, ModelAliasRegistration, ModelRegistration, OperationRoute, RegistryPolicy,
 };
 pub use registry::{
     CorrelatedBatchRoute, HealthMonitor, HealthStatus, LLMRegistry, RequestSelectionError,
