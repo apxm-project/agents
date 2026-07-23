@@ -17,7 +17,6 @@ pub mod error;
 pub mod events;
 pub mod logging;
 pub mod metrics;
-pub mod model_profiles;
 pub mod observability;
 pub mod paths;
 pub mod plan;

@@ -27,8 +27,8 @@ using llvm::isa;
 
 namespace {
 
-// Operation kinds for artifact serialization
-// LLM ops (Ask/Think/Reason) are markers for runtime config lookup
+// Operation kinds for artifact serialization, generated from the AIS
+// operation definitions (the five semantic ops plus the structural family).
 enum class OperationKind : uint32_t {
 #include "ais/Dialect/AIS/Conversion/Artifact/OperationKind.generated.inc"
 };

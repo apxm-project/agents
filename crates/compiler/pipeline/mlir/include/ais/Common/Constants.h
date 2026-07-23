@@ -34,48 +34,6 @@ constexpr llvm::StringLiteral EMPTY_JSON = "{}";
 constexpr llvm::StringLiteral EMPTY_ARRAY = "[]";
 }  // namespace data
 
-/// Operation name aliases - used in parser and MLIR generation
-namespace operations {
-// Memory operations
-constexpr llvm::StringLiteral QUERY_MEMORY = "query_memory";
-constexpr llvm::StringLiteral QMEM = "qmem";
-constexpr llvm::StringLiteral MEM = "mem";
-
-// Invocation operations
-constexpr llvm::StringLiteral INVOKE = "invoke";
-constexpr llvm::StringLiteral LLM = "llm";
-constexpr llvm::StringLiteral TOOL = "tool";
-
-// Reasoning operations
-constexpr llvm::StringLiteral REASON = "reason";
-constexpr llvm::StringLiteral RSN = "rsn";
-constexpr llvm::StringLiteral THINK = "think";
-
-// Planning operations
-constexpr llvm::StringLiteral PLAN = "plan";
-constexpr llvm::StringLiteral PLN = "pln";
-
-// Reflection operations
-constexpr llvm::StringLiteral REFLECT = "reflect";
-constexpr llvm::StringLiteral RFL = "rfl";
-
-// Verification operations
-constexpr llvm::StringLiteral VERIFY = "verify";
-constexpr llvm::StringLiteral VRF = "vrf";
-
-// Execution operations
-constexpr llvm::StringLiteral EXEC = "exec";
-constexpr llvm::StringLiteral EX = "ex";
-
-// Communication operations
-constexpr llvm::StringLiteral TALK = "talk";
-constexpr llvm::StringLiteral TLK = "tlk";
-
-// Synchronization operations
-constexpr llvm::StringLiteral WAIT = "wait";
-constexpr llvm::StringLiteral MERGE = "merge";
-}  // namespace operations
-
 /// Default file and input identifiers
 namespace input {
 constexpr llvm::StringLiteral DEFAULT_INPUT = "<input>";
