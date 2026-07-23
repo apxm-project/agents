@@ -60,14 +60,3 @@ pub fn state_home() -> PathBuf {
 pub fn server_url() -> String {
     std::env::var(APXM_SERVER_URL).unwrap_or_else(|_| DEFAULT_SERVER_URL.to_string())
 }
-
-/// Resolve the APXM server URL with an explicit override.
-///
-/// If `override_url` is `Some`, it wins. Otherwise falls back to
-/// `APXM_SERVER_URL` and then the canonical default for handlers that accept a
-/// per-node `server_url` attribute.
-pub fn server_url_with_override(override_url: Option<String>) -> String {
-    override_url
-        .or_else(|| std::env::var(APXM_SERVER_URL).ok())
-        .unwrap_or_else(|| DEFAULT_SERVER_URL.to_string())
-}
