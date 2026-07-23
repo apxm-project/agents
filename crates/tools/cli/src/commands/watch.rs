@@ -11,8 +11,9 @@ use std::io::Write as _;
 
 use crate::client::reqwest;
 use crate::client::{
-    ClientInfo, DEFAULT_SERVER_BASE, client_for_sse,
+    ClientInfo, client_for_sse,
     events::{event_kind, parse_approval_prompt},
+    resolve_server_base,
 };
 use anyhow::{Context, Result, anyhow};
 use apxm_core::events::ApxmEvent;
@@ -34,19 +35,17 @@ pub struct WatchOptions {
 }
 
 impl WatchOptions {
-    pub fn new(thread_id: impl Into<String>) -> Self {
-        let server_base =
-            std::env::var("APXM_SERVER_BASE").unwrap_or_else(|_| DEFAULT_SERVER_BASE.to_string());
-        Self {
+    pub fn new(thread_id: impl Into<String>) -> Result<Self> {
+        Ok(Self {
             thread_id: thread_id.into(),
-            server_base,
+            server_base: resolve_server_base(None)?,
             expand_node_id: None,
-        }
+        })
     }
 }
 
 pub async fn watch_command(thread_id: String, expand: Option<u64>) -> Result<()> {
-    let mut opts = WatchOptions::new(thread_id);
+    let mut opts = WatchOptions::new(thread_id)?;
     opts.expand_node_id = expand;
     watch_with_options(opts).await
 }

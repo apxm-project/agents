@@ -9,7 +9,7 @@ use std::io::Write as _;
 use std::path::PathBuf;
 
 use crate::client::{
-    Client, ClientInfo, DEFAULT_SERVER_BASE, client_for_sse, execute::ExecuteRequest,
+    Client, ClientInfo, client_for_sse, execute::ExecuteRequest, resolve_server_base,
     types::SessionStatus,
 };
 use anyhow::{Context, Result, anyhow};
@@ -202,11 +202,7 @@ async fn render_session_stream(resp: crate::client::reqwest::Response, client: C
 /// deliver stdin turns via the conversations endpoint — no host transcript or
 /// compaction (constitution #2).
 async fn run_agent_chat(opts: &ChatOptions, agent_id: &str) -> Result<()> {
-    let base = opts
-        .server
-        .clone()
-        .or_else(|| std::env::var("APXM_SERVER_BASE").ok())
-        .unwrap_or_else(|| DEFAULT_SERVER_BASE.to_string());
+    let base = resolve_server_base(opts.server.as_deref())?;
     let client = client_for_sse(&base);
 
     let started = client
@@ -351,11 +347,7 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
         ));
     }
 
-    let base = opts
-        .server
-        .clone()
-        .or_else(|| std::env::var("APXM_SERVER_BASE").ok())
-        .unwrap_or_else(|| DEFAULT_SERVER_BASE.to_string());
+    let base = resolve_server_base(opts.server.as_deref())?;
     let session_id = opts.session_id.clone().unwrap_or_else(mint_session_id);
     let client = client_for_sse(&base);
 

@@ -13,9 +13,25 @@ include!(concat!(env!("OUT_DIR"), "/apxm_client_codegen.rs"));
 pub mod events;
 pub mod execute;
 
-/// Default apxm-server bind address (`apxm-server` `DEFAULT_PORT` = 18800).
+/// Environment variable naming the apxm-server base URL.
 #[cfg(feature = "driver")]
-pub const DEFAULT_SERVER_BASE: &str = "http://127.0.0.1:18800";
+pub const APXM_SERVER_BASE_ENV: &str = "APXM_SERVER_BASE";
+
+/// Resolve the apxm-server base URL, failing closed. The address must be given
+/// explicitly (`--server`) or via `APXM_SERVER_BASE`; there is no hardcoded
+/// localhost default, so the CLI never silently talks to the wrong endpoint.
+#[cfg(feature = "driver")]
+pub fn resolve_server_base(explicit: Option<&str>) -> anyhow::Result<String> {
+    if let Some(base) = explicit.filter(|value| !value.is_empty()) {
+        return Ok(base.to_string());
+    }
+    match std::env::var(APXM_SERVER_BASE_ENV) {
+        Ok(base) if !base.is_empty() => Ok(base),
+        _ => anyhow::bail!(
+            "no apxm-server address: pass --server <URL> or set {APXM_SERVER_BASE_ENV}"
+        ),
+    }
+}
 
 /// Build a generated [`Client`] suitable for long-lived SSE.
 ///
