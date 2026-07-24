@@ -2,7 +2,7 @@
 
 - Architectural status: exact selection is canonical v1; routing is planned
   future work
-- Frontend syntax status: design proposal aligned with
+- Frontend syntax status: implemented source-first Model binding aligned with
   [Author an Agent](creating-an-agent-program.md)
 - Future plan: [APXM-owned routing](../agents/future-apxm-routing-plan.md)
 
@@ -26,7 +26,7 @@ Python declares and calls the exact target through `Model`:
 ```python
 from apxm_program import Model
 
-SupportModel = Model[SupportRequest, SupportResponse](ExactSupportModelRef)
+SupportModel = Model[SupportRequest, SupportResponse]("model.support.v1")
 response = await SupportModel(request)
 ```
 
@@ -36,7 +36,7 @@ TypeScript uses the same source concept:
 import { Model } from "@apxm/frontend";
 
 const SupportModel = Model<SupportRequest, SupportResponse>(
-  ExactSupportModelRef,
+  "model.support.v1",
 );
 const response = await SupportModel(request);
 ```

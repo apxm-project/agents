@@ -1,6 +1,7 @@
 # APXM agents documentation
 
-- Status: canonical APXM v1 index plus clearly named prototype evidence
+- Status: canonical APXM v1 index with shipped source-first frontend and
+  clearly named historical evidence
 - Ubiquitous language: [APXM Agent Programs](../CONTEXT.md)
 - Normative target: [Agent Program composition and AIR contract](agents/agent-program-composition-and-air-contract.md)
 - Reference implementation plan: [Agent Program composition and AIR full-replacement plan](agents/agent-program-composition-and-air-full-replacement-plan.md)
@@ -11,11 +12,11 @@ FrontendGraph/AIR verification and artifact production. The generic runtime
 executes admitted artifacts without assuming a conversation, named example, company
 hierarchy, Skill injection, or model/tool loop.
 
-The proposed short frontend spelling is documented in the
+The shipped short frontend spelling is documented in the
 [source-first Agent frontend master plan](agents/simple-agent-authoring-frontend-plan.md):
 `Agent`, `Context`, `Tool`, `Model`, and ordinary control flow, with focused
-`Capability`, `Event`, `Hook`, and `TaskGroup` extensions. That spelling remains
-a D0 design decision; the generic execution semantics below are already fixed.
+`Capability`, `Event`, `Hook`, and `TaskGroup` extensions. The generic
+execution semantics below remain the governing boundary.
 
 ## Canonical v1 pipeline
 
@@ -72,8 +73,8 @@ operation builders are not v1 APIs.
    programs, build repository examples, invoke ACP agents, and select exact
    models.
 4. [Source-first Agent frontend master plan](agents/simple-agent-authoring-frontend-plan.md)
-   — proposed everyday API, typed FrontendGraph boundary, deterministic
-   lowering, optimization, vLLM connection, and completion gates.
+   — delivered everyday API, typed FrontendGraph boundary, deterministic
+   lowering, optimization, vLLM connection, and completion evidence.
 5. [ADR index](adr/README.md) — accepted and superseded decisions.
 6. [ADR-0008](adr/0008-agent-programs-compose-through-new-and-invoke.md) —
    composition, state, ownership, isolation, identity, and failure semantics.
@@ -143,11 +144,12 @@ Python and TypeScript packages author Agent Programs. Generated SDKs call
 remote services. CLI and servers are applications. None of those surfaces
 silently embeds another compiler/runtime or changes semantics.
 
-## Current implementation evidence
+## Shipped frontend and historical evidence
 
-The checkout still implements a pre-canonical prototype. The following
-pages and examples are retained only to inventory and migrate it; each is
-locally labelled historical/current baseline:
+The checkout ships the source-first frontend through `apxm_program` and
+`@apxm/frontend`; the Rust compiler remains the only FrontendGraph-to-AIR
+lowerer. The following pages are retained as explicitly labelled historical
+evidence, not as authoring or compatibility surfaces:
 
 | Evidence | What it records |
 | --- | --- |
@@ -158,8 +160,8 @@ locally labelled historical/current baseline:
 | [Prototype ACP sandbox seam](integrations/sandbox-acp-seam.md) | Current `SandboxRegistry`/profile implementation |
 | [Sandbox interface investigation](integrations/sandbox-interface.md) | Superseded registry/mega-interface exploration |
 | [OpenShell investigation](integrations/openshell-integration.md) | Superseded sandbox/router comparison evidence |
-| [Current AIS crate](../crates/machine/ais/README.md) | Closed five-op/structural catalogue and remaining registered-signature gap |
-| [First agent](agents/first-agent.md) | Current executable journey, not target API |
+| [Current AIS crate](../crates/machine/ais/README.md) | Closed five-op and structural catalogue |
+| [First agent](agents/first-agent.md) | Current executable source-first journey |
 
 The live checkout catalogue is always obtained with `dekk agents ops list`.
 ADR-0009 permanently accounts for the retired 38-operation prototype

@@ -5,10 +5,10 @@ Author an Agent in ordinary Python with decorators and typed values:
 ```python
 from apxm_program import Agent, Model
 
-SummarizerModel = Model[SummaryRequest, Summary](ExactSummarizerModelRef)
+SummarizerModel = Model[object, object]("model.summary.v1")
 
 
-@Agent(input=SummaryRequest, output=Summary)
+@Agent(input="SummaryRequest", output="Summary")
 async def Summarizer(agent, request):
     return await SummarizerModel(request)
 ```

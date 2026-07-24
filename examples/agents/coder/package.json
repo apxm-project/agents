@@ -2,8 +2,17 @@
   "name": "coder",
   "private": true,
   "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "compile": "node --input-type=module -e \"import { Coder } from './dist/src/main.js'; console.log(Coder.canonicalAir())\"",
+    "run": "node --input-type=module -e \"import { Coder } from './dist/src/main.js'; console.log(JSON.stringify(Coder.frontendGraph()))\""
+  },
   "dependencies": {
     "@apxm/agent-packaging": "file:../../../crates/tools/cli/agent-packaging",
     "@apxm/frontend": "file:../../../crates/compiler/frontend/typescript"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "typescript": "^5.6.3"
   }
 }

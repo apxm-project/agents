@@ -1,12 +1,10 @@
 # APXM Compiler Frontends
 
-- Current implementation: low-level FrontendGraph conformance scaffold
-- Target authoring syntax: design proposal pending the frontend D0 owner
-  decision
-- Target guide:
-  [Author an Agent](../../../docs/guides/creating-an-agent-program.md)
-- Delivery master plan:
-  [Source-first Agent frontend](../../../docs/agents/simple-agent-authoring-frontend-plan.md)
+- Current implementation: shipped source-first Python and TypeScript authoring
+  surface
+- Author guide: [Author an Agent](../../../docs/guides/creating-an-agent-program.md)
+- First runnable program: [Create Your First APXM Agent](../../../docs/agents/first-agent.md)
+- Delivery record: [Source-first Agent frontend](../../../docs/agents/simple-agent-authoring-frontend-plan.md)
 
 Python and TypeScript must provide equivalent language-native views of one
 Agent programming model. Both produce the same versioned FrontendGraph; Rust
@@ -14,7 +12,7 @@ alone validates it, constructs CFG/SSA and structural AIS, selects the five AIR
 operations, verifies registered AIS, and builds the artifact. Frontend packages
 never execute an Agent Program or print AIR/MLIR.
 
-The target frontend pipeline is deliberately layered:
+The frontend pipeline is deliberately layered:
 
 ```text
 native language AST + symbols/types
@@ -24,7 +22,7 @@ native language AST + symbols/types
   -> Rust CFG/SSA, AIR, and registered AIS/MLIR
 ```
 
-`BoundAgentTree` is a proposed internal name, not another wire contract. It
+`BoundAgentTree` is an internal name, not another wire contract. It
 retains typed lexical semantics and source locations while removing surface
 syntax differences. FrontendGraph remains the sole language-neutral handoff.
 Each transition is verified; public decorators/functions never act as mutable
@@ -49,7 +47,6 @@ executes user callbacks while compiling.
 The Python package is [`python/`](python/) and exports `apxm_program`.
 TypeScript is [`typescript/`](typescript/) and exports `@apxm/frontend`.
 
-At the pinned baseline, both packages expose an imperative `AgentProgram`
-recorder that requires authored node/region identities and raw operation
-kinds. That surface exists for executable parity fixtures while the contract
-replacement is designed; it is not the target teaching or compatibility API.
+The packages expose the source-first declaration surface only. They do not
+export an imperative `AgentProgram` recorder, graph builder, node or region
+identity, raw operation constant, or AIR printer.
