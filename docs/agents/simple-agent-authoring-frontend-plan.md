@@ -1,8 +1,8 @@
 # Source-first Agent frontend master plan
 
-- Status: implementation authority for phases P1–P6 under
-  [ADR-0015](../adr/0015-source-first-agent-frontend-vocabulary.md); D0 owner
-  decision and contract amendment accepted 2026-07-23
+- Status: P1–P6 implemented in `agents@09dbdf63` under
+  [ADR-0015](../adr/0015-source-first-agent-frontend-vocabulary.md); this plan
+  preserves the accepted delivery shape and current authoring syntax
 - Owner: APXM `agents`
 - Scope: Python, TypeScript, FrontendGraph, Rust lowering, examples, generated
   Studio source, documentation, and frontend-to-evidence conformance
@@ -15,9 +15,9 @@
   [ADR-0006](../adr/0006-authoring-frontends-use-explicit-compiler-bridges.md)
 
 Accepted ADRs and the parent contract remain architectural authority. This
-master plan is the single delivery and syntax-alignment source for the proposed
-short frontend. Guides and READMEs may teach it, but they do not independently
-invent public names, decorator behavior, lowering rules, or examples.
+master plan records the delivered syntax-alignment shape for the source-first
+frontend. Guides and READMEs may teach it, but they do not independently invent
+public names, decorator behavior, lowering rules, or examples.
 
 ## 1. Goal
 
@@ -37,15 +37,10 @@ verifier, CFG/SSA constructor, AIS selector, and AIR lowerer. The simple names
 are authoring projections over the precise contract types; they do not create
 a frontend runtime or new AIS operations.
 
-The current imperative `AgentProgram` API and conversational example are
-baseline evidence, not the target author experience. At the baseline revision,
-the public
-[Python `AgentProgram`](../../crates/compiler/frontend/python/apxm_program/agent_program.py),
-[TypeScript `AgentProgram`](../../crates/compiler/frontend/typescript/src/agent-program.ts),
-and
-[conversational example](../../examples/agents/conversational/README.md)
-require authors to supply recorder-level node/region identities and, in the
-example, source spans.
+The imperative recorder baseline is historical evidence only. The current
+packages and repository examples use the source-first `Agent`, `Context`,
+`Tool`, and `Model` surface without authored node, region, or source-span
+identities.
 
 ### 1.1 The frontend is the coding face of APXM
 
@@ -283,7 +278,7 @@ a callback builder or let source choose a region/node id.
 ```python
 from apxm_program import Agent, Model
 
-SummarizerModel = Model[SummaryRequest, Summary](ExactSummarizerModelRef)
+SummarizerModel = Model[SummaryRequest, Summary]("model.summary.v1")
 
 
 @Agent(input=SummaryRequest, output=Summary)
@@ -305,8 +300,8 @@ class Conversation:
     messages: tuple[Message, ...] = ()
 
 
-SearchWeb = Tool[SearchRequest, SearchResult](SearchWebCapabilityRef)
-SupportModel = Model[ModelRequest, ModelResponse](ExactSupportModelRef)
+SearchWeb = Tool[SearchRequest, SearchResult]("capability.search-web.v1")
+SupportModel = Model[ModelRequest, ModelResponse]("model.support.v1")
 
 
 @Agent(
@@ -375,12 +370,16 @@ The inferred type of `specialist` is the existing
 
 ```typescript
 import { Agent, Model } from "@apxm/frontend";
+import "@apxm/frontend/node";
+import { staticSource } from "./static-source.js";
 
-const SummarizerModel = Model<SummaryRequest, Summary>(
-  ExactSummarizerModelRef,
-);
+const source = staticSource(import.meta.url);
+const SummarizerModel = Model<SummaryRequest, Summary>("model.summary.v1");
 
 export const Summarizer = Agent<SummaryRequest, Summary>({
+  name: "Summarizer",
+  source,
+  use: { SummarizerModel },
   async run(agent, request) {
     return await SummarizerModel(request);
   },
@@ -393,21 +392,27 @@ The callback parameter is inferred; no `AgentFacade` type import is required.
 
 ```typescript
 import { Agent, Context, Model, Tool } from "@apxm/frontend";
+import "@apxm/frontend/node";
+import { staticSource } from "./static-source.js";
 
 type Conversation = {
   messages: readonly Message[];
 };
 
 const ConversationContext = Context<Conversation>({ messages: [] });
-const SearchWeb = Tool<SearchRequest, SearchResult>(SearchWebCapabilityRef);
-const SupportModel = Model<ModelRequest, ModelResponse>(ExactSupportModelRef);
+const SearchWeb = Tool<SearchRequest, SearchResult>("capability.search-web.v1");
+const SupportModel = Model<ModelRequest, ModelResponse>("model.support.v1");
+const source = staticSource(import.meta.url);
 
 export const Support = Agent<
   ConversationInput,
   ConversationOutput,
   Conversation
 >({
+  name: "Support",
+  source,
   context: ConversationContext,
+  use: { SearchWeb, SupportModel },
   async run(agent, incoming) {
     for (;;) {
       const research = incoming.searchQuery === undefined

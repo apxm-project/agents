@@ -95,8 +95,8 @@ class Conversation:
     messages: tuple[Message, ...] = ()
 
 
-SearchWeb = Tool[SearchRequest, SearchResult](SearchWebCapabilityRef)
-SupportModel = Model[ModelRequest, ModelResponse](ExactSupportModelRef)
+SearchWeb = Tool[SearchRequest, SearchResult]("capability.search-web.v1")
+SupportModel = Model[ModelRequest, ModelResponse]("model.support.v1")
 
 
 @Agent(input=ConversationInput, output=ConversationOutput, context=Conversation)
@@ -105,7 +105,7 @@ async def Support(agent, incoming):
 
 
 specialist = Specialist.new(
-    initial_context=SpecialistContext(domain="security"),
+    context=SpecialistContext(domain="security"),
 )
 answer = await specialist.invoke(SpecialistInput(question=question))
 summary = await Summarizer.invoke(SummaryInput(answer=answer))
@@ -115,20 +115,30 @@ summary = await Summarizer.invoke(SummaryInput(answer=answer))
 
 ```typescript
 import { Agent, Context, Model, Tool } from "@apxm/frontend";
+import "@apxm/frontend/node";
+import { staticSource } from "./static-source.js";
 
 const ConversationContext = Context<Conversation>({ messages: [] });
-const SearchWeb = Tool<SearchRequest, SearchResult>(SearchWebCapabilityRef);
-const SupportModel = Model<ModelRequest, ModelResponse>(ExactSupportModelRef);
+const SearchWeb = Tool<SearchRequest, SearchResult>("capability.search-web.v1");
+const SupportModel = Model<ModelRequest, ModelResponse>("model.support.v1");
+const source = staticSource(import.meta.url);
 
 export const Support = Agent<ConversationInput, ConversationOutput, Conversation>({
+  name: "Support",
+  source,
   context: ConversationContext,
-  async run(agent, incoming) { /* ... */ },
+  use: { SearchWeb, SupportModel, Specialist, Summarizer },
+  async run(agent, incoming) {
+    const specialist = Specialist.new({ context: { domain: "security" } });
+    const answer = await specialist.invoke({ question: incoming.question });
+    return await Summarizer.invoke({ answer });
+  },
 });
-
-const specialist = Specialist.new({ initialContext: { domain: "security" } });
-const answer = await specialist.invoke({ question });
-const summary = await Summarizer.invoke({ answer });
 ```
+
+The TypeScript example uses the portable `static-source.ts` helper shown in
+[Create Your First APXM Agent](first-agent.md). Every module-scope binding read
+by the Agent body appears in `use`.
 
 Both examples MUST record semantically equivalent `FrontendGraph` values. The
 exact Python decorator/TypeScript factory matrix is frozen by ADR-0015 §4.

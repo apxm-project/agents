@@ -5,6 +5,7 @@
     "moduleResolution": "bundler",
     "strict": true,
     "skipLibCheck": true,
+    "outDir": "dist",
     "types": ["node"],
     "typeRoots": ["../../../crates/compiler/frontend/typescript/node_modules/@types"],
     "paths": {
@@ -12,5 +13,5 @@
       "@apxm/agent-packaging": ["../../../crates/tools/cli/agent-packaging/index.d.ts"]
     }
   },
-  "include": ["capabilities/**/*.ts"]
+  "include": ["src/**/*.ts", "capabilities/**/*.ts"]
 }
