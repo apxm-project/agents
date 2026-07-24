@@ -24,7 +24,8 @@ use apxm_program::runtime_evidence::Fact;
 use apxm_execution::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
     CompositionReceiver, CompositionRequest, EventAwait, EventOutcome, EventPort, ExecutionError,
-    ExecutionPorts, ExecutionRequest, NodeOutcome, StaticHookHandlerPort, StaticHookResult, execute,
+    ExecutionPorts, ExecutionRequest, NodeOutcome, StaticHookHandlerPort, StaticHookResult,
+    execute,
 };
 
 fn digest(c: char) -> String {
@@ -240,13 +241,9 @@ fn request() -> ExecutionRequest {
 async fn executes_all_five_ops_and_commits_atomically() {
     let commit = Arc::new(FakeCommit::new());
 
-    let report = execute(
-        &ports(commit.clone()),
-        request(),
-        json!({"turns": 0}),
-    )
-    .await
-    .expect("run");
+    let report = execute(&ports(commit.clone()), request(), json!({"turns": 0}))
+        .await
+        .expect("run");
 
     // All six nodes executed through their exact ports.
     assert_eq!(report.node_outcomes.len(), 6);
@@ -317,10 +314,12 @@ async fn executes_all_five_ops_and_commits_atomically() {
     // its explicit Context transition, lifecycle facts, and one ChildAttached
     // lineage fact for each of program.new and program.invoke.
     assert_eq!(commit.facts().len(), 2 + 6 + 1 + 1 + 1 + 2);
-    assert!(commit
-        .facts()
-        .iter()
-        .any(|fact| fact.is_kind(apxm_program::runtime_evidence::FactKind::HookExecuted)));
+    assert!(
+        commit
+            .facts()
+            .iter()
+            .any(|fact| fact.is_kind(apxm_program::runtime_evidence::FactKind::HookExecuted))
+    );
     assert!(commit
         .facts()
         .iter()
@@ -333,11 +332,16 @@ async fn executes_all_five_ops_and_commits_atomically() {
         .iter()
         .filter(|fact| fact.is_kind(apxm_program::runtime_evidence::FactKind::ChildAttached))
         .collect();
-    assert_eq!(child_attached.len(), 2, "one ChildAttached per composition op");
+    assert_eq!(
+        child_attached.len(),
+        2,
+        "one ChildAttached per composition op"
+    );
     assert!(
-        child_attached
-            .iter()
-            .any(|fact| fact.runtime().and_then(|r| r.parent_node_execution_id.as_ref()).is_some()),
+        child_attached.iter().any(|fact| fact
+            .runtime()
+            .and_then(|r| r.parent_node_execution_id.as_ref())
+            .is_some()),
         "program.invoke ChildAttached carries parent lineage"
     );
 }
@@ -351,17 +355,12 @@ async fn repeated_instance_invocations_keep_evidence_identities_disjoint() {
 
     let mut second = request();
     second.commit_id = "c2".into();
-    execute(
-        &ports(commit.clone()),
-        second,
-        json!({"invocation": 2}),
-    )
-    .await
-    .expect("second invocation");
+    execute(&ports(commit.clone()), second, json!({"invocation": 2}))
+        .await
+        .expect("second invocation");
 
     let facts = commit.facts();
-    let fact_ids: std::collections::HashSet<_> =
-        facts.iter().map(Fact::fact_id).collect();
+    let fact_ids: std::collections::HashSet<_> = facts.iter().map(Fact::fact_id).collect();
     assert_eq!(fact_ids.len(), facts.len());
     assert!(fact_ids.iter().any(|fact_id| fact_id.contains(".c1.")));
     assert!(fact_ids.iter().any(|fact_id| fact_id.contains(".c2.")));
@@ -376,13 +375,19 @@ struct RecordingComposition {
 #[async_trait]
 impl CompositionPort for RecordingComposition {
     async fn program_new(&self, request: CompositionRequest) -> CompositionOutcome {
-        self.receivers.lock().unwrap().push(request.receiver.clone());
+        self.receivers
+            .lock()
+            .unwrap()
+            .push(request.receiver.clone());
         CompositionOutcome::Created {
             child_instance_ref: format!("child.{}", request.receiver.reference()),
         }
     }
     async fn program_invoke(&self, request: CompositionRequest) -> CompositionOutcome {
-        self.receivers.lock().unwrap().push(request.receiver.clone());
+        self.receivers
+            .lock()
+            .unwrap()
+            .push(request.receiver.clone());
         CompositionOutcome::Invoked {
             child_instance_ref: request.receiver.reference().to_string(),
         }

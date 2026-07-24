@@ -13,6 +13,23 @@ function run(command: string, args: string[], cwd: string) {
 }
 
 describe("packed @apxm/frontend", () => {
+  it("keeps the Node compiler bridge outside the root authoring bundle", () => {
+    const rootModules = [
+      "index.ts",
+      "agent.ts",
+      "capture.ts",
+      "markers.ts",
+      "advanced.ts",
+      "contract.ts",
+      "compiler-service.ts",
+    ];
+    for (const module of rootModules) {
+      const source = readFileSync(join(PACKAGE_DIR, "src", module), "utf8");
+      expect(source, module).not.toContain('from "node:');
+      expect(source, module).not.toContain("from 'node:");
+    }
+  });
+
   it("installs as a generic-only clean-consumer surface", () => {
     const temp = mkdtempSync(join(tmpdir(), "apxm-frontend-package-"));
     const packed = run(
@@ -46,17 +63,25 @@ describe("packed @apxm/frontend", () => {
       genericScript,
       [
         'import * as frontend from "@apxm/frontend";',
+        'import "@apxm/frontend/node";',
+        'import { readFileSync } from "node:fs";',
+        'import { fileURLToPath } from "node:url";',
         'const removed = ["AgentProgram", "AgentFacade", "FIVE_OPS", "OP_MODEL_CALL",',
         '  "OP_CAPABILITY_INVOKE", "canonicalAirJson", "lower", "verify",',
-        '  "ConversationalAgent", "Gao", "StructuredTaskScope"];',
+        '  "ConversationalAgent", "Gao", "StructuredTaskScope", "AgentConfig",',
+        '  "AgentDefinition", "ProgramInstance", "decodeFact", "RuntimeFact"];',
         "if (typeof frontend.Agent !== 'function') process.exit(2);",
         "if (removed.some((name) => name in frontend)) process.exit(3);",
+        'const expected = ["Agent", "Capability", "Context", "Event", "Hook", "Model", "TaskGroup", "Tool"];',
+        "if (JSON.stringify(Object.keys(frontend).sort()) !== JSON.stringify(expected)) process.exit(7);",
         "const { Agent, Context, Model, Tool } = frontend;",
         "const Weather = Tool('weather.capability.v1');",
         "const Planner = Model('planner.model.v1');",
         "const TripCtx = Context({ legs: [] });",
+        "const sourceFile = fileURLToPath(import.meta.url);",
+        "const source = { fileName: sourceFile, text: readFileSync(sourceFile, 'utf8') };",
         "const Plan = Agent({",
-        "  name: 'Plan', context: TripCtx, use: { Weather, Planner },",
+        "  name: 'Plan', source, context: TripCtx, use: { Weather, Planner },",
         "  async run(agent, request) {",
         "    while (true) {",
         "      if (request !== null) { await Weather(request); }",

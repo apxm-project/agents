@@ -225,7 +225,6 @@ impl ToolsStore {
         }
         Ok(out)
     }
-
 }
 
 fn map_schedule(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScheduleRow> {

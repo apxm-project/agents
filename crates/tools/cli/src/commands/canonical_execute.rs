@@ -10,8 +10,7 @@ use serde_json::{Value, json};
 use apxm_execution::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
     CompositionReceiver, CompositionRequest, EventAwait, EventOutcome, EventPort, ExecutionPorts,
-    ExecutionRequest,
-    NodeOutcome, NoopStaticHookHandler, execute,
+    ExecutionRequest, NodeOutcome, NoopStaticHookHandler, execute,
 };
 use apxm_inference::{
     AttemptDisposition, ExactPortBindingRef, ModelBindingAdmission, ModelCallRequest,

@@ -7,8 +7,9 @@ use serde_json::{Value, json};
 
 use apxm_execution::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
-    CompositionRequest, Continuation, EventAwait, EventOutcome, EventPort, ExecutionPorts,
-    ExecutionRequest, EventRef, NoopStaticHookHandler, RunOutcome, execute_resumable, resume_event,
+    CompositionRequest, Continuation, EventAwait, EventOutcome, EventPort, EventRef,
+    ExecutionPorts, ExecutionRequest, NoopStaticHookHandler, RunOutcome, execute_resumable,
+    resume_event,
 };
 use apxm_inference::{
     AttemptDisposition, ExactPortBindingRef, ModelBindingAdmission, ModelCallRequest,
@@ -342,10 +343,9 @@ async fn nested_loop_park_restores_exact_stack_without_duplicate_work() {
     execute_resumable(&ports(commit.clone()), nested, Value::Null)
         .await
         .expect("nested await parks");
-    let continuation: Continuation = serde_json::from_value(
-        commit.continuation.lock().unwrap().clone().unwrap(),
-    )
-    .expect("typed nested continuation");
+    let continuation: Continuation =
+        serde_json::from_value(commit.continuation.lock().unwrap().clone().unwrap())
+            .expect("typed nested continuation");
     assert_eq!(
         continuation
             .loop_frames
@@ -373,9 +373,7 @@ async fn nested_loop_park_restores_exact_stack_without_duplicate_work() {
         facts
             .iter()
             .filter(|fact| {
-                fact.is_kind(
-                    apxm_program::runtime_evidence::FactKind::EventAwaitRegistered,
-                )
+                fact.is_kind(apxm_program::runtime_evidence::FactKind::EventAwaitRegistered)
             })
             .count(),
         1

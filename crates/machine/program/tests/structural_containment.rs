@@ -44,32 +44,7 @@ fn nested_sibling_graph() -> Value {
             }
         ],
         "data_edges": [],
-        "call_intents": [
-            {
-                "node_id": "node.outer.before",
-                "intent_kind": "model_invocation",
-                "parent_region_id": "loop.outer",
-                "execution_order": 0
-            },
-            {
-                "node_id": "node.inner",
-                "intent_kind": "capability_invocation",
-                "parent_region_id": "loop.inner",
-                "execution_order": 0
-            },
-            {
-                "node_id": "node.outer.after",
-                "intent_kind": "model_invocation",
-                "parent_region_id": "loop.outer",
-                "execution_order": 2
-            },
-            {
-                "node_id": "node.sibling",
-                "intent_kind": "event_wait",
-                "parent_region_id": "loop.sibling",
-                "execution_order": 0
-            }
-        ],
+        "call_intents": [],
         "control_intents": [],
         "context_flow": [],
         "hook_bindings": [],
@@ -98,7 +73,7 @@ fn typed_nested_and_sibling_containment_verifies_and_lowers() {
 #[test]
 fn verifier_rejects_missing_parent_cycles_and_duplicate_sibling_order() {
     let mut missing_parent = nested_sibling_graph();
-    missing_parent["call_intents"][0]["parent_region_id"] = json!("loop.missing");
+    missing_parent["regions"][1]["parent_region_id"] = json!("loop.missing");
     assert!(!verify_frontend_graph_json(&missing_parent).is_accepted());
 
     let mut cycle = nested_sibling_graph();

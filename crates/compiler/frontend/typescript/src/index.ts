@@ -7,35 +7,6 @@
 // FrontendGraph; it never executes the authored body and exposes no operation
 // constant, node or region identity, or raw graph builder.
 
-export {
-  Agent,
-  AgentDefinition,
-  ProgramInstance,
-  type AgentConfig,
-  type AgentFacade,
-} from "./agent.js";
-export {
-  Capability,
-  Context,
-  Event,
-  Model,
-  Tool,
-  type CapabilityBinding,
-  type ContextSchema,
-  type EventTypeBinding,
-  type HandlerSpec,
-  type ModelBinding,
-  type ToolBinding,
-} from "./markers.js";
-export { Hook, TaskGroup, type HookDecl, type HookOptions } from "./advanced.js";
-export {
-  ALL_FACT_KINDS,
-  RUNTIME_FACT_KINDS,
-  decodeFact,
-  type Fact,
-  type LoopIterationCompletedFact,
-  type NodeExecutionRecordedFact,
-  type NodeExecutionScope,
-  type RuntimeFact,
-  type RuntimeFactKind,
-} from "./generated/runtime-evidence.js";
+export { Agent } from "./agent.js";
+export { Capability, Context, Event, Model, Tool } from "./markers.js";
+export { Hook, TaskGroup } from "./advanced.js";

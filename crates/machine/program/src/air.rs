@@ -8,6 +8,7 @@
 
 use std::collections::HashSet;
 
+use apxm_ais::get_operation_spec;
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Verdict, schema_violation};
@@ -99,6 +100,7 @@ impl AirModule {
         let mut verdict = Verdict::accepted();
 
         let mut seen_nodes: HashSet<&str> = HashSet::new();
+        let mut seen_value_definitions: HashSet<&str> = HashSet::new();
         for op in &self.semantic_operations {
             if !is_identifier(&op.node_id) {
                 verdict.push(Diagnostic::new(
@@ -117,8 +119,21 @@ impl AirModule {
             for operand in &op.operands {
                 check_operand(&mut verdict, operand, &op.node_id);
             }
+            validate_semantic_signature(&mut verdict, op);
             if let Some(result) = &op.result {
-                check_value(&mut verdict, &result.value_id, &result.type_ref, &op.node_id);
+                check_value(
+                    &mut verdict,
+                    &result.value_id,
+                    &result.type_ref,
+                    &op.node_id,
+                );
+                if !seen_value_definitions.insert(result.value_id.as_str()) {
+                    verdict.push(Diagnostic::new(
+                        DiagnosticCode::SchemaViolation,
+                        result.value_id.clone(),
+                        "SSA result value_id is defined more than once",
+                    ));
+                }
             }
         }
 
@@ -145,6 +160,13 @@ impl AirModule {
                     &argument.type_ref,
                     &region.region_id,
                 );
+                if !seen_value_definitions.insert(argument.value_id.as_str()) {
+                    verdict.push(Diagnostic::new(
+                        DiagnosticCode::SchemaViolation,
+                        argument.value_id.clone(),
+                        "SSA block argument value_id is defined more than once",
+                    ));
+                }
             }
             for operand in &region.operands {
                 check_operand(&mut verdict, operand, &region.region_id);
@@ -264,14 +286,76 @@ fn collect_containment_diagnostics(
 
 /// Check one typed SSA operand's slot, value id, and type ref grammar.
 fn check_operand(verdict: &mut Verdict, operand: &Operand, owner: &str) {
-    if operand.slot.is_empty() {
+    if !is_identifier(&operand.slot) {
         verdict.push(Diagnostic::new(
-            DiagnosticCode::SchemaViolation,
+            DiagnosticCode::InvalidIdentifier,
             owner.to_string(),
-            "operand slot is empty",
+            "operand slot is not a contract identifier",
         ));
     }
     check_value(verdict, &operand.value_id, &operand.type_ref, owner);
+}
+
+/// Verify that an AIR semantic operation exactly instantiates the field
+/// signature owned by the AIS catalogue. The FrontendGraph selects source
+/// intents, but once lowering has selected an AIS operation its required
+/// operands and result cannot be dropped or replaced by an arbitrary slot.
+fn validate_semantic_signature(verdict: &mut Verdict, operation: &SemanticOp) {
+    let Some(spec) = get_operation_spec(operation.op) else {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::SchemaViolation,
+            operation.node_id.clone(),
+            "semantic operation is absent from the AIS catalogue",
+        ));
+        return;
+    };
+
+    let mut seen_slots = HashSet::new();
+    for operand in &operation.operands {
+        if !seen_slots.insert(operand.slot.as_str()) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                operation.node_id.clone(),
+                format!("semantic operand slot '{}' is duplicated", operand.slot),
+            ));
+        }
+        if spec.get_field(&operand.slot).is_none() {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                operation.node_id.clone(),
+                format!(
+                    "semantic operand slot '{}' is not declared by {}",
+                    operand.slot,
+                    operation.op.wire()
+                ),
+            ));
+        }
+    }
+
+    for field in spec.required_fields() {
+        if !seen_slots.contains(field.name) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                operation.node_id.clone(),
+                format!(
+                    "semantic operation {} is missing required '{}' operand",
+                    operation.op.wire(),
+                    field.name
+                ),
+            ));
+        }
+    }
+
+    if spec.produces_output && operation.result.is_none() {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::SchemaViolation,
+            operation.node_id.clone(),
+            format!(
+                "semantic operation {} is missing its typed result",
+                operation.op.wire()
+            ),
+        ));
+    }
 }
 
 /// Check a typed value's id and type ref against the contract identifier grammar.

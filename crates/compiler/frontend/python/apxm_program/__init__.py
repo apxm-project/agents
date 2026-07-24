@@ -12,7 +12,7 @@ region identity, or raw graph builder.
 from __future__ import annotations
 
 from ._advanced import Hook, TaskGroup
-from ._agent import Agent, AgentDefinition, ProgramInstance
+from ._agent import Agent
 from ._markers import Capability, Context, Event, Model, Tool
 
 __all__ = [

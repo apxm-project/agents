@@ -54,7 +54,7 @@ fn generate_structural_op_def(kind: StructuralOpKind) -> String {
     let op_class = kind.mlir_cpp_class();
     let mnemonic = kind.wire().strip_prefix("ais.").unwrap_or(kind.wire());
     format!(
-        "def AIS_{op_class} : AIS_Op<\"{mnemonic}\", []> {{\n  let summary = \"Compiler-emitted {kind} structural operation\";\n  let results = (outs AIS_TokenType:$result);\n  let assemblyFormat = \"attr-dict `:` type($result)\";\n}}\n"
+        "def AIS_{op_class} : AIS_Op<\"{mnemonic}\", [NoTerminator]> {{\n  let summary = \"Compiler-emitted {kind} structural operation\";\n  let arguments = (ins Variadic<AIS_TokenType>:$operands);\n  let regions = (region AnyRegion:$body);\n  let results = (outs AIS_TokenType:$result);\n}}\n"
     )
 }
 
@@ -84,17 +84,22 @@ fn generate_semantic_op_def(spec: &OperationSpec) -> String {
         .expect("MLIR class name ends in Op");
     let mnemonic = spec.op_type.wire().replace('.', "_");
     let arguments = render_operand_arguments(spec);
+    let traits = if spec.fields.iter().filter(|field| !field.required).count() >= 2 {
+        "AttrSizedOperandSegments"
+    } else {
+        ""
+    };
     format!(
-        "def AIS_{op_name}Op : AIS_Op<\"{mnemonic}\", []> {{\n  let summary = \"{summary}\";\n{arguments}  let results = (outs AIS_TokenType:$result);\n  let assemblyFormat = \"attr-dict `:` type($result)\";\n}}\n",
+        "def AIS_{op_name}Op : AIS_Op<\"{mnemonic}\", [{traits}]> {{\n  let summary = \"{summary}\";\n{arguments}  let results = (outs AIS_TokenType:$result);\n}}\n",
         summary = spec.description.replace('"', "\\\"")
     )
 }
 
-/// Render the typed operand attribute list for one semantic operation. Each
-/// contract operand becomes a typed string attribute (its slot name); required
-/// operands are inherent, optional operands are `OptionalAttr`. Carrying every
-/// owner-contract input as an inherent/optional attribute means MLIR verifies a
-/// dropped required operand instead of silently emitting `() -> ()`.
+/// Render the typed SSA operand list for one semantic operation. Each contract
+/// field becomes a named AIS token operand; required fields are required
+/// operands and optional fields use the corresponding optional operand form.
+/// This makes the registered operation signature carry every value dependency
+/// instead of serializing source value ids as untyped string attributes.
 fn render_operand_arguments(spec: &OperationSpec) -> String {
     if spec.fields.is_empty() {
         return String::new();
@@ -104,9 +109,9 @@ fn render_operand_arguments(spec: &OperationSpec) -> String {
         .iter()
         .map(|field| {
             if field.required {
-                format!("StrAttr:${}", field.name)
+                format!("AIS_TokenType:${}", field.name)
             } else {
-                format!("OptionalAttr<StrAttr>:${}", field.name)
+                format!("Optional<AIS_TokenType>:${}", field.name)
             }
         })
         .collect();
@@ -137,15 +142,16 @@ mod tests {
     }
 
     #[test]
-    fn semantic_declarations_carry_typed_operand_attributes() {
+    fn semantic_declarations_carry_typed_ssa_operands() {
         let declarations = generate_semantic_tablegen_declarations();
-        // model.call carries its required model_ref and request plus optional
-        // options, so a dropped required operand fails MLIR verification rather
-        // than emitting a bare `() -> ()` operation.
-        assert!(declarations.contains("StrAttr:$model_ref"));
-        assert!(declarations.contains("StrAttr:$request"));
-        assert!(declarations.contains("OptionalAttr<StrAttr>:$options"));
-        assert!(declarations.contains("StrAttr:$capability_ref"));
-        assert!(declarations.contains("StrAttr:$event_ref"));
+        assert!(declarations.contains("AIS_TokenType:$model_ref"));
+        assert!(declarations.contains("AIS_TokenType:$request"));
+        assert!(declarations.contains("Optional<AIS_TokenType>:$options"));
+        assert!(declarations.contains("AIS_TokenType:$capability_ref"));
+        assert!(declarations.contains("AIS_TokenType:$event_ref"));
+        let structural = generate_structural_tablegen_declarations();
+        assert!(structural.contains("Variadic<AIS_TokenType>:$operands"));
+        assert!(structural.contains("region AnyRegion:$body"));
+        assert!(structural.contains("[NoTerminator]"));
     }
 }

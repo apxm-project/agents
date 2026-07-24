@@ -195,10 +195,7 @@ mod drift_gate {
         let entries = build_entries();
         assert_eq!(entries.len(), 5);
         assert!(entries.iter().all(|entry| !entry.is_pseudo_op));
-        let wires: Vec<_> = entries
-            .iter()
-            .map(|entry| entry.op.wire())
-            .collect();
+        let wires: Vec<_> = entries.iter().map(|entry| entry.op.wire()).collect();
         assert_eq!(
             wires,
             vec![

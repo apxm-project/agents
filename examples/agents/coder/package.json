@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@apxm/agent-packaging": "file:../../../crates/tools/cli/agent-packaging",
     "@apxm/frontend": "file:../../../crates/compiler/frontend/typescript"
   }
 }

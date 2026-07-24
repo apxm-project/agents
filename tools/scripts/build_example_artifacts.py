@@ -26,10 +26,15 @@ def run_json(command: list[str], *, cwd: Path, env: dict[str, str]) -> dict[str,
         command,
         cwd=cwd,
         env=env,
-        check=True,
         capture_output=True,
         text=True,
     )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            "example compiler failed:\n"
+            f"stdout:\n{completed.stdout}\n"
+            f"stderr:\n{completed.stderr}"
+        )
     value = json.loads(completed.stdout)
     if value.get("schema_version") != "apxm.executable-artifact.v1":
         raise ValueError("example compiler did not emit apxm.executable-artifact.v1")
@@ -43,14 +48,12 @@ def build_python_artifact(package_root: Path) -> dict[str, Any]:
     env = os.environ.copy()
     env["PYTHONPATH"] = os.pathsep.join((str(package_root), str(example_root)))
     program = (
-        "import json, pathlib; "
-        "import apxm_program; "
-        "from agent import build_conversational; "
+        "import json, pathlib; import apxm_program; "
+        "from agent import ConversationalExample; "
         f"root=pathlib.Path({str(package_root)!r}).resolve(); "
         "loaded=pathlib.Path(apxm_program.__file__).resolve(); "
         "assert loaded.is_relative_to(root), (loaded, root); "
-        "print(json.dumps(apxm_program.compile_artifact("
-        "build_conversational().build_graph()), sort_keys=True, separators=(',', ':')))"
+        "print(json.dumps(ConversationalExample.artifact(), sort_keys=True, separators=(',', ':')))"
     )
     return run_json([sys.executable, "-c", program], cwd=REPOSITORY_ROOT, env=env)
 
@@ -63,9 +66,8 @@ def build_typescript_artifact() -> dict[str, Any]:
     if not installed_frontend.is_file():
         raise FileNotFoundError(f"missing installed TypeScript frontend: {installed_frontend}")
     program = (
-        "import { compileArtifact } from '@apxm/frontend';"
         "import { buildGao } from './dist/index.js';"
-        "console.log(JSON.stringify(compileArtifact(buildGao().buildGraph())));"
+        "console.log(JSON.stringify(buildGao().artifact()));"
     )
     return run_json(
         ["node", "--input-type=module", "-e", program],

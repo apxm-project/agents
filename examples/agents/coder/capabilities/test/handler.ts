@@ -1,4 +1,4 @@
-import { tool } from "@apxm/frontend";
+import { tool } from "@apxm/agent-packaging";
 
 interface TestArgs {
   command: string;

@@ -714,14 +714,16 @@ impl RuntimeEvidence {
                     seen_node_executions.insert(&node.node_execution_id, memberships);
                 }
                 runtime_variant => {
-                    let runtime = runtime_variant.runtime().expect("exhaustive runtime variant");
+                    let runtime = runtime_variant
+                        .runtime()
+                        .expect("exhaustive runtime variant");
                     let kind = runtime_variant.kind().expect("runtime variant kind");
                     if kind == FactKind::EffectOutcomeUnknown {
-                        let claims_success =
-                            runtime.model_outcome == Some(ModelOutcome::CommittedSuccess)
-                                || runtime
-                                    .invocation_state
-                                    .is_some_and(InvocationState::is_committed);
+                        let claims_success = runtime.model_outcome
+                            == Some(ModelOutcome::CommittedSuccess)
+                            || runtime
+                                .invocation_state
+                                .is_some_and(InvocationState::is_committed);
                         if claims_success {
                             verdict.push(Diagnostic::new(
                                 DiagnosticCode::OutcomeUnknownClaimsSuccess,

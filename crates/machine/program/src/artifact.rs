@@ -220,7 +220,8 @@ impl ExecutableArtifact {
     ) -> Result<Self, ArtifactBuildError> {
         let bundle = SourceBundle::from_graph(graph);
         let source_bundle_digest = bundle.digest().map_err(ArtifactBuildError::Codec)?;
-        let air_bytes = serde_json::to_vec(air).map_err(|error| ArtifactBuildError::Codec(CodecError(error)))?;
+        let air_bytes = serde_json::to_vec(air)
+            .map_err(|error| ArtifactBuildError::Codec(CodecError(error)))?;
         let air_digest = sha256_digest(&air_bytes);
 
         let entrypoints = graph
@@ -256,7 +257,8 @@ impl ExecutableArtifact {
             artifact_semantic_requirements,
             integrity_algorithm: IntegrityAlgorithm::Sha256,
         };
-        let content = serde_json::to_vec(&artifact).map_err(|error| ArtifactBuildError::Codec(CodecError(error)))?;
+        let content = serde_json::to_vec(&artifact)
+            .map_err(|error| ArtifactBuildError::Codec(CodecError(error)))?;
         artifact.artifact_digest = sha256_digest(&content);
         Ok(artifact)
     }
@@ -443,9 +445,7 @@ impl std::fmt::Display for ArtifactBuildError {
 
 impl std::error::Error for ArtifactBuildError {}
 
-fn entrypoint_from_definition(
-    program: &crate::frontend_graph::ProgramDefinition,
-) -> Entrypoint {
+fn entrypoint_from_definition(program: &crate::frontend_graph::ProgramDefinition) -> Entrypoint {
     Entrypoint {
         entrypoint: program.entrypoint.clone(),
         program_id: program.program_id.clone(),
@@ -728,7 +728,13 @@ mod from_graph_tests {
                     "result_value": "value.cap.out"
                 }
             ],
-            "control_intents": [],
+            "control_intents": [{
+                "node_id": "node.loop.1",
+                "control_kind": "loop",
+                "parent_region_id": "region.body",
+                "execution_order": 0,
+                "body_region_ids": ["region.loop.1"]
+            }],
             "context_flow": [],
             "hook_bindings": [],
             "capability_requirements": [{ "capability_ref": "cap.search" }],
@@ -757,27 +763,32 @@ mod from_graph_tests {
         assert_eq!(artifact.hook_bindings.len(), graph.hook_bindings.len());
         assert!(artifact.validate().is_accepted());
         let bundle = SourceBundle::from_graph(&graph);
-        assert_eq!(artifact.source_bundle_digest, bundle.digest().expect("bundle digest"));
+        assert_eq!(
+            artifact.source_bundle_digest,
+            bundle.digest().expect("bundle digest")
+        );
     }
 
     #[test]
     fn rejects_mixed_requirement_scope_in_validation() {
         let mut artifact =
             ExecutableArtifact::from_frontend_graph(&specialist_graph()).expect("artifact");
-        artifact.artifact_semantic_requirements.push(PortRequirement {
-            schema_version: PortRequirementVersion::V1,
-            typed_port_slot: "deployment".to_string(),
-            required_port_contract: SchemaDigestRef {
-                schema_id: "apxm.execution-commit.v1".to_string(),
-                digest: sha256_digest(b"apxm.execution-commit.v1"),
-            },
-            required_feature_set: Vec::new(),
-            semantic_limits_digest: sha256_digest(b""),
-            source_scope: PortSourceScope::DeploymentInfrastructure,
-            source_owner: SemanticOwner::Server,
-            source_digest: sha256_digest(b"deployment"),
-            requirement_digest: sha256_digest(b"deployment-req"),
-        });
+        artifact
+            .artifact_semantic_requirements
+            .push(PortRequirement {
+                schema_version: PortRequirementVersion::V1,
+                typed_port_slot: "deployment".to_string(),
+                required_port_contract: SchemaDigestRef {
+                    schema_id: "apxm.execution-commit.v1".to_string(),
+                    digest: sha256_digest(b"apxm.execution-commit.v1"),
+                },
+                required_feature_set: Vec::new(),
+                semantic_limits_digest: sha256_digest(b""),
+                source_scope: PortSourceScope::DeploymentInfrastructure,
+                source_owner: SemanticOwner::Server,
+                source_digest: sha256_digest(b"deployment"),
+                requirement_digest: sha256_digest(b"deployment-req"),
+            });
         assert!(
             artifact
                 .validate()

@@ -7,13 +7,13 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::ports::EventRef;
 use apxm_inference::{ModelBindingAdmission, Usage};
 use apxm_kernel::AtomicWriteSet;
 use apxm_program::air::AirModule;
 use apxm_program::external_agent::ExternalAgentEvidence;
 use apxm_program::frontend_graph::HookBinding;
 use apxm_program::runtime_evidence::Fact;
-use crate::ports::EventRef;
 
 /// One active structural loop frame persisted in exact nesting order.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,7 +82,10 @@ impl std::fmt::Display for ContinuationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotCommitted { invocation_ref } => {
-                write!(f, "no committed continuation for invocation {invocation_ref}")
+                write!(
+                    f,
+                    "no committed continuation for invocation {invocation_ref}"
+                )
             }
             Self::InvalidCommittedState { message } => {
                 write!(f, "invalid committed continuation state: {message}")

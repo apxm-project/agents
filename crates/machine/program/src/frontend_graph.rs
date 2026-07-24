@@ -10,7 +10,7 @@
 //! placement, or credentials. Rust alone selects AIS operations from these
 //! intents. `deny_unknown_fields` rejects any out-of-shape field at decode.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -412,6 +412,7 @@ impl FrontendGraph {
         }
 
         collect_containment_diagnostics(&mut verdict, self);
+        collect_typed_link_diagnostics(&mut verdict, self);
 
         for import in &self.imported_program_refs {
             check_identifier(&mut verdict, &import.program_ref, "imported program_ref");
@@ -428,6 +429,406 @@ impl FrontendGraph {
     }
 }
 
+/// Verify the typed cross references that turn the JSON DTO into a closed
+/// FrontendGraph rather than a collection of independently well-formed lists.
+/// Every value, declaration, region, function, data edge, and source intent is
+/// resolved before Rust selects an AIS operation.
+fn collect_typed_link_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph) {
+    let declarations: HashMap<&str, &Declaration> = graph
+        .declarations
+        .iter()
+        .map(|declaration| (declaration.decl_id.as_str(), declaration))
+        .collect();
+    let values: HashMap<&str, &Value> = graph
+        .values
+        .iter()
+        .map(|value| (value.value_id.as_str(), value))
+        .collect();
+    let functions: HashMap<&str, &FunctionDef> = graph
+        .functions
+        .iter()
+        .map(|function| (function.function_id.as_str(), function))
+        .collect();
+    let blocks: HashMap<&str, &Block> = graph
+        .blocks
+        .iter()
+        .map(|block| (block.block_id.as_str(), block))
+        .collect();
+    let regions: HashSet<&str> = graph
+        .regions
+        .iter()
+        .map(|region| region.region_id.as_str())
+        .collect();
+    let call_intents: HashMap<&str, &CallIntent> = graph
+        .call_intents
+        .iter()
+        .map(|intent| (intent.node_id.as_str(), intent))
+        .collect();
+    let control_intents: HashMap<&str, &ControlIntent> = graph
+        .control_intents
+        .iter()
+        .map(|intent| (intent.node_id.as_str(), intent))
+        .collect();
+
+    check_unique_ids(
+        verdict,
+        graph.declarations.iter().map(|item| item.decl_id.as_str()),
+        "declaration",
+    );
+    check_unique_ids(
+        verdict,
+        graph.functions.iter().map(|item| item.function_id.as_str()),
+        "function",
+    );
+    check_unique_ids(
+        verdict,
+        graph.blocks.iter().map(|item| item.block_id.as_str()),
+        "block",
+    );
+    check_unique_ids(
+        verdict,
+        graph
+            .program_definitions
+            .iter()
+            .map(|item| item.program_id.as_str()),
+        "program definition",
+    );
+    check_unique_ids(
+        verdict,
+        graph
+            .imported_program_refs
+            .iter()
+            .map(|item| item.program_ref.as_str()),
+        "imported program reference",
+    );
+
+    let mut entrypoints = 0usize;
+    for function in &graph.functions {
+        check_identifier(verdict, &function.function_id, "function function_id");
+        if !regions.contains(function.body_region_id.as_str()) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                function.function_id.clone(),
+                "function body_region_id does not reference a declared region",
+            ));
+        }
+        if function.is_entrypoint {
+            entrypoints += 1;
+        }
+        for parameter in &function.parameters {
+            let Some(value) = values.get(parameter.value_id.as_str()) else {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    function.function_id.clone(),
+                    format!("parameter '{}' has no declared value", parameter.value_id),
+                ));
+                continue;
+            };
+            if value.type_ref != parameter.type_ref
+                || value.origin != ValueOrigin::Parameter
+                || value.origin_id.as_deref() != Some(function.function_id.as_str())
+            {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    parameter.value_id.clone(),
+                    "function parameter does not match its typed parameter value origin",
+                ));
+            }
+        }
+    }
+    if entrypoints != 1 {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::SchemaViolation,
+            "functions",
+            "a FrontendGraph declares exactly one entrypoint function",
+        ));
+    }
+
+    for program in &graph.program_definitions {
+        check_identifier(verdict, &program.program_id, "program program_id");
+        if !functions.contains_key(program.entrypoint.as_str()) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                program.program_id.clone(),
+                "program entrypoint does not reference a declared function",
+            ));
+        }
+    }
+
+    for declaration in &graph.declarations {
+        check_identifier(verdict, &declaration.decl_id, "declaration decl_id");
+        check_identifier(
+            verdict,
+            &declaration.input_type_ref,
+            "declaration input_type_ref",
+        );
+        check_identifier(
+            verdict,
+            &declaration.output_type_ref,
+            "declaration output_type_ref",
+        );
+        if matches!(
+            declaration.decl_kind,
+            DeclKind::ModelBinding
+                | DeclKind::ToolBinding
+                | DeclKind::CapabilityBinding
+                | DeclKind::EventType
+        ) && declaration.target_ref.is_none()
+        {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                declaration.decl_id.clone(),
+                "external declaration is missing its exact target_ref",
+            ));
+        }
+    }
+
+    for value in &graph.values {
+        match value.origin {
+            ValueOrigin::Parameter => {
+                if value
+                    .origin_id
+                    .as_deref()
+                    .is_none_or(|function_id| !functions.contains_key(function_id))
+                {
+                    verdict.push(Diagnostic::new(
+                        DiagnosticCode::SchemaViolation,
+                        value.value_id.clone(),
+                        "parameter value origin_id does not reference a function",
+                    ));
+                }
+            }
+            ValueOrigin::CallResult => {
+                let valid = value
+                    .origin_id
+                    .as_deref()
+                    .and_then(|node_id| call_intents.get(node_id))
+                    .is_some_and(|intent| {
+                        intent.result_value.as_deref() == Some(value.value_id.as_str())
+                    });
+                if !valid {
+                    verdict.push(Diagnostic::new(
+                        DiagnosticCode::SchemaViolation,
+                        value.value_id.clone(),
+                        "call-result value origin does not match a call intent result",
+                    ));
+                }
+            }
+            ValueOrigin::BlockArgument => {
+                let valid = value
+                    .origin_id
+                    .as_deref()
+                    .and_then(|block_id| blocks.get(block_id))
+                    .is_some_and(|block| {
+                        block.block_arguments.iter().any(|id| id == &value.value_id)
+                    });
+                if !valid {
+                    verdict.push(Diagnostic::new(
+                        DiagnosticCode::SchemaViolation,
+                        value.value_id.clone(),
+                        "block-argument value origin does not match a block argument",
+                    ));
+                }
+            }
+            ValueOrigin::ContextValue | ValueOrigin::Literal => {
+                if value.origin_id.is_some() {
+                    verdict.push(Diagnostic::new(
+                        DiagnosticCode::SchemaViolation,
+                        value.value_id.clone(),
+                        "context and literal values do not carry an origin_id",
+                    ));
+                }
+            }
+            ValueOrigin::ResumeInput => {
+                if value
+                    .origin_id
+                    .as_deref()
+                    .is_none_or(|node_id| !control_intents.contains_key(node_id))
+                {
+                    verdict.push(Diagnostic::new(
+                        DiagnosticCode::SchemaViolation,
+                        value.value_id.clone(),
+                        "resume-input value origin_id does not reference a control intent",
+                    ));
+                }
+            }
+        }
+    }
+
+    for block in &graph.blocks {
+        let mut seen_args = HashSet::new();
+        for value_id in &block.block_arguments {
+            if !seen_args.insert(value_id.as_str()) {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    block.block_id.clone(),
+                    "block_arguments contains the same value more than once",
+                ));
+            }
+            if !values.contains_key(value_id.as_str()) {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    block.block_id.clone(),
+                    format!("block argument '{value_id}' has no declared value"),
+                ));
+            }
+        }
+    }
+
+    let mut edge_slots = HashSet::new();
+    for edge in &graph.data_edges {
+        if !values.contains_key(edge.from_value.as_str()) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                edge.from_value.clone(),
+                "data edge source does not reference a declared value",
+            ));
+        }
+        if !call_intents.contains_key(edge.to_consumer.as_str())
+            && !control_intents.contains_key(edge.to_consumer.as_str())
+        {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                edge.to_consumer.clone(),
+                "data edge consumer does not reference a call or control intent",
+            ));
+        }
+        if !edge_slots.insert((edge.to_consumer.as_str(), edge.consumer_slot.as_str())) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                edge.to_consumer.clone(),
+                "data edges assign the same consumer slot more than once",
+            ));
+        }
+    }
+
+    for intent in &graph.call_intents {
+        validate_call_intent(verdict, intent, &declarations, &values, graph);
+    }
+    for intent in &graph.control_intents {
+        for region_id in &intent.body_region_ids {
+            if !regions.contains(region_id.as_str()) {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    intent.node_id.clone(),
+                    format!("control body region '{region_id}' is not declared"),
+                ));
+            }
+        }
+        if intent.control_kind == ControlKind::Loop && intent.body_region_ids.len() != 1 {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                intent.node_id.clone(),
+                "a loop intent owns exactly one body region",
+            ));
+        }
+    }
+}
+
+fn check_unique_ids<'a>(verdict: &mut Verdict, ids: impl Iterator<Item = &'a str>, kind: &str) {
+    let mut seen = HashSet::new();
+    for id in ids {
+        if !seen.insert(id) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                id,
+                format!("{kind} id is not unique"),
+            ));
+        }
+    }
+}
+
+fn validate_call_intent(
+    verdict: &mut Verdict,
+    intent: &CallIntent,
+    declarations: &HashMap<&str, &Declaration>,
+    values: &HashMap<&str, &Value>,
+    graph: &FrontendGraph,
+) {
+    let declaration_matches = |kind: DeclKind| match intent.intent_kind {
+        IntentKind::ModelInvocation => kind == DeclKind::ModelBinding,
+        IntentKind::ToolInvocation => {
+            kind == DeclKind::ToolBinding || kind == DeclKind::ToolHandler
+        }
+        IntentKind::CapabilityInvocation => {
+            kind == DeclKind::CapabilityBinding || kind == DeclKind::CapabilityHandler
+        }
+        IntentKind::EventWait => kind == DeclKind::EventType,
+        IntentKind::AgentCreation | IntentKind::AgentInvocation => false,
+    };
+    if matches!(
+        intent.intent_kind,
+        IntentKind::ModelInvocation | IntentKind::ToolInvocation | IntentKind::CapabilityInvocation
+    ) {
+        match intent
+            .binding_ref
+            .as_deref()
+            .and_then(|id| declarations.get(id))
+        {
+            Some(declaration) if declaration_matches(declaration.decl_kind) => {}
+            _ => verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                intent.node_id.clone(),
+                "call intent binding_ref does not resolve to the required typed declaration",
+            )),
+        }
+    } else if intent.intent_kind == IntentKind::EventWait {
+        if let Some(binding_ref) = intent.binding_ref.as_deref()
+            && !declarations
+                .get(binding_ref)
+                .is_some_and(|declaration| declaration_matches(declaration.decl_kind))
+        {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                intent.node_id.clone(),
+                "event binding_ref does not resolve to a typed Event declaration",
+            ));
+        }
+    } else if let Some(binding_ref) = intent.binding_ref.as_deref() {
+        let known_program = graph
+            .program_definitions
+            .iter()
+            .any(|program| program.program_id == binding_ref)
+            || graph
+                .imported_program_refs
+                .iter()
+                .any(|program| program.program_ref == binding_ref);
+        if !known_program {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                intent.node_id.clone(),
+                "program call binding_ref does not resolve to a local or imported ProgramRef",
+            ));
+        }
+    } else {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::SchemaViolation,
+            intent.node_id.clone(),
+            "call intent is missing its typed binding_ref",
+        ));
+    }
+
+    let Some(result_value) = intent.result_value.as_deref() else {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::SchemaViolation,
+            intent.node_id.clone(),
+            "effect intent is missing its typed result value",
+        ));
+        return;
+    };
+    let valid_result = values.get(result_value).is_some_and(|value| {
+        value.origin == ValueOrigin::CallResult
+            && value.origin_id.as_deref() == Some(intent.node_id.as_str())
+    });
+    if !valid_result {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::SchemaViolation,
+            intent.node_id.clone(),
+            "effect intent result_value does not resolve to its call-result value",
+        ));
+    }
+}
+
 fn collect_containment_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph) {
     let regions: HashSet<&str> = graph
         .regions
@@ -435,6 +836,7 @@ fn collect_containment_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph)
         .map(|region| region.region_id.as_str())
         .collect();
     let mut positions: HashSet<(Option<&str>, u32)> = HashSet::new();
+    let mut region_at_position: HashMap<(Option<&str>, u32), &str> = HashMap::new();
 
     for region in &graph.regions {
         if let Some(parent) = region.parent_region_id.as_deref()
@@ -446,13 +848,15 @@ fn collect_containment_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph)
                 "region parent_region_id does not reference a declared region",
             ));
         }
-        if !positions.insert((region.parent_region_id.as_deref(), region.execution_order)) {
+        let position = (region.parent_region_id.as_deref(), region.execution_order);
+        if !positions.insert(position) {
             verdict.push(Diagnostic::new(
                 DiagnosticCode::SchemaViolation,
                 region.region_id.clone(),
                 "sibling regions have duplicate execution_order",
             ));
         }
+        region_at_position.insert(position, region.region_id.as_str());
 
         let mut cursor = region.parent_region_id.as_deref();
         let mut ancestors = HashSet::new();
@@ -503,10 +907,15 @@ fn collect_containment_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph)
                 "control intent parent_region_id does not reference a declared region",
             ));
         }
-        if !positions.insert((
+        let position = (
             Some(intent.parent_region_id.as_str()),
             intent.execution_order,
-        )) {
+        );
+        let loop_replaces_its_body_region = intent.control_kind == ControlKind::Loop
+            && region_at_position
+                .get(&position)
+                .is_some_and(|region_id| intent.body_region_ids.iter().any(|id| id == region_id));
+        if !loop_replaces_its_body_region && !positions.insert(position) {
             verdict.push(Diagnostic::new(
                 DiagnosticCode::SchemaViolation,
                 intent.node_id.clone(),

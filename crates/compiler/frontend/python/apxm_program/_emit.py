@@ -42,6 +42,7 @@ def emit_frontend_graph(program: BoundProgram, source_language: str = "python") 
     declarations = [_declaration(d) for d in program.declarations]
     values = [_value(v) for v in program.values]
     regions = [_region(r) for r in program.regions]
+    blocks = _blocks(program)
 
     call_intents = []
     data_edges: list[dict[str, Any]] = []
@@ -130,7 +131,7 @@ def emit_frontend_graph(program: BoundProgram, source_language: str = "python") 
         "declarations": declarations,
         "functions": functions,
         "values": values,
-        "blocks": [],
+        "blocks": blocks,
         "regions": regions,
         "data_edges": data_edges,
         "call_intents": call_intents,
@@ -196,6 +197,36 @@ def _region(region: Any) -> dict[str, Any]:
     if region.parent_region_id is not None:
         record["parent_region_id"] = region.parent_region_id
     return record
+
+
+def _blocks(program: BoundProgram) -> list[dict[str, Any]]:
+    """Emit one lexical entry block for every captured region.
+
+    A yielded resume value is introduced at the lexical point where the yield
+    resumes. Keeping that value in its enclosing region block makes the
+    continuation boundary explicit to Rust lowering without changing the
+    value's ``resume_input`` provenance.
+    """
+    controls = {control.node_id: control for control in program.controls}
+    arguments_by_region: dict[str, list[str]] = {
+        region.region_id: [] for region in program.regions
+    }
+    for value in program.values:
+        if value.origin != "resume_input" or value.origin_id is None:
+            continue
+        control = controls.get(value.origin_id)
+        if control is not None:
+            arguments_by_region[control.parent_region_id].append(value.value_id)
+
+    return [
+        {
+            "block_id": f"{region.region_id}.block.0",
+            "region_id": region.region_id,
+            "block_arguments": arguments_by_region[region.region_id],
+            "execution_order": 0,
+        }
+        for region in program.regions
+    ]
 
 
 def _hook(hook: Any) -> dict[str, Any]:

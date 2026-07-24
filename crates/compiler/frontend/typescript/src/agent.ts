@@ -1,54 +1,65 @@
 // The Agent definition factory and its compiled program handle.
 //
-// Agent(...) binds one typed program from a run callback and captures its source
-// into the FrontendGraph on definition. The returned handle exposes new(...) and
-// invoke(...) composition and the compiled graph for the compiler bridge.
+// Agent(...) binds one typed program from a static source declaration and
+// captures its complete callback AST into the FrontendGraph. The returned handle
+// exposes new(...) and invoke(...) composition and the compiler bridge result.
 
+import type { Json } from "./contract.js";
+import { compilerService } from "./compiler-service.js";
 import {
-  canonicalAirJson,
-  compileArtifact,
-  verifyGraph,
-  type Json,
-} from "./bridge.js";
-import { captureProgram, type Binding } from "./capture.js";
+  captureProgram,
+  type Binding,
+  type ProgramBinding,
+  type StaticSource,
+} from "./capture.js";
 import type { ContextSchema } from "./markers.js";
+import { stableDigest } from "./markers.js";
 
-export type AgentConfig<I, O, C> = {
+type AgentCallback<C, I, O> = {
+  context: C;
+  yield_(output: O): Promise<I>;
+};
+
+type AgentConfig<I, O, C> = {
   readonly name?: string;
   readonly context?: ContextSchema;
   readonly use?: Readonly<Record<string, Binding>>;
-  run(agent: AgentFacade<C>, input: I): Promise<O> | O;
+  readonly source?: StaticSource;
+  run(agent: AgentCallback<C, I, O>, input: I): Promise<O> | O;
 };
 
-export type AgentFacade<C> = {
-  context: C;
-  yield_(output: unknown): Promise<unknown>;
-};
+export class AgentHandle<I, O, C> implements ProgramBinding {
+  readonly kind = "agent_definition" as const;
+  readonly artifactDigest: string;
+  readonly entrypoint = "run";
+  readonly targetAgentIdentityRequirement: string;
 
-export class AgentDefinition<I, O, C> {
   constructor(
     readonly programId: string,
     private readonly graph: Json,
-  ) {}
+  ) {
+    this.artifactDigest = stableDigest(JSON.stringify(graph));
+    this.targetAgentIdentityRequirement = programId;
+  }
 
   frontendGraph(): Json {
     return this.graph;
   }
 
   diagnostics(): string | null {
-    return verifyGraph(this.graph);
+    return compilerService().verifyGraph(this.graph);
   }
 
   canonicalAir(): string {
-    return canonicalAirJson(this.graph);
+    return compilerService().canonicalAir(this.graph);
   }
 
   artifact(): Json {
-    return compileArtifact(this.graph);
+    return compilerService().artifact(this.graph);
   }
 
   new(_options?: { context?: C }): ProgramInstance<I, O, C> {
-    return new ProgramInstance<I, O, C>(this.programId);
+    return new ProgramInstance<I, O, C>(this.programId, this.artifactDigest);
   }
 
   invoke(_input: I): Promise<O> {
@@ -57,7 +68,10 @@ export class AgentDefinition<I, O, C> {
 }
 
 export class ProgramInstance<I, O, C> {
-  constructor(readonly programRef: string) {}
+  constructor(
+    readonly programRef: string,
+    readonly artifactDigest: string,
+  ) {}
 
   invoke(_input: I): Promise<O> {
     throw new Error("instance.invoke is called inside a compiled Agent body");
@@ -66,7 +80,7 @@ export class ProgramInstance<I, O, C> {
 
 export function Agent<I, O, C = undefined>(
   config: AgentConfig<I, O, C>,
-): AgentDefinition<I, O, C> {
+): AgentHandle<I, O, C> {
   const programId = config.name ?? (config.run.name || "Agent");
 
   const bindings = new Map<string, Binding>();
@@ -94,10 +108,10 @@ export function Agent<I, O, C = undefined>(
     hasDefaultContext,
     bindings,
     bindingDeclIds,
-    callbackSource: config.run.toString(),
+    source: config.source ?? missingStaticSource(),
   });
 
-  return new AgentDefinition<I, O, C>(programId, graph);
+  return new AgentHandle<I, O, C>(programId, graph);
 }
 
 function declId(name: string, binding: Binding): string {
@@ -114,5 +128,11 @@ function declId(name: string, binding: Binding): string {
       return `decl.event.${name}`;
     case "context":
       return `decl.context.${name}`;
+    case "agent_definition":
+      return binding.programId;
   }
+}
+
+function missingStaticSource(): never {
+  throw new Error("Agent requires a static source token from its compiler bridge");
 }

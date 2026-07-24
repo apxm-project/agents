@@ -234,8 +234,7 @@ fn classify_process(cmdline: &[String], scope: &ProcessScope) -> Option<String> 
 
 fn matches_direct_apxm_job(cmdline: &[String]) -> bool {
     for idx in 0..cmdline.len() {
-        if basename(&cmdline[idx]) == APXM_BINARY
-            && is_direct_apxm_job_command(&cmdline[idx + 1..])
+        if basename(&cmdline[idx]) == APXM_BINARY && is_direct_apxm_job_command(&cmdline[idx + 1..])
         {
             return true;
         }
@@ -249,9 +248,7 @@ fn matches_dekk_apxm_job(cmdline: &[String]) -> bool {
             continue;
         }
         let rest = &cmdline[idx + 1..];
-        if rest
-            .first()
-            .is_some_and(|arg| arg == DEKK_AGENTS_SURFACE)
+        if rest.first().is_some_and(|arg| arg == DEKK_AGENTS_SURFACE)
             && is_apxm_job_command(&rest[1..])
         {
             return true;
@@ -501,7 +498,10 @@ mod tests {
     #[test]
     fn dekk_apxm_retired_surface_is_not_matched() {
         assert!(!matches_dekk_apxm_job(&args(&[
-            "dekk", "apxm", "execute", "program.air"
+            "dekk",
+            "apxm",
+            "execute",
+            "program.air"
         ])));
     }
 }

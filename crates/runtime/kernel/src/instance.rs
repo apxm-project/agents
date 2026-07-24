@@ -11,8 +11,8 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use apxm_program::runtime_evidence::{
-    Fact, FactKind, InstanceState, InvocationState, ProgramIdentity, RuntimeEvidence, RuntimeFact,
-    RuntimeEvidenceVersion,
+    Fact, FactKind, InstanceState, InvocationState, ProgramIdentity, RuntimeEvidence,
+    RuntimeEvidenceVersion, RuntimeFact,
 };
 
 use crate::bundle::PortBundle;
@@ -472,13 +472,14 @@ fn capability_terminal_fact(
                 Some(InvocationState::Failed),
                 None,
             );
-            runtime_fact_mut(&mut fact).typed_error = Some(apxm_program::common::TypedErrorEnvelope {
-                error_id: "agents.external_agent_failed".to_string(),
-                category: apxm_program::common::ErrorCategory::Unavailable,
-                code_ref: "ExternalAgentFailed".to_string(),
-                message: message.clone(),
-                details_digest: None,
-            });
+            runtime_fact_mut(&mut fact).typed_error =
+                Some(apxm_program::common::TypedErrorEnvelope {
+                    error_id: "agents.external_agent_failed".to_string(),
+                    category: apxm_program::common::ErrorCategory::Unavailable,
+                    code_ref: "ExternalAgentFailed".to_string(),
+                    message: message.clone(),
+                    details_digest: None,
+                });
             fact
         }
         PromptEffectState::OutcomeUnknown { .. } => {
@@ -502,32 +503,35 @@ fn lifecycle_fact(
     invocation_state: Option<InvocationState>,
     commit_sequence: Option<u64>,
 ) -> Fact {
-    Fact::from_runtime(kind, RuntimeFact {
-        fact_id: format!("fact.{seq}"),
-        event_sequence: seq,
-        ownership_epoch: None,
-        instance_state,
-        invocation_state,
-        event_state: None,
-        model_outcome: None,
-        commit_sequence,
-        node_execution_id: None,
-        attempt_id: None,
-        region_occurrence_id: None,
-        static_region_id: None,
-        loop_memberships: None,
-        air_node_id: None,
-        parent_node_execution_id: None,
-        hook_execution_id: None,
-        hook_id: None,
-        hook_scope: None,
-        hook_phase: None,
-        context_transition_id: None,
-        context_before_ref: None,
-        context_after_ref: None,
-        effect_outcome_ref: None,
-        typed_error: None,
-    })
+    Fact::from_runtime(
+        kind,
+        RuntimeFact {
+            fact_id: format!("fact.{seq}"),
+            event_sequence: seq,
+            ownership_epoch: None,
+            instance_state,
+            invocation_state,
+            event_state: None,
+            model_outcome: None,
+            commit_sequence,
+            node_execution_id: None,
+            attempt_id: None,
+            region_occurrence_id: None,
+            static_region_id: None,
+            loop_memberships: None,
+            air_node_id: None,
+            parent_node_execution_id: None,
+            hook_execution_id: None,
+            hook_id: None,
+            hook_scope: None,
+            hook_phase: None,
+            context_transition_id: None,
+            context_before_ref: None,
+            context_after_ref: None,
+            effect_outcome_ref: None,
+            typed_error: None,
+        },
+    )
 }
 
 fn runtime_fact_mut(fact: &mut Fact) -> &mut RuntimeFact {

@@ -56,8 +56,7 @@ fn decode_air(value: Value) -> AirModule {
 fn example_artifact_air(artifact: &str) -> AirModule {
     let value: Value = serde_json::from_str(artifact).expect("example-built executable artifact");
     assert_eq!(
-        value["schema_version"],
-        "apxm.executable-artifact.v1",
+        value["schema_version"], "apxm.executable-artifact.v1",
         "runtime proof consumes the immutable artifact, not handwritten AIR",
     );
     decode_air(value["air"].clone())
@@ -419,7 +418,11 @@ async fn repository_example_artifacts_execute_only_generic_structural_semantics(
 
         let commit = Arc::new(RecordingCommit::new(false));
         let report = execute(
-            &ports(Arc::new(SequencedModel::successful()), commit.clone(), false),
+            &ports(
+                Arc::new(SequencedModel::successful()),
+                commit.clone(),
+                false,
+            ),
             request(air, commit_id),
             Value::Null,
         )
@@ -442,7 +445,11 @@ async fn repository_example_artifacts_execute_only_generic_structural_semantics(
 async fn sibling_and_nested_loops_commit_independent_evidence() {
     let commit = Arc::new(RecordingCommit::new(false));
     execute(
-        &ports(Arc::new(SequencedModel::successful()), commit.clone(), false),
+        &ports(
+            Arc::new(SequencedModel::successful()),
+            commit.clone(),
+            false,
+        ),
         request(nested_sibling_air(), "nested"),
         Value::Null,
     )
@@ -501,7 +508,11 @@ async fn park_yield_and_return_suppress_loop_completion() {
     for kind in ["yield", "return"] {
         let commit = Arc::new(RecordingCommit::new(false));
         execute(
-            &ports(Arc::new(SequencedModel::successful()), commit.clone(), false),
+            &ports(
+                Arc::new(SequencedModel::successful()),
+                commit.clone(),
+                false,
+            ),
             request(interrupted_loop_air(kind), kind),
             Value::Null,
         )
@@ -518,7 +529,11 @@ async fn park_yield_and_return_suppress_loop_completion() {
 async fn compare_conflict_publishes_no_prepared_completion() {
     let commit = Arc::new(RecordingCommit::new(true));
     let report = execute(
-        &ports(Arc::new(SequencedModel::successful()), commit.clone(), false),
+        &ports(
+            Arc::new(SequencedModel::successful()),
+            commit.clone(),
+            false,
+        ),
         request(two_node_loop_air(), "conflict"),
         Value::Null,
     )

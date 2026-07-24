@@ -1,8 +1,8 @@
 # Build a conversational Agent
 
 - Architectural status: canonical generic Agent Program behavior
-- Frontend syntax status: design proposal aligned with
-  [Author an Agent](creating-an-agent-program.md)
+- Frontend syntax status: implemented source-first authoring surface aligned
+  with [Author an Agent](creating-an-agent-program.md)
 - Implementation plan:
   [Source-first Agent frontend master plan](../agents/simple-agent-authoring-frontend-plan.md)
 - Decisions:
@@ -51,11 +51,11 @@ class Conversation:
     messages: tuple[Message, ...] = ()
 
 
-SearchSkills = Tool[SkillQuery, tuple[SkillSummary, ...]](SearchSkillsCapabilityRef)
-ReadSkill = Tool[SkillRef, SkillBody](ReadSkillCapabilityRef)
-CrmLookup = Tool[CrmLookupInput, CrmLookupResult](CrmLookupCapabilityRef)
-CreateTicket = Tool[CreateTicketInput, Ticket](CreateTicketCapabilityRef)
-SupportModel = Model[SupportRequest, SupportResponse](ExactSupportModelRef)
+SearchSkills = Tool[SkillQuery, tuple[SkillSummary, ...]]("capability.skill-search.v1")
+ReadSkill = Tool[SkillRef, SkillBody]("capability.skill-read.v1")
+CrmLookup = Tool[CrmLookupInput, CrmLookupResult]("capability.crm-lookup.v1")
+CreateTicket = Tool[CreateTicketInput, Ticket]("capability.ticket-create.v1")
+SupportModel = Model[SupportRequest, SupportResponse]("model.support.v1")
 
 
 @Agent(
@@ -78,7 +78,6 @@ async def Support(agent, incoming):
                 messages=agent.context.messages,
                 incoming=incoming,
                 skills=skill_context,
-                tools=(CrmLookup.schema, CreateTicket.schema),
             )
         )
 
@@ -115,6 +114,8 @@ and decides whether another Model call is needed.
 
 ```typescript
 import { Agent, Context, Model, Tool } from "@apxm/frontend";
+import "@apxm/frontend/node";
+import { staticSource } from "./static-source.js";
 
 type Conversation = {
   messages: readonly Message[];
@@ -122,17 +123,21 @@ type Conversation = {
 
 const ConversationContext = Context<Conversation>({ messages: [] });
 const SearchSkills = Tool<SkillQuery, readonly SkillSummary[]>(
-  SearchSkillsCapabilityRef,
+  "capability.skill-search.v1",
 );
-const ReadSkill = Tool<SkillRef, SkillBody>(ReadSkillCapabilityRef);
-const CrmLookup = Tool<CrmLookupInput, CrmLookupResult>(CrmLookupCapabilityRef);
-const CreateTicket = Tool<CreateTicketInput, Ticket>(CreateTicketCapabilityRef);
+const ReadSkill = Tool<SkillRef, SkillBody>("capability.skill-read.v1");
+const CrmLookup = Tool<CrmLookupInput, CrmLookupResult>("capability.crm-lookup.v1");
+const CreateTicket = Tool<CreateTicketInput, Ticket>("capability.ticket-create.v1");
 const SupportModel = Model<SupportRequest, SupportResponse>(
-  ExactSupportModelRef,
+  "model.support.v1",
 );
+const source = staticSource(import.meta.url);
 
 export const Support = Agent<UserMessage, AgentReply, Conversation>({
+  name: "Support",
+  source,
   context: ConversationContext,
+  use: { SearchSkills, ReadSkill, CrmLookup, CreateTicket, SupportModel },
   async run(agent, incoming) {
     for (;;) {
       const summaries = await SearchSkills(
@@ -148,7 +153,6 @@ export const Support = Agent<UserMessage, AgentReply, Conversation>({
         messages: agent.context.messages,
         incoming,
         skills: skillContext,
-        tools: [CrmLookup.schema, CreateTicket.schema],
       });
 
       response = await runRequestedTools(response);
@@ -226,13 +230,13 @@ A Tool or Capability can return a typed `Event[T]`. Waiting on it parks the
 same Program Invocation; it does not yield a reply, start another loop, or ask
 the frontend runtime to poll.
 
-The proposed Python spelling is:
+The Python spelling is:
 
 ```python
 from apxm_program import Event
 
 RequestApproval = Tool[ApprovalRequest, Event[Approval]](
-    RequestApprovalCapabilityRef
+    "capability.request-approval.v1"
 )
 
 pending = await RequestApproval(ApprovalRequest(change=change))
@@ -247,7 +251,7 @@ The equivalent TypeScript spelling is:
 import { Event } from "@apxm/frontend";
 
 const RequestApproval = Tool<ApprovalRequest, Event<Approval>>(
-  RequestApprovalCapabilityRef,
+  "capability.request-approval.v1",
 );
 
 const pending = await RequestApproval({ change });
@@ -268,12 +272,13 @@ the inferred `agent`; ordinary source does not import `AgentFacade`. Context is
 updated by assigning `agent.context`, and error recovery remains authored
 try/catch rather than a special error Hook.
 
-The proposed focused Hook spelling keeps the target and owning Agent explicit:
+The focused Hook spelling binds a static source target. Python names the target
+and closed scope; TypeScript names both the Agent and target in the declaration:
 
 ```python
 from apxm_program import Hook
 
-@Hook.before(agent=Support, target=SupportModel)
+@Hook.before(target="SupportModel", scope="model")
 async def AddCurrentPolicy(agent):
     agent.context = agent.context.with_policy(current_policy(agent.identity))
 ```
@@ -293,10 +298,9 @@ export const AddCurrentPolicy = Hook.before({
 });
 ```
 
-The exact binding spelling is frozen with the frontend D0 decision. The
-semantics are already fixed: the binding is static, order is deterministic,
-Context changes are explicit values, and a Hook effect uses the same admitted
-Model/Capability path as ordinary source.
+The binding is static, order is deterministic, Context changes are explicit
+values, and a Hook effect uses the same admitted Model/Capability path as
+ordinary source.
 
 Hooks cannot grant authority, hide evidence, mutate undeclared global state,
 select a fallback model, bulk-load Skills, or perform an unrecorded effect.

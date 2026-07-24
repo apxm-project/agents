@@ -234,9 +234,9 @@ dekk agents codegen         # regenerate Python frontend bindings
 Both are non-negotiable: skipping either produces silent type drift
 between the Rust runtime, the Python frontend, and the MLIR layer.
 
-The canonical pass list lives at
-`crates/compiler/pipeline/src/passes/pipeline.rs::build_pass_list()`.
-Add new passes there (and only there) so the pipeline stays in one place.
+Canonical AIR → AIS MLIR lowering lives in
+`crates/compiler/pipeline/src/canonical.rs`; there is no separate optimization
+pass pipeline.
 
 Attribute names must be a single source of truth — see the
 `feedback_attribute_dual_naming` incident: the canonical enum lives in the AIS

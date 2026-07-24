@@ -5,7 +5,7 @@
  * Provides the body of every out-of-line method declared in AISTypes.h:
  *   - `get` constructors that uniquify the type in the MLIRContext
  *   - String ↔ enum conversion helpers for MemorySpace
- *   - `getDefaultPayloadType` helper shared by both Token and Handle
+ *   - `getDefaultHandlePayloadType` helper for legacy Handle payloads
  *
  * The file is intentionally free of dialect or operation logic; it only
  * realises the low-level type storage manipulation required by the context.
@@ -14,12 +14,13 @@
 #include "ais/Dialect/AIS/IR/AISTypes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "llvm/ADT/StringSwitch.h"
+#include <cassert>
 #include <utility>
 
 using namespace mlir;
 using namespace mlir::ais;
 
-Type mlir::ais::getDefaultPayloadType(MLIRContext *context) {
+Type mlir::ais::getDefaultHandlePayloadType(MLIRContext *context) {
   return NoneType::get(context);
 }
 
@@ -43,19 +44,27 @@ StringRef mlir::ais::stringifyMemorySpace(MemorySpace space) {
   llvm_unreachable("Unknown memory space");
 }
 
-TokenType TokenType::get(MLIRContext *context, Type innerType) {
-  if (!innerType)
-    innerType = getDefaultPayloadType(context);
-  return Base::get(context, innerType);
+TypeRefType TypeRefType::get(MLIRContext *context, StringRef typeRef) {
+  assert(!typeRef.empty() && "AIS type references must be non-empty");
+  return Base::get(context, typeRef);
 }
 
-Type TokenType::getInnerType() const {
-  return getImpl()->innerType;
+StringRef TypeRefType::getTypeRef() const {
+  return getImpl()->typeRef;
+}
+
+TokenType TokenType::get(MLIRContext *context, TypeRefType typeRef) {
+  assert(typeRef && "AIS tokens require a TypeRefType payload");
+  return Base::get(context, typeRef);
+}
+
+TypeRefType TokenType::getInnerType() const {
+  return getImpl()->typeRef;
 }
 
 HandleType HandleType::get(MLIRContext *context, MemorySpace space, Type payload) {
   if (!payload)
-    payload = getDefaultPayloadType(context);
+    payload = getDefaultHandlePayloadType(context);
   return Base::get(context, std::make_pair(space, payload));
 }
 

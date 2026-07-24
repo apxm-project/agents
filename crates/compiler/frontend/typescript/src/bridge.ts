@@ -8,13 +8,10 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import type { Json } from "./contract.js";
+
 const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
-
-export const FRONTEND_GRAPH_VERSION = "apxm.frontend-graph.v1";
-export const SOURCE_MAP_VERSION = "apxm.source-map.v1";
-
-export type Json = Record<string, unknown>;
 
 type NativeBridge = {
   compileFrontendGraphArtifact(json: string): string;

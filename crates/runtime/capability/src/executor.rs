@@ -105,7 +105,6 @@ pub trait CapabilityExecutor: Send + Sync {
         let _ = args; // suppress unused warning
         None
     }
-
 }
 
 /// Convert a sandbox [`ExecResult`] into a [`Value`] suitable for

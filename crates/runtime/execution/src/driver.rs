@@ -196,11 +196,20 @@ impl std::fmt::Display for ExecutionError {
             Self::InvalidEventRef { node_id, source } => {
                 write!(f, "node {node_id} has an invalid event_ref: {source}")
             }
-            Self::EventRefMismatch { expected, delivered } => {
-                write!(f, "event reference mismatch: expected {expected}, delivered {delivered}")
+            Self::EventRefMismatch {
+                expected,
+                delivered,
+            } => {
+                write!(
+                    f,
+                    "event reference mismatch: expected {expected}, delivered {delivered}"
+                )
             }
             Self::EventDeliveryRequiresRef { invocation_ref } => {
-                write!(f, "continuation for {invocation_ref} requires an EventRef delivery")
+                write!(
+                    f,
+                    "continuation for {invocation_ref} requires an EventRef delivery"
+                )
             }
             Self::Commit(result) => write!(f, "atomic execution commit failed: {}", result.label()),
         }
@@ -265,32 +274,35 @@ fn fact(
     node_execution_id: Option<String>,
     commit_sequence: Option<u64>,
 ) -> Fact {
-    Fact::from_runtime(kind, RuntimeFact {
-        fact_id: format!("fact.{program_invocation_id}.{seq}"),
-        event_sequence: seq,
-        ownership_epoch: None,
-        instance_state,
-        invocation_state,
-        event_state: None,
-        model_outcome: None,
-        commit_sequence,
-        node_execution_id,
-        attempt_id: None,
-        region_occurrence_id: None,
-        static_region_id: None,
-        loop_memberships: None,
-        air_node_id: None,
-        parent_node_execution_id: None,
-        hook_execution_id: None,
-        hook_id: None,
-        hook_scope: None,
-        hook_phase: None,
-        context_transition_id: None,
-        context_before_ref: None,
-        context_after_ref: None,
-        effect_outcome_ref: None,
-        typed_error: None,
-    })
+    Fact::from_runtime(
+        kind,
+        RuntimeFact {
+            fact_id: format!("fact.{program_invocation_id}.{seq}"),
+            event_sequence: seq,
+            ownership_epoch: None,
+            instance_state,
+            invocation_state,
+            event_state: None,
+            model_outcome: None,
+            commit_sequence,
+            node_execution_id,
+            attempt_id: None,
+            region_occurrence_id: None,
+            static_region_id: None,
+            loop_memberships: None,
+            air_node_id: None,
+            parent_node_execution_id: None,
+            hook_execution_id: None,
+            hook_id: None,
+            hook_scope: None,
+            hook_phase: None,
+            context_transition_id: None,
+            context_before_ref: None,
+            context_after_ref: None,
+            effect_outcome_ref: None,
+            typed_error: None,
+        },
+    )
 }
 
 fn runtime_fact_mut(fact: &mut Fact) -> &mut RuntimeFact {
@@ -464,15 +476,7 @@ fn join_fact(
     air_node_id: Option<String>,
     parent_node_execution_id: Option<String>,
 ) -> Fact {
-    let mut fact = fact(
-        program_invocation_id,
-        seq,
-        kind,
-        None,
-        None,
-        None,
-        None,
-    );
+    let mut fact = fact(program_invocation_id, seq, kind, None, None, None, None);
     let runtime = runtime_fact_mut(&mut fact);
     runtime.region_occurrence_id = region_occurrence_id;
     runtime.static_region_id = static_region_id;
@@ -536,11 +540,7 @@ async fn drive_from(
         ));
     }
 
-    for (schedule_position, step) in schedule
-        .iter()
-        .enumerate()
-        .skip(start_schedule_position)
-    {
+    for (schedule_position, step) in schedule.iter().enumerate().skip(start_schedule_position) {
         match step {
             ScheduleStep::HookBefore { binding } => {
                 let (before, after) = apply_static_hook(&mut state, ports, binding).await;
@@ -608,8 +608,7 @@ async fn drive_from(
             }
             ScheduleStep::ContextEdge { from_node, to_node } => {
                 state.seq += 1;
-                let mut fact =
-                    context_transition_fact(&state.program_invocation_id, state.seq);
+                let mut fact = context_transition_fact(&state.program_invocation_id, state.seq);
                 let runtime = runtime_fact_mut(&mut fact);
                 runtime.air_node_id = Some(to_node.clone());
                 runtime.parent_node_execution_id = Some(from_node.clone());
@@ -625,14 +624,12 @@ async fn drive_from(
                     "node-execution.{}.{}.{}",
                     state.program_invocation_id, op.node_id, state.seq
                 );
-                let innermost_loop = loop_path
-                    .last()
-                    .and_then(|loop_id| {
-                        state
-                            .active_loops
-                            .iter()
-                            .find(|frame| frame.static_loop_id == *loop_id)
-                    });
+                let innermost_loop = loop_path.last().and_then(|loop_id| {
+                    state
+                        .active_loops
+                        .iter()
+                        .find(|frame| frame.static_loop_id == *loop_id)
+                });
                 let loop_memberships = loop_path
                     .iter()
                     .filter_map(|loop_id| {
@@ -656,10 +653,7 @@ async fn drive_from(
                     _ => unreachable!("typed schedule loop path and active frames agree"),
                 };
                 let node_fact = Fact::NodeExecutionRecorded(NodeExecutionRecordedFact {
-                    fact_id: format!(
-                        "fact.{}.{}",
-                        state.program_invocation_id, state.seq
-                    ),
+                    fact_id: format!("fact.{}.{}", state.program_invocation_id, state.seq),
                     event_sequence: state.seq,
                     node_execution_id: node_execution_id.clone(),
                     air_node_id: op.node_id.clone(),
@@ -710,19 +704,19 @@ async fn drive_from(
                         state.last_model_node_execution_id = Some(node_execution_id.clone());
                     }
                     SemanticOpKind::CapabilityInvoke => {
-                        let capability_ref = operand_str(op, "capability_ref").ok_or_else(|| {
-                            ExecutionError::MissingOperand {
-                                node_id: op.node_id.clone(),
-                                operand: "capability_ref",
-                            }
-                        })?;
+                        let capability_ref =
+                            operand_str(op, "capability_ref").ok_or_else(|| {
+                                ExecutionError::MissingOperand {
+                                    node_id: op.node_id.clone(),
+                                    operand: "capability_ref",
+                                }
+                            })?;
                         if let Some(profile) = capability_ref.strip_prefix("external-agent:") {
-                            let session_ref = operand_str(op, "external_agent_session").ok_or_else(
-                                || ExecutionError::MissingOperand {
+                            let session_ref = operand_str(op, "external_agent_session")
+                                .ok_or_else(|| ExecutionError::MissingOperand {
                                     node_id: op.node_id.clone(),
                                     operand: "external_agent_session",
-                                },
-                            )?;
+                                })?;
                             let outcome = ports
                                 .external_agent
                                 .prompt(AcpPromptRequest {
@@ -753,7 +747,9 @@ async fn drive_from(
                             state.last_operation_succeeded =
                                 matches!(&outcome, CapabilityOutcome::Completed { .. });
                             state.last_result = match &outcome {
-                                CapabilityOutcome::Completed { result } => Value::String(result.clone()),
+                                CapabilityOutcome::Completed { result } => {
+                                    Value::String(result.clone())
+                                }
                                 CapabilityOutcome::Failed { message }
                                 | CapabilityOutcome::OutcomeUnknown { message } => {
                                     Value::String(message.clone())
@@ -855,9 +851,11 @@ async fn drive_from(
                                 operand: "event_ref",
                             })
                             .and_then(|value| {
-                                EventRef::new(value).map_err(|source| ExecutionError::InvalidEventRef {
-                                    node_id: op.node_id.clone(),
-                                    source,
+                                EventRef::new(value).map_err(|source| {
+                                    ExecutionError::InvalidEventRef {
+                                        node_id: op.node_id.clone(),
+                                        source,
+                                    }
                                 })
                             })?;
                         let outcome = ports
@@ -1078,11 +1076,7 @@ fn commit_tuple(
         context: state.context.clone(),
         continuation,
         event_wait,
-        effect_outcomes: state
-            .node_outcomes
-            .iter()
-            .map(node_outcome_value)
-            .collect(),
+        effect_outcomes: state.node_outcomes.iter().map(node_outcome_value).collect(),
         evidence: state.batch.clone(),
         usage: serde_json::json!({
             "input_tokens": state.native_usage.input_tokens,
@@ -1332,11 +1326,12 @@ async fn resume_from_continuation(
     };
 
     if event_ref.is_some() {
-        let event_ref = event_ref.clone().ok_or_else(|| {
-            ExecutionError::EventDeliveryRequiresRef {
-                invocation_ref: version_scope.clone(),
-            }
-        })?;
+        let event_ref =
+            event_ref
+                .clone()
+                .ok_or_else(|| ExecutionError::EventDeliveryRequiresRef {
+                    invocation_ref: version_scope.clone(),
+                })?;
         let payload = match &delivered {
             Value::String(text) => text.clone(),
             other => other.to_string(),
@@ -1531,11 +1526,7 @@ mod loop_evidence_tests {
                     }],
                 },
             }));
-        state.record_node_outcome(
-            &["region.loop.main".into()],
-            "node-execution.1",
-            true,
-        );
+        state.record_node_outcome(&["region.loop.main".into()], "node-execution.1", true);
 
         assert!(state.complete_loop_iteration("region.loop.main"));
         let tuple = commit_tuple(&state, None, None);

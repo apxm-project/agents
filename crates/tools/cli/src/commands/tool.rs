@@ -23,7 +23,12 @@ fn load_tools() -> Result<ToolsFile> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(ToolsFile::default());
         }
-        Err(error) => return Err(anyhow::anyhow!("Failed to read {}: {error}", path.display())),
+        Err(error) => {
+            return Err(anyhow::anyhow!(
+                "Failed to read {}: {error}",
+                path.display()
+            ));
+        }
     };
     let tools_file: ToolsFile = serde_json::from_str(&content)
         .map_err(|error| anyhow::anyhow!("Failed to parse {}: {error}", path.display()))?;

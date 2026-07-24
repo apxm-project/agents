@@ -13,7 +13,7 @@ import {
   FRONTEND_GRAPH_VERSION,
   SOURCE_MAP_VERSION,
   type Json,
-} from "./bridge.js";
+} from "./contract.js";
 import type {
   CapabilityBinding,
   ContextSchema,
@@ -21,13 +21,24 @@ import type {
   ModelBinding,
   ToolBinding,
 } from "./markers.js";
+import { stableDigest } from "./markers.js";
+
+/** Static program reference metadata consumed by composition capture. */
+export type ProgramBinding = {
+  readonly kind: "agent_definition";
+  readonly programId: string;
+  readonly artifactDigest: string;
+  readonly entrypoint: string;
+  readonly targetAgentIdentityRequirement: string;
+};
 
 export type Binding =
-  | ModelBinding
-  | ToolBinding
-  | CapabilityBinding
-  | EventTypeBinding
-  | ContextSchema;
+  | ModelBinding<any, any>
+  | ToolBinding<any, any>
+  | CapabilityBinding<any, any>
+  | EventTypeBinding<any>
+  | ContextSchema
+  | ProgramBinding;
 
 type CallRecord = {
   node_id: string;
@@ -50,6 +61,14 @@ type ControlRecord = {
   result_value?: string;
 };
 
+/** Source text registered by the host compiler bridge before Agent capture. */
+export type StaticSource = {
+  readonly fileName: string;
+  readonly text: string;
+  readonly line?: number;
+};
+
+/** Bound Agent declaration inputs consumed by the static AST capture pass. */
 export type CaptureInput = {
   programId: string;
   entrypoint: string;
@@ -59,27 +78,38 @@ export type CaptureInput = {
   hasDefaultContext: boolean;
   bindings: Map<string, Binding>;
   bindingDeclIds: Map<string, string>;
-  callbackSource: string;
+  source: StaticSource;
 };
 
+/** Source diagnostic raised when an Agent construct is outside the closed subset. */
 export class CaptureError extends Error {}
 
 class Capture {
   private counter = 0;
   private readonly order = new Map<string, number>();
-  private facadeName = "agent";
   private inputName = "input";
 
   private readonly declarations: Json[] = [];
   private readonly values: Json[] = [];
+  private readonly blocks: Json[] = [];
   private readonly regions: Json[] = [];
   private readonly calls: CallRecord[] = [];
   private readonly controls: ControlRecord[] = [];
   private readonly dataEdges: Json[] = [];
+  private readonly contextFlow: Json[] = [];
+  private readonly hooks: Json[] = [];
+  private readonly importedProgramRefs = new Map<string, Json>();
+  private readonly instances = new Map<ts.Symbol, string>();
+  private readonly bindingSymbols = new Map<ts.Symbol, string>();
+  private readonly lastNodeByRegion = new Map<string, string>();
+  private readonly pendingContextByRegion = new Map<string, string>();
   private readonly capabilityRequirements = new Map<string, boolean>();
   private readonly modelRequirements: string[] = [];
   private readonly nodeSpans: Json[] = [];
   private readonly bodyRegionId: string;
+  private programBindingSymbol: ts.Symbol | undefined;
+  private facadeSymbol: ts.Symbol | undefined;
+  private checker!: ts.TypeChecker;
 
   constructor(private readonly input: CaptureInput) {
     this.bodyRegionId = `${input.programId}.body`;
@@ -155,34 +185,30 @@ class Capture {
           output_type_ref: binding.typeRef,
           context_default_present: binding.defaultPresent,
         });
+      } else if (binding.kind === "agent_definition") {
+        this.importedProgramRefs.set(binding.programId, {
+          program_ref: binding.programId,
+          artifact_digest: binding.artifactDigest,
+          entrypoint: binding.entrypoint,
+          target_agent_identity_requirement: binding.targetAgentIdentityRequirement,
+        });
       }
     }
   }
 
   capture(): Json {
     this.declareBindings();
-
-    // A method-shorthand callback (`async run(agent, input) { ... }`) is not a
-    // standalone parse; wrap it as an object literal member so the compiler API
-    // yields a function-like node.
-    const raw = this.input.callbackSource.trimStart();
-    const wrapped =
-      raw.startsWith("function") || raw.startsWith("async function") || raw.includes("=>")
-        ? `const __agent__ = (${raw});`
-        : `const __agent__ = { ${raw} };`;
-    const source = ts.createSourceFile(
-      "agent.ts",
-      wrapped,
-      ts.ScriptTarget.Latest,
-      true,
-    );
-    const fn = this.findCallback(source);
-    if (fn === undefined) {
-      throw new CaptureError("an Agent run callback is one function");
-    }
+    const { checker, source } = createBoundSource(this.input.source);
+    this.checker = checker;
+    this.bindDeclaredSymbols(source);
+    const definition = this.findAgentDefinition(source);
+    const fn = definition.callback;
+    this.programBindingSymbol = definition.bindingName === undefined
+      ? undefined
+      : this.symbolForTopLevelName(source, definition.bindingName);
     const params = fn.parameters;
     if (params.length >= 1 && ts.isIdentifier(params[0].name)) {
-      this.facadeName = params[0].name.text;
+      this.facadeSymbol = this.symbolAt(params[0].name);
     }
     if (params.length >= 2 && ts.isIdentifier(params[1].name)) {
       this.inputName = params[1].name.text;
@@ -194,40 +220,148 @@ class Capture {
       origin: "parameter",
       origin_id: this.input.entrypoint,
     });
-    this.regions.push({
-      region_id: this.bodyRegionId,
-      region_role: "function_body",
-      execution_order: 0,
+    this.values.push({
+      value_id: `${this.input.programId}.param.agent`,
+      type_ref: "AgentFacade",
+      origin: "parameter",
+      origin_id: this.input.entrypoint,
     });
+    this.addRegion(this.bodyRegionId, "function_body", undefined, 0);
 
     if (fn.body !== undefined && ts.isBlock(fn.body)) {
       this.visitBlock(fn.body.statements, this.bodyRegionId, source);
     }
+    this.captureStaticHooks(source);
 
     return this.build();
   }
 
-  private findCallback(
-    source: ts.SourceFile,
-  ): ts.FunctionLikeDeclarationBase | undefined {
-    let found: ts.FunctionLikeDeclarationBase | undefined;
+  private findAgentDefinition(source: ts.SourceFile): {
+    callback: ts.FunctionLikeDeclarationBase;
+    bindingName?: string;
+  } {
+    const candidates: Array<{
+      call: ts.CallExpression;
+      callback: ts.FunctionLikeDeclarationBase;
+      bindingName?: string;
+      distance: number;
+    }> = [];
+    const requestedPosition = this.input.source.line === undefined
+      ? undefined
+      : source.getPositionOfLineAndCharacter(Math.max(this.input.source.line - 1, 0), 0);
     const visit = (node: ts.Node): void => {
-      if (found !== undefined) {
-        return;
-      }
       if (
-        ts.isFunctionDeclaration(node) ||
-        ts.isFunctionExpression(node) ||
-        ts.isArrowFunction(node) ||
-        ts.isMethodDeclaration(node)
+        ts.isCallExpression(node) && this.isFrontendAgentFactory(node.expression)
       ) {
-        found = node;
-        return;
+        const callback = callbackFromAgentCall(node);
+        if (callback !== undefined) {
+          const bindingName = bindingNameOfAgentCall(node);
+          const contained = requestedPosition !== undefined &&
+            node.getStart(source) <= requestedPosition && requestedPosition <= node.getEnd();
+          const namedForProgram = agentNameFromCall(node) === this.input.programId;
+          candidates.push({
+            call: node,
+            callback,
+            bindingName,
+            distance: namedForProgram
+              ? 0
+              : contained
+                ? node.getWidth(source)
+                : requestedPosition === undefined
+                  ? Number.MAX_SAFE_INTEGER
+                  : Math.abs(node.getStart(source) - requestedPosition),
+          });
+        }
       }
       ts.forEachChild(node, visit);
     };
     ts.forEachChild(source, visit);
-    return found;
+    candidates.sort((left, right) => left.distance - right.distance);
+    const selected = candidates[0];
+    if (selected === undefined) {
+      throw new CaptureError("Agent requires a statically declared run callback");
+    }
+    return { callback: selected.callback, bindingName: selected.bindingName };
+  }
+
+  private bindDeclaredSymbols(source: ts.SourceFile): void {
+    for (const statement of source.statements) {
+      if (!ts.isVariableStatement(statement)) {
+        continue;
+      }
+      for (const declaration of statement.declarationList.declarations) {
+        if (!ts.isIdentifier(declaration.name) || !this.input.bindings.has(declaration.name.text)) {
+          continue;
+        }
+        const symbol = this.symbolAt(declaration.name);
+        if (symbol !== undefined) {
+          this.bindingSymbols.set(symbol, declaration.name.text);
+        }
+      }
+    }
+  }
+
+  private symbolForTopLevelName(source: ts.SourceFile, name: string): ts.Symbol | undefined {
+    for (const statement of source.statements) {
+      if (!ts.isVariableStatement(statement)) {
+        continue;
+      }
+      for (const declaration of statement.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name) && declaration.name.text === name) {
+          return this.symbolAt(declaration.name);
+        }
+      }
+    }
+    return undefined;
+  }
+
+  private symbolAt(node: ts.Node): ts.Symbol | undefined {
+    return this.checker.getSymbolAtLocation(node);
+  }
+
+  private bindingNameFor(node: ts.Identifier): string | undefined {
+    const symbol = this.symbolAt(node);
+    return symbol === undefined ? undefined : this.bindingSymbols.get(symbol);
+  }
+
+  private isFacadeIdentifier(node: ts.Identifier): boolean {
+    return this.facadeSymbol !== undefined && this.symbolAt(node) === this.facadeSymbol;
+  }
+
+  private isFrontendAgentFactory(expression: ts.Expression): boolean {
+    return ts.isIdentifier(expression) && this.isFrontendMarker(expression, "Agent");
+  }
+
+  private isFrontendMarker(identifier: ts.Identifier, expectedName: string): boolean {
+    const symbol = this.symbolAt(identifier);
+    return symbol?.declarations?.some((declaration) => {
+      if (ts.isImportSpecifier(declaration)) {
+        const importedName = declaration.propertyName?.text ?? declaration.name.text;
+        const importDeclaration = findImportDeclaration(declaration);
+        return importedName === expectedName && isFrontendImportDeclaration(importDeclaration);
+      }
+      return this.isFrontendNamespaceBinding(declaration, expectedName);
+    }) ?? false;
+  }
+
+  private isFrontendNamespaceBinding(declaration: ts.Declaration, expectedName: string): boolean {
+    if (!ts.isBindingElement(declaration) || !ts.isIdentifier(declaration.name)) {
+      return false;
+    }
+    const projectedName = declaration.propertyName?.getText() ?? declaration.name.text;
+    if (projectedName !== expectedName) {
+      return false;
+    }
+    const variable = findVariableDeclaration(declaration);
+    const initializer = variable?.initializer;
+    if (initializer === undefined || !ts.isIdentifier(initializer)) {
+      return false;
+    }
+    const namespaceSymbol = this.symbolAt(initializer);
+    return namespaceSymbol?.declarations?.some(
+      (candidate) => ts.isNamespaceImport(candidate) &&
+        isFrontendImportDeclaration(findImportDeclaration(candidate)),
+    ) ?? false;
   }
 
   private visitBlock(
@@ -250,7 +384,17 @@ class Capture {
     } else if (ts.isVariableStatement(stmt)) {
       for (const decl of stmt.declarationList.declarations) {
         if (decl.initializer !== undefined) {
-          this.visitExpression(decl.initializer, regionId, source);
+          const creation = this.visitExpression(decl.initializer, regionId, source);
+          if (
+            creation !== undefined &&
+            ts.isIdentifier(decl.name) &&
+            creation.programRef !== undefined
+          ) {
+            const instanceSymbol = this.symbolAt(decl.name);
+            if (instanceSymbol !== undefined) {
+              this.instances.set(instanceSymbol, creation.programRef);
+            }
+          }
         }
       }
     } else if (ts.isWhileStatement(stmt) || ts.isForStatement(stmt)) {
@@ -270,7 +414,7 @@ class Capture {
     expr: ts.Expression,
     regionId: string,
     source: ts.SourceFile,
-  ): void {
+  ): { programRef?: string } | undefined {
     if (ts.isAwaitExpression(expr)) {
       this.visitAwait(expr, regionId, source);
     } else if (
@@ -281,19 +425,26 @@ class Capture {
       if (
         ts.isPropertyAccessExpression(expr.left) &&
         ts.isIdentifier(expr.left.expression) &&
-        expr.left.expression.text === this.facadeName &&
+        this.isFacadeIdentifier(expr.left.expression) &&
         expr.left.name.text === "context"
       ) {
+        const contextNode = this.next("context");
         this.values.push({
-          value_id: this.next("context"),
+          value_id: contextNode,
           type_ref: this.input.contextTypeRef ?? "Context",
           origin: "context_value",
-          origin_id: this.bodyRegionId,
         });
+        const lastNode = this.lastNodeByRegion.get(regionId);
+        if (lastNode !== undefined) {
+          this.pendingContextByRegion.set(regionId, lastNode);
+        }
       } else if (ts.isAwaitExpression(expr.right)) {
         this.visitAwait(expr.right, regionId, source);
       }
+    } else if (ts.isCallExpression(expr) && this.isAgentCreation(expr)) {
+      return { programRef: this.recordAgentCreation(expr, regionId, source) };
     }
+    return undefined;
   }
 
   private visitAwait(
@@ -304,6 +455,14 @@ class Capture {
     const call = expr.expression;
     if (!ts.isCallExpression(call)) {
       throw new CaptureError("await targets a typed effect call");
+    }
+    if (this.isYield(call)) {
+      this.recordYield(call, regionId, source);
+      return;
+    }
+    if (this.isTaskGroup(call)) {
+      this.recordTaskGroup(call, regionId, source);
+      return;
     }
     const resolved = this.resolveCallTarget(call);
     const nodeId = this.next(resolved.intent);
@@ -347,18 +506,8 @@ class Capture {
     }
     this.calls.push(record);
 
-    const { line } = source.getLineAndCharacterOfPosition(call.getStart(source));
-    this.nodeSpans.push({
-      node_id: nodeId,
-      source_file: "<agent>",
-      span: {
-        start_line: line + 1,
-        start_column: 0,
-        end_line: line + 1,
-        end_column: 1,
-      },
-      semantic_annotation: resolved.intent,
-    });
+    this.recordNode(regionId, nodeId);
+    this.recordSpan(nodeId, resolved.intent, call, source);
   }
 
   private resolveCallTarget(call: ts.CallExpression): {
@@ -370,40 +519,69 @@ class Capture {
     const callee = call.expression;
     if (ts.isPropertyAccessExpression(callee)) {
       const method = callee.name.text;
-      const receiverName = ts.isIdentifier(callee.expression)
-        ? callee.expression.text
+      const receiver = ts.isIdentifier(callee.expression)
+        ? callee.expression
         : undefined;
+      const bindingName = receiver === undefined
+        ? undefined
+        : this.bindingNameFor(receiver);
       if (method === "invoke") {
-        const receiverKind =
-          receiverName !== undefined && this.input.bindings.has(receiverName)
-            ? "program_ref"
-            : "program_instance_ref";
+        const binding = bindingName === undefined
+          ? undefined
+          : this.input.bindings.get(bindingName);
+        if (binding?.kind === "agent_definition") {
+          return {
+            intent: "agent_invocation",
+            bindingRef: binding.programId,
+            receiverKind: "program_ref",
+            slot: "input",
+          };
+        }
+        const instance = receiver === undefined
+          ? undefined
+          : this.instances.get(this.symbolAt(receiver) as ts.Symbol);
+        if (instance === undefined) {
+          throw new CaptureError("invoke receiver is a statically bound Agent definition or instance");
+        }
         return {
           intent: "agent_invocation",
-          bindingRef: this.bindingRefOf(receiverName),
-          receiverKind,
+          bindingRef: instance,
+          receiverKind: "program_instance_ref",
           slot: "input",
         };
       }
       if (method === "new") {
+        const programRef = this.programRefOfBinding(bindingName);
+        if (programRef === undefined) {
+          throw new CaptureError("new receiver is a statically bound Agent definition");
+        }
         return {
           intent: "agent_creation",
-          bindingRef: this.bindingRefOf(receiverName),
+          bindingRef: programRef,
           slot: "initial_context",
         };
       }
       if (method === "wait") {
+        const bindingRef = this.bindingRefOfBinding(bindingName);
+        if (bindingRef === undefined) {
+          throw new CaptureError("wait receiver is a statically bound Event");
+        }
         return {
           intent: "event_wait",
-          bindingRef: this.bindingRefOf(receiverName),
+          bindingRef,
           slot: "event_ref",
         };
       }
       throw new CaptureError(`unsupported call '.${method}(...)'`);
     }
     if (ts.isIdentifier(callee)) {
-      const binding = this.input.bindings.get(callee.text);
-      const declId = this.input.bindingDeclIds.get(callee.text);
+      const bindingName = this.bindingNameFor(callee);
+      const binding = bindingName === undefined
+        ? undefined
+        : this.input.bindings.get(bindingName);
+      const declId = bindingName === undefined
+        ? undefined
+        : this.input.bindingDeclIds.get(bindingName);
       if (binding?.kind === "model_binding") {
         return { intent: "model_invocation", bindingRef: declId, slot: "request" };
       }
@@ -427,11 +605,19 @@ class Capture {
     throw new CaptureError("computed or dynamic call targets are not supported");
   }
 
-  private bindingRefOf(name: string | undefined): string | undefined {
+  private bindingRefOfBinding(name: string | undefined): string | undefined {
     if (name === undefined) {
       return undefined;
     }
     return this.input.bindingDeclIds.get(name) ?? name;
+  }
+
+  private programRefOfBinding(name: string | undefined): string | undefined {
+    if (name === undefined) {
+      return undefined;
+    }
+    const binding = this.input.bindings.get(name);
+    return binding?.kind === "agent_definition" ? binding.programId : undefined;
   }
 
   private resultType(bindingRef: string | undefined): string {
@@ -456,7 +642,6 @@ class Capture {
       value_id: valueId,
       type_ref: "ArgumentValue",
       origin: "literal",
-      origin_id: nodeId,
     });
     this.dataEdges.push({
       from_value: valueId,
@@ -464,6 +649,192 @@ class Capture {
       consumer_slot: slot,
     });
     return [valueId];
+  }
+
+  private isYield(call: ts.CallExpression): boolean {
+    return (
+      ts.isPropertyAccessExpression(call.expression) &&
+        ts.isIdentifier(call.expression.expression) &&
+        this.isFacadeIdentifier(call.expression.expression) &&
+        call.expression.name.text === "yield_"
+    );
+  }
+
+  private isTaskGroup(call: ts.CallExpression): boolean {
+    return (
+      ts.isPropertyAccessExpression(call.expression) &&
+        ts.isIdentifier(call.expression.expression) &&
+        this.isFrontendMarker(call.expression.expression, "TaskGroup") &&
+        call.expression.name.text === "run"
+    );
+  }
+
+  private isAgentCreation(call: ts.CallExpression): boolean {
+    return (
+      ts.isPropertyAccessExpression(call.expression) &&
+        ts.isIdentifier(call.expression.expression) &&
+      call.expression.name.text === "new" &&
+      this.input.bindings.get(
+        this.bindingNameFor(call.expression.expression) ?? "",
+      )?.kind === "agent_definition"
+    );
+  }
+
+  private recordAgentCreation(
+    call: ts.CallExpression,
+    regionId: string,
+    source: ts.SourceFile,
+  ): string {
+    const resolved = this.resolveCallTarget(call);
+    const nodeId = this.next("agent_creation");
+    const resultValue = this.next("value");
+    this.values.push({
+      value_id: resultValue,
+      type_ref: "ProgramInstanceRef",
+      origin: "call_result",
+      origin_id: nodeId,
+    });
+    const operandValues = this.callOperands(call, nodeId, resolved.slot);
+    this.calls.push({
+      node_id: nodeId,
+      intent_kind: resolved.intent,
+      parent_region_id: regionId,
+      execution_order: this.orderIn(regionId),
+      binding_ref: resolved.bindingRef,
+      operand_values: operandValues,
+      result_value: resultValue,
+    });
+    this.recordNode(regionId, nodeId);
+    this.recordSpan(nodeId, "agent_creation", call, source);
+    return resolved.bindingRef ?? "unknown_program";
+  }
+
+  private recordYield(
+    call: ts.CallExpression,
+    regionId: string,
+    source: ts.SourceFile,
+  ): void {
+    const nodeId = this.next("yield");
+    const resultValue = this.next("resume");
+    this.values.push({
+      value_id: resultValue,
+      type_ref: this.input.inputTypeRef,
+      origin: "resume_input",
+      origin_id: nodeId,
+    });
+    this.addBlockArgument(regionId, resultValue);
+    const operandValues = this.callOperands(call, nodeId, "output");
+    this.controls.push({
+      node_id: nodeId,
+      control_kind: "yield",
+      parent_region_id: regionId,
+      execution_order: this.orderIn(regionId),
+      operand_values: operandValues,
+      result_value: resultValue,
+    });
+    this.recordNode(regionId, nodeId);
+    this.recordSpan(nodeId, "yield", call, source);
+  }
+
+  private recordTaskGroup(
+    call: ts.CallExpression,
+    regionId: string,
+    source: ts.SourceFile,
+  ): void {
+    const scope = call.arguments[0];
+    if (
+      scope === undefined ||
+      (!ts.isArrowFunction(scope) && !ts.isFunctionExpression(scope))
+    ) {
+      throw new CaptureError("TaskGroup.run requires one static callback");
+    }
+    const nodeId = this.next("task_group");
+    const childRegion = `${nodeId}.child.1`;
+    this.controls.push({
+      node_id: nodeId,
+      control_kind: "task_group",
+      parent_region_id: regionId,
+      execution_order: this.orderIn(regionId),
+      body_region_ids: [childRegion],
+    });
+    this.recordNode(regionId, nodeId);
+    this.addRegion(childRegion, "task_child", regionId, this.orderIn(regionId));
+    if (ts.isBlock(scope.body)) {
+      this.visitBlock(scope.body.statements, childRegion, source);
+    } else {
+      this.visitExpression(scope.body, childRegion, source);
+    }
+    this.recordSpan(nodeId, "task_group", call, source);
+  }
+
+  private recordSpan(
+    nodeId: string,
+    annotation: string,
+    node: ts.Node,
+    source: ts.SourceFile,
+  ): void {
+    const start = source.getLineAndCharacterOfPosition(node.getStart(source));
+    const end = source.getLineAndCharacterOfPosition(node.getEnd());
+    this.nodeSpans.push({
+      node_id: nodeId,
+      source_file: portableSourceFile(this.input.source.fileName),
+      span: {
+        start_line: start.line + 1,
+        start_column: start.character,
+        end_line: end.line + 1,
+        end_column: end.character,
+      },
+      semantic_annotation: annotation,
+    });
+  }
+
+  private recordNode(regionId: string, nodeId: string): void {
+    const contextSource = this.pendingContextByRegion.get(regionId);
+    if (contextSource !== undefined && contextSource !== nodeId) {
+      this.contextFlow.push({
+        from_node: contextSource,
+        to_node: nodeId,
+        context_type_ref: this.input.contextTypeRef ?? "Context",
+      });
+      this.pendingContextByRegion.delete(regionId);
+    }
+    this.lastNodeByRegion.set(regionId, nodeId);
+  }
+
+  private addRegion(
+    regionId: string,
+    regionRole: string,
+    parentRegionId: string | undefined,
+    executionOrder: number,
+  ): void {
+    this.regions.push({
+      region_id: regionId,
+      region_role: regionRole,
+      parent_region_id: parentRegionId,
+      execution_order: executionOrder,
+    });
+
+    const blockId = `${regionId}.block.0`;
+    this.blocks.push({
+      block_id: blockId,
+      region_id: regionId,
+      block_arguments: [],
+      execution_order: 0,
+    });
+  }
+
+  private addBlockArgument(regionId: string, valueId: string): void {
+    const block = this.blocks.find(
+      (candidate) => candidate.block_id === `${regionId}.block.0`,
+    );
+    if (block === undefined) {
+      throw new CaptureError(`region '${regionId}' has no lexical entry block`);
+    }
+    const arguments_ = block.block_arguments;
+    if (!Array.isArray(arguments_)) {
+      throw new CaptureError(`block '${block.block_id}' has invalid block arguments`);
+    }
+    arguments_.push(valueId);
   }
 
   private visitLoop(
@@ -480,12 +851,7 @@ class Capture {
       execution_order: this.orderIn(regionId),
       body_region_ids: [bodyRegion],
     });
-    this.regions.push({
-      region_id: bodyRegion,
-      region_role: "loop_body",
-      parent_region_id: regionId,
-      execution_order: this.orderIn(regionId),
-    });
+    this.addRegion(bodyRegion, "loop_body", regionId, this.orderIn(regionId));
     if (stmt.statement !== undefined) {
       this.visitBodyStatement(stmt.statement, bodyRegion, source);
     }
@@ -509,21 +875,11 @@ class Capture {
       execution_order: this.orderIn(regionId),
       body_region_ids: bodyRegions,
     });
-    this.regions.push({
-      region_id: thenRegion,
-      region_role: "conditional_arm",
-      parent_region_id: regionId,
-      execution_order: this.orderIn(regionId),
-    });
+    this.addRegion(thenRegion, "conditional_arm", regionId, this.orderIn(regionId));
     this.visitBodyStatement(stmt.thenStatement, thenRegion, source);
     if (stmt.elseStatement !== undefined) {
       const elseRegion = `${nodeId}.else`;
-      this.regions.push({
-        region_id: elseRegion,
-        region_role: "conditional_arm",
-        parent_region_id: regionId,
-        execution_order: this.orderIn(regionId),
-      });
+      this.addRegion(elseRegion, "conditional_arm", regionId, this.orderIn(regionId));
       this.visitBodyStatement(stmt.elseStatement, elseRegion, source);
     }
   }
@@ -546,21 +902,11 @@ class Capture {
       execution_order: this.orderIn(regionId),
       body_region_ids: bodyRegions,
     });
-    this.regions.push({
-      region_id: tryRegion,
-      region_role: "try_body",
-      parent_region_id: regionId,
-      execution_order: this.orderIn(regionId),
-    });
+    this.addRegion(tryRegion, "try_body", regionId, this.orderIn(regionId));
     this.visitBlock(stmt.tryBlock.statements, tryRegion, source);
     if (stmt.catchClause !== undefined) {
       const catchRegion = `${nodeId}.catch.1`;
-      this.regions.push({
-        region_id: catchRegion,
-        region_role: "catch_body",
-        parent_region_id: regionId,
-        execution_order: this.orderIn(regionId),
-      });
+      this.addRegion(catchRegion, "catch_body", regionId, this.orderIn(regionId));
       this.visitBlock(stmt.catchClause.block.statements, catchRegion, source);
     }
   }
@@ -573,12 +919,101 @@ class Capture {
     if (stmt.expression !== undefined && ts.isAwaitExpression(stmt.expression)) {
       this.visitAwait(stmt.expression, regionId, source);
     }
+    const nodeId = this.next("return");
     this.controls.push({
-      node_id: this.next("return"),
+      node_id: nodeId,
       control_kind: "return",
       parent_region_id: regionId,
       execution_order: this.orderIn(regionId),
     });
+    this.recordNode(regionId, nodeId);
+  }
+
+  private captureStaticHooks(source: ts.SourceFile): void {
+    const hooks: Array<{
+      declaration: ts.VariableDeclaration;
+      phase: "before" | "after";
+      options: ts.ObjectLiteralExpression;
+    }> = [];
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isVariableDeclaration(node) &&
+        node.initializer !== undefined &&
+        ts.isCallExpression(node.initializer) &&
+        ts.isPropertyAccessExpression(node.initializer.expression) &&
+        ts.isIdentifier(node.initializer.expression.expression) &&
+        this.isFrontendMarker(node.initializer.expression.expression, "Hook") &&
+        (node.initializer.expression.name.text === "before" ||
+          node.initializer.expression.name.text === "after")
+      ) {
+        const options = node.initializer.arguments[0];
+        if (options !== undefined && ts.isObjectLiteralExpression(options)) {
+          hooks.push({
+            declaration: node,
+            phase: node.initializer.expression.name.text,
+            options,
+          });
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    ts.forEachChild(source, visit);
+
+    for (const [order, hook] of hooks.entries()) {
+      const agent = identifierProperty(hook.options, "agent");
+      if (agent === undefined || this.symbolAt(agent) !== this.programBindingSymbol) {
+        continue;
+      }
+      const target = identifierProperty(hook.options, "target");
+      if (target === undefined) {
+        throw new CaptureError("Hook target is a static bound declaration");
+      }
+      const hookName = ts.isIdentifier(hook.declaration.name)
+        ? hook.declaration.name.text
+        : `hook_${order + 1}`;
+      const scope = stringProperty(hook.options, "scope") ?? "node";
+      if (!["agent", "loop", "node", "model", "capability"].includes(scope)) {
+        throw new CaptureError(`Hook scope '${scope}' is not supported`);
+      }
+      const replace = booleanProperty(hook.options, "replace") ?? false;
+      const run = functionProperty(hook.options, "run");
+      if (run === undefined) {
+        throw new CaptureError("Hook requires a static run callback");
+      }
+      const targetSelector = this.resolveHookTarget(target, scope);
+      this.hooks.push({
+        hook_id: `hook.${hookName}`,
+        scope,
+        phase: hook.phase,
+        target_selector: targetSelector,
+        declaration_order: order,
+        handler_ref: `handler.${hookName}`,
+        handler_digest: stableDigest(run.getText(source)),
+        input_type_ref: "AgentFacade",
+        output_type_ref: replace ? this.input.outputTypeRef : "Unit",
+        return_mode: replace ? "replace_result" : "observe",
+      });
+    }
+  }
+
+  private resolveHookTarget(target: ts.Identifier, scope: string): string {
+    if (scope === "agent") {
+      return this.bodyRegionId;
+    }
+    if (scope === "loop") {
+      const loop = this.controls.find((control) => control.control_kind === "loop");
+      const region = loop?.body_region_ids?.[0];
+      if (region === undefined) {
+        throw new CaptureError("a loop Hook requires a static loop in the Agent body");
+      }
+      return region;
+    }
+    const bindingRef = this.bindingRefOfBinding(this.bindingNameFor(target));
+    const call = this.calls.find((candidate) => candidate.binding_ref === bindingRef);
+    if (call === undefined) {
+      throw new CaptureError(`Hook target '${target.text}' has no static invocation`);
+    }
+    return call.node_id;
   }
 
   private visitBodyStatement(
@@ -621,7 +1056,7 @@ class Capture {
       schema_version: FRONTEND_GRAPH_VERSION,
       source_language: "typescript",
       program_definitions: [definition],
-      imported_program_refs: [],
+      imported_program_refs: Array.from(this.importedProgramRefs.values()),
       declarations: this.declarations,
       functions: [
         {
@@ -644,13 +1079,13 @@ class Capture {
         },
       ],
       values: this.values,
-      blocks: [],
+      blocks: this.blocks,
       regions: this.regions,
       data_edges: this.dataEdges,
       call_intents: this.calls as unknown as Json[],
       control_intents: this.controls as unknown as Json[],
-      context_flow: [],
-      hook_bindings: [],
+      context_flow: this.contextFlow,
+      hook_bindings: this.hooks,
       capability_requirements: Array.from(
         this.capabilityRequirements,
         ([ref, tool]) => ({
@@ -671,6 +1106,184 @@ class Capture {
   }
 }
 
+function portableSourceFile(fileName: string): string {
+  const normalized = fileName.replaceAll("\\", "/");
+  if (normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized)) {
+    return "<agent>";
+  }
+  return normalized;
+}
+
+/** Capture one statically registered Agent declaration into FrontendGraph. */
 export function captureProgram(input: CaptureInput): Json {
   return new Capture(input).capture();
+}
+
+function createBoundSource(input: StaticSource): {
+  source: ts.SourceFile;
+  checker: ts.TypeChecker;
+} {
+  const options: ts.CompilerOptions = {
+    target: ts.ScriptTarget.Latest,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    allowJs: true,
+    noLib: true,
+    noResolve: true,
+    skipLibCheck: true,
+  };
+  const host: ts.CompilerHost = {
+    fileExists: (fileName) => fileName === input.fileName,
+    readFile: (fileName) => fileName === input.fileName ? input.text : undefined,
+    getSourceFile: (fileName, languageVersion) =>
+      fileName === input.fileName
+        ? ts.createSourceFile(fileName, input.text, languageVersion, true)
+        : undefined,
+    getDefaultLibFileName: () => "lib.d.ts",
+    writeFile: () => {},
+    getCurrentDirectory: () => "",
+    getDirectories: () => [],
+    getCanonicalFileName: (fileName) => fileName,
+    useCaseSensitiveFileNames: () => true,
+    getNewLine: () => "\n",
+  };
+  const program = ts.createProgram({
+    rootNames: [input.fileName],
+    options,
+    host,
+  });
+  const source = program.getSourceFile(input.fileName);
+  if (source === undefined) {
+    throw new CaptureError(`static source '${input.fileName}' is unavailable`);
+  }
+  return { source, checker: program.getTypeChecker() };
+}
+
+function findImportDeclaration(node: ts.Node): ts.ImportDeclaration | undefined {
+  let current: ts.Node | undefined = node;
+  while (current !== undefined && !ts.isSourceFile(current)) {
+    if (ts.isImportDeclaration(current)) {
+      return current;
+    }
+    current = current.parent;
+  }
+  return undefined;
+}
+
+function findVariableDeclaration(node: ts.Node): ts.VariableDeclaration | undefined {
+  let current: ts.Node | undefined = node;
+  while (current !== undefined && !ts.isSourceFile(current)) {
+    if (ts.isVariableDeclaration(current)) {
+      return current;
+    }
+    current = current.parent;
+  }
+  return undefined;
+}
+
+function isFrontendImportDeclaration(
+  declaration: ts.ImportDeclaration | undefined,
+): boolean {
+  return declaration !== undefined &&
+    ts.isStringLiteral(declaration.moduleSpecifier) &&
+    isFrontendModuleSpecifier(declaration.moduleSpecifier.text);
+}
+
+function isFrontendModuleSpecifier(specifier: string): boolean {
+  return specifier === "@apxm/frontend" || specifier === "../src/index.ts";
+}
+
+function callbackFromAgentCall(
+  call: ts.CallExpression,
+): ts.FunctionLikeDeclarationBase | undefined {
+  const config = call.arguments[0];
+  if (config === undefined || !ts.isObjectLiteralExpression(config)) {
+    return undefined;
+  }
+  const run = functionProperty(config, "run");
+  return run;
+}
+
+function bindingNameOfAgentCall(call: ts.CallExpression): string | undefined {
+  if (!ts.isVariableDeclaration(call.parent) || !ts.isIdentifier(call.parent.name)) {
+    return undefined;
+  }
+  return call.parent.name.text;
+}
+
+function agentNameFromCall(call: ts.CallExpression): string | undefined {
+  const config = call.arguments[0];
+  if (config === undefined || !ts.isObjectLiteralExpression(config)) {
+    return undefined;
+  }
+  return stringProperty(config, "name");
+}
+
+function namedProperty(
+  object: ts.ObjectLiteralExpression,
+  name: string,
+): ts.ObjectLiteralElementLike | undefined {
+  return object.properties.find(
+    (property) =>
+      ts.isPropertyAssignment(property) || ts.isMethodDeclaration(property)
+        ? property.name?.getText() === name
+        : false,
+  );
+}
+
+function functionProperty(
+  object: ts.ObjectLiteralExpression,
+  name: string,
+): ts.FunctionLikeDeclarationBase | undefined {
+  const property = namedProperty(object, name);
+  if (property === undefined) {
+    return undefined;
+  }
+  if (ts.isMethodDeclaration(property)) {
+    return property;
+  }
+  if (
+    ts.isPropertyAssignment(property) &&
+    (ts.isArrowFunction(property.initializer) || ts.isFunctionExpression(property.initializer))
+  ) {
+    return property.initializer;
+  }
+  return undefined;
+}
+
+function identifierProperty(
+  object: ts.ObjectLiteralExpression,
+  name: string,
+): ts.Identifier | undefined {
+  const property = namedProperty(object, name);
+  if (property === undefined || !ts.isPropertyAssignment(property)) {
+    return undefined;
+  }
+  return ts.isIdentifier(property.initializer) ? property.initializer : undefined;
+}
+
+function stringProperty(
+  object: ts.ObjectLiteralExpression,
+  name: string,
+): string | undefined {
+  const property = namedProperty(object, name);
+  if (property === undefined || !ts.isPropertyAssignment(property)) {
+    return undefined;
+  }
+  return ts.isStringLiteral(property.initializer) ? property.initializer.text : undefined;
+}
+
+function booleanProperty(
+  object: ts.ObjectLiteralExpression,
+  name: string,
+): boolean | undefined {
+  const property = namedProperty(object, name);
+  if (property === undefined || !ts.isPropertyAssignment(property)) {
+    return undefined;
+  }
+  return property.initializer.kind === ts.SyntaxKind.TrueKeyword
+    ? true
+    : property.initializer.kind === ts.SyntaxKind.FalseKeyword
+      ? false
+      : undefined;
 }

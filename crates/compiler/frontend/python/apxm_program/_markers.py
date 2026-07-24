@@ -77,6 +77,7 @@ class EventType:
     """A typed durable event reference whose wait records an event wait."""
 
     type_ref: str
+    target_ref: str
 
     def wait(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
         raise RuntimeError("an Event is awaited inside a compiled Agent body")
@@ -131,12 +132,24 @@ class _CapabilityFactory:
         return CapabilityBinding(target_ref=target)
 
 
-class _EventFactory:
-    def __getitem__(self, type_arg: Any) -> EventType:
-        return EventType(type_ref=_type_name(type_arg, "Event"))
+class _TypedEventFactory:
+    """Binds a static Event payload type before its exact event reference."""
 
-    def __call__(self, type_ref: str) -> EventType:
-        return EventType(type_ref=type_ref)
+    def __init__(self, type_ref: str) -> None:
+        self._type_ref = type_ref
+
+    def __call__(self, target_ref: str) -> EventType:
+        _reject_display_name(target_ref, "Event")
+        return EventType(type_ref=self._type_ref, target_ref=target_ref)
+
+
+class _EventFactory:
+    def __getitem__(self, type_arg: Any) -> _TypedEventFactory:
+        return _TypedEventFactory(_type_name(type_arg, "Event"))
+
+    def __call__(self, target_ref: str) -> EventType:
+        _reject_display_name(target_ref, "Event")
+        return EventType(type_ref="Event", target_ref=target_ref)
 
 
 def Context(cls: Any) -> ContextSchema:

@@ -329,5 +329,4 @@ mod tests {
         assert!(runtime.read_only);
         assert!(!runtime.requires_approval);
     }
-
 }

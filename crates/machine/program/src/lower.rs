@@ -25,7 +25,7 @@
 //! The native bridges and `dekk agents canonical-air` submit FrontendGraph to
 //! this owner path. No alternative graph-to-AIR builder is reachable.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use apxm_ais::{SemanticOpKind, StructuralOpKind};
 
@@ -38,6 +38,9 @@ use crate::frontend_graph::{
     CallIntent, ControlIntent, ControlKind, FrontendGraph, HookBinding, HookPhase, IntentKind,
     Region, RegionRole, Value,
 };
+
+const EXECUTION_ORDER_STRIDE: u32 = 1_000_000;
+const STRUCTURAL_ORDER_OFFSET: u32 = 500_000;
 
 /// Lower a FrontendGraph to canonical AIR, failing closed with diagnostics when
 /// verification or lowering preconditions fail.
@@ -100,13 +103,18 @@ pub fn frontend_graph_to_air(graph: &FrontendGraph) -> Result<AirModule, Verdict
             .then(a.execution_order.cmp(&b.execution_order))
     });
 
-    let structural_ir = lower_structural_ir(graph, &values, &slot_of, &mut lowering);
+    let mut structural_ir = lower_structural_ir(graph, &values, &slot_of, &mut lowering);
 
     if !lowering.is_accepted() {
         return Err(lowering.finish());
     }
 
-    Ok(AirModule {
+    add_entry_block_arguments(&mut structural_ir, &semantic_operations, &mut lowering);
+    if !lowering.is_accepted() {
+        return Err(lowering.finish());
+    }
+
+    let air = AirModule {
         schema_version: AirVersion::V1,
         semantic_operations,
         structural_ir,
@@ -120,7 +128,12 @@ pub fn frontend_graph_to_air(graph: &FrontendGraph) -> Result<AirModule, Verdict
             })
             .collect(),
         source_map: graph.source_map.clone(),
-    })
+    };
+    let air_verdict = air.verify();
+    if !air_verdict.is_accepted() {
+        return Err(air_verdict);
+    }
+    Ok(air)
 }
 
 /// Select the AIS semantic operation for a typed call intent. Tool and advanced
@@ -180,7 +193,7 @@ fn lower_call_intent(
         node_id: intent.node_id.clone(),
         op,
         parent_region_id: intent.parent_region_id.clone(),
-        execution_order: intent.execution_order,
+        execution_order: canonical_execution_order(intent.execution_order, STRUCTURAL_ORDER_OFFSET),
         operands,
         result,
     }
@@ -198,7 +211,7 @@ fn reference_operand(
     match intent.intent_kind {
         IntentKind::ModelInvocation => {
             let target = declarations.get(binding_ref)?.target_ref.clone()?;
-            Some(("model_target_ref", target, "ModelTargetRef".to_string()))
+            Some(("model_ref", target, "ModelTargetRef".to_string()))
         }
         IntentKind::ToolInvocation | IntentKind::CapabilityInvocation => {
             let target = declarations.get(binding_ref)?.target_ref.clone()?;
@@ -226,6 +239,56 @@ fn reference_operand(
             Some(("receiver", target, type_ref.to_string()))
         }
     }
+}
+
+/// Materialize every AIR operand that is not produced by a semantic operation
+/// or declared as a lexical block argument as an entry block argument. Source
+/// references (model targets, capability refs, imported programs) are typed
+/// values in the canonical function signature, never string-only pseudo
+/// operands in the MLIR emitter.
+fn add_entry_block_arguments(
+    structural_ir: &mut [StructuralNode],
+    semantic_operations: &[SemanticOp],
+    verdict: &mut Verdict,
+) {
+    let mut definitions: HashSet<&str> = semantic_operations
+        .iter()
+        .filter_map(|operation| operation.result.as_ref())
+        .map(|result| result.value_id.as_str())
+        .collect();
+    for node in structural_ir.iter() {
+        for argument in &node.block_arguments {
+            definitions.insert(argument.value_id.as_str());
+        }
+    }
+
+    let mut entry_values = BTreeMap::new();
+    for operation in semantic_operations {
+        for operand in &operation.operands {
+            if !definitions.contains(operand.value_id.as_str()) {
+                entry_values
+                    .entry(operand.value_id.clone())
+                    .or_insert_with(|| operand.type_ref.clone());
+            }
+        }
+    }
+    let Some(entry) = structural_ir
+        .iter_mut()
+        .find(|node| node.kind == StructuralOpKind::Function)
+    else {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::SchemaViolation,
+            "structural_ir",
+            "canonical AIR has no function structural region for entry operands",
+        ));
+        return;
+    };
+    for (value_id, type_ref) in entry_values {
+        entry.block_arguments.push(SsaValue { value_id, type_ref });
+    }
+    entry
+        .block_arguments
+        .sort_by(|left, right| left.value_id.cmp(&right.value_id));
 }
 
 /// Resolve a program binding reference to its imported program reference string.
@@ -339,7 +402,10 @@ fn lower_structural_ir(
                 region_id: region.region_id.clone(),
                 kind: StructuralOpKind::Loop,
                 parent_region_id: Some(intent.parent_region_id.clone()),
-                execution_order: intent.execution_order,
+                execution_order: canonical_execution_order(
+                    intent.execution_order,
+                    STRUCTURAL_ORDER_OFFSET,
+                ),
                 block_arguments,
                 operands,
             });
@@ -350,7 +416,10 @@ fn lower_structural_ir(
             region_id: region.region_id.clone(),
             kind,
             parent_region_id: region.parent_region_id.clone(),
-            execution_order: region.execution_order,
+            execution_order: canonical_execution_order(
+                region.execution_order,
+                STRUCTURAL_ORDER_OFFSET,
+            ),
             block_arguments,
             operands: Vec::new(),
         });
@@ -375,7 +444,10 @@ fn lower_structural_ir(
             region_id: intent.node_id.clone(),
             kind,
             parent_region_id: Some(intent.parent_region_id.clone()),
-            execution_order: intent.execution_order,
+            execution_order: canonical_execution_order(
+                intent.execution_order,
+                STRUCTURAL_ORDER_OFFSET,
+            ),
             block_arguments,
             operands,
         });
@@ -391,11 +463,18 @@ fn lower_structural_ir(
             .then(a.declaration_order.cmp(&b.declaration_order))
     });
     for hook in hooks {
+        let (parent_region_id, target_execution_order) = hook_parent_region(graph, hook).expect(
+            "lowering validation resolves every Hook target selector before structural expansion",
+        );
         nodes.push(StructuralNode {
             region_id: hook.hook_id.clone(),
             kind: StructuralOpKind::Region,
-            parent_region_id: Some(hook.target_selector.clone()),
-            execution_order: hook_execution_order(hook.phase, hook.declaration_order),
+            parent_region_id: Some(parent_region_id),
+            execution_order: hook_execution_order(
+                hook.phase,
+                target_execution_order,
+                hook.declaration_order,
+            ),
             block_arguments: Vec::new(),
             operands: Vec::new(),
         });
@@ -410,6 +489,37 @@ fn lower_structural_ir(
             .then(a.region_id.cmp(&b.region_id))
     });
     nodes
+}
+
+/// Hook bindings retain their selected node or region in the typed Hook
+/// metadata. Their structural wrapper is a sibling in that selected target's
+/// lexical parent, because a Hook target can be a call node and only regions
+/// may own structural children in AIR.
+fn hook_parent_region(graph: &FrontendGraph, hook: &HookBinding) -> Option<(String, u32)> {
+    graph
+        .call_intents
+        .iter()
+        .find(|intent| intent.node_id == hook.target_selector)
+        .map(|intent| (intent.parent_region_id.clone(), intent.execution_order))
+        .or_else(|| {
+            graph
+                .control_intents
+                .iter()
+                .find(|intent| intent.node_id == hook.target_selector)
+                .map(|intent| (intent.parent_region_id.clone(), intent.execution_order))
+        })
+        .or_else(|| {
+            graph
+                .regions
+                .iter()
+                .find(|region| region.region_id == hook.target_selector)
+                .and_then(|region| {
+                    region
+                        .parent_region_id
+                        .clone()
+                        .map(|parent| (parent, region.execution_order))
+                })
+        })
 }
 
 /// The entrypoint body region lowers to a `function` structural node; all other
@@ -447,11 +557,15 @@ fn region_block_arguments(
     args
 }
 
-/// A loop carries its carried values, and a yield carries the resume input, as
-/// block arguments so resume/continuation is SSA rather than a flat token.
-fn control_block_arguments(intent: &ControlIntent, values: &HashMap<&str, &Value>) -> Vec<SsaValue> {
+/// A loop carries its values as structural block arguments. Yield resume values
+/// are owned by their lexical FrontendGraph block, which prevents a second SSA
+/// definition on the compiler-emitted yield node.
+fn control_block_arguments(
+    intent: &ControlIntent,
+    values: &HashMap<&str, &Value>,
+) -> Vec<SsaValue> {
     match intent.control_kind {
-        ControlKind::Loop | ControlKind::Yield => intent
+        ControlKind::Loop => intent
             .result_value
             .as_deref()
             .and_then(|value_id| values.get(value_id))
@@ -468,11 +582,30 @@ fn control_block_arguments(intent: &ControlIntent, values: &HashMap<&str, &Value
 
 /// Before-hooks wrap ahead of the target region, after-hooks behind it. The
 /// declaration order breaks ties within a phase.
-fn hook_execution_order(phase: HookPhase, declaration_order: u32) -> u32 {
+fn hook_execution_order(
+    phase: HookPhase,
+    target_execution_order: u32,
+    declaration_order: u32,
+) -> u32 {
     match phase {
-        HookPhase::Before => declaration_order,
-        HookPhase::After => 1_000_000 + declaration_order,
+        HookPhase::Before => canonical_execution_order(target_execution_order, declaration_order),
+        HookPhase::After => canonical_execution_order(
+            target_execution_order,
+            STRUCTURAL_ORDER_OFFSET
+                .saturating_add(1)
+                .saturating_add(declaration_order),
+        ),
     }
+}
+
+/// Reserve a deterministic ordering interval around every source-order slot:
+/// before Hooks, the selected source node, then after Hooks. The source graph
+/// remains the owner of the original lexical order; AIR uses the expanded order
+/// so structural wrapper nodes never collide with effect nodes in one region.
+fn canonical_execution_order(source_order: u32, offset: u32) -> u32 {
+    source_order
+        .saturating_mul(EXECUTION_ORDER_STRIDE)
+        .saturating_add(offset)
 }
 
 /// Lower a FrontendGraph JSON document to canonical AIR JSON.

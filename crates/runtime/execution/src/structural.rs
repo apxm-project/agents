@@ -9,21 +9,38 @@ use apxm_program::frontend_graph::{HookBinding, HookPhase, HookScope};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ScheduleStep {
     /// Run one exact statically compiled `before` handler.
-    HookBefore { binding: HookBinding },
+    HookBefore {
+        binding: HookBinding,
+    },
     /// Run one exact statically compiled `after` handler.
-    HookAfter { binding: HookBinding },
+    HookAfter {
+        binding: HookBinding,
+    },
     /// Commit explicit Context along a recorded context-flow edge.
-    ContextEdge { from_node: String, to_node: String },
+    ContextEdge {
+        from_node: String,
+        to_node: String,
+    },
     /// Dispatch semantic operation at `index` in `air.semantic_operations`.
     Semantic {
         index: usize,
         loop_path: Vec<String>,
     },
-    EnterLoop { static_loop_id: String },
-    LoopBackEdge { static_loop_id: String },
-    ProgramYield { region_id: String },
-    ProgramReturn { region_id: String },
-    ProgramExit { region_id: String },
+    EnterLoop {
+        static_loop_id: String,
+    },
+    LoopBackEdge {
+        static_loop_id: String,
+    },
+    ProgramYield {
+        region_id: String,
+    },
+    ProgramReturn {
+        region_id: String,
+    },
+    ProgramExit {
+        region_id: String,
+    },
 }
 
 /// Build the deterministic execution schedule for `air`.
@@ -44,14 +61,7 @@ pub fn build_schedule(air: &AirModule, hook_bindings: &[HookBinding]) -> Vec<Sch
         });
     }
 
-    emit_children(
-        air,
-        hook_bindings,
-        &context_edges,
-        None,
-        &[],
-        &mut schedule,
-    );
+    emit_children(air, hook_bindings, &context_edges, None, &[], &mut schedule);
 
     for binding in ordered_hooks(hook_bindings, HookPhase::After, |hook| {
         hook.scope == HookScope::Agent
@@ -110,14 +120,10 @@ fn emit_children(
                         schedule.push(ScheduleStep::EnterLoop {
                             static_loop_id: region.region_id.clone(),
                         });
-                        for binding in ordered_hooks(
-                            hook_bindings,
-                            HookPhase::Before,
-                            |hook| {
-                                hook.scope == HookScope::Loop
-                                    && hook.target_selector == region.region_id
-                            },
-                        ) {
+                        for binding in ordered_hooks(hook_bindings, HookPhase::Before, |hook| {
+                            hook.scope == HookScope::Loop
+                                && hook.target_selector == region.region_id
+                        }) {
                             schedule.push(ScheduleStep::HookBefore {
                                 binding: binding.clone(),
                             });
@@ -132,14 +138,10 @@ fn emit_children(
                             &nested_path,
                             schedule,
                         );
-                        for binding in ordered_hooks(
-                            hook_bindings,
-                            HookPhase::After,
-                            |hook| {
-                                hook.scope == HookScope::Loop
-                                    && hook.target_selector == region.region_id
-                            },
-                        ) {
+                        for binding in ordered_hooks(hook_bindings, HookPhase::After, |hook| {
+                            hook.scope == HookScope::Loop
+                                && hook.target_selector == region.region_id
+                        }) {
                             schedule.push(ScheduleStep::HookAfter {
                                 binding: binding.clone(),
                             });

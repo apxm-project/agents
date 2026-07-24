@@ -60,13 +60,13 @@ export type HandlerSpec<I, O> = {
   run(input: I): Promise<O> | O;
 };
 
-function digestOf(fn: (...args: never[]) => unknown): string {
-  const source = fn.toString();
+/** Derive a deterministic source-identity digest for static declarations. */
+export function stableDigest(value: string): string {
   let hash = 5381;
-  for (let index = 0; index < source.length; index += 1) {
-    hash = ((hash << 5) + hash + source.charCodeAt(index)) & 0xffffffff;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = ((hash << 5) + hash + value.charCodeAt(index)) & 0xffffffff;
   }
-  return `sha256:${(hash >>> 0).toString(16).padStart(64, "0")}`;
+  return `sha256:${String(hash >>> 0).padStart(64, "0")}`;
 }
 
 function uncallable(marker: string): never {
@@ -100,7 +100,7 @@ export function Tool<I, O>(target: string | HandlerSpec<I, O>): ToolBinding<I, O
     targetRef: `tool:${target.run.name || "handler"}`,
     inputTypeRef: "ToolInput",
     outputTypeRef: "ToolOutput",
-    handlerDigest: digestOf(target.run as (...args: never[]) => unknown),
+    handlerDigest: stableDigest(`tool:${target.run.name || "handler"}`),
   });
 }
 
@@ -122,7 +122,7 @@ export function Capability<I, O>(
     targetRef: `capability:${target.run.name || "handler"}`,
     inputTypeRef: "CapabilityInput",
     outputTypeRef: "CapabilityOutput",
-    handlerDigest: digestOf(target.run as (...args: never[]) => unknown),
+    handlerDigest: stableDigest(`capability:${target.run.name || "handler"}`),
   });
 }
 
