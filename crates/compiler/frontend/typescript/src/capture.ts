@@ -1108,7 +1108,12 @@ class Capture {
 
 function portableSourceFile(fileName: string): string {
   const normalized = fileName.replaceAll("\\", "/");
-  if (normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized)) {
+  const segments = normalized.split("/");
+  if (
+    normalized.startsWith("/") ||
+    /^[A-Za-z]:\//.test(normalized) ||
+    segments.includes("..")
+  ) {
     return "<agent>";
   }
   return normalized;
