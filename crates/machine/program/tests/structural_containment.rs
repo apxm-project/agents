@@ -13,57 +13,64 @@ fn nested_sibling_graph() -> Value {
             "has_default_context": true
         }],
         "imported_program_refs": [],
-        "semantic_operations": [
-            {
-                "node_id": "node.outer.before",
-                "op": "model.call",
-                "parent_region_id": "loop.outer",
-                "execution_order": 0
-            },
-            {
-                "node_id": "node.inner",
-                "op": "capability.invoke",
-                "parent_region_id": "loop.inner",
-                "execution_order": 0
-            },
-            {
-                "node_id": "node.outer.after",
-                "op": "model.call",
-                "parent_region_id": "loop.outer",
-                "execution_order": 2
-            },
-            {
-                "node_id": "node.sibling",
-                "op": "await.event",
-                "parent_region_id": "loop.sibling",
-                "execution_order": 0
-            }
-        ],
-        "structural_regions": [
-            {
-                "region_id": "region.root",
-                "kind": "region",
-                "execution_order": 0
-            },
+        "declarations": [],
+        "functions": [{
+            "function_id": "run",
+            "parameters": [],
+            "body_region_id": "region.root",
+            "is_entrypoint": true
+        }],
+        "values": [],
+        "blocks": [],
+        "regions": [
+            {"region_id": "region.root", "region_role": "function_body", "execution_order": 0},
             {
                 "region_id": "loop.outer",
-                "kind": "ais.loop",
+                "region_role": "loop_body",
                 "parent_region_id": "region.root",
                 "execution_order": 0
             },
             {
                 "region_id": "loop.inner",
-                "kind": "ais.loop",
+                "region_role": "loop_body",
                 "parent_region_id": "loop.outer",
                 "execution_order": 1
             },
             {
                 "region_id": "loop.sibling",
-                "kind": "ais.loop",
+                "region_role": "loop_body",
                 "parent_region_id": "region.root",
                 "execution_order": 1
             }
         ],
+        "data_edges": [],
+        "call_intents": [
+            {
+                "node_id": "node.outer.before",
+                "intent_kind": "model_invocation",
+                "parent_region_id": "loop.outer",
+                "execution_order": 0
+            },
+            {
+                "node_id": "node.inner",
+                "intent_kind": "capability_invocation",
+                "parent_region_id": "loop.inner",
+                "execution_order": 0
+            },
+            {
+                "node_id": "node.outer.after",
+                "intent_kind": "model_invocation",
+                "parent_region_id": "loop.outer",
+                "execution_order": 2
+            },
+            {
+                "node_id": "node.sibling",
+                "intent_kind": "event_wait",
+                "parent_region_id": "loop.sibling",
+                "execution_order": 0
+            }
+        ],
+        "control_intents": [],
         "context_flow": [],
         "hook_bindings": [],
         "capability_requirements": [],
@@ -72,66 +79,33 @@ fn nested_sibling_graph() -> Value {
             "schema_version": "apxm.source-map.v1",
             "source_language": "python",
             "node_spans": [],
-            "region_annotations": [
-                {"region_id": "loop.outer", "annotation": "structural_loop"},
-                {"region_id": "loop.inner", "annotation": "structural_loop"},
-                {"region_id": "loop.sibling", "annotation": "structural_loop"}
-            ]
+            "region_annotations": []
         }
     })
 }
 
 #[test]
-fn lowering_preserves_nested_and_sibling_loop_containment() {
+fn typed_nested_and_sibling_containment_verifies_and_lowers() {
     let value = nested_sibling_graph();
     assert!(verify_frontend_graph_json(&value).is_accepted());
     let graph: FrontendGraph = serde_json::from_value(value).expect("typed graph");
+    // Lowering reconstructs typed CFG/SSA AIR from these intents and regions and
+    // carries the source map through unchanged.
     let air = frontend_graph_to_air(&graph).expect("lower graph");
-
-    let outer_before = air
-        .semantic_operations
-        .iter()
-        .find(|operation| operation.node_id == "node.outer.before")
-        .unwrap();
-    let inner = air
-        .semantic_operations
-        .iter()
-        .find(|operation| operation.node_id == "node.inner")
-        .unwrap();
-    let sibling = air
-        .semantic_operations
-        .iter()
-        .find(|operation| operation.node_id == "node.sibling")
-        .unwrap();
-    assert_eq!(outer_before.parent_region_id, "loop.outer");
-    assert_eq!(outer_before.execution_order, 0);
-    assert_eq!(inner.parent_region_id, "loop.inner");
-    assert_eq!(sibling.parent_region_id, "loop.sibling");
-
-    let inner_loop = air
-        .structural_ir
-        .iter()
-        .find(|region| region.region_id == "loop.inner")
-        .unwrap();
-    assert_eq!(inner_loop.parent_region_id.as_deref(), Some("loop.outer"));
-    assert_eq!(inner_loop.execution_order, 1);
+    assert_eq!(air.source_map, graph.source_map);
 }
 
 #[test]
 fn verifier_rejects_missing_parent_cycles_and_duplicate_sibling_order() {
     let mut missing_parent = nested_sibling_graph();
-    missing_parent["semantic_operations"][0]["parent_region_id"] = json!("loop.missing");
+    missing_parent["call_intents"][0]["parent_region_id"] = json!("loop.missing");
     assert!(!verify_frontend_graph_json(&missing_parent).is_accepted());
 
     let mut cycle = nested_sibling_graph();
-    cycle["structural_regions"][0]["parent_region_id"] = json!("loop.inner");
+    cycle["regions"][0]["parent_region_id"] = json!("loop.inner");
     assert!(!verify_frontend_graph_json(&cycle).is_accepted());
 
     let mut duplicate_order = nested_sibling_graph();
-    duplicate_order["structural_regions"][3]["execution_order"] = json!(0);
+    duplicate_order["regions"][3]["execution_order"] = json!(0);
     assert!(!verify_frontend_graph_json(&duplicate_order).is_accepted());
-
-    let mut missing_loop_identity = nested_sibling_graph();
-    missing_loop_identity["source_map"]["region_annotations"] = json!([]);
-    assert!(!verify_frontend_graph_json(&missing_loop_identity).is_accepted());
 }

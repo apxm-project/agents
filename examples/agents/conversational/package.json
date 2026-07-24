@@ -15,7 +15,7 @@
     "build:python": "PYTHONPYCACHEPREFIX=../../../.apxm/example-python-cache python -m py_compile python/agent.py",
     "compile": "node --input-type=module -e \"import { buildConversational } from './dist/index.js'; console.log(buildConversational().canonicalAir())\"",
     "compile:python": "python python/agent.py --air",
-    "run": "node --input-type=module -e \"import { buildConversational } from './dist/index.js'; console.log(JSON.stringify(buildConversational().buildGraph()))\"",
+    "run": "node --input-type=module -e \"import { buildConversational } from './dist/index.js'; console.log(JSON.stringify(buildConversational().frontendGraph()))\"",
     "run:python": "python python/agent.py"
   },
   "dependencies": {

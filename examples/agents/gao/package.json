@@ -13,12 +13,11 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "compile": "node --input-type=module -e \"import { buildGao } from './dist/index.js'; console.log(buildGao().canonicalAir())\"",
-    "run": "node --input-type=module -e \"import { buildGao } from './dist/index.js'; console.log(JSON.stringify(buildGao().buildGraph()))\"",
+    "run": "node --input-type=module -e \"import { buildGao } from './dist/index.js'; console.log(JSON.stringify(buildGao().frontendGraph()))\"",
     "test": "node --test tests/authoring.test.mjs"
   },
   "dependencies": {
     "@apxm/agent-packaging": "file:../../../crates/tools/cli/agent-packaging",
-    "@apxm/example-agent-conversational": "file:../conversational",
     "@apxm/frontend": "file:../../../crates/compiler/frontend/typescript"
   },
   "devDependencies": {

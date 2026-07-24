@@ -2,15 +2,21 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "apxm.frontend-graph.v1",
   "title": "FrontendGraph",
-  "description": "Language-neutral typed graph recorded equivalently by Python, TypeScript, and generated Studio source. It records program definitions, imported program references, the five semantic operations, structural control-flow records, explicit context flow, static Hook bindings, and a source map. It never records raw AIR text, runtime placement, credentials, or dynamic registration.",
+  "description": "Language-neutral typed source graph emitted equivalently by the Python and TypeScript source-first frontends. It records typed declarations and bindings, typed values, blocks, regions, data edges, explicit context/state edges, discriminated typed source intents for the model/capability/program/event effects, language-neutral structural control-flow intents, static Hook bindings, exact requirements, digests, and a source map. It carries typed source intent only: it never contains an AIR/AIS operation string, an ais.* kind, an untyped operand bag, runtime placement, credentials, grants, or dynamic registration. Rust alone selects AIS operations from these intents.",
   "type": "object",
   "required": [
     "schema_version",
     "source_language",
     "program_definitions",
     "imported_program_refs",
-    "semantic_operations",
-    "structural_regions",
+    "declarations",
+    "functions",
+    "values",
+    "blocks",
+    "regions",
+    "data_edges",
+    "call_intents",
+    "control_intents",
     "context_flow",
     "hook_bindings",
     "capability_requirements",
@@ -41,16 +47,60 @@
         "$ref": "#/$defs/ImportedProgramRef"
       }
     },
-    "semantic_operations": {
+    "declarations": {
       "type": "array",
+      "description": "Typed source declarations and bindings resolved by imported symbol identity: Context schema, Model binding, Tool binding/handler, Capability binding/handler, Event type.",
       "items": {
-        "$ref": "#/$defs/SemanticOperation"
+        "$ref": "#/$defs/Declaration"
       }
     },
-    "structural_regions": {
+    "functions": {
       "type": "array",
+      "description": "Typed entrypoint and helper functions with typed parameters and a body region.",
       "items": {
-        "$ref": "#/$defs/StructuralRegion"
+        "$ref": "#/$defs/FunctionDef"
+      }
+    },
+    "values": {
+      "type": "array",
+      "description": "Typed SSA-precursor values produced by parameters, declarations, call-intent results, block arguments, and structural joins. Every value has one typed origin.",
+      "items": {
+        "$ref": "#/$defs/Value"
+      }
+    },
+    "blocks": {
+      "type": "array",
+      "description": "Basic blocks with typed block arguments, contained in a region.",
+      "items": {
+        "$ref": "#/$defs/Block"
+      }
+    },
+    "regions": {
+      "type": "array",
+      "description": "Lexical regions (function body, conditional arms, loop body, task scope, try/catch). A region owns blocks; Rust reconstructs CFG/SSA and structural AIS from them. This is source lexical structure, not an ais.* kind.",
+      "items": {
+        "$ref": "#/$defs/Region"
+      }
+    },
+    "data_edges": {
+      "type": "array",
+      "description": "Typed def-use edges from a producing value to a consuming intent operand or block-argument slot.",
+      "items": {
+        "$ref": "#/$defs/DataEdge"
+      }
+    },
+    "call_intents": {
+      "type": "array",
+      "description": "Discriminated typed effect intents. Rust selects exactly one of the five AIS semantic operations from each; a Tool invocation and an advanced Capability invocation are distinct intents that both converge to capability.invoke.",
+      "items": {
+        "$ref": "#/$defs/CallIntent"
+      }
+    },
+    "control_intents": {
+      "type": "array",
+      "description": "Discriminated language-neutral structural intents: conditional, loop, task-scope, try/catch, yield, return. Rust constructs the closed structural AIS family from these; source never names ais.loop or any ais.* kind.",
+      "items": {
+        "$ref": "#/$defs/ControlIntent"
       }
     },
     "context_flow": {
@@ -93,24 +143,12 @@
         "has_default_context"
       ],
       "properties": {
-        "program_id": {
-          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
-        },
-        "entrypoint": {
-          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
-        },
-        "input_type_ref": {
-          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
-        },
-        "output_type_ref": {
-          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
-        },
-        "context_type_ref": {
-          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
-        },
-        "has_default_context": {
-          "type": "boolean"
-        }
+        "program_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "entrypoint": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "input_type_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "output_type_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "context_type_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "has_default_context": { "type": "boolean" }
       },
       "additionalProperties": false
     },
@@ -123,112 +161,250 @@
         "target_agent_identity_requirement"
       ],
       "properties": {
-        "program_ref": {
-          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
-        },
-        "artifact_digest": {
-          "$ref": "apxm.contract-common.v1#/$defs/Digest"
-        },
-        "entrypoint": {
-          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
-        },
-        "target_agent_identity_requirement": {
-          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
-        }
+        "program_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "artifact_digest": { "$ref": "apxm.contract-common.v1#/$defs/Digest" },
+        "entrypoint": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "target_agent_identity_requirement": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" }
       },
       "additionalProperties": false
     },
-    "SemanticOperation": {
+    "Declaration": {
       "type": "object",
+      "description": "One typed source declaration or binding. `decl_kind` discriminates the role; friendly names (Context/Model/Tool/Capability/Event) map to these bound nodes.",
       "required": [
-        "node_id",
-        "op",
-        "parent_region_id",
-        "execution_order"
+        "decl_id",
+        "decl_kind",
+        "input_type_ref",
+        "output_type_ref"
       ],
       "properties": {
-        "node_id": {
-          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
-        },
-        "op": {
+        "decl_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "decl_kind": {
           "type": "string",
           "enum": [
-            "model.call",
-            "capability.invoke",
-            "program.new",
-            "program.invoke",
-            "await.event"
+            "context",
+            "model_binding",
+            "tool_binding",
+            "tool_handler",
+            "capability_binding",
+            "capability_handler",
+            "event_type"
           ]
         },
-        "parent_region_id": {
-          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        "input_type_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "output_type_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "target_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier",
+          "description": "Exact external reference for a binding (ModelTargetRef, CapabilityRef, EventRef)."
         },
-        "execution_order": {
-          "type": "integer",
-          "minimum": 0
+        "handler_digest": {
+          "$ref": "apxm.contract-common.v1#/$defs/Digest",
+          "description": "Content digest for a locally bundled Tool/Capability handler; absent for imported bindings."
         },
-        "operands": {
-          "type": "object"
+        "context_default_present": {
+          "type": "boolean",
+          "description": "For decl_kind=context, whether a typed default initializer is present."
         }
       },
       "additionalProperties": false
     },
-    "StructuralRegion": {
+    "FunctionDef": {
       "type": "object",
       "required": [
-        "region_id",
-        "kind",
-        "execution_order"
+        "function_id",
+        "parameters",
+        "body_region_id",
+        "is_entrypoint"
       ],
       "properties": {
-        "region_id": {
-          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        "function_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "parameters": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Parameter" }
         },
-        "kind": {
+        "result_type_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "body_region_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "is_entrypoint": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "Parameter": {
+      "type": "object",
+      "required": ["value_id", "type_ref", "role"],
+      "properties": {
+        "value_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "type_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "role": {
+          "type": "string",
+          "enum": ["agent_facade", "input", "context", "ordinary"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "Value": {
+      "type": "object",
+      "description": "One typed value with exactly one typed origin.",
+      "required": ["value_id", "type_ref", "origin"],
+      "properties": {
+        "value_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "type_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "origin": {
           "type": "string",
           "enum": [
-            "function",
-            "region",
-            "block",
-            "value",
-            "branch",
+            "parameter",
+            "call_result",
+            "block_argument",
+            "context_value",
+            "literal",
+            "resume_input"
+          ]
+        },
+        "origin_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier",
+          "description": "The id of the producing parameter, call_intent, block, or context edge."
+        }
+      },
+      "additionalProperties": false
+    },
+    "Block": {
+      "type": "object",
+      "required": ["block_id", "region_id", "block_arguments", "execution_order"],
+      "properties": {
+        "block_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "region_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "block_arguments": {
+          "type": "array",
+          "items": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" }
+        },
+        "execution_order": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "Region": {
+      "type": "object",
+      "description": "A lexical region. `region_role` is source structure, not an AIS op kind; Rust maps it to structural AIS.",
+      "required": ["region_id", "region_role", "execution_order"],
+      "properties": {
+        "region_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "region_role": {
+          "type": "string",
+          "enum": [
+            "function_body",
+            "conditional_arm",
+            "loop_body",
+            "task_scope",
+            "task_child",
+            "try_body",
+            "catch_body"
+          ]
+        },
+        "parent_region_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "execution_order": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "DataEdge": {
+      "type": "object",
+      "description": "A typed def-use edge from a producing value to a consuming operand slot.",
+      "required": ["from_value", "to_consumer", "consumer_slot"],
+      "properties": {
+        "from_value": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "to_consumer": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier",
+          "description": "The consuming call_intent, control_intent, or block id."
+        },
+        "consumer_slot": {
+          "type": "string",
+          "description": "The named typed operand slot on the consumer (e.g. request, options, arguments, input, receiver, event_ref, condition, carried)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "CallIntent": {
+      "type": "object",
+      "description": "One discriminated typed effect intent. `intent_kind` names the SOURCE role; Rust maps it to an AIR/AIS operation. There is no AIR/AIS string here.",
+      "required": ["node_id", "intent_kind", "parent_region_id", "execution_order"],
+      "properties": {
+        "node_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "intent_kind": {
+          "type": "string",
+          "enum": [
+            "model_invocation",
+            "tool_invocation",
+            "capability_invocation",
+            "agent_creation",
+            "agent_invocation",
+            "event_wait"
+          ]
+        },
+        "parent_region_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "execution_order": { "type": "integer", "minimum": 0 },
+        "binding_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier",
+          "description": "The declaration or imported-program id this intent invokes."
+        },
+        "receiver_kind": {
+          "type": "string",
+          "enum": ["program_ref", "program_instance_ref"],
+          "description": "Present only for agent_invocation: distinguishes one-shot from stateful receiver."
+        },
+        "operand_values": {
+          "type": "array",
+          "description": "Ordered typed value ids consumed as this intent's operands; slot identity is carried by matching data_edges.",
+          "items": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" }
+        },
+        "result_value": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier",
+          "description": "The typed value produced by this intent, if any."
+        }
+      },
+      "additionalProperties": false
+    },
+    "ControlIntent": {
+      "type": "object",
+      "description": "One discriminated language-neutral structural intent. Rust constructs structural AIS (branch/switch/ais.loop/parallel_join/try/throw/catch/yield/return) from these.",
+      "required": ["node_id", "control_kind", "parent_region_id", "execution_order"],
+      "properties": {
+        "node_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "control_kind": {
+          "type": "string",
+          "enum": [
+            "conditional",
             "switch",
-            "ais.loop",
-            "parallel_join",
-            "try",
+            "loop",
+            "task_group",
+            "try_catch",
             "throw",
-            "catch",
-            "return",
-            "yield"
+            "yield",
+            "return"
           ]
         },
-        "parent_region_id": {
-          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        "parent_region_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "execution_order": { "type": "integer", "minimum": 0 },
+        "body_region_ids": {
+          "type": "array",
+          "description": "The lexical regions this control intent owns (arms, loop body, task children, try/catch bodies).",
+          "items": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" }
         },
-        "execution_order": {
-          "type": "integer",
-          "minimum": 0
+        "operand_values": {
+          "type": "array",
+          "description": "Typed value ids consumed (condition, switch scrutinee, carried loop values, yielded output, returned output).",
+          "items": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" }
+        },
+        "result_value": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier",
+          "description": "The typed value produced (e.g. a yield resume input); absent for return."
         }
       },
       "additionalProperties": false
     },
     "ContextEdge": {
       "type": "object",
-      "required": [
-        "from_node",
-        "to_node",
-        "context_type_ref"
-      ],
+      "required": ["from_node", "to_node", "context_type_ref"],
       "properties": {
-        "from_node": {
-          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
-        },
-        "to_node": {
-          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
-        },
-        "context_type_ref": {
-          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
-        }
+        "from_node": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "to_node": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "context_type_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" }
       },
       "additionalProperties": false
     },
@@ -247,76 +423,39 @@
         "return_mode"
       ],
       "properties": {
-        "hook_id": {
-          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
-        },
+        "hook_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
         "scope": {
           "type": "string",
-          "enum": [
-            "agent",
-            "loop",
-            "node",
-            "model",
-            "capability"
-          ]
+          "enum": ["agent", "loop", "node", "model", "capability"]
         },
-        "phase": {
-          "type": "string",
-          "enum": [
-            "before",
-            "after"
-          ]
-        },
-        "target_selector": {
-          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
-        },
-        "declaration_order": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "handler_ref": {
-          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
-        },
-        "handler_digest": {
-          "$ref": "apxm.contract-common.v1#/$defs/Digest"
-        },
-        "input_type_ref": {
-          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
-        },
-        "output_type_ref": {
-          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
-        },
-        "return_mode": {
-          "type": "string",
-          "enum": [
-            "observe",
-            "replace_result"
-          ]
-        }
+        "phase": { "type": "string", "enum": ["before", "after"] },
+        "target_selector": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "declaration_order": { "type": "integer", "minimum": 0 },
+        "handler_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "handler_digest": { "$ref": "apxm.contract-common.v1#/$defs/Digest" },
+        "input_type_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "output_type_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "return_mode": { "type": "string", "enum": ["observe", "replace_result"] }
       },
       "additionalProperties": false
     },
     "CapabilityRequirement": {
       "type": "object",
-      "required": [
-        "capability_ref"
-      ],
+      "required": ["capability_ref"],
       "properties": {
-        "capability_ref": {
-          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        "capability_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "tool_schema_present": {
+          "type": "boolean",
+          "description": "True when this requirement is surfaced to a model as a typed Tool schema."
         }
       },
       "additionalProperties": false
     },
     "ModelRequirement": {
       "type": "object",
-      "required": [
-        "model_target_ref"
-      ],
+      "required": ["model_target_ref"],
       "properties": {
-        "model_target_ref": {
-          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
-        }
+        "model_target_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" }
       },
       "additionalProperties": false
     }

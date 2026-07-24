@@ -85,16 +85,31 @@ fn emit_module(air: &AirModule) -> String {
     out.push_str("\"} {\n");
     out.push_str("  func.func @program() {\n");
 
-    for op in &air.semantic_operations {
-        out.push_str("    \"apxm.");
-        out.push_str(op.op.wire());
-        out.push_str("\"() {apxm.node_id = \"");
+    for (index, op) in air.semantic_operations.iter().enumerate() {
+        // Emit the registered `ais.<mnemonic>` operation (model_call,
+        // capability_invoke, program_new, program_invoke, await_event) with its
+        // typed operand attributes and a token result, so canonical verification
+        // succeeds with unregistered dialects disabled.
+        let mnemonic = op.op.wire().replace('.', "_");
+        out.push_str("    %sem");
+        out.push_str(&index.to_string());
+        out.push_str(" = \"ais.");
+        out.push_str(&mnemonic);
+        out.push_str("\"() {");
+        // Typed operand attributes first, in slot order.
+        for operand in &op.operands {
+            out.push_str(&operand.slot);
+            out.push_str(" = \"");
+            push_escaped(&mut out, &operand.value_id);
+            out.push_str("\", ");
+        }
+        out.push_str("apxm.node_id = \"");
         push_escaped(&mut out, &op.node_id);
         out.push_str("\", apxm.parent_region_id = \"");
         push_escaped(&mut out, &op.parent_region_id);
         out.push_str("\", apxm.execution_order = ");
         out.push_str(&op.execution_order.to_string());
-        out.push_str(" : i64} : () -> ()\n");
+        out.push_str(" : i64} : () -> !ais.token\n");
     }
 
     for (index, region) in air.structural_ir.iter().enumerate() {
@@ -145,11 +160,11 @@ mod tests {
         json!({
             "schema_version": "apxm.air.v1",
             "semantic_operations": [
-                {"node_id": "node.model.1", "op": "model.call", "parent_region_id": "region.loop.1", "execution_order": 0},
-                {"node_id": "node.cap.1", "op": "capability.invoke", "parent_region_id": "region.loop.1", "execution_order": 1},
-                {"node_id": "node.new.1", "op": "program.new", "parent_region_id": "region.loop.1", "execution_order": 2},
-                {"node_id": "node.invoke.1", "op": "program.invoke", "parent_region_id": "region.loop.1", "execution_order": 3},
-                {"node_id": "node.await.1", "op": "await.event", "parent_region_id": "region.loop.1", "execution_order": 4}
+                {"node_id": "node.model.1", "op": "model.call", "parent_region_id": "region.loop.1", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.req", "type_ref": "ModelRequest"}]},
+                {"node_id": "node.cap.1", "op": "capability.invoke", "parent_region_id": "region.loop.1", "execution_order": 1, "operands": [{"slot": "capability_ref", "value_id": "cap.search", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "value.args", "type_ref": "SearchRequest"}]},
+                {"node_id": "node.new.1", "op": "program.new", "parent_region_id": "region.loop.1", "execution_order": 2, "operands": [{"slot": "program_ref", "value_id": "child", "type_ref": "ProgramRef"}]},
+                {"node_id": "node.invoke.1", "op": "program.invoke", "parent_region_id": "region.loop.1", "execution_order": 3, "operands": [{"slot": "receiver", "value_id": "node.new.1", "type_ref": "ProgramInstanceRef"}, {"slot": "input", "value_id": "value.in", "type_ref": "ChildInput"}]},
+                {"node_id": "node.await.1", "op": "await.event", "parent_region_id": "region.loop.1", "execution_order": 4, "operands": [{"slot": "event_ref", "value_id": "evt.ready", "type_ref": "EventRef"}]}
             ],
             "structural_ir": [
                 {"region_id": "region.fn.1", "kind": "function", "execution_order": 0},
@@ -185,6 +200,10 @@ mod tests {
         assert!(first.contains("apxm.parent_region_id = \"region.loop.1\""));
         assert!(first.contains("apxm.execution_order = 0 : i64"));
         assert!(first.contains("\"ais.loop\"()"));
+        // Semantic operations emit as registered ais.* ops with a token result.
+        assert!(first.contains("\"ais.model_call\"()"));
+        assert!(first.contains(": () -> !ais.token"));
+        assert!(!first.contains("\"apxm.model.call\""));
     }
 
     #[test]
@@ -229,6 +248,29 @@ mod tests {
             printed_once, printed_twice,
             "MLIR round-trip is not deterministic"
         );
-        assert!(printed_once.contains("apxm.model.call"));
+        assert!(printed_once.contains("ais.model_call"));
+    }
+
+    #[cfg(feature = "mlir")]
+    #[test]
+    fn registered_model_call_missing_required_operand_fails_verification() {
+        // A registered ais.model_call without its required model_ref/request
+        // attributes must fail MLIR verification, so a dropped operand cannot
+        // reach an artifact. Unregistered dialects are disabled, so an unknown
+        // operation also cannot pass.
+        let missing_operand = "module {\n  func.func @program() {\n    \
+             %s0 = \"ais.model_call\"() {apxm.node_id = \"n\"} : () -> !ais.token\n    \
+             func.return\n  }\n}\n";
+        assert!(
+            verify_mlir_text(missing_operand).is_err(),
+            "model_call without required operands must fail verification"
+        );
+
+        let unregistered = "module {\n  func.func @program() {\n    \
+             \"ais.not_a_real_op\"() : () -> ()\n    func.return\n  }\n}\n";
+        assert!(
+            verify_mlir_text(unregistered).is_err(),
+            "an unregistered operation must fail with unregistered dialects disabled"
+        );
     }
 }

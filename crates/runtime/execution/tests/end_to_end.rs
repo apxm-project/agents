@@ -46,12 +46,12 @@ fn air() -> AirModule {
     serde_json::from_value(json!({
         "schema_version": "apxm.air.v1",
         "semantic_operations": [
-            {"node_id": "n.model", "op": "model.call", "parent_region_id": "r.fn", "execution_order": 0, "operands": {"model_target_ref": "model.default"}},
-            {"node_id": "n.cap", "op": "capability.invoke", "parent_region_id": "r.fn", "execution_order": 1, "operands": {"capability_ref": "cap.search"}},
-            {"node_id": "n.acp", "op": "capability.invoke", "parent_region_id": "r.fn", "execution_order": 2, "operands": {"capability_ref": "external-agent:acp:claude-code", "external_agent_session": "session.1"}},
-            {"node_id": "n.new", "op": "program.new", "parent_region_id": "r.fn", "execution_order": 3, "operands": {"program_ref": "Specialist"}},
-            {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.fn", "execution_order": 4, "operands": {"receiver": {"program_instance_ref": "n.new"}}},
-            {"node_id": "n.await", "op": "await.event", "parent_region_id": "r.fn", "execution_order": 5, "operands": {"event_ref": "evt.done"}}
+            {"node_id": "n.model", "op": "model.call", "parent_region_id": "r.fn", "execution_order": 0, "operands": [{"slot": "model_target_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]},
+            {"node_id": "n.cap", "op": "capability.invoke", "parent_region_id": "r.fn", "execution_order": 1, "operands": [{"slot": "capability_ref", "value_id": "cap.search", "type_ref": "CapabilityRef"}]},
+            {"node_id": "n.acp", "op": "capability.invoke", "parent_region_id": "r.fn", "execution_order": 2, "operands": [{"slot": "capability_ref", "value_id": "external-agent:acp:claude-code", "type_ref": "CapabilityRef"}, {"slot": "external_agent_session", "value_id": "session.1", "type_ref": "ExternalAgentSessionRef"}]},
+            {"node_id": "n.new", "op": "program.new", "parent_region_id": "r.fn", "execution_order": 3, "operands": [{"slot": "program_ref", "value_id": "Specialist", "type_ref": "ProgramRef"}]},
+            {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.fn", "execution_order": 4, "operands": [{"slot": "receiver", "value_id": "n.new", "type_ref": "ProgramInstanceRef"}]},
+            {"node_id": "n.await", "op": "await.event", "parent_region_id": "r.fn", "execution_order": 5, "operands": [{"slot": "event_ref", "value_id": "evt.done", "type_ref": "EventRef"}]}
         ],
         "structural_ir": [
             {"region_id": "r.fn", "kind": "function", "execution_order": 0},
@@ -396,8 +396,8 @@ async fn program_invoke_dispatches_to_the_created_instance_receiver() {
     let air: AirModule = serde_json::from_value(json!({
         "schema_version": "apxm.air.v1",
         "semantic_operations": [
-            {"node_id": "n.new", "op": "program.new", "parent_region_id": "r.fn", "execution_order": 0, "operands": {"program_ref": "Specialist"}},
-            {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.fn", "execution_order": 1, "operands": {"receiver": {"program_instance_ref": "n.new"}}}
+            {"node_id": "n.new", "op": "program.new", "parent_region_id": "r.fn", "execution_order": 0, "operands": [{"slot": "program_ref", "value_id": "Specialist", "type_ref": "ProgramRef"}]},
+            {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.fn", "execution_order": 1, "operands": [{"slot": "receiver", "value_id": "n.new", "type_ref": "ProgramInstanceRef"}]}
         ],
         "structural_ir": [
             {"region_id": "r.fn", "kind": "function", "execution_order": 0}
@@ -472,7 +472,7 @@ async fn unbound_model_target_fails_closed() {
     let bad_air: AirModule = serde_json::from_value(json!({
         "schema_version": "apxm.air.v1",
         "semantic_operations": [
-            {"node_id": "n.model", "op": "model.call", "parent_region_id": "r.fn", "execution_order": 0, "operands": {"model_target_ref": "model.unbound"}}
+            {"node_id": "n.model", "op": "model.call", "parent_region_id": "r.fn", "execution_order": 0, "operands": [{"slot": "model_target_ref", "value_id": "model.unbound", "type_ref": "ModelTargetRef"}]}
         ],
         "structural_ir": [
             {"region_id": "r.fn", "kind": "function", "execution_order": 0}

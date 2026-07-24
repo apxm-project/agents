@@ -1,12 +1,6 @@
 # apxm_program — Python Agent authoring frontend
 
-- Current implementation: low-level conformance recorder
-- Target syntax: design proposal; not implemented at the pinned frontend
-  baseline
-- Target guide:
-  [Author an Agent](../../../../docs/guides/creating-an-agent-program.md)
-
-The target Python experience uses decorators and typed values:
+Author an Agent in ordinary Python with decorators and typed values:
 
 ```python
 from apxm_program import Agent, Model
@@ -21,15 +15,13 @@ async def Summarizer(agent, request):
 
 `Agent`, `Context`, `Tool`, and `Model` cover ordinary programs;
 `Capability`, `Event`, `Hook`, and `TaskGroup` are focused extensions. Python
-parses the module with the host AST, binds recognized APXM symbols/types into
-an immutable frontend-internal typed source tree, and deterministically
+parses the module with the host AST, binds recognized APXM symbols and types
+into an immutable frontend-internal typed source tree, and deterministically
 traverses it into FrontendGraph. It never executes the Agent body to discover
-behavior and never prints AIR/MLIR.
+behavior and never prints AIR or MLIR.
 
-The current package still exposes imperative `AgentProgram` and region/node
-recorders used by repository parity fixtures. Those APIs are baseline evidence,
-not the intended author surface, and the full replacement keeps no compatibility
-alias for them.
+The package exposes only these declaration markers. It has no imperative program
+builder, region or node recorder, operation constant, or raw graph API.
 
 ## Compiling workflows
 

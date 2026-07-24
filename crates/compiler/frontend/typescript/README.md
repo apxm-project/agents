@@ -1,13 +1,7 @@
 # @apxm/frontend — TypeScript Agent authoring frontend
 
-- Current implementation: low-level conformance recorder
-- Target syntax: design proposal; not implemented at the pinned frontend
-  baseline
-- Target guide:
-  [Author an Agent](../../../../docs/guides/creating-an-agent-program.md)
-
-The target TypeScript experience uses typed definitions and inferred callback
-types:
+Author an Agent in ordinary TypeScript with typed definitions and inferred
+callback types:
 
 ```typescript
 import { Agent, Model } from "@apxm/frontend";
@@ -27,9 +21,9 @@ export const Summarizer = Agent<SummaryRequest, Summary>({
 `Capability`, `Event`, `Hook`, and `TaskGroup` are focused extensions.
 TypeScript uses the compiler AST, symbols, and TypeChecker to build an immutable
 frontend-internal typed source tree, then deterministically traverses it into
-FrontendGraph. It never executes the Agent or prints AIR/MLIR.
+FrontendGraph. It never executes the Agent or prints AIR or MLIR.
 
-## Target compilation contract
+## Compilation contract
 
 ```text
 typed Agent source
@@ -40,10 +34,9 @@ typed Agent source
   -> Rust AIR/AIS lowering and artifact result
 ```
 
-The current package still exposes imperative `AgentProgram`, raw region/node
-recorders, and direct graph/AIR inspection helpers for repository parity
-fixtures. Those APIs are baseline evidence, not the intended author surface,
-and the full replacement keeps no compatibility alias for them.
+The package exposes only these declaration markers. It has no imperative program
+builder, region or node recorder, operation constant, or raw graph/AIR
+inspection API.
 
 ## Checks
 

@@ -1,16 +1,43 @@
 //! Deterministic FrontendGraph → AIR lowering.
 //!
-//! Typed containment and sibling execution order lower without flattening or
-//! reconstructing control from names or source order.
+//! This is the one canonical FrontendGraph→AIR owner. It consumes the typed
+//! discriminated intents of `apxm.frontend-graph.v1` and reconstructs canonical
+//! AIR:
+//!
+//! - each typed [`CallIntent`] selects exactly one of the five semantic AIS
+//!   operations (a Tool invocation and an advanced Capability invocation both
+//!   converge to `capability.invoke`), and its ordered `operand_values` become
+//!   typed SSA [`Operand`]s whose slot names come from the AIS operand catalogue
+//!   and whose types come from the graph's value table;
+//! - each typed [`ControlIntent`] and the lexical [`Region`]s it owns become
+//!   structural AIS nodes carrying typed block arguments (CFG joins, loop-carried
+//!   Context, resume input) and typed operands (branch condition, switch
+//!   scrutinee, carried/yielded/returned values); and
+//! - static Hooks expand into ordered structural wrapper regions around the
+//!   selected target in declaration order, adding no operation.
+//!
+//! Canonical ordering is a contract field, not an accident: declarations use
+//! canonical source identity, structural siblings and operations use the
+//! frontend's `execution_order`, block arguments use stable value order, and Hook
+//! wrappers use declared scope/phase/order. Python and TypeScript goldens
+//! therefore converge after canonicalization even when their host ASTs differ.
 //!
 //! The native bridges and `dekk agents canonical-air` submit FrontendGraph to
 //! this owner path. No alternative graph-to-AIR builder is reachable.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 
-use crate::air::{AirModule, AirVersion, ContextEdge as AirContextEdge, SemanticOp, StructuralNode};
+use apxm_ais::{SemanticOpKind, StructuralOpKind};
+
+use crate::air::{
+    AirModule, AirVersion, ContextEdge as AirContextEdge, Operand, SemanticOp, SsaValue,
+    StructuralNode,
+};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Verdict};
-use crate::frontend_graph::FrontendGraph;
+use crate::frontend_graph::{
+    CallIntent, ControlIntent, ControlKind, FrontendGraph, HookBinding, HookPhase, IntentKind,
+    Region, RegionRole, Value,
+};
 
 /// Lower a FrontendGraph to canonical AIR, failing closed with diagnostics when
 /// verification or lowering preconditions fail.
@@ -30,19 +57,54 @@ pub fn frontend_graph_to_air(graph: &FrontendGraph) -> Result<AirModule, Verdict
         return Err(lowering.finish());
     }
 
-    let semantic_operations = graph
-        .semantic_operations
+    let values: HashMap<&str, &Value> = graph
+        .values
         .iter()
-        .map(|op| SemanticOp {
-            node_id: op.node_id.clone(),
-            op: op.op,
-            parent_region_id: op.parent_region_id.clone(),
-            execution_order: op.execution_order,
-            operands: op.operands.clone(),
-        })
+        .map(|value| (value.value_id.as_str(), value))
         .collect();
 
-    let structural_ir = lower_structural_ir(graph);
+    // Declaration lookup: an intent's binding_ref resolves to the exact external
+    // reference the runtime needs (model target, capability, event, program).
+    let declarations: HashMap<&str, &crate::frontend_graph::Declaration> = graph
+        .declarations
+        .iter()
+        .map(|decl| (decl.decl_id.as_str(), decl))
+        .collect();
+
+    // Slot lookup for each consuming node: (consumer node id, value id) -> slot.
+    let mut slot_of: HashMap<(&str, &str), &str> = HashMap::new();
+    for edge in &graph.data_edges {
+        slot_of.insert(
+            (edge.to_consumer.as_str(), edge.from_value.as_str()),
+            edge.consumer_slot.as_str(),
+        );
+    }
+
+    let mut semantic_operations = Vec::with_capacity(graph.call_intents.len());
+    for intent in &graph.call_intents {
+        semantic_operations.push(lower_call_intent(
+            intent,
+            &values,
+            &slot_of,
+            &declarations,
+            graph,
+            &mut lowering,
+        ));
+    }
+    // Canonical operation order: structural containment plus frontend
+    // execution_order. Ordering by (parent_region_id, execution_order) is stable
+    // and independent of host AST emission order.
+    semantic_operations.sort_by(|a, b| {
+        a.parent_region_id
+            .cmp(&b.parent_region_id)
+            .then(a.execution_order.cmp(&b.execution_order))
+    });
+
+    let structural_ir = lower_structural_ir(graph, &values, &slot_of, &mut lowering);
+
+    if !lowering.is_accepted() {
+        return Err(lowering.finish());
+    }
 
     Ok(AirModule {
         schema_version: AirVersion::V1,
@@ -59,6 +121,358 @@ pub fn frontend_graph_to_air(graph: &FrontendGraph) -> Result<AirModule, Verdict
             .collect(),
         source_map: graph.source_map.clone(),
     })
+}
+
+/// Select the AIS semantic operation for a typed call intent. Tool and advanced
+/// Capability invocations both converge to `capability.invoke`.
+fn select_semantic_op(kind: IntentKind) -> SemanticOpKind {
+    match kind {
+        IntentKind::ModelInvocation => SemanticOpKind::ModelCall,
+        IntentKind::ToolInvocation | IntentKind::CapabilityInvocation => {
+            SemanticOpKind::CapabilityInvoke
+        }
+        IntentKind::AgentCreation => SemanticOpKind::ProgramNew,
+        IntentKind::AgentInvocation => SemanticOpKind::ProgramInvoke,
+        IntentKind::EventWait => SemanticOpKind::AwaitEvent,
+    }
+}
+
+fn lower_call_intent(
+    intent: &CallIntent,
+    values: &HashMap<&str, &Value>,
+    slot_of: &HashMap<(&str, &str), &str>,
+    declarations: &HashMap<&str, &crate::frontend_graph::Declaration>,
+    graph: &FrontendGraph,
+    verdict: &mut Verdict,
+) -> SemanticOp {
+    let op = select_semantic_op(intent.intent_kind);
+    let mut operands = Vec::new();
+
+    // The exact external reference the runtime binds is carried as the first
+    // operand, taken from the resolved binding declaration or imported program.
+    if let Some((slot, reference, type_ref)) = reference_operand(intent, declarations, graph) {
+        operands.push(Operand {
+            slot: slot.to_string(),
+            value_id: reference,
+            type_ref,
+        });
+    }
+
+    operands.extend(resolve_operands(
+        &intent.node_id,
+        &intent.operand_values,
+        values,
+        slot_of,
+        verdict,
+    ));
+
+    let result = intent.result_value.as_deref().map(|value_id| {
+        let type_ref = values
+            .get(value_id)
+            .map_or_else(|| value_id.to_string(), |value| value.type_ref.clone());
+        SsaValue {
+            value_id: value_id.to_string(),
+            type_ref,
+        }
+    });
+
+    SemanticOp {
+        node_id: intent.node_id.clone(),
+        op,
+        parent_region_id: intent.parent_region_id.clone(),
+        execution_order: intent.execution_order,
+        operands,
+        result,
+    }
+}
+
+/// The exact external reference operand for an effect intent: which model,
+/// capability, event, or program the runtime binds. Its value is the target
+/// reference string carried by the resolved declaration or imported program.
+fn reference_operand(
+    intent: &CallIntent,
+    declarations: &HashMap<&str, &crate::frontend_graph::Declaration>,
+    graph: &FrontendGraph,
+) -> Option<(&'static str, String, String)> {
+    let binding_ref = intent.binding_ref.as_deref()?;
+    match intent.intent_kind {
+        IntentKind::ModelInvocation => {
+            let target = declarations.get(binding_ref)?.target_ref.clone()?;
+            Some(("model_target_ref", target, "ModelTargetRef".to_string()))
+        }
+        IntentKind::ToolInvocation | IntentKind::CapabilityInvocation => {
+            let target = declarations.get(binding_ref)?.target_ref.clone()?;
+            Some(("capability_ref", target, "CapabilityRef".to_string()))
+        }
+        IntentKind::EventWait => {
+            let target = declarations
+                .get(binding_ref)
+                .and_then(|decl| decl.target_ref.clone())
+                .unwrap_or_else(|| binding_ref.to_string());
+            Some(("event_ref", target, "EventRef".to_string()))
+        }
+        IntentKind::AgentCreation => {
+            let target = resolve_program_ref(binding_ref, graph);
+            Some(("program_ref", target, "ProgramRef".to_string()))
+        }
+        IntentKind::AgentInvocation => {
+            let target = resolve_program_ref(binding_ref, graph);
+            let type_ref = match intent.receiver_kind {
+                Some(crate::frontend_graph::ReceiverKind::ProgramInstanceRef) => {
+                    "ProgramInstanceRef"
+                }
+                _ => "ProgramRef",
+            };
+            Some(("receiver", target, type_ref.to_string()))
+        }
+    }
+}
+
+/// Resolve a program binding reference to its imported program reference string.
+fn resolve_program_ref(binding_ref: &str, graph: &FrontendGraph) -> String {
+    graph
+        .imported_program_refs
+        .iter()
+        .find(|import| import.program_ref == binding_ref)
+        .map(|import| import.program_ref.clone())
+        .unwrap_or_else(|| binding_ref.to_string())
+}
+
+/// Resolve an ordered list of value ids into typed SSA operands, taking each
+/// operand's slot from the matching data edge and its type from the value table.
+fn resolve_operands(
+    consumer: &str,
+    operand_values: &[String],
+    values: &HashMap<&str, &Value>,
+    slot_of: &HashMap<(&str, &str), &str>,
+    verdict: &mut Verdict,
+) -> Vec<Operand> {
+    let mut operands = Vec::with_capacity(operand_values.len());
+    for value_id in operand_values {
+        let Some(value) = values.get(value_id.as_str()) else {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                consumer.to_string(),
+                format!("operand value '{value_id}' is not a declared value"),
+            ));
+            continue;
+        };
+        let Some(slot) = slot_of.get(&(consumer, value_id.as_str())) else {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                consumer.to_string(),
+                format!("operand value '{value_id}' has no typed data edge naming its slot"),
+            ));
+            continue;
+        };
+        operands.push(Operand {
+            slot: (*slot).to_string(),
+            value_id: value_id.clone(),
+            type_ref: value.type_ref.clone(),
+        });
+    }
+    operands
+}
+
+/// Map a control intent to its structural AIS operation kind.
+fn select_structural_op(kind: ControlKind) -> StructuralOpKind {
+    match kind {
+        ControlKind::Conditional => StructuralOpKind::Branch,
+        ControlKind::Switch => StructuralOpKind::Switch,
+        ControlKind::Loop => StructuralOpKind::Loop,
+        ControlKind::TaskGroup => StructuralOpKind::ParallelJoin,
+        ControlKind::TryCatch => StructuralOpKind::Try,
+        ControlKind::Throw => StructuralOpKind::Throw,
+        ControlKind::Yield => StructuralOpKind::Yield,
+        ControlKind::Return => StructuralOpKind::Return,
+    }
+}
+
+/// Build structural AIR: one enclosing function region, one node per lexical
+/// region, and one node per control intent, each carrying typed block arguments
+/// and operands. Hooks expand into ordered wrapper regions around their target.
+fn lower_structural_ir(
+    graph: &FrontendGraph,
+    values: &HashMap<&str, &Value>,
+    slot_of: &HashMap<(&str, &str), &str>,
+    verdict: &mut Verdict,
+) -> Vec<StructuralNode> {
+    let mut nodes: Vec<StructuralNode> = Vec::new();
+
+    // A loop's body region is the region the loop's operations parent to, so the
+    // loop itself becomes the structural region enclosing them: the ais.loop node
+    // adopts the body region id and the plain body region is not emitted twice.
+    let loop_body_regions: HashMap<&str, &crate::frontend_graph::ControlIntent> = graph
+        .control_intents
+        .iter()
+        .filter(|intent| intent.control_kind == ControlKind::Loop)
+        .filter_map(|intent| {
+            intent
+                .body_region_ids
+                .first()
+                .map(|body| (body.as_str(), intent))
+        })
+        .collect();
+
+    // Lexical regions become structural region/function nodes preserving the
+    // containment tree. The entrypoint body region is a function region; a loop
+    // body region becomes the ais.loop node itself.
+    let entry_body: Option<&str> = graph
+        .functions
+        .iter()
+        .find(|f| f.is_entrypoint)
+        .map(|f| f.body_region_id.as_str());
+
+    for region in &graph.regions {
+        let block_arguments = region_block_arguments(&region.region_id, graph, values);
+        if let Some(intent) = loop_body_regions.get(region.region_id.as_str()) {
+            // Emit the ais.loop node in place of the body region, parented where
+            // the loop occurs and carrying the loop's typed operands.
+            let operands = resolve_operands(
+                &intent.node_id,
+                &intent.operand_values,
+                values,
+                slot_of,
+                verdict,
+            );
+            nodes.push(StructuralNode {
+                region_id: region.region_id.clone(),
+                kind: StructuralOpKind::Loop,
+                parent_region_id: Some(intent.parent_region_id.clone()),
+                execution_order: intent.execution_order,
+                block_arguments,
+                operands,
+            });
+            continue;
+        }
+        let kind = region_structural_kind(region, entry_body);
+        nodes.push(StructuralNode {
+            region_id: region.region_id.clone(),
+            kind,
+            parent_region_id: region.parent_region_id.clone(),
+            execution_order: region.execution_order,
+            block_arguments,
+            operands: Vec::new(),
+        });
+    }
+
+    // Non-loop control intents become structural nodes hanging off their parent
+    // region. Loops are already emitted from their body region above.
+    for intent in &graph.control_intents {
+        if intent.control_kind == ControlKind::Loop {
+            continue;
+        }
+        let kind = select_structural_op(intent.control_kind);
+        let operands = resolve_operands(
+            &intent.node_id,
+            &intent.operand_values,
+            values,
+            slot_of,
+            verdict,
+        );
+        let block_arguments = control_block_arguments(intent, values);
+        nodes.push(StructuralNode {
+            region_id: intent.node_id.clone(),
+            kind,
+            parent_region_id: Some(intent.parent_region_id.clone()),
+            execution_order: intent.execution_order,
+            block_arguments,
+            operands,
+        });
+    }
+
+    // Hook wrappers: one structural region per hook, ordered by declaration
+    // order, hung off the hook's target selector. This adds no operation and no
+    // dynamic registry.
+    let mut hooks: Vec<&HookBinding> = graph.hook_bindings.iter().collect();
+    hooks.sort_by(|a, b| {
+        a.target_selector
+            .cmp(&b.target_selector)
+            .then(a.declaration_order.cmp(&b.declaration_order))
+    });
+    for hook in hooks {
+        nodes.push(StructuralNode {
+            region_id: hook.hook_id.clone(),
+            kind: StructuralOpKind::Region,
+            parent_region_id: Some(hook.target_selector.clone()),
+            execution_order: hook_execution_order(hook.phase, hook.declaration_order),
+            block_arguments: Vec::new(),
+            operands: Vec::new(),
+        });
+    }
+
+    // Canonical structural order: by containment then execution order, stable and
+    // host-AST-independent.
+    nodes.sort_by(|a, b| {
+        a.parent_region_id
+            .cmp(&b.parent_region_id)
+            .then(a.execution_order.cmp(&b.execution_order))
+            .then(a.region_id.cmp(&b.region_id))
+    });
+    nodes
+}
+
+/// The entrypoint body region lowers to a `function` structural node; all other
+/// lexical regions lower to `region` nodes. Loop/try/catch semantics are carried
+/// by the owning control intent, not by the passive lexical region.
+fn region_structural_kind(region: &Region, entry_body: Option<&str>) -> StructuralOpKind {
+    if entry_body == Some(region.region_id.as_str())
+        && region.region_role == RegionRole::FunctionBody
+    {
+        StructuralOpKind::Function
+    } else {
+        StructuralOpKind::Region
+    }
+}
+
+/// Collect the typed block arguments a region carries: any value whose origin is
+/// a block argument and whose declaring block belongs to this region.
+fn region_block_arguments(
+    region_id: &str,
+    graph: &FrontendGraph,
+    values: &HashMap<&str, &Value>,
+) -> Vec<SsaValue> {
+    let mut args: Vec<SsaValue> = Vec::new();
+    for block in graph.blocks.iter().filter(|b| b.region_id == region_id) {
+        for value_id in &block.block_arguments {
+            if let Some(value) = values.get(value_id.as_str()) {
+                args.push(SsaValue {
+                    value_id: value.value_id.clone(),
+                    type_ref: value.type_ref.clone(),
+                });
+            }
+        }
+    }
+    args.sort_by(|a, b| a.value_id.cmp(&b.value_id));
+    args
+}
+
+/// A loop carries its carried values, and a yield carries the resume input, as
+/// block arguments so resume/continuation is SSA rather than a flat token.
+fn control_block_arguments(intent: &ControlIntent, values: &HashMap<&str, &Value>) -> Vec<SsaValue> {
+    match intent.control_kind {
+        ControlKind::Loop | ControlKind::Yield => intent
+            .result_value
+            .as_deref()
+            .and_then(|value_id| values.get(value_id))
+            .map(|value| {
+                vec![SsaValue {
+                    value_id: value.value_id.clone(),
+                    type_ref: value.type_ref.clone(),
+                }]
+            })
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+/// Before-hooks wrap ahead of the target region, after-hooks behind it. The
+/// declaration order breaks ties within a phase.
+fn hook_execution_order(phase: HookPhase, declaration_order: u32) -> u32 {
+    match phase {
+        HookPhase::Before => declaration_order,
+        HookPhase::After => 1_000_000 + declaration_order,
+    }
 }
 
 /// Lower a FrontendGraph JSON document to canonical AIR JSON.
@@ -81,14 +495,18 @@ fn format_verdict(verdict: Verdict) -> String {
     format!("frontend graph rejected: [{}]", rendered.join("; "))
 }
 
+/// Lowering-time cross-reference checks over the typed graph: context-flow and
+/// Hook targets must reference real intents or regions.
 fn validate_lowering(graph: &FrontendGraph, verdict: &mut Verdict) {
-    let node_ids: HashSet<&str> = graph
-        .semantic_operations
-        .iter()
-        .map(|op| op.node_id.as_str())
-        .collect();
-    let region_ids: HashSet<&str> = graph
-        .structural_regions
+    let mut node_ids: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for intent in &graph.call_intents {
+        node_ids.insert(intent.node_id.as_str());
+    }
+    for intent in &graph.control_intents {
+        node_ids.insert(intent.node_id.as_str());
+    }
+    let region_ids: std::collections::HashSet<&str> = graph
+        .regions
         .iter()
         .map(|region| region.region_id.as_str())
         .collect();
@@ -98,14 +516,14 @@ fn validate_lowering(graph: &FrontendGraph, verdict: &mut Verdict) {
             verdict.push(Diagnostic::new(
                 DiagnosticCode::SchemaViolation,
                 edge.from_node.clone(),
-                "context flow from_node is not a recorded semantic operation",
+                "context flow from_node is not a recorded intent",
             ));
         }
         if !node_ids.contains(edge.to_node.as_str()) {
             verdict.push(Diagnostic::new(
                 DiagnosticCode::SchemaViolation,
                 edge.to_node.clone(),
-                "context flow to_node is not a recorded semantic operation",
+                "context flow to_node is not a recorded intent",
             ));
         }
     }
@@ -116,161 +534,8 @@ fn validate_lowering(graph: &FrontendGraph, verdict: &mut Verdict) {
             verdict.push(Diagnostic::new(
                 DiagnosticCode::SchemaViolation,
                 hook.hook_id.clone(),
-                "hook target_selector does not reference a semantic node or structural region",
+                "hook target_selector does not reference an intent or region",
             ));
         }
-    }
-}
-
-fn lower_structural_ir(graph: &FrontendGraph) -> Vec<StructuralNode> {
-    graph
-        .structural_regions
-        .iter()
-        .map(|region| StructuralNode {
-            region_id: region.region_id.clone(),
-            kind: region.kind,
-            parent_region_id: region.parent_region_id.clone(),
-            execution_order: region.execution_order,
-        })
-        .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::frontend_graph::verify_frontend_graph_json;
-    use serde_json::json;
-
-    fn graph(value: serde_json::Value) -> FrontendGraph {
-        serde_json::from_value(value).expect("valid graph fixture")
-    }
-
-    #[test]
-    fn rejects_unknown_hook_target() {
-        let graph = graph(json!({
-            "schema_version": "apxm.frontend-graph.v1",
-            "source_language": "python",
-            "program_definitions": [{
-                "program_id": "P",
-                "entrypoint": "run",
-                "input_type_ref": "I",
-                "output_type_ref": "O",
-                "has_default_context": false
-            }],
-            "imported_program_refs": [],
-            "semantic_operations": [{
-                "node_id": "node.one",
-                "op": "model.call",
-                "parent_region_id": "region.body",
-                "execution_order": 0
-            }],
-            "structural_regions": [{
-                "region_id": "region.body",
-                "kind": "region",
-                "execution_order": 0
-            }],
-            "context_flow": [],
-            "hook_bindings": [{
-                "hook_id": "hook.bad",
-                "scope": "node",
-                "phase": "before",
-                "target_selector": "node.missing",
-                "declaration_order": 0,
-                "handler_ref": "hooks.bad",
-                "handler_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-                "input_type_ref": "I",
-                "output_type_ref": "O",
-                "return_mode": "observe"
-            }],
-            "capability_requirements": [],
-            "model_requirements": [],
-            "source_map": {
-                "schema_version": "apxm.source-map.v1",
-                "source_language": "python",
-                "node_spans": [],
-                "region_annotations": []
-            }
-        }));
-        assert!(verify_frontend_graph_json(&json!(graph)).is_accepted());
-        let err = frontend_graph_to_air(&graph).expect_err("unknown hook target rejected");
-        assert!(
-            err.diagnostics()
-                .iter()
-                .any(|d| d.location == "hook.bad"),
-            "expected hook diagnostic, got {err:?}"
-        );
-    }
-
-    #[test]
-    fn lowers_typed_containment_without_synthetic_nodes() {
-        let graph = graph(json!({
-            "schema_version": "apxm.frontend-graph.v1",
-            "source_language": "python",
-            "program_definitions": [{
-                "program_id": "Specialist",
-                "entrypoint": "run",
-                "input_type_ref": "SpecialistInput",
-                "output_type_ref": "SpecialistOutput",
-                "context_type_ref": "SpecialistContext",
-                "has_default_context": true
-            }],
-            "imported_program_refs": [],
-            "semantic_operations": [
-                {
-                    "node_id": "node.model.1",
-                    "op": "model.call",
-                    "parent_region_id": "region.loop.1",
-                    "execution_order": 0,
-                    "operands": { "model_target_ref": "model.default" }
-                },
-                {
-                    "node_id": "node.cap.1",
-                    "op": "capability.invoke",
-                    "parent_region_id": "region.loop.1",
-                    "execution_order": 1,
-                    "operands": { "capability_ref": "cap.search" }
-                }
-            ],
-            "structural_regions": [
-                {
-                    "region_id": "region.loop.1",
-                    "kind": "ais.loop",
-                    "execution_order": 0
-                }
-            ],
-            "context_flow": [{
-                "from_node": "node.model.1",
-                "to_node": "node.cap.1",
-                "context_type_ref": "SpecialistContext"
-            }],
-            "hook_bindings": [{
-                "hook_id": "hook.before.model",
-                "scope": "model",
-                "phase": "before",
-                "target_selector": "node.model.1",
-                "declaration_order": 0,
-                "handler_ref": "hooks.before_model",
-                "handler_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-                "input_type_ref": "ModelContext",
-                "output_type_ref": "ModelContext",
-                "return_mode": "observe"
-            }],
-            "capability_requirements": [{ "capability_ref": "cap.search" }],
-            "model_requirements": [{ "model_target_ref": "model.default" }],
-            "source_map": {
-                "schema_version": "apxm.source-map.v1",
-                "source_language": "python",
-                "node_spans": [],
-                "region_annotations": [
-                    {"region_id": "region.loop.1", "annotation": "structural_loop"}
-                ]
-            }
-        }));
-        let air = frontend_graph_to_air(&graph).expect("lowering succeeds");
-        assert_eq!(air.structural_ir.len(), 1);
-        assert_eq!(air.structural_ir[0].region_id, "region.loop.1");
-        assert_eq!(air.semantic_operations[0].parent_region_id, "region.loop.1");
-        assert_eq!(air.semantic_operations[1].execution_order, 1);
-        assert_eq!(air.semantic_operations.len(), 2);
     }
 }

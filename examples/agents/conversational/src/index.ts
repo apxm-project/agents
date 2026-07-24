@@ -1,3 +1,3 @@
-// Exports the conversational repository example for local example composition.
+// Exports the conversational repository example for local composition.
 
-export { ConversationalAgent, buildConversational } from "./conversational-agent.js";
+export { ConversationalExample, buildConversational } from "./conversational-agent.js";

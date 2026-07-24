@@ -28,9 +28,9 @@ fn request(scope: &str) -> ExecutionRequest {
     let air = serde_json::from_value::<AirModule>(json!({
         "schema_version": "apxm.air.v1",
         "semantic_operations": [
-            {"node_id": "node.model", "op": "model.call", "parent_region_id": "loop.main", "execution_order": 0, "operands": {"model_target_ref": "model.default"}},
-            {"node_id": "node.await", "op": "await.event", "parent_region_id": "loop.main", "execution_order": 1, "operands": {"event_ref": "evt-atomic"}},
-            {"node_id": "node.capability", "op": "capability.invoke", "parent_region_id": "loop.main", "execution_order": 2, "operands": {"capability_ref": "cap.finish"}}
+            {"node_id": "node.model", "op": "model.call", "parent_region_id": "loop.main", "execution_order": 0, "operands": [{"slot": "model_target_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]},
+            {"node_id": "node.await", "op": "await.event", "parent_region_id": "loop.main", "execution_order": 1, "operands": [{"slot": "event_ref", "value_id": "evt-atomic", "type_ref": "EventRef"}]},
+            {"node_id": "node.capability", "op": "capability.invoke", "parent_region_id": "loop.main", "execution_order": 2, "operands": [{"slot": "capability_ref", "value_id": "cap.finish", "type_ref": "CapabilityRef"}]}
         ],
         "structural_ir": [
             {"region_id": "region.root", "kind": "function", "execution_order": 0},
@@ -317,9 +317,9 @@ async fn nested_loop_park_restores_exact_stack_without_duplicate_work() {
     nested.air = serde_json::from_value(json!({
         "schema_version": "apxm.air.v1",
         "semantic_operations": [
-            {"node_id": "node.outer.before", "op": "model.call", "parent_region_id": "loop.outer", "execution_order": 0, "operands": {"model_target_ref": "model.default"}},
-            {"node_id": "node.inner.await", "op": "await.event", "parent_region_id": "loop.inner", "execution_order": 0, "operands": {"event_ref": "evt-atomic"}},
-            {"node_id": "node.outer.after", "op": "capability.invoke", "parent_region_id": "loop.outer", "execution_order": 2, "operands": {"capability_ref": "cap.finish"}}
+            {"node_id": "node.outer.before", "op": "model.call", "parent_region_id": "loop.outer", "execution_order": 0, "operands": [{"slot": "model_target_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]},
+            {"node_id": "node.inner.await", "op": "await.event", "parent_region_id": "loop.inner", "execution_order": 0, "operands": [{"slot": "event_ref", "value_id": "evt-atomic", "type_ref": "EventRef"}]},
+            {"node_id": "node.outer.after", "op": "capability.invoke", "parent_region_id": "loop.outer", "execution_order": 2, "operands": [{"slot": "capability_ref", "value_id": "cap.finish", "type_ref": "CapabilityRef"}]}
         ],
         "structural_ir": [
             {"region_id": "region.root", "kind": "function", "execution_order": 0},

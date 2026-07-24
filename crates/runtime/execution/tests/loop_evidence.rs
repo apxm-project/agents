@@ -107,28 +107,28 @@ fn nested_sibling_air() -> AirModule {
                 "op": "model.call",
                 "parent_region_id": "loop.outer",
                 "execution_order": 0,
-                "operands": {"model_target_ref": "model.default"}
+                "operands": [{"slot": "model_target_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
             },
             {
                 "node_id": "node.inner",
                 "op": "model.call",
                 "parent_region_id": "loop.inner",
                 "execution_order": 0,
-                "operands": {"model_target_ref": "model.default"}
+                "operands": [{"slot": "model_target_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
             },
             {
                 "node_id": "node.outer.after",
                 "op": "model.call",
                 "parent_region_id": "loop.outer",
                 "execution_order": 2,
-                "operands": {"model_target_ref": "model.default"}
+                "operands": [{"slot": "model_target_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
             },
             {
                 "node_id": "node.sibling",
                 "op": "model.call",
                 "parent_region_id": "loop.sibling",
                 "execution_order": 0,
-                "operands": {"model_target_ref": "model.default"}
+                "operands": [{"slot": "model_target_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
             }
         ],
         "structural_ir": [
@@ -166,14 +166,14 @@ fn two_node_loop_air() -> AirModule {
                 "op": "model.call",
                 "parent_region_id": "loop.main",
                 "execution_order": 0,
-                "operands": {"model_target_ref": "model.default"}
+                "operands": [{"slot": "model_target_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
             },
             {
                 "node_id": "node.second",
                 "op": "model.call",
                 "parent_region_id": "loop.main",
                 "execution_order": 1,
-                "operands": {"model_target_ref": "model.default"}
+                "operands": [{"slot": "model_target_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
             }
         ],
         "structural_ir": [
@@ -209,7 +209,7 @@ fn interrupted_loop_air(interrupt_kind: &str) -> AirModule {
             "op": "await.event",
             "parent_region_id": "loop.main",
             "execution_order": 1,
-            "operands": {"event_ref": "event.input"}
+            "operands": [{"slot": "event_ref", "value_id": "event.input", "type_ref": "EventRef"}]
         })
     } else {
         json!({
@@ -217,7 +217,7 @@ fn interrupted_loop_air(interrupt_kind: &str) -> AirModule {
             "op": "model.call",
             "parent_region_id": "loop.main",
             "execution_order": 2,
-            "operands": {"model_target_ref": "model.default"}
+            "operands": [{"slot": "model_target_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
         })
     };
     decode_air(json!({
@@ -228,7 +228,7 @@ fn interrupted_loop_air(interrupt_kind: &str) -> AirModule {
                 "op": "model.call",
                 "parent_region_id": "loop.main",
                 "execution_order": 0,
-                "operands": {"model_target_ref": "model.default"}
+                "operands": [{"slot": "model_target_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
             },
             operation
         ],

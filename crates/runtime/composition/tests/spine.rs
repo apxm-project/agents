@@ -29,12 +29,12 @@ use apxm_kernel::{
     ExternalAgentCapabilityPort, PortSlot,
 };
 use apxm_program::air::{
-    AirModule, AirVersion, SemanticOp, SemanticOpKind, StructuralNode, StructuralOpKind,
+    AirModule, AirVersion, Operand, SemanticOp, SemanticOpKind, StructuralNode, StructuralOpKind,
 };
 use apxm_program::artifact::SchemaDigestRef;
 use apxm_program::source_map::{SourceLanguage, SourceMap, SourceMapVersion};
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 const DIGEST_A: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const DIGEST_B: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -61,12 +61,26 @@ fn admitted_binding(slot: PortSlot, schema_id: &str) -> AdmittedBinding {
     }
 }
 
-fn operands(pairs: &[(&str, &str)]) -> Option<Map<String, Value>> {
-    let mut map = Map::new();
-    for (k, v) in pairs {
-        map.insert((*k).to_string(), Value::String((*v).to_string()));
+fn type_of_slot(slot: &str) -> &'static str {
+    match slot {
+        "model_target_ref" => "ModelTargetRef",
+        "capability_ref" => "CapabilityRef",
+        "external_agent_session" => "ExternalAgentSessionRef",
+        "program_ref" => "ProgramRef",
+        "event_ref" => "EventRef",
+        _ => "Ref",
     }
-    Some(map)
+}
+
+fn operands(pairs: &[(&str, &str)]) -> Vec<Operand> {
+    pairs
+        .iter()
+        .map(|(slot, value)| Operand {
+            slot: (*slot).to_string(),
+            value_id: (*value).to_string(),
+            type_ref: type_of_slot(slot).to_string(),
+        })
+        .collect()
 }
 
 fn five_op_air() -> AirModule {
@@ -79,6 +93,7 @@ fn five_op_air() -> AirModule {
                 parent_region_id: "r_root".into(),
                 execution_order: 0,
                 operands: operands(&[("model_target_ref", MODEL_TARGET)]),
+                result: None,
             },
             SemanticOp {
                 node_id: "n_external_agent".into(),
@@ -89,6 +104,7 @@ fn five_op_air() -> AirModule {
                     ("capability_ref", "external-agent:acp:claude-code"),
                     ("external_agent_session", "conn_1"),
                 ]),
+                result: None,
             },
             SemanticOp {
                 node_id: "n_program_new".into(),
@@ -96,22 +112,19 @@ fn five_op_air() -> AirModule {
                 parent_region_id: "r_root".into(),
                 execution_order: 2,
                 operands: operands(&[("program_ref", "child_program")]),
+                result: None,
             },
             SemanticOp {
                 node_id: "n_program_invoke".into(),
                 op: SemanticOpKind::ProgramInvoke,
                 parent_region_id: "r_root".into(),
                 execution_order: 3,
-                operands: {
-                    let mut receiver = Map::new();
-                    receiver.insert(
-                        "program_instance_ref".to_string(),
-                        Value::String("n_program_new".to_string()),
-                    );
-                    let mut map = Map::new();
-                    map.insert("receiver".to_string(), Value::Object(receiver));
-                    Some(map)
-                },
+                operands: vec![Operand {
+                    slot: "receiver".to_string(),
+                    value_id: "n_program_new".to_string(),
+                    type_ref: "ProgramInstanceRef".to_string(),
+                }],
+                result: None,
             },
             SemanticOp {
                 node_id: "n_await".into(),
@@ -119,6 +132,7 @@ fn five_op_air() -> AirModule {
                 parent_region_id: "r_root".into(),
                 execution_order: 4,
                 operands: operands(&[("event_ref", "webhook_ready")]),
+                result: None,
             },
         ],
         structural_ir: vec![StructuralNode {
@@ -126,6 +140,8 @@ fn five_op_air() -> AirModule {
             kind: StructuralOpKind::Function,
             parent_region_id: None,
             execution_order: 0,
+            block_arguments: vec![],
+            operands: vec![],
         }],
         context_flow: vec![],
         source_map: SourceMap {

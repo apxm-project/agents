@@ -31,7 +31,9 @@ struct ApxmCompilerContext {
     // Register required dialects used across the C API implementation
     mlir_context->loadDialect<mlir::ais::AISDialect>();
     mlir_context->loadDialect<mlir::func::FuncDialect>();
-    mlir_context->allowUnregisteredDialects(true);
+    // Canonical lowering emits only registered ais.* operations; unregistered
+    // dialects stay disabled so no canonical success depends on an escape hatch.
+    // An unregistered or incomplete operation fails verification.
 
     // Register diagnostic handler to print warnings and errors to stderr
     diagnostic_handler_id = mlir_context->getDiagEngine().registerHandler(
