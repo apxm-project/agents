@@ -28,12 +28,17 @@
     {
       "schema_id": "apxm.frontend-graph.v1",
       "path": "schemas/apxm.frontend-graph.v1.json",
-      "digest": "sha256:47b7e4e22cf7094bc30f6721d11eed84eb54ee8840ffaaf480999ba093d2233f"
+      "digest": "sha256:413bb33a709cfba75d93ae90fb99c6db1fe8a7d9744832485d2b385699b4881a"
+    },
+    {
+      "schema_id": "apxm.frontend-surface.v1",
+      "path": "schemas/apxm.frontend-surface.v1.json",
+      "digest": "sha256:dc90884ae80425126ac5d8df8f190e76b5571e4794b257a57ee0da4a643faa1a"
     },
     {
       "schema_id": "apxm.air.v1",
       "path": "schemas/apxm.air.v1.json",
-      "digest": "sha256:b4e5d6ec53533e31ac3ab704b1441d8fe69242920e81489c7c08dc063e3d3b0c"
+      "digest": "sha256:bd9d4b748d1025dc21bb6bcd68517ad552b41348e9eabe43a1aa9b6c527067b1"
     },
     {
       "schema_id": "apxm.executable-artifact.v1",
@@ -251,7 +256,7 @@
     {
       "schema_id": "apxm.frontend-graph.v1",
       "path": "vectors/apxm.frontend-graph.v1.json",
-      "digest": "sha256:f2ea0f6d3f7effe4fef02202f63a5053d41ad2356510041e979dbcbfa7d27767",
+      "digest": "sha256:e81c9f20d8fa67d5477b31855bdcbb70b973e5bc754d044fb3ad2be892c6de60",
       "coverage": [
         "positive",
         "unknown_discriminant",
@@ -261,7 +266,7 @@
     {
       "schema_id": "apxm.air.v1",
       "path": "vectors/apxm.air.v1.json",
-      "digest": "sha256:47757426a653a95ca9095fc8aa4266a653b790a972637362627975834fe23fbb",
+      "digest": "sha256:547094104a1b61253e99a70e824d7438f1063a608dcee9c2d1c0720e1790d3af",
       "coverage": [
         "positive",
         "unknown_discriminant"
@@ -374,5 +379,5 @@
     "algorithm": "ed25519",
     "status": "signing_pending_no_key"
   },
-  "descriptor_digest": "sha256:fc54cef35d7b6ff1bbd1848016fc734d29898eed81c3a7438e257fec8019716b"
+  "descriptor_digest": "sha256:db320ceb033252ecc0fbfe4de5b6df81f3e64eef03335ea640b47a74f4e3cc47"
 }
