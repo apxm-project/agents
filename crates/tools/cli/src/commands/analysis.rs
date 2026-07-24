@@ -383,10 +383,13 @@ pub fn explain_command(target: &str, json_output: bool) -> Result<()> {
             if !desc.is_empty() {
                 println!("        {}", desc.dimmed());
             }
-            if let Some(operands) = &op.operands {
-                for (key, value) in operands {
-                    println!("        {}: {}", key.bold(), value);
-                }
+            for operand in &op.operands {
+                println!(
+                    "        {}: {} ({})",
+                    operand.slot.bold(),
+                    operand.value_id,
+                    operand.type_ref,
+                );
             }
         }
 

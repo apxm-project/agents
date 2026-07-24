@@ -4,6 +4,31 @@ This glossary defines the ubiquitous language for authoring, compiling, and
 executing APXM Agent Programs. Detailed behavior belongs in contracts and
 architecture documents; this file defines what the terms mean.
 
+## Frontend names versus contract types
+
+ADR-0015 fixes a source-first authoring surface. Everyday author-facing names
+are friendly projections over precise contract types; they are not the contract
+types themselves.
+
+**Friendly authoring names** (what authors write):
+`Agent`, `Context`, `Tool`, `Model` for everyday programs, plus `Capability`,
+`Event`, `Hook`, and `TaskGroup` for advanced programs, and the inferred
+callback parameter `agent`. These are compile-time markers resolved by imported
+symbol identity and type. They never carry credentials, grants, endpoints,
+runtime objects, node/region ids, or AIS operation spellings.
+
+**Contract types** (what the compiler and contracts use):
+`AgentProgram<I,O,C>` is the semantic definition type behind `Agent`;
+`AgentFacade<I,O,C>` is the callback-view contract behind `agent`;
+`ProgramRef`/`ProgramInstanceRef` are the composition references behind
+`.new`/`.invoke`; `ModelTargetRef` is the exact target behind `Model`;
+`FrontendGraph`, node ids, region ids, context edges, and source spans are
+generated compiler inputs; `model.call`, `capability.invoke`, `program.new`,
+`program.invoke`, `await.event`, and every `ais.*` spelling are Rust-owned
+lowering identities. None of the contract types are required imports in ordinary
+author source, and none of the lowering identities are exported by the
+installable authoring packages.
+
 ## Programs and execution
 
 **Program Execution Model (PXM)**:

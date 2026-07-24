@@ -83,10 +83,34 @@ fn generate_semantic_op_def(spec: &OperationSpec) -> String {
         .strip_suffix("Op")
         .expect("MLIR class name ends in Op");
     let mnemonic = spec.op_type.wire().replace('.', "_");
+    let arguments = render_operand_arguments(spec);
     format!(
-        "def AIS_{op_name}Op : AIS_Op<\"{mnemonic}\", []> {{\n  let summary = \"{summary}\";\n  let results = (outs AIS_TokenType:$result);\n  let assemblyFormat = \"attr-dict `:` type($result)\";\n}}\n",
+        "def AIS_{op_name}Op : AIS_Op<\"{mnemonic}\", []> {{\n  let summary = \"{summary}\";\n{arguments}  let results = (outs AIS_TokenType:$result);\n  let assemblyFormat = \"attr-dict `:` type($result)\";\n}}\n",
         summary = spec.description.replace('"', "\\\"")
     )
+}
+
+/// Render the typed operand attribute list for one semantic operation. Each
+/// contract operand becomes a typed string attribute (its slot name); required
+/// operands are inherent, optional operands are `OptionalAttr`. Carrying every
+/// owner-contract input as an inherent/optional attribute means MLIR verifies a
+/// dropped required operand instead of silently emitting `() -> ()`.
+fn render_operand_arguments(spec: &OperationSpec) -> String {
+    if spec.fields.is_empty() {
+        return String::new();
+    }
+    let rendered: Vec<String> = spec
+        .fields
+        .iter()
+        .map(|field| {
+            if field.required {
+                format!("StrAttr:${}", field.name)
+            } else {
+                format!("OptionalAttr<StrAttr>:${}", field.name)
+            }
+        })
+        .collect();
+    format!("  let arguments = (ins {});\n", rendered.join(", "))
 }
 
 #[cfg(test)]
@@ -110,5 +134,18 @@ mod tests {
         }
         assert!(generate_tablegen().starts_with(&declarations));
         assert!(generate_structural_tablegen_declarations().contains("AIS_LoopOp"));
+    }
+
+    #[test]
+    fn semantic_declarations_carry_typed_operand_attributes() {
+        let declarations = generate_semantic_tablegen_declarations();
+        // model.call carries its required model_ref and request plus optional
+        // options, so a dropped required operand fails MLIR verification rather
+        // than emitting a bare `() -> ()` operation.
+        assert!(declarations.contains("StrAttr:$model_ref"));
+        assert!(declarations.contains("StrAttr:$request"));
+        assert!(declarations.contains("OptionalAttr<StrAttr>:$options"));
+        assert!(declarations.contains("StrAttr:$capability_ref"));
+        assert!(declarations.contains("StrAttr:$event_ref"));
     }
 }

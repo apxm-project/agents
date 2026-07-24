@@ -9,7 +9,6 @@
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Map;
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Verdict, schema_violation};
 use crate::grammar::is_identifier;
@@ -24,7 +23,25 @@ pub enum AirVersion {
     V1,
 }
 
-/// One public semantic operation.
+/// One typed SSA operand: a named input slot bound to a produced value id and its
+/// type. The untyped operand bag is retired; every operand names its slot.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Operand {
+    pub slot: String,
+    pub value_id: String,
+    pub type_ref: String,
+}
+
+/// One typed SSA value produced by an operation or carried as a block argument.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SsaValue {
+    pub value_id: String,
+    pub type_ref: String,
+}
+
+/// One public semantic operation with typed SSA operands and an optional result.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SemanticOp {
@@ -32,11 +49,13 @@ pub struct SemanticOp {
     pub op: SemanticOpKind,
     pub parent_region_id: String,
     pub execution_order: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub operands: Vec<Operand>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub operands: Option<Map<String, serde_json::Value>>,
+    pub result: Option<SsaValue>,
 }
 
-/// One structural IR region.
+/// One structural IR node carrying typed block arguments and typed SSA operands.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StructuralNode {
@@ -45,6 +64,10 @@ pub struct StructuralNode {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_region_id: Option<String>,
     pub execution_order: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub block_arguments: Vec<SsaValue>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub operands: Vec<Operand>,
 }
 
 /// One explicit typed Context edge retained in AIR.
@@ -91,6 +114,12 @@ impl AirModule {
                     "semantic operation node_id is not unique",
                 ));
             }
+            for operand in &op.operands {
+                check_operand(&mut verdict, operand, &op.node_id);
+            }
+            if let Some(result) = &op.result {
+                check_value(&mut verdict, &result.value_id, &result.type_ref, &op.node_id);
+            }
         }
 
         let mut seen_regions: HashSet<&str> = HashSet::new();
@@ -108,6 +137,17 @@ impl AirModule {
                     region.region_id.clone(),
                     "structural region region_id is not unique",
                 ));
+            }
+            for argument in &region.block_arguments {
+                check_value(
+                    &mut verdict,
+                    &argument.value_id,
+                    &argument.type_ref,
+                    &region.region_id,
+                );
+            }
+            for operand in &region.operands {
+                check_operand(&mut verdict, operand, &region.region_id);
             }
         }
 
@@ -219,6 +259,36 @@ fn collect_containment_diagnostics(
                 "structural loop is missing its generic source-map identity",
             ));
         }
+    }
+}
+
+/// Check one typed SSA operand's slot, value id, and type ref grammar.
+fn check_operand(verdict: &mut Verdict, operand: &Operand, owner: &str) {
+    if operand.slot.is_empty() {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::SchemaViolation,
+            owner.to_string(),
+            "operand slot is empty",
+        ));
+    }
+    check_value(verdict, &operand.value_id, &operand.type_ref, owner);
+}
+
+/// Check a typed value's id and type ref against the contract identifier grammar.
+fn check_value(verdict: &mut Verdict, value_id: &str, type_ref: &str, owner: &str) {
+    if !is_identifier(value_id) {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::InvalidIdentifier,
+            owner.to_string(),
+            "operand value_id is not a contract identifier",
+        ));
+    }
+    if !is_identifier(type_ref) {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::InvalidIdentifier,
+            owner.to_string(),
+            "operand type_ref is not a contract identifier",
+        ));
     }
 }
 

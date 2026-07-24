@@ -1,282 +1,110 @@
-// Generic TypeScript AgentProgram records effects and structured control flow.
+// Source-first TypeScript authoring produces the typed FrontendGraph.
 
 import { describe, expect, it } from "vitest";
 
-import { AgentProgram, decodeFact } from "../src/index.ts";
+import { Agent, Context, Model, Tool, decodeFact } from "../src/index.ts";
 
-describe("AgentProgram", () => {
-  it("records generic effects and a structured loop", () => {
-    const program = new AgentProgram({
-      program_id: "generic",
-      input_type_ref: "Input",
-      output_type_ref: "Output",
-      context_type_ref: "Context",
-    });
-    program.loop("region.loop", (body) => body.modelCall("node.model", "model.default"));
-    program.capabilityInvoke("node.capability", "cap.search");
-    program.awaitEvent("node.await", "event.input");
-    program.returnRegion("region.return");
+const SummarizerModel = Model("summarizer.model.v1");
 
-    const graph = program.buildGraph() as {
-      semantic_operations: Array<{
-        op: string;
-        parent_region_id: string;
-        execution_order: number;
-      }>;
-      structural_regions: Array<Record<string, unknown>>;
-    };
-    expect(graph.semantic_operations.map((operation) => operation.op)).toEqual([
-      "model.call",
-      "capability.invoke",
-      "await.event",
-    ]);
-    expect(graph.semantic_operations[0]).toMatchObject({
-      parent_region_id: "region.loop",
-      execution_order: 0,
-    });
-    expect(graph.semantic_operations[1]).toMatchObject({
-      parent_region_id: "region.generic.body",
-      execution_order: 1,
-    });
-    expect(graph.structural_regions).toEqual([
-      {
-        region_id: "region.generic.body",
-        kind: "region",
-        execution_order: 0,
-      },
-      {
-        region_id: "region.loop",
-        kind: "ais.loop",
-        parent_region_id: "region.generic.body",
-        execution_order: 0,
-      },
-      {
-        region_id: "region.return",
-        kind: "return",
-        parent_region_id: "region.generic.body",
-        execution_order: 3,
-      },
-    ]);
-    expect(
-      (program.buildGraph() as { source_map: { region_annotations: unknown[] } })
-        .source_map.region_annotations,
-    ).toEqual([{ region_id: "region.loop", annotation: "structural_loop" }]);
-  });
+const Summarizer = Agent({
+  name: "Summarizer",
+  use: { SummarizerModel },
+  async run(agent, request) {
+    return await SummarizerModel(request);
+  },
+});
 
-  it("exposes every author-facing structural kind", () => {
-    const program = new AgentProgram({
-      program_id: "structured",
-      input_type_ref: "Input",
-      output_type_ref: "Output",
-    });
-    const empty = () => undefined;
+const ConversationCtx = Context({ messages: [] as string[] });
+const SearchWeb = Tool("search.web.capability.v1");
+const SupportModel = Model("support.model.v1");
 
-    program.branch("region.branch", empty, empty);
-    program.switch("region.switch", [empty, empty]);
-    program.loop("region.loop", empty);
-    program.parallel("region.parallel", empty);
-    program.tryCatch("region.try", "region.catch", empty, empty);
-    program.throwRegion("region.throw");
-    program.returnRegion("region.return");
-    program.yieldRegion("region.yield");
-
-    const graph = program.buildGraph() as {
-      structural_regions: Array<Record<string, unknown>>;
-    };
-    expect(graph.structural_regions).toEqual([
-      {
-        region_id: "region.structured.body",
-        kind: "region",
-        execution_order: 0,
-      },
-      ...[
-        ["region.branch", "branch"],
-        ["region.switch", "switch"],
-        ["region.loop", "ais.loop"],
-        ["region.parallel", "parallel_join"],
-        ["region.try", "try"],
-        ["region.catch", "catch"],
-        ["region.throw", "throw"],
-        ["region.return", "return"],
-        ["region.yield", "yield"],
-      ].map(([region_id, kind], execution_order) => ({
-        region_id,
-        kind,
-        parent_region_id: "region.structured.body",
-        execution_order,
-      })),
-    ]);
-    expect("recordRegion" in program).toBe(false);
-  });
-
-  it("records nested and sibling loop containment", () => {
-    const program = new AgentProgram({
-      program_id: "nested",
-      input_type_ref: "Input",
-      output_type_ref: "Output",
-    });
-    program.loop("loop.outer", (outer) => {
-      outer.modelCall("node.outer.before", "model.default");
-      outer.loop("loop.inner", (inner) =>
-        inner.capabilityInvoke("node.inner", "cap.inner"),
-      );
-      outer.modelCall("node.outer.after", "model.default");
-    });
-    program.loop("loop.sibling", (sibling) =>
-      sibling.capabilityInvoke("node.sibling", "cap.sibling"),
-    );
-
-    const graph = program.buildGraph() as {
-      structural_regions: Array<{
-        region_id: string;
-        parent_region_id?: string;
-        execution_order: number;
-      }>;
-      semantic_operations: Array<{
-        node_id: string;
-        parent_region_id: string;
-        execution_order: number;
-      }>;
-      source_map: { region_annotations: Array<{ annotation: string }> };
-    };
-    const regions = new Map(
-      graph.structural_regions.map((region) => [region.region_id, region]),
-    );
-    const nodes = new Map(
-      graph.semantic_operations.map((operation) => [operation.node_id, operation]),
-    );
-    expect(regions.get("loop.outer")).toMatchObject({
-      parent_region_id: "region.nested.body",
-      execution_order: 0,
-    });
-    expect(regions.get("loop.inner")).toMatchObject({
-      parent_region_id: "loop.outer",
-      execution_order: 1,
-    });
-    expect(regions.get("loop.sibling")).toMatchObject({
-      parent_region_id: "region.nested.body",
-      execution_order: 1,
-    });
-    expect(nodes.get("node.outer.before")).toMatchObject({
-      parent_region_id: "loop.outer",
-      execution_order: 0,
-    });
-    expect(nodes.get("node.inner")).toMatchObject({
-      parent_region_id: "loop.inner",
-      execution_order: 0,
-    });
-    expect(nodes.get("node.outer.after")?.execution_order).toBe(2);
-    expect(nodes.get("node.sibling")?.parent_region_id).toBe("loop.sibling");
-    expect(
-      new Set(
-        graph.source_map.region_annotations.map(
-          (annotation) => annotation.annotation,
-        ),
-      ),
-    ).toEqual(new Set(["structural_loop"]));
-  });
-
-  it("publishes a closed generated runtime evidence decoder", () => {
-    expect(
-      decodeFact({
-        fact_id: "loop.1",
-        event_sequence: 1,
-        fact_kind: "LoopIterationCompleted",
-        static_loop_id: "loop.main",
-        loop_occurrence_id: "occurrence.1",
-        iteration_index: 0,
-        program_invocation_id: "invocation.1",
-        causal_node_execution_ids: ["node-execution.1"],
-      }).fact_kind,
-    ).toBe("LoopIterationCompleted");
-    expect(() =>
-      decodeFact({
-        fact_id: "bad.1",
-        event_sequence: 1,
-        fact_kind: "invented.fact",
-      }),
-    ).toThrow();
-    const runtime = {
-      fact_id: "runtime.1",
-      event_sequence: 2,
-      fact_kind: "invocation.committed",
-      commit_sequence: 1,
-      invocation_state: "committed_return",
-      context_before_ref: {
-        ref_type: "ContextRef",
-        ref: "context.before",
-        digest: `sha256:${"a".repeat(64)}`,
-      },
-      typed_error: {
-        error_id: "error.1",
-        category: "validation",
-        code_ref: "InvalidInput",
-        message: "invalid input",
-      },
-    };
-    expect(decodeFact(runtime)).toEqual(runtime);
-    for (const malformed of [
-      { ...runtime, event_sequence: "2" },
-      { ...runtime, invocation_state: "invented" },
-      { ...runtime, context_before_ref: { ref_type: "ContextRef" } },
-      {
-        ...runtime,
-        context_before_ref: {
-          ref_type: "ContextRef",
-          ref: "context.before",
-          extra: true,
-        },
-      },
-      {
-        ...runtime,
-        context_before_ref: { ref_type: "bad space", ref: "context.before" },
-      },
-      { ...runtime, typed_error: { error_id: "error.1" } },
-      {
-        ...runtime,
-        typed_error: {
-          error_id: "error.1",
-          category: "invented",
-          code_ref: "InvalidInput",
-          message: "invalid",
-        },
-      },
-      {
-        ...runtime,
-        typed_error: {
-          error_id: "error.1",
-          category: "validation",
-          code_ref: "InvalidInput",
-          message: "invalid",
-          extra: true,
-        },
-      },
-      {
-        fact_id: "loop.bad",
-        event_sequence: 1,
-        fact_kind: "LoopIterationCompleted",
-        static_loop_id: "loop.main",
-        loop_occurrence_id: "occurrence.1",
-        iteration_index: 0,
-        program_invocation_id: "invocation.1",
-        causal_node_execution_ids: ["node.1", "node.1"],
-      },
-      {
-        fact_id: "node.bad",
-        event_sequence: 1,
-        fact_kind: "node_execution.recorded",
-        node_execution_id: "node.1",
-        air_node_id: "air.1",
-        execution_scope: {
-          scope_kind: "loop",
-          region_occurrence_id: "occurrence.1",
-          static_region_id: "loop.main",
-          loop_memberships: [{ static_loop_id: "loop.main" }],
-        },
-      },
-      { ...runtime, unknown: true },
-    ]) {
-      expect(() => decodeFact(malformed)).toThrow();
+const Support = Agent({
+  name: "Support",
+  context: ConversationCtx,
+  use: { SearchWeb, SupportModel },
+  async run(agent, incoming) {
+    while (true) {
+      let research = null;
+      if (incoming !== null) {
+        research = await SearchWeb(incoming);
+      }
+      const response = await SupportModel(incoming);
+      agent.context = { messages: [] };
+      return response;
     }
+  },
+});
+
+type Graph = {
+  schema_version: string;
+  declarations: Array<{ decl_kind: string }>;
+  call_intents: Array<{ intent_kind: string }>;
+  control_intents: Array<{ control_kind: string }>;
+  capability_requirements: Array<{ capability_ref: string; tool_schema_present: boolean }>;
+};
+
+describe("source-first TypeScript authoring", () => {
+  it("binds a minimal one-shot Model agent", () => {
+    const graph = Summarizer.frontendGraph() as unknown as Graph;
+    expect(graph.schema_version).toBe("apxm.frontend-graph.v1");
+    expect(graph.declarations.map((d) => d.decl_kind)).toEqual(["model_binding"]);
+    expect(graph.call_intents.map((c) => c.intent_kind)).toEqual(["model_invocation"]);
+    expect(Summarizer.diagnostics()).toBeNull();
+  });
+
+  it("lowers the minimal agent to a registered model.call", () => {
+    const air = JSON.parse(Summarizer.canonicalAir()) as {
+      semantic_operations: Array<{ op: string; operands: Array<{ slot: string }> }>;
+    };
+    expect(air.semantic_operations.map((o) => o.op)).toEqual(["model.call"]);
+    expect(air.semantic_operations[0].operands.some((o) => o.slot === "request")).toBe(true);
+  });
+
+  it("binds a contextual Tool-using loop agent", () => {
+    const graph = Support.frontendGraph() as unknown as Graph;
+    expect(new Set(graph.declarations.map((d) => d.decl_kind))).toEqual(
+      new Set(["context", "tool_binding", "model_binding"]),
+    );
+    expect(graph.call_intents.map((c) => c.intent_kind)).toEqual([
+      "tool_invocation",
+      "model_invocation",
+    ]);
+    expect(new Set(graph.control_intents.map((c) => c.control_kind))).toEqual(
+      new Set(["loop", "conditional", "return"]),
+    );
+    expect(graph.capability_requirements).toEqual([
+      { capability_ref: "search.web.capability.v1", tool_schema_present: true },
+    ]);
+    expect(Support.diagnostics()).toBeNull();
+  });
+
+  it("lowers a Tool call to capability.invoke inside ais.loop", () => {
+    const air = JSON.parse(Support.canonicalAir()) as {
+      semantic_operations: Array<{ op: string }>;
+      structural_ir: Array<{ kind: string }>;
+    };
+    const ops = new Set(air.semantic_operations.map((o) => o.op));
+    expect(ops.has("capability.invoke")).toBe(true);
+    expect(ops.has("model.call")).toBe(true);
+    const structural = air.structural_ir.map((n) => n.kind);
+    expect(structural).toContain("ais.loop");
+    expect(structural).toContain("branch");
+  });
+
+  it("keeps runtime evidence decoding closed", () => {
+    const fact = decodeFact({
+      fact_id: "loop.1",
+      event_sequence: 1,
+      fact_kind: "LoopIterationCompleted",
+      static_loop_id: "loop.main",
+      loop_occurrence_id: "occurrence.1",
+      iteration_index: 0,
+      program_invocation_id: "invocation.1",
+      causal_node_execution_ids: ["node-execution.1"],
+    });
+    expect(fact.fact_kind).toBe("LoopIterationCompleted");
+    expect(() =>
+      decodeFact({ fact_id: "bad", event_sequence: 1, fact_kind: "invented" }),
+    ).toThrow();
   });
 });

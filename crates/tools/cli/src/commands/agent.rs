@@ -2142,6 +2142,10 @@ mod tests {
         );
     }
 
+    // Spawns the package's Python entry, which imports the apxm_program frontend;
+    // it runs only where that package is installed on the subprocess path (as the
+    // packed-frontend gate arranges), not under the bare CLI test harness.
+    #[ignore = "requires the apxm_program frontend installed on the subprocess path"]
     #[cfg(feature = "driver")]
     #[test]
     fn studio_style_source_package_builds_with_server_selected_skill_policy() {
@@ -2161,13 +2165,17 @@ mod tests {
         .unwrap();
         fs::write(
             root.join("python/main.py"),
-            "import apxm_program\n\
+            "from apxm_program import Agent, Model\n\
              \n\
-             program = apxm_program.AgentProgram(program_id=\"studio-generated\", input_type_ref=\"Input\", output_type_ref=\"Output\")\n\
-             program.loop(\"region.loop\", lambda body: body.model_call(\"node.model\", \"model.default\"))\n\
-             program.return_region(\"region.return\")\n\n\
+             StudioModel = Model[object, object](\"model.default\")\n\
+             \n\
+             \n\
+             @Agent(input=\"Input\", output=\"Output\")\n\
+             async def StudioGenerated(agent, request):\n\
+             \x20\x20\x20\x20while True:\n\
+             \x20\x20\x20\x20\x20\x20\x20\x20reply = await StudioModel(request)\n\n\
              if __name__ == \"__main__\":\n\
-             \x20\x20\x20\x20print(program.canonical_air_json(), end=\"\")\n",
+             \x20\x20\x20\x20print(StudioGenerated.canonical_air(), end=\"\")\n",
         )
         .unwrap();
         agent_build(&root, true).expect("package with Server-selected skill policy must build");

@@ -1,6 +1,6 @@
 [
   {
-    "name": "valid-frontend-graph-five-ops",
+    "name": "valid-frontend-graph-typed-intents",
     "input": {
       "schema_version": "apxm.frontend-graph.v1",
       "source_language": "python",
@@ -22,61 +22,163 @@
           "target_agent_identity_requirement": "summarizer-identity"
         }
       ],
-      "semantic_operations": [
+      "declarations": [
         {
-          "node_id": "node.model.1",
-          "op": "model.call",
-          "parent_region_id": "region.loop.1",
-          "execution_order": 0,
-          "operands": {
-            "model_target_ref": "model.default"
-          }
+          "decl_id": "decl.model.default",
+          "decl_kind": "model_binding",
+          "input_type_ref": "ModelRequest",
+          "output_type_ref": "ModelResponse",
+          "target_ref": "model.default"
         },
         {
-          "node_id": "node.cap.1",
-          "op": "capability.invoke",
-          "parent_region_id": "region.loop.1",
-          "execution_order": 1,
-          "operands": {
-            "capability_ref": "cap.search"
-          }
+          "decl_id": "decl.cap.search",
+          "decl_kind": "capability_binding",
+          "input_type_ref": "SearchArguments",
+          "output_type_ref": "SearchResult",
+          "target_ref": "cap.search"
         },
         {
-          "node_id": "node.new.1",
-          "op": "program.new",
-          "parent_region_id": "region.loop.1",
-          "execution_order": 2
-        },
-        {
-          "node_id": "node.invoke.1",
-          "op": "program.invoke",
-          "parent_region_id": "region.loop.1",
-          "execution_order": 3
-        },
-        {
-          "node_id": "node.await.1",
-          "op": "await.event",
-          "parent_region_id": "region.loop.1",
-          "execution_order": 4
+          "decl_id": "decl.event.input",
+          "decl_kind": "event_type",
+          "input_type_ref": "SessionInput",
+          "output_type_ref": "SessionInput"
         }
       ],
-      "structural_regions": [
+      "functions": [
         {
-          "region_id": "region.root",
-          "kind": "region",
+          "function_id": "run",
+          "parameters": [
+            {
+              "value_id": "value.agent",
+              "type_ref": "AgentFacade",
+              "role": "agent_facade"
+            },
+            {
+              "value_id": "value.input",
+              "type_ref": "SpecialistInput",
+              "role": "input"
+            }
+          ],
+          "result_type_ref": "SpecialistOutput",
+          "body_region_id": "region.body",
+          "is_entrypoint": true
+        }
+      ],
+      "values": [
+        {
+          "value_id": "value.agent",
+          "type_ref": "AgentFacade",
+          "origin": "parameter",
+          "origin_id": "run"
+        },
+        {
+          "value_id": "value.input",
+          "type_ref": "SpecialistInput",
+          "origin": "parameter",
+          "origin_id": "run"
+        },
+        {
+          "value_id": "value.model.out",
+          "type_ref": "ModelResponse",
+          "origin": "call_result",
+          "origin_id": "node.model.1"
+        },
+        {
+          "value_id": "value.search.out",
+          "type_ref": "SearchResult",
+          "origin": "call_result",
+          "origin_id": "node.cap.1"
+        }
+      ],
+      "blocks": [
+        {
+          "block_id": "block.body.entry",
+          "region_id": "region.loop.1",
+          "block_arguments": [],
+          "execution_order": 0
+        }
+      ],
+      "regions": [
+        {
+          "region_id": "region.body",
+          "region_role": "function_body",
           "execution_order": 0
         },
         {
           "region_id": "region.loop.1",
-          "kind": "ais.loop",
-          "parent_region_id": "region.root",
+          "region_role": "loop_body",
+          "parent_region_id": "region.body",
           "execution_order": 0
+        }
+      ],
+      "data_edges": [
+        {
+          "from_value": "value.input",
+          "to_consumer": "node.model.1",
+          "consumer_slot": "request"
         },
         {
-          "region_id": "region.return.1",
-          "kind": "return",
-          "parent_region_id": "region.root",
-          "execution_order": 1
+          "from_value": "value.model.out",
+          "to_consumer": "node.cap.1",
+          "consumer_slot": "arguments"
+        }
+      ],
+      "call_intents": [
+        {
+          "node_id": "node.model.1",
+          "intent_kind": "model_invocation",
+          "parent_region_id": "region.loop.1",
+          "execution_order": 0,
+          "binding_ref": "decl.model.default",
+          "operand_values": ["value.input"],
+          "result_value": "value.model.out"
+        },
+        {
+          "node_id": "node.cap.1",
+          "intent_kind": "capability_invocation",
+          "parent_region_id": "region.loop.1",
+          "execution_order": 1,
+          "binding_ref": "decl.cap.search",
+          "operand_values": ["value.model.out"],
+          "result_value": "value.search.out"
+        },
+        {
+          "node_id": "node.new.1",
+          "intent_kind": "agent_creation",
+          "parent_region_id": "region.loop.1",
+          "execution_order": 2,
+          "binding_ref": "Summarizer"
+        },
+        {
+          "node_id": "node.invoke.1",
+          "intent_kind": "agent_invocation",
+          "parent_region_id": "region.loop.1",
+          "execution_order": 3,
+          "binding_ref": "Summarizer",
+          "receiver_kind": "program_instance_ref"
+        },
+        {
+          "node_id": "node.await.1",
+          "intent_kind": "event_wait",
+          "parent_region_id": "region.loop.1",
+          "execution_order": 4,
+          "binding_ref": "decl.event.input"
+        }
+      ],
+      "control_intents": [
+        {
+          "node_id": "node.loop.1",
+          "control_kind": "loop",
+          "parent_region_id": "region.body",
+          "execution_order": 1,
+          "body_region_ids": ["region.loop.1"]
+        },
+        {
+          "node_id": "node.return.1",
+          "control_kind": "return",
+          "parent_region_id": "region.body",
+          "execution_order": 2,
+          "operand_values": ["value.search.out"]
         }
       ],
       "context_flow": [
@@ -102,7 +204,8 @@
       ],
       "capability_requirements": [
         {
-          "capability_ref": "cap.search"
+          "capability_ref": "cap.search",
+          "tool_schema_present": true
         }
       ],
       "model_requirements": [
@@ -125,7 +228,7 @@
     "expected_valid": true
   },
   {
-    "name": "unknown-semantic-operation-rejected",
+    "name": "ais-kind-in-graph-intent-rejected",
     "input": {
       "schema_version": "apxm.frontend-graph.v1",
       "source_language": "python",
@@ -139,13 +242,62 @@
         }
       ],
       "imported_program_refs": [],
-      "semantic_operations": [
+      "declarations": [],
+      "functions": [],
+      "values": [],
+      "blocks": [],
+      "regions": [],
+      "data_edges": [],
+      "call_intents": [],
+      "control_intents": [
         {
           "node_id": "node.loop.1",
-          "op": "tool.loop"
+          "control_kind": "ais.loop",
+          "parent_region_id": "region.body",
+          "execution_order": 0
         }
       ],
-      "structural_regions": [],
+      "context_flow": [],
+      "hook_bindings": [],
+      "capability_requirements": [],
+      "model_requirements": [],
+      "source_map": {
+        "schema_version": "apxm.source-map.v1",
+        "source_language": "python",
+        "node_spans": [],
+        "region_annotations": []
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "value-with-no-origin-rejected",
+    "input": {
+      "schema_version": "apxm.frontend-graph.v1",
+      "source_language": "python",
+      "program_definitions": [
+        {
+          "program_id": "Specialist",
+          "entrypoint": "run",
+          "input_type_ref": "SpecialistInput",
+          "output_type_ref": "SpecialistOutput",
+          "has_default_context": true
+        }
+      ],
+      "imported_program_refs": [],
+      "declarations": [],
+      "functions": [],
+      "values": [
+        {
+          "value_id": "value.orphan",
+          "type_ref": "SpecialistInput"
+        }
+      ],
+      "blocks": [],
+      "regions": [],
+      "data_edges": [],
+      "call_intents": [],
+      "control_intents": [],
       "context_flow": [],
       "hook_bindings": [],
       "capability_requirements": [],
@@ -174,8 +326,14 @@
         }
       ],
       "imported_program_refs": [],
-      "semantic_operations": [],
-      "structural_regions": [],
+      "declarations": [],
+      "functions": [],
+      "values": [],
+      "blocks": [],
+      "regions": [],
+      "data_edges": [],
+      "call_intents": [],
+      "control_intents": [],
       "context_flow": [],
       "hook_bindings": [],
       "capability_requirements": [],
@@ -205,8 +363,14 @@
         }
       ],
       "imported_program_refs": [],
-      "semantic_operations": [],
-      "structural_regions": [],
+      "declarations": [],
+      "functions": [],
+      "values": [],
+      "blocks": [],
+      "regions": [],
+      "data_edges": [],
+      "call_intents": [],
+      "control_intents": [],
       "context_flow": [],
       "hook_bindings": [
         {

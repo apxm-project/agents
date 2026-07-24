@@ -8,31 +8,48 @@
           "node_id": "node.model.1",
           "op": "model.call",
           "parent_region_id": "region.loop.1",
-          "execution_order": 0
+          "execution_order": 0,
+          "operands": [
+            { "slot": "model_ref", "value_id": "value.model.ref", "type_ref": "ModelRef" },
+            { "slot": "request", "value_id": "value.request", "type_ref": "ModelRequest" }
+          ],
+          "result": { "value_id": "value.model.out", "type_ref": "ModelResponse" }
         },
         {
           "node_id": "node.cap.1",
           "op": "capability.invoke",
           "parent_region_id": "region.loop.1",
-          "execution_order": 1
+          "execution_order": 1,
+          "operands": [
+            { "slot": "capability_ref", "value_id": "value.cap.ref", "type_ref": "CapabilityRef" },
+            { "slot": "arguments", "value_id": "value.model.out", "type_ref": "SearchArguments" }
+          ],
+          "result": { "value_id": "value.cap.out", "type_ref": "SearchResult" }
         },
         {
           "node_id": "node.new.1",
           "op": "program.new",
           "parent_region_id": "region.loop.1",
-          "execution_order": 2
+          "execution_order": 2,
+          "operands": []
         },
         {
           "node_id": "node.invoke.1",
           "op": "program.invoke",
           "parent_region_id": "region.loop.1",
-          "execution_order": 3
+          "execution_order": 3,
+          "operands": [
+            { "slot": "receiver", "value_id": "value.instance", "type_ref": "ProgramInstanceRef" }
+          ]
         },
         {
           "node_id": "node.await.1",
           "op": "await.event",
           "parent_region_id": "region.loop.1",
-          "execution_order": 4
+          "execution_order": 4,
+          "operands": [
+            { "slot": "event_ref", "value_id": "value.event.ref", "type_ref": "EventRef" }
+          ]
         }
       ],
       "structural_ir": [
@@ -45,7 +62,13 @@
           "region_id": "region.loop.1",
           "kind": "ais.loop",
           "parent_region_id": "region.root",
-          "execution_order": 0
+          "execution_order": 0,
+          "block_arguments": [
+            { "value_id": "value.carried.ctx", "type_ref": "SpecialistContext" }
+          ],
+          "operands": [
+            { "slot": "carried", "value_id": "value.carried.ctx", "type_ref": "SpecialistContext" }
+          ]
         },
         {
           "region_id": "region.yield.1",

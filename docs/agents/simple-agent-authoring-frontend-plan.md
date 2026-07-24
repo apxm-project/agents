@@ -1,7 +1,8 @@
 # Source-first Agent frontend master plan
 
-- Status: subordinate design master plan; not implementation authority until
-  the owner ADR and contract amendment in phase D0 are accepted
+- Status: implementation authority for phases P1–P6 under
+  [ADR-0015](../adr/0015-source-first-agent-frontend-vocabulary.md); D0 owner
+  decision and contract amendment accepted 2026-07-23
 - Owner: APXM `agents`
 - Scope: Python, TypeScript, FrontendGraph, Rust lowering, examples, generated
   Studio source, documentation, and frontend-to-evidence conformance

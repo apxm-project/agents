@@ -41,6 +41,7 @@
   "$defs": {
     "SemanticOp": {
       "type": "object",
+      "description": "One public semantic operation with typed SSA operands and result selected by Rust from a FrontendGraph call intent. `operands` names each typed input slot (per the AIS operand catalogue) and binds it to a produced value id; the untyped operand bag is retired.",
       "required": [
         "node_id",
         "op",
@@ -69,13 +70,42 @@
           "minimum": 0
         },
         "operands": {
-          "type": "object"
+          "type": "array",
+          "description": "Ordered typed SSA operands. Each names a slot from the AIS operand catalogue for this op and references a value id.",
+          "items": { "$ref": "#/$defs/Operand" }
+        },
+        "result": {
+          "$ref": "#/$defs/SsaValue",
+          "description": "The typed SSA value this operation produces, if any."
         }
+      },
+      "additionalProperties": false
+    },
+    "Operand": {
+      "type": "object",
+      "required": ["slot", "value_id", "type_ref"],
+      "properties": {
+        "slot": {
+          "type": "string",
+          "description": "Named typed input slot from the AIS operand catalogue (e.g. model_ref, request, options, capability_ref, arguments, receiver, input, event_ref, timeout_ms, condition, carried)."
+        },
+        "value_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "type_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" }
+      },
+      "additionalProperties": false
+    },
+    "SsaValue": {
+      "type": "object",
+      "required": ["value_id", "type_ref"],
+      "properties": {
+        "value_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "type_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" }
       },
       "additionalProperties": false
     },
     "StructuralNode": {
       "type": "object",
+      "description": "One structural IR node. Carries typed block arguments and region-carried values so Rust can encode CFG joins, loop-carried Context, and yield/resume as SSA rather than flat tokens.",
       "required": [
         "region_id",
         "kind",
@@ -109,6 +139,16 @@
         "execution_order": {
           "type": "integer",
           "minimum": 0
+        },
+        "block_arguments": {
+          "type": "array",
+          "description": "Typed SSA block arguments (join values, loop-carried values, resume input).",
+          "items": { "$ref": "#/$defs/SsaValue" }
+        },
+        "operands": {
+          "type": "array",
+          "description": "Typed SSA operands consumed by this structural node (branch condition, switch scrutinee, carried inputs, yielded/returned value).",
+          "items": { "$ref": "#/$defs/Operand" }
         }
       },
       "additionalProperties": false

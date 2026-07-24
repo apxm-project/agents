@@ -18,7 +18,8 @@ only and cannot be used as implementation authority.
 | [0011](0011-agent-program-execution-is-one-end-to-end-spine.md) | Accepted; amended by 0013 | One frontend/compiler/runtime/inference/evidence execution spine | APXM master and composition/AIR plans |
 | [0012](0012-acp-uses-explicit-capabilities-selection-is-not-runtime-semantics.md) | Accepted; amended by 0013 | ACP is an external Capability; v1 selection is exact; APXM-owned routing is future work | ACP/exact-selection plan and future-routing plan |
 | [0013](0013-core-semantics-are-closed-and-implementations-enter-through-exact-port-bindings.md) | Accepted | Closed semantic types, narrow Port Contracts, exact implementation bindings, and no first-party bypass | Portable core contract, Rust embedding plan, and APXM portability plan |
-| [0014](0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md) | Accepted | Conversational Agent and Gao are examples; AIS owns separate closed effect/composition and structural operation families; completed-loop evidence is generic | Composition/AIR contract and plan |
+| [0014](0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md) | Accepted; amended by 0015 | Conversational Agent and Gao are examples; AIS owns separate closed effect/composition and structural operation families; completed-loop evidence is generic | Composition/AIR contract and plan |
+| [0015](0015-source-first-agent-frontend-vocabulary.md) | Accepted | Source-first five-concept authoring surface, frozen declaration matrix, BoundAgentTree representation stack, FrontendGraph typed intents vs Rust-owned AIS selection, surface manifest | Source-first Agent frontend master plan |
 
 Canonical owner contract and plan:
 

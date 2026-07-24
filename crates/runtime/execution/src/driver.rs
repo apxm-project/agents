@@ -209,37 +209,37 @@ impl std::fmt::Display for ExecutionError {
 
 impl std::error::Error for ExecutionError {}
 
+/// Read a typed SSA operand by slot name. For exact-reference slots
+/// (`model_target_ref`, `capability_ref`, `program_ref`, `event_ref`, …) the
+/// compiler places the exact reference string as the operand's `value_id`, so a
+/// slot lookup returns that reference directly.
 fn operand_str(op: &SemanticOp, key: &str) -> Option<String> {
     op.operands
-        .as_ref()?
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_string)
+        .iter()
+        .find(|operand| operand.slot == key)
+        .map(|operand| operand.value_id.clone())
 }
 
-/// Parse the typed `operands.receiver` union that compiled AIR encodes for a
-/// composition node: `{program_ref: ...}` targets a `ProgramRef`, while
-/// `{program_instance_ref: ...}` targets an already-created stateful instance.
+/// Resolve the composition receiver from typed operands. The compiler encodes
+/// the receiver kind in the operand `type_ref` (`ProgramRef` vs
+/// `ProgramInstanceRef`) and the exact reference string in its `value_id`.
 fn composition_receiver(op: &SemanticOp) -> Result<CompositionReceiver, ExecutionError> {
     let receiver = op
         .operands
-        .as_ref()
-        .and_then(|operands| operands.get("receiver"))
-        .and_then(Value::as_object)
+        .iter()
+        .find(|operand| operand.slot == "receiver")
         .ok_or(ExecutionError::MissingOperand {
             node_id: op.node_id.clone(),
             operand: "receiver",
         })?;
 
-    if let Some(program_ref) = receiver.get("program_ref").and_then(Value::as_str) {
-        Ok(CompositionReceiver::Program {
-            program_ref: program_ref.to_string(),
-        })
-    } else if let Some(program_instance_ref) =
-        receiver.get("program_instance_ref").and_then(Value::as_str)
-    {
+    if receiver.type_ref == "ProgramInstanceRef" {
         Ok(CompositionReceiver::Instance {
-            program_instance_ref: program_instance_ref.to_string(),
+            program_instance_ref: receiver.value_id.clone(),
+        })
+    } else if receiver.type_ref == "ProgramRef" {
+        Ok(CompositionReceiver::Program {
+            program_ref: receiver.value_id.clone(),
         })
     } else {
         Err(ExecutionError::MissingOperand {

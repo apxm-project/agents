@@ -1,76 +1,34 @@
-// Defines the example-local conversational specialization over generic APIs.
+// A conversational Agent authored on the installed typed frontend.
+//
+// A conversational Agent is an ordinary Agent: a typed input, an authored loop
+// that calls a Model and an optional Tool, an explicit Context replacement, and a
+// reply yielded before the next input. No conversation-specific runtime, turn
+// type, or hidden loop is involved.
 
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { Agent, Context, Event, Model, Tool } from "@apxm/frontend";
 
-import { AgentProgram } from "@apxm/frontend";
+const SearchWeb = Tool("cap.search");
+const SupportModel = Model("model.default");
+const NextInput = Event("ConversationInput");
 
-const SOURCE_PATH = fileURLToPath(new URL("../src/conversational-agent.ts", import.meta.url));
+type ConversationState = { messages: readonly string[] };
 
-function bindSourceSpan(
-  program: AgentProgram,
-  nodeId: string,
-  authoredCall: string,
-  annotation: string,
-): void {
-  const lines = readFileSync(SOURCE_PATH, "utf8").split(/\r?\n/);
-  const lineIndex = lines.findIndex((text) => text.includes(authoredCall));
-  if (lineIndex < 0) throw new Error(`authored call not found: ${authoredCall}`);
-  const startColumn = lines[lineIndex].indexOf(authoredCall);
-  program.sourceSpan(
-    nodeId,
-    "conversational-agent.ts",
-    lineIndex + 1,
-    annotation,
-    startColumn,
-    startColumn + authoredCall.length,
-  );
-}
+const ConversationContext = Context<ConversationState>({ messages: [] });
 
-export class ConversationalAgent extends AgentProgram {
-  /** Record one ordinary structured conversation loop. */
-  defineConversation(compose?: (body: this) => unknown): this {
-    this.loop("region.loop.conversation", (body) => {
-      body
-        .modelCall("node.model", "model.default")
-        .capabilityInvoke("node.capability", "cap.search");
-      compose?.(body);
-      body.awaitEvent("node.await", "event.conversation.input");
-    });
-    this.contextFlow({
-      from_node: "node.model",
-      to_node: "node.capability",
-      context_type_ref: "ConversationContext",
-    });
-    bindSourceSpan(
-      this,
-      "node.model",
-      '.modelCall("node.model"',
-      "model.call",
-    );
-    bindSourceSpan(
-      this,
-      "node.capability",
-      '.capabilityInvoke("node.capability"',
-      "capability.invoke",
-    );
-    bindSourceSpan(
-      this,
-      "node.await",
-      '.awaitEvent("node.await"',
-      "await.event",
-    );
-    this.returnRegion("region.return");
-    return this;
-  }
-}
+export const ConversationalExample = Agent<unknown, unknown, ConversationState>({
+  name: "ConversationalExample",
+  context: ConversationContext,
+  use: { SearchWeb, SupportModel, NextInput },
+  async run(agent, incoming) {
+    while (true) {
+      const research = await SearchWeb(incoming);
+      const response = await SupportModel(incoming);
+      agent.context = { messages: [] };
+      incoming = await NextInput.wait();
+    }
+  },
+});
 
-/** Build the TypeScript conversational example. */
-export function buildConversational(): ConversationalAgent {
-  return new ConversationalAgent({
-    program_id: "ConversationalExample",
-    input_type_ref: "ConversationInput",
-    output_type_ref: "ConversationOutput",
-    context_type_ref: "ConversationContext",
-  }).defineConversation();
+export function buildConversational() {
+  return ConversationalExample;
 }

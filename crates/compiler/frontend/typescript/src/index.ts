@@ -1,38 +1,33 @@
-// Publishes the generic TypeScript Agent Program authoring and compiler bridge APIs.
+// Typed Agent authoring in ordinary TypeScript.
+//
+// An everyday author needs five names — Agent, Context, Tool, Model, and
+// ordinary control flow — plus the inferred agent callback parameter. Advanced
+// programs add Capability, Event, Hook, and TaskGroup. The frontend reads the
+// authored source statically and traverses it into the language-neutral
+// FrontendGraph; it never executes the authored body and exposes no operation
+// constant, node or region identity, or raw graph builder.
 
 export {
-  FIVE_OPS,
-  FRONTEND_GRAPH_VERSION,
-  OP_AWAIT_EVENT,
-  OP_CAPABILITY_INVOKE,
-  OP_MODEL_CALL,
-  OP_PROGRAM_INVOKE,
-  OP_PROGRAM_NEW,
-  SOURCE_MAP_VERSION,
-  canonicalAirJson,
-  compileArtifact,
-  lower,
-  verify,
-  type Json,
-  type OpName,
-} from "./frontend-graph.js";
+  Agent,
+  AgentDefinition,
+  ProgramInstance,
+  type AgentConfig,
+  type AgentFacade,
+} from "./agent.js";
 export {
-  AgentProgram,
-  type ContextEdge,
-  type HookBinding,
-  type ImportedProgram,
-} from "./agent-program.js";
-export { Hook, type AgentFacade, type HookHandler } from "./hook.js";
-export {
-  type ProgramInstanceRef,
-  type ProgramInvokeSpec,
-  type ProgramNewSpec,
-  type ProgramRef,
-  programInstanceReceiver,
-  programInvokeOperands,
-  programNewOperands,
-} from "./program-instance.js";
-export { StructuredTaskScope } from "./structured-task.js";
+  Capability,
+  Context,
+  Event,
+  Model,
+  Tool,
+  type CapabilityBinding,
+  type ContextSchema,
+  type EventTypeBinding,
+  type HandlerSpec,
+  type ModelBinding,
+  type ToolBinding,
+} from "./markers.js";
+export { Hook, TaskGroup, type HookDecl, type HookOptions } from "./advanced.js";
 export {
   ALL_FACT_KINDS,
   RUNTIME_FACT_KINDS,

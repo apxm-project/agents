@@ -292,11 +292,13 @@ impl ExecutableArtifact {
             if op.op != SemanticOpKind::ModelCall {
                 continue;
             }
+            // The model target is carried by the typed `model_ref` operand slot
+            // (AIS operand catalogue); the untyped operand bag is retired.
             let Some(target) = op
                 .operands
-                .as_ref()
-                .and_then(|operands| operands.get("model_target_ref"))
-                .and_then(serde_json::Value::as_str)
+                .iter()
+                .find(|operand| operand.slot == "model_ref")
+                .map(|operand| operand.value_id.as_str())
             else {
                 continue;
             };
@@ -546,7 +548,9 @@ mod from_air_tests {
                     "op": "model.call",
                     "parent_region_id": "region.body",
                     "execution_order": i,
-                    "operands": { "model_target_ref": target }
+                    "operands": [
+                        { "slot": "model_ref", "value_id": target, "type_ref": "ModelRef" }
+                    ]
                 })
             })
             .chain(std::iter::once(serde_json::json!({
@@ -554,7 +558,9 @@ mod from_air_tests {
                 "op": "await.event",
                 "parent_region_id": "region.body",
                 "execution_order": model_targets.len(),
-                "operands": { "event_ref": "session-input" }
+                "operands": [
+                    { "slot": "event_ref", "value_id": "session-input", "type_ref": "EventRef" }
+                ]
             })))
             .collect();
         serde_json::from_value(serde_json::json!({
@@ -658,37 +664,71 @@ mod from_graph_tests {
                 "entrypoint": "run",
                 "target_agent_identity_requirement": "summarizer-identity"
             }],
-            "semantic_operations": [
+            "declarations": [
+                {
+                    "decl_id": "decl.model.default",
+                    "decl_kind": "model_binding",
+                    "input_type_ref": "ModelRequest",
+                    "output_type_ref": "ModelResponse",
+                    "target_ref": "model.default"
+                },
+                {
+                    "decl_id": "decl.cap.search",
+                    "decl_kind": "capability_binding",
+                    "input_type_ref": "SearchArguments",
+                    "output_type_ref": "SearchResult",
+                    "target_ref": "cap.search"
+                }
+            ],
+            "functions": [{
+                "function_id": "run",
+                "parameters": [
+                    {"value_id": "value.input", "type_ref": "SpecialistInput", "role": "input"}
+                ],
+                "result_type_ref": "SpecialistOutput",
+                "body_region_id": "region.body",
+                "is_entrypoint": true
+            }],
+            "values": [
+                {"value_id": "value.input", "type_ref": "SpecialistInput", "origin": "parameter", "origin_id": "run"},
+                {"value_id": "value.model.out", "type_ref": "ModelResponse", "origin": "call_result", "origin_id": "node.model.1"},
+                {"value_id": "value.cap.out", "type_ref": "SearchResult", "origin": "call_result", "origin_id": "node.cap.1"}
+            ],
+            "blocks": [],
+            "regions": [
+                { "region_id": "region.body", "region_role": "function_body", "execution_order": 0 },
+                {
+                    "region_id": "region.loop.1",
+                    "region_role": "loop_body",
+                    "parent_region_id": "region.body",
+                    "execution_order": 0
+                }
+            ],
+            "data_edges": [
+                {"from_value": "value.input", "to_consumer": "node.model.1", "consumer_slot": "request"},
+                {"from_value": "value.model.out", "to_consumer": "node.cap.1", "consumer_slot": "arguments"}
+            ],
+            "call_intents": [
                 {
                     "node_id": "node.model.1",
-                    "op": "model.call",
+                    "intent_kind": "model_invocation",
                     "parent_region_id": "region.loop.1",
                     "execution_order": 0,
-                    "operands": { "model_target_ref": "model.default" }
+                    "binding_ref": "decl.model.default",
+                    "operand_values": ["value.input"],
+                    "result_value": "value.model.out"
                 },
                 {
                     "node_id": "node.cap.1",
-                    "op": "capability.invoke",
+                    "intent_kind": "capability_invocation",
                     "parent_region_id": "region.loop.1",
                     "execution_order": 1,
-                    "operands": { "capability_ref": "cap.search" }
+                    "binding_ref": "decl.cap.search",
+                    "operand_values": ["value.model.out"],
+                    "result_value": "value.cap.out"
                 }
             ],
-            "structural_regions": [
-                { "region_id": "region.root", "kind": "region", "execution_order": 0 },
-                {
-                    "region_id": "region.loop.1",
-                    "kind": "ais.loop",
-                    "parent_region_id": "region.root",
-                    "execution_order": 0
-                },
-                {
-                    "region_id": "region.return.1",
-                    "kind": "return",
-                    "parent_region_id": "region.root",
-                    "execution_order": 1
-                }
-            ],
+            "control_intents": [],
             "context_flow": [],
             "hook_bindings": [],
             "capability_requirements": [{ "capability_ref": "cap.search" }],

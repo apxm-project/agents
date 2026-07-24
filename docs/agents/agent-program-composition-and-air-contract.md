@@ -77,13 +77,36 @@ encodes it only inside that owner state.
 
 ## 3. Source API
 
+Under ADR-0015 the author-facing surface is source-first: a definition is
+declared with `Agent`, its state schema with `Context`, exact model targets with
+`Model`, and model-callable actions with `Tool` (advanced programs add
+`Capability`, `Event`, `Hook`, `TaskGroup`). The callback parameter `agent` is
+inferred and exposes `.context` and `.yield_(...)`. No ordinary source imports
+`AgentProgram`, `AgentFacade`, node/region ids, or operation constants.
+
 ### 3.1 Python
 
 ```python
+from apxm_program import Agent, Context, Model, Tool
+
+
+@Context
+class Conversation:
+    messages: tuple[Message, ...] = ()
+
+
+SearchWeb = Tool[SearchRequest, SearchResult](SearchWebCapabilityRef)
+SupportModel = Model[ModelRequest, ModelResponse](ExactSupportModelRef)
+
+
+@Agent(input=ConversationInput, output=ConversationOutput, context=Conversation)
+async def Support(agent, incoming):
+    ...
+
+
 specialist = Specialist.new(
     initial_context=SpecialistContext(domain="security"),
 )
-
 answer = await specialist.invoke(SpecialistInput(question=question))
 summary = await Summarizer.invoke(SummaryInput(answer=answer))
 ```
@@ -91,15 +114,24 @@ summary = await Summarizer.invoke(SummaryInput(answer=answer))
 ### 3.2 TypeScript
 
 ```typescript
-const specialist = Specialist.new({
-  initialContext: { domain: "security" },
+import { Agent, Context, Model, Tool } from "@apxm/frontend";
+
+const ConversationContext = Context<Conversation>({ messages: [] });
+const SearchWeb = Tool<SearchRequest, SearchResult>(SearchWebCapabilityRef);
+const SupportModel = Model<ModelRequest, ModelResponse>(ExactSupportModelRef);
+
+export const Support = Agent<ConversationInput, ConversationOutput, Conversation>({
+  context: ConversationContext,
+  async run(agent, incoming) { /* ... */ },
 });
 
+const specialist = Specialist.new({ initialContext: { domain: "security" } });
 const answer = await specialist.invoke({ question });
 const summary = await Summarizer.invoke({ answer });
 ```
 
-Both examples MUST record semantically equivalent `FrontendGraph` values.
+Both examples MUST record semantically equivalent `FrontendGraph` values. The
+exact Python decorator/TypeScript factory matrix is frozen by ADR-0015 §4.
 
 ### 3.3 Rules
 
@@ -364,6 +396,17 @@ The graph MUST NOT contain:
 
 Unknown semantic fields fail closed. Descriptive source-map extensions may be
 ignored only when the contract marks them non-semantic.
+
+Under ADR-0015, the five semantic operation records and the closed structural
+operation records are **typed source intents**, not AIR/AIS operation spellings.
+FrontendGraph carries discriminated intents for Model invocation,
+Tool/Capability invocation, Agent creation/invocation, and Event wait, plus
+language-neutral conditional, loop, task-scope, try/catch, yield, and return
+intents. A Tool invocation and an advanced Capability invocation are distinct
+typed intents here; Rust alone converges both to `capability.invoke` and selects
+every other AIS operation. FrontendGraph MUST contain no `ais.*` kind and no raw
+operation string, and public authoring packages MUST export no operation
+constant or structural AIS kind.
 
 ## 8. AIR effect/composition operations
 

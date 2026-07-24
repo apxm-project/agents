@@ -57,38 +57,53 @@ def test_packed_wheel_exposes_only_generic_agent_program_surface() -> None:
         )
         assert installed.returncode == 0, installed.stderr
 
-        generic_import = run(
-            str(python),
-            "-c",
-            (
-                "from apxm_program import AgentProgram, Hook, StructuredTaskScope; "
-                "program = AgentProgram(program_id='clean', input_type_ref='Input', "
-                "output_type_ref='Output'); "
-                "empty = lambda body: None; "
-                "program.branch('region.branch', empty, empty); "
-                "program.switch('region.switch', (empty,)); "
-                "program.loop('region.loop', empty); "
-                "program.parallel('region.parallel', empty); "
-                "program.try_catch('region.try', 'region.catch', empty, empty); "
-                "program.throw_region('region.throw'); "
-                "program.return_region('region.return'); "
-                "program.yield_region('region.yield'); "
-                "assert program.build_graph()['schema_version'] == "
-                "'apxm.frontend-graph.v1'; "
-                "assert program.verify() is None"
-            ),
-            cwd=temp,
+        golden = temp / "clean_agent.py"
+        golden.write_text(
+            "from apxm_program import Agent, Context, Model, Tool\n"
+            "\n"
+            "Weather = Tool[object, object]('weather.capability.v1')\n"
+            "Planner = Model[object, object]('planner.model.v1')\n"
+            "\n"
+            "\n"
+            "@Context\n"
+            "class Trip:\n"
+            "    legs: tuple = ()\n"
+            "\n"
+            "\n"
+            "@Agent(input='TripRequest', output='TripPlan', context=Trip)\n"
+            "async def Plan(agent, request):\n"
+            "    while True:\n"
+            "        if request is not None:\n"
+            "            forecast = await Weather(request)\n"
+            "        plan = await Planner(request)\n"
+            "        agent.context = Trip()\n"
+            "        return plan\n"
+            "\n"
+            "\n"
+            "if __name__ == '__main__':\n"
+            "    graph = Plan.frontend_graph()\n"
+            "    assert graph['schema_version'] == 'apxm.frontend-graph.v1'\n"
+            "    assert Plan.diagnostics() is None\n"
+            "    kinds = {c['intent_kind'] for c in graph['call_intents']}\n"
+            "    assert kinds == {'tool_invocation', 'model_invocation'}, kinds\n"
+            "    air = __import__('json').loads(Plan.canonical_air())\n"
+            "    ops = {op['op'] for op in air['semantic_operations']}\n"
+            "    assert ops == {'capability.invoke', 'model.call'}, ops\n"
         )
-        assert generic_import.returncode == 0, generic_import.stderr
+        clean_author = run(str(python), str(golden), cwd=temp)
+        assert clean_author.returncode == 0, clean_author.stderr
 
         root_absence = run(
             str(python),
             "-c",
             (
                 "import apxm_program; "
-                "removed = ('ConversationalAgent', 'Gao', 'TurnSpec', "
-                "'SpecialistComposition'); "
-                "assert all(not hasattr(apxm_program, name) for name in removed)"
+                "removed = ('AgentProgram', 'AgentFacade', 'FIVE_OPS', "
+                "'OP_MODEL_CALL', 'OP_CAPABILITY_INVOKE', 'ConversationalAgent', "
+                "'Gao', 'canonical_air_json', 'lower', 'verify', "
+                "'StructuredTaskScope'); "
+                "assert all(not hasattr(apxm_program, name) for name in removed), "
+                "[n for n in removed if hasattr(apxm_program, n)]"
             ),
             cwd=temp,
         )

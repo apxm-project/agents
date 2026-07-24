@@ -90,7 +90,7 @@ class CanonicalOnlyReachabilityTests(unittest.TestCase):
             / "examples/agents/conversational/src/conversational-agent.ts"
         ).read_text()
         gao = (REPOSITORY_ROOT / "examples/agents/gao/src/gao.ts").read_text()
-        self.assertIn("ConversationalAgent", conversational)
+        self.assertIn("ConversationalExample", conversational)
         self.assertIn("Gao", gao)
 
     def test_workspace_has_no_retired_execution_members(self) -> None:

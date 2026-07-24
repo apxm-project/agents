@@ -43,8 +43,8 @@ it is not a package export or runtime mode.
 Python expresses local declarations with `@Agent`, `@Context`, `@Tool`,
 `@Capability`, and static `@Hook` markers. TypeScript uses the equivalent typed
 `Agent(...)`, `Context(...)`, `Tool(...)`, `Capability(...)`, and `Hook(...)`
-declaration factories. Both bind to the master plan's same semantic-node
-matrix; neither executes user callbacks while compiling.
+declaration factories. Both bind to the same semantic-node matrix; neither
+executes user callbacks while compiling.
 
 The Python package is [`python/`](python/) and exports `apxm_program`.
 TypeScript is [`typescript/`](typescript/) and exports `@apxm/frontend`.
