@@ -90,6 +90,7 @@ type Graph = {
   hook_bindings: Array<{ scope: string; phase: string }>;
   imported_program_refs: Array<{ program_ref: string }>;
   capability_requirements: Array<{ capability_ref: string; tool_schema_present: boolean }>;
+  source_map: { node_spans: Array<{ source_file: string }> };
 };
 
 describe("source-first TypeScript authoring", () => {
@@ -159,6 +160,33 @@ describe("source-first TypeScript authoring", () => {
     expect(graph.source_map.node_spans.every((span) =>
       !span.source_file.startsWith("/") && !span.source_file.includes("/home/"),
     )).toBe(true);
+  });
+
+  it("redacts source tokens that escape the author workspace", () => {
+    const graph = captureProgram({
+      programId: "EscapingSource",
+      entrypoint: "run",
+      inputTypeRef: "Input",
+      outputTypeRef: "Output",
+      hasDefaultContext: false,
+      bindings: new Map([["SummarizerModel", SummarizerModel]]),
+      bindingDeclIds: new Map([["SummarizerModel", "decl.model.SummarizerModel"]]),
+      source: {
+        fileName: "../../outside-workspace/agent.ts",
+        text: `
+          import { Agent, Model } from "@apxm/frontend";
+          const SummarizerModel = Model("summarizer.model.v1");
+          const EscapingSource = Agent({
+            async run(agent, input) {
+              return await SummarizerModel(input);
+            },
+          });
+        `,
+      },
+    }) as unknown as Graph;
+
+    expect(graph.source_map.node_spans).toHaveLength(1);
+    expect(graph.source_map.node_spans[0]?.source_file).toBe("<agent>");
   });
 
   it("rejects a local binding that shadows a declared Model", () => {
