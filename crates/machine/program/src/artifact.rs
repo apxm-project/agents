@@ -588,7 +588,7 @@ mod from_air_tests {
 
     #[test]
     fn from_air_produces_a_validating_digest_bound_artifact() {
-        let artifact = ExecutableArtifact::from_air(&air(&["model.default"])).expect("from_air");
+        let artifact = ExecutableArtifact::from_air(&air(&["model.target.v1"])).expect("from_air");
         assert_eq!(artifact.schema_version, ArtifactVersion::V1);
         assert_eq!(artifact.integrity_algorithm, IntegrityAlgorithm::Sha256);
         assert!(is_digest(&artifact.artifact_digest));
@@ -604,9 +604,12 @@ mod from_air_tests {
 
     #[test]
     fn from_air_emits_one_artifact_semantic_requirement_per_distinct_model_target() {
-        let artifact =
-            ExecutableArtifact::from_air(&air(&["model.default", "model.default", "model.fast"]))
-                .expect("from_air");
+        let artifact = ExecutableArtifact::from_air(&air(&[
+            "model.target.v1",
+            "model.target.v1",
+            "model.fast",
+        ]))
+        .expect("from_air");
         assert_eq!(artifact.artifact_semantic_requirements.len(), 2);
         for requirement in &artifact.artifact_semantic_requirements {
             assert_eq!(requirement.source_scope, PortSourceScope::ArtifactSemantic);
@@ -621,13 +624,13 @@ mod from_air_tests {
             .iter()
             .map(|r| r.typed_port_slot.as_str())
             .collect();
-        assert!(slots.contains(&"model.default") && slots.contains(&"model.fast"));
+        assert!(slots.contains(&"model.target.v1") && slots.contains(&"model.fast"));
     }
 
     #[test]
     fn from_air_is_deterministic_and_content_addressed() {
-        let a = ExecutableArtifact::from_air(&air(&["model.default"])).expect("from_air");
-        let b = ExecutableArtifact::from_air(&air(&["model.default"])).expect("from_air");
+        let a = ExecutableArtifact::from_air(&air(&["model.target.v1"])).expect("from_air");
+        let b = ExecutableArtifact::from_air(&air(&["model.target.v1"])).expect("from_air");
         assert_eq!(a, b, "from_air is a deterministic content address");
         let c = ExecutableArtifact::from_air(&air(&["model.other"])).expect("from_air");
         assert_ne!(a.artifact_digest, c.artifact_digest);
@@ -666,11 +669,11 @@ mod from_graph_tests {
             }],
             "declarations": [
                 {
-                    "decl_id": "decl.model.default",
+                    "decl_id": "decl.model.target.v1",
                     "decl_kind": "model_binding",
                     "input_type_ref": "ModelRequest",
                     "output_type_ref": "ModelResponse",
-                    "target_ref": "model.default"
+                    "target_ref": "model.target.v1"
                 },
                 {
                     "decl_id": "decl.cap.search",
@@ -714,7 +717,7 @@ mod from_graph_tests {
                     "intent_kind": "model_invocation",
                     "parent_region_id": "region.loop.1",
                     "execution_order": 0,
-                    "binding_ref": "decl.model.default",
+                    "binding_ref": "decl.model.target.v1",
                     "operand_values": ["value.input"],
                     "result_value": "value.model.out"
                 },
@@ -738,7 +741,7 @@ mod from_graph_tests {
             "context_flow": [],
             "hook_bindings": [],
             "capability_requirements": [{ "capability_ref": "cap.search" }],
-            "model_requirements": [{ "model_target_ref": "model.default" }],
+            "model_requirements": [{ "model_target_ref": "model.target.v1" }],
             "source_map": {
                 "schema_version": "apxm.source-map.v1",
                 "source_language": "python",

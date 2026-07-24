@@ -22,11 +22,11 @@ fn generic_graph_value() -> Value {
         "imported_program_refs": [],
         "declarations": [
             {
-                "decl_id": "decl.model.default",
+                "decl_id": "decl.model.target.v1",
                 "decl_kind": "model_binding",
                 "input_type_ref": "ModelRequest",
                 "output_type_ref": "ModelResponse",
-                "target_ref": "model.default"
+                "target_ref": "model.target.v1"
             },
             {
                 "decl_id": "decl.cap.search",
@@ -70,7 +70,7 @@ fn generic_graph_value() -> Value {
                 "intent_kind": "model_invocation",
                 "parent_region_id": "loop.main",
                 "execution_order": 0,
-                "binding_ref": "decl.model.default",
+                "binding_ref": "decl.model.target.v1",
                 "operand_values": ["value.input"],
                 "result_value": "value.model.out"
             },
@@ -98,7 +98,7 @@ fn generic_graph_value() -> Value {
         }],
         "hook_bindings": [],
         "capability_requirements": [{"capability_ref": "cap.search"}],
-        "model_requirements": [{"model_target_ref": "model.default"}],
+        "model_requirements": [{"model_target_ref": "model.target.v1"}],
         "source_map": {
             "schema_version": "apxm.source-map.v1",
             "source_language": "python",
@@ -131,6 +131,11 @@ fn generic_graph_lowers_and_carries_source_map() {
         .expect("model.call lowered");
     assert_eq!(model.op.wire(), "model.call");
     assert!(model.operands.iter().any(|o| o.slot == "request"));
+    assert!(model.operands.iter().any(|operand| {
+        operand.slot == "model_ref"
+            && operand.type_ref == "ModelTargetRef"
+            && operand.value_id == "model.target.v1"
+    }));
     assert_eq!(
         model.result.as_ref().map(|r| r.value_id.as_str()),
         Some("value.model.out")
@@ -143,6 +148,15 @@ fn generic_graph_lowers_and_carries_source_map() {
         .expect("capability.invoke lowered");
     assert_eq!(cap.op.wire(), "capability.invoke");
     assert!(cap.operands.iter().any(|o| o.slot == "arguments"));
+}
+
+#[test]
+fn frontend_graph_rejects_an_air_model_ref_before_lowering() {
+    let mut value = generic_graph_value();
+    value["model_requirements"][0]["model_ref"] = json!("model.target.v1");
+    let error = serde_json::from_value::<FrontendGraph>(value)
+        .expect_err("FrontendGraph has no AIR model_ref field");
+    assert!(error.to_string().contains("model_ref"));
 }
 
 #[test]

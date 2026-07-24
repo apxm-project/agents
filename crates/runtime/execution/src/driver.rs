@@ -32,7 +32,8 @@ use apxm_inference::{
 };
 use apxm_kernel::{
     AcpPromptRequest, AtomicWriteSet, ExecutionCommitPort, ExecutionCommitRequest,
-    ExecutionCommitResult, ExecutionCommitTuple, ExternalAgentCapabilityPort, assemble_evidence,
+    ExecutionCommitResult, ExecutionCommitTuple, ExternalAgentCapabilityPort, PortBundle, PortSlot,
+    assemble_evidence,
 };
 use apxm_program::air::{AirModule, SemanticOp, SemanticOpKind};
 use apxm_program::common::TypedRef;
@@ -55,13 +56,69 @@ use crate::structural::{ScheduleStep, build_schedule};
 /// The exact set of injected ports the driver drives. Every port is a single
 /// admitted implementation; the driver holds no registry and does no discovery.
 pub struct ExecutionPorts {
-    pub model_inference: Arc<dyn ModelInferencePort + Send + Sync>,
-    pub capability: Arc<dyn CapabilityPort>,
-    pub external_agent: Arc<dyn ExternalAgentCapabilityPort>,
-    pub events: Arc<dyn EventPort>,
-    pub composition: Arc<dyn CompositionPort>,
-    pub execution_commit: Arc<dyn ExecutionCommitPort>,
-    pub hook_handlers: Arc<dyn StaticHookHandlerPort>,
+    model_inference: Arc<dyn ModelInferencePort + Send + Sync>,
+    capability: Arc<dyn CapabilityPort>,
+    external_agent: Arc<dyn ExternalAgentCapabilityPort>,
+    events: Arc<dyn EventPort>,
+    composition: Arc<dyn CompositionPort>,
+    execution_commit: Arc<dyn ExecutionCommitPort>,
+    hook_handlers: Arc<dyn StaticHookHandlerPort>,
+}
+
+/// Why the canonical driver cannot be constructed from a port bundle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExecutionPortsError {
+    MissingAdmittedPort(PortSlot),
+}
+
+impl std::fmt::Display for ExecutionPortsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+impl std::error::Error for ExecutionPortsError {}
+
+impl ExecutionPorts {
+    /// Construct the driver ports from one validated kernel bundle.
+    ///
+    /// Ordinary capability, model, external-agent, and commit effects are
+    /// copied only from their exact admitted slots. The remaining driver-local
+    /// ports do not select an implementation for those effects.
+    pub fn from_admitted_bundle(
+        bundle: &PortBundle,
+        events: Arc<dyn EventPort>,
+        composition: Arc<dyn CompositionPort>,
+        hook_handlers: Arc<dyn StaticHookHandlerPort>,
+    ) -> Result<Self, ExecutionPortsError> {
+        let model_inference =
+            bundle
+                .model_inference()
+                .cloned()
+                .ok_or(ExecutionPortsError::MissingAdmittedPort(
+                    PortSlot::ModelInference,
+                ))?;
+        let capability =
+            bundle
+                .capability()
+                .cloned()
+                .ok_or(ExecutionPortsError::MissingAdmittedPort(
+                    PortSlot::Capability,
+                ))?;
+        let external_agent = bundle.external_agent_capability().cloned().ok_or(
+            ExecutionPortsError::MissingAdmittedPort(PortSlot::ExternalAgentCapability),
+        )?;
+
+        Ok(Self {
+            model_inference,
+            capability,
+            external_agent,
+            events,
+            composition,
+            execution_commit: bundle.execution_commit().clone(),
+            hook_handlers,
+        })
+    }
 }
 
 /// The result of executing one exact statically bound Hook handler.

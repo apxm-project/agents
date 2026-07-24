@@ -15,7 +15,8 @@
 use std::sync::Arc;
 
 use apxm_execution::{
-    CapabilityPort, CompositionPort, EventPort, ExecutionPorts, StaticHookHandlerPort,
+    CapabilityPort, CompositionPort, EventPort, ExecutionPorts, ExecutionPortsError,
+    StaticHookHandlerPort,
 };
 use apxm_inference::ModelInferencePort;
 use apxm_kernel::{
@@ -31,6 +32,7 @@ pub struct AdmittedPorts {
     pub execution_commit: Arc<dyn ExecutionCommitPort>,
     pub confinement: Arc<dyn ConfinementPort>,
     pub model_inference: Arc<dyn ModelInferencePort + Send + Sync>,
+    pub capability: Arc<dyn CapabilityPort>,
     pub external_agent: Arc<dyn ExternalAgentCapabilityPort>,
     pub hook_handlers: Arc<dyn StaticHookHandlerPort>,
 }
@@ -50,7 +52,7 @@ pub struct AdmittedBinding {
 /// Returns a [`BundleError`] if the bindings are incomplete, mismatched, or carry
 /// a malformed digest — construction fails closed.
 pub fn assemble_bundle(
-    bindings: [AdmittedBinding; 4],
+    bindings: [AdmittedBinding; 5],
     ports: &AdmittedPorts,
 ) -> Result<PortBundle, BundleError> {
     let spec = PortBundleSpec::new(
@@ -59,7 +61,7 @@ pub fn assemble_bundle(
             .map(|b| (b.slot, b.port_contract.clone()))
             .collect(),
     );
-    let [commit_b, confine_b, model_b, acp_b] = bindings;
+    let [commit_b, confine_b, model_b, capability_b, acp_b] = bindings;
     PortBundle::construct(
         &spec,
         vec![
@@ -76,6 +78,10 @@ pub fn assemble_bundle(
                 PortImplementation::ModelInference(ports.model_inference.clone()),
             ),
             (
+                capability_b.binding,
+                PortImplementation::Capability(ports.capability.clone()),
+            ),
+            (
                 acp_b.binding,
                 PortImplementation::ExternalAgentCapability(ports.external_agent.clone()),
             ),
@@ -83,22 +89,18 @@ pub fn assemble_bundle(
     )
 }
 
-/// Assemble the canonical driver's [`ExecutionPorts`] from the admitted runtime
-/// ports plus the injected non-model effect ports.
-#[must_use]
+/// Assemble the canonical driver's [`ExecutionPorts`] from one validated bundle
+/// plus the non-admitting driver-local ports.
+///
+/// # Errors
+///
+/// Returns [`ExecutionPortsError`] when the bundle omitted an effect port the
+/// driver must dispatch through an exact admitted binding.
 pub fn execution_ports(
-    admitted: &AdmittedPorts,
-    capability: Arc<dyn CapabilityPort>,
+    bundle: &PortBundle,
+    hook_handlers: Arc<dyn StaticHookHandlerPort>,
     events: Arc<dyn EventPort>,
     composition: Arc<dyn CompositionPort>,
-) -> ExecutionPorts {
-    ExecutionPorts {
-        model_inference: admitted.model_inference.clone(),
-        capability,
-        external_agent: admitted.external_agent.clone(),
-        events,
-        composition,
-        execution_commit: admitted.execution_commit.clone(),
-        hook_handlers: admitted.hook_handlers.clone(),
-    }
+) -> Result<ExecutionPorts, ExecutionPortsError> {
+    ExecutionPorts::from_admitted_bundle(bundle, events, composition, hook_handlers)
 }

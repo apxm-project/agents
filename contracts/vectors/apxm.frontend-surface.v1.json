@@ -82,18 +82,6 @@
       "diagnostics": ["ToolRefNotCapability", "ToolDisplayNameRejected", "ToolCredentialInSource"]
     },
     {
-      "concept": "Bundled Tool handler",
-      "tier": "everyday",
-      "python_projection": "@Tool on one typed async def",
-      "typescript_projection": "Tool<I, O>({ async run(request) })",
-      "bound_semantic_node": "ToolDecl",
-      "arguments": [
-        { "name": "run", "accepts": "handler_body", "required": true }
-      ],
-      "produces_intent": "tool_invocation",
-      "diagnostics": ["ToolHandlerNotTyped", "ToolHandlerExecutedAtCapture", "ToolHandlerGrantsAuthority"]
-    },
-    {
       "concept": "Imported Capability",
       "tier": "advanced",
       "python_projection": "Capability[I, O](ref)",
@@ -104,18 +92,6 @@
       ],
       "produces_intent": "capability_invocation",
       "diagnostics": ["CapabilityRefNotExact", "CapabilityDisplayNameRejected"]
-    },
-    {
-      "concept": "Bundled Capability handler",
-      "tier": "advanced",
-      "python_projection": "@Capability on one typed async def",
-      "typescript_projection": "Capability<I, O>({ async run(...) })",
-      "bound_semantic_node": "CapabilityDecl",
-      "arguments": [
-        { "name": "run", "accepts": "handler_body", "required": true }
-      ],
-      "produces_intent": "capability_invocation",
-      "diagnostics": ["CapabilityHandlerNotTyped", "CapabilityHandlerExecutedAtCapture"]
     },
     {
       "concept": "Static Hook",

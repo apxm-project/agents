@@ -6,27 +6,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// A request to invoke one non-model Capability.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CapabilityRequest {
-    pub node_id: String,
-    pub capability_ref: String,
-}
-
-/// The typed outcome of a Capability invocation.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum CapabilityOutcome {
-    Completed { result: String },
-    Failed { message: String },
-    OutcomeUnknown { message: String },
-}
-
-/// The Capability port for `capability.invoke` effects that are not External
-/// Agent capabilities.
-#[async_trait]
-pub trait CapabilityPort: Send + Sync {
-    async fn invoke(&self, request: CapabilityRequest) -> CapabilityOutcome;
-}
+pub use apxm_kernel::{CapabilityOutcome, CapabilityPort, CapabilityRequest};
 
 /// The opaque identity of one OS-minted durable event.
 ///

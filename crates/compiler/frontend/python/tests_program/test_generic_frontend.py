@@ -91,6 +91,38 @@ def test_minimal_agent_lowers_to_registered_model_call() -> None:
         operand["slot"] for operand in air["semantic_operations"][0]["operands"]
     ]
     assert "request" in request_slots
+    assert {
+        operand["slot"] for operand in air["semantic_operations"][0]["operands"]
+    } >= {"model_ref", "request"}
+    assert next(
+        operand["value_id"]
+        for operand in air["semantic_operations"][0]["operands"]
+        if operand["slot"] == "model_ref"
+    ) == "summarizer.model.v1"
+
+
+def test_static_bindings_reject_display_names_callables_and_bare_event_factories() -> None:
+    for marker in (Model, Tool, Capability, Event):
+        for invalid in ("", "default", "model.default", "support", "search-web"):
+            try:
+                marker(invalid)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(f"{marker!r} accepted forbidden reference {invalid!r}")
+
+    for marker in (Tool, Capability):
+        try:
+            marker(lambda: None)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"{marker!r} accepted a package-local handler")
+
+    bare_typed_factory = Event[object]
+    assert not hasattr(bare_typed_factory, "wait")
+    event = bare_typed_factory("event.session.input.v1")
+    assert event.target_ref == "event.session.input.v1"
 
 
 def test_contextual_agent_binds_context_tool_and_loop() -> None:

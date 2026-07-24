@@ -70,7 +70,7 @@
         "typescript_projection": { "type": "string" },
         "bound_semantic_node": {
           "type": "string",
-          "enum": ["AgentDecl", "ContextDecl", "ModelBinding", "ToolBinding", "ToolDecl", "CapabilityBinding", "CapabilityDecl", "HookDecl", "EventType", "EventWait", "TaskScope"]
+          "enum": ["AgentDecl", "ContextDecl", "ModelBinding", "ToolBinding", "CapabilityBinding", "HookDecl", "EventType", "EventWait", "TaskScope"]
         },
         "arguments": {
           "type": "array",
@@ -81,7 +81,7 @@
               "name": { "type": "string" },
               "accepts": {
                 "type": "string",
-                "enum": ["type_ref", "exact_reference", "closed_option", "literal", "typed_default", "callback_body", "handler_body", "selector", "phase"]
+                "enum": ["type_ref", "exact_reference", "closed_option", "literal", "typed_default", "callback_body", "selector", "phase"]
               },
               "required": { "type": "boolean" }
             },

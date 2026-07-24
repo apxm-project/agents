@@ -31,7 +31,7 @@ type AgentConfig<I, O, C> = {
 export class AgentHandle<I, O, C> implements ProgramBinding {
   readonly kind = "agent_definition" as const;
   readonly artifactDigest: string;
-  readonly entrypoint = "run";
+  readonly entrypoint: string;
   readonly targetAgentIdentityRequirement: string;
 
   constructor(
@@ -39,7 +39,8 @@ export class AgentHandle<I, O, C> implements ProgramBinding {
     private readonly graph: Json,
   ) {
     this.artifactDigest = stableDigest(JSON.stringify(graph));
-    this.targetAgentIdentityRequirement = programId;
+    this.entrypoint = programId;
+    this.targetAgentIdentityRequirement = `${programId}.identity`;
   }
 
   frontendGraph(): Json {
@@ -119,10 +120,8 @@ function declId(name: string, binding: Binding): string {
     case "model_binding":
       return `decl.model.${name}`;
     case "tool_binding":
-    case "tool_handler":
       return `decl.tool.${name}`;
     case "capability_binding":
-    case "capability_handler":
       return `decl.capability.${name}`;
     case "event_type":
       return `decl.event.${name}`;

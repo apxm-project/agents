@@ -21,8 +21,8 @@ const SearchWeb = Tool<ConversationInput, string>("cap.search");
 const SupportModel = Model<
   { incoming: ConversationInput; research: string },
   ConversationOutput
->("model.default");
-const ResearchContext = Context<ResearchContext>({ requests: 0 });
+>("model.target.v1");
+const ResearchContext = Context<ResearchContext>({ requests: 0 }, "ResearchContext");
 const source = staticSource(import.meta.url);
 
 const ResearchSpecialist = Agent<ConversationInput, string, ResearchContext>({
@@ -37,7 +37,7 @@ const ResearchSpecialist = Agent<ConversationInput, string, ResearchContext>({
   },
 });
 
-const ConversationContext = Context<ConversationState>({ messages: [] });
+const ConversationContext = Context<ConversationState>({ messages: [] }, "ConversationContext");
 
 export const ConversationalExample: ConversationalProgram = Agent<
   ConversationInput,
@@ -47,7 +47,7 @@ export const ConversationalExample: ConversationalProgram = Agent<
   name: "ConversationalExample",
   source,
   context: ConversationContext,
-  use: { ResearchSpecialist, SupportModel },
+  use: { ResearchSpecialist, ResearchContext, SupportModel },
   async run(agent, incoming) {
     while (true) {
       const specialist = ResearchSpecialist.new({ context: { requests: 0 } });

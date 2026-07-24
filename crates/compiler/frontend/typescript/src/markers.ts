@@ -5,10 +5,10 @@
 // authored body to discover the graph, and they carry no credential, grant,
 // endpoint, or runtime object.
 
-const FORBIDDEN_DISPLAY_NAMES = new Set(["default", "support", "search-web", ""]);
+const FORBIDDEN_DISPLAY_NAMES = new Set(["default", "model.default", "support", "search-web", ""]);
 
-function rejectDisplayName(value: string, marker: string): void {
-  if (FORBIDDEN_DISPLAY_NAMES.has(value)) {
+function rejectDisplayName(value: unknown, marker: string): void {
+  if (typeof value !== "string" || FORBIDDEN_DISPLAY_NAMES.has(value)) {
     throw new Error(
       `${marker} accepts an exact typed reference, not a display name '${value}'`,
     );
@@ -27,26 +27,25 @@ export type ModelBinding<I = unknown, O = unknown> = {
 };
 
 export type ToolBinding<I = unknown, O = unknown> = {
-  readonly kind: "tool_binding" | "tool_handler";
+  readonly kind: "tool_binding";
   readonly targetRef: string;
   readonly inputTypeRef: string;
   readonly outputTypeRef: string;
-  readonly handlerDigest?: string;
   (args: I): Promise<O>;
 };
 
 export type CapabilityBinding<I = unknown, O = unknown> = {
-  readonly kind: "capability_binding" | "capability_handler";
+  readonly kind: "capability_binding";
   readonly targetRef: string;
   readonly inputTypeRef: string;
   readonly outputTypeRef: string;
-  readonly handlerDigest?: string;
   (args: I): Promise<O>;
 };
 
 export type EventTypeBinding<T = unknown> = {
   readonly kind: "event_type";
   readonly typeRef: string;
+  readonly targetRef: string;
   wait(): Promise<T>;
 };
 
@@ -54,10 +53,6 @@ export type ContextSchema = {
   readonly kind: "context";
   readonly typeRef: string;
   readonly defaultPresent: boolean;
-};
-
-export type HandlerSpec<I, O> = {
-  run(input: I): Promise<O> | O;
 };
 
 /** Derive a deterministic source-identity digest for static declarations. */
@@ -84,60 +79,42 @@ export function Model<I, O>(ref: string): ModelBinding<I, O> {
   });
 }
 
-export function Tool<I, O>(target: string | HandlerSpec<I, O>): ToolBinding<I, O> {
+export function Tool<I, O>(targetRef: string): ToolBinding<I, O> {
   const binding = () => uncallable("Tool");
-  if (typeof target === "string") {
-    rejectDisplayName(target, "Tool");
-    return Object.assign(binding, {
-      kind: "tool_binding" as const,
-      targetRef: target,
-      inputTypeRef: "ToolInput",
-      outputTypeRef: "ToolOutput",
-    });
-  }
+  rejectDisplayName(targetRef, "Tool");
   return Object.assign(binding, {
-    kind: "tool_handler" as const,
-    targetRef: `tool:${target.run.name || "handler"}`,
+    kind: "tool_binding" as const,
+    targetRef,
     inputTypeRef: "ToolInput",
     outputTypeRef: "ToolOutput",
-    handlerDigest: stableDigest(`tool:${target.run.name || "handler"}`),
   });
 }
 
-export function Capability<I, O>(
-  target: string | HandlerSpec<I, O>,
-): CapabilityBinding<I, O> {
+export function Capability<I, O>(targetRef: string): CapabilityBinding<I, O> {
   const binding = () => uncallable("Capability");
-  if (typeof target === "string") {
-    rejectDisplayName(target, "Capability");
-    return Object.assign(binding, {
-      kind: "capability_binding" as const,
-      targetRef: target,
-      inputTypeRef: "CapabilityInput",
-      outputTypeRef: "CapabilityOutput",
-    });
-  }
+  rejectDisplayName(targetRef, "Capability");
   return Object.assign(binding, {
-    kind: "capability_handler" as const,
-    targetRef: `capability:${target.run.name || "handler"}`,
+    kind: "capability_binding" as const,
+    targetRef,
     inputTypeRef: "CapabilityInput",
     outputTypeRef: "CapabilityOutput",
-    handlerDigest: stableDigest(`capability:${target.run.name || "handler"}`),
   });
 }
 
-export function Event<T>(typeRef = "Event"): EventTypeBinding<T> {
+export function Event<T>(targetRef: string, typeRef = "Event"): EventTypeBinding<T> {
+  rejectDisplayName(targetRef, "Event");
   return {
     kind: "event_type",
     typeRef,
+    targetRef,
     wait: () => uncallable("Event"),
   };
 }
 
-export function Context<C>(initial?: C): ContextSchema {
+export function Context<C>(initial?: C, typeRef = "Context"): ContextSchema {
   return {
     kind: "context",
-    typeRef: "Context",
+    typeRef,
     defaultPresent: initial !== undefined,
   };
 }

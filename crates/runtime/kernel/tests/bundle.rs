@@ -10,9 +10,10 @@ use apxm_inference::{AttemptDisposition, ModelCallRequest, ModelInferencePort};
 use apxm_program::artifact::SchemaDigestRef;
 
 use apxm_kernel::{
-    BundleError, ConfinementAttestation, ConfinementError, ConfinementPort, ConfinementRequest,
-    ExactPortBinding, ExecutionCommitPort, ExecutionCommitRequest, ExecutionCommitResult,
-    PortBundle, PortBundleSpec, PortImplementation, PortSlot,
+    BundleError, CapabilityOutcome, CapabilityPort, CapabilityRequest, ConfinementAttestation,
+    ConfinementError, ConfinementPort, ConfinementRequest, ExactPortBinding, ExecutionCommitPort,
+    ExecutionCommitRequest, ExecutionCommitResult, PortBundle, PortBundleSpec, PortImplementation,
+    PortSlot,
 };
 
 fn digest(c: char) -> String {
@@ -57,6 +58,17 @@ struct NoopInference;
 impl ModelInferencePort for NoopInference {
     fn attempt(&self, _request: &ModelCallRequest, _attempt: u32) -> AttemptDisposition {
         AttemptDisposition::Cancelled
+    }
+}
+
+struct NoopCapability;
+
+#[async_trait]
+impl CapabilityPort for NoopCapability {
+    async fn invoke(&self, _request: CapabilityRequest) -> CapabilityOutcome {
+        CapabilityOutcome::OutcomeUnknown {
+            message: "test capability is not invoked".into(),
+        }
     }
 }
 
@@ -225,4 +237,114 @@ fn spec_without_execution_commit_fails_closed() {
     let spec = PortBundleSpec::new(vec![(PortSlot::Confinement, commit_contract())]);
     let err = PortBundle::construct(&spec, vec![]).expect_err("execution commit required");
     assert_eq!(err, BundleError::ExecutionCommitNotRequired);
+}
+
+#[test]
+fn capability_slot_binds_only_when_exactly_declared() {
+    let spec = PortBundleSpec::new(vec![
+        (PortSlot::ExecutionCommit, commit_contract()),
+        (PortSlot::Capability, commit_contract()),
+    ]);
+    let capability_binding = ExactPortBinding {
+        slot: PortSlot::Capability,
+        port_contract: commit_contract(),
+        binding_digest: digest('d'),
+        proof_digest: digest('f'),
+    };
+    let bundle = PortBundle::construct(
+        &spec,
+        vec![
+            (commit_binding(commit_contract(), 'b', 'c'), commit_impl()),
+            (
+                capability_binding,
+                PortImplementation::Capability(Arc::new(NoopCapability)),
+            ),
+        ],
+    )
+    .expect("valid bundle with a capability");
+    assert!(bundle.capability().is_some());
+}
+
+#[test]
+fn capability_slot_rejects_missing_unexpected_mismatched_and_wrong_contract_bindings() {
+    let spec = PortBundleSpec::new(vec![
+        (PortSlot::ExecutionCommit, commit_contract()),
+        (PortSlot::Capability, commit_contract()),
+    ]);
+    let missing = PortBundle::construct(
+        &spec,
+        vec![(commit_binding(commit_contract(), 'b', 'c'), commit_impl())],
+    )
+    .expect_err("capability binding is required");
+    assert_eq!(missing, BundleError::MissingSlot(PortSlot::Capability));
+
+    let unexpected = PortBundle::construct(
+        &commit_spec(),
+        vec![
+            (commit_binding(commit_contract(), 'b', 'c'), commit_impl()),
+            (
+                ExactPortBinding {
+                    slot: PortSlot::Capability,
+                    port_contract: commit_contract(),
+                    binding_digest: digest('d'),
+                    proof_digest: digest('f'),
+                },
+                PortImplementation::Capability(Arc::new(NoopCapability)),
+            ),
+        ],
+    )
+    .expect_err("capability binding cannot be supplied outside the spec");
+    assert_eq!(
+        unexpected,
+        BundleError::UnexpectedSlot(PortSlot::Capability)
+    );
+
+    let mismatched = PortBundle::construct(
+        &spec,
+        vec![
+            (commit_binding(commit_contract(), 'b', 'c'), commit_impl()),
+            (
+                ExactPortBinding {
+                    slot: PortSlot::Capability,
+                    port_contract: commit_contract(),
+                    binding_digest: digest('d'),
+                    proof_digest: digest('f'),
+                },
+                PortImplementation::Confinement(Arc::new(NoopConfinement)),
+            ),
+        ],
+    )
+    .expect_err("capability binding must carry a capability implementation");
+    assert_eq!(
+        mismatched,
+        BundleError::SlotImplementationMismatch(PortSlot::Capability)
+    );
+
+    let wrong_contract = SchemaDigestRef {
+        schema_id: "apxm.capability.v1".into(),
+        digest: digest('f'),
+    };
+    let mismatch = PortBundle::construct(
+        &spec,
+        vec![
+            (commit_binding(commit_contract(), 'b', 'c'), commit_impl()),
+            (
+                ExactPortBinding {
+                    slot: PortSlot::Capability,
+                    port_contract: wrong_contract,
+                    binding_digest: digest('d'),
+                    proof_digest: digest('f'),
+                },
+                PortImplementation::Capability(Arc::new(NoopCapability)),
+            ),
+        ],
+    )
+    .expect_err("capability contract must match the declared contract");
+    assert!(matches!(
+        mismatch,
+        BundleError::ContractMismatch {
+            slot: PortSlot::Capability,
+            ..
+        }
+    ));
 }

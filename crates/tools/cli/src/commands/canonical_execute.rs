@@ -18,10 +18,12 @@ use apxm_inference::{
     Usage,
 };
 use apxm_kernel::{
-    AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, ExecutionCommitPort,
-    ExecutionCommitRequest, ExecutionCommitResult, ExternalAgentCapabilityPort, PromptEffectState,
+    AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, ExactPortBinding, ExecutionCommitPort,
+    ExecutionCommitRequest, ExecutionCommitResult, ExternalAgentCapabilityPort, PortBundle,
+    PortBundleSpec, PortImplementation, PortSlot, PromptEffectState,
 };
 use apxm_program::air::{AirModule, SemanticOpKind};
+use apxm_program::artifact::SchemaDigestRef;
 use apxm_program::external_agent::{AttributedEvent, AttributedEventKind, PeerUsage};
 
 const DEV_BINDING_DIGEST: &str =
@@ -29,7 +31,8 @@ const DEV_BINDING_DIGEST: &str =
 
 pub async fn execute_canonical_command(input: PathBuf, _json_output: bool) -> Result<()> {
     let air = load_canonical_air(&input)?;
-    let target = first_model_target(&air).unwrap_or_else(|| "model.default".to_string());
+    let target = first_model_target(&air)
+        .context("canonical AIR must declare an exact model_ref for local execution")?;
     let request = ExecutionRequest {
         air,
         hook_bindings: Vec::new(),
@@ -39,7 +42,8 @@ pub async fn execute_canonical_command(input: PathBuf, _json_output: bool) -> Re
         write_set: dev_write_set(),
     };
     let commit = Arc::new(DevCommit::default());
-    let report = execute(&dev_ports(commit), request, Value::Null)
+    let ports = dev_ports(commit)?;
+    let report = execute(&ports, request, Value::Null)
         .await
         .map_err(|err| anyhow::anyhow!(err))?;
 
@@ -248,16 +252,59 @@ impl ExecutionCommitPort for DevCommit {
     }
 }
 
-fn dev_ports(commit: Arc<DevCommit>) -> ExecutionPorts {
-    ExecutionPorts {
-        model_inference: Arc::new(DevModel),
-        capability: Arc::new(DevCapability),
-        external_agent: Arc::new(DevExternalAgent),
-        events: Arc::new(DevEvents),
-        composition: Arc::new(DevComposition),
-        execution_commit: commit,
-        hook_handlers: Arc::new(NoopStaticHookHandler),
-    }
+fn dev_ports(commit: Arc<DevCommit>) -> Result<ExecutionPorts> {
+    let contract = |schema_id: &str| SchemaDigestRef {
+        schema_id: schema_id.into(),
+        digest: DEV_BINDING_DIGEST.into(),
+    };
+    let binding = |slot, schema_id| ExactPortBinding {
+        slot,
+        port_contract: contract(schema_id),
+        binding_digest: DEV_BINDING_DIGEST.into(),
+        proof_digest: DEV_BINDING_DIGEST.into(),
+    };
+    let spec = PortBundleSpec::new(vec![
+        (
+            PortSlot::ExecutionCommit,
+            contract("apxm.execution-commit.v1"),
+        ),
+        (
+            PortSlot::ModelInference,
+            contract("apxm.model-inference.v1"),
+        ),
+        (PortSlot::Capability, contract("apxm.capability.v1")),
+        (
+            PortSlot::ExternalAgentCapability,
+            contract("apxm.external-agent.v1"),
+        ),
+    ]);
+    let bundle = PortBundle::construct(
+        &spec,
+        vec![
+            (
+                binding(PortSlot::ExecutionCommit, "apxm.execution-commit.v1"),
+                PortImplementation::ExecutionCommit(commit),
+            ),
+            (
+                binding(PortSlot::ModelInference, "apxm.model-inference.v1"),
+                PortImplementation::ModelInference(Arc::new(DevModel)),
+            ),
+            (
+                binding(PortSlot::Capability, "apxm.capability.v1"),
+                PortImplementation::Capability(Arc::new(DevCapability)),
+            ),
+            (
+                binding(PortSlot::ExternalAgentCapability, "apxm.external-agent.v1"),
+                PortImplementation::ExternalAgentCapability(Arc::new(DevExternalAgent)),
+            ),
+        ],
+    )?;
+    Ok(ExecutionPorts::from_admitted_bundle(
+        &bundle,
+        Arc::new(DevEvents),
+        Arc::new(DevComposition),
+        Arc::new(NoopStaticHookHandler),
+    )?)
 }
 
 fn node_outcome_json(outcome: &NodeOutcome) -> Value {
@@ -393,7 +440,7 @@ mod tests {
         let air: AirModule = serde_json::from_value(json!({
             "schema_version": "apxm.air.v1",
             "semantic_operations": [
-                {"node_id": "n.model", "op": "model.call", "parent_region_id": "r.root", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]},
+                {"node_id": "n.model", "op": "model.call", "parent_region_id": "r.root", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}]},
                 {"node_id": "n.cap", "op": "capability.invoke", "parent_region_id": "r.root", "execution_order": 1, "operands": [{"slot": "capability_ref", "value_id": "cap.search", "type_ref": "CapabilityRef"}]},
                 {"node_id": "n.new", "op": "program.new", "parent_region_id": "r.root", "execution_order": 2, "operands": [{"slot": "program_ref", "value_id": "child", "type_ref": "ProgramRef"}]},
                 {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.root", "execution_order": 3, "operands": [{"slot": "receiver", "value_id": "n.new", "type_ref": "ProgramInstanceRef"}]},
@@ -406,12 +453,13 @@ mod tests {
         .expect("canonical air");
 
         let commit = Arc::new(DevCommit::default());
+        let ports = dev_ports(commit).expect("development ports form an admitted bundle");
         let report = execute(
-            &dev_ports(commit),
+            &ports,
             ExecutionRequest {
                 air,
                 hook_bindings: Vec::new(),
-                model_admission: dev_model_admission("model.default".into()),
+                model_admission: dev_model_admission("model.target.v1".into()),
                 version_scope: "test.instance".into(),
                 commit_id: "test.commit".into(),
                 write_set: dev_write_set(),

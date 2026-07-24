@@ -16,10 +16,12 @@ use apxm_inference::{
     ModelDeploymentRef, ModelInferencePort, ModelTargetRef, ResolvedModelBinding, Usage,
 };
 use apxm_kernel::{
-    AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, ExecutionCommitPort,
-    ExecutionCommitRequest, ExecutionCommitResult, ExternalAgentCapabilityPort, PromptEffectState,
+    AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, ExactPortBinding, ExecutionCommitPort,
+    ExecutionCommitRequest, ExecutionCommitResult, ExternalAgentCapabilityPort, PortBundle,
+    PortBundleSpec, PortImplementation, PortSlot, PromptEffectState,
 };
 use apxm_program::air::AirModule;
+use apxm_program::artifact::SchemaDigestRef;
 use apxm_program::runtime_evidence::{
     Fact, LoopIterationCompletedFact, ProgramIdentity, RuntimeEvidence, RuntimeEvidenceVersion,
 };
@@ -41,7 +43,7 @@ fn write_set() -> AtomicWriteSet {
 
 fn admission() -> ModelBindingAdmission {
     ModelBindingAdmission::new(ResolvedModelBinding {
-        model_target_ref: ModelTargetRef("model.default".into()),
+        model_target_ref: ModelTargetRef("model.target.v1".into()),
         model_deployment_ref: ModelDeploymentRef("deployment.default".into()),
         exact_port_binding: ExactPortBindingRef {
             binding_digest: digest('a'),
@@ -106,28 +108,28 @@ fn nested_sibling_air() -> AirModule {
                 "op": "model.call",
                 "parent_region_id": "loop.outer",
                 "execution_order": 0,
-                "operands": [{"slot": "model_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
+                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}]
             },
             {
                 "node_id": "node.inner",
                 "op": "model.call",
                 "parent_region_id": "loop.inner",
                 "execution_order": 0,
-                "operands": [{"slot": "model_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
+                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}]
             },
             {
                 "node_id": "node.outer.after",
                 "op": "model.call",
                 "parent_region_id": "loop.outer",
                 "execution_order": 2,
-                "operands": [{"slot": "model_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
+                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}]
             },
             {
                 "node_id": "node.sibling",
                 "op": "model.call",
                 "parent_region_id": "loop.sibling",
                 "execution_order": 0,
-                "operands": [{"slot": "model_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
+                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}]
             }
         ],
         "structural_ir": [
@@ -165,14 +167,14 @@ fn two_node_loop_air() -> AirModule {
                 "op": "model.call",
                 "parent_region_id": "loop.main",
                 "execution_order": 0,
-                "operands": [{"slot": "model_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
+                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}]
             },
             {
                 "node_id": "node.second",
                 "op": "model.call",
                 "parent_region_id": "loop.main",
                 "execution_order": 1,
-                "operands": [{"slot": "model_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
+                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}]
             }
         ],
         "structural_ir": [
@@ -216,7 +218,7 @@ fn interrupted_loop_air(interrupt_kind: &str) -> AirModule {
             "op": "model.call",
             "parent_region_id": "loop.main",
             "execution_order": 2,
-            "operands": [{"slot": "model_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
+            "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}]
         })
     };
     decode_air(json!({
@@ -227,7 +229,7 @@ fn interrupted_loop_air(interrupt_kind: &str) -> AirModule {
                 "op": "model.call",
                 "parent_region_id": "loop.main",
                 "execution_order": 0,
-                "operands": [{"slot": "model_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
+                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}]
             },
             operation
         ],
@@ -390,15 +392,60 @@ fn ports(
     commit: Arc<RecordingCommit>,
     park_event: bool,
 ) -> ExecutionPorts {
-    ExecutionPorts {
-        model_inference: model,
-        capability: Arc::new(Capability),
-        external_agent: Arc::new(ExternalAgent),
-        events: Arc::new(Events { park: park_event }),
-        composition: Arc::new(Composition),
-        execution_commit: commit,
-        hook_handlers: Arc::new(NoopStaticHookHandler),
-    }
+    let contract = |schema_id: &str| SchemaDigestRef {
+        schema_id: schema_id.into(),
+        digest: digest('e'),
+    };
+    let binding = |slot, schema_id| ExactPortBinding {
+        slot,
+        port_contract: contract(schema_id),
+        binding_digest: digest('b'),
+        proof_digest: digest('c'),
+    };
+    let spec = PortBundleSpec::new(vec![
+        (
+            PortSlot::ExecutionCommit,
+            contract("apxm.execution-commit.v1"),
+        ),
+        (
+            PortSlot::ModelInference,
+            contract("apxm.model-inference.v1"),
+        ),
+        (PortSlot::Capability, contract("apxm.capability.v1")),
+        (
+            PortSlot::ExternalAgentCapability,
+            contract("apxm.external-agent.v1"),
+        ),
+    ]);
+    let bundle = PortBundle::construct(
+        &spec,
+        vec![
+            (
+                binding(PortSlot::ExecutionCommit, "apxm.execution-commit.v1"),
+                PortImplementation::ExecutionCommit(commit),
+            ),
+            (
+                binding(PortSlot::ModelInference, "apxm.model-inference.v1"),
+                PortImplementation::ModelInference(model),
+            ),
+            (
+                binding(PortSlot::Capability, "apxm.capability.v1"),
+                PortImplementation::Capability(Arc::new(Capability)),
+            ),
+            (
+                binding(PortSlot::ExternalAgentCapability, "apxm.external-agent.v1"),
+                PortImplementation::ExternalAgentCapability(Arc::new(ExternalAgent)),
+            ),
+        ],
+    )
+    .expect("test ports satisfy the admitted bundle");
+    ExecutionPorts::from_admitted_bundle(
+        &bundle,
+        Arc::new(Events { park: park_event }),
+        Arc::new(Composition),
+        Arc::new(NoopStaticHookHandler),
+    )
+    .expect("bundle contains every runtime effect port")
 }
 
 #[tokio::test]

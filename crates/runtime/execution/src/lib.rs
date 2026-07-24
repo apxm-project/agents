@@ -19,9 +19,9 @@ pub mod session_ledger;
 pub mod structural;
 
 pub use driver::{
-    ExecutionError, ExecutionPorts, ExecutionRequest, NodeOutcome, NoopStaticHookHandler,
-    RunReport, StaticHookHandlerPort, StaticHookResult, execute, execute_resumable, resume,
-    resume_event,
+    ExecutionError, ExecutionPorts, ExecutionPortsError, ExecutionRequest, NodeOutcome,
+    NoopStaticHookHandler, RunReport, StaticHookHandlerPort, StaticHookResult, execute,
+    execute_resumable, resume, resume_event,
 };
 pub use ports::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,

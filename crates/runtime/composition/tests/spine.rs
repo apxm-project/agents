@@ -96,14 +96,11 @@ fn five_op_air() -> AirModule {
                 result: None,
             },
             SemanticOp {
-                node_id: "n_external_agent".into(),
+                node_id: "n_capability".into(),
                 op: SemanticOpKind::CapabilityInvoke,
                 parent_region_id: "r_root".into(),
                 execution_order: 1,
-                operands: operands(&[
-                    ("capability_ref", "external-agent:acp:claude-code"),
-                    ("external_agent_session", "conn_1"),
-                ]),
+                operands: operands(&[("capability_ref", "capability.search")]),
                 result: None,
             },
             SemanticOp {
@@ -210,7 +207,7 @@ impl CompositionPort for TestComposition {
     }
 }
 
-fn admitted_ports() -> AdmittedPorts {
+fn admitted_ports(capability: Arc<dyn CapabilityPort>) -> AdmittedPorts {
     let execution_commit: Arc<dyn ExecutionCommitPort> = Arc::new(InMemoryExecutionCommit::new());
     let confinement: Arc<dyn ConfinementPort> = Arc::new(AdmittedSandboxConfinement::new(
         &[(ConfinementType::Gvisor, DIGEST_A)],
@@ -252,6 +249,7 @@ fn admitted_ports() -> AdmittedPorts {
         execution_commit,
         confinement,
         model_inference,
+        capability,
         external_agent,
         hook_handlers: Arc::new(NoopStaticHookHandler),
     }
@@ -259,12 +257,13 @@ fn admitted_ports() -> AdmittedPorts {
 
 #[test]
 fn composition_root_assembles_a_real_kernel_bundle() {
-    let ports = admitted_ports();
+    let ports = admitted_ports(Arc::new(TestCapability));
     let bundle = assemble_bundle(
         [
             admitted_binding(PortSlot::ExecutionCommit, "apxm.execution-commit.v1"),
             admitted_binding(PortSlot::Confinement, "apxm.confinement-attestation.v1"),
             admitted_binding(PortSlot::ModelInference, "apxm.vllm-inference.v1"),
+            admitted_binding(PortSlot::Capability, "apxm.capability.v1"),
             admitted_binding(
                 PortSlot::ExternalAgentCapability,
                 "apxm.external-agent-evidence.v1",
@@ -275,18 +274,34 @@ fn composition_root_assembles_a_real_kernel_bundle() {
     .expect("adapters assemble into a real kernel PortBundle");
     assert!(bundle.confinement().is_some());
     assert!(bundle.model_inference().is_some());
+    assert!(bundle.capability().is_some());
     assert!(bundle.external_agent_capability().is_some());
 }
 
 #[tokio::test]
 async fn composition_root_drives_canonical_execution_end_to_end() {
-    let admitted = admitted_ports();
-    let ports = execution_ports(
+    let admitted = admitted_ports(Arc::new(TestCapability));
+    let bundle = assemble_bundle(
+        [
+            admitted_binding(PortSlot::ExecutionCommit, "apxm.execution-commit.v1"),
+            admitted_binding(PortSlot::Confinement, "apxm.confinement-attestation.v1"),
+            admitted_binding(PortSlot::ModelInference, "apxm.vllm-inference.v1"),
+            admitted_binding(PortSlot::Capability, "apxm.capability.v1"),
+            admitted_binding(
+                PortSlot::ExternalAgentCapability,
+                "apxm.external-agent-evidence.v1",
+            ),
+        ],
         &admitted,
-        Arc::new(TestCapability),
+    )
+    .expect("admitted implementations assemble into the execution bundle");
+    let ports = execution_ports(
+        &bundle,
+        admitted.hook_handlers.clone(),
         Arc::new(TestEvents),
         Arc::new(TestComposition),
-    );
+    )
+    .expect("execution reads every effect implementation from the bundle");
 
     let report = execute(
         &ports,
@@ -308,22 +323,20 @@ async fn composition_root_drives_canonical_execution_end_to_end() {
     assert!(matches!(report.node_outcomes[0], NodeOutcome::Model { .. }));
     assert!(matches!(
         report.node_outcomes[1],
-        NodeOutcome::ExternalAgent { .. }
+        NodeOutcome::Capability {
+            outcome: CapabilityOutcome::Completed { .. },
+            ..
+        }
     ));
     assert!(matches!(
         report.node_outcomes[4],
         NodeOutcome::AwaitEvent { .. }
     ));
 
-    // Native model usage comes from the vLLM client; peer usage stays isolated
-    // in External Agent evidence and never enters native accounting.
+    // Native model usage comes from the vLLM client.
     assert_eq!(report.native_usage.input_tokens, 42);
     assert_eq!(report.native_usage.output_tokens, 100);
-    assert_eq!(report.external_agent_evidence.len(), 1);
-    assert_eq!(
-        report.external_agent_evidence[0].peer_usage[0].reported_value,
-        "512"
-    );
+    assert!(report.external_agent_evidence.is_empty());
 
     // The whole run committed atomically through the one Execution Commit port.
     assert!(matches!(

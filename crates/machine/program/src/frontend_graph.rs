@@ -62,9 +62,7 @@ pub enum DeclKind {
     Context,
     ModelBinding,
     ToolBinding,
-    ToolHandler,
     CapabilityBinding,
-    CapabilityHandler,
     EventType,
 }
 
@@ -174,8 +172,6 @@ pub struct Declaration {
     pub output_type_ref: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_ref: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub handler_digest: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_default_present: Option<bool>,
 }
@@ -747,12 +743,8 @@ fn validate_call_intent(
 ) {
     let declaration_matches = |kind: DeclKind| match intent.intent_kind {
         IntentKind::ModelInvocation => kind == DeclKind::ModelBinding,
-        IntentKind::ToolInvocation => {
-            kind == DeclKind::ToolBinding || kind == DeclKind::ToolHandler
-        }
-        IntentKind::CapabilityInvocation => {
-            kind == DeclKind::CapabilityBinding || kind == DeclKind::CapabilityHandler
-        }
+        IntentKind::ToolInvocation => kind == DeclKind::ToolBinding,
+        IntentKind::CapabilityInvocation => kind == DeclKind::CapabilityBinding,
         IntentKind::EventWait => kind == DeclKind::EventType,
         IntentKind::AgentCreation | IntentKind::AgentInvocation => false,
     };

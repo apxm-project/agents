@@ -170,8 +170,6 @@ def _declaration(decl: Any) -> dict[str, Any]:
     }
     if decl.target_ref is not None:
         record["target_ref"] = decl.target_ref
-    if decl.handler_digest is not None:
-        record["handler_digest"] = decl.handler_digest
     if decl.context_default_present is not None:
         record["context_default_present"] = decl.context_default_present
     return record
