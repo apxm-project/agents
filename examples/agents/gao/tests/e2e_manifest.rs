@@ -592,7 +592,7 @@ fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
         let file_type = entry.file_type()?;
         if matches!(
             entry.file_name().to_str(),
-            Some("node_modules" | "dist" | "__pycache__")
+            Some("node_modules" | "dist" | "__pycache__" | "artifacts")
         ) || file_type.is_symlink()
         {
             continue;
