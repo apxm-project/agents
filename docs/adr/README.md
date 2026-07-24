@@ -20,6 +20,7 @@ only and cannot be used as implementation authority.
 | [0013](0013-core-semantics-are-closed-and-implementations-enter-through-exact-port-bindings.md) | Accepted | Closed semantic types, narrow Port Contracts, exact implementation bindings, and no first-party bypass | Portable core contract, Rust embedding plan, and APXM portability plan |
 | [0014](0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md) | Accepted; amended by 0015 | Conversational Agent and Gao are examples; AIS owns separate closed effect/composition and structural operation families; completed-loop evidence is generic | Composition/AIR contract and plan |
 | [0015](0015-source-first-agent-frontend-vocabulary.md) | Accepted | Source-first five-concept authoring surface, frozen declaration matrix, BoundAgentTree representation stack, FrontendGraph typed intents vs Rust-owned AIS selection, surface manifest | Source-first Agent frontend master plan |
+| [0016](0016-tool-authoring-and-handler-execution-are-separate.md) | Accepted | Typed Tool references, private package-handler definitions, Rust-owned manifest, and Rust-admitted Capability execution are separate boundaries | Tool authoring and handler-execution plan |
 
 Canonical owner contract and plan:
 
@@ -29,5 +30,6 @@ Canonical owner contract and plan:
 - [ACP interoperability and exact-selection full-replacement plan](../agents/acp-and-routing-full-replacement-plan.md)
 - [Future APXM-owned routing plan](../agents/future-apxm-routing-plan.md)
 - [Portable core interface contract](../agents/portable-core-interface-contract.md)
+- [Tool authoring and handler-execution plan](../agents/tool-authoring-and-handler-execution-plan.md)
 - [APXM Port Contracts and composition plan](../../../../docs/plans/apxm-port-contracts-and-composition-full-replacement-plan.md)
 - [APXM master plan](../../../../docs/plans/apxm-master-plan.md)

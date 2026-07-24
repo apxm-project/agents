@@ -1,4 +1,0 @@
-id = "list_local_skills"
-description = "List grant-visible Agent Skill metadata through the host catalogue."
-kind = "builtin"
-read_only = true

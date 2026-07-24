@@ -1,5 +1,4 @@
-# Coder acceptance fixture
+# Coder acceptance checks
 
-The acceptance script checks that Coder exposes only read-only capabilities,
-that its TypeScript tools carry closed argument schemas, and that Explorer's
-read-only child relationship matches both hierarchy manifests.
+The acceptance script verifies Coder's three read-only capabilities and the
+closed schemas for its edit and test proposals.

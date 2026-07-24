@@ -1,4 +1,0 @@
-id = "list_files"
-description = "List files under declared read roots."
-kind = "typescript_handler"
-read_only = true

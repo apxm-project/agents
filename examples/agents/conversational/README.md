@@ -1,21 +1,20 @@
-# Conversational Agent repository example
+# Conversational reference example
 
-This example is the current low-level conformance scaffold for equivalent
-Python and TypeScript conversational Agent Programs. Each language records the
-same FrontendGraph and lowers to equivalent AIR with `ais.loop`; the
-example-local `ConversationalAgent` class is not an APXM package API.
+This is the primary APXM authoring reference. Its equivalent Python and
+TypeScript sources use only the installed generic frontend: `Agent`, `Context`,
+`Tool`, `Model`, `.new()`/`.invoke()`, an authored loop, and `agent.yield_()`.
 
-Conceptually, a conversational Agent is an ordinary Agent with a typed Context,
-an authored loop, explicit Model and optional Tool/Capability calls, and a
-yield/resume boundary. The same generic frontend can add Events, Hooks,
-specialists, and structured task groups; no conversation-specific compiler or
-runtime feature is required.
+The example demonstrates a complete conversational shape without a
+conversation-specific runtime or package API:
 
-It is not the intended teaching surface: the current source exposes recorder
-details such as node/region ids and manual source-span binding. The
-[source-first authoring guide](../../../docs/guides/creating-an-agent-program.md)
-defines the target author experience and the conditions for replacing this
-scaffold with ordinary typed agent source.
+1. create a short-lived research specialist;
+2. invoke it through explicit composition;
+3. call the Model with its result;
+4. replace explicit Context; and
+5. yield a reply that resumes with the next input.
+
+Coder and Gao are small extensions of this reference: Coder focuses on coding
+capabilities, while Gao focuses on APXM authoring capabilities.
 
 Run the focused build, compile, and parity checks from the repository root:
 
@@ -23,5 +22,5 @@ Run the focused build, compile, and parity checks from the repository root:
 dekk agents test-frontend-examples
 ```
 
-`package.json` declares the separate Python and TypeScript build, compile, and
-run entrypoints consumed by the repository control plane.
+`package.json` declares the Python and TypeScript build, compile, and run
+entrypoints consumed by the repository control plane.

@@ -1,8 +1,27 @@
-# Coder
+# Coder extension
 
-Coder inspects source with `read`, prepares structured before/after proposals
-with `edit`, and prepares test commands for review with `test`. All three
-capabilities are read-only: Coder does not apply changes or execute commands.
+Coder is the focused coding-capability extension of the primary
+[Conversational example](../conversational/README.md). It is an ordinary
+source-first TypeScript `Agent` built on the public APXM frontend.
 
-The package hierarchy permits `explorer` as a child. Explorer receives only
-`read`; host orchestration decides whether to invoke it.
+The entire flow is deliberately small:
+
+1. `read` inspects one requested file;
+2. `edit` returns a structured before/after proposal; and
+3. `test` returns a single test-command proposal.
+
+All three capabilities are read-only. Coder never writes a file or executes a
+command; a host must explicitly review and apply a proposal. The final model
+call summarizes those three explicit results.
+
+The two package-local tools use `Tool.define`, `Tool.object`, and
+`Tool.answer`. Their input schemas and handler manifest are generated from that
+typed definition, so a tool author never writes protocol frames or JSON schema.
+The TypeScript helper only builds the Rust-owned handler manifest; it never
+becomes Coder's runtime.
+
+Run it through the shared example gate from the repository root:
+
+```sh
+dekk agents test-frontend-examples
+```

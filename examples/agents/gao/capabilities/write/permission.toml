@@ -1,3 +1,0 @@
-capability = "write"
-decision = "ask"
-reason = "Writes files on the host."

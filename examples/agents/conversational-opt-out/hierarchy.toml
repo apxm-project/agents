@@ -1,3 +1,0 @@
-# Optional: this agent's parent and the children it may spawn/delegate to.
-# parent = "team.supervisor"
-permitted_children = []

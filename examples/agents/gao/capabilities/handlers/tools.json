@@ -4,214 +4,21 @@
     {
       "kind": "tool",
       "language": "typescript",
-      "handler_id": "sha256:5334724835a9d4dfd3387b67f27a70af8f0cb9fe5c893a8daffc248f0d81817b",
-      "module": "capabilities/explain_permission/handler",
-      "qualname": "explainPermission",
-      "name": "explain_permission",
-      "source": {
-        "artifact_path": "handlers/5334724835a9d4dfd3387b67f27a70af8f0cb9fe5c893a8daffc248f0d81817b.mjs",
-        "content": "// ../../../../../crates/tools/cli/agent-packaging/index.mjs\nimport { createHash } from \"node:crypto\";\nfunction handlerModule() {\n  return process.env.APXM_HANDLER_MODULE ?? \"__unknown__\";\n}\nfunction handlerId(module, qualname) {\n  const digest = createHash(\"sha256\").update(`${module}:${qualname}`, \"utf8\").digest(\"hex\");\n  return `sha256:${digest}`;\n}\nfunction wrapTool(fn, options = {}) {\n  const module = handlerModule();\n  const qualname = fn.name || \"tool\";\n  return {\n    kind: \"tool\",\n    name: options.name ?? qualname,\n    description: options.description ?? \"\",\n    schema: options.schema ?? {},\n    handler_id: handlerId(module, qualname),\n    module,\n    qualname,\n    fn\n  };\n}\nfunction tool(fnOrOptions = {}) {\n  if (typeof fnOrOptions === \"function\") {\n    return wrapTool(fnOrOptions);\n  }\n  return (fn) => wrapTool(fn, fnOrOptions);\n}\n\n// ../handlers/semantics.ts\nfunction resolveCapability(capabilityId, catalog, policy) {\n  const catalogEntry = catalog.find((entry) => entry.id === capabilityId);\n  const policyEntry = policy.entries?.find((entry) => entry.capability_id === capabilityId);\n  const decision = policyEntry?.decision ?? catalogEntry?.permission ?? policy.default_decision ?? \"unknown\";\n  return {\n    id: capabilityId,\n    known: catalogEntry != null,\n    ...catalogEntry?.description ? { description: catalogEntry.description } : {},\n    ...typeof catalogEntry?.read_only === \"boolean\" ? { read_only: catalogEntry.read_only } : {},\n    decision,\n    ...policyEntry?.reason ? { reason: policyEntry.reason } : {}\n  };\n}\n\n// handler.ts\nvar explainPermission = tool({\n  name: \"explain_permission\",\n  description: \"Explain the operator approval Gao needs before using an APXM capability.\",\n  schema: {\n    type: \"object\",\n    properties: {\n      capability_id: { type: \"string\" },\n      policy: {\n        type: \"object\",\n        properties: {\n          default_decision: { type: \"string\", enum: [\"allow\", \"ask\", \"deny\"] },\n          entries: {\n            type: \"array\",\n            items: {\n              type: \"object\",\n              properties: {\n                capability_id: { type: \"string\", minLength: 1 },\n                decision: { type: \"string\", enum: [\"allow\", \"ask\", \"deny\"] },\n                reason: { type: \"string\" }\n              },\n              required: [\"capability_id\", \"decision\"],\n              additionalProperties: false\n            }\n          }\n        },\n        additionalProperties: false\n      },\n      catalog: {\n        type: \"array\",\n        items: {\n          type: \"object\",\n          properties: {\n            id: { type: \"string\", minLength: 1 },\n            description: { type: \"string\" },\n            read_only: { type: \"boolean\" },\n            permission: { type: \"string\", enum: [\"allow\", \"ask\", \"deny\"] }\n          },\n          required: [\"id\"],\n          additionalProperties: false\n        }\n      }\n    },\n    required: [\"capability_id\", \"policy\", \"catalog\"],\n    additionalProperties: false\n  }\n})((args) => {\n  const capability = resolveCapability(args.capability_id.trim(), args.catalog, args.policy);\n  const reason = capability.reason ?? (!capability.known ? \"The host capability catalog does not contain this capability.\" : capability.decision === \"ask\" ? \"The supplied permission policy requires an explicit operator grant.\" : capability.decision === \"deny\" ? \"The supplied permission policy denies this capability.\" : capability.decision === \"allow\" ? \"The supplied permission policy allows this capability without an additional grant.\" : \"The supplied permission policy does not define a decision for this capability.\");\n  return {\n    capability: capability.id,\n    known: capability.known,\n    read_only: capability.read_only ?? null,\n    decision: capability.decision,\n    requires_approval: capability.decision === \"unknown\" ? null : capability.decision === \"ask\",\n    reason\n  };\n});\nexport {\n  explainPermission\n};\n"
-      },
-      "description": "Explain the operator approval Gao needs before using an APXM capability.",
-      "schema": {
-        "additionalProperties": false,
-        "properties": {
-          "capability_id": {
-            "type": "string"
-          },
-          "catalog": {
-            "items": {
-              "additionalProperties": false,
-              "properties": {
-                "description": {
-                  "type": "string"
-                },
-                "id": {
-                  "minLength": 1,
-                  "type": "string"
-                },
-                "permission": {
-                  "enum": [
-                    "allow",
-                    "ask",
-                    "deny"
-                  ],
-                  "type": "string"
-                },
-                "read_only": {
-                  "type": "boolean"
-                }
-              },
-              "required": [
-                "id"
-              ],
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "policy": {
-            "additionalProperties": false,
-            "properties": {
-              "default_decision": {
-                "enum": [
-                  "allow",
-                  "ask",
-                  "deny"
-                ],
-                "type": "string"
-              },
-              "entries": {
-                "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "capability_id": {
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "decision": {
-                      "enum": [
-                        "allow",
-                        "ask",
-                        "deny"
-                      ],
-                      "type": "string"
-                    },
-                    "reason": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "capability_id",
-                    "decision"
-                  ],
-                  "type": "object"
-                },
-                "type": "array"
-              }
-            },
-            "type": "object"
-          }
-        },
-        "required": [
-          "capability_id",
-          "policy",
-          "catalog"
-        ],
-        "type": "object"
-      },
-      "read_only": true,
-      "requires_approval": false
-    },
-    {
-      "kind": "tool",
-      "language": "typescript",
-      "handler_id": "sha256:6cc0a49709e272fc2134605b5967441fdd796aaa3960c5ddf5d14a33d978f30d",
-      "module": "capabilities/list_files/handler",
-      "qualname": "listFiles",
-      "name": "list_files",
-      "source": {
-        "artifact_path": "handlers/6cc0a49709e272fc2134605b5967441fdd796aaa3960c5ddf5d14a33d978f30d.mjs",
-        "content": "// handler.ts\nimport { readdirSync } from \"node:fs\";\nimport { isAbsolute, relative, resolve as resolve2 } from \"node:path\";\n\n// ../../../../../crates/tools/cli/agent-packaging/index.mjs\nimport { createHash } from \"node:crypto\";\nfunction handlerModule() {\n  return process.env.APXM_HANDLER_MODULE ?? \"__unknown__\";\n}\nfunction handlerId(module, qualname) {\n  const digest = createHash(\"sha256\").update(`${module}:${qualname}`, \"utf8\").digest(\"hex\");\n  return `sha256:${digest}`;\n}\nfunction wrapTool(fn, options = {}) {\n  const module = handlerModule();\n  const qualname = fn.name || \"tool\";\n  return {\n    kind: \"tool\",\n    name: options.name ?? qualname,\n    description: options.description ?? \"\",\n    schema: options.schema ?? {},\n    handler_id: handlerId(module, qualname),\n    module,\n    qualname,\n    fn\n  };\n}\nfunction tool(fnOrOptions = {}) {\n  if (typeof fnOrOptions === \"function\") {\n    return wrapTool(fnOrOptions);\n  }\n  return (fn) => wrapTool(fn, fnOrOptions);\n}\n\n// ../handlers/context.ts\nimport { dirname, resolve } from \"node:path\";\nimport { fileURLToPath } from \"node:url\";\nvar cachedRoot = null;\nfunction packageRoot() {\n  if (cachedRoot) {\n    return cachedRoot;\n  }\n  const here = dirname(fileURLToPath(import.meta.url));\n  const root = resolve(here, \"..\", \"..\");\n  cachedRoot = root;\n  return root;\n}\n\n// handler.ts\nvar listFiles = tool({\n  name: \"list_files\",\n  description: \"List files under a path relative to declared read roots.\",\n  schema: {\n    type: \"object\",\n    properties: { subpath: { type: \"string\" } },\n    additionalProperties: false\n  }\n})((args) => {\n  const root = packageRoot();\n  const target = resolve2(root, args.subpath ?? \"\");\n  const targetRelative = relative(root, target);\n  if (targetRelative.startsWith(\"..\") || isAbsolute(targetRelative)) {\n    throw new Error(\"subpath escapes Gao package\");\n  }\n  try {\n    const rows = readdirSync(target, { withFileTypes: true }).map((entry) => ({\n      name: entry.name,\n      path: relative(root, resolve2(target, entry.name)),\n      kind: entry.isDirectory() ? \"dir\" : \"file\"\n    })).sort((a, b) => a.path.localeCompare(b.path));\n    return JSON.stringify(rows, null, 2);\n  } catch {\n    return \"[]\";\n  }\n});\nexport {\n  listFiles\n};\n"
-      },
-      "description": "List files under a path relative to declared read roots.",
-      "schema": {
-        "additionalProperties": false,
-        "properties": {
-          "subpath": {
-            "type": "string"
-          }
-        },
-        "type": "object"
-      },
-      "read_only": true,
-      "requires_approval": false
-    },
-    {
-      "kind": "tool",
-      "language": "typescript",
       "handler_id": "sha256:82da83328aebb541cb78febe90c47e06a4518deb9e4e3cc64eb9c72db6837204",
       "module": "capabilities/plan_workflow/handler",
       "qualname": "planWorkflow",
       "name": "plan_workflow",
       "source": {
         "artifact_path": "handlers/82da83328aebb541cb78febe90c47e06a4518deb9e4e3cc64eb9c72db6837204.mjs",
-        "content": "// ../../../../../crates/tools/cli/agent-packaging/index.mjs\nimport { createHash } from \"node:crypto\";\nfunction handlerModule() {\n  return process.env.APXM_HANDLER_MODULE ?? \"__unknown__\";\n}\nfunction handlerId(module, qualname) {\n  const digest = createHash(\"sha256\").update(`${module}:${qualname}`, \"utf8\").digest(\"hex\");\n  return `sha256:${digest}`;\n}\nfunction wrapTool(fn, options = {}) {\n  const module = handlerModule();\n  const qualname = fn.name || \"tool\";\n  return {\n    kind: \"tool\",\n    name: options.name ?? qualname,\n    description: options.description ?? \"\",\n    schema: options.schema ?? {},\n    handler_id: handlerId(module, qualname),\n    module,\n    qualname,\n    fn\n  };\n}\nfunction tool(fnOrOptions = {}) {\n  if (typeof fnOrOptions === \"function\") {\n    return wrapTool(fnOrOptions);\n  }\n  return (fn) => wrapTool(fn, fnOrOptions);\n}\n\n// ../handlers/semantics.ts\nvar STOP_WORDS = /* @__PURE__ */ new Set([\n  \"a\",\n  \"an\",\n  \"and\",\n  \"as\",\n  \"at\",\n  \"be\",\n  \"by\",\n  \"for\",\n  \"from\",\n  \"in\",\n  \"into\",\n  \"is\",\n  \"it\",\n  \"of\",\n  \"on\",\n  \"or\",\n  \"the\",\n  \"then\",\n  \"to\",\n  \"with\",\n  \"workflow\"\n]);\nfunction normalizedWords(value) {\n  return new Set(\n    value.toLowerCase().replaceAll(/[^a-z0-9_-]+/g, \" \").split(/\\s+/).map((word) => word.trim()).filter((word) => word.length > 1 && !STOP_WORDS.has(word))\n  );\n}\nfunction escapeRegExp(value) {\n  return value.replace(/[.*+?^${}()|[\\]\\\\]/g, \"\\\\$&\");\n}\nfunction capabilityScore(text, entry) {\n  const normalizedText = text.toLowerCase();\n  const idPattern = new RegExp(`(^|[^a-z0-9_-])${escapeRegExp(entry.id.toLowerCase())}([^a-z0-9_-]|$)`);\n  if (idPattern.test(normalizedText)) {\n    return 100;\n  }\n  const textWords = normalizedWords(text);\n  const catalogWords = normalizedWords(`${entry.id} ${entry.description ?? \"\"}`);\n  let score = 0;\n  for (const word of catalogWords) {\n    if (textWords.has(word)) {\n      score += 1;\n    }\n  }\n  return score;\n}\nfunction resolveCapability(capabilityId, catalog, policy) {\n  const catalogEntry = catalog.find((entry) => entry.id === capabilityId);\n  const policyEntry = policy.entries?.find((entry) => entry.capability_id === capabilityId);\n  const decision = policyEntry?.decision ?? catalogEntry?.permission ?? policy.default_decision ?? \"unknown\";\n  return {\n    id: capabilityId,\n    known: catalogEntry != null,\n    ...catalogEntry?.description ? { description: catalogEntry.description } : {},\n    ...typeof catalogEntry?.read_only === \"boolean\" ? { read_only: catalogEntry.read_only } : {},\n    decision,\n    ...policyEntry?.reason ? { reason: policyEntry.reason } : {}\n  };\n}\nfunction capabilitiesMentionedIn(text, catalog) {\n  return catalog.map((entry) => ({ entry, score: capabilityScore(text, entry) })).filter(({ score }) => score > 0).sort((left, right) => right.score - left.score || left.entry.id.localeCompare(right.entry.id)).map(({ entry }) => entry);\n}\nfunction splitWorkflowRequest(request) {\n  const clauses = request.split(/(?:\\r?\\n|[.!?]+|\\b(?:and then|then|after that)\\b)/i).map((clause) => clause.trim()).filter(Boolean);\n  const triggers = clauses.filter((clause) => /^(?:after|at|every|on|when|whenever)\\b/i.test(clause));\n  const actions = clauses.filter((clause) => !triggers.includes(clause));\n  return {\n    triggers,\n    actions: actions.length > 0 ? actions : [request.trim()]\n  };\n}\n\n// handler.ts\nvar planWorkflow = tool({\n  name: \"plan_workflow\",\n  description: \"Turn a natural-language request into a structured APXM workflow design plan.\",\n  schema: {\n    type: \"object\",\n    properties: {\n      request: { type: \"string\", minLength: 1 },\n      policy: {\n        type: \"object\",\n        properties: {\n          default_decision: { type: \"string\", enum: [\"allow\", \"ask\", \"deny\"] },\n          entries: {\n            type: \"array\",\n            items: {\n              type: \"object\",\n              properties: {\n                capability_id: { type: \"string\", minLength: 1 },\n                decision: { type: \"string\", enum: [\"allow\", \"ask\", \"deny\"] },\n                reason: { type: \"string\" }\n              },\n              required: [\"capability_id\", \"decision\"],\n              additionalProperties: false\n            }\n          }\n        },\n        additionalProperties: false\n      },\n      catalog: {\n        type: \"array\",\n        items: {\n          type: \"object\",\n          properties: {\n            id: { type: \"string\", minLength: 1 },\n            description: { type: \"string\" },\n            read_only: { type: \"boolean\" },\n            permission: { type: \"string\", enum: [\"allow\", \"ask\", \"deny\"] }\n          },\n          required: [\"id\"],\n          additionalProperties: false\n        }\n      }\n    },\n    required: [\"request\", \"policy\", \"catalog\"],\n    additionalProperties: false\n  }\n})((args) => {\n  const request = args.request.trim();\n  const { triggers, actions } = splitWorkflowRequest(request);\n  const mentioned = capabilitiesMentionedIn(request, args.catalog);\n  const capabilityPlans = mentioned.map((entry) => resolveCapability(entry.id, args.catalog, args.policy));\n  const questions = [];\n  if (triggers.length === 0) {\n    questions.push(\"What event or schedule should trigger this workflow?\");\n  }\n  if (args.catalog.length === 0) {\n    questions.push(\"Which host-supplied capabilities are available for this workflow?\");\n  } else if (mentioned.length === 0) {\n    questions.push(\"Which catalog capabilities should implement the requested actions?\");\n  }\n  const denied = capabilityPlans.filter((entry) => entry.decision === \"deny\");\n  const unknown = capabilityPlans.filter((entry) => entry.decision === \"unknown\");\n  if (unknown.length > 0) {\n    questions.push(`What permission policy applies to: ${unknown.map((entry) => entry.id).join(\", \")}?`);\n  }\n  return {\n    request: args.request,\n    questions,\n    workflow: {\n      triggers,\n      steps: actions.map((instruction, index) => {\n        const capability = capabilitiesMentionedIn(instruction, mentioned)[0];\n        return {\n          id: `step_${index + 1}`,\n          instruction,\n          ...capability ? { capability_id: capability.id } : {}\n        };\n      }),\n      capabilities: capabilityPlans.map((entry) => ({\n        id: entry.id,\n        decision: entry.decision,\n        requires_approval: entry.decision === \"ask\",\n        ...entry.reason ? { reason: entry.reason } : {}\n      }))\n    },\n    next_action: denied.length > 0 ? \"revise_request_or_policy\" : questions.length > 0 ? \"ask_clarifying_question\" : \"review_plan\"\n  };\n});\nexport {\n  planWorkflow\n};\n"
+        "content": "// ../../../../../crates/tools/cli/agent-packaging/index.mjs\nimport { createHash } from \"node:crypto\";\nvar ANSWER_KIND = \"apxm.tool-answer.v1\";\nvar FIELD_KIND = Symbol(\"apxm.tool-field.v1\");\nvar INPUT_KIND = Symbol(\"apxm.tool-input.v1\");\nfunction handlerModule() {\n  return process.env.APXM_HANDLER_MODULE ?? \"__unknown__\";\n}\nfunction handlerId(module, qualname) {\n  const digest = createHash(\"sha256\").update(`${module}:${qualname}`, \"utf8\").digest(\"hex\");\n  return `sha256:${digest}`;\n}\nfunction mark(value, kind) {\n  Object.defineProperty(value, kind, { value: true });\n  return value;\n}\nfunction isPlainObject(value) {\n  if (value === null || typeof value !== \"object\" || Array.isArray(value)) {\n    return false;\n  }\n  const prototype = Object.getPrototypeOf(value);\n  return prototype === Object.prototype || prototype === null;\n}\nfunction wrapTool(fn, definition) {\n  const module = handlerModule();\n  const qualname = fn.name || \"tool\";\n  return {\n    kind: \"tool\",\n    name: definition.name,\n    description: definition.description,\n    schema: definition.input,\n    handler_id: handlerId(module, qualname),\n    module,\n    qualname,\n    fn\n  };\n}\nfunction text(options = {}) {\n  return mark({\n    type: \"string\",\n    ...options.minLength === void 0 ? {} : { minLength: options.minLength }\n  }, FIELD_KIND);\n}\nfunction object(fields) {\n  const entries = Object.entries(fields);\n  if (entries.length === 0) {\n    throw new TypeError(\"Tool.object requires at least one field\");\n  }\n  if (entries.some(([, field]) => field?.[FIELD_KIND] !== true)) {\n    throw new TypeError(\"Tool.object fields must come from Tool helpers\");\n  }\n  return mark({\n    type: \"object\",\n    properties: Object.fromEntries(entries),\n    required: entries.map(([name]) => name),\n    additionalProperties: false\n  }, INPUT_KIND);\n}\nfunction answer(value) {\n  if (!isPlainObject(value)) {\n    throw new TypeError(\"Tool.answer requires one plain answer object\");\n  }\n  return { kind: ANSWER_KIND, value };\n}\nfunction define(definition) {\n  if (typeof definition !== \"object\" || definition === null) {\n    throw new TypeError(\"Tool.define requires one definition object\");\n  }\n  if (typeof definition.name !== \"string\" || definition.name.length === 0) {\n    throw new TypeError(\"Tool.define requires a non-empty name\");\n  }\n  if (typeof definition.description !== \"string\" || definition.description.length === 0) {\n    throw new TypeError(\"Tool.define requires a non-empty description\");\n  }\n  if (definition.input?.[INPUT_KIND] !== true) {\n    throw new TypeError(\"Tool.define input must come from Tool.object\");\n  }\n  if (typeof definition.run !== \"function\") {\n    throw new TypeError(\"Tool.define requires a run function\");\n  }\n  return wrapTool(definition.run, definition);\n}\nvar Tool = Object.freeze({ define, object, text, answer });\n\n// handler.ts\nvar planWorkflow = Tool.define({\n  name: \"plan_workflow\",\n  description: \"Turn an APXM request and capability summary into a reviewable workflow plan.\",\n  input: Tool.object({\n    request: Tool.text({ minLength: 1 }),\n    catalog: Tool.text({ minLength: 1 })\n  }),\n  run(args) {\n    const plan = `Review this APXM workflow plan before applying it: request=${args.request.trim()}; capabilities=${args.catalog.trim()}.`;\n    return Tool.answer({ plan, next_action: \"review_plan\" });\n  }\n});\nexport {\n  planWorkflow\n};\n"
       },
-      "description": "Turn a natural-language request into a structured APXM workflow design plan.",
+      "description": "Turn an APXM request and capability summary into a reviewable workflow plan.",
       "schema": {
         "additionalProperties": false,
         "properties": {
           "catalog": {
-            "items": {
-              "additionalProperties": false,
-              "properties": {
-                "description": {
-                  "type": "string"
-                },
-                "id": {
-                  "minLength": 1,
-                  "type": "string"
-                },
-                "permission": {
-                  "enum": [
-                    "allow",
-                    "ask",
-                    "deny"
-                  ],
-                  "type": "string"
-                },
-                "read_only": {
-                  "type": "boolean"
-                }
-              },
-              "required": [
-                "id"
-              ],
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "policy": {
-            "additionalProperties": false,
-            "properties": {
-              "default_decision": {
-                "enum": [
-                  "allow",
-                  "ask",
-                  "deny"
-                ],
-                "type": "string"
-              },
-              "entries": {
-                "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "capability_id": {
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "decision": {
-                      "enum": [
-                        "allow",
-                        "ask",
-                        "deny"
-                      ],
-                      "type": "string"
-                    },
-                    "reason": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "capability_id",
-                    "decision"
-                  ],
-                  "type": "object"
-                },
-                "type": "array"
-              }
-            },
-            "type": "object"
+            "minLength": 1,
+            "type": "string"
           },
           "request": {
             "minLength": 1,
@@ -220,7 +27,6 @@
         },
         "required": [
           "request",
-          "policy",
           "catalog"
         ],
         "type": "object"
@@ -237,113 +43,24 @@
       "name": "prepare_validation",
       "source": {
         "artifact_path": "handlers/cf6703f02f1d242dac5e0880df49b6bb5c2081f5b141a0681de2cffc4673943b.mjs",
-        "content": "// ../../../../../crates/tools/cli/agent-packaging/index.mjs\nimport { createHash } from \"node:crypto\";\nfunction handlerModule() {\n  return process.env.APXM_HANDLER_MODULE ?? \"__unknown__\";\n}\nfunction handlerId(module, qualname) {\n  const digest = createHash(\"sha256\").update(`${module}:${qualname}`, \"utf8\").digest(\"hex\");\n  return `sha256:${digest}`;\n}\nfunction wrapTool(fn, options = {}) {\n  const module = handlerModule();\n  const qualname = fn.name || \"tool\";\n  return {\n    kind: \"tool\",\n    name: options.name ?? qualname,\n    description: options.description ?? \"\",\n    schema: options.schema ?? {},\n    handler_id: handlerId(module, qualname),\n    module,\n    qualname,\n    fn\n  };\n}\nfunction tool(fnOrOptions = {}) {\n  if (typeof fnOrOptions === \"function\") {\n    return wrapTool(fnOrOptions);\n  }\n  return (fn) => wrapTool(fn, fnOrOptions);\n}\n\n// ../handlers/semantics.ts\nvar STOP_WORDS = /* @__PURE__ */ new Set([\n  \"a\",\n  \"an\",\n  \"and\",\n  \"as\",\n  \"at\",\n  \"be\",\n  \"by\",\n  \"for\",\n  \"from\",\n  \"in\",\n  \"into\",\n  \"is\",\n  \"it\",\n  \"of\",\n  \"on\",\n  \"or\",\n  \"the\",\n  \"then\",\n  \"to\",\n  \"with\",\n  \"workflow\"\n]);\nfunction normalizedWords(value) {\n  return new Set(\n    value.toLowerCase().replaceAll(/[^a-z0-9_-]+/g, \" \").split(/\\s+/).map((word) => word.trim()).filter((word) => word.length > 1 && !STOP_WORDS.has(word))\n  );\n}\nfunction escapeRegExp(value) {\n  return value.replace(/[.*+?^${}()|[\\]\\\\]/g, \"\\\\$&\");\n}\nfunction capabilityScore(text, entry) {\n  const normalizedText = text.toLowerCase();\n  const idPattern = new RegExp(`(^|[^a-z0-9_-])${escapeRegExp(entry.id.toLowerCase())}([^a-z0-9_-]|$)`);\n  if (idPattern.test(normalizedText)) {\n    return 100;\n  }\n  const textWords = normalizedWords(text);\n  const catalogWords = normalizedWords(`${entry.id} ${entry.description ?? \"\"}`);\n  let score = 0;\n  for (const word of catalogWords) {\n    if (textWords.has(word)) {\n      score += 1;\n    }\n  }\n  return score;\n}\nfunction resolveCapability(capabilityId, catalog, policy) {\n  const catalogEntry = catalog.find((entry) => entry.id === capabilityId);\n  const policyEntry = policy.entries?.find((entry) => entry.capability_id === capabilityId);\n  const decision = policyEntry?.decision ?? catalogEntry?.permission ?? policy.default_decision ?? \"unknown\";\n  return {\n    id: capabilityId,\n    known: catalogEntry != null,\n    ...catalogEntry?.description ? { description: catalogEntry.description } : {},\n    ...typeof catalogEntry?.read_only === \"boolean\" ? { read_only: catalogEntry.read_only } : {},\n    decision,\n    ...policyEntry?.reason ? { reason: policyEntry.reason } : {}\n  };\n}\nfunction capabilitiesMentionedIn(text, catalog) {\n  return catalog.map((entry) => ({ entry, score: capabilityScore(text, entry) })).filter(({ score }) => score > 0).sort((left, right) => right.score - left.score || left.entry.id.localeCompare(right.entry.id)).map(({ entry }) => entry);\n}\n\n// handler.ts\nvar prepareValidation = tool({\n  name: \"prepare_validation\",\n  description: \"Prepare a structured APXM validation request for a workflow artifact.\",\n  schema: {\n    type: \"object\",\n    properties: {\n      workflow_name: { type: \"string\", minLength: 1 },\n      artifact_kind: { type: \"string\", enum: [\"air\", \"workflow_draft\"] },\n      artifact: { type: \"string\", minLength: 1 },\n      capability_ids: { type: \"array\", items: { type: \"string\", minLength: 1 } },\n      policy: {\n        type: \"object\",\n        properties: {\n          default_decision: { type: \"string\", enum: [\"allow\", \"ask\", \"deny\"] },\n          entries: {\n            type: \"array\",\n            items: {\n              type: \"object\",\n              properties: {\n                capability_id: { type: \"string\", minLength: 1 },\n                decision: { type: \"string\", enum: [\"allow\", \"ask\", \"deny\"] },\n                reason: { type: \"string\" }\n              },\n              required: [\"capability_id\", \"decision\"],\n              additionalProperties: false\n            }\n          }\n        },\n        additionalProperties: false\n      },\n      catalog: {\n        type: \"array\",\n        items: {\n          type: \"object\",\n          properties: {\n            id: { type: \"string\", minLength: 1 },\n            description: { type: \"string\" },\n            read_only: { type: \"boolean\" },\n            permission: { type: \"string\", enum: [\"allow\", \"ask\", \"deny\"] }\n          },\n          required: [\"id\"],\n          additionalProperties: false\n        }\n      }\n    },\n    required: [\"workflow_name\", \"artifact_kind\", \"artifact\", \"policy\", \"catalog\"],\n    additionalProperties: false\n  }\n})((args) => {\n  const inferredIds = capabilitiesMentionedIn(args.artifact, args.catalog).map((entry) => entry.id);\n  const capabilityIds = [.../* @__PURE__ */ new Set([...args.capability_ids ?? [], ...inferredIds])];\n  const capabilities = capabilityIds.map((id) => resolveCapability(id, args.catalog, args.policy));\n  const validationPlan = args.artifact_kind === \"air\" ? [{ owner: \"agents\", operation: \"validate_air\" }] : [\n    { owner: \"studio\", operation: \"validate_workflow_draft\" },\n    { owner: \"studio\", operation: \"lower_workflow_draft\" }\n  ];\n  if (capabilities.length > 0) {\n    validationPlan.push({ owner: \"runtime\", operation: \"admit_capabilities\" });\n  }\n  if (capabilities.some((entry) => entry.decision === \"ask\")) {\n    validationPlan.push({ owner: \"runtime\", operation: \"enforce_write_boundary\" });\n  }\n  const issues = [];\n  for (const entry of capabilities) {\n    if (!entry.known) {\n      issues.push({ capability_id: entry.id, kind: \"missing_catalog_entry\" });\n      continue;\n    }\n    if (entry.decision === \"deny\") {\n      issues.push({ capability_id: entry.id, kind: \"denied_by_policy\" });\n      continue;\n    }\n    if (entry.decision === \"unknown\") {\n      issues.push({ capability_id: entry.id, kind: \"missing_policy_decision\" });\n    }\n  }\n  return {\n    workflow_name: args.workflow_name.trim(),\n    artifact_kind: args.artifact_kind,\n    artifact_preview: args.artifact.slice(0, 2e3),\n    capabilities: capabilities.map((entry) => ({\n      id: entry.id,\n      known: entry.known,\n      decision: entry.decision,\n      requires_approval: entry.decision === \"ask\"\n    })),\n    validation_plan: validationPlan,\n    issues,\n    next_action: issues.length > 0 ? \"resolve_validation_issues\" : \"submit_for_validation\"\n  };\n});\nexport {\n  prepareValidation\n};\n"
+        "content": "// ../../../../../crates/tools/cli/agent-packaging/index.mjs\nimport { createHash } from \"node:crypto\";\nvar ANSWER_KIND = \"apxm.tool-answer.v1\";\nvar FIELD_KIND = Symbol(\"apxm.tool-field.v1\");\nvar INPUT_KIND = Symbol(\"apxm.tool-input.v1\");\nfunction handlerModule() {\n  return process.env.APXM_HANDLER_MODULE ?? \"__unknown__\";\n}\nfunction handlerId(module, qualname) {\n  const digest = createHash(\"sha256\").update(`${module}:${qualname}`, \"utf8\").digest(\"hex\");\n  return `sha256:${digest}`;\n}\nfunction mark(value, kind) {\n  Object.defineProperty(value, kind, { value: true });\n  return value;\n}\nfunction isPlainObject(value) {\n  if (value === null || typeof value !== \"object\" || Array.isArray(value)) {\n    return false;\n  }\n  const prototype = Object.getPrototypeOf(value);\n  return prototype === Object.prototype || prototype === null;\n}\nfunction wrapTool(fn, definition) {\n  const module = handlerModule();\n  const qualname = fn.name || \"tool\";\n  return {\n    kind: \"tool\",\n    name: definition.name,\n    description: definition.description,\n    schema: definition.input,\n    handler_id: handlerId(module, qualname),\n    module,\n    qualname,\n    fn\n  };\n}\nfunction text(options = {}) {\n  return mark({\n    type: \"string\",\n    ...options.minLength === void 0 ? {} : { minLength: options.minLength }\n  }, FIELD_KIND);\n}\nfunction object(fields) {\n  const entries = Object.entries(fields);\n  if (entries.length === 0) {\n    throw new TypeError(\"Tool.object requires at least one field\");\n  }\n  if (entries.some(([, field]) => field?.[FIELD_KIND] !== true)) {\n    throw new TypeError(\"Tool.object fields must come from Tool helpers\");\n  }\n  return mark({\n    type: \"object\",\n    properties: Object.fromEntries(entries),\n    required: entries.map(([name]) => name),\n    additionalProperties: false\n  }, INPUT_KIND);\n}\nfunction answer(value) {\n  if (!isPlainObject(value)) {\n    throw new TypeError(\"Tool.answer requires one plain answer object\");\n  }\n  return { kind: ANSWER_KIND, value };\n}\nfunction define(definition) {\n  if (typeof definition !== \"object\" || definition === null) {\n    throw new TypeError(\"Tool.define requires one definition object\");\n  }\n  if (typeof definition.name !== \"string\" || definition.name.length === 0) {\n    throw new TypeError(\"Tool.define requires a non-empty name\");\n  }\n  if (typeof definition.description !== \"string\" || definition.description.length === 0) {\n    throw new TypeError(\"Tool.define requires a non-empty description\");\n  }\n  if (definition.input?.[INPUT_KIND] !== true) {\n    throw new TypeError(\"Tool.define input must come from Tool.object\");\n  }\n  if (typeof definition.run !== \"function\") {\n    throw new TypeError(\"Tool.define requires a run function\");\n  }\n  return wrapTool(definition.run, definition);\n}\nvar Tool = Object.freeze({ define, object, text, answer });\n\n// handler.ts\nvar prepareValidation = Tool.define({\n  name: \"prepare_validation\",\n  description: \"Prepare an APXM validation request for a reviewable workflow plan.\",\n  input: Tool.object({\n    request: Tool.text({ minLength: 1 }),\n    plan: Tool.text({ minLength: 1 })\n  }),\n  run(args) {\n    const validation_request = `Submit this APXM validation request for review: request=${args.request.trim()}; plan=${args.plan.trim()}.`;\n    return Tool.answer({ validation_request, next_action: \"submit_for_validation\" });\n  }\n});\nexport {\n  prepareValidation\n};\n"
       },
-      "description": "Prepare a structured APXM validation request for a workflow artifact.",
+      "description": "Prepare an APXM validation request for a reviewable workflow plan.",
       "schema": {
         "additionalProperties": false,
         "properties": {
-          "artifact": {
+          "plan": {
             "minLength": 1,
             "type": "string"
           },
-          "artifact_kind": {
-            "enum": [
-              "air",
-              "workflow_draft"
-            ],
-            "type": "string"
-          },
-          "capability_ids": {
-            "items": {
-              "minLength": 1,
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "catalog": {
-            "items": {
-              "additionalProperties": false,
-              "properties": {
-                "description": {
-                  "type": "string"
-                },
-                "id": {
-                  "minLength": 1,
-                  "type": "string"
-                },
-                "permission": {
-                  "enum": [
-                    "allow",
-                    "ask",
-                    "deny"
-                  ],
-                  "type": "string"
-                },
-                "read_only": {
-                  "type": "boolean"
-                }
-              },
-              "required": [
-                "id"
-              ],
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "policy": {
-            "additionalProperties": false,
-            "properties": {
-              "default_decision": {
-                "enum": [
-                  "allow",
-                  "ask",
-                  "deny"
-                ],
-                "type": "string"
-              },
-              "entries": {
-                "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "capability_id": {
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "decision": {
-                      "enum": [
-                        "allow",
-                        "ask",
-                        "deny"
-                      ],
-                      "type": "string"
-                    },
-                    "reason": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "capability_id",
-                    "decision"
-                  ],
-                  "type": "object"
-                },
-                "type": "array"
-              }
-            },
-            "type": "object"
-          },
-          "workflow_name": {
+          "request": {
             "minLength": 1,
             "type": "string"
           }
         },
         "required": [
-          "workflow_name",
-          "artifact_kind",
-          "artifact",
-          "policy",
-          "catalog"
+          "request",
+          "plan"
         ],
         "type": "object"
       },

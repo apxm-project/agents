@@ -971,13 +971,15 @@ fn walk_recognized_files(root: &Path) -> Result<Vec<(String, PathBuf)>> {
 }
 
 /// Find any file under the agent root that is *not* recognized by the
-/// schema's folder contract (excluding common noise: `.git`, `__pycache__`,
-/// build sidecars).
+/// schema's folder contract (excluding common noise and local build sidecars).
 fn find_unrecognized_files(root: &Path) -> Result<Vec<String>> {
     let mut out = Vec::new();
     for entry in walkdir::WalkDir::new(root).into_iter().filter_entry(|e| {
         let name = e.file_name().to_string_lossy();
-        name != ".git" && name != "__pycache__" && name != ".pytest_cache"
+        !matches!(
+            name.as_ref(),
+            ".git" | "__pycache__" | ".pytest_cache" | "node_modules" | "dist"
+        )
     }) {
         let entry = entry.with_context(|| format!("Failed to walk {}", root.display()))?;
         if !entry.file_type().is_file() {
@@ -2067,6 +2069,20 @@ mod tests {
         fs::write(root.join("not-a-real-file.txt"), "nope").unwrap();
         let err = agent_lint(&root, None, true).expect_err("unrecognized file must fail lint");
         assert!(err.to_string().contains("lint error"));
+    }
+
+    #[test]
+    fn lint_ignores_local_node_build_sidecars() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("sidecars");
+        scaffold(&root, "sidecars");
+        fs::create_dir_all(root.join("node_modules/example")).unwrap();
+        fs::create_dir_all(root.join("dist/src")).unwrap();
+        fs::write(root.join("node_modules/example/index.js"), "export {};").unwrap();
+        fs::write(root.join("dist/src/main.js"), "export {};").unwrap();
+
+        agent_lint(&root, None, true)
+            .expect("local build sidecars do not violate the folder contract");
     }
 
     #[test]

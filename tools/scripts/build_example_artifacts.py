@@ -12,11 +12,9 @@ from typing import Any
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-CONVERSATIONAL_OUTPUT = (
-    REPOSITORY_ROOT
-    / "examples/agents/conversational/artifacts/executable-artifact.v1.json"
-)
-GAO_OUTPUT = REPOSITORY_ROOT / "examples/agents/gao/artifacts/executable-artifact.v1.json"
+FIXTURE_ROOT = REPOSITORY_ROOT / "crates/machine/program/tests/fixtures/example-artifacts"
+CONVERSATIONAL_OUTPUT = FIXTURE_ROOT / "conversational.v1.json"
+GAO_OUTPUT = FIXTURE_ROOT / "gao.v1.json"
 
 
 def run_json(command: list[str], *, cwd: Path, env: dict[str, str]) -> dict[str, Any]:
@@ -77,13 +75,13 @@ def build_typescript_artifact() -> dict[str, Any]:
 
 
 def canonical_bytes(value: dict[str, Any]) -> bytes:
-    """Encode a stable repository artifact."""
+    """Encode a stable runtime-proof fixture."""
 
     return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
 
 
 def publish(path: Path, value: dict[str, Any], *, check: bool) -> None:
-    """Write or drift-check one generated example artifact."""
+    """Write or drift-check one source-derived runtime-proof fixture."""
 
     expected = canonical_bytes(value)
     if check:
@@ -95,7 +93,7 @@ def publish(path: Path, value: dict[str, Any], *, check: bool) -> None:
 
 
 def main() -> None:
-    """Build or drift-check both example artifacts."""
+    """Build or drift-check the example-derived runtime-proof fixtures."""
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--python-package-root", type=Path, required=True)

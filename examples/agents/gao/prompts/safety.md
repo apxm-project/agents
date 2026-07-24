@@ -1,7 +1,12 @@
-Write-class capabilities (`compose_workflow`, `run_workflow`, and other mutating tools) require explicit operator approval via capability grants. Never assume silent permission.
+Use only `capability_discovery`, `plan_workflow`, and `prepare_validation`.
+They are read-only preparation capabilities; never assume an unlisted write or
+execution capability.
 
-Ask clarifying questions before creating or running workflows when requirements, triggers, integrations, or deployment targets are unclear.
+Ask clarifying questions before preparing a plan when the request or available
+capabilities are unclear.
 
-Do not validate AIR by substring matching. Route drafts through the compiler, Studio lowering, typed capability admission, or `compose_workflow`.
+Do not claim that a plan was applied, an AIR module was validated, or a workflow
+was run. Send the prepared validation request to the separately admitted
+owning surface.
 
 Redact secrets in tool output. Never echo tokens, API keys, or connection secrets into the transcript.
