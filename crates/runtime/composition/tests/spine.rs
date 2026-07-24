@@ -63,7 +63,7 @@ fn admitted_binding(slot: PortSlot, schema_id: &str) -> AdmittedBinding {
 
 fn type_of_slot(slot: &str) -> &'static str {
     match slot {
-        "model_target_ref" => "ModelTargetRef",
+        "model_ref" => "ModelTargetRef",
         "capability_ref" => "CapabilityRef",
         "external_agent_session" => "ExternalAgentSessionRef",
         "program_ref" => "ProgramRef",
@@ -92,7 +92,7 @@ fn five_op_air() -> AirModule {
                 op: SemanticOpKind::ModelCall,
                 parent_region_id: "r_root".into(),
                 execution_order: 0,
-                operands: operands(&[("model_target_ref", MODEL_TARGET)]),
+                operands: operands(&[("model_ref", MODEL_TARGET)]),
                 result: None,
             },
             SemanticOp {

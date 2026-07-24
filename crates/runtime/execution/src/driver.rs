@@ -219,7 +219,7 @@ impl std::fmt::Display for ExecutionError {
 impl std::error::Error for ExecutionError {}
 
 /// Read a typed SSA operand by slot name. For exact-reference slots
-/// (`model_target_ref`, `capability_ref`, `program_ref`, `event_ref`, …) the
+/// (`model_ref`, `capability_ref`, `program_ref`, `event_ref`, …) the
 /// compiler places the exact reference string as the operand's `value_id`, so a
 /// slot lookup returns that reference directly.
 fn operand_str(op: &SemanticOp, key: &str) -> Option<String> {
@@ -672,10 +672,10 @@ async fn drive_from(
 
                 match op.op {
                     SemanticOpKind::ModelCall => {
-                        let target = operand_str(op, "model_target_ref").ok_or_else(|| {
+                        let target = operand_str(op, "model_ref").ok_or_else(|| {
                             ExecutionError::MissingOperand {
                                 node_id: op.node_id.clone(),
-                                operand: "model_target_ref",
+                                operand: "model_ref",
                             }
                         })?;
                         let call = ModelCallRequest::authorize(
@@ -1183,10 +1183,10 @@ pub async fn execute(
 }
 
 /// Execute a canonical AIR program with durable park/resume. It behaves exactly
-/// like [`execute`] until it reaches a parked `await.event`, at which point it
-/// persists a [`Continuation`] through `continuation` and returns
-/// [`RunOutcome::Suspended`] without committing. When it runs to the end it
-/// commits atomically and returns [`RunOutcome::Completed`].
+/// like [`execute`] until it reaches a structural yield or parked `await.event`,
+/// at which point it persists a [`Continuation`] through `continuation` and
+/// returns [`RunOutcome::Suspended`] without completing the invocation. When it
+/// runs to the end it commits atomically and returns [`RunOutcome::Completed`].
 ///
 /// # Errors
 ///

@@ -27,11 +27,11 @@ pub struct DurableLoopFrame {
     pub parked: bool,
 }
 
-/// A suspended execution, captured at a parked `await.event`. It carries exactly
-/// the state required to resume: the AIR, the index of the next operation, the
-/// threaded Context, the accumulated native usage and External Agent evidence,
-/// the in-progress evidence batch and sequence, and the commit scope/write-set
-/// used by the one atomic commit performed when the resumed run completes.
+/// A suspended execution, captured at a structural yield or parked
+/// `await.event`. It carries exactly the state required to resume: the AIR, the
+/// index of the next operation, the threaded Context, the accumulated native
+/// usage and External Agent evidence, the in-progress evidence batch and
+/// sequence, and the commit scope/write-set used by the next atomic commit.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Continuation {
     pub air: AirModule,
@@ -59,7 +59,8 @@ pub struct Continuation {
 }
 
 /// The result of driving a resumable execution: either it ran to completion and
-/// committed, or it parked at an `await.event` and persisted its continuation.
+/// committed, or it parked at a structural yield or `await.event` and persisted
+/// its continuation.
 #[derive(Debug)]
 pub enum RunOutcome {
     Completed(crate::driver::RunReport),

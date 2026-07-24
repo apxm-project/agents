@@ -110,7 +110,7 @@ fn first_model_target(air: &AirModule) -> Option<String> {
         }
         op.operands
             .iter()
-            .find(|operand| operand.slot == "model_target_ref")
+            .find(|operand| operand.slot == "model_ref")
             .map(|operand| operand.value_id.clone())
     })
 }
@@ -393,7 +393,7 @@ mod tests {
         let air: AirModule = serde_json::from_value(json!({
             "schema_version": "apxm.air.v1",
             "semantic_operations": [
-                {"node_id": "n.model", "op": "model.call", "parent_region_id": "r.root", "execution_order": 0, "operands": [{"slot": "model_target_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]},
+                {"node_id": "n.model", "op": "model.call", "parent_region_id": "r.root", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]},
                 {"node_id": "n.cap", "op": "capability.invoke", "parent_region_id": "r.root", "execution_order": 1, "operands": [{"slot": "capability_ref", "value_id": "cap.search", "type_ref": "CapabilityRef"}]},
                 {"node_id": "n.new", "op": "program.new", "parent_region_id": "r.root", "execution_order": 2, "operands": [{"slot": "program_ref", "value_id": "child", "type_ref": "ProgramRef"}]},
                 {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.root", "execution_order": 3, "operands": [{"slot": "receiver", "value_id": "n.new", "type_ref": "ProgramInstanceRef"}]},
