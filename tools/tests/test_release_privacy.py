@@ -51,6 +51,7 @@ class ReleasePrivacyTests(unittest.TestCase):
         subprocess.run(
             ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)],
             check=True,
+            env=privacy.ssh_keygen_environment(),
         )
         allowed_signers = root / "allowed_signers"
         allowed_signers.write_text(
@@ -70,6 +71,7 @@ class ReleasePrivacyTests(unittest.TestCase):
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            env=privacy.ssh_keygen_environment(),
         )
         return manifest, manifest.with_suffix(".json.sig"), allowed_signers
 

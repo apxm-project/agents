@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import tomllib
@@ -24,6 +25,14 @@ APPROVED_SETUP_PY_DIGESTS = {
     "crates/compiler/frontend/python/setup.py":
         "09420719e38852339ae03caebbc3dbbc9541c4e91858ca8d70760ac5c77286be",
 }
+
+
+def ssh_keygen_environment() -> dict[str, str]:
+    """Run the system signing tool without APXM's compiler library path."""
+
+    environment = os.environ.copy()
+    environment.pop("LD_LIBRARY_PATH", None)
+    return environment
 
 
 @dataclass(frozen=True)
@@ -214,6 +223,7 @@ def _verify_signature(
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env=ssh_keygen_environment(),
     )
     if process.returncode != 0:
         detail = process.stderr.decode("utf-8", errors="replace").strip()
