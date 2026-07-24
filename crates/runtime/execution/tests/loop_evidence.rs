@@ -106,28 +106,28 @@ fn nested_sibling_air() -> AirModule {
                 "op": "model.call",
                 "parent_region_id": "loop.outer",
                 "execution_order": 0,
-                "operands": [{"slot": "model_target_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
+                "operands": [{"slot": "model_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
             },
             {
                 "node_id": "node.inner",
                 "op": "model.call",
                 "parent_region_id": "loop.inner",
                 "execution_order": 0,
-                "operands": [{"slot": "model_target_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
+                "operands": [{"slot": "model_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
             },
             {
                 "node_id": "node.outer.after",
                 "op": "model.call",
                 "parent_region_id": "loop.outer",
                 "execution_order": 2,
-                "operands": [{"slot": "model_target_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
+                "operands": [{"slot": "model_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
             },
             {
                 "node_id": "node.sibling",
                 "op": "model.call",
                 "parent_region_id": "loop.sibling",
                 "execution_order": 0,
-                "operands": [{"slot": "model_target_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
+                "operands": [{"slot": "model_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
             }
         ],
         "structural_ir": [
@@ -165,14 +165,14 @@ fn two_node_loop_air() -> AirModule {
                 "op": "model.call",
                 "parent_region_id": "loop.main",
                 "execution_order": 0,
-                "operands": [{"slot": "model_target_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
+                "operands": [{"slot": "model_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
             },
             {
                 "node_id": "node.second",
                 "op": "model.call",
                 "parent_region_id": "loop.main",
                 "execution_order": 1,
-                "operands": [{"slot": "model_target_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
+                "operands": [{"slot": "model_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
             }
         ],
         "structural_ir": [
@@ -216,7 +216,7 @@ fn interrupted_loop_air(interrupt_kind: &str) -> AirModule {
             "op": "model.call",
             "parent_region_id": "loop.main",
             "execution_order": 2,
-            "operands": [{"slot": "model_target_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
+            "operands": [{"slot": "model_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
         })
     };
     decode_air(json!({
@@ -227,7 +227,7 @@ fn interrupted_loop_air(interrupt_kind: &str) -> AirModule {
                 "op": "model.call",
                 "parent_region_id": "loop.main",
                 "execution_order": 0,
-                "operands": [{"slot": "model_target_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
+                "operands": [{"slot": "model_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]
             },
             operation
         ],
@@ -413,6 +413,12 @@ async fn repository_example_artifacts_execute_only_generic_structural_semantics(
                 .any(|region| region.kind.wire() == "ais.loop"),
             "{commit_id} must contain compiler-emitted ais.loop",
         );
+        assert!(
+            air.structural_ir
+                .iter()
+                .any(|region| region.kind.wire() == "yield"),
+            "{commit_id} must include compiler-emitted yield",
+        );
         let encoded = serde_json::to_string(&air).expect("AIR JSON");
         assert!(!encoded.contains("conversational_loop"));
 
@@ -433,10 +439,20 @@ async fn repository_example_artifacts_execute_only_generic_structural_semantics(
             report
                 .node_outcomes
                 .iter()
-                .any(|outcome| matches!(outcome, apxm_execution::NodeOutcome::AwaitEvent { .. })),
-            "{commit_id} executes the ordinary await.event operation",
+                .any(|outcome| matches!(outcome, apxm_execution::NodeOutcome::Model { .. })),
+            "{commit_id} executes the ordinary model.call operation",
         );
-        assert_eq!(commit.completions().len(), 1);
+        assert!(
+            report
+                .node_outcomes
+                .iter()
+                .all(|outcome| !matches!(outcome, apxm_execution::NodeOutcome::AwaitEvent { .. })),
+            "{commit_id} uses structural yield rather than an await.event stand-in",
+        );
+        assert!(
+            commit.completions().is_empty(),
+            "{commit_id} uses one-shot execution, so structural yield does not commit a resumable loop completion",
+        );
         assert!(commit.evidence().verify().is_accepted());
     }
 }
