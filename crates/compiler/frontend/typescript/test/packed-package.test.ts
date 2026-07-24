@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 const PACKAGE_DIR = new URL("..", import.meta.url).pathname;
+const PACKED_PACKAGE_INSTALL_TIMEOUT_MS = 30_000;
 
 function run(command: string, args: string[], cwd: string) {
   return spawnSync(command, args, { cwd, encoding: "utf8" });
@@ -109,5 +110,5 @@ describe("packed @apxm/frontend", () => {
       expect(absent.status).not.toBe(0);
       expect(readFileSync(absentScript, "utf8")).toContain(subpath);
     }
-  });
+  }, PACKED_PACKAGE_INSTALL_TIMEOUT_MS);
 });
