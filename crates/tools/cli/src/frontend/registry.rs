@@ -2,8 +2,7 @@ use apxm_backends::llm::ProviderProtocol;
 use apxm_backends::llm::catalog::{BUILTIN_MODELS, BUILTIN_PROVIDERS};
 use apxm_core::constants;
 use apxm_core::types::operations::{
-    SemanticOpKind as AISOperationType, OperationCategory, OperationField,
-    get_all_operations,
+    OperationCategory, OperationField, SemanticOpKind as AISOperationType, get_all_operations,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

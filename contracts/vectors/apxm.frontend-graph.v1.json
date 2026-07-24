@@ -41,7 +41,8 @@
           "decl_id": "decl.event.input",
           "decl_kind": "event_type",
           "input_type_ref": "SessionInput",
-          "output_type_ref": "SessionInput"
+          "output_type_ref": "SessionInput",
+          "target_ref": "event.input"
         }
       ],
       "functions": [
@@ -88,6 +89,24 @@
           "type_ref": "SearchResult",
           "origin": "call_result",
           "origin_id": "node.cap.1"
+        },
+        {
+          "value_id": "value.child.instance",
+          "type_ref": "ProgramInstanceRef",
+          "origin": "call_result",
+          "origin_id": "node.new.1"
+        },
+        {
+          "value_id": "value.child.output",
+          "type_ref": "SummarizerOutput",
+          "origin": "call_result",
+          "origin_id": "node.invoke.1"
+        },
+        {
+          "value_id": "value.event.output",
+          "type_ref": "SessionInput",
+          "origin": "call_result",
+          "origin_id": "node.await.1"
         }
       ],
       "blocks": [
@@ -121,6 +140,16 @@
           "from_value": "value.model.out",
           "to_consumer": "node.cap.1",
           "consumer_slot": "arguments"
+        },
+        {
+          "from_value": "value.input",
+          "to_consumer": "node.invoke.1",
+          "consumer_slot": "input"
+        },
+        {
+          "from_value": "value.search.out",
+          "to_consumer": "node.return.1",
+          "consumer_slot": "output"
         }
       ],
       "call_intents": [
@@ -147,7 +176,8 @@
           "intent_kind": "agent_creation",
           "parent_region_id": "region.loop.1",
           "execution_order": 2,
-          "binding_ref": "Summarizer"
+          "binding_ref": "Summarizer",
+          "result_value": "value.child.instance"
         },
         {
           "node_id": "node.invoke.1",
@@ -155,14 +185,17 @@
           "parent_region_id": "region.loop.1",
           "execution_order": 3,
           "binding_ref": "Summarizer",
-          "receiver_kind": "program_instance_ref"
+          "receiver_kind": "program_instance_ref",
+          "operand_values": ["value.input"],
+          "result_value": "value.child.output"
         },
         {
           "node_id": "node.await.1",
           "intent_kind": "event_wait",
           "parent_region_id": "region.loop.1",
           "execution_order": 4,
-          "binding_ref": "decl.event.input"
+          "binding_ref": "decl.event.input",
+          "result_value": "value.event.output"
         }
       ],
       "control_intents": [

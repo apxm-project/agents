@@ -85,10 +85,15 @@ pub struct EventAwait {
 /// The typed outcome of an `await.event` effect.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EventOutcome {
-    Fulfilled { event_ref: EventRef, payload: String },
+    Fulfilled {
+        event_ref: EventRef,
+        payload: String,
+    },
     Parked,
     Expired,
-    Mismatched { delivered_event_ref: EventRef },
+    Mismatched {
+        delivered_event_ref: EventRef,
+    },
 }
 
 /// The event port for `await.event` effects.

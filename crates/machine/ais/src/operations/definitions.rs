@@ -615,7 +615,10 @@ mod absence_tests {
         for spec in AIS_OPERATIONS {
             for field in spec.fields {
                 if field.name.contains('.') {
-                    panic!("semantic operand field names must be flat identifiers: {}", field.name);
+                    panic!(
+                        "semantic operand field names must be flat identifiers: {}",
+                        field.name
+                    );
                 }
             }
         }

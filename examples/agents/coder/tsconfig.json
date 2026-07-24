@@ -8,7 +8,8 @@
     "types": ["node"],
     "typeRoots": ["../../../crates/compiler/frontend/typescript/node_modules/@types"],
     "paths": {
-      "@apxm/frontend": ["../../../crates/compiler/frontend/typescript/dist/index.d.ts"]
+      "@apxm/frontend": ["../../../crates/compiler/frontend/typescript/dist/index.d.ts"],
+      "@apxm/agent-packaging": ["../../../crates/tools/cli/agent-packaging/index.d.ts"]
     }
   },
   "include": ["capabilities/**/*.ts"]

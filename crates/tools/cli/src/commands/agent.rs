@@ -180,8 +180,7 @@ impl fmt::Display for FrontendLanguage {
     }
 }
 
-const TYPESCRIPT_AGENT_PACKAGING_PACKAGE: &str =
-    "APXM_TYPESCRIPT_AGENT_PACKAGING_PACKAGE";
+const TYPESCRIPT_AGENT_PACKAGING_PACKAGE: &str = "APXM_TYPESCRIPT_AGENT_PACKAGING_PACKAGE";
 
 fn installed_typescript_agent_packaging_entry(relative: &str) -> Result<PathBuf> {
     let package = std::env::var_os(TYPESCRIPT_AGENT_PACKAGING_PACKAGE).ok_or_else(|| {
@@ -2192,10 +2191,9 @@ mod tests {
             Some("python/main.py")
         );
 
-        let air = super::super::compile_service_canonical::emit_canonical_air_from_agent(
-            &root, None,
-        )
-        .expect("canonical compile-service must compile the package-level program entry");
+        let air =
+            super::super::compile_service_canonical::emit_canonical_air_from_agent(&root, None)
+                .expect("canonical compile-service must compile the package-level program entry");
         assert!(air.contains("\"schema_version\":\"apxm.air.v1\""));
         assert!(air.contains("\"op\":\"model.call\""));
     }

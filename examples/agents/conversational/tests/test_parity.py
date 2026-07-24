@@ -3,20 +3,33 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
 EXAMPLE_DIR = Path(__file__).resolve().parents[1]
+FRONTEND_PACKAGE_DIR = EXAMPLE_DIR.parents[2] / ".apxm" / "frontend-example-python"
+
+
+def _python_environment() -> dict[str, str]:
+    """Keep the packed frontend importable after the subprocess changes cwd."""
+    environment = os.environ.copy()
+    inherited = environment.get("PYTHONPATH", "")
+    environment["PYTHONPATH"] = os.pathsep.join(
+        value for value in (str(FRONTEND_PACKAGE_DIR), inherited) if value
+    )
+    return environment
 
 
 def python_air() -> dict:
     result = subprocess.run(
         ["python", "python/agent.py", "--air"],
         cwd=EXAMPLE_DIR,
-        check=True,
+        env=_python_environment(),
         capture_output=True,
         text=True,
     )
+    assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
 
 
@@ -30,10 +43,11 @@ def typescript_air() -> dict:
             "console.log(buildConversational().canonicalAir());",
         ],
         cwd=EXAMPLE_DIR,
-        check=True,
+        env=_python_environment(),
         capture_output=True,
         text=True,
     )
+    assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
 
 
@@ -62,6 +76,7 @@ def test_conversational_examples_lower_equivalently() -> None:
 def test_conversational_example_uses_only_generic_operations() -> None:
     air = python_air()
     ops = {op["op"] for op in air["semantic_operations"]}
-    assert ops == {"capability.invoke", "model.call", "await.event"}
+    assert ops == {"program.new", "program.invoke", "model.call"}
     structural = {node["kind"] for node in air["structural_ir"]}
     assert "ais.loop" in structural
+    assert "yield" in structural

@@ -126,7 +126,6 @@ impl PromptInputRole {
     pub const fn is_protected(self) -> bool {
         !self.is_user()
     }
-
 }
 
 /// Exact serialized values accepted in an [`INPUT_ROLES`] vector.

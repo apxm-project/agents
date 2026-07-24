@@ -31,7 +31,10 @@
           "op": "program.new",
           "parent_region_id": "region.loop.1",
           "execution_order": 2,
-          "operands": []
+          "operands": [
+            { "slot": "program_ref", "value_id": "value.program.ref", "type_ref": "ProgramRef" }
+          ],
+          "result": { "value_id": "value.instance", "type_ref": "ProgramInstanceRef" }
         },
         {
           "node_id": "node.invoke.1",
@@ -39,8 +42,10 @@
           "parent_region_id": "region.loop.1",
           "execution_order": 3,
           "operands": [
-            { "slot": "receiver", "value_id": "value.instance", "type_ref": "ProgramInstanceRef" }
-          ]
+            { "slot": "receiver", "value_id": "value.instance", "type_ref": "ProgramInstanceRef" },
+            { "slot": "input", "value_id": "value.child.input", "type_ref": "ChildInput" }
+          ],
+          "result": { "value_id": "value.child.output", "type_ref": "ChildOutput" }
         },
         {
           "node_id": "node.await.1",
@@ -49,7 +54,8 @@
           "execution_order": 4,
           "operands": [
             { "slot": "event_ref", "value_id": "value.event.ref", "type_ref": "EventRef" }
-          ]
+          ],
+          "result": { "value_id": "value.event.output", "type_ref": "EventOutput" }
         }
       ],
       "structural_ir": [

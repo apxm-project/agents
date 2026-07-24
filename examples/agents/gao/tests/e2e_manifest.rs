@@ -246,12 +246,14 @@ fn gao_uses_generic_host_input_without_package_context_injection() {
         "Gao must not carry a hand-maintained Studio node-kind snapshot"
     );
     assert!(
-        entry.contains("extends ConversationalAgent"),
-        "Gao must extend the example-local ConversationalAgent"
+        entry.contains("Agent<"),
+        "Gao must use the installed generic Agent authoring API"
     );
     assert!(
-        entry.contains("programNew") && entry.contains("programInvoke"),
-        "Gao must use generic program composition"
+        entry.contains("WorkflowDiscovery.new")
+            && entry.contains("specialist.invoke")
+            && entry.contains("agent.yield_"),
+        "Gao must compose a generic Program Instance and yield its next input"
     );
 }
 

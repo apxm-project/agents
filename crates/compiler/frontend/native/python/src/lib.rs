@@ -22,8 +22,7 @@ fn lower_frontend_graph(graph_json: &str) -> PyResult<String> {
 /// Compile a FrontendGraph JSON string into a complete executable artifact.
 #[pyfunction]
 fn compile_frontend_graph_artifact(graph_json: &str) -> PyResult<String> {
-    apxm_program::compile_frontend_graph_artifact_json(graph_json)
-        .map_err(PyValueError::new_err)
+    apxm_program::compile_frontend_graph_artifact_json(graph_json).map_err(PyValueError::new_err)
 }
 
 /// Return `None` if the FrontendGraph JSON verifies, otherwise a diagnostic

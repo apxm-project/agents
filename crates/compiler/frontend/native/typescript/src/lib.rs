@@ -22,8 +22,7 @@ pub fn lower_frontend_graph(graph_json: String) -> napi::Result<String> {
 /// Compile a FrontendGraph JSON string into a complete executable artifact.
 #[napi]
 pub fn compile_frontend_graph_artifact(graph_json: String) -> napi::Result<String> {
-    apxm_program::compile_frontend_graph_artifact_json(&graph_json)
-        .map_err(Error::from_reason)
+    apxm_program::compile_frontend_graph_artifact_json(&graph_json).map_err(Error::from_reason)
 }
 
 /// Return `null` if the FrontendGraph JSON verifies, otherwise a diagnostic

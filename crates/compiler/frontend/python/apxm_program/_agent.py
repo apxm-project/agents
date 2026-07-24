@@ -7,6 +7,8 @@ and ``.invoke(...)`` composition and the compiled graph for the compiler bridge.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Callable, Optional
 
 from . import _bridge
@@ -31,10 +33,23 @@ class AgentDefinition:
         self._input_type_ref = input_type_ref
         self._output_type_ref = output_type_ref
         self._context_type_ref = context_type_ref
+        self._artifact_digest = "sha256:" + hashlib.sha256(
+            json.dumps(graph, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
 
     @property
     def program_id(self) -> str:
         return self._program_id
+
+    @property
+    def _program_reference(self) -> tuple[str, str, str, str]:
+        """Return the static composition reference consumed by source capture."""
+        return (
+            self._program_id,
+            self._artifact_digest,
+            self._program_id,
+            f"{self._program_id}.identity",
+        )
 
     def frontend_graph(self) -> dict[str, Any]:
         """The captured FrontendGraph for this program."""

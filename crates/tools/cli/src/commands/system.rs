@@ -26,8 +26,28 @@ const DOCTOR_FRONTEND_GRAPH_PROBE: &str = r#"{
     }
   ],
   "imported_program_refs": [],
-  "semantic_operations": [],
-  "structural_regions": [],
+  "declarations": [],
+  "functions": [
+    {
+      "function_id": "main",
+      "parameters": [],
+      "result_type_ref": "unit",
+      "body_region_id": "doctor_probe.body",
+      "is_entrypoint": true
+    }
+  ],
+  "values": [],
+  "blocks": [],
+  "regions": [
+    {
+      "region_id": "doctor_probe.body",
+      "region_role": "function_body",
+      "execution_order": 0
+    }
+  ],
+  "data_edges": [],
+  "call_intents": [],
+  "control_intents": [],
   "context_flow": [],
   "hook_bindings": [],
   "capability_requirements": [],

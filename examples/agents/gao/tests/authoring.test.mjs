@@ -11,11 +11,14 @@ test("Gao verifies and lowers to only generic operations", () => {
   assert.equal(gao.diagnostics(), null);
   const air = JSON.parse(gao.canonicalAir());
   const ops = new Set(air.semantic_operations.map((operation) => operation.op));
-  assert.ok(ops.has("model.call"));
-  assert.ok(ops.has("capability.invoke"));
-  assert.ok(ops.has("await.event"));
+  assert.deepEqual([...ops].sort(), [
+    "model.call",
+    "program.invoke",
+    "program.new",
+  ]);
   const structural = air.structural_ir.map((node) => node.kind);
   assert.ok(structural.includes("ais.loop"));
+  assert.ok(structural.includes("yield"));
 });
 
 test("Gao source uses only the public authoring surface", () => {
@@ -23,5 +26,7 @@ test("Gao source uses only the public authoring surface", () => {
   assert.equal(source.includes("crates/compiler"), false);
   assert.equal(source.includes("AgentProgram"), false);
   assert.equal(source.includes("sourceSpan"), false);
-  assert.equal(source.includes("programNew"), false);
+  assert.equal(source.includes("GraphBuilder"), false);
+  assert.ok(source.includes("agent.yield_"));
+  assert.ok(source.includes("WorkflowDiscovery.new"));
 });

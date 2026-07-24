@@ -325,7 +325,11 @@ fn check_generated_named_files(
     for entry in fs::read_dir(output_dir)? {
         let entry = entry?;
         if entry.file_type()?.is_file()
-            && entry.path().extension().and_then(|extension| extension.to_str()) == Some("ts")
+            && entry
+                .path()
+                .extension()
+                .and_then(|extension| extension.to_str())
+                == Some("ts")
             && entry
                 .file_name()
                 .to_str()

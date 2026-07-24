@@ -33,14 +33,32 @@ impl std::fmt::Display for SessionLedgerError {
             Self::ToolBudgetExhausted { tool, budget } => {
                 write!(f, "session tool budget exhausted for '{tool}' ({budget})")
             }
-            Self::DurableRead { session_id, message } => {
-                write!(f, "failed to read durable session ledger for '{session_id}': {message}")
+            Self::DurableRead {
+                session_id,
+                message,
+            } => {
+                write!(
+                    f,
+                    "failed to read durable session ledger for '{session_id}': {message}"
+                )
             }
-            Self::DurableWrite { session_id, message } => {
-                write!(f, "failed to write durable session ledger for '{session_id}': {message}")
+            Self::DurableWrite {
+                session_id,
+                message,
+            } => {
+                write!(
+                    f,
+                    "failed to write durable session ledger for '{session_id}': {message}"
+                )
             }
-            Self::CorruptRecord { session_id, message } => {
-                write!(f, "invalid durable session ledger for '{session_id}': {message}")
+            Self::CorruptRecord {
+                session_id,
+                message,
+            } => {
+                write!(
+                    f,
+                    "invalid durable session ledger for '{session_id}': {message}"
+                )
             }
         }
     }
@@ -160,7 +178,10 @@ impl SessionLedger {
 
     #[must_use]
     pub fn turns_used(&self) -> usize {
-        self.state.lock().expect("session ledger poisoned").turns_used
+        self.state
+            .lock()
+            .expect("session ledger poisoned")
+            .turns_used
     }
 
     /// Remaining per-tool call budget for the session (unbounded tools omitted).
@@ -190,7 +211,8 @@ impl SessionLedger {
     /// Remaining substantive turns before the cap, if bounded.
     #[must_use]
     pub fn turns_remaining(&self) -> Option<usize> {
-        self.turn_cap.map(|cap| cap.saturating_sub(self.turns_used()))
+        self.turn_cap
+            .map(|cap| cap.saturating_sub(self.turns_used()))
     }
 
     /// The current persistable counter snapshot.

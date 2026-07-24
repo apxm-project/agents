@@ -84,7 +84,13 @@ fn generic_graph_value() -> Value {
                 "result_value": "value.cap.out"
             }
         ],
-        "control_intents": [],
+        "control_intents": [{
+            "node_id": "node.loop",
+            "control_kind": "loop",
+            "parent_region_id": "region.root",
+            "execution_order": 0,
+            "body_region_ids": ["loop.main"]
+        }],
         "context_flow": [{
             "from_node": "node.model",
             "to_node": "node.capability",
@@ -125,7 +131,10 @@ fn generic_graph_lowers_and_carries_source_map() {
         .expect("model.call lowered");
     assert_eq!(model.op.wire(), "model.call");
     assert!(model.operands.iter().any(|o| o.slot == "request"));
-    assert_eq!(model.result.as_ref().map(|r| r.value_id.as_str()), Some("value.model.out"));
+    assert_eq!(
+        model.result.as_ref().map(|r| r.value_id.as_str()),
+        Some("value.model.out")
+    );
 
     let cap = air
         .semantic_operations
@@ -143,4 +152,81 @@ fn generic_graph_produces_validating_artifact() {
     assert!(artifact.validate().is_accepted());
     assert_eq!(artifact.entrypoints[0].program_id, "Worker");
     assert_eq!(artifact.artifact_semantic_requirements.len(), 2);
+}
+
+#[test]
+fn hook_wrapper_is_a_non_colliding_sibling_of_its_call_target() {
+    let mut value = generic_graph_value();
+    value["hook_bindings"] = json!([{
+        "hook_id": "hook.before.model",
+        "scope": "model",
+        "phase": "before",
+        "target_selector": "node.model",
+        "declaration_order": 0,
+        "handler_ref": "hooks.before_model",
+        "handler_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "input_type_ref": "ModelContext",
+        "output_type_ref": "ModelContext",
+        "return_mode": "observe"
+    }]);
+    let graph: FrontendGraph = serde_json::from_value(value).expect("hook graph");
+    let air = frontend_graph_to_air(&graph).expect("lower hook graph");
+    let wrapper = air
+        .structural_ir
+        .iter()
+        .find(|node| node.region_id == "hook.before.model")
+        .expect("hook wrapper");
+    let model = air
+        .semantic_operations
+        .iter()
+        .find(|operation| operation.node_id == "node.model")
+        .expect("model operation");
+    assert_eq!(wrapper.parent_region_id.as_deref(), Some("loop.main"));
+    assert!(wrapper.execution_order < model.execution_order);
+    assert!(air.verify().is_accepted());
+}
+
+#[test]
+fn yield_resume_value_is_owned_once_by_its_lexical_block() {
+    let mut value = generic_graph_value();
+    value["values"]
+        .as_array_mut()
+        .expect("values array")
+        .push(json!({
+            "value_id": "value.resume",
+            "type_ref": "Input",
+            "origin": "resume_input",
+            "origin_id": "node.yield"
+        }));
+    value["blocks"] = json!([{
+        "block_id": "block.loop",
+        "region_id": "loop.main",
+        "block_arguments": ["value.resume"],
+        "execution_order": 0
+    }]);
+    value["control_intents"]
+        .as_array_mut()
+        .expect("control intent array")
+        .push(json!({
+            "node_id": "node.yield",
+            "control_kind": "yield",
+            "parent_region_id": "loop.main",
+            "execution_order": 2,
+            "result_value": "value.resume"
+        }));
+
+    let graph: FrontendGraph = serde_json::from_value(value).expect("yield graph");
+    let air = frontend_graph_to_air(&graph).expect("yield graph lowers without duplicate SSA");
+    let owners: Vec<&str> = air
+        .structural_ir
+        .iter()
+        .filter(|node| {
+            node.block_arguments
+                .iter()
+                .any(|argument| argument.value_id == "value.resume")
+        })
+        .map(|node| node.region_id.as_str())
+        .collect();
+    assert_eq!(owners, ["loop.main"]);
+    assert!(air.verify().is_accepted());
 }

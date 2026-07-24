@@ -2,8 +2,9 @@
  * @file  AISTypes.h
  * @brief Type interface and uniqued storage for the AIS dialect.
  *
- * Defines the three first-class types exported by the dialect:
- *   - TokenType  – data-flow token carrying a typed payload
+ * Defines the four first-class types exported by the dialect:
+ *   - TypeRefType – dialect-owned reference to a source or compiler type
+ *   - TokenType  – data-flow token carrying a required TypeRefType payload
  *   - HandleType – reference to content in an AAM memory space
  *   - GoalType   – planning goal annotated with a priority
  *
@@ -34,12 +35,13 @@ enum class MemorySpace : uint8_t { STM = 0, LTM, Episodic };
 
 std::optional<MemorySpace> symbolizeMemorySpace(StringRef str);
 StringRef stringifyMemorySpace(MemorySpace space);
-Type getDefaultPayloadType(MLIRContext *ctx);
+Type getDefaultHandlePayloadType(MLIRContext *ctx);
 
 //===----------------------------------------------------------------------===//
 // Forward declarations (public)
 //===----------------------------------------------------------------------===//
 
+class TypeRefType;
 class TokenType;
 class HandleType;
 class GoalType;
@@ -50,18 +52,51 @@ class GoalType;
 
 namespace detail {
 
+struct TypeRefTypeStorage final : public TypeStorage {
+  using KeyTy = StringRef;
+
+  explicit TypeRefTypeStorage(StringRef typeRef) : typeRef(typeRef) {}
+
+  bool operator==(const KeyTy &key) const { return key == typeRef; }
+
+  static TypeRefTypeStorage *construct(TypeStorageAllocator &alloc, const KeyTy &key) {
+    return new (alloc.allocate<TypeRefTypeStorage>()) TypeRefTypeStorage(alloc.copyInto(key));
+  }
+
+  StringRef typeRef;
+};
+
+} // namespace detail
+
+//===----------------------------------------------------------------------===//
+// Public type classes
+//===----------------------------------------------------------------------===//
+
+/// A stable, dialect-owned reference to one exact source or compiler type.
+class TypeRefType : public Type::TypeBase<TypeRefType, Type, detail::TypeRefTypeStorage> {
+public:
+  using Base::Base;
+
+  static constexpr StringLiteral name = "ais.type_ref";
+
+  static TypeRefType get(MLIRContext *ctx, StringRef typeRef);
+  StringRef getTypeRef() const;
+};
+
+namespace detail {
+
 struct TokenTypeStorage final : public TypeStorage {
-  using KeyTy = Type;
+  using KeyTy = TypeRefType;
 
-  explicit TokenTypeStorage(Type inner) : innerType(inner) {}
+  explicit TokenTypeStorage(TypeRefType typeRef) : typeRef(typeRef) {}
 
-  bool operator==(const KeyTy &key) const { return key == innerType; }
+  bool operator==(const KeyTy &key) const { return key == typeRef; }
 
   static TokenTypeStorage *construct(TypeStorageAllocator &alloc, const KeyTy &key) {
     return new (alloc.allocate<TokenTypeStorage>()) TokenTypeStorage(key);
   }
 
-  Type innerType;
+  TypeRefType typeRef;
 };
 
 struct HandleTypeStorage final : public TypeStorage {
@@ -97,18 +132,14 @@ struct GoalTypeStorage final : public TypeStorage {
 
 } // namespace detail
 
-//===----------------------------------------------------------------------===//
-// Public type classes
-//===----------------------------------------------------------------------===//
-
 class TokenType : public Type::TypeBase<TokenType, Type, detail::TokenTypeStorage> {
 public:
   using Base::Base;
 
   static constexpr StringLiteral name = "ais.token";
 
-  static TokenType get(MLIRContext *ctx, Type innerType);
-  Type getInnerType() const;
+  static TokenType get(MLIRContext *ctx, TypeRefType typeRef);
+  TypeRefType getInnerType() const;
 };
 
 class HandleType : public Type::TypeBase<HandleType, Type, detail::HandleTypeStorage> {

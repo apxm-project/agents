@@ -8,7 +8,6 @@ use super::registry::{
     graph_metric_constants, operation_specs, provider_protocols,
 };
 
-
 pub fn render_typescript_frontend_files() -> Vec<(&'static str, String)> {
     vec![("runtime-evidence.ts", render_runtime_evidence_typescript())]
 }

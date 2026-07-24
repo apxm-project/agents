@@ -2,8 +2,8 @@
 
 - Architectural status: accepted APXM v1 source → FrontendGraph → Rust → AIR
   direction
-- Frontend syntax status: design proposal; the short API shown here is not
-  implemented at `agents@8ccf4040bd341d074954489bdd61112f3bee294b`
+- Frontend syntax status: implemented source-first authoring surface; package
+  export and canonical capture checks are the current compatibility evidence
 - Implementation plan:
   [Source-first Agent frontend master plan](../agents/simple-agent-authoring-frontend-plan.md)
 - Audience: Python and TypeScript authors
@@ -42,9 +42,20 @@ bound semantic nodes and FrontendGraph intents.
 
 Markers are statically recognized by imported symbol identity. Compiling does
 not execute the decorator, declaration factory callback, Agent body, or handler
-to discover behavior. The complete proposed matrix and composition rules live
+to discover behavior. The complete declaration matrix and composition rules live
 in the master plan's
 [language projections and decorator matrix](../agents/simple-agent-authoring-frontend-plan.md#24-language-projections-and-decorator-matrix).
+
+### 1.2 Authoring conventions
+
+Declare Models, Tools, Capabilities, Events, Context, and composed Agents at
+module scope. Python capture reads the decorated function source directly.
+TypeScript capture receives a static `{ fileName, text }` token and, for Node
+compilation, imports `@apxm/frontend/node`; the repository examples provide a
+small `static-source.ts` helper for this. Pass every binding used by an Agent in
+its TypeScript `use` object. This keeps symbol resolution exact, makes source
+maps portable, and lets the frontend reject dynamic lookup or shadowed marker
+names rather than infer behavior from text.
 
 ## 2. What the frontend does
 
@@ -73,7 +84,7 @@ AIR v1 -> registered AIS verification -> executable artifact
         -> admission -> generic runtime
 ```
 
-`BoundAgentTree` is a proposed internal implementation name, not a public API
+`BoundAgentTree` is a frozen internal implementation name, not a public API
 or serialized contract. It is the frontend's immutable, typed view of the
 complete source after names and APXM constructs are bound. FrontendGraph is the
 first language-neutral wire representation. Rust then becomes the single
@@ -101,10 +112,10 @@ and
 ```python
 from apxm_program import Agent, Model
 
-SummarizerModel = Model[SummaryRequest, Summary](ExactSummarizerModelRef)
+SummarizerModel = Model[object, object]("model.summarizer.v1")
 
 
-@Agent(input=SummaryRequest, output=Summary)
+@Agent(input="SummaryRequest", output="Summary")
 async def Summarizer(agent, request):
     return await SummarizerModel(request)
 ```
@@ -123,8 +134,8 @@ class Conversation:
     messages: tuple[Message, ...] = ()
 
 
-SearchWeb = Tool[SearchRequest, SearchResult](SearchWebCapabilityRef)
-SupportModel = Model[ModelRequest, ModelResponse](ExactSupportModelRef)
+SearchWeb = Tool[SearchRequest, SearchResult]("capability.search-web.v1")
+SupportModel = Model[ModelRequest, ModelResponse]("model.support.v1")
 
 
 @Agent(
@@ -196,12 +207,21 @@ Agent definition is one-shot; invoking the returned instance is stateful.
 
 ```typescript
 import { Agent, Model } from "@apxm/frontend";
+import "@apxm/frontend/node";
+import { staticSource } from "./static-source.js";
+
+type SummaryRequest = { readonly text: string };
+type Summary = { readonly text: string };
 
 const SummarizerModel = Model<SummaryRequest, Summary>(
-  ExactSummarizerModelRef,
+  "model.summarizer.v1",
 );
+const source = staticSource(import.meta.url);
 
 export const Summarizer = Agent<SummaryRequest, Summary>({
+  name: "Summarizer",
+  source,
+  use: { SummarizerModel },
   async run(agent, request) {
     return await SummarizerModel(request);
   },
@@ -214,21 +234,27 @@ The callback parameter is inferred. Authors do not import `AgentFacade`.
 
 ```typescript
 import { Agent, Context, Model, Tool } from "@apxm/frontend";
+import "@apxm/frontend/node";
+import { staticSource } from "./static-source.js";
 
 type Conversation = {
   messages: readonly Message[];
 };
 
 const ConversationContext = Context<Conversation>({ messages: [] });
-const SearchWeb = Tool<SearchRequest, SearchResult>(SearchWebCapabilityRef);
-const SupportModel = Model<ModelRequest, ModelResponse>(ExactSupportModelRef);
+const SearchWeb = Tool<SearchRequest, SearchResult>("capability.search-web.v1");
+const SupportModel = Model<ModelRequest, ModelResponse>("model.support.v1");
+const source = staticSource(import.meta.url);
 
 export const Support = Agent<
   ConversationInput,
   ConversationOutput,
   Conversation
 >({
+  name: "Support",
+  source,
   context: ConversationContext,
+  use: { SearchWeb, SupportModel },
   async run(agent, incoming) {
     for (;;) {
       const research = incoming.searchQuery === undefined
@@ -301,13 +327,10 @@ and `Agent(...)` bind typed semantic-tree declarations that later emit
 FrontendGraph; an AIR effect appears only at an invoked callsite. Context
 assignments become value flow, not a sixth operation.
 
-This complete lowering is part of the linked design plan. At the pinned
-baseline, FrontendGraph still carries AIR operation strings and `ais.loop`, the
-Rust lowerer mostly copies those records, and the MLIR emitter omits semantic
-operands. The
-[baseline gap table](../agents/simple-agent-authoring-frontend-plan.md#9-baseline-findings-and-required-corrections)
-identifies the owning source for each gap; the guide syntax is not implemented
-until those gates close.
+The source-first implementation is verified as one representation stack:
+FrontendGraph carries typed source intent, Rust verifies it before constructing
+CFG/SSA and registered AIS, and package checks reject unsupported recorder or
+raw-operation exports.
 
 ## 6. Tool versus Capability
 
@@ -372,11 +395,9 @@ powerful: source syntax, high-level semantic representation, language-neutral
 graph, canonical IR, optimization IR, and executable artifact are distinct
 verified levels.
 
-At the current baseline, the repository
-[conversational example](../../examples/agents/conversational/README.md)
-still uses the low-level recorder API. It remains an executable parity fixture
-until the plan linked above implements the short API and replaces the example
-atomically in Python and TypeScript.
+The repository [conversational example](../../examples/agents/conversational/README.md)
+uses the same short API in Python and TypeScript. It is an executable parity
+fixture, not a package-level conversational abstraction.
 
 ## 9. Acceptance checklist
 

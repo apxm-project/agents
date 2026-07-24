@@ -11,11 +11,15 @@ from __future__ import annotations
 import json
 import sys
 
-from apxm_program import Agent, Context, Event, Model, Tool
+from apxm_program import Agent, Context, Model, Tool
 
 SearchWeb = Tool[object, object]("cap.search")
 SupportModel = Model[object, object]("model.default")
-NextInput = Event[object]
+
+
+@Context
+class ResearchContext:
+    requests: int = 0
 
 
 @Context
@@ -25,15 +29,29 @@ class ConversationContext:
 
 @Agent(
     input="ConversationInput",
+    output="ResearchOutput",
+    context=ResearchContext,
+)
+async def ResearchSpecialist(agent, incoming):
+    research = await SearchWeb(incoming)
+    agent.context = ResearchContext(requests=agent.context.requests + 1)
+    return research
+
+
+@Agent(
+    input="ConversationInput",
     output="ConversationOutput",
     context=ConversationContext,
 )
 async def ConversationalExample(agent, incoming):
     while True:
-        research = await SearchWeb(incoming)
-        response = await SupportModel(incoming)
-        agent.context = ConversationContext()
-        incoming = await NextInput.wait()
+        specialist = ResearchSpecialist.new(context=ResearchContext())
+        research = await specialist.invoke(incoming)
+        response = await SupportModel({"incoming": incoming, "research": research})
+        agent.context = ConversationContext(
+            messages=(*agent.context.messages, incoming, response)
+        )
+        incoming = await agent.yield_(response)
 
 
 def main() -> None:
