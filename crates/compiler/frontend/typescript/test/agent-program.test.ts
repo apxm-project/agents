@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import "../src/node.ts";
-import { Agent, Capability, Context, Hook, Model, TaskGroup, Tool } from "../src/index.ts";
+import { Agent, Capability, Context, Event, Hook, Model, TaskGroup, Tool } from "../src/index.ts";
 import { CaptureError, captureProgram } from "../src/capture.ts";
 import { decodeFact } from "../src/generated/runtime-evidence.ts";
 
@@ -104,10 +104,32 @@ describe("source-first TypeScript authoring", () => {
 
   it("lowers the minimal agent to a registered model.call", () => {
     const air = JSON.parse(Summarizer.canonicalAir()) as {
-      semantic_operations: Array<{ op: string; operands: Array<{ slot: string }> }>;
+      semantic_operations: Array<{
+        op: string;
+        operands: Array<{ slot: string; value_id: string }>;
+      }>;
     };
     expect(air.semantic_operations.map((o) => o.op)).toEqual(["model.call"]);
     expect(air.semantic_operations[0].operands.some((o) => o.slot === "request")).toBe(true);
+    expect(air.semantic_operations[0].operands).toContainEqual({
+      slot: "model_ref",
+      value_id: "summarizer.model.v1",
+      type_ref: "ModelTargetRef",
+    });
+  });
+
+  it("rejects display aliases and handler objects while preserving constructed event refs", () => {
+    for (const marker of [Model, Tool, Capability, Event]) {
+      for (const invalid of ["", "default", "model.default", "support", "search-web"]) {
+        expect(() => marker(invalid)).toThrow(/exact typed reference/);
+      }
+    }
+    expect(() => Tool({ run() {} } as unknown as string)).toThrow(/exact typed reference/);
+    expect(() => Capability({ run() {} } as unknown as string)).toThrow(/exact typed reference/);
+
+    const event = Event<object>("event.session.input.v1");
+    expect(event.targetRef).toBe("event.session.input.v1");
+    expect((Event as unknown as { wait?: unknown }).wait).toBeUndefined();
   });
 
   it("binds a contextual Tool-using loop agent", () => {

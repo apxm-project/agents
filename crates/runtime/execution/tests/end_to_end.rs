@@ -13,10 +13,12 @@ use apxm_inference::{
     Usage,
 };
 use apxm_kernel::{
-    AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, ExecutionCommitPort,
-    ExecutionCommitRequest, ExecutionCommitResult, ExternalAgentCapabilityPort, PromptEffectState,
+    AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, ExactPortBinding, ExecutionCommitPort,
+    ExecutionCommitRequest, ExecutionCommitResult, ExternalAgentCapabilityPort, PortBundle,
+    PortBundleSpec, PortImplementation, PortSlot, PromptEffectState,
 };
 use apxm_program::air::AirModule;
+use apxm_program::artifact::SchemaDigestRef;
 use apxm_program::external_agent::{AttributedEvent, AttributedEventKind, PeerUsage};
 use apxm_program::frontend_graph::{HookBinding, HookPhase, HookReturnMode, HookScope};
 use apxm_program::runtime_evidence::Fact;
@@ -47,7 +49,7 @@ fn air() -> AirModule {
     serde_json::from_value(json!({
         "schema_version": "apxm.air.v1",
         "semantic_operations": [
-            {"node_id": "n.model", "op": "model.call", "parent_region_id": "r.fn", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.default", "type_ref": "ModelTargetRef"}]},
+            {"node_id": "n.model", "op": "model.call", "parent_region_id": "r.fn", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}]},
             {"node_id": "n.cap", "op": "capability.invoke", "parent_region_id": "r.fn", "execution_order": 1, "operands": [{"slot": "capability_ref", "value_id": "cap.search", "type_ref": "CapabilityRef"}]},
             {"node_id": "n.acp", "op": "capability.invoke", "parent_region_id": "r.fn", "execution_order": 2, "operands": [{"slot": "capability_ref", "value_id": "external-agent:acp:claude-code", "type_ref": "CapabilityRef"}, {"slot": "external_agent_session", "value_id": "session.1", "type_ref": "ExternalAgentSessionRef"}]},
             {"node_id": "n.new", "op": "program.new", "parent_region_id": "r.fn", "execution_order": 3, "operands": [{"slot": "program_ref", "value_id": "Specialist", "type_ref": "ProgramRef"}]},
@@ -66,7 +68,7 @@ fn air() -> AirModule {
 
 fn admission() -> ModelBindingAdmission {
     ModelBindingAdmission::new(ResolvedModelBinding {
-        model_target_ref: ModelTargetRef("model.default".into()),
+        model_target_ref: ModelTargetRef("model.target.v1".into()),
         model_deployment_ref: ModelDeploymentRef("deploy.default".into()),
         exact_port_binding: ExactPortBindingRef {
             binding_digest: digest('a'),
@@ -204,15 +206,67 @@ impl ExecutionCommitPort for FakeCommit {
 }
 
 fn ports(commit: Arc<FakeCommit>) -> ExecutionPorts {
-    ExecutionPorts {
-        model_inference: Arc::new(FakeModel),
-        capability: Arc::new(FakeCapability),
-        external_agent: Arc::new(FakeAcpPeer),
-        events: Arc::new(FakeEvents),
-        composition: Arc::new(FakeComposition),
-        execution_commit: commit,
-        hook_handlers: Arc::new(StaticHooks),
-    }
+    ports_with_composition(commit, Arc::new(FakeComposition))
+}
+
+fn ports_with_composition(
+    commit: Arc<FakeCommit>,
+    composition: Arc<dyn CompositionPort>,
+) -> ExecutionPorts {
+    let contract = |schema_id: &str| SchemaDigestRef {
+        schema_id: schema_id.into(),
+        digest: digest('e'),
+    };
+    let binding = |slot, schema_id| ExactPortBinding {
+        slot,
+        port_contract: contract(schema_id),
+        binding_digest: digest('b'),
+        proof_digest: digest('c'),
+    };
+    let spec = PortBundleSpec::new(vec![
+        (
+            PortSlot::ExecutionCommit,
+            contract("apxm.execution-commit.v1"),
+        ),
+        (
+            PortSlot::ModelInference,
+            contract("apxm.model-inference.v1"),
+        ),
+        (PortSlot::Capability, contract("apxm.capability.v1")),
+        (
+            PortSlot::ExternalAgentCapability,
+            contract("apxm.external-agent.v1"),
+        ),
+    ]);
+    let bundle = PortBundle::construct(
+        &spec,
+        vec![
+            (
+                binding(PortSlot::ExecutionCommit, "apxm.execution-commit.v1"),
+                PortImplementation::ExecutionCommit(commit),
+            ),
+            (
+                binding(PortSlot::ModelInference, "apxm.model-inference.v1"),
+                PortImplementation::ModelInference(Arc::new(FakeModel)),
+            ),
+            (
+                binding(PortSlot::Capability, "apxm.capability.v1"),
+                PortImplementation::Capability(Arc::new(FakeCapability)),
+            ),
+            (
+                binding(PortSlot::ExternalAgentCapability, "apxm.external-agent.v1"),
+                PortImplementation::ExternalAgentCapability(Arc::new(FakeAcpPeer)),
+            ),
+        ],
+    )
+    .expect("test ports satisfy the admitted bundle");
+    ExecutionPorts::from_admitted_bundle(
+        &bundle,
+        Arc::new(FakeEvents),
+        composition,
+        Arc::new(StaticHooks),
+    )
+    .expect("bundle contains every runtime effect port")
 }
 
 fn request() -> ExecutionRequest {
@@ -411,10 +465,12 @@ async fn program_invoke_dispatches_to_the_created_instance_receiver() {
         "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
     }))
     .unwrap();
-    let mut ports = ports(commit.clone());
-    ports.composition = Arc::new(RecordingComposition {
-        receivers: receivers.clone(),
-    });
+    let ports = ports_with_composition(
+        commit.clone(),
+        Arc::new(RecordingComposition {
+            receivers: receivers.clone(),
+        }),
+    );
     let mut req = request();
     req.air = air;
     req.hook_bindings = Vec::new();

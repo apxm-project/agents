@@ -10,6 +10,7 @@
 //! implementation and admits nothing; adapters implement the ports it defines.
 
 pub mod bundle;
+pub mod capability;
 pub mod commit;
 pub mod confinement;
 pub mod events;
@@ -21,6 +22,7 @@ pub mod reconcile;
 pub use bundle::{
     BundleError, ExactPortBinding, PortBundle, PortBundleSpec, PortImplementation, PortSlot,
 };
+pub use capability::{CapabilityOutcome, CapabilityPort, CapabilityRequest};
 pub use commit::{
     ATOMIC_WRITE_SET, AtomicWriteSet, ExecutionCommitPort, ExecutionCommitRequest,
     ExecutionCommitResult, ExecutionCommitTuple,

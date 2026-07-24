@@ -24,11 +24,11 @@
       ],
       "declarations": [
         {
-          "decl_id": "decl.model.default",
+          "decl_id": "decl.model.target.v1",
           "decl_kind": "model_binding",
           "input_type_ref": "ModelRequest",
           "output_type_ref": "ModelResponse",
-          "target_ref": "model.default"
+          "target_ref": "model.target.v1"
         },
         {
           "decl_id": "decl.cap.search",
@@ -158,7 +158,7 @@
           "intent_kind": "model_invocation",
           "parent_region_id": "region.loop.1",
           "execution_order": 0,
-          "binding_ref": "decl.model.default",
+          "binding_ref": "decl.model.target.v1",
           "operand_values": ["value.input"],
           "result_value": "value.model.out"
         },
@@ -243,7 +243,7 @@
       ],
       "model_requirements": [
         {
-          "model_target_ref": "model.default"
+          "model_target_ref": "model.target.v1"
         }
       ],
       "source_map": {

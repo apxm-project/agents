@@ -14,7 +14,7 @@ import sys
 from apxm_program import Agent, Context, Model, Tool
 
 SearchWeb = Tool[object, object]("cap.search")
-SupportModel = Model[object, object]("model.default")
+SupportModel = Model[object, object]("model.target.v1")
 
 
 @Context
@@ -58,6 +58,8 @@ def main() -> None:
     """Print the example graph, or canonical AIR with ``--air``."""
     if "--air" in sys.argv[1:]:
         print(ConversationalExample.canonical_air())
+    elif "--diagnostics" in sys.argv[1:]:
+        print(json.dumps(ConversationalExample.diagnostics()))
     else:
         print(
             json.dumps(

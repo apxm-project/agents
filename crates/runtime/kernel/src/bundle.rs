@@ -14,6 +14,7 @@ use apxm_inference::ModelInferencePort;
 use apxm_program::artifact::SchemaDigestRef;
 use apxm_program::grammar::is_digest;
 
+use crate::capability::CapabilityPort;
 use crate::commit::ExecutionCommitPort;
 use crate::confinement::ConfinementPort;
 use crate::external_agent::ExternalAgentCapabilityPort;
@@ -24,6 +25,7 @@ pub enum PortSlot {
     ExecutionCommit,
     Confinement,
     ModelInference,
+    Capability,
     ExternalAgentCapability,
 }
 
@@ -34,6 +36,7 @@ impl PortSlot {
             Self::ExecutionCommit => "execution_commit",
             Self::Confinement => "confinement",
             Self::ModelInference => "model_inference",
+            Self::Capability => "capability",
             Self::ExternalAgentCapability => "external_agent_capability",
         }
     }
@@ -56,6 +59,7 @@ pub enum PortImplementation {
     // A model inference implementation admitted into a concurrent runtime bundle
     // must be thread-safe; the inference Port Contract itself is transport-neutral.
     ModelInference(Arc<dyn ModelInferencePort + Send + Sync>),
+    Capability(Arc<dyn CapabilityPort>),
     ExternalAgentCapability(Arc<dyn ExternalAgentCapabilityPort>),
 }
 
@@ -66,6 +70,7 @@ impl PortImplementation {
             Self::ExecutionCommit(_) => PortSlot::ExecutionCommit,
             Self::Confinement(_) => PortSlot::Confinement,
             Self::ModelInference(_) => PortSlot::ModelInference,
+            Self::Capability(_) => PortSlot::Capability,
             Self::ExternalAgentCapability(_) => PortSlot::ExternalAgentCapability,
         }
     }
@@ -131,6 +136,7 @@ pub struct PortBundle {
     execution_commit: Arc<dyn ExecutionCommitPort>,
     confinement: Option<Arc<dyn ConfinementPort>>,
     model_inference: Option<Arc<dyn ModelInferencePort + Send + Sync>>,
+    capability: Option<Arc<dyn CapabilityPort>>,
     external_agent_capability: Option<Arc<dyn ExternalAgentCapabilityPort>>,
 }
 
@@ -140,6 +146,7 @@ impl std::fmt::Debug for PortBundle {
             .field("execution_commit", &true)
             .field("confinement", &self.confinement.is_some())
             .field("model_inference", &self.model_inference.is_some())
+            .field("capability", &self.capability.is_some())
             .field(
                 "external_agent_capability",
                 &self.external_agent_capability.is_some(),
@@ -167,6 +174,7 @@ impl PortBundle {
         let mut execution_commit: Option<Arc<dyn ExecutionCommitPort>> = None;
         let mut confinement: Option<Arc<dyn ConfinementPort>> = None;
         let mut model_inference: Option<Arc<dyn ModelInferencePort + Send + Sync>> = None;
+        let mut capability: Option<Arc<dyn CapabilityPort>> = None;
         let mut external_agent_capability: Option<Arc<dyn ExternalAgentCapabilityPort>> = None;
         let mut seen: HashSet<PortSlot> = HashSet::new();
 
@@ -198,6 +206,7 @@ impl PortBundle {
                 PortImplementation::ExecutionCommit(port) => execution_commit = Some(port),
                 PortImplementation::Confinement(port) => confinement = Some(port),
                 PortImplementation::ModelInference(port) => model_inference = Some(port),
+                PortImplementation::Capability(port) => capability = Some(port),
                 PortImplementation::ExternalAgentCapability(port) => {
                     external_agent_capability = Some(port);
                 }
@@ -217,6 +226,7 @@ impl PortBundle {
             execution_commit,
             confinement,
             model_inference,
+            capability,
             external_agent_capability,
         })
     }
@@ -234,6 +244,11 @@ impl PortBundle {
     #[must_use]
     pub fn model_inference(&self) -> Option<&Arc<dyn ModelInferencePort + Send + Sync>> {
         self.model_inference.as_ref()
+    }
+
+    #[must_use]
+    pub fn capability(&self) -> Option<&Arc<dyn CapabilityPort>> {
+        self.capability.as_ref()
     }
 
     #[must_use]

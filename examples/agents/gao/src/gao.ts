@@ -23,10 +23,10 @@ const PrepareValidation = Tool<{ request: string; plan: string }, ValidationRequ
 const GaoModel = Model<
   { incoming: GaoInput; catalog: CapabilityCatalog; plan: WorkflowPlan; validation: ValidationRequest },
   GaoReply
->("model.default");
+>("model.target.v1");
 const source = staticSource(import.meta.url);
 
-const GaoContext = Context<GaoState>({ history: [] });
+const GaoContext = Context<GaoState>({ history: [] }, "GaoContext");
 
 export const Gao: GaoProgram = Agent<GaoInput, GaoReply, GaoState>({
   name: "Gao",

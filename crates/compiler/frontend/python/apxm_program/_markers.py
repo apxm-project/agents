@@ -8,22 +8,12 @@ endpoint, or runtime object.
 
 from __future__ import annotations
 
-import hashlib
-import inspect
 from dataclasses import dataclass
-from typing import Any, Callable, Generic, Optional, TypeVar
+from typing import Any, TypeVar
 
 I = TypeVar("I")
 O = TypeVar("O")
 T = TypeVar("T")
-
-
-def _digest(func: Callable[..., Any]) -> str:
-    try:
-        source = inspect.getsource(func)
-    except (OSError, TypeError):
-        source = func.__qualname__
-    return "sha256:" + hashlib.sha256(source.encode("utf-8")).hexdigest()
 
 
 def _type_name(annotation: Any, fallback: str) -> str:
@@ -48,12 +38,11 @@ class ModelBinding:
 
 @dataclass(frozen=True, slots=True)
 class ToolBinding:
-    """A model-callable action reference or a bundled typed handler."""
+    """A static model-callable capability reference."""
 
     target_ref: str
     input_type_ref: str = "ToolInput"
     output_type_ref: str = "ToolOutput"
-    handler_digest: Optional[str] = None
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
         raise RuntimeError("a Tool is invoked inside a compiled Agent body")
@@ -61,12 +50,11 @@ class ToolBinding:
 
 @dataclass(frozen=True, slots=True)
 class CapabilityBinding:
-    """A typed executable action that is not a model-callable Tool."""
+    """A static executable capability reference that is not a Tool."""
 
     target_ref: str
     input_type_ref: str = "CapabilityInput"
     output_type_ref: str = "CapabilityOutput"
-    handler_digest: Optional[str] = None
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
         raise RuntimeError("a Capability is invoked inside a compiled Agent body")
@@ -96,7 +84,7 @@ class _ModelFactory:
         return self
 
     def __call__(self, target_ref: str) -> ModelBinding:
-        _reject_display_name(target_ref, "Model")
+        _require_exact_reference(target_ref, "Model")
         return ModelBinding(target_ref=target_ref)
 
 
@@ -104,32 +92,18 @@ class _ToolFactory:
     def __getitem__(self, _types: Any) -> "_ToolFactory":
         return self
 
-    def __call__(self, target: Any) -> ToolBinding:
-        if callable(target) and not isinstance(target, str):
-            return ToolBinding(
-                target_ref=f"tool:{target.__qualname__}",
-                handler_digest=_digest(target),
-                input_type_ref=_first_param_type(target),
-                output_type_ref=_return_type(target),
-            )
-        _reject_display_name(target, "Tool")
-        return ToolBinding(target_ref=target)
+    def __call__(self, target_ref: str) -> ToolBinding:
+        _require_exact_reference(target_ref, "Tool")
+        return ToolBinding(target_ref=target_ref)
 
 
 class _CapabilityFactory:
     def __getitem__(self, _types: Any) -> "_CapabilityFactory":
         return self
 
-    def __call__(self, target: Any) -> CapabilityBinding:
-        if callable(target) and not isinstance(target, str):
-            return CapabilityBinding(
-                target_ref=f"capability:{target.__qualname__}",
-                handler_digest=_digest(target),
-                input_type_ref=_first_param_type(target),
-                output_type_ref=_return_type(target),
-            )
-        _reject_display_name(target, "Capability")
-        return CapabilityBinding(target_ref=target)
+    def __call__(self, target_ref: str) -> CapabilityBinding:
+        _require_exact_reference(target_ref, "Capability")
+        return CapabilityBinding(target_ref=target_ref)
 
 
 class _TypedEventFactory:
@@ -139,7 +113,7 @@ class _TypedEventFactory:
         self._type_ref = type_ref
 
     def __call__(self, target_ref: str) -> EventType:
-        _reject_display_name(target_ref, "Event")
+        _require_exact_reference(target_ref, "Event")
         return EventType(type_ref=self._type_ref, target_ref=target_ref)
 
 
@@ -148,7 +122,7 @@ class _EventFactory:
         return _TypedEventFactory(_type_name(type_arg, "Event"))
 
     def __call__(self, target_ref: str) -> EventType:
-        _reject_display_name(target_ref, "Event")
+        _require_exact_reference(target_ref, "Event")
         return EventType(type_ref="Event", target_ref=target_ref)
 
 
@@ -162,28 +136,9 @@ def Context(cls: Any) -> ContextSchema:
     return ContextSchema(type_ref=cls.__name__, default_present=default_present)
 
 
-def _first_param_type(func: Callable[..., Any]) -> str:
-    signature = inspect.signature(func)
-    for parameter in signature.parameters.values():
-        return _type_name(
-            None if parameter.annotation is inspect.Signature.empty else parameter.annotation,
-            "HandlerInput",
-        )
-    return "HandlerInput"
-
-
-def _return_type(func: Callable[..., Any]) -> str:
-    signature = inspect.signature(func)
-    annotation = signature.return_annotation
-    return _type_name(
-        None if annotation is inspect.Signature.empty else annotation,
-        "HandlerOutput",
-    )
-
-
-def _reject_display_name(value: Any, marker: str) -> None:
-    forbidden = {"default", "support", "search-web", ""}
-    if isinstance(value, str) and value in forbidden:
+def _require_exact_reference(value: Any, marker: str) -> None:
+    forbidden = {"default", "model.default", "support", "search-web", ""}
+    if not isinstance(value, str) or value in forbidden:
         raise ValueError(
             f"{marker} accepts an exact typed reference, not a display name '{value}'"
         )

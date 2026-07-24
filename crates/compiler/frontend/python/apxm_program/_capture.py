@@ -143,11 +143,10 @@ class _Capture:
                 self.declarations.append(
                     BoundDeclaration(
                         decl_id=decl_id,
-                        decl_kind="tool_handler" if binding.handler_digest else "tool_binding",
+                        decl_kind="tool_binding",
                         input_type_ref=binding.input_type_ref,
                         output_type_ref=binding.output_type_ref,
                         target_ref=binding.target_ref,
-                        handler_digest=binding.handler_digest,
                     )
                 )
                 self.capability_requirements[binding.target_ref] = True
@@ -157,13 +156,10 @@ class _Capture:
                 self.declarations.append(
                     BoundDeclaration(
                         decl_id=decl_id,
-                        decl_kind="capability_handler"
-                        if binding.handler_digest
-                        else "capability_binding",
+                        decl_kind="capability_binding",
                         input_type_ref=binding.input_type_ref,
                         output_type_ref=binding.output_type_ref,
                         target_ref=binding.target_ref,
-                        handler_digest=binding.handler_digest,
                     )
                 )
                 self.capability_requirements[binding.target_ref] = False

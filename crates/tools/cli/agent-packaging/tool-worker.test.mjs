@@ -66,3 +66,59 @@ test("the worker rejects a handler result that bypasses Tool.answer", async () =
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("the worker unwraps a typed Tool.answer only at its private boundary", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "apxm-tool-worker-test-"));
+  const manifestPath = path.join(directory, "handlers.json");
+  const handlerId = "sha256:typed-answer-fixture";
+  const source = [
+    `import { Tool } from ${JSON.stringify(authoringModule)};`,
+    "export const typedAnswer = Tool.define({",
+    '  name: "typed_answer",',
+    '  description: "Private worker fixture.",',
+    "  input: Tool.object({ message: Tool.text({ minLength: 1 }) }),",
+    "  run({ message }) { return Tool.answer({ message }); },",
+    "});",
+  ].join("\n");
+  const manifest = {
+    version: "apxm.handler-manifest.v1",
+    handlers: [{
+      kind: "tool",
+      handler_id: handlerId,
+      module: "fixtures/typed-answer",
+      qualname: "typedAnswer",
+      name: "typed_answer",
+      source: { artifact_path: "handlers/typed-answer.mjs", content: source },
+    }],
+  };
+
+  try {
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    const child = spawn(process.execPath, [workerPath, manifestPath], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    child.stdin.end(`${JSON.stringify({
+      v: 1,
+      type: "call",
+      req_id: "typed-answer",
+      tool_id: handlerId,
+      args: { message: "hello" },
+    })}\n`);
+
+    const [stdout, stderr] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    const exitCode = await new Promise((resolve) => child.once("close", resolve));
+    assert.equal(exitCode, 0, stderr);
+    assert.deepEqual(JSON.parse(stdout), {
+      v: 1,
+      type: "result",
+      req_id: "typed-answer",
+      ok: true,
+      value: { message: "hello" },
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

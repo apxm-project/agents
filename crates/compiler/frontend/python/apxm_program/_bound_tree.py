@@ -38,11 +38,10 @@ class BoundDeclaration:
     """A resolved Context, Model, Tool, Capability, or Event declaration."""
 
     decl_id: str
-    decl_kind: str  # context | model_binding | tool_binding | tool_handler | capability_binding | capability_handler | event_type
+    decl_kind: str  # context | model_binding | tool_binding | capability_binding | event_type
     input_type_ref: str
     output_type_ref: str
     target_ref: Optional[str] = None
-    handler_digest: Optional[str] = None
     context_default_present: Optional[bool] = None
 
 

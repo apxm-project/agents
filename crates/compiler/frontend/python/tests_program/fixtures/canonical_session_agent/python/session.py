@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from apxm_program import Agent, Context, Event, Model
 
-SessionModel = Model[object, object]("model.default")
+SessionModel = Model[object, object]("model.target.v1")
 SessionInput = Event[object]("event.session.input")
 
 

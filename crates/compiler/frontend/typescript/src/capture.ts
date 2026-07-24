@@ -141,34 +141,23 @@ class Capture {
           target_ref: binding.targetRef,
         });
         this.modelRequirements.push(binding.targetRef);
-      } else if (binding.kind === "tool_binding" || binding.kind === "tool_handler") {
-        const record: Json = {
+      } else if (binding.kind === "tool_binding") {
+        this.declarations.push({
           decl_id: declId,
-          decl_kind: binding.kind,
+          decl_kind: "tool_binding",
           input_type_ref: binding.inputTypeRef,
           output_type_ref: binding.outputTypeRef,
           target_ref: binding.targetRef,
-        };
-        if (binding.handlerDigest !== undefined) {
-          record.handler_digest = binding.handlerDigest;
-        }
-        this.declarations.push(record);
+        });
         this.capabilityRequirements.set(binding.targetRef, true);
-      } else if (
-        binding.kind === "capability_binding" ||
-        binding.kind === "capability_handler"
-      ) {
-        const record: Json = {
+      } else if (binding.kind === "capability_binding") {
+        this.declarations.push({
           decl_id: declId,
-          decl_kind: binding.kind,
+          decl_kind: "capability_binding",
           input_type_ref: binding.inputTypeRef,
           output_type_ref: binding.outputTypeRef,
           target_ref: binding.targetRef,
-        };
-        if (binding.handlerDigest !== undefined) {
-          record.handler_digest = binding.handlerDigest;
-        }
-        this.declarations.push(record);
+        });
         this.capabilityRequirements.set(binding.targetRef, false);
       } else if (binding.kind === "event_type") {
         this.declarations.push({
@@ -176,6 +165,7 @@ class Capture {
           decl_kind: "event_type",
           input_type_ref: binding.typeRef,
           output_type_ref: binding.typeRef,
+          target_ref: binding.targetRef,
         });
       } else if (binding.kind === "context") {
         this.declarations.push({
@@ -585,13 +575,10 @@ class Capture {
       if (binding?.kind === "model_binding") {
         return { intent: "model_invocation", bindingRef: declId, slot: "request" };
       }
-      if (binding?.kind === "tool_binding" || binding?.kind === "tool_handler") {
+      if (binding?.kind === "tool_binding") {
         return { intent: "tool_invocation", bindingRef: declId, slot: "arguments" };
       }
-      if (
-        binding?.kind === "capability_binding" ||
-        binding?.kind === "capability_handler"
-      ) {
+      if (binding?.kind === "capability_binding") {
         return {
           intent: "capability_invocation",
           bindingRef: declId,

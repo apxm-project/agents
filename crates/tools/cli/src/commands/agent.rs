@@ -1389,7 +1389,7 @@ fn check_capability_bindings(pkg: &LoadedAgent) -> Vec<String> {
                     )),
                 }
             }
-            Some("typescript_handler" | "python_handler") => {
+            Some("typescript_handler") => {
                 if !cap.extra.contains_key("handler_module") {
                     errors.push(format!(
                         "capability '{}' (kind={}) is missing handler_module",
@@ -1408,7 +1408,7 @@ fn check_capability_bindings(pkg: &LoadedAgent) -> Vec<String> {
             Some("host" | "provider" | "http" | "static" | "mcp") => {}
             Some(other) => errors.push(format!(
                 "capability '{}' has unsupported kind '{other}'; expected one of \
-                 builtin, typescript_handler, python_handler, host, provider, http, static, mcp",
+                 builtin, typescript_handler, host, provider, http, static, mcp",
                 cap.id
             )),
             None => {
@@ -2182,7 +2182,7 @@ mod tests {
             root.join("python/main.py"),
             "from apxm_program import Agent, Model\n\
              \n\
-             StudioModel = Model[object, object](\"model.default\")\n\
+             StudioModel = Model[object, object](\"model.target.v1\")\n\
              \n\
              \n\
              @Agent(input=\"Input\", output=\"Output\")\n\

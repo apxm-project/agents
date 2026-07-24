@@ -1,8 +1,8 @@
 //! Portable frontend handler-manifest contract.
 //!
-//! Python and TypeScript frontends emit this versioned artifact sidecar for
-//! every tool and hook. The manifest carries only artifact-local source, never
-//! a build-host path.
+//! TypeScript package build tooling emits this versioned artifact sidecar for
+//! every packaged tool and hook. The manifest carries only artifact-local
+//! source, never a build-host path.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -23,12 +23,10 @@ pub const HANDLER_MANIFEST_HANDLER_ID_PREFIX: &str = "sha256:";
 /// Hexadecimal character count in a SHA-256 handler identity.
 pub const HANDLER_MANIFEST_HANDLER_ID_HEX_LENGTH: usize = 64;
 
-/// A handler's authoring language.
+/// The authoring language for the private package-handler worker.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HandlerLanguage {
-    /// Python handler source.
-    Python,
     /// TypeScript handler source.
     #[serde(rename = "typescript")]
     TypeScript,
@@ -256,7 +254,7 @@ mod tests {
     fn descriptor(kind: HandlerKind, name: &str) -> HandlerDescriptor {
         HandlerDescriptor {
             kind,
-            language: HandlerLanguage::Python,
+            language: HandlerLanguage::TypeScript,
             handler_id: format!(
                 "{HANDLER_MANIFEST_HANDLER_ID_PREFIX}{}",
                 "a".repeat(HANDLER_MANIFEST_HANDLER_ID_HEX_LENGTH)
@@ -265,8 +263,8 @@ mod tests {
             qualname: name.to_string(),
             name: name.to_string(),
             source: HandlerSource {
-                artifact_path: format!("handlers/{name}.py"),
-                content: "def handler(): pass\n".to_string(),
+                artifact_path: format!("handlers/{name}.mjs"),
+                content: "export function handler() {}\n".to_string(),
             },
             description: "example".to_string(),
             schema: empty_schema(),
