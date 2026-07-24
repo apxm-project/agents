@@ -41,8 +41,9 @@ owner for every v1 contract, and zero pending or deferred v1 decisions.
   admission, and runtime handlers;
 - Program Instance state, invocation, cancellation, structured children,
   replay, state commit, and generic checkpointing;
-- runnable conversational and Gao repository examples using only packed
-  generic frontend APIs;
+- three runnable repository examples using only packed generic frontend APIs:
+  Conversational as the primary reference plus focused Coder and Gao
+  extensions; and
 - local embedding, CLI/application, Server, and OS consumer cutover; and
 - deletion and absence proof for every retired operation and old semantic path.
 
@@ -286,9 +287,12 @@ Deliverables:
 - implement discovery-only Skills behavior and explicit context updates;
 - implement equivalent Python/TypeScript conversational examples using only
   packed generic APIs and ordinary structured loops;
-- implement Gao under repository examples as a TypeScript specialization of
-  the example-local `ConversationalAgent`, using only generic Agent Facade,
-  Context, `program.new`, and `program.invoke` APIs; and
+- implement Coder and Gao under repository examples as direct TypeScript
+  `Agent` definitions: Coder demonstrates read-only coding proposals, while
+  Gao demonstrates capability discovery, workflow planning, validation
+  preparation, explicit Context, a Model call, and source-owned yield/resume;
+  neither requires an example-local `ConversationalAgent` helper or
+  program-to-program composition; and
 - preserve provider-returned output/reasoning summaries without claiming
   hidden chain of thought.
 

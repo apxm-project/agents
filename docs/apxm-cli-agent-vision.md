@@ -52,7 +52,7 @@ boundary is.
 
 | Concern | Assessment at the original review | Historical evidence |
 |---|---|---|
-| **Turn body as a program** (QMEM→ASK→UMEM→FENCE, tools, skill calls) | ✅ YES — validated | `examples/agents/conversational/` is the source-first generic `Agent` reference; it has no `ConversationalAgent` package API |
+| **Turn body as a program** (QMEM→ASK→UMEM→FENCE, tools, skill calls) | ✅ YES — validated | Historical prototype evidence; superseded by the source-first authoring references named in this document's preamble |
 | **Authoring it simply** | ✅ YES — ~5–15 lines | Python frontend `@compile` + `g.ask(...)` + `Agent(instructions=, tools=)`; template auto-wiring (`{var}` → data edge); `@tool` 1-liner (`crates/compiler/frontend/python/apxm/{proxy,agent}.py`) |
 | **Static system prompt** | ✅ YES | `system_prompt=` attr, read at `llm/mod.rs:114` |
 | **Tools in the ASK** | ✅ YES (native tool-calling loop, max 10 iters) | `tool_dispatch.rs:381`; `capability_groups=["web"]` |

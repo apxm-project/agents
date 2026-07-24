@@ -171,22 +171,24 @@ The loop, optional Tool call, Model call, context update, and stateful yield are
 visible in ordinary source. There is no hidden model/Tool loop or implicit
 memory update.
 
-### 3.3 A bundled Tool
+### 3.3 A Tool reference
 
 ```python
 from apxm_program import Tool
 
 
-@Tool
-async def NormalizeAddress(request: AddressInput) -> NormalizedAddress:
-    return normalize_address(request)
+NormalizeAddress = Tool[AddressInput, NormalizedAddress](
+    "capability.normalize-address.v1"
+)
 ```
 
-The frontend recognizes the decorator and binds the typed Tool declaration and
-handler metadata into its semantic tree for the separate handler bundler. It
-does not run the handler while compiling and does not grant permission.
-Calling `NormalizeAddress(...)` from an Agent emits one typed Capability intent
-into FrontendGraph; execution still requires admission.
+The Python frontend records this typed Capability reference; it never runs a
+handler while compiling and grants no permission. Calling
+`NormalizeAddress(...)` from an Agent emits one typed Capability intent into
+FrontendGraph; execution still requires admission. Python package-local Tool
+handlers are not an authoring surface until their deterministic bundler and
+admitted adapter exist. See
+[ADR-0016](../adr/0016-tool-authoring-and-handler-execution-are-separate.md).
 
 ### 3.4 Compose Agents
 
@@ -276,17 +278,31 @@ export const Support = Agent<
 });
 ```
 
-### 4.3 A bundled Tool
+### 4.3 A package-local TypeScript Tool implementation
 
 ```typescript
-import { Tool } from "@apxm/frontend";
+import { Tool } from "@apxm/agent-packaging";
 
-export const NormalizeAddress = Tool<AddressInput, NormalizedAddress>({
-  async run(request) {
-    return normalizeAddress(request);
+type AddressInput = { line: string };
+type NormalizedAddress = { normalized: string };
+
+export const NormalizeAddress = Tool.define({
+  name: "normalize_address",
+  description: "Normalize one address without changing external state.",
+  input: Tool.object<AddressInput>({
+    line: Tool.text({ minLength: 1 }),
+  }),
+  run(input) {
+    return Tool.answer({ normalized: normalizeAddress(input.line) });
   },
 });
 ```
+
+This declaration lives in a package handler module. The Agent Program itself
+uses `Tool<AddressInput, NormalizedAddress>("capability.normalize-address.v1")`
+from `@apxm/frontend` as a static reference. The packaging helper generates the
+Rust-owned handler manifest; it is not a frontend runtime or an authority path.
+Authors never write the manifest, JSON Schema, or worker protocol.
 
 ### 4.4 Compose Agents
 
@@ -352,10 +368,12 @@ data. Source chooses a closed Tool variant, invokes it, and decides whether to
 call the Model again.
 
 `Model(...)` receives a typed digest-pinned Model Target reference. An imported
-`Tool(...)` receives a typed Capability-definition reference; a local `@Tool`
-derives its identity from the exported source declaration and typed schema.
-Mutable display names such as `"default-model"` and `"search-web"` are not
-executable source references.
+`Tool(...)` receives a typed Capability-definition reference. A separate
+TypeScript package handler can use `Tool.define` to generate a private build
+sidecar, but it cannot select an implementation or grant authority; Python
+package handlers are intentionally unsupported today. Mutable display names
+such as `"default-model"` and `"search-web"` are not executable source
+references.
 
 Programs that need an executable action which is not model-callable may use the
 focused advanced `Capability` API. That distinction keeps APXM authority
@@ -411,7 +429,8 @@ The frontend is ready when:
 - each frontend binds its native AST into an immutable typed source tree and
   deterministically traverses it into FrontendGraph without running user code;
 - Python and TypeScript produce equivalent FrontendGraph, AIR, diagnostics,
-  source maps, artifacts, and handler sidecars;
+  source maps, and artifacts; TypeScript package handlers separately generate
+  the one Rust-validated sidecar when a package supplies them;
 - FrontendGraph contains typed source intent rather than raw AIR/AIS operation
   strings, and registered AIS verification preserves every operand/result;
 - legal optimization preserves program meaning, authority, durability,

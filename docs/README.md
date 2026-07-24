@@ -185,7 +185,8 @@ The retired raw-authoring prototype demos that lived under `examples/python/`
 imported removed `apxm` package symbols (`GraphRecorder`, `GraphBuilder`,
 `compile`, `Agent`) and could not run; P9 removed that corpus. Canonical
 runnable examples now live under
-[`examples/agents/`](../examples/agents/) (`conversational/`, `gao/`) authored
+[`examples/agents/`](../examples/agents/): `conversational/` is the primary
+reference, with focused `coder/` and `gao/` extensions. They are authored
 against `apxm_program` / `@apxm/frontend`.
 
 Backend/operator references remain useful for the current implementation and
