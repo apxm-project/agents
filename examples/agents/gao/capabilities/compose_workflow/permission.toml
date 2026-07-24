@@ -1,3 +1,0 @@
-capability = "compose_workflow"
-decision = "ask"
-reason = "Creates or stages workflow artifacts."

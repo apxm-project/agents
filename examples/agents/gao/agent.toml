@@ -1,25 +1,9 @@
-allowed_agent_skills = [
-    "agent-builder",
-    "workflow-designer",
-    "workflow-reviewer",
-]
 capabilities = [
-    "bash",
     "capability_discovery",
-    "compose_workflow",
-    "explain_permission",
-    "http_get",
-    "list_files",
-    "list_local_skills",
     "plan_workflow",
     "prepare_validation",
-    "read",
-    "read_local_skill",
-    "run_workflow",
-    "search_skills",
-    "write",
 ]
-description = "A looped APXM agent for designing, reviewing, and controlling APXM workflows."
+description = "A looped APXM capability agent that discovers, plans, and prepares workflow validation."
 display_name = "Gao"
 domain = "apxm"
 id = "gao"
@@ -34,10 +18,8 @@ frontend = "typescript"
 
 [prompts]
 persona = "prompts/persona.md"
-response_style = "prompts/response-style.md"
 safety = "prompts/safety.md"
 terminology = "prompts/apxm-terminology.md"
-workflow_authoring = "prompts/workflow-authoring.md"
 
 [source]
 type = "local"

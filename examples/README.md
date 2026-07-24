@@ -1,102 +1,48 @@
-# APXM Examples
+# APXM authoring examples
 
-## Why APXM?
+These are the complete, deliberately small authoring examples. They all use
+the installed generic APXM frontend—never handwritten FrontendGraph, AIR, a
+frontend runtime, or a privileged named-agent API.
 
-APXM lets authors write readable typed Agents while retaining the complete
-structure needed to compile, optimize, govern, execute, and explain them:
+| Start here | Purpose | Language |
+| --- | --- | --- |
+| [Conversational](agents/conversational/README.md) | Primary reference: Context, Tool, Model, composition, loop, and yield/resume | Python and TypeScript |
+| [Coder](agents/coder/README.md) | Coding-capability extension: read, edit proposal, and test proposal | TypeScript |
+| [Gao](agents/gao/README.md) | APXM-capability extension: discovery, workflow planning, and validation preparation | TypeScript |
 
-- **Simple source** — Python and TypeScript use `Agent`, `Context`, `Tool`,
-  `Model`, Events, Hooks, typed composition, and ordinary control flow.
-- **Compiler understanding** — one FrontendGraph captures types, values,
-  dependencies, effects, Context flow, regions, loops, and source spans.
-- **Safe optimization** — the Rust/AIS pipeline may optimize only when program
-  meaning, authority, effect ordering, durability, and evidence correlation are
-  preserved.
-- **Exact execution** — Agent composition uses `new`/`invoke`; Models and
-  Capabilities execute only through exact admitted ports, without hidden
-  routing, fallback, or Tool loops.
-- **Full observability** — source, artifact, Program Invocation, loop
-  occurrence, NodeExecution, attempt, effect, Context, usage, output, and
-  failure evidence remain joinable.
+Conversational is the teaching reference. Coder and Gao are its two focused
+extensions: one demonstrates a small coding workflow, the other demonstrates
+APXM authoring capabilities. They are ordinary Agent Programs, not product
+features, package exports, compiler modes, or runtime identities.
 
-A conversational Agent is therefore just one repository example: an ordinary
-Agent with an authored loop, explicit Context, Model/Tool calls, and
-yield/resume. Events, Hooks, specialists, and structured task groups can be
-added using the same generic frontend.
+## Run the examples
 
-## Quick Start
+From this repository root:
 
-```bash
-# From project root
+```sh
 dekk agents doctor
-dekk agents agent build <source-package>
-dekk agents compile-service-canonical <source-package> > /tmp/apxm-tool-use.air.json
+dekk agents test-frontend-examples
 ```
 
-Use Dekk for normal runs. It sets up the APXM environment consistently across
-machines.
+The gate builds each checked-in example with the installed Python or TypeScript
+frontend, compiles it through the explicit compiler bridge, and checks the
+conversational Python/TypeScript parity. Compile-only validation uses
+deterministic test bindings; executing a real Model or Capability requires its
+separately admitted deployment and authority.
 
-## Dependencies
-
-Required:
-
-- `dekk agents install --no-interactive`
-- `dekk agents doctor`
-
-Optional, depending on the example:
-
-- An exact admitted inference binding for an example that executes
-  `model.call` against a real model.
-- Generated typed ACP profile imports for examples that invoke external coding
-  agents through a Capability. Verify
-  them with `dekk agents agent list` and `dekk agents agent test <name>`.
-- Node/npm plus the relevant authenticated agent CLI when using APXM ACP
-  profiles. The checked-in `claude` profile launches
-  `npx -y @agentclientprotocol/claude-agent-acp@^0.24.2`; the checked-in
-  `codex` profile launches `npx -y @zed-industries/codex-acp@^0.16.0`.
-- The APXM-vLLM implementation when an exact admitted Model binding selects it;
-  see `docs/backends/vllm.md`. Agent source remains provider-neutral.
-- `jq` and `rg` only for inspection/reporting commands that mention
-  them.
-
-For backend-free validation, prefer compile-only checks and deterministic
-contract fakes. Test fakes are explicit test dependencies, never production
-fallbacks.
-
-Canonical examples compile as source packages through the explicit bridge:
-
-```bash
-dekk agents agent build <source-package>
-dekk agents compile-service-canonical <source-package> > hello.air.json
-```
-
-> **First time?** See the [docs/](../docs/README.md) overview, then run
-> `dekk agents doctor` to verify your environment.
-
-## Repository examples
-
-The current `agents/conversational` and `agents/gao` sources are low-level
-conformance scaffolds over `apxm_program` (Python) and `@apxm/frontend`
-(TypeScript). They are executable baseline evidence, not the intended teaching
-API. The reviewed target is the paired
+For the authoring API itself, read the
 [source-first guide](../docs/guides/creating-an-agent-program.md).
 
-1. **[agents/conversational/](agents/conversational/)** -- Equivalent Python
-   and TypeScript generic Agent Programs organized by an example-local
-   `ConversationalAgent` helper. Validate parity with
-   `dekk agents test-frontend-examples`.
-2. **[agents/gao/](agents/gao/)** -- TypeScript-only Agent Program example
-   that specializes the example-local helper with Capability calls, specialist
-   composition, static Hooks, and `await.event`. Gao has no package, compiler,
-   runtime, Server, or Studio meaning.
-3. **[agents/coder/](agents/coder/)** and
-   **[agents/coder-fixture/](agents/coder-fixture/)** -- ACP coding-agent
-   integration examples.
-4. **[workflows/](workflows/)** -- Native `.apxmw` workflow coordination,
-   event loops, resume, and cancel.
-5. **[metrics/](metrics/)** -- APXM graph metrics hierarchy reference.
+## Package tools
 
-A retired raw-authoring example corpus (`python/`, `agents/explorer/`) that
-imported removed `apxm` package symbols (`GraphRecorder`, `GraphBuilder`,
-`compile`, `Agent`) has been removed. It predated the current
-`apxm_program` conformance scaffold and could not run.
+Package-local capability handlers use the same small authoring pattern:
+`Tool.define` names the tool, `Tool.object` and `Tool.text` describe its typed
+input, and `Tool.answer` returns one typed answer object. Authors write ordinary
+TypeScript objects; the generated `capabilities/handlers/tools.json` sidecar is
+an internal build output and is never edited by hand.
+
+This TypeScript package helper is a build input, not an APXM runtime. The
+Rust-owned handler-manifest contract records its output, and the admitted Rust
+Capability port owns execution. The Node worker used by package tests only
+proves a TypeScript bundle conforms to that contract. A Python package helper
+is unnecessary until APXM supports a Python package-local handler bundle.

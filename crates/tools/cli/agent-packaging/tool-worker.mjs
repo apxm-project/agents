@@ -6,7 +6,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline";
 
-import { isFunctionTool } from "./index.mjs";
+import { isFunctionTool, isToolAnswer } from "./index.mjs";
 
 async function loadHandlers(manifestPath) {
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
@@ -51,9 +51,12 @@ try {
       continue;
     }
     try {
-      const value = await handler(frame.args ?? {});
+      const answer = await handler(frame.args ?? {});
+      if (!isToolAnswer(answer)) {
+        throw new TypeError("a packaged Tool handler must return Tool.answer({...})");
+      }
       console.log(
-        JSON.stringify({ v: 1, type: "result", req_id: frame.req_id, ok: true, value }),
+        JSON.stringify({ v: 1, type: "result", req_id: frame.req_id, ok: true, value: answer.value }),
       );
     } catch (error) {
       console.log(

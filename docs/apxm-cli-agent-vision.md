@@ -9,12 +9,11 @@
 This file preserves the investigation that motivated Agent Programs and
 conversational lifecycle control. Its path references, branch status, and
 implementation claims describe an earlier repository state and MUST NOT be
-used as evidence of shipped behavior. In particular, the
-[current Python public API](../crates/compiler/frontend/python/apxm/__init__.py)
-does not export `ConversationalAgent`; the accepted contract defines it as a
-frontend construct that will ship only after frontend/compiler/runtime
-conformance. Current behavior is anchored by source and tests cited in the
-canonical contract.
+used as evidence of shipped behavior. The tables below are a historical
+snapshot, not a current feature matrix. For current source-first authoring,
+use the [Agent Program guide](guides/creating-an-agent-program.md), the
+[Agent Program composition and AIR contract](agents/agent-program-composition-and-air-contract.md),
+and their cited source and tests.
 
 Principle (the brief): the chat agent must not be hardcoded Rust in `chat.rs`. It
 should **be an APXM program** — a turn body + composable middleware + dynamic
@@ -49,11 +48,11 @@ boundary is.
 
 ---
 
-## 2. What APXM can express today (verified)
+## 2. Snapshot at the original review (superseded)
 
-| Concern | In APXM today? | Evidence |
+| Concern | Assessment at the original review | Historical evidence |
 |---|---|---|
-| **Turn body as a program** (QMEM→ASK→UMEM→FENCE, tools, skill calls) | ✅ YES — validated | `examples/agents/conversational/python/agent.py` (canonical `apxm_program` `ConversationalAgent`) is the high-water mark |
+| **Turn body as a program** (QMEM→ASK→UMEM→FENCE, tools, skill calls) | ✅ YES — validated | `examples/agents/conversational/` is the source-first generic `Agent` reference; it has no `ConversationalAgent` package API |
 | **Authoring it simply** | ✅ YES — ~5–15 lines | Python frontend `@compile` + `g.ask(...)` + `Agent(instructions=, tools=)`; template auto-wiring (`{var}` → data edge); `@tool` 1-liner (`crates/compiler/frontend/python/apxm/{proxy,agent}.py`) |
 | **Static system prompt** | ✅ YES | `system_prompt=` attr, read at `llm/mod.rs:114` |
 | **Tools in the ASK** | ✅ YES (native tool-calling loop, max 10 iters) | `tool_dispatch.rs:381`; `capability_groups=["web"]` |

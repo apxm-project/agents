@@ -1,4 +1,5 @@
-import { tool } from "@apxm/agent-packaging";
+// Defines Coder's read-only structured edit proposal Tool.
+import { Tool } from "@apxm/agent-packaging";
 
 interface EditArgs {
   file_path: string;
@@ -6,31 +7,20 @@ interface EditArgs {
   after: string;
 }
 
-/** Prepare a before/after proposal without mutating the file. */
-export const proposeEdit = tool({
+/** Prepare a before/after proposal without mutating a file. */
+export const proposeEdit = Tool.define({
   name: "edit",
   description: "Return a structured before/after proposal without changing a file.",
-  schema: {
-    type: "object",
-    properties: {
-      file_path: { type: "string", minLength: 1 },
-      before: { type: "string", minLength: 1 },
-      after: { type: "string", minLength: 1 },
-    },
-    required: ["file_path", "before", "after"],
-    additionalProperties: false,
+  input: Tool.object<EditArgs>({
+    file_path: Tool.text({ minLength: 1 }),
+    before: Tool.text({ minLength: 1 }),
+    after: Tool.text({ minLength: 1 }),
+  }),
+  run(args) {
+    const file_path = args.file_path.trim();
+    if (file_path.length === 0 || args.before === args.after) {
+      throw new Error("edit requires a file path and a changed proposal");
+    }
+    return Tool.answer({ file_path, before: args.before, after: args.after, mutates: false });
   },
-})((args: EditArgs) => {
-  const filePath = args.file_path.trim();
-  const before = args.before;
-  const after = args.after;
-  if (!filePath || !before || before === after) {
-    throw new Error("edit requires file_path, before, and a changed after value");
-  }
-  return {
-    file_path: filePath,
-    before,
-    after,
-    mutates: false,
-  };
 });

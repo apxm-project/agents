@@ -1,4 +1,0 @@
-id = "search_skills"
-description = "Search grant-visible Agent Skill metadata through the host catalogue."
-kind = "builtin"
-read_only = true

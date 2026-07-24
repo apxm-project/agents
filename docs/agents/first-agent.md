@@ -72,6 +72,13 @@ Keep bindings at module scope, include every binding used by an Agent in its
 `capability.search.v1`. The frontend rejects dynamic marker lookup and local
 shadowing instead of guessing what an Agent means.
 
+`Tool` in an Agent Program is a typed reference to an admitted Capability; it
+does not implement or execute a runtime tool. A package-local TypeScript
+handler, when one is needed, uses `Tool.define` and `Tool.answer` in a separate
+handler module. Its generated manifest is Rust-validated, and Rust owns the
+admitted Capability execution boundary. See
+[ADR-0016](../adr/0016-tool-authoring-and-handler-execution-are-separate.md).
+
 ## Compile through the owner boundary
 
 Place source and its manifest in an Agent Program Source Bundle, then submit it

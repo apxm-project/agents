@@ -12,9 +12,8 @@ test("Gao verifies and lowers to only generic operations", () => {
   const air = JSON.parse(gao.canonicalAir());
   const ops = new Set(air.semantic_operations.map((operation) => operation.op));
   assert.deepEqual([...ops].sort(), [
+    "capability.invoke",
     "model.call",
-    "program.invoke",
-    "program.new",
   ]);
   const structural = air.structural_ir.map((node) => node.kind);
   assert.ok(structural.includes("ais.loop"));
@@ -28,5 +27,7 @@ test("Gao source uses only the public authoring surface", () => {
   assert.equal(source.includes("sourceSpan"), false);
   assert.equal(source.includes("GraphBuilder"), false);
   assert.ok(source.includes("agent.yield_"));
-  assert.ok(source.includes("WorkflowDiscovery.new"));
+  assert.ok(source.includes("DiscoverCapabilities"));
+  assert.ok(source.includes("PlanWorkflow"));
+  assert.ok(source.includes("PrepareValidation"));
 });

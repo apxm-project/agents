@@ -34,9 +34,9 @@ FORBIDDEN_NAMED_SEMANTICS = (
     "TurnSpec",
     "conversational_loop",
 )
-EXAMPLE_ARTIFACTS = (
-    Path("examples/agents/conversational/artifacts/executable-artifact.v1.json"),
-    Path("examples/agents/gao/artifacts/executable-artifact.v1.json"),
+EXAMPLE_RUNTIME_PROOF_FIXTURES = (
+    Path("crates/machine/program/tests/fixtures/example-artifacts/conversational.v1.json"),
+    Path("crates/machine/program/tests/fixtures/example-artifacts/gao.v1.json"),
 )
 RETIRED_OPERATION_MARKERS = (
     "prototype_retired",
@@ -75,11 +75,11 @@ class CanonicalOnlyReachabilityTests(unittest.TestCase):
                     offenders.append(f"{path.relative_to(REPOSITORY_ROOT)}: {', '.join(markers)}")
         self.assertEqual(offenders, [], "\n".join(offenders))
 
-    def test_repository_examples_publish_immutable_generic_artifacts(self) -> None:
-        for path in EXAMPLE_ARTIFACTS:
-            artifact = REPOSITORY_ROOT / path
-            self.assertTrue(artifact.is_file(), f"missing example-built artifact: {path}")
-            text = artifact.read_text()
+    def test_examples_have_immutable_generic_runtime_proof_fixtures(self) -> None:
+        for path in EXAMPLE_RUNTIME_PROOF_FIXTURES:
+            fixture = REPOSITORY_ROOT / path
+            self.assertTrue(fixture.is_file(), f"missing example runtime-proof fixture: {path}")
+            text = fixture.read_text()
             self.assertIn('"schema_version":"apxm.executable-artifact.v1"', text)
             self.assertIn('"kind":"ais.loop"', text)
             self.assertNotIn("conversational_loop", text)

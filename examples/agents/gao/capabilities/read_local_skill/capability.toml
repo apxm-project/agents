@@ -1,4 +1,0 @@
-id = "read_local_skill"
-description = "Read one grant-visible Agent Skill resource through the host catalogue."
-kind = "builtin"
-read_only = true

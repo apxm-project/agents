@@ -1,5 +1,0 @@
-id = "run_workflow"
-description = "Run a staged workflow and return its result."
-kind = "builtin"
-builtin_group = "authoring"
-read_only = false

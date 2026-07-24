@@ -1,4 +1,4 @@
-// End-to-end fixture for the ultrathin looped `gao` example agent.
+// Packaging conformance fixture for the ultrathin looped `gao` example agent.
 //
 // Exercised from `crates/tools/cli/src/commands/agent.rs` via
 // `cargo test --features driver -p apxm-cli agent:: gao`.
@@ -69,7 +69,7 @@ fn worker_manifest_entry(root: &Path, selector: &str) -> serde_json::Value {
         .unwrap_or_else(|| panic!("missing Gao worker entry {selector}"))
 }
 
-fn run_typescript_worker(
+fn run_typescript_packaging_worker(
     tmp: &TempDir,
     entries: Vec<serde_json::Value>,
     frames: &[serde_json::Value],
@@ -146,7 +146,7 @@ fn gao_example_sync_and_lint_pass() {
 }
 
 #[test]
-fn gao_declares_runtime_registered_discovery_and_http_builtins() {
+fn gao_declares_a_small_apxm_authoring_capability_set() {
     let root = require_gao_example();
     let agent: toml::Value = toml::from_str(
         &fs::read_to_string(root.join("agent.toml")).expect("read gao agent.toml"),
@@ -160,68 +160,42 @@ fn gao_declares_runtime_registered_discovery_and_http_builtins() {
         .filter_map(toml::Value::as_str)
         .collect::<Vec<_>>();
 
-    for capability in ["capability_discovery", "http_get"] {
+    assert_eq!(
+        capabilities,
+        vec![
+            "capability_discovery",
+            "plan_workflow",
+            "prepare_validation",
+        ],
+        "Gao keeps only its three APXM authoring capabilities",
+    );
+
+    for capability in &capabilities {
         assert!(
-            capabilities.contains(&capability),
-            "gao must declare runtime-registered builtin {capability}"
+            root.join("capabilities")
+                .join(capability)
+                .join("capability.toml")
+                .is_file(),
+            "Gao must define its declared capability {capability}"
         );
+    }
+
+    let discovery = fs::read_to_string(root.join("capabilities/capability_discovery/capability.toml"))
+        .expect("read capability discovery definition");
+    assert!(
+        discovery.contains("kind = \"builtin\""),
+        "capability discovery is provided by the APXM host"
+    );
+    for capability in ["plan_workflow", "prepare_validation"] {
         let definition = fs::read_to_string(
             root.join("capabilities")
                 .join(capability)
                 .join("capability.toml"),
         )
-        .expect("read builtin capability definition");
+        .expect("read Gao capability definition");
         assert!(
-            definition.contains("kind = \"builtin\""),
-            "{capability} must use canonical builtin dispatch"
-        );
-    }
-}
-
-#[test]
-fn gao_local_skill_capabilities_use_host_registered_builtins() {
-    let tmp = copy_gao_example();
-    let root = tmp.path().join("gao");
-    agent_sync(&root, true).expect("gao agent sync");
-    agent_lint(&root, None, true).expect("gao agent lint");
-
-    for capability in ["list_local_skills", "search_skills", "read_local_skill"] {
-        let definition_path = root
-            .join("capabilities")
-            .join(capability)
-            .join("capability.toml");
-        let definition: toml::Value = toml::from_str(
-            &fs::read_to_string(&definition_path).expect("read local-skill capability definition"),
-        )
-        .expect("parse local-skill capability definition");
-        assert_eq!(
-            definition.get("kind").and_then(toml::Value::as_str),
-            Some("builtin")
-        );
-        assert!(
-            !root
-                .join("capabilities")
-                .join(capability)
-                .join("handler.ts")
-                .exists(),
-            "{capability} must not carry a package-local catalogue reader"
-        );
-    }
-
-    let tool_names = read_tools_manifest(&root)
-        .into_iter()
-        .filter(|entry| entry.get("kind").and_then(serde_json::Value::as_str) == Some("tool"))
-        .filter_map(|entry| {
-            entry
-                .get("name")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string)
-        })
-        .collect::<std::collections::BTreeSet<_>>();
-    for capability in ["list_local_skills", "search_skills", "read_local_skill"] {
-        assert!(
-            !tool_names.contains(capability),
-            "{capability} must resolve through the host capability registry, not tools.json"
+            definition.contains("kind = \"typescript_handler\""),
+            "{capability} is implemented by the focused Gao extension"
         );
     }
 }
@@ -229,18 +203,8 @@ fn gao_local_skill_capabilities_use_host_registered_builtins() {
 #[test]
 fn gao_uses_generic_host_input_without_package_context_injection() {
     let root = require_gao_example();
-    let context = fs::read_to_string(root.join("capabilities/handlers/context.ts"))
-        .expect("read Gao context handler");
     let entry = fs::read_to_string(root.join("src/gao.ts")).expect("read Gao entry source");
 
-    assert!(
-        !context.contains("fetch("),
-        "package-local path helpers must not perform direct network I/O"
-    );
-    assert!(
-        !context.contains("APXM_CAPABILITY_INVENTORY_"),
-        "host context must not be read through process environment variables"
-    );
     assert!(
         !root.join("shared/node_kinds.json").exists(),
         "Gao must not carry a hand-maintained Studio node-kind snapshot"
@@ -250,10 +214,11 @@ fn gao_uses_generic_host_input_without_package_context_injection() {
         "Gao must use the installed generic Agent authoring API"
     );
     assert!(
-        entry.contains("WorkflowDiscovery.new")
-            && entry.contains("specialist.invoke")
+        entry.contains("DiscoverCapabilities")
+            && entry.contains("PlanWorkflow")
+            && entry.contains("PrepareValidation")
             && entry.contains("agent.yield_"),
-        "Gao must compose a generic Program Instance and yield its next input"
+        "Gao must use its three APXM authoring capabilities and yield the next input"
     );
 }
 
@@ -418,7 +383,6 @@ fn gao_semantic_tools_derive_typed_outputs_from_inputs() {
     agent_build(&root, true).expect("gao agent build");
     let plan = worker_manifest_entry(&root, "plan_workflow");
     let validation = worker_manifest_entry(&root, "prepare_validation");
-    let permission = worker_manifest_entry(&root, "explain_permission");
     let plan_id = plan
         .get("handler_id")
         .and_then(serde_json::Value::as_str)
@@ -427,81 +391,42 @@ fn gao_semantic_tools_derive_typed_outputs_from_inputs() {
         .get("handler_id")
         .and_then(serde_json::Value::as_str)
         .unwrap();
-    let permission_id = permission
-        .get("handler_id")
-        .and_then(serde_json::Value::as_str)
-        .unwrap();
-    let request =
-        "When a request arrives. Fetch it with fetch_record, then publish it with publish_report.";
-    let catalog = serde_json::json!([
-        {"id": "fetch_record", "description": "Fetch a record", "read_only": true},
-        {"id": "publish_report", "description": "Publish a report", "read_only": false}
-    ]);
-    let policy = serde_json::json!({
-        "entries": [
-            {"capability_id": "fetch_record", "decision": "allow"},
-            {"capability_id": "publish_report", "decision": "ask", "reason": "Publishing changes external state."}
-        ]
-    });
+    let request = "Draft an APXM workflow that validates a source-first agent.";
+    let catalog = "capability_discovery, plan_workflow, prepare_validation";
     let frames = vec![
         serde_json::json!({
             "v": 1, "type": "call", "req_id": "gao-plan-test", "tool_id": plan_id,
-            "args": {"request": request, "catalog": catalog, "policy": policy}, "deadline_ms": 5_000
+            "args": {"request": request, "catalog": catalog}, "deadline_ms": 5_000
         }),
         serde_json::json!({
             "v": 1, "type": "call", "req_id": "gao-validation-test", "tool_id": validation_id,
             "args": {
-                "workflow_name": "publish-request",
-                "artifact_kind": "air",
-                "artifact": "module { fetch_record publish_report }",
-                "catalog": catalog,
-                "policy": policy
+                "request": request,
+                "plan": "Review the source-first agent workflow."
             },
             "deadline_ms": 5_000
         }),
-        serde_json::json!({
-            "v": 1, "type": "call", "req_id": "gao-permission-test", "tool_id": permission_id,
-            "args": {"capability_id": "publish_report", "catalog": catalog, "policy": policy},
-            "deadline_ms": 5_000
-        }),
     ];
-    let results = run_typescript_worker(&tmp, vec![plan, validation, permission], &frames);
+    let results = run_typescript_packaging_worker(&tmp, vec![plan, validation], &frames);
     let plan_value = worker_value(&results, "gao-plan-test");
+    let plan_text = plan_value
+        .get("plan")
+        .and_then(serde_json::Value::as_str)
+        .expect("plan_workflow returns a typed plan answer");
+    assert!(plan_text.contains(request));
+    assert!(plan_text.contains(catalog));
     assert_eq!(
-        plan_value
-            .get("request")
-            .and_then(serde_json::Value::as_str),
-        Some(request),
-        "plan_workflow must retain the typed request field"
+        plan_value.get("next_action").and_then(serde_json::Value::as_str),
+        Some("review_plan")
     );
-    assert_eq!(
-        plan_value
-            .pointer("/workflow/triggers/0")
-            .and_then(serde_json::Value::as_str),
-        Some("When a request arrives")
-    );
-    assert!(plan_value
-        .pointer("/workflow/capabilities")
-        .and_then(serde_json::Value::as_array)
-        .is_some_and(|entries| entries.iter().any(|entry| entry
-            .get("id")
-            .and_then(serde_json::Value::as_str)
-            == Some("publish_report")
-            && entry
-                .get("requires_approval")
-                .and_then(serde_json::Value::as_bool)
-                == Some(true))));
 
-    let validation_value = worker_result(&results, "gao-validation-test")
-        .get("value")
-        .unwrap();
-    assert!(validation_value
-        .pointer("/validation_plan")
-        .and_then(serde_json::Value::as_array)
-        .is_some_and(|steps| steps.iter().any(|step| step
-            .get("operation")
-            .and_then(serde_json::Value::as_str)
-            == Some("enforce_write_boundary"))));
+    let validation_value = worker_value(&results, "gao-validation-test");
+    let validation_text = validation_value
+        .get("validation_request")
+        .and_then(serde_json::Value::as_str)
+        .expect("prepare_validation returns a typed validation answer");
+    assert!(validation_text.contains(request));
+    assert!(validation_text.contains("Review the source-first agent workflow."));
     assert_eq!(
         validation_value
             .get("next_action")
@@ -509,27 +434,6 @@ fn gao_semantic_tools_derive_typed_outputs_from_inputs() {
         Some("submit_for_validation")
     );
 
-    let permission_value = worker_result(&results, "gao-permission-test")
-        .get("value")
-        .unwrap();
-    assert_eq!(
-        permission_value
-            .get("decision")
-            .and_then(serde_json::Value::as_str),
-        Some("ask")
-    );
-    assert_eq!(
-        permission_value
-            .get("requires_approval")
-            .and_then(serde_json::Value::as_bool),
-        Some(true)
-    );
-    assert_eq!(
-        permission_value
-            .get("reason")
-            .and_then(serde_json::Value::as_str),
-        Some("Publishing changes external state.")
-    );
 }
 
 #[test]

@@ -1,4 +1,0 @@
-id = "search_web"
-description = "Search the web for grounding facts without retaining conversation memory."
-kind = "builtin"
-read_only = true

@@ -64,13 +64,13 @@ fn example_artifact_air(artifact: &str) -> AirModule {
 
 fn conversational_example_air() -> AirModule {
     example_artifact_air(include_str!(
-        "../../../../examples/agents/conversational/artifacts/executable-artifact.v1.json"
+        "../../../machine/program/tests/fixtures/example-artifacts/conversational.v1.json"
     ))
 }
 
 fn gao_example_air() -> AirModule {
     example_artifact_air(include_str!(
-        "../../../../examples/agents/gao/artifacts/executable-artifact.v1.json"
+        "../../../machine/program/tests/fixtures/example-artifacts/gao.v1.json"
     ))
 }
 
