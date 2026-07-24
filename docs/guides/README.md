@@ -33,11 +33,14 @@ export or core contract.
 
 Reading order:
 
-1. [Author an Agent](creating-an-agent-program.md)
-2. [Build a conversational Agent](creating-a-conversational-agent.md)
-3. [Compose Agent Programs](composing-agent-programs.md)
-4. [Use external coding agents through ACP](using-external-coding-agents-over-acp.md)
-5. [Choose models and understand future routing](model-selection-and-future-routing.md)
+1. [Start authoring an Agent](authoring-workflow.md) — the short, practical
+   path: begin with Conversational, then take focused Coder or Gao patterns
+   only when they fit.
+2. [Author an Agent](creating-an-agent-program.md)
+3. [Build a conversational Agent](creating-a-conversational-agent.md)
+4. [Compose Agent Programs](composing-agent-programs.md)
+5. [Use external coding agents through ACP](using-external-coding-agents-over-acp.md)
+6. [Choose models and understand future routing](model-selection-and-future-routing.md)
 
 Business-provider Integration and webhook authoring is documented at the
 workspace level because it composes `adapters`, Auth, OS, Server, runtime and
