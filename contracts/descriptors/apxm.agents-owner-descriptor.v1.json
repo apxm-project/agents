@@ -28,12 +28,12 @@
     {
       "schema_id": "apxm.frontend-graph.v1",
       "path": "schemas/apxm.frontend-graph.v1.json",
-      "digest": "sha256:413bb33a709cfba75d93ae90fb99c6db1fe8a7d9744832485d2b385699b4881a"
+      "digest": "sha256:b830d0ecda3ddcb847fdb077b9fcf9d7f880b47baa48eaaf5913c0672ffa4059"
     },
     {
       "schema_id": "apxm.frontend-surface.v1",
       "path": "schemas/apxm.frontend-surface.v1.json",
-      "digest": "sha256:dc90884ae80425126ac5d8df8f190e76b5571e4794b257a57ee0da4a643faa1a"
+      "digest": "sha256:18d7fe956568922cde04ced008c33ab9ddec8487e12e87867a857d833468ef4c"
     },
     {
       "schema_id": "apxm.air.v1",
@@ -256,7 +256,7 @@
     {
       "schema_id": "apxm.frontend-graph.v1",
       "path": "vectors/apxm.frontend-graph.v1.json",
-      "digest": "sha256:e81c9f20d8fa67d5477b31855bdcbb70b973e5bc754d044fb3ad2be892c6de60",
+      "digest": "sha256:2247d6640c314b8a712f5cc1b17b68e5edd4c456084465433c450b9a960e1ed4",
       "coverage": [
         "positive",
         "unknown_discriminant",
@@ -379,5 +379,5 @@
     "algorithm": "ed25519",
     "status": "signing_pending_no_key"
   },
-  "descriptor_digest": "sha256:db320ceb033252ecc0fbfe4de5b6df81f3e64eef03335ea640b47a74f4e3cc47"
+  "descriptor_digest": "sha256:5ed220a39bdd9e9624a5c16eda8988cc7dfb8183754df780a006a31c667b1157"
 }
