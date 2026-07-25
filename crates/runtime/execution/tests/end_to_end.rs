@@ -46,15 +46,15 @@ fn write_set() -> AtomicWriteSet {
 }
 
 fn air() -> AirModule {
-    serde_json::from_value(json!({
+    let air: AirModule = serde_json::from_value(json!({
         "schema_version": "apxm.air.v1",
         "semantic_operations": [
-            {"node_id": "n.model", "op": "model.call", "parent_region_id": "r.fn", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}]},
-            {"node_id": "n.cap", "op": "capability.invoke", "parent_region_id": "r.fn", "execution_order": 1, "operands": [{"slot": "capability_ref", "value_id": "cap.search", "type_ref": "CapabilityRef"}]},
-            {"node_id": "n.acp", "op": "capability.invoke", "parent_region_id": "r.fn", "execution_order": 2, "operands": [{"slot": "capability_ref", "value_id": "external-agent:acp:claude-code", "type_ref": "CapabilityRef"}, {"slot": "external_agent_session", "value_id": "session.1", "type_ref": "ExternalAgentSessionRef"}]},
-            {"node_id": "n.new", "op": "program.new", "parent_region_id": "r.fn", "execution_order": 3, "operands": [{"slot": "program_ref", "value_id": "Specialist", "type_ref": "ProgramRef"}]},
-            {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.fn", "execution_order": 4, "operands": [{"slot": "receiver", "value_id": "n.new", "type_ref": "ProgramInstanceRef"}]},
-            {"node_id": "n.await", "op": "await.event", "parent_region_id": "r.fn", "execution_order": 5, "operands": [{"slot": "event_ref", "value_id": "evt.done", "type_ref": "EventRef"}]}
+            {"node_id": "n.model", "op": "model.call", "parent_region_id": "r.fn", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.model.request", "type_ref": "ModelRequest"}], "result": {"value_id": "value.model.output", "type_ref": "ModelOutput"}},
+            {"node_id": "n.cap", "op": "capability.invoke", "parent_region_id": "r.fn", "execution_order": 1, "operands": [{"slot": "capability_ref", "value_id": "cap.search", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "value.cap.arguments", "type_ref": "CapabilityArguments"}], "result": {"value_id": "value.cap.output", "type_ref": "CapabilityOutput"}},
+            {"node_id": "n.acp", "op": "capability.invoke", "parent_region_id": "r.fn", "execution_order": 2, "operands": [{"slot": "capability_ref", "value_id": "external-agent:acp:claude-code", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "session.1", "type_ref": "ExternalAgentSessionRef"}], "result": {"value_id": "value.acp.output", "type_ref": "ExternalAgentOutput"}},
+            {"node_id": "n.new", "op": "program.new", "parent_region_id": "r.fn", "execution_order": 3, "operands": [{"slot": "program_ref", "value_id": "Specialist", "type_ref": "ProgramRef"}], "result": {"value_id": "value.program.instance", "type_ref": "ProgramInstanceRef"}},
+            {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.fn", "execution_order": 4, "operands": [{"slot": "receiver", "value_id": "value.program.instance", "type_ref": "ProgramInstanceRef"}, {"slot": "input", "value_id": "value.program.input", "type_ref": "ProgramInput"}], "result": {"value_id": "value.program.output", "type_ref": "ProgramOutput"}},
+            {"node_id": "n.await", "op": "await.event", "parent_region_id": "r.fn", "execution_order": 5, "operands": [{"slot": "event_ref", "value_id": "evt.done", "type_ref": "EventRef"}], "result": {"value_id": "value.event.output", "type_ref": "EventOutput"}}
         ],
         "structural_ir": [
             {"region_id": "r.fn", "kind": "function", "execution_order": 0},
@@ -63,7 +63,9 @@ fn air() -> AirModule {
         "context_flow": [],
         "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
     }))
-    .expect("valid AIR")
+    .expect("valid AIR");
+    assert!(air.verify().is_accepted());
+    air
 }
 
 fn admission() -> ModelBindingAdmission {
@@ -355,6 +357,7 @@ async fn executes_all_five_ops_and_commits_atomically() {
 
     // Peer usage is isolated in External Agent evidence, never in native usage.
     assert_eq!(report.external_agent_evidence.len(), 1);
+    assert_eq!(report.external_agent_evidence[0].session_ref, "session.1");
     assert_eq!(
         report.external_agent_evidence[0].peer_usage[0].reported_value,
         "555"
@@ -455,8 +458,8 @@ async fn program_invoke_dispatches_to_the_created_instance_receiver() {
     let air: AirModule = serde_json::from_value(json!({
         "schema_version": "apxm.air.v1",
         "semantic_operations": [
-            {"node_id": "n.new", "op": "program.new", "parent_region_id": "r.fn", "execution_order": 0, "operands": [{"slot": "program_ref", "value_id": "Specialist", "type_ref": "ProgramRef"}]},
-            {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.fn", "execution_order": 1, "operands": [{"slot": "receiver", "value_id": "n.new", "type_ref": "ProgramInstanceRef"}]}
+            {"node_id": "n.new", "op": "program.new", "parent_region_id": "r.fn", "execution_order": 0, "operands": [{"slot": "program_ref", "value_id": "Specialist", "type_ref": "ProgramRef"}], "result": {"value_id": "value.program.instance", "type_ref": "ProgramInstanceRef"}},
+            {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.fn", "execution_order": 1, "operands": [{"slot": "receiver", "value_id": "value.program.instance", "type_ref": "ProgramInstanceRef"}, {"slot": "input", "value_id": "value.program.input", "type_ref": "ProgramInput"}], "result": {"value_id": "value.program.output", "type_ref": "ProgramOutput"}}
         ],
         "structural_ir": [
             {"region_id": "r.fn", "kind": "function", "execution_order": 0}
@@ -465,6 +468,7 @@ async fn program_invoke_dispatches_to_the_created_instance_receiver() {
         "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
     }))
     .unwrap();
+    assert!(air.verify().is_accepted());
     let ports = ports_with_composition(
         commit.clone(),
         Arc::new(RecordingComposition {
@@ -490,7 +494,7 @@ async fn program_invoke_dispatches_to_the_created_instance_receiver() {
     assert_eq!(
         seen[1],
         CompositionReceiver::Instance {
-            program_instance_ref: "n.new".into()
+            program_instance_ref: "value.program.instance".into()
         },
         "program.invoke dispatches to the created instance, not a program_ref fallback"
     );
@@ -511,6 +515,7 @@ async fn program_invoke_without_a_receiver_fails_closed() {
         "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
     }))
     .unwrap();
+    assert!(!air.verify().is_accepted());
     let mut req = request();
     req.air = air;
     req.hook_bindings = Vec::new();
@@ -533,7 +538,7 @@ async fn unbound_model_target_fails_closed() {
     let bad_air: AirModule = serde_json::from_value(json!({
         "schema_version": "apxm.air.v1",
         "semantic_operations": [
-            {"node_id": "n.model", "op": "model.call", "parent_region_id": "r.fn", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.unbound", "type_ref": "ModelTargetRef"}]}
+            {"node_id": "n.model", "op": "model.call", "parent_region_id": "r.fn", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.unbound", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.model.request", "type_ref": "ModelRequest"}], "result": {"value_id": "value.model.output", "type_ref": "ModelOutput"}}
         ],
         "structural_ir": [
             {"region_id": "r.fn", "kind": "function", "execution_order": 0}
@@ -542,6 +547,7 @@ async fn unbound_model_target_fails_closed() {
         "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
     }))
     .unwrap();
+    assert!(bad_air.verify().is_accepted());
     let request = ExecutionRequest {
         air: bad_air,
         hook_bindings: Vec::new(),

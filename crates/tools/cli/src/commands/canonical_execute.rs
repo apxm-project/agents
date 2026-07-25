@@ -440,17 +440,18 @@ mod tests {
         let air: AirModule = serde_json::from_value(json!({
             "schema_version": "apxm.air.v1",
             "semantic_operations": [
-                {"node_id": "n.model", "op": "model.call", "parent_region_id": "r.root", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}]},
-                {"node_id": "n.cap", "op": "capability.invoke", "parent_region_id": "r.root", "execution_order": 1, "operands": [{"slot": "capability_ref", "value_id": "cap.search", "type_ref": "CapabilityRef"}]},
-                {"node_id": "n.new", "op": "program.new", "parent_region_id": "r.root", "execution_order": 2, "operands": [{"slot": "program_ref", "value_id": "child", "type_ref": "ProgramRef"}]},
-                {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.root", "execution_order": 3, "operands": [{"slot": "receiver", "value_id": "n.new", "type_ref": "ProgramInstanceRef"}]},
-                {"node_id": "n.await", "op": "await.event", "parent_region_id": "r.root", "execution_order": 4, "operands": [{"slot": "event_ref", "value_id": "ready", "type_ref": "EventRef"}]}
+                {"node_id": "n.model", "op": "model.call", "parent_region_id": "r.root", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.model.request", "type_ref": "ModelRequest"}], "result": {"value_id": "value.model.output", "type_ref": "ModelOutput"}},
+                {"node_id": "n.cap", "op": "capability.invoke", "parent_region_id": "r.root", "execution_order": 1, "operands": [{"slot": "capability_ref", "value_id": "cap.search", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "value.capability.arguments", "type_ref": "CapabilityArguments"}], "result": {"value_id": "value.capability.output", "type_ref": "CapabilityOutput"}},
+                {"node_id": "n.new", "op": "program.new", "parent_region_id": "r.root", "execution_order": 2, "operands": [{"slot": "program_ref", "value_id": "child", "type_ref": "ProgramRef"}], "result": {"value_id": "value.program.instance", "type_ref": "ProgramInstanceRef"}},
+                {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.root", "execution_order": 3, "operands": [{"slot": "receiver", "value_id": "value.program.instance", "type_ref": "ProgramInstanceRef"}, {"slot": "input", "value_id": "value.program.input", "type_ref": "ProgramInput"}], "result": {"value_id": "value.program.output", "type_ref": "ProgramOutput"}},
+                {"node_id": "n.await", "op": "await.event", "parent_region_id": "r.root", "execution_order": 4, "operands": [{"slot": "event_ref", "value_id": "ready", "type_ref": "EventRef"}], "result": {"value_id": "value.event.output", "type_ref": "EventOutput"}}
             ],
             "structural_ir": [{"region_id": "r.root", "kind": "function", "execution_order": 0}],
             "context_flow": [],
             "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
         }))
         .expect("canonical air");
+        assert!(air.verify().is_accepted());
 
         let commit = Arc::new(DevCommit::default());
         let ports = dev_ports(commit).expect("development ports form an admitted bundle");

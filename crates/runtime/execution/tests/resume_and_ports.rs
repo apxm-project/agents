@@ -31,9 +31,9 @@ fn request(scope: &str) -> ExecutionRequest {
     let air = serde_json::from_value::<AirModule>(json!({
         "schema_version": "apxm.air.v1",
         "semantic_operations": [
-            {"node_id": "node.model", "op": "model.call", "parent_region_id": "loop.main", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}]},
-            {"node_id": "node.await", "op": "await.event", "parent_region_id": "loop.main", "execution_order": 1, "operands": [{"slot": "event_ref", "value_id": "evt-atomic", "type_ref": "EventRef"}]},
-            {"node_id": "node.capability", "op": "capability.invoke", "parent_region_id": "loop.main", "execution_order": 2, "operands": [{"slot": "capability_ref", "value_id": "cap.finish", "type_ref": "CapabilityRef"}]}
+            {"node_id": "node.model", "op": "model.call", "parent_region_id": "loop.main", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.model.request", "type_ref": "ModelRequest"}], "result": {"value_id": "value.model.output", "type_ref": "ModelOutput"}},
+            {"node_id": "node.await", "op": "await.event", "parent_region_id": "loop.main", "execution_order": 1, "operands": [{"slot": "event_ref", "value_id": "evt-atomic", "type_ref": "EventRef"}], "result": {"value_id": "value.event.output", "type_ref": "EventOutput"}},
+            {"node_id": "node.capability", "op": "capability.invoke", "parent_region_id": "loop.main", "execution_order": 2, "operands": [{"slot": "capability_ref", "value_id": "cap.finish", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "value.capability.arguments", "type_ref": "CapabilityArguments"}], "result": {"value_id": "value.capability.output", "type_ref": "CapabilityOutput"}}
         ],
         "structural_ir": [
             {"region_id": "region.root", "kind": "function", "execution_order": 0},
@@ -43,6 +43,7 @@ fn request(scope: &str) -> ExecutionRequest {
         "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": [{"region_id": "loop.main", "annotation": "structural_loop"}]}
     }))
     .expect("canonical AIR");
+    assert!(air.verify().is_accepted());
     ExecutionRequest {
         air,
         hook_bindings: Vec::new(),
@@ -365,9 +366,9 @@ async fn nested_loop_park_restores_exact_stack_without_duplicate_work() {
     nested.air = serde_json::from_value(json!({
         "schema_version": "apxm.air.v1",
         "semantic_operations": [
-            {"node_id": "node.outer.before", "op": "model.call", "parent_region_id": "loop.outer", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}]},
-            {"node_id": "node.inner.await", "op": "await.event", "parent_region_id": "loop.inner", "execution_order": 0, "operands": [{"slot": "event_ref", "value_id": "evt-atomic", "type_ref": "EventRef"}]},
-            {"node_id": "node.outer.after", "op": "capability.invoke", "parent_region_id": "loop.outer", "execution_order": 2, "operands": [{"slot": "capability_ref", "value_id": "cap.finish", "type_ref": "CapabilityRef"}]}
+            {"node_id": "node.outer.before", "op": "model.call", "parent_region_id": "loop.outer", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.outer.request", "type_ref": "ModelRequest"}], "result": {"value_id": "value.outer.output", "type_ref": "ModelOutput"}},
+            {"node_id": "node.inner.await", "op": "await.event", "parent_region_id": "loop.inner", "execution_order": 0, "operands": [{"slot": "event_ref", "value_id": "evt-atomic", "type_ref": "EventRef"}], "result": {"value_id": "value.event.output", "type_ref": "EventOutput"}},
+            {"node_id": "node.outer.after", "op": "capability.invoke", "parent_region_id": "loop.outer", "execution_order": 2, "operands": [{"slot": "capability_ref", "value_id": "cap.finish", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "value.capability.arguments", "type_ref": "CapabilityArguments"}], "result": {"value_id": "value.capability.output", "type_ref": "CapabilityOutput"}}
         ],
         "structural_ir": [
             {"region_id": "region.root", "kind": "function", "execution_order": 0},
@@ -386,6 +387,7 @@ async fn nested_loop_park_restores_exact_stack_without_duplicate_work() {
         }
     }))
     .expect("nested AIR");
+    assert!(nested.air.verify().is_accepted());
 
     execute_resumable(&ports(commit.clone()), nested, Value::Null)
         .await

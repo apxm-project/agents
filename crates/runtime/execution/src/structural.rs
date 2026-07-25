@@ -307,25 +307,33 @@ mod tests {
                     "node_id": "node.outer.before",
                     "op": "model.call",
                     "parent_region_id": "loop.outer",
-                    "execution_order": 0
+                    "execution_order": 0,
+                    "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.outer.before.request", "type_ref": "ModelRequest"}],
+                    "result": {"value_id": "value.outer.before.output", "type_ref": "ModelOutput"}
                 },
                 {
                     "node_id": "node.inner",
                     "op": "capability.invoke",
                     "parent_region_id": "loop.inner",
-                    "execution_order": 0
+                    "execution_order": 0,
+                    "operands": [{"slot": "capability_ref", "value_id": "capability.inner", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "value.inner.arguments", "type_ref": "CapabilityArguments"}],
+                    "result": {"value_id": "value.inner.output", "type_ref": "CapabilityOutput"}
                 },
                 {
                     "node_id": "node.outer.after",
                     "op": "model.call",
                     "parent_region_id": "loop.outer",
-                    "execution_order": 2
+                    "execution_order": 2,
+                    "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.outer.after.request", "type_ref": "ModelRequest"}],
+                    "result": {"value_id": "value.outer.after.output", "type_ref": "ModelOutput"}
                 },
                 {
                     "node_id": "node.sibling",
                     "op": "model.call",
                     "parent_region_id": "loop.sibling",
-                    "execution_order": 0
+                    "execution_order": 0,
+                    "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.sibling.request", "type_ref": "ModelRequest"}],
+                    "result": {"value_id": "value.sibling.output", "type_ref": "ModelOutput"}
                 }
             ],
             "structural_ir": [
@@ -362,6 +370,7 @@ mod tests {
             }
         }))
         .expect("nested loop AIR");
+        assert!(air.verify().is_accepted());
 
         let schedule = build_schedule(&air, &[]);
         let control: Vec<String> = schedule
