@@ -29,7 +29,8 @@ use apxm_kernel::{
     ExternalAgentCapabilityPort, PortSlot,
 };
 use apxm_program::air::{
-    AirModule, AirVersion, Operand, SemanticOp, SemanticOpKind, StructuralNode, StructuralOpKind,
+    AirModule, AirVersion, Operand, SemanticOp, SemanticOpKind, SsaValue, StructuralNode,
+    StructuralOpKind,
 };
 use apxm_program::artifact::SchemaDigestRef;
 use apxm_program::source_map::{SourceLanguage, SourceMap, SourceMapVersion};
@@ -65,9 +66,11 @@ fn type_of_slot(slot: &str) -> &'static str {
     match slot {
         "model_ref" => "ModelTargetRef",
         "capability_ref" => "CapabilityRef",
-        "external_agent_session" => "ExternalAgentSessionRef",
         "program_ref" => "ProgramRef",
         "event_ref" => "EventRef",
+        "request" => "ModelRequest",
+        "arguments" => "CapabilityArguments",
+        "input" => "ProgramInput",
         _ => "Ref",
     }
 }
@@ -83,8 +86,15 @@ fn operands(pairs: &[(&str, &str)]) -> Vec<Operand> {
         .collect()
 }
 
+fn result(value_id: &str, type_ref: &str) -> Option<SsaValue> {
+    Some(SsaValue {
+        value_id: value_id.to_string(),
+        type_ref: type_ref.to_string(),
+    })
+}
+
 fn five_op_air() -> AirModule {
-    AirModule {
+    let air = AirModule {
         schema_version: AirVersion::V1,
         semantic_operations: vec![
             SemanticOp {
@@ -92,16 +102,22 @@ fn five_op_air() -> AirModule {
                 op: SemanticOpKind::ModelCall,
                 parent_region_id: "r_root".into(),
                 execution_order: 0,
-                operands: operands(&[("model_ref", MODEL_TARGET)]),
-                result: None,
+                operands: operands(&[
+                    ("model_ref", MODEL_TARGET),
+                    ("request", "value.model.request"),
+                ]),
+                result: result("value.model.output", "ModelOutput"),
             },
             SemanticOp {
                 node_id: "n_capability".into(),
                 op: SemanticOpKind::CapabilityInvoke,
                 parent_region_id: "r_root".into(),
                 execution_order: 1,
-                operands: operands(&[("capability_ref", "capability.search")]),
-                result: None,
+                operands: operands(&[
+                    ("capability_ref", "capability.search"),
+                    ("arguments", "value.capability.arguments"),
+                ]),
+                result: result("value.capability.output", "CapabilityOutput"),
             },
             SemanticOp {
                 node_id: "n_program_new".into(),
@@ -109,19 +125,26 @@ fn five_op_air() -> AirModule {
                 parent_region_id: "r_root".into(),
                 execution_order: 2,
                 operands: operands(&[("program_ref", "child_program")]),
-                result: None,
+                result: result("value.program.instance", "ProgramInstanceRef"),
             },
             SemanticOp {
                 node_id: "n_program_invoke".into(),
                 op: SemanticOpKind::ProgramInvoke,
                 parent_region_id: "r_root".into(),
                 execution_order: 3,
-                operands: vec![Operand {
-                    slot: "receiver".to_string(),
-                    value_id: "n_program_new".to_string(),
-                    type_ref: "ProgramInstanceRef".to_string(),
-                }],
-                result: None,
+                operands: vec![
+                    Operand {
+                        slot: "receiver".to_string(),
+                        value_id: "value.program.instance".to_string(),
+                        type_ref: "ProgramInstanceRef".to_string(),
+                    },
+                    Operand {
+                        slot: "input".to_string(),
+                        value_id: "value.program.input".to_string(),
+                        type_ref: "ProgramInput".to_string(),
+                    },
+                ],
+                result: result("value.program.output", "ProgramOutput"),
             },
             SemanticOp {
                 node_id: "n_await".into(),
@@ -129,7 +152,7 @@ fn five_op_air() -> AirModule {
                 parent_region_id: "r_root".into(),
                 execution_order: 4,
                 operands: operands(&[("event_ref", "webhook_ready")]),
-                result: None,
+                result: result("value.event.output", "EventOutput"),
             },
         ],
         structural_ir: vec![StructuralNode {
@@ -147,7 +170,9 @@ fn five_op_air() -> AirModule {
             node_spans: vec![],
             region_annotations: vec![],
         },
-    }
+    };
+    assert!(air.verify().is_accepted());
+    air
 }
 
 fn write_set() -> AtomicWriteSet {

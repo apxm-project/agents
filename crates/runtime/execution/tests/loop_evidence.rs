@@ -52,7 +52,9 @@ fn admission() -> ModelBindingAdmission {
 }
 
 fn decode_air(value: Value) -> AirModule {
-    serde_json::from_value(value).expect("typed generic AIR")
+    let air: AirModule = serde_json::from_value(value).expect("typed generic AIR");
+    assert!(air.verify().is_accepted());
+    air
 }
 
 fn example_artifact_air(artifact: &str) -> AirModule {
@@ -108,28 +110,32 @@ fn nested_sibling_air() -> AirModule {
                 "op": "model.call",
                 "parent_region_id": "loop.outer",
                 "execution_order": 0,
-                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}]
+                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.outer.before.request", "type_ref": "ModelRequest"}],
+                "result": {"value_id": "value.outer.before.output", "type_ref": "ModelOutput"}
             },
             {
                 "node_id": "node.inner",
                 "op": "model.call",
                 "parent_region_id": "loop.inner",
                 "execution_order": 0,
-                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}]
+                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.inner.request", "type_ref": "ModelRequest"}],
+                "result": {"value_id": "value.inner.output", "type_ref": "ModelOutput"}
             },
             {
                 "node_id": "node.outer.after",
                 "op": "model.call",
                 "parent_region_id": "loop.outer",
                 "execution_order": 2,
-                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}]
+                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.outer.after.request", "type_ref": "ModelRequest"}],
+                "result": {"value_id": "value.outer.after.output", "type_ref": "ModelOutput"}
             },
             {
                 "node_id": "node.sibling",
                 "op": "model.call",
                 "parent_region_id": "loop.sibling",
                 "execution_order": 0,
-                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}]
+                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.sibling.request", "type_ref": "ModelRequest"}],
+                "result": {"value_id": "value.sibling.output", "type_ref": "ModelOutput"}
             }
         ],
         "structural_ir": [
@@ -167,14 +173,16 @@ fn two_node_loop_air() -> AirModule {
                 "op": "model.call",
                 "parent_region_id": "loop.main",
                 "execution_order": 0,
-                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}]
+                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.first.request", "type_ref": "ModelRequest"}],
+                "result": {"value_id": "value.first.output", "type_ref": "ModelOutput"}
             },
             {
                 "node_id": "node.second",
                 "op": "model.call",
                 "parent_region_id": "loop.main",
                 "execution_order": 1,
-                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}]
+                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.second.request", "type_ref": "ModelRequest"}],
+                "result": {"value_id": "value.second.output", "type_ref": "ModelOutput"}
             }
         ],
         "structural_ir": [
@@ -210,7 +218,8 @@ fn interrupted_loop_air(interrupt_kind: &str) -> AirModule {
             "op": "await.event",
             "parent_region_id": "loop.main",
             "execution_order": 1,
-            "operands": [{"slot": "event_ref", "value_id": "event.input", "type_ref": "EventRef"}]
+            "operands": [{"slot": "event_ref", "value_id": "event.input", "type_ref": "EventRef"}],
+            "result": {"value_id": "value.event.output", "type_ref": "EventOutput"}
         })
     } else {
         json!({
@@ -218,7 +227,8 @@ fn interrupted_loop_air(interrupt_kind: &str) -> AirModule {
             "op": "model.call",
             "parent_region_id": "loop.main",
             "execution_order": 2,
-            "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}]
+            "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.after.request", "type_ref": "ModelRequest"}],
+            "result": {"value_id": "value.after.output", "type_ref": "ModelOutput"}
         })
     };
     decode_air(json!({
@@ -229,7 +239,8 @@ fn interrupted_loop_air(interrupt_kind: &str) -> AirModule {
                 "op": "model.call",
                 "parent_region_id": "loop.main",
                 "execution_order": 0,
-                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}]
+                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.before.request", "type_ref": "ModelRequest"}],
+                "result": {"value_id": "value.before.output", "type_ref": "ModelOutput"}
             },
             operation
         ],
