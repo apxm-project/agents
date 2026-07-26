@@ -68,7 +68,7 @@
     {
       "schema_id": "apxm.model-context-envelope.v1",
       "path": "schemas/apxm.model-context-envelope.v1.json",
-      "digest": "sha256:c9aea883e43edf497fb1c1ea00690e2e44b98288774faf59de5da7e6fc17bc46"
+      "digest": "sha256:a52f410a5c1864eec708c5c07c87603ecd532264ce7b99adc3c9990fe3f4821f"
     },
     {
       "schema_id": "apxm.model-target.v1",
@@ -286,7 +286,7 @@
     {
       "schema_id": "apxm.runtime-evidence.v1",
       "path": "vectors/apxm.runtime-evidence.v1.json",
-      "digest": "sha256:b8bec1549999933daa06fbaed5df335a888df5eae87f328732bcd45bf5eaf29e",
+      "digest": "sha256:0e38e3e11e71bd04e800088f9d18ba0b662aa8688b986523b24406074f647780",
       "coverage": [
         "positive",
         "replay",
@@ -338,7 +338,7 @@
     {
       "schema_id": "apxm.external-agent-evidence.v1",
       "path": "vectors/apxm.external-agent-evidence.v1.json",
-      "digest": "sha256:987983eb60b450df231172b5723288b38f58ba11206eed859bdc4cbe4817327b",
+      "digest": "sha256:867d06faac73f4a3abf95e505fc50233ea66b07da468a678837a6e352814ed38",
       "coverage": [
         "positive",
         "skew",
@@ -349,7 +349,7 @@
     {
       "schema_id": "apxm.model-context-envelope.v1",
       "path": "vectors/apxm.model-context-envelope.v1.json",
-      "digest": "sha256:ecc81c0382186ed8db81aef0c0ad7c5ae10445cdedc652fe886454fec98adbeb",
+      "digest": "sha256:c25636fad5e13244aacfda1edcffeb3f18eabe6bd6af6860199b8005e6a6ed31",
       "coverage": [
         "positive",
         "mutation"
@@ -379,5 +379,5 @@
     "algorithm": "ed25519",
     "status": "signing_pending_no_key"
   },
-  "descriptor_digest": "sha256:5ed220a39bdd9e9624a5c16eda8988cc7dfb8183754df780a006a31c667b1157"
+  "descriptor_digest": "sha256:a10132e26619c47641b315550a5a79ae6549e682220ab375e48a6325e0d3a524"
 }

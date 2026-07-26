@@ -192,7 +192,7 @@
         "scope": {
           "type": "string",
           "enum": [
-            "turn",
+            "invocation",
             "session",
             "child",
             "replay"

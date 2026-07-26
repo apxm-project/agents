@@ -40,9 +40,9 @@ pub mod env {
     /// Path to a JSON script of ordered `{"contains": ..., "response": ...}`
     /// pattern rules (plus an optional top-level `"default"` string) that
     /// `configure_llm_registry` loads into the mock backend via
-    /// `MockLLMBackend::when_prompt_contains`, so a multi-turn scripted
+    /// `MockLLMBackend::when_prompt_contains`, so a multi-message scripted
     /// transcript (context injection -> tool use -> compaction) gets
-    /// distinct deterministic answers per turn instead of one static
+    /// distinct deterministic answers per prompt instead of one static
     /// response. Only read when
     /// `APXM_MOCK_BACKEND` is also set; malformed/missing files are a hard
     /// error, never a silent fall-back to the single default response.
@@ -113,7 +113,7 @@ pub mod env {
     pub const APXM_RUNTIME_MAX_INFLIGHT: &str = "APXM_RUNTIME_MAX_INFLIGHT";
     /// Maximum scheduler in-flight LLM work for server-owned runtime work.
     pub const APXM_RUNTIME_LLM_INFLIGHT: &str = "APXM_RUNTIME_LLM_INFLIGHT";
-    /// Maximum parallel tool calls admitted within one LLM tool-call turn.
+    /// Maximum parallel tool calls admitted within one LLM tool-call batch.
     pub const APXM_RUNTIME_MAX_PARALLEL_TOOL_CALLS: &str = "APXM_RUNTIME_MAX_PARALLEL_TOOL_CALLS";
     /// Maximum tokens requested for MCP workflow emission.
     pub const APXM_MCP_WORKFLOW_MAX_TOKENS: &str = "APXM_MCP_WORKFLOW_MAX_TOKENS";
@@ -208,12 +208,12 @@ pub mod runtime {
     /// Context-window compaction defaults.
     /// Sibling of [`context_stack`]'s prompt-budget family: that module
     /// bounds ONE assembled prompt; this one bounds the ACCUMULATED
-    /// multi-turn context window before older frames can fold into a rolling
+    /// accumulated context window before older frames can fold into a rolling
     /// summary.
     pub mod conversation_compaction {
-        /// Turns kept verbatim once compaction folds older turns into the
-        /// rolling summary.
-        pub const DEFAULT_KEEP_RECENT_TURNS: usize = 4;
+        /// Messages kept verbatim once compaction folds older messages into
+        /// the rolling summary.
+        pub const DEFAULT_KEEP_RECENT_MESSAGES: usize = 4;
         /// Accumulated-window token budget above which compaction triggers.
         pub const DEFAULT_COMPACT_AT_TOKENS: usize = 20_000;
         /// Utilization percentage (of `compact_at_tokens`) at or above which
@@ -314,7 +314,7 @@ pub mod runtime {
         pub const MODEL: &str = "model";
     }
 
-    /// Runtime-owned structured response contract for spawned-agent prompt turns.
+    /// Runtime-owned structured response contract for spawned-agent prompts.
     ///
     /// Adapters such as ACP populate these fields, but the contract belongs to
     /// the APXM runtime so core execution and metrics stay frontend/backend
@@ -325,7 +325,6 @@ pub mod runtime {
         pub const STOP_REASON: &str = "stop_reason";
         pub const SESSION_ID: &str = "session_id";
         pub const AGENT_SESSION_ID: &str = "agent_session_id";
-        pub const TURN: &str = "turn";
         pub const MODEL: &str = "model";
         pub const INPUT_TOKENS: &str = "input_tokens";
         pub const OUTPUT_TOKENS: &str = "output_tokens";
@@ -687,7 +686,7 @@ pub mod session {
             pub const AGGREGATES: &str = "aggregates";
             pub const BY_AGENT: &str = "by_agent";
             pub const PROCESS_SPAWNS: &str = "process_spawns";
-            pub const PROMPT_TURNS: &str = "prompt_turns";
+            pub const PROMPTS: &str = "prompts";
         }
 
         /// Wire keys nested under `runtime.link_phases` (compile vs runtime split).

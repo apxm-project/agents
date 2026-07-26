@@ -17,7 +17,7 @@ pub use index::{IndexDb, IndexError, ThreadIndexEntry, rebuild_index_from_disk};
 pub use line::{
     AssistantMessagePayload, CacheCreationBreakdown, CompactedPayload, ContentBlock,
     EventMsgPayload, RolloutLine, RolloutMeta, RolloutPayload, SessionMetaPayload, SpilledPayload,
-    ToolResultPayload, ToolUsePayload, TurnContextPayload, Usage, UserMessagePayload,
+    ToolResultPayload, ToolUsePayload, Usage, UserMessagePayload,
 };
 pub use loader::{ConversationTree, LoadError, LoadStats, load_rollout, reconstruct_history};
 pub use paths::{RolloutPaths, blob_path_for, rollout_path_for, subagent_path_for};

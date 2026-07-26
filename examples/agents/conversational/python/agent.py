@@ -2,8 +2,8 @@
 
 A conversational Agent is an ordinary Agent: a typed input, an authored loop that
 calls a Model and an optional Tool, an explicit Context replacement, and a reply
-yielded before the next input. No conversation-specific runtime, turn type, or
-hidden loop is involved.
+yielded before the next input. No conversation-specific runtime type or hidden
+loop is involved.
 """
 
 from __future__ import annotations

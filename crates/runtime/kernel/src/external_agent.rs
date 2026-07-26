@@ -29,7 +29,7 @@ pub enum PromptEffectState {
     },
 }
 
-/// A request to run one prompt turn against an admitted External Agent.
+/// A request to run one prompt against an admitted External Agent.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AcpPromptRequest {
     pub effect_ref: String,

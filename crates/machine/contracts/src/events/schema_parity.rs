@@ -71,7 +71,7 @@ fn core_event_kinds_match_schema_registry_table() {
 
 /// Ambiguous-terminal sense pin (threat-model coverage): the three kinds
 /// documented in schemas/event.v1.json as `terminal_sense: atomic_no_delta`
-/// (no `_delta` streaming partner, but does NOT end a run/session/turn)
+/// (no `_delta` streaming partner, but does NOT end a run/session)
 /// must stay `terminal: false`, and a genuine run-ending kind stays
 /// `terminal: true` — regression pin for the exact misclassification the
 /// ambiguous terminal classifications.
@@ -86,12 +86,12 @@ fn ambiguous_terminal_kinds_stay_non_terminal() {
             !kind.is_terminal(),
             "{name} carries terminal_sense=atomic_no_delta in schemas/event.v1.json \
              (no _delta streaming partner) and must stay terminal=false — it does not \
-             end a run/session/turn"
+             end a run or session"
         );
     }
 
     assert!(
-        kind::TURN_COMPLETE.is_terminal(),
-        "turn_complete is terminal_sense=run_end"
+        kind::EXECUTE_COMPLETE.is_terminal(),
+        "execute_complete is terminal_sense=run_end"
     );
 }

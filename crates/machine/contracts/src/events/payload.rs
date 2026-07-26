@@ -236,20 +236,12 @@ fn boxed_core_payload_from_json(
         boxed!(SessionStartPayload)
     } else if kind_name == kind::SESSION_END.name() {
         boxed!(SessionEndPayload)
-    } else if kind_name == kind::TURN_BOUNDARY.name() {
-        boxed!(TurnBoundaryPayload)
     } else if kind_name == kind::AGENT_SPAWNED.name() {
         boxed!(AgentSpawnedPayload)
     } else if kind_name == kind::COMMUNICATE_DISPATCHED.name() {
         boxed!(CommunicateDispatchedPayload)
     } else if kind_name == kind::GRAPH_EDGE.name() {
         boxed!(GraphEdgePayload)
-    } else if kind_name == kind::TURN_STARTED.name() {
-        boxed!(TurnStartedPayload)
-    } else if kind_name == kind::TURN_COMPLETE.name() {
-        boxed!(TurnCompletePayload)
-    } else if kind_name == kind::TURN_ABORTED.name() {
-        boxed!(TurnAbortedPayload)
     } else if kind_name == kind::SUBAGENT_SPAWN_BEGIN.name() {
         boxed!(SubagentSpawnBeginPayload)
     } else if kind_name == kind::SUBAGENT_SPAWN_END.name() {
@@ -560,7 +552,7 @@ pub struct LlmStepPerformancePayload {
     pub decode_ms: f64,
 }
 
-/// One model-call step completed inside a larger agent turn.
+/// One model-call step completed inside a larger agent loop iteration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LlmStepCompletedPayload {
     /// Graph node that issued the model call.
@@ -769,7 +761,7 @@ impl_event_payload!(ToolEndPayload, kind::TOOL_END);
 // reconstruct an agent/tool dispatch tree without scraping op
 // attributes. None of the three is a terminal event (no _delta partner,
 // but they describe topology resolved mid-run, not the end of a
-// turn/session/execution — see `EventKind::is_terminal` on each).
+// session/execution — see `EventKind::is_terminal` on each).
 // ───────────────────────────────────────────────────────────────────
 
 /// A new agent was registered/spawned by a SPAWN_AGENT op.
@@ -1510,30 +1502,10 @@ impl_event_payload!(SessionStartPayload, kind::SESSION_START);
 pub struct SessionEndPayload {
     /// Session identifier.
     pub session_id: String,
-    /// Total number of turns in the session.
-    pub total_turns: usize,
+    /// Total number of Program Invocations executed in the session.
+    pub total_invocations: usize,
 }
 impl_event_payload!(SessionEndPayload, kind::SESSION_END);
-
-/// Direction of a conversation turn.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum TurnDirection {
-    /// User request.
-    Request,
-    /// Model response.
-    Response,
-}
-
-/// A turn boundary was reached.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TurnBoundaryPayload {
-    /// Turn number (1-based).
-    pub turn_number: usize,
-    /// Whether this is a request or response boundary.
-    pub direction: TurnDirection,
-}
-impl_event_payload!(TurnBoundaryPayload, kind::TURN_BOUNDARY);
 
 // ===========================================================================
 // Layer 2 — agent-layer payload structs
@@ -1544,48 +1516,6 @@ impl_event_payload!(TurnBoundaryPayload, kind::TURN_BOUNDARY);
 // canonical pairing rules. Field shapes follow the host app's dispatch
 // event-kind payloads so the relay can stop translating.
 // ===========================================================================
-
-/// The outermost executor entry began — a user turn started.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TurnStartedPayload {
-    /// APXM execution id for this turn.
-    pub execution_id: String,
-    /// Optional host-facing turn id (when one was supplied by the caller).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub turn_id: Option<String>,
-    /// Optional human-readable label for the top-level agent (e.g. "Cleo").
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub coordinator_label: Option<String>,
-}
-impl_event_payload!(TurnStartedPayload, kind::TURN_STARTED);
-
-/// The outermost executor returned successfully.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TurnCompletePayload {
-    /// APXM execution id for the completed turn.
-    pub execution_id: String,
-    /// Wall-clock duration of the turn, in milliseconds.
-    pub duration_ms: u64,
-    /// Whether the turn produced a coordinator answer.
-    pub had_answer: bool,
-}
-impl_event_payload!(TurnCompletePayload, kind::TURN_COMPLETE);
-
-/// The outermost executor terminated abnormally.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TurnAbortedPayload {
-    /// APXM execution id for the aborted turn.
-    pub execution_id: String,
-    /// Wall-clock duration before abort, in milliseconds.
-    pub duration_ms: u64,
-    /// Coarse classification of the abort reason
-    /// (`"cancelled"`, `"error"`, `"timeout"`, …).
-    pub reason: String,
-    /// Safe (PII-scrubbed) message about what happened.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error_message_safe: Option<String>,
-}
-impl_event_payload!(TurnAbortedPayload, kind::TURN_ABORTED);
 
 /// A SPAWN_AGENT node is creating a new sub-agent execution scope.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1724,7 +1654,7 @@ pub struct AgentMessagePayload {
     /// Optional provider response id this answer is part of.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response_id: Option<String>,
-    /// Aggregated token usage for the coordinator's final turn.
+    /// Aggregated token usage for the coordinator's final answer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<UsagePayload>,
 }

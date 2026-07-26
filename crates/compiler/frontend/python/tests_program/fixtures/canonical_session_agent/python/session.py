@@ -16,7 +16,7 @@ SessionInput = Event[object]("event.session.input")
 
 @Context
 class SessionContext:
-    turns: tuple = ()
+    messages: tuple = ()
 
 
 @Agent(input="SessionInput", output="SessionOutput", context=SessionContext)

@@ -127,8 +127,8 @@ pub fn graph_metric_constants() -> Vec<FrontendConstant> {
             value: graph_metric_keys::PROCESS_SPAWNS,
         },
         FrontendConstant {
-            name: "GRAPH_METRIC_PROMPT_TURNS".to_string(),
-            value: graph_metric_keys::PROMPT_TURNS,
+            name: "GRAPH_METRIC_PROMPTS".to_string(),
+            value: graph_metric_keys::PROMPTS,
         },
     ]
 }
