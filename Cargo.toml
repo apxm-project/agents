@@ -18,7 +18,6 @@ members = [
 	"crates/runtime/inference",
 	"crates/runtime/kernel",
 	"crates/runtime/execution",
-	"crates/runtime/composition",
 	# ── Orchestration (ACP + Artifact) ───
 	"crates/orchestration/artifact",
 	# ── Tools (CLI + developer clients) ───────────
@@ -55,7 +54,6 @@ apxm-rollout = { version = "0.1.0", path = "crates/runtime/rollout" }
 apxm-inference = { version = "0.1.0", path = "crates/runtime/inference" }
 apxm-kernel = { version = "0.1.0", path = "crates/runtime/kernel" }
 apxm-execution = { version = "0.1.0", path = "crates/runtime/execution" }
-apxm-composition = { version = "0.1.0", path = "crates/runtime/composition" }
 apxm-artifact = { version = "0.1.0", path = "crates/orchestration/artifact" }
 apxm-observability = { version = "0.1.0", path = "crates/observability" }
 
