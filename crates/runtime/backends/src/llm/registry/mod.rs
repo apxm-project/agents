@@ -1,7 +1,10 @@
-//! Multi-backend registry with intelligent routing.
+//! Backend registry keyed by exact model reference.
 //!
-//! Provides backend registration, intelligent routing, health monitoring,
-//! and fallback chain execution for robust LLM request handling.
+//! Provides backend registration, one exact model-reference-to-backend
+//! binding, health recording, rate limiting, and dispatch. A request names
+//! exactly one model reference; the registry returns the single backend bound
+//! to it or fails. The registry never ranks, orders, or chooses among
+//! candidate backends.
 
 #[cfg(feature = "metrics")]
 use crate::llm::RequestMetrics;
@@ -12,29 +15,21 @@ use crate::llm::backends::{
 use crate::llm::rate_limit::{RateLimitConfig, RateLimiter, SystemClock};
 use crate::llm::wire::response_metadata;
 use anyhow::{Context as AnyhowContext, Result};
+use apxm_core::types::BackendGraphCapabilities;
 use apxm_core::types::TokenUsage;
-use apxm_core::types::{AISOperationType, BackendGraphCapabilities};
 use dashmap::DashMap;
 use futures::stream::{Stream, StreamExt};
 use std::collections::{BTreeSet, HashMap};
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 mod health;
-mod latency_profile;
-mod resolver;
 
 pub use health::{HealthMonitor, HealthStatus};
-#[allow(unused_imports)]
-pub use latency_profile::{
-    BackendLatencyProfile, DEFAULT_LATENCY_EWMA_ALPHA, LATENCY_PROFILE_MIN_SAMPLES,
-    LatencyProfileStore,
-};
-pub use resolver::{RoutingStrategy, SelectionCriteria};
 
-/// LLM Registry manages multiple backends with routing and fallback.
+/// LLM Registry manages backends bound to exact model references.
 ///
 /// Backends are stored as `Arc<dyn LLMBackend>`, allowing both enum-based
 /// `Provider` instances and custom trait implementations to be registered.
@@ -46,29 +41,17 @@ pub use resolver::{RoutingStrategy, SelectionCriteria};
 pub struct LLMRegistry {
     /// Registered backends by name
     backends: Arc<parking_lot::RwLock<HashMap<String, Arc<dyn LLMBackend>>>>,
-    /// Default backend name
-    default_backend: Arc<parking_lot::RwLock<Option<String>>>,
-    /// Default model name
-    default_model: Arc<parking_lot::RwLock<Option<String>>>,
-    /// Operation-specific backend defaults
-    operation_defaults: Arc<DashMap<AISOperationType, String>>,
-    /// Operation-specific model defaults
-    operation_models: Arc<DashMap<AISOperationType, String>>,
-    /// Named model aliases (e.g. "fast" -> "gpt-4o-mini")
-    model_aliases: Arc<DashMap<String, String>>,
-    /// Explicit model to backend routing (e.g. "claude-3-7" -> "anthropic")
-    model_routes: Arc<DashMap<String, String>>,
+    /// Exact model reference to the one backend that serves it. A model
+    /// reference binds to exactly one backend; a conflicting rebind is
+    /// rejected rather than resolved.
+    model_backends: Arc<DashMap<String, String>>,
     /// Health monitor
     health_monitor: Arc<HealthMonitor>,
-    /// Routing strategy
-    routing_strategy: RoutingStrategy,
     /// Metrics tracker
     #[cfg(feature = "metrics")]
     metrics: crate::llm::MetricsTracker,
     /// Rate limiter
     rate_limiter: Arc<RateLimiter<SystemClock>>,
-    /// Round-robin counter for RoutingStrategy::RoundRobin
-    round_robin_counter: Arc<AtomicUsize>,
     /// graph_id → (handles_peak, blocks_peak), populated by `start_pin_polling`
     /// and read by `pre_release_status_all`.
     #[allow(clippy::type_complexity)]
@@ -178,29 +161,36 @@ impl StreamingBackendError {
     }
 }
 
-/// A request cannot be routed from registered model capability evidence.
+/// A request does not carry an exact model reference bound to a backend.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub enum RequestSelectionError {
-    /// No request or registry policy supplied a model.
-    #[error("LLM request has no model; set an explicit model or configured registry default")]
+pub enum ModelReferenceError {
+    /// The request carries no model reference.
+    #[error("LLM request has no model reference; every request names exactly one model")]
     MissingModel,
 
-    /// The selected model is not registered to any backend.
-    #[error("LLM model '{model}' is not registered to a backend")]
+    /// The referenced model is bound to no backend.
+    #[error("LLM model '{model}' is not bound to a backend")]
     UnknownModel { model: String },
 
-    /// An explicit backend contradicts the configured model route.
+    /// An explicit backend contradicts the model's registered binding.
     #[error(
-        "LLM model '{model}' is registered to backend '{configured_backend}', not '{requested_backend}'"
+        "LLM model '{model}' is bound to backend '{bound_backend}', not '{requested_backend}'"
     )]
     ModelBackendMismatch {
         model: String,
-        configured_backend: String,
+        bound_backend: String,
         requested_backend: String,
+    },
+
+    /// A model reference is already bound to a different backend.
+    #[error("LLM model '{model}' is already bound to backend '{bound_backend}'")]
+    ConflictingBinding {
+        model: String,
+        bound_backend: String,
     },
 }
 
-/// Runtime capability evidence for one resolved backend/model route.
+/// Runtime capability evidence for one exact backend/model binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CorrelatedBatchRoute {
     pub backend_name: String,
@@ -209,7 +199,7 @@ pub struct CorrelatedBatchRoute {
 }
 
 impl LLMRegistry {
-    /// Create a new empty registry with default routing.
+    /// Create a new empty registry.
     pub fn new() -> Self {
         Self::with_rate_limits(HashMap::new()).expect("empty rate limit config should be valid")
     }
@@ -221,43 +211,13 @@ impl LLMRegistry {
 
         Ok(LLMRegistry {
             backends: Arc::new(parking_lot::RwLock::new(HashMap::new())),
-            default_backend: Arc::new(parking_lot::RwLock::new(None)),
-            default_model: Arc::new(parking_lot::RwLock::new(None)),
-            operation_defaults: Arc::new(DashMap::new()),
-            operation_models: Arc::new(DashMap::new()),
-            model_aliases: Arc::new(DashMap::new()),
-            model_routes: Arc::new(DashMap::new()),
+            model_backends: Arc::new(DashMap::new()),
             health_monitor: Arc::new(HealthMonitor::new()),
-            routing_strategy: RoutingStrategy::default(),
             #[cfg(feature = "metrics")]
             metrics: crate::llm::MetricsTracker::new(),
             rate_limiter: Arc::new(rate_limiter),
-            round_robin_counter: Arc::new(AtomicUsize::new(0)),
             pin_peaks: Arc::new(DashMap::new()),
         })
-    }
-
-    /// Create registry with custom routing strategy.
-    pub fn with_strategy(routing_strategy: RoutingStrategy) -> Self {
-        let rate_limiter =
-            RateLimiter::new(HashMap::new(), Arc::new(SystemClock)).expect("empty config is valid");
-
-        LLMRegistry {
-            backends: Arc::new(parking_lot::RwLock::new(HashMap::new())),
-            default_backend: Arc::new(parking_lot::RwLock::new(None)),
-            default_model: Arc::new(parking_lot::RwLock::new(None)),
-            operation_defaults: Arc::new(DashMap::new()),
-            operation_models: Arc::new(DashMap::new()),
-            model_aliases: Arc::new(DashMap::new()),
-            model_routes: Arc::new(DashMap::new()),
-            health_monitor: Arc::new(HealthMonitor::new()),
-            routing_strategy,
-            #[cfg(feature = "metrics")]
-            metrics: crate::llm::MetricsTracker::new(),
-            rate_limiter: Arc::new(rate_limiter),
-            round_robin_counter: Arc::new(AtomicUsize::new(0)),
-            pin_peaks: Arc::new(DashMap::new()),
-        }
     }
 
     #[cfg(feature = "metrics")]
@@ -265,25 +225,14 @@ impl LLMRegistry {
         &self.metrics
     }
 
-    /// Resolve the backend name a request would dispatch to, without taking a
-    /// backend handle. The streaming path records health and metrics outcomes
-    /// against the same backend the stream actually selected.
-    pub fn resolved_backend_name(&self, request: &LLMRequest) -> Result<String> {
-        self.resolve_backend(request)
-    }
-
-    /// Return correlated-batch capability evidence after normal configured
-    /// route resolution. `None` means callers must retain per-node dispatch.
+    /// Return correlated-batch capability evidence for the request's exact
+    /// model reference. `None` means callers must retain per-node dispatch.
     pub fn correlated_batch_route(
         &self,
         request: &LLMRequest,
     ) -> Result<Option<CorrelatedBatchRoute>> {
-        let prepared = self.prepare_request(request);
-        let backend_name = self.resolve_backend(&prepared)?;
-        let model = prepared
-            .model
-            .clone()
-            .context("correlated batch request has no resolved model")?;
+        let backend_name = self.resolve_backend(request)?;
+        let model = self.require_model_reference(request)?.to_string();
         let backend = self
             .backends
             .read()
@@ -336,9 +285,9 @@ impl LLMRegistry {
             ));
         }
         if success {
-            self.health_monitor.record_success(backend_name, latency);
+            self.health_monitor.record_success(backend_name);
         } else {
-            self.health_monitor.record_failure(backend_name, latency);
+            self.health_monitor.record_failure(backend_name);
         }
     }
 
@@ -371,87 +320,47 @@ impl LLMRegistry {
         Ok(())
     }
 
-    /// Unregister a backend.
+    /// Unregister a backend and every model reference bound to it.
     pub fn unregister(&self, name: &str) -> Result<()> {
         self.backends
             .write()
             .remove(name)
             .with_context(|| format!("Backend '{}' not found", name))?;
 
+        self.model_backends
+            .retain(|_, backend_name| backend_name != name);
         self.health_monitor.unregister_backend(name);
 
         Ok(())
     }
 
-    /// Set the default backend for requests.
-    pub fn set_default(&self, name: impl Into<String>) -> Result<()> {
-        let name = name.into();
-
-        // Verify backend exists
-        if !self.backends.read().contains_key(&name) {
-            anyhow::bail!("Backend '{}' not registered", name);
-        }
-
-        *self.default_backend.write() = Some(name);
-        Ok(())
-    }
-
-    /// Set the default model to apply when a request omits `model`.
-    pub fn set_default_model(&self, model: impl Into<String>) -> Result<()> {
-        let model = model.into();
-        let model = self.canonical_model_name(&model);
-        self.require_registered_model(&model)?;
-        *self.default_model.write() = Some(model);
-        Ok(())
-    }
-
-    /// Set operation-specific backend default.
-    pub fn set_operation_default(
+    /// Bind one exact model reference to the backend that serves it.
+    ///
+    /// A model reference has exactly one backend. Rebinding it to a different
+    /// backend is rejected: the caller must unregister the current backend
+    /// first, so no request can ever observe two backends for one reference.
+    pub fn bind_model(
         &self,
-        operation: AISOperationType,
-        backend: impl Into<String>,
-    ) -> Result<()> {
-        let backend_name = backend.into();
-
-        // Verify backend exists
-        if !self.backends.read().contains_key(&backend_name) {
-            anyhow::bail!("Backend '{}' not registered", backend_name);
-        }
-
-        self.operation_defaults.insert(operation, backend_name);
-        Ok(())
-    }
-
-    /// Set operation-specific model default.
-    pub fn set_operation_model(
-        &self,
-        operation: AISOperationType,
         model: impl Into<String>,
-    ) -> Result<()> {
-        let model = model.into();
-        let model = self.canonical_model_name(&model);
-        self.require_registered_model(&model)?;
-        self.operation_models.insert(operation, model);
-        Ok(())
-    }
-
-    /// Register a named model alias.
-    pub fn register_model_alias(&self, alias: impl Into<String>, model: impl Into<String>) {
-        self.model_aliases.insert(alias.into(), model.into());
-    }
-
-    /// Route a model name or alias to a specific backend.
-    pub fn set_model_route(
-        &self,
-        model_or_alias: impl Into<String>,
         backend: impl Into<String>,
     ) -> Result<()> {
         let backend_name = backend.into();
         if !self.backends.read().contains_key(&backend_name) {
             anyhow::bail!("Backend '{}' not registered", backend_name);
         }
-        self.model_routes
-            .insert(model_or_alias.into(), backend_name);
+        let model = model.into();
+        if let Some(existing) = self.model_backends.get(&model) {
+            let bound_backend = existing.value().clone();
+            if bound_backend != backend_name {
+                return Err(ModelReferenceError::ConflictingBinding {
+                    model,
+                    bound_backend,
+                }
+                .into());
+            }
+            return Ok(());
+        }
+        self.model_backends.insert(model, backend_name);
         Ok(())
     }
 
@@ -470,55 +379,13 @@ impl LLMRegistry {
         self.health_monitor.status(name)
     }
 
-    /// Get the EWMA-smoothed whole-request latency (milliseconds) for a
-    /// backend, or `None` if unregistered or no successful request has
-    /// completed yet. Backs `ModelRouter`'s `RoutingTarget::Latency`.
-    pub fn backend_latency_ms_ewma(&self, name: &str) -> Option<f64> {
-        self.health_monitor.latency_ms_ewma(name)
-    }
-
-    /// Normalize model/backend selection for a request using the configured policy.
-    pub fn prepare_request(&self, request: &LLMRequest) -> LLMRequest {
-        let mut prepared = request.clone();
-
-        if prepared.model.is_none() {
-            if let Some(operation) = prepared.operation_type
-                && let Some(entry) = self.operation_models.get(&operation)
-            {
-                prepared.model = Some(entry.value().clone());
-            } else if let Some(default_model) = self.default_model.read().clone() {
-                prepared.model = Some(default_model);
-            }
-        }
-
-        if let Some(model) = prepared.model.clone() {
-            let canonical_model = self
-                .model_aliases
-                .get(&model)
-                .map(|entry| entry.value().clone())
-                .unwrap_or(model.clone());
-
-            if prepared.backend.is_none() {
-                if let Some(entry) = self.model_routes.get(&model) {
-                    prepared.backend = Some(entry.value().clone());
-                } else if let Some(entry) = self.model_routes.get(&canonical_model) {
-                    prepared.backend = Some(entry.value().clone());
-                }
-            }
-
-            prepared.model = Some(canonical_model);
-        }
-
-        prepared
-    }
-
-    /// Execute one compiler-approved, same-route request batch.
+    /// Execute one compiler-approved request batch against one exact model
+    /// reference.
     ///
-    /// This path never applies the ordinary per-request fallback chain: a
-    /// fallback could split a compiler-proven route group across backends and
-    /// would invalidate the batch contract. Missing capability evidence,
-    /// route disagreement, malformed outcomes, and transport failures all
-    /// return a typed error so the scheduler can retain per-node dispatch.
+    /// Every request in the batch names the same model reference and therefore
+    /// resolves to the same backend. Missing capability evidence, a
+    /// disagreeing model reference, malformed outcomes, and transport failures
+    /// all return a typed error so the scheduler can retain per-node dispatch.
     pub async fn generate_correlated_batch(
         &self,
         requests: Vec<CorrelatedLLMRequest>,
@@ -541,19 +408,16 @@ impl LLMRegistry {
                 anyhow::bail!("correlated batch requires unique non-empty correlation ids");
             }
 
-            let mut request = self.prepare_request(&request);
+            let mut request = request;
             let backend_name = self.resolve_backend(&request)?;
-            let model = request
-                .model
-                .clone()
-                .context("correlated batch request has no resolved model")?;
+            let model = self.require_model_reference(&request)?.to_string();
             request.backend = Some(backend_name.clone());
 
             match (&resolved_backend, &resolved_model) {
                 (Some(expected_backend), Some(expected_model)) => {
                     if expected_backend != &backend_name || expected_model != &model {
                         anyhow::bail!(
-                            "correlated batch requests must resolve to one configured backend/model route"
+                            "correlated batch requests must name one exact backend/model reference"
                         );
                     }
                 }
@@ -561,7 +425,7 @@ impl LLMRegistry {
                     resolved_backend = Some(backend_name);
                     resolved_model = Some(model);
                 }
-                _ => anyhow::bail!("correlated batch route state is incomplete"),
+                _ => anyhow::bail!("correlated batch model reference state is incomplete"),
             }
 
             prepared.push(CorrelatedLLMRequest {
@@ -615,14 +479,12 @@ impl LLMRegistry {
             estimated_costs.insert(item.correlation_id.clone(), estimated);
         }
 
-        let start = Instant::now();
         let result = backend.generate_correlated_batch(prepared).await;
-        let latency = start.elapsed();
 
         let outcomes = match result {
             Ok(outcomes) => outcomes,
             Err(error) => {
-                self.health_monitor.record_failure(&backend_name, latency);
+                self.health_monitor.record_failure(&backend_name);
                 return Err(error).context(format!(
                     "correlated batch dispatch failed on backend '{backend_name}'"
                 ));
@@ -637,7 +499,7 @@ impl LLMRegistry {
             || received_ids.len() != expected_ids.len()
             || !received_ids.iter().all(|id| expected_ids.contains(*id))
         {
-            self.health_monitor.record_failure(&backend_name, latency);
+            self.health_monitor.record_failure(&backend_name);
             anyhow::bail!(
                 "backend '{backend_name}' returned incomplete, duplicate, or unknown correlated batch outcomes"
             );
@@ -657,19 +519,20 @@ impl LLMRegistry {
                 );
             }
         }
-        self.health_monitor.record_success(&backend_name, latency);
+        self.health_monitor.record_success(&backend_name);
         Ok(outcomes)
     }
 
-    /// Generate using a specific backend by name.
+    /// Generate against the named backend, which must be the exact backend the
+    /// request's model reference is bound to.
     pub async fn generate_with_backend(
         &self,
         backend_name: &str,
         request: LLMRequest,
     ) -> Result<LLMResponse> {
-        let mut request = self.prepare_request(&request);
+        let mut request = request;
         request.backend = Some(backend_name.to_string());
-        self.require_configured_model_route(&request)?;
+        self.resolve_backend(&request)?;
         self.try_generate(backend_name, request).await
     }
 
@@ -726,12 +589,12 @@ impl LLMRegistry {
                 );
 
                 // Record success
-                self.health_monitor.record_success(backend_name, latency);
+                self.health_monitor.record_success(backend_name);
                 Ok(response)
             }
             Err(e) => {
                 // Record failure
-                self.health_monitor.record_failure(backend_name, latency);
+                self.health_monitor.record_failure(backend_name);
                 Err(e)
             }
         }
@@ -751,7 +614,7 @@ impl LLMRegistry {
         let model = request
             .model
             .as_deref()
-            .context("context-window admission requires a resolved model")?;
+            .context("context-window admission requires an exact model reference")?;
         let Some(context_window) = backend.context_window_for_model(model) else {
             return Ok(());
         };
@@ -764,7 +627,7 @@ impl LLMRegistry {
         Ok(())
     }
 
-    /// Resolve a backend for streaming.
+    /// Resolve the backend bound to the request's model reference for streaming.
     ///
     /// Returns the resolved backend `Arc` so the caller can call
     /// `generate_stream()` on it directly. The caller keeps the Arc
@@ -793,27 +656,17 @@ impl LLMRegistry {
         Ok(backend)
     }
 
-    /// Generate a streaming response from the exact resolved backend.
+    /// Stream one request against the backend bound to its exact model
+    /// reference.
     ///
-    /// This is the fail-closed streaming path for callers that have already
-    /// admitted a backend/model through a stricter routing boundary. A registry
-    /// fallback cannot carry that admission evidence, so a pre-commit failure
-    /// remains an error for the caller to reroute deliberately.
-    pub fn generate_stream_strict<'a>(
-        &'a self,
-        request: &'a LLMRequest,
-    ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + 'a>> {
-        self.generate_stream(request)
-    }
-
-    /// Stream one request against the exact resolved backend, already-admitted route.
-    fn generate_stream<'a>(
+    /// A pre-commit failure is an error the caller handles; the registry never
+    /// re-dispatches the request to another backend.
+    pub fn generate_stream<'a>(
         &'a self,
         request: &'a LLMRequest,
     ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + 'a>> {
         Box::pin(async_stream::try_stream! {
-            let prepared = self.prepare_request(request);
-            let primary_backend = match self.resolve_backend(&prepared) {
+            let backend_name = match self.resolve_backend(request) {
                 Ok(name) => name,
                 Err(e) => {
                     Err(e)?;
@@ -821,7 +674,7 @@ impl LLMRegistry {
                 }
             };
 
-            let attempt = match self.begin_streaming_attempt(&primary_backend, &prepared) {
+            let attempt = match self.begin_streaming_attempt(&backend_name, request) {
                 Ok(attempt) => attempt,
                 Err(error) => {
                     Err(error)?;
@@ -830,7 +683,7 @@ impl LLMRegistry {
             };
 
             let started_at = Instant::now();
-            let mut stream = attempt.backend.generate_stream(prepared.clone());
+            let mut stream = attempt.backend.generate_stream(request.clone());
             let mut committed = false;
 
             while let Some(chunk_result) = stream.next().await {
@@ -875,14 +728,6 @@ impl LLMRegistry {
                             .with_metadata(
                                 response_metadata::APXM_BACKEND_MODEL,
                                 serde_json::json!(attempt.backend_model.as_str()),
-                            )
-                            .with_metadata(
-                                response_metadata::APXM_PRIMARY_BACKEND,
-                                serde_json::json!(primary_backend.as_str()),
-                            )
-                            .with_metadata(
-                                response_metadata::APXM_FALLBACK_USED,
-                                serde_json::json!(false),
                             );
                         yield StreamChunk::Done(response);
                         return;
@@ -963,67 +808,46 @@ impl LLMRegistry {
         }
     }
 
-    /// Resolve the backend name that would handle this request after policy normalization.
-    pub fn resolve_backend_name(&self, request: &LLMRequest) -> Result<String> {
-        let prepared = self.prepare_request(request);
-        self.resolve_backend(&prepared)
-    }
-
-    /// Resolve which backend to use for a request.
-    fn resolve_backend(&self, request: &LLMRequest) -> Result<String> {
-        self.require_configured_model_route(request)?;
-        // Use resolver to determine backend
-        let criteria = SelectionCriteria::from_request(request);
-        resolver::resolve(
-            &criteria,
-            &self.backends,
-            &self.operation_defaults,
-            &self.default_backend,
-            &self.health_monitor,
-            &self.routing_strategy,
-            &self.round_robin_counter,
-        )
-    }
-
-    /// Require the selected model to be backed by explicit registry evidence.
-    fn require_configured_model_route(&self, request: &LLMRequest) -> Result<()> {
-        let model = request
+    /// The exact model reference a request names.
+    ///
+    /// A request without a model reference is rejected; the registry has no
+    /// default, ambient, or inferred model.
+    fn require_model_reference<'a>(&self, request: &'a LLMRequest) -> Result<&'a str> {
+        request
             .model
             .as_deref()
-            .filter(|model| !model.trim().is_empty())
-            .ok_or(RequestSelectionError::MissingModel)?;
-        let configured_backend = self.require_registered_model(model)?;
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+            .ok_or_else(|| ModelReferenceError::MissingModel.into())
+    }
+
+    /// Return the one backend bound to the request's exact model reference.
+    ///
+    /// There is no candidate set, no ordering, and no health-based choice: the
+    /// reference either has a binding or the request is rejected. A request
+    /// that also names a backend must name the bound one.
+    pub fn resolve_backend(&self, request: &LLMRequest) -> Result<String> {
+        let model = self.require_model_reference(request)?;
+        let bound_backend = self
+            .model_backends
+            .get(model)
+            .map(|entry| entry.value().clone())
+            .ok_or_else(|| ModelReferenceError::UnknownModel {
+                model: model.to_string(),
+            })?;
 
         if let Some(requested_backend) = request.backend.as_deref()
-            && requested_backend != configured_backend.as_str()
+            && requested_backend != bound_backend.as_str()
         {
-            return Err(RequestSelectionError::ModelBackendMismatch {
+            return Err(ModelReferenceError::ModelBackendMismatch {
                 model: model.to_string(),
-                configured_backend,
+                bound_backend,
                 requested_backend: requested_backend.to_string(),
             }
             .into());
         }
 
-        Ok(())
-    }
-
-    /// Return the backend registered to serve a model.
-    fn require_registered_model(&self, model: &str) -> Result<String> {
-        self.model_routes
-            .get(model)
-            .map(|entry| entry.value().clone())
-            .ok_or_else(|| RequestSelectionError::UnknownModel {
-                model: model.to_string(),
-            })
-            .map_err(Into::into)
-    }
-
-    /// Resolve a configured alias before checking model-routing evidence.
-    fn canonical_model_name(&self, model: &str) -> String {
-        self.model_aliases
-            .get(model)
-            .map_or_else(|| model.to_string(), |entry| entry.value().clone())
+        Ok(bound_backend)
     }
 
     /// Snapshot all backends (clones name + Arc pairs out of the lock).
@@ -1215,18 +1039,16 @@ mod request_recording_tests {
     /// be required for the observed path to equal the default build. This
     /// test only compiles at all if the `metrics` feature (and therefore
     /// `LLMRegistry::metrics()`, itself `#[cfg(feature = "metrics")]`) is
-    /// active under a plain `cargo test` with no extra `--features` flag —
-    /// which is exactly the guarantee  asks for.
+    /// active under a plain `cargo test` with no extra `--features` flag.
     #[tokio::test]
     async fn request_recording_is_active_without_opting_into_a_feature_flag() {
         let registry = LLMRegistry::new();
         registry
             .register("mock", MockLLMBackend::static_response("hello"))
             .expect("register mock backend");
-        registry.set_default("mock").expect("set default backend");
         registry
-            .set_model_route("fixture-model", "mock")
-            .expect("register fixture model route");
+            .bind_model("fixture-model", "mock")
+            .expect("bind fixture model");
 
         registry
             .generate_with_backend("mock", LLMRequest::new("hi").with_model("fixture-model"))
@@ -1249,8 +1071,8 @@ mod request_recording_tests {
             .register("mock", backend.clone())
             .expect("register mock backend");
         registry
-            .set_model_route("fixture-model", "mock")
-            .expect("register fixture model route");
+            .bind_model("fixture-model", "mock")
+            .expect("bind fixture model");
 
         let error = registry
             .generate_with_backend(
@@ -1279,8 +1101,8 @@ mod request_recording_tests {
             .register("mock", backend.clone())
             .expect("register mock backend");
         registry
-            .set_model_route("fixture-model", "mock")
-            .expect("register fixture model route");
+            .bind_model("fixture-model", "mock")
+            .expect("bind fixture model");
 
         let outcomes = registry
             .generate_correlated_batch(vec![
@@ -1303,7 +1125,7 @@ mod request_recording_tests {
     }
 
     #[tokio::test]
-    async fn correlated_batch_rejects_mixed_routes_before_backend_dispatch() {
+    async fn correlated_batch_rejects_mixed_model_references_before_backend_dispatch() {
         let registry = LLMRegistry::new();
         let left = MockLLMBackend::static_response("left").model_name("left-model");
         let right = MockLLMBackend::static_response("right").model_name("right-model");
@@ -1314,11 +1136,11 @@ mod request_recording_tests {
             .register("right", right.clone())
             .expect("register right");
         registry
-            .set_model_route("left-model", "left")
-            .expect("route left model");
+            .bind_model("left-model", "left")
+            .expect("bind left model");
         registry
-            .set_model_route("right-model", "right")
-            .expect("route right model");
+            .bind_model("right-model", "right")
+            .expect("bind right model");
 
         let error = registry
             .generate_correlated_batch(vec![
@@ -1332,27 +1154,124 @@ mod request_recording_tests {
                 },
             ])
             .await
-            .expect_err("mixed routes are not a batch");
+            .expect_err("mixed model references are not a batch");
 
         assert!(
             error
                 .to_string()
-                .contains("one configured backend/model route")
+                .contains("one exact backend/model reference")
         );
         assert_eq!(left.batch_submission_count(), 0);
         assert_eq!(right.batch_submission_count(), 0);
     }
 
+    /// An unbound model reference is rejected even when the registry holds
+    /// healthy, serviceable backends — including one that already serves a
+    /// different model reference.
+    ///
+    /// The registered backends are the whole point: they are exactly the
+    /// candidate set any first-available, provider-inferred, or
+    /// health-ranked selection would draw from. If resolution ever grows a
+    /// selection step, `unknown-model` resolves to `mock` or `other` and
+    /// this test fails. Resolving against an empty registry would not
+    /// distinguish "this reference has no binding" from "there was nothing
+    /// to select".
     #[test]
-    fn registry_rejects_unregistered_model_without_provider_inference() {
+    fn registry_rejects_unbound_model_without_provider_inference() {
         let registry = LLMRegistry::new();
+        registry
+            .register("mock", MockLLMBackend::static_response("hello"))
+            .expect("register mock backend");
+        registry
+            .register("other", MockLLMBackend::static_response("hello"))
+            .expect("register other backend");
+        registry
+            .bind_model("fixture-model", "mock")
+            .expect("bind fixture model");
+
+        assert_eq!(
+            registry.backend_names().len(),
+            2,
+            "the rejection must be observed with a non-empty candidate set"
+        );
+
+        match registry.resolve_backend(&LLMRequest::new("hi").with_model("unknown-model")) {
+            Ok(backend) => panic!(
+                "unbound model resolved to backend {backend:?}: resolution selected a \
+                 backend the reference is not bound to"
+            ),
+            Err(error) => assert!(
+                matches!(
+                    error.downcast_ref::<ModelReferenceError>(),
+                    Some(ModelReferenceError::UnknownModel { model }) if model == "unknown-model"
+                ),
+                "expected UnknownModel for the unbound reference, got: {error}"
+            ),
+        }
+    }
+
+    #[test]
+    fn registry_rejects_a_request_without_a_model_reference() {
+        let registry = LLMRegistry::new();
+        registry
+            .register("mock", MockLLMBackend::static_response("hello"))
+            .expect("register mock backend");
+
         let error = registry
-            .resolve_backend_name(&LLMRequest::new("hi").with_model("unknown-model"))
-            .expect_err("unregistered models must fail closed");
+            .resolve_backend(&LLMRequest::new("hi"))
+            .expect_err("a request without a model reference must fail closed");
 
         assert!(matches!(
-            error.downcast_ref::<RequestSelectionError>(),
-            Some(RequestSelectionError::UnknownModel { model }) if model == "unknown-model"
+            error.downcast_ref::<ModelReferenceError>(),
+            Some(ModelReferenceError::MissingModel)
+        ));
+    }
+
+    #[test]
+    fn registry_rejects_a_backend_that_is_not_the_bound_one() {
+        let registry = LLMRegistry::new();
+        registry
+            .register("mock", MockLLMBackend::static_response("hello"))
+            .expect("register mock backend");
+        registry
+            .register("other", MockLLMBackend::static_response("hello"))
+            .expect("register other backend");
+        registry
+            .bind_model("fixture-model", "mock")
+            .expect("bind fixture model");
+
+        let error = registry
+            .resolve_backend(&LLMRequest::new("hi").with_model("fixture-model").with_backend("other"))
+            .expect_err("a non-bound backend must fail closed");
+
+        assert!(matches!(
+            error.downcast_ref::<ModelReferenceError>(),
+            Some(ModelReferenceError::ModelBackendMismatch { model, bound_backend, requested_backend })
+                if model == "fixture-model" && bound_backend == "mock" && requested_backend == "other"
+        ));
+    }
+
+    #[test]
+    fn a_model_reference_binds_to_exactly_one_backend() {
+        let registry = LLMRegistry::new();
+        registry
+            .register("mock", MockLLMBackend::static_response("hello"))
+            .expect("register mock backend");
+        registry
+            .register("other", MockLLMBackend::static_response("hello"))
+            .expect("register other backend");
+        registry
+            .bind_model("fixture-model", "mock")
+            .expect("bind fixture model");
+
+        let error = registry
+            .bind_model("fixture-model", "other")
+            .expect_err("rebinding a model reference must fail closed");
+
+        assert!(matches!(
+            error.downcast_ref::<ModelReferenceError>(),
+            Some(ModelReferenceError::ConflictingBinding { model, bound_backend })
+                if model == "fixture-model" && bound_backend == "mock"
         ));
     }
 }

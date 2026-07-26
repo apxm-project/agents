@@ -71,8 +71,9 @@ max_model_len = 32768
 # --- Shape C: cross-node multi-instance (replicas) -------------------
 # Same model, multiple Slurm allocations (one node per replica).
 # Use when one replica saturates a node and you want horizontal
-# capacity for the same served_model_name. The APXM registry will
-# round-robin across the backends at request time.
+# capacity for the same served_model_name. Each replica registers under
+# its own backend name and is addressed by an exact model reference; the
+# APXM registry never distributes requests across the replicas.
 [[deployment]]
 name = "example-throughput-model"
 model = "<HF_OR_LOCAL_REF>"

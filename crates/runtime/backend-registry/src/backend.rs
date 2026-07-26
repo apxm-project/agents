@@ -368,7 +368,6 @@ mod tests {
             headers,
             models: vec![ModelConfig {
                 id: "fixture-model".to_string(),
-                aliases: vec![],
                 context_window: 0,
                 supports_vision: false,
                 supports_functions: false,

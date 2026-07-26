@@ -472,9 +472,6 @@ pub enum BackendAction {
         backend: String,
         /// Model identifier (sent to API)
         model_id: String,
-        /// Alternative routing names
-        #[arg(long)]
-        alias: Vec<String>,
         /// Maximum context window in tokens
         #[arg(long, default_value = "0")]
         context_window: usize,

@@ -77,14 +77,11 @@ pub struct BackendConfig {
     pub supports_structured_outputs: Option<bool>,
 }
 
-/// Model metadata and capability hints for routing and request shaping.
+/// Model metadata and capability hints for request shaping.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelConfig {
-    /// Model identifier sent to the API.
+    /// Exact model identifier sent to the API.
     pub id: String,
-    /// Alternative names for this model.
-    #[serde(default)]
-    pub aliases: Vec<String>,
     /// Maximum context window in tokens. `0` means unknown.
     #[serde(default)]
     pub context_window: usize,

@@ -334,30 +334,6 @@ fn representative_core_payloads() -> Vec<Box<dyn EventPayload>> {
             delay_ms: 5,
             reason: "backoff".to_string(),
         }),
-        Box::new(ModelRouteDecisionPayload {
-            backend: "vllm".to_string(),
-            model: Some("llama-70b".to_string()),
-            was_failover: false,
-            reason: "cost".to_string(),
-            rejected_candidates: vec![ModelRouteRejectionPayload {
-                candidate: "gpt-slow".to_string(),
-                backend: "openai".to_string(),
-                reason_kind: "circuit_breaker_open".to_string(),
-                reason: "backend circuit breaker is open".to_string(),
-            }],
-        }),
-        Box::new(AgentRouteDecisionPayload {
-            id: "req-1".to_string(),
-            profile: Some("planner-profile".to_string()),
-            source: "selected".to_string(),
-            reason: "capability fit".to_string(),
-            required_capabilities: vec!["read".to_string()],
-            rejected_candidates: vec![AgentRouteRejectionPayload {
-                profile: "reviewer-profile".to_string(),
-                missing_capabilities: vec!["execute".to_string()],
-                reason: "missing required capability".to_string(),
-            }],
-        }),
         Box::new(HeadOfLineBlockPayload {
             blocker_node: 1,
             blocked_node: 2,

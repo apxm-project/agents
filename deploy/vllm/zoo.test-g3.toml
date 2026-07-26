@@ -1,10 +1,9 @@
-# Replica round-robin smoke.
+# Two-replica deployment smoke.
 #
-# One model with replicas=2 — exercises the resolver path where
-# find_backend_for_model collects all matching backends and
-# select_by_strategy dispatches across them. The two replicas land on
-# consecutive ports starting at port_base = 8965 and register as
-# distinct backend names (-r0, -r1) serving the same served_model_name.
+# One model with replicas=2. The two replicas land on consecutive ports
+# starting at port_base = 8965 and register as distinct backend names
+# (-r0, -r1). Each backend name is an exact model reference the registry
+# binds on its own; the registry never chooses among the replicas.
 
 schema_version = 1
 
