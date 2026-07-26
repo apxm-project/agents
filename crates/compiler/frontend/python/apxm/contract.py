@@ -304,7 +304,6 @@ class RepoPath(str, Enum):
 class ArgName(str, Enum):
     """argparse destination names used by the controller."""
 
-    ALIAS = "alias"
     API_KEY = "api_key"
     API_KEY_ENV = "api_key_env"
     ARCHIVE = "archive"

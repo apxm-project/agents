@@ -194,10 +194,6 @@ fn boxed_core_payload_from_json(
         boxed!(CheckpointRestoredPayload)
     } else if kind_name == kind::SCHEDULER_DECISION.name() {
         boxed!(SchedulerDecisionPayload)
-    } else if kind_name == kind::MODEL_ROUTE_DECISION.name() {
-        boxed!(ModelRouteDecisionPayload)
-    } else if kind_name == kind::AGENT_ROUTE_DECISION.name() {
-        boxed!(AgentRouteDecisionPayload)
     } else if kind_name == kind::HEAD_OF_LINE_BLOCK.name() {
         boxed!(HeadOfLineBlockPayload)
     } else if kind_name == kind::GPU_UTILIZATION.name() {
@@ -1030,78 +1026,6 @@ pub struct SchedulerDecisionPayload {
     pub reason: String,
 }
 impl_event_payload!(SchedulerDecisionPayload, kind::SCHEDULER_DECISION);
-
-/// A model-routing candidate rejected before final selection. Kept here without creating a
-/// dependency from `apxm-core` back onto the runtime crate.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelRouteRejectionPayload {
-    /// Candidate model name.
-    pub candidate: String,
-    /// Candidate's backend.
-    pub backend: String,
-    /// Typed rejection reason spelling (e.g. `circuit_breaker_open`,
-    /// `requirements_not_satisfied`, `not_best_ranked`) — always sourced
-    /// from `ModelRouteRejectionReason::as_str()` at the emit call site.
-    pub reason_kind: String,
-    /// Human-readable detail.
-    pub reason: String,
-}
-
-/// Routing metadata emitted by `ModelRouter::select`: the chosen backend/model,
-/// why it was chosen,
-/// and every candidate that was passed over with its own reason.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelRouteDecisionPayload {
-    /// Chosen backend name.
-    pub backend: String,
-    /// Resolved model name, if any.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    /// Whether this decision was constrained by circuit-breaker state.
-    pub was_failover: bool,
-    /// Why `backend`/`model` were chosen.
-    pub reason: String,
-    /// Candidates considered and passed over before this backend was chosen.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub rejected_candidates: Vec<ModelRouteRejectionPayload>,
-}
-impl_event_payload!(ModelRouteDecisionPayload, kind::MODEL_ROUTE_DECISION);
-
-/// An agent-routing candidate rejected before final selection.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentRouteRejectionPayload {
-    /// Candidate profile name.
-    pub profile: String,
-    /// Required capabilities the candidate was missing.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub missing_capabilities: Vec<String>,
-    /// Human-readable rejection reason.
-    pub reason: String,
-}
-
-/// An `AgentRouter::route_requests` decision, made observable: the
-/// chosen agent profile, why, and which candidates were rejected and why.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentRouteDecisionPayload {
-    /// Request id this decision answers.
-    pub id: String,
-    /// Chosen profile, if any (`None` means deterministic execution with no
-    /// agent binding).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profile: Option<String>,
-    /// Route source (`explicit` | `selected` | `deterministic`) — always
-    /// sourced from `AgentRouteSource::as_str()`.
-    pub source: String,
-    /// Why this route was chosen.
-    pub reason: String,
-    /// Normalized required capabilities for this request.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub required_capabilities: Vec<String>,
-    /// Candidates rejected before this profile was chosen.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub rejected_candidates: Vec<AgentRouteRejectionPayload>,
-}
-impl_event_payload!(AgentRouteDecisionPayload, kind::AGENT_ROUTE_DECISION);
 
 /// A head-of-line blocking observation.
 #[derive(Debug, Clone, Serialize, Deserialize)]

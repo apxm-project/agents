@@ -1165,17 +1165,49 @@ mod request_recording_tests {
         assert_eq!(right.batch_submission_count(), 0);
     }
 
+    /// An unbound model reference is rejected even when the registry holds
+    /// healthy, serviceable backends — including one that already serves a
+    /// different model reference.
+    ///
+    /// The registered backends are the whole point: they are exactly the
+    /// candidate set any first-available, provider-inferred, or
+    /// health-ranked selection would draw from. If resolution ever grows a
+    /// selection step, `unknown-model` resolves to `mock` or `other` and
+    /// this test fails. Resolving against an empty registry would not
+    /// distinguish "this reference has no binding" from "there was nothing
+    /// to select".
     #[test]
     fn registry_rejects_unbound_model_without_provider_inference() {
         let registry = LLMRegistry::new();
-        let error = registry
-            .resolve_backend(&LLMRequest::new("hi").with_model("unknown-model"))
-            .expect_err("unbound models must fail closed");
+        registry
+            .register("mock", MockLLMBackend::static_response("hello"))
+            .expect("register mock backend");
+        registry
+            .register("other", MockLLMBackend::static_response("hello"))
+            .expect("register other backend");
+        registry
+            .bind_model("fixture-model", "mock")
+            .expect("bind fixture model");
 
-        assert!(matches!(
-            error.downcast_ref::<ModelReferenceError>(),
-            Some(ModelReferenceError::UnknownModel { model }) if model == "unknown-model"
-        ));
+        assert_eq!(
+            registry.backend_names().len(),
+            2,
+            "the rejection must be observed with a non-empty candidate set"
+        );
+
+        match registry.resolve_backend(&LLMRequest::new("hi").with_model("unknown-model")) {
+            Ok(backend) => panic!(
+                "unbound model resolved to backend {backend:?}: resolution selected a \
+                 backend the reference is not bound to"
+            ),
+            Err(error) => assert!(
+                matches!(
+                    error.downcast_ref::<ModelReferenceError>(),
+                    Some(ModelReferenceError::UnknownModel { model }) if model == "unknown-model"
+                ),
+                "expected UnknownModel for the unbound reference, got: {error}"
+            ),
+        }
     }
 
     #[test]
