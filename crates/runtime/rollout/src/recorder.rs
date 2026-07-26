@@ -276,7 +276,6 @@ impl RolloutRecorder {
 fn payload_kind_name(payload: &RolloutPayload) -> &'static str {
     match payload {
         RolloutPayload::SessionMeta(_) => "session_meta",
-        RolloutPayload::TurnContext(_) => "turn_context",
         RolloutPayload::UserMessage(_) => "user_message",
         RolloutPayload::AssistantMessage(_) => "assistant_message",
         RolloutPayload::ToolUse(_) => "tool_use",

@@ -214,7 +214,7 @@
           "causal_node_execution_ids": [
             "node-execution.1"
           ],
-          "turn_id": "turn.1"
+          "unrecognized_field": "value.1"
         }
       ]
     },
@@ -336,7 +336,7 @@
         {
           "fact_id": "fact.1",
           "event_sequence": 1,
-          "fact_kind": "turn.completed"
+          "fact_kind": "not.a.fact.kind"
         }
       ]
     },

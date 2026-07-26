@@ -99,7 +99,7 @@
       "attributed_events": [
         {
           "event_sequence": 0,
-          "kind": "turn"
+          "kind": "not_a_kind"
         }
       ],
       "peer_usage": []

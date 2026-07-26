@@ -15,8 +15,7 @@ use apxm_core::events::payload::{
     LlmPromptPayload, LlmStepCompletedPayload, NodeOutputPayload, RedactedContent,
     SubagentLlmCallBeginPayload, SubagentLlmCallEndPayload, SubagentSpawnBeginPayload,
     ThoughtPayload, TokenPayload, TokenUsagePayload, ToolCallBeginPayload, ToolCallEndPayload,
-    ToolCallPayload, ToolEndPayload, ToolStartPayload, TurnAbortedPayload, TurnBoundaryPayload,
-    TurnCompletePayload, TurnDirection, TurnStartedPayload,
+    ToolCallPayload, ToolEndPayload, ToolStartPayload,
 };
 use apxm_core::events::{ApxmEvent, EventEmitter, EventSource};
 use blake3::Hasher;
@@ -207,7 +206,6 @@ enum CorrelationRole {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CorrelationFamily {
-    Turn,
     Operation,
     ModelStep,
     Inference,
@@ -217,7 +215,6 @@ enum CorrelationFamily {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CorrelationIdentity {
-    Execution(String),
     Operation { node_id: u64, op_type: String },
     Generation(GenerationIdentity),
     ToolCall(String),
@@ -356,34 +353,7 @@ fn lock_correlations(state: &Mutex<CorrelationState>) -> MutexGuard<'_, Correlat
 
 fn correlation_descriptor(event: &ApxmEvent) -> Option<CorrelationDescriptor> {
     let (family, role, identity, span_name, operation, span_kind) =
-        if let Some(payload) = event.payload.downcast_ref::<TurnStartedPayload>() {
-            (
-                CorrelationFamily::Turn,
-                CorrelationRole::Begin,
-                CorrelationIdentity::Execution(payload.execution_id.clone()),
-                "apxm.agent.turn",
-                GENAI_OPERATION_INVOKE_AGENT,
-                SpanKind::Internal,
-            )
-        } else if let Some(payload) = event.payload.downcast_ref::<TurnCompletePayload>() {
-            (
-                CorrelationFamily::Turn,
-                CorrelationRole::End,
-                CorrelationIdentity::Execution(payload.execution_id.clone()),
-                "apxm.agent.turn",
-                GENAI_OPERATION_INVOKE_AGENT,
-                SpanKind::Internal,
-            )
-        } else if let Some(payload) = event.payload.downcast_ref::<TurnAbortedPayload>() {
-            (
-                CorrelationFamily::Turn,
-                CorrelationRole::End,
-                CorrelationIdentity::Execution(payload.execution_id.clone()),
-                "apxm.agent.turn",
-                GENAI_OPERATION_INVOKE_AGENT,
-                SpanKind::Internal,
-            )
-        } else if matches!(event.kind().name(), "operation_start" | "operation_end") {
+        if matches!(event.kind().name(), "operation_start" | "operation_end") {
             let (node_id, op_type) = operation_identity(event)?;
             (
                 CorrelationFamily::Operation,
@@ -648,8 +618,8 @@ pub fn operation_name(kind: EventKind) -> &'static str {
             GENAI_OPERATION_EXECUTE_TOOL
         }
         "subagent_spawn_begin" | "subagent_spawn_end" => GENAI_OPERATION_CREATE_AGENT,
-        "turn_started" | "turn_complete" | "turn_aborted" | "turn_boundary" | "subagent_done"
-        | "subagent_failed" | "agent_message" | "approval_request" | "approval_resolved" => {
+        "subagent_done" | "subagent_failed" | "agent_message" | "approval_request"
+        | "approval_resolved" => {
             GENAI_OPERATION_INVOKE_AGENT
         }
         "operation_start"
@@ -963,63 +933,6 @@ fn add_payload_attributes(
             &payload.result,
             config.capture_message_content,
         );
-    }
-
-    if let Some(payload) = event.payload.downcast_ref::<TurnStartedPayload>() {
-        attributes.push(KeyValue::new(
-            "gen_ai.agent.execution.id",
-            payload.execution_id.clone(),
-        ));
-        if let Some(turn_id) = &payload.turn_id {
-            attributes.push(KeyValue::new("gen_ai.agent.turn.id", turn_id.clone()));
-        }
-    }
-
-    if let Some(payload) = event.payload.downcast_ref::<TurnCompletePayload>() {
-        attributes.push(KeyValue::new(
-            "gen_ai.agent.execution.id",
-            payload.execution_id.clone(),
-        ));
-        attributes.push(KeyValue::new("gen_ai.agent.had_answer", payload.had_answer));
-        attributes.push(KeyValue::new(
-            "gen_ai.agent.duration_ms",
-            i64::try_from(payload.duration_ms).unwrap_or(i64::MAX),
-        ));
-    }
-
-    if let Some(payload) = event.payload.downcast_ref::<TurnBoundaryPayload>() {
-        attributes.push(KeyValue::new(
-            "gen_ai.agent.turn.number",
-            i64::try_from(payload.turn_number).unwrap_or(i64::MAX),
-        ));
-        attributes.push(KeyValue::new(
-            "gen_ai.agent.turn.direction",
-            match payload.direction {
-                TurnDirection::Request => "request",
-                TurnDirection::Response => "response",
-            },
-        ));
-    }
-
-    if let Some(payload) = event.payload.downcast_ref::<TurnAbortedPayload>() {
-        attributes.push(KeyValue::new(
-            "gen_ai.agent.execution.id",
-            payload.execution_id.clone(),
-        ));
-        attributes.push(KeyValue::new(
-            "gen_ai.agent.duration_ms",
-            i64::try_from(payload.duration_ms).unwrap_or(i64::MAX),
-        ));
-        attributes.push(KeyValue::new(
-            "gen_ai.agent.abort_reason",
-            payload.reason.clone(),
-        ));
-        if let Some(error_message) = &payload.error_message_safe {
-            attributes.push(KeyValue::new(
-                "gen_ai.agent.error_message",
-                error_message.clone(),
-            ));
-        }
     }
 
     if let Some(payload) = event.payload.downcast_ref::<SubagentSpawnBeginPayload>() {
@@ -1421,10 +1334,11 @@ mod tests {
             args: std::collections::HashMap::new(),
             tool_call_correlation: None,
         }));
-        exporter.emit(event(TurnStartedPayload {
-            execution_id: "exec-1".to_string(),
-            turn_id: None,
-            coordinator_label: None,
+        exporter.emit(event(AgentMessagePayload {
+            text: "done".to_string(),
+            item_id: None,
+            response_id: None,
+            usage: None,
         }));
         exporter.emit(event(SubagentSpawnBeginPayload {
             agent_code: "worker".to_string(),
@@ -1456,7 +1370,7 @@ mod tests {
     }
 
     #[test]
-    fn llm_step_and_turn_boundary_export_typed_observability_attributes() {
+    fn llm_step_exports_typed_observability_attributes() {
         let (exporter, spans, _) = test_exporter(GenAiExporterConfig::enabled());
         exporter.emit(event(LlmStepCompletedPayload {
             node_id: 7,
@@ -1479,13 +1393,8 @@ mod tests {
             tool_call_count: 2,
             generation: None,
         }));
-        exporter.emit(event(TurnBoundaryPayload {
-            turn_number: 3,
-            direction: TurnDirection::Response,
-        }));
-
         let spans = spans.get_finished_spans().expect("span export failed");
-        assert_eq!(spans.len(), 2);
+        assert_eq!(spans.len(), 1);
         assert_eq!(
             attribute_value(&spans[0], "gen_ai.operation.name").map(Value::as_str),
             Some(std::borrow::Cow::Borrowed(GENAI_OPERATION_CHAT))
@@ -1501,16 +1410,6 @@ mod tests {
         assert_eq!(
             attribute_value(&spans[0], "apxm.usage.cached_input_tokens"),
             Some(&Value::I64(32))
-        );
-        assert_eq!(
-            attribute_value(&spans[1], "gen_ai.agent.turn.number"),
-            Some(&Value::I64(3))
-        );
-        assert_eq!(
-            attribute_value(&spans[1], "gen_ai.agent.turn.direction")
-                .map(Value::as_str)
-                .map(|value| value.into_owned()),
-            Some("response".to_string())
         );
     }
 
@@ -1551,15 +1450,18 @@ mod tests {
     }
 
     #[test]
-    fn turn_events_form_one_duration_bearing_span_with_stable_ids() {
+    fn paired_events_form_one_duration_bearing_span_with_stable_ids() {
         let (exporter, spans, _) = test_exporter(GenAiExporterConfig::enabled());
+        let correlation =
+            ToolCallCorrelation::new(GenerationIdentity::new("generation-1", 1, 1), "tool-call-1");
         let begin = correlated_event(
-            TurnStartedPayload {
-                execution_id: "exec-1".to_string(),
-                turn_id: Some("turn-1".to_string()),
-                coordinator_label: Some("Coordinator".to_string()),
+            ToolCallBeginPayload {
+                agent_code: "worker".to_string(),
+                tool_name: "lookup".to_string(),
+                argument_keys: Vec::new(),
+                tool_call_correlation: Some(correlation.clone()),
             },
-            "turn-begin",
+            "pair-begin",
             "run-parent",
             10,
         );
@@ -1573,12 +1475,15 @@ mod tests {
 
         std::thread::sleep(std::time::Duration::from_millis(2));
         let end = correlated_event(
-            TurnCompletePayload {
-                execution_id: "exec-1".to_string(),
-                duration_ms: 2,
-                had_answer: true,
+            ToolCallEndPayload {
+                agent_code: "worker".to_string(),
+                tool_name: "lookup".to_string(),
+                result_keys: Vec::new(),
+                status: ToolCallStatus::Ok,
+                latency_ms: 2,
+                tool_call_correlation: Some(correlation),
             },
-            "turn-end",
+            "pair-end",
             "run-parent",
             11,
         );
@@ -1587,7 +1492,7 @@ mod tests {
         let spans = spans.get_finished_spans().expect("span export failed");
         assert_eq!(spans.len(), 1);
         let span = &spans[0];
-        assert_eq!(span.name.as_ref(), "apxm.agent.turn");
+        assert_eq!(span.name.as_ref(), "apxm.tool.operation");
         assert!(span.end_time > span.start_time);
         assert_eq!(
             span.span_context.span_id(),
@@ -1600,11 +1505,11 @@ mod tests {
         );
         assert_eq!(
             attribute_value(span, "apxm.event.start.span_id").map(Value::as_str),
-            Some(std::borrow::Cow::Borrowed("turn-begin"))
+            Some(std::borrow::Cow::Borrowed("pair-begin"))
         );
         assert_eq!(
             attribute_value(span, "apxm.event.end.span_id").map(Value::as_str),
-            Some(std::borrow::Cow::Borrowed("turn-end"))
+            Some(std::borrow::Cow::Borrowed("pair-end"))
         );
     }
 
@@ -1780,10 +1685,14 @@ mod tests {
         let (exporter, spans, _) = test_exporter_with_limit(GenAiExporterConfig::enabled(), 2);
         for index in 0..3 {
             exporter.emit(correlated_event(
-                TurnStartedPayload {
-                    execution_id: format!("exec-{index}"),
-                    turn_id: None,
-                    coordinator_label: None,
+                ToolCallBeginPayload {
+                    agent_code: "worker".to_string(),
+                    tool_name: "lookup".to_string(),
+                    argument_keys: Vec::new(),
+                    tool_call_correlation: Some(ToolCallCorrelation::new(
+                        GenerationIdentity::new(format!("generation-{index}"), 1, 1),
+                        format!("tool-call-{index}"),
+                    )),
                 },
                 &format!("begin-{index}"),
                 "run-parent",

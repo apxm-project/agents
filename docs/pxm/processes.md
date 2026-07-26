@@ -78,7 +78,7 @@ In all three cases, the underlying AAM **instance** is shared per server
 execution — there is no per-agent_id AAM today. This is a known gap for
 use cases that need fully-independent belief stores per agent (e.g. a Cleo
 "specialist fan-out" pattern where each specialist accumulates its own
-belief slice across turns). Lifting this constraint is tracked separately;
+belief slice across exchanges). Lifting this constraint is tracked separately;
 the current doc reflects what the code does today.
 
 ### Phase 2: Communicate
@@ -92,9 +92,9 @@ the current doc reflects what the code does today.
 
 During a prompt, the agent can read/write files and execute terminal commands, all mediated by A-PXM's capability system and sandbox boundary.
 
-### Phase 3: Multi-turn
+### Phase 3: Multi-exchange
 
-Each subsequent COMMUNICATE to the same recipient reuses the same session (same OS process, same pipes). The agent retains full conversation context from previous turns. Turn count increments with each interaction.
+Each subsequent COMMUNICATE to the same recipient reuses the same session (same OS process, same pipes). The agent retains full conversation context from previous exchanges. The exchange count increments with each interaction.
 
 ### Phase 4: Terminate
 
@@ -159,9 +159,9 @@ The `ProcessTable` is the unified registry of all live agent processes -- analog
 |--------|-----------|-------------------------------|
 | Identity | Anonymous capability call | Named process in ProcessTable |
 | State | Stateless (or manual session handle) | Stateful (persistent session) |
-| Multi-turn | Requires explicit session handle | Natural (same recipient name) |
+| Multi-exchange | Requires explicit session handle | Natural (same recipient name) |
 | Isolation | Via CapabilitySystem | OS process boundary |
 | Lifecycle | Per-invocation | Spawn-to-terminate |
 | Observability | Capability metrics | Full process/thread tracking |
 
-Both approaches remain valid. `INV(acp)` is simpler for one-shot agent calls. `SPAWN_AGENT` + `COMMUNICATE` is preferred for multi-turn conversations, workflows where agent identity matters, and scenarios requiring explicit lifecycle control.
+Both approaches remain valid. `INV(acp)` is simpler for one-shot agent calls. `SPAWN_AGENT` + `COMMUNICATE` is preferred for multi-exchange conversations, workflows where agent identity matters, and scenarios requiring explicit lifecycle control.

@@ -3,7 +3,7 @@
 //! Shared by BOTH parallelism engines so same-name write tools serialize
 //! regardless of how they run:
 //! - the in-ASK parallel tool loop (`handlers/llm/tool_dispatch.rs`), where the
-//!   model emits a batch of tool calls in one turn, and
+//!   model emits a batch of tool calls in one response, and
 //! - the graph/dataflow path (`handlers/inv_cap.rs`), where the scheduler runs
 //!   independent `inv_cap` nodes concurrently (it serializes by data dependency
 //!   only, never by tool identity).

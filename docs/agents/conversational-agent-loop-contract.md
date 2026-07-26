@@ -8,7 +8,7 @@
 The former runtime-facing `apxm.conversational-loop.v1`, Turn Outcome, terminal
 Turn commit, and rearm contract is not part of the target. A Conversational
 Agent authors an ordinary structured loop. The compiler preserves source
-mapping, the runtime records generic region occurrences, and Studio projects
-them as Turns.
+mapping, the runtime records generic region occurrences through
+`LoopIterationCompleted`, and Studio projects those generic loop iterations.
 
 This tombstone preserves link history only. It is not legacy support.

@@ -222,7 +222,7 @@ async fn park_commits_context_continuation_wait_effects_evidence_usage_and_outpu
     let outcome = execute_resumable(
         &ports(commit.clone()),
         request("instance.atomic"),
-        json!({"turn": 1}),
+        json!({"iteration": 1}),
     )
     .await
     .expect("park commits atomically");
@@ -238,7 +238,7 @@ async fn park_commits_context_continuation_wait_effects_evidence_usage_and_outpu
     let tuples = commit.tuples.lock().unwrap();
     assert_eq!(tuples.len(), 1);
     let tuple = &tuples[0];
-    assert_eq!(tuple.context, json!({"turn": 1}));
+    assert_eq!(tuple.context, json!({"iteration": 1}));
     assert!(tuple.continuation.is_some());
     let continuation: Continuation =
         serde_json::from_value(tuple.continuation.clone().unwrap()).expect("typed continuation");
@@ -272,7 +272,7 @@ async fn crash_before_atomic_commit_leaves_no_context_or_continuation_to_replay(
     let error = execute_resumable(
         &ports(commit.clone()),
         request("instance.crash"),
-        json!({"turn": 1}),
+        json!({"iteration": 1}),
     )
     .await
     .expect_err("an uncertain atomic commit cannot report a durable suspension");
@@ -289,7 +289,7 @@ async fn resume_reads_the_committed_structural_continuation() {
     execute_resumable(
         &ports(commit.clone()),
         request("instance.replay"),
-        json!({"turn": 1}),
+        json!({"iteration": 1}),
     )
     .await
     .expect("park");
@@ -298,7 +298,7 @@ async fn resume_reads_the_committed_structural_continuation() {
         &ports(commit.clone()),
         "instance.replay",
         EventRef::new("evt-atomic").expect("non-empty event ref"),
-        json!({"turn": 2}),
+        json!({"iteration": 2}),
     )
     .await
     .expect("resume from committed state");

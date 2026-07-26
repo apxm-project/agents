@@ -43,8 +43,8 @@ Token, Thought, ToolCall, LlmDone, Usage, Retry, Warning, Citation, ProviderEven
 ### Runtime Layer (16)
 OperationStart/End, ToolStart/End, PlanCreated, PlanStepStarted/Completed, MemoryRead/Write, CheckpointSaved/Restored, SchedulerDecision, GpuUtilization, TokenUsage, MemoizationHit, Error
 
-### Session Layer (8)
-ContextCompacted, ModelRerouted, Cancelled, LoopDetected, ContextWindowWarning, SessionStart, SessionEnd, TurnBoundary
+### Session Layer (7)
+ContextCompacted, ModelRerouted, Cancelled, LoopDetected, ContextWindowWarning, SessionStart, SessionEnd
 
 ### Consumers
 

@@ -48,7 +48,7 @@ impl OperationMetricTotals {
 pub struct ProcessMetricTotals {
     pub spawn_count: usize,
     pub spawn_failures: usize,
-    pub prompt_turns: usize,
+    pub prompts: usize,
     pub prompt_failures: usize,
     pub total_spawn_duration_ms: u64,
     pub total_prompt_duration_ms: u64,
@@ -67,8 +67,8 @@ impl ProcessMetricTotals {
         }
     }
 
-    pub fn record_turn(&mut self, metric: &ProcessPromptMetric) {
-        self.prompt_turns += 1;
+    pub fn record_prompt(&mut self, metric: &ProcessPromptMetric) {
+        self.prompts += 1;
         self.total_prompt_duration_ms += metric.duration_ms;
         if !metric.success {
             self.prompt_failures += 1;
@@ -84,7 +84,7 @@ impl ProcessMetricTotals {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.spawn_count == 0 && self.prompt_turns == 0
+        self.spawn_count == 0 && self.prompts == 0
     }
 }
 
@@ -104,8 +104,8 @@ impl GraphMetricTotals {
         self.processes.record_spawn(metric);
     }
 
-    pub fn record_turn(&mut self, metric: &ProcessPromptMetric) {
-        self.processes.record_turn(metric);
+    pub fn record_prompt(&mut self, metric: &ProcessPromptMetric) {
+        self.processes.record_prompt(metric);
     }
 
     pub fn is_empty(&self) -> bool {
@@ -136,7 +136,7 @@ pub struct ProcessSpawnMetric {
     pub error: Option<String>,
 }
 
-/// One prompt turn sent to a spawned agent process.
+/// One prompt sent to a spawned agent process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessPromptMetric {
     pub node_id: u64,
@@ -144,7 +144,7 @@ pub struct ProcessPromptMetric {
     pub process_id: String,
     pub protocol: String,
     pub session_id: Option<String>,
-    pub turn: Option<u64>,
+    pub prompt_index: Option<u64>,
     pub model: Option<String>,
     pub stop_reason: Option<String>,
     pub duration_ms: u64,
@@ -160,7 +160,7 @@ pub struct ProcessPromptMetric {
 pub struct NodeProcessMetrics {
     pub totals: ProcessMetricTotals,
     pub process_spawns: Vec<ProcessSpawnMetric>,
-    pub prompt_turns: Vec<ProcessPromptMetric>,
+    pub prompts: Vec<ProcessPromptMetric>,
 }
 
 impl NodeProcessMetrics {
@@ -169,9 +169,9 @@ impl NodeProcessMetrics {
         self.process_spawns.push(metric);
     }
 
-    pub fn record_turn(&mut self, metric: ProcessPromptMetric) {
-        self.totals.record_turn(&metric);
-        self.prompt_turns.push(metric);
+    pub fn record_prompt(&mut self, metric: ProcessPromptMetric) {
+        self.totals.record_prompt(&metric);
+        self.prompts.push(metric);
     }
 }
 
@@ -200,8 +200,8 @@ impl NodeMetrics {
         self.processes.record_spawn(metric);
     }
 
-    pub fn record_turn(&mut self, metric: ProcessPromptMetric) {
-        self.processes.record_turn(metric);
+    pub fn record_prompt(&mut self, metric: ProcessPromptMetric) {
+        self.processes.record_prompt(metric);
     }
 }
 

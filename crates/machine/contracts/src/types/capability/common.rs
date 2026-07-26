@@ -27,7 +27,7 @@ pub enum Delegability {
 #[serde(rename_all = "snake_case")]
 pub enum LifecycleBound {
     OneShot,
-    Turn,
+    Invocation,
     Task,
     Session,
     Lease,

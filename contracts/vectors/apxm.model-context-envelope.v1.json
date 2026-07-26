@@ -38,7 +38,7 @@
         {"kind":"current_input","position":5,"provenance_ref":"input://invoke-201","trust":"data","redaction":"sensitive","token_budget":4096,"token_cost":1,"frame_ids":["frame-input"]},
         {"kind":"tool_results","position":6,"provenance_ref":"context://tool-results/none","trust":"tool_result","redaction":"sensitive","token_budget":0,"token_cost":0,"frame_ids":[]}
       ],
-      "frames": [{"frame_id":"frame-input","layer":"current_input","role":"user","source_ref":"input://invoke-201","digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444","trust":"data","redaction":"sensitive","scope":"turn","truncation":"deterministic_budget","token_cost":1,"content_ref":"input://invoke-201","disposition":"reference"}],
+      "frames": [{"frame_id":"frame-input","layer":"current_input","role":"user","source_ref":"input://invoke-201","digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444","trust":"data","redaction":"sensitive","scope":"invocation","truncation":"deterministic_budget","token_cost":1,"content_ref":"input://invoke-201","disposition":"reference"}],
       "tool_schemas": [],
       "model_requirements": {"tools":false,"structured_output":false,"thinking":false,"vision":false,"locality":"any","minimum_context_tokens":0},
       "sealed_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
@@ -53,7 +53,7 @@
       "invocation_id": "invoke-202",
       "policy_ref": "policy://context/default",
       "layers": [],
-      "frames": [{"frame_id":"frame-system","layer":"platform_policy","role":"system","source_ref":"policy://platform/base","trust":"platform_instruction","redaction":"public","scope":"turn","truncation":"forbidden","token_cost":32,"content_ref":"context://frames/frame-system","disposition":"prompt"}],
+      "frames": [{"frame_id":"frame-system","layer":"platform_policy","role":"system","source_ref":"policy://platform/base","trust":"platform_instruction","redaction":"public","scope":"invocation","truncation":"forbidden","token_cost":32,"content_ref":"context://frames/frame-system","disposition":"prompt"}],
       "tool_schemas": [],
       "model_requirements": {"tools":false,"structured_output":false,"thinking":false,"vision":false,"locality":"any","minimum_context_tokens":0},
       "sealed_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555"

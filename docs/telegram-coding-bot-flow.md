@@ -531,7 +531,7 @@ the event while the Codex session continues running detached on the server.
 The server acks 202 immediately and the skill sends the Telegram reply
 asynchronously via `inv_cap "telegram.send_message"` after Codex completes.
 
-### 7e. Session context across turns
+### 7e. Session context across exchanges
 
 **Status:** the OS mints `session_id = "apxm-os-<agent-name>-<chat_id>"` using
 the Telegram `chat_id` extracted via `subject_pointer`. This correctly threads
