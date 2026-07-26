@@ -24,6 +24,7 @@ tools/           the validation and digest gate
 | `apxm.executable-artifact.v1` | Digest-bound artifact emitting only `artifact_semantic` Port Requirements |
 | `apxm.runtime-evidence.v1` | Append-only monotonic Program Instance/Invocation/effect facts |
 | `apxm.source-map.v1` | Non-executable mapping from operations and regions back to source spans |
+| `apxm.handler-manifest.v1` | TypeScript-only artifact-local tool/hook handler sidecar; no Python package-local handler shape |
 
 ## Referenced constitution envelopes
 
