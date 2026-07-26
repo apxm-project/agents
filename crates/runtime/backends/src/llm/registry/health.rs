@@ -1,14 +1,13 @@
 //! Health monitoring for backends.
 //!
-//! Tracks backend health status based on recent request success/failure rates
-//! and response latencies.
+//! Tracks backend health status from recent request success and failure rates.
+//! Health is admission evidence for the one backend a request already names;
+//! it never ranks or chooses among backends.
 
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-
-use super::latency_profile::LatencyProfileStore;
+use std::time::Instant;
 
 /// Health status of a backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -33,8 +32,6 @@ struct HealthStats {
     successful_requests: usize,
     /// Failed requests
     failed_requests: usize,
-    /// Recent latencies (last 10 requests)
-    recent_latencies: Vec<Duration>,
     /// Last update timestamp
     last_updated: Instant,
     /// Explicit status override
@@ -47,31 +44,21 @@ impl HealthStats {
             total_requests: 0,
             successful_requests: 0,
             failed_requests: 0,
-            recent_latencies: Vec::new(),
             last_updated: Instant::now(),
             status_override: None,
         }
     }
 
-    fn record_success(&mut self, latency: Duration) {
+    fn record_success(&mut self) {
         self.total_requests += 1;
         self.successful_requests += 1;
-        self.add_latency(latency);
         self.last_updated = Instant::now();
     }
 
-    fn record_failure(&mut self, latency: Duration) {
+    fn record_failure(&mut self) {
         self.total_requests += 1;
         self.failed_requests += 1;
-        self.add_latency(latency);
         self.last_updated = Instant::now();
-    }
-
-    fn add_latency(&mut self, latency: Duration) {
-        self.recent_latencies.push(latency);
-        if self.recent_latencies.len() > 10 {
-            self.recent_latencies.remove(0);
-        }
     }
 
     fn success_rate(&self) -> f64 {
@@ -79,15 +66,6 @@ impl HealthStats {
             return 0.0;
         }
         (self.successful_requests as f64) / (self.total_requests as f64)
-    }
-
-    fn average_latency(&self) -> Option<Duration> {
-        if self.recent_latencies.is_empty() {
-            return None;
-        }
-
-        let total: Duration = self.recent_latencies.iter().sum();
-        Some(total / self.recent_latencies.len() as u32)
     }
 
     fn compute_status(&self) -> HealthStatus {
@@ -117,10 +95,6 @@ impl HealthStats {
 pub struct HealthMonitor {
     /// Health statistics per backend
     stats: Arc<DashMap<String, parking_lot::Mutex<HealthStats>>>,
-    /// EWMA-smoothed whole-request latency per backend, fed from every
-    /// `record_success` call. Backs `RoutingTarget::Latency` in
-    /// `ModelRouter::select_from_table`.
-    latency_profiles: LatencyProfileStore,
 }
 
 impl HealthMonitor {
@@ -128,7 +102,6 @@ impl HealthMonitor {
     pub fn new() -> Self {
         HealthMonitor {
             stats: Arc::new(DashMap::new()),
-            latency_profiles: LatencyProfileStore::new(),
         }
     }
 
@@ -138,31 +111,24 @@ impl HealthMonitor {
             name.to_string(),
             parking_lot::Mutex::new(HealthStats::new()),
         );
-        self.latency_profiles.register_backend(name);
     }
 
     /// Unregister a backend from health tracking.
     pub fn unregister_backend(&self, name: &str) {
         self.stats.remove(name);
-        self.latency_profiles.unregister_backend(name);
     }
 
     /// Record a successful request.
-    ///
-    /// Feeds `latency` into both the recent-latencies window used by
-    /// `average_latency` and the backend's EWMA latency profile used by
-    /// `latency_ms_ewma`.
-    pub fn record_success(&self, name: &str, latency: Duration) {
+    pub fn record_success(&self, name: &str) {
         if let Some(entry) = self.stats.get(name) {
-            entry.value().lock().record_success(latency);
+            entry.value().lock().record_success();
         }
-        self.latency_profiles.record_request(name, latency);
     }
 
     /// Record a failed request.
-    pub fn record_failure(&self, name: &str, latency: Duration) {
+    pub fn record_failure(&self, name: &str) {
         if let Some(entry) = self.stats.get(name) {
-            entry.value().lock().record_failure(latency);
+            entry.value().lock().record_failure();
         }
     }
 
@@ -187,22 +153,6 @@ impl HealthMonitor {
             .map(|entry| entry.value().lock().success_rate())
     }
 
-    /// Get average latency for a backend.
-    pub fn average_latency(&self, name: &str) -> Option<Duration> {
-        self.stats
-            .get(name)
-            .and_then(|entry| entry.value().lock().average_latency())
-    }
-
-    /// Get the EWMA-smoothed whole-request latency (milliseconds) for a
-    /// backend, or `None` if the backend is unregistered or has not yet
-    /// completed a successful request. Callers that need to rank backends
-    /// with no signal yet (cold start) should treat `None` as "unknown, rank
-    /// last" rather than a hard failure.
-    pub fn latency_ms_ewma(&self, name: &str) -> Option<f64> {
-        self.latency_profiles.request_ms(name)
-    }
-
     /// Get total request count for a backend.
     pub fn total_requests(&self, name: &str) -> Option<usize> {
         self.stats
@@ -210,12 +160,11 @@ impl HealthMonitor {
             .map(|entry| entry.value().lock().total_requests)
     }
 
-    /// Reset statistics for a backend, including its EWMA latency profile.
+    /// Reset statistics for a backend.
     pub fn reset(&self, name: &str) {
         if let Some(entry) = self.stats.get(name) {
             *entry.value().lock() = HealthStats::new();
         }
-        self.latency_profiles.reset_backend(name);
     }
 
     /// Get all backend names being monitored.

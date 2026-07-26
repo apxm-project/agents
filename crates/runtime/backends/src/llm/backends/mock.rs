@@ -23,9 +23,9 @@
 //!     .when_prompt_contains("translate", "Translation: bonjour")
 //!     .default_response("I don't know");
 //!
-//! // Register in runtime
+//! // Register in runtime and bind the exact model reference it serves
 //! runtime.llm_registry().register("mock", mock).unwrap();
-//! runtime.llm_registry().set_default("mock").unwrap();
+//! runtime.llm_registry().bind_model("mock-model", "mock").unwrap();
 //! ```
 
 use super::openai::backend::validate_provider_dispatch;
