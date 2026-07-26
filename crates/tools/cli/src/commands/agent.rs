@@ -2062,6 +2062,47 @@ mod tests {
     }
 
     #[test]
+    fn load_typescript_tools_manifest_rejects_non_conforming_manifest() {
+        let tmp = tempdir().unwrap();
+        let handlers_dir = tmp.path().join("capabilities/handlers");
+        fs::create_dir_all(&handlers_dir).unwrap();
+        // A tool descriptor whose artifact_path escapes the artifact onto a
+        // build-host path must be rejected at admission:
+        // HandlerManifest::validate() fails closed on a non-conforming
+        // manifest instead of silently trusting it.
+        fs::write(
+            handlers_dir.join("tools.json"),
+            serde_json::json!({
+                "version": "apxm.handler-manifest.v1",
+                "handlers": [
+                    {
+                        "kind": "tool",
+                        "language": "typescript",
+                        "handler_id": format!("sha256:{}", "a".to_string().repeat(64)),
+                        "module": "capabilities/echo/handler",
+                        "qualname": "echo",
+                        "name": "echo",
+                        "source": {
+                            "artifact_path": "/tmp/build-host/echo.mjs",
+                            "content": "export function echo() {}\n",
+                        },
+                        "schema": {"type": "object"},
+                    }
+                ],
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let err = load_typescript_tools_manifest(tmp.path())
+            .expect_err("a build-host artifact path must not be admitted");
+        assert!(
+            err.to_string().contains("Invalid"),
+            "expected an admission-boundary rejection, got: {err}"
+        );
+    }
+
+    #[test]
     fn lint_rejects_unrecognized_files() {
         let tmp = tempdir().unwrap();
         let root = tmp.path().join("stray");

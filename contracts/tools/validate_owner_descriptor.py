@@ -57,6 +57,7 @@ VECTOR_SCHEMA = {
     "apxm.model-context-envelope.v1.json": "apxm.model-context-envelope.v1",
     "apxm.model-target.v1.json": "apxm.model-target.v1",
     "apxm.model-binding.v1.json": "apxm.model-binding.v1",
+    "apxm.handler-manifest.v1.json": "apxm.handler-manifest.v1",
 }
 
 # Authoring rule: no product surface may cite the delivery plan or its
