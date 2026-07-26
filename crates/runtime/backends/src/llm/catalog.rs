@@ -115,8 +115,6 @@ pub struct BuiltinModelSpec {
     pub id: &'static str,
     /// Protocol family this model belongs to.
     pub protocol: ProviderProtocol,
-    /// Whether this model is selected by an explicit registry policy.
-    pub is_default: bool,
 }
 
 /// All built-in models, grouped by provider.
@@ -124,147 +122,118 @@ pub const BUILTIN_MODELS: &[BuiltinModelSpec] = &[
     BuiltinModelSpec {
         id: "claude-opus-4-6",
         protocol: ProviderProtocol::Anthropic,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "claude-sonnet-4-6",
         protocol: ProviderProtocol::Anthropic,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "claude-haiku-4-5",
         protocol: ProviderProtocol::Anthropic,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "claude-opus-4-5",
         protocol: ProviderProtocol::Anthropic,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "claude-sonnet-4-5",
         protocol: ProviderProtocol::Anthropic,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "claude-3-7-sonnet",
         protocol: ProviderProtocol::Anthropic,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "claude-3-5-sonnet-20241022",
         protocol: ProviderProtocol::Anthropic,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "claude-3-opus-20240229",
         protocol: ProviderProtocol::Anthropic,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "claude-3-sonnet-20240229",
         protocol: ProviderProtocol::Anthropic,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "claude-3-haiku-20240307",
         protocol: ProviderProtocol::Anthropic,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "gpt-4o",
         protocol: ProviderProtocol::OpenAI,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "gpt-4o-mini",
         protocol: ProviderProtocol::OpenAI,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "gpt-4-turbo",
         protocol: ProviderProtocol::OpenAI,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "gpt-4",
         protocol: ProviderProtocol::OpenAI,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "gpt-3.5-turbo",
         protocol: ProviderProtocol::OpenAI,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "gpt-5",
         protocol: ProviderProtocol::OpenAI,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "gpt-5-mini",
         protocol: ProviderProtocol::OpenAI,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "gpt-5-nano",
         protocol: ProviderProtocol::OpenAI,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "gpt-5.1",
         protocol: ProviderProtocol::OpenAI,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "gpt-5.2",
         protocol: ProviderProtocol::OpenAI,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "o1",
         protocol: ProviderProtocol::OpenAI,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "o1-mini",
         protocol: ProviderProtocol::OpenAI,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "o1-preview",
         protocol: ProviderProtocol::OpenAI,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "o3",
         protocol: ProviderProtocol::OpenAI,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "o4-mini",
         protocol: ProviderProtocol::OpenAI,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "gemini-2.5-flash",
         protocol: ProviderProtocol::Google,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "gemini-2.0-pro",
         protocol: ProviderProtocol::Google,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "gemini-1.5-pro",
         protocol: ProviderProtocol::Google,
-        is_default: false,
     },
     BuiltinModelSpec {
         id: "gemini-1.5-flash",
         protocol: ProviderProtocol::Google,
-        is_default: false,
     },
 ];
 
@@ -289,18 +258,6 @@ pub fn models_for_protocol(
     BUILTIN_MODELS
         .iter()
         .filter(move |model| model.protocol == protocol)
-}
-
-/// Return no model because deployment policy must select registered models.
-pub fn default_model_for_provider(provider: &str) -> Option<&'static str> {
-    let _ = provider;
-    None
-}
-
-/// Return no model because deployment policy must select registered models.
-pub fn default_model_for_protocol(protocol: ProviderProtocol) -> Option<&'static str> {
-    let _ = protocol;
-    None
 }
 
 /// Look up a builtin model by exact id.

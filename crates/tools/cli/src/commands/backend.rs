@@ -103,7 +103,6 @@ fn sync_ollama_models(
                 ollama_model_caps(base_url, model_name);
             let model = apxm_backends::llm::ModelConfig {
                 id: model_name.to_string(),
-                aliases: vec![],
                 context_window: ctx_window,
                 supports_vision,
                 supports_functions,
@@ -431,7 +430,6 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
         BackendAction::AddModel {
             backend,
             model_id,
-            alias,
             context_window,
             supports_vision,
             supports_functions,
@@ -443,7 +441,6 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
 
             let model = ModelConfig {
                 id: model_id.clone(),
-                aliases: alias,
                 context_window,
                 supports_vision,
                 supports_functions,

@@ -537,20 +537,12 @@ fn render_models_module() -> String {
         let provider_models: Vec<&FrontendModelSpec> =
             models.iter().filter(|m| m.provider == *provider).collect();
 
-        let mut default_const = None;
         for m in &provider_models {
             let const_name = to_model_constant(m.id);
             buf.push_str(&format!(
                 "    {const_name}: Final[ModelId] = ModelId({id})\n",
                 id = py_string(m.id)
             ));
-            if m.is_default {
-                default_const = Some(const_name.clone());
-            }
-        }
-
-        if let Some(ref default) = default_const {
-            buf.push_str(&format!("    DEFAULT: Final[ModelId] = {default}\n"));
         }
 
         buf.push_str("\n\n");

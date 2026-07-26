@@ -99,7 +99,6 @@ cmd=(
   --enable-prompt-tokens-details
   --enable-force-include-usage
   --enable
-  --alias benchmark
   --startup-timeout "$STARTUP_TIMEOUT_SECONDS"
   --max-num-seqs "$MAX_NUM_SEQS"
 )
