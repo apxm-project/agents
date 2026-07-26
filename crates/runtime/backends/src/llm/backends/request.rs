@@ -156,16 +156,12 @@ pub struct LLMRequest {
     pub enable_thinking: Option<bool>,
     /// Custom metadata passed through to provider
     pub metadata: HashMap<String, serde_json::Value>,
-    /// Explicitly requested backend (for routing)
+    /// The exact backend the request names. When set it must be the backend
+    /// the model reference is bound to.
     pub backend: Option<String>,
-    /// Explicitly requested model (for routing)
+    /// The exact model reference the request names.
     pub model: Option<String>,
-    /// Semantic model tier (e.g. "reasoning-tier") to resolve via
-    /// `ProfileRouter` into a concrete `model` before `ModelRouter::select`
-    /// runs. Ignored once `backend`/`model` is explicitly set — explicit
-    /// routing always wins over a profile.
-    pub model_profile: Option<String>,
-    /// AIS operation type used for intelligent routing.
+    /// AIS operation type this request was issued for.
     pub operation_type: Option<AISOperationType>,
     /// Tools available for the LLM to call
     pub tools: Option<Vec<ToolDefinition>>,
@@ -203,7 +199,6 @@ impl LLMRequest {
             metadata: HashMap::new(),
             backend: None,
             model: None,
-            model_profile: None,
             operation_type: None,
             tools: None,
             tool_choice: None,
@@ -340,7 +335,7 @@ impl LLMRequest {
         self
     }
 
-    /// Set explicit backend for routing.
+    /// Set the exact backend the request names.
     pub fn with_backend(mut self, backend: impl Into<String>) -> Self {
         self.backend = Some(backend.into());
         self
@@ -358,20 +353,13 @@ impl LLMRequest {
         self
     }
 
-    /// Set explicit model for routing.
+    /// Set the exact model reference the request names.
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.model = Some(model.into());
         self
     }
 
-    /// Set a semantic model profile (e.g. "reasoning-tier") to resolve into a
-    /// concrete model via `ProfileRouter` before `ModelRouter::select` runs.
-    pub fn with_model_profile(mut self, profile: impl Into<String>) -> Self {
-        self.model_profile = Some(profile.into());
-        self
-    }
-
-    /// Set operation type for routing.
+    /// Set the AIS operation type this request was issued for.
     pub fn with_operation_type(mut self, operation: AISOperationType) -> Self {
         self.operation_type = Some(operation);
         self

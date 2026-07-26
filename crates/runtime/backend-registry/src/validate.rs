@@ -396,7 +396,6 @@ mod tests {
             headers: HashMap::new(),
             models: vec![ModelConfig {
                 id: "claude-sonnet-4-6".to_string(),
-                aliases: vec![],
                 context_window: 0,
                 supports_vision: false,
                 supports_functions: true,

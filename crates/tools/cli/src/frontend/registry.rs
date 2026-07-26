@@ -59,7 +59,6 @@ pub struct FrontendProviderSpec {
 pub struct FrontendModelSpec {
     pub id: &'static str,
     pub provider: &'static str,
-    pub is_default: bool,
 }
 
 pub fn builtin_models() -> Vec<FrontendModelSpec> {
@@ -68,7 +67,6 @@ pub fn builtin_models() -> Vec<FrontendModelSpec> {
         .map(|m| FrontendModelSpec {
             id: m.id,
             provider: m.protocol.as_str(),
-            is_default: m.is_default,
         })
         .collect()
 }

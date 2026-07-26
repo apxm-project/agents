@@ -1,7 +1,7 @@
-//! Typed registration and policy entities layered over `LLMRegistry`.
+//! Typed registration entities layered over `LLMRegistry`.
 //!
-//! These types keep registration dynamic while making the control plane
-//! explicit enough for APXM runtimes and adapters.
+//! Registration binds each exact model reference to the one backend that
+//! serves it. There is no alias, default, or operation-level selection.
 
 use crate::llm::LLMRegistry;
 use crate::llm::Provider;
@@ -13,7 +13,7 @@ use crate::llm::{
 };
 use anyhow::{Result, anyhow};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
-use apxm_core::types::{AISOperationType, ModelInfo};
+use apxm_core::types::ModelInfo;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as JsonValue, json};
 use std::collections::HashMap;
@@ -23,12 +23,9 @@ use std::fmt::Write as _;
 /// Model registration metadata attached to a backend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelRegistration {
-    /// Canonical model identifier used at request time.
+    /// Exact model identifier used at request time.
     pub id: String,
-    /// Alternative names resolved to the canonical id.
-    #[serde(default)]
-    pub aliases: Vec<String>,
-    /// Optional descriptive metadata for routing and inspection.
+    /// Optional descriptive metadata for inspection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub info: Option<ModelInfo>,
     /// Whether the model supports vision/image inputs.
@@ -163,7 +160,6 @@ impl BackendRegistration {
             .iter()
             .map(|model| ModelRegistration {
                 id: model.id.clone(),
-                aliases: model.aliases.clone(),
                 info: Some(ModelInfo {
                     id: model.id.clone(),
                     name: model.id.clone(),
@@ -326,15 +322,11 @@ impl BackendRegistration {
         registry.register(self.name.clone(), provider)?;
 
         if let Some(model) = &self.default_model {
-            registry.set_model_route(model.clone(), self.name.clone())?;
+            registry.bind_model(model.clone(), self.name.clone())?;
         }
 
         for model in &self.models {
-            registry.set_model_route(model.id.clone(), self.name.clone())?;
-            for alias in &model.aliases {
-                registry.register_model_alias(alias.clone(), model.id.clone());
-                registry.set_model_route(alias.clone(), self.name.clone())?;
-            }
+            registry.bind_model(model.id.clone(), self.name.clone())?;
         }
         Ok(())
     }
@@ -406,64 +398,6 @@ fn merge_custom_headers_from_env(
     }
 }
 
-/// Operation-level routing rule.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OperationRoute {
-    pub operation: AISOperationType,
-    pub backend: Option<String>,
-    pub model: Option<String>,
-}
-
-/// Named model alias with optional backend preference.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelAliasRegistration {
-    pub alias: String,
-    pub model: String,
-    pub backend: Option<String>,
-}
-
-/// Typed registry policy applied after backend registration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct RegistryPolicy {
-    pub default_backend: Option<String>,
-    pub default_model: Option<String>,
-    #[serde(default)]
-    pub operation_routes: Vec<OperationRoute>,
-    #[serde(default)]
-    pub model_aliases: Vec<ModelAliasRegistration>,
-}
-
-impl RegistryPolicy {
-    /// Apply this policy to a populated registry.
-    pub fn apply(&self, registry: &LLMRegistry) -> Result<()> {
-        if let Some(default_backend) = &self.default_backend {
-            registry.set_default(default_backend.clone())?;
-        }
-
-        for alias in &self.model_aliases {
-            registry.register_model_alias(alias.alias.clone(), alias.model.clone());
-            if let Some(backend) = &alias.backend {
-                registry.set_model_route(alias.alias.clone(), backend.clone())?;
-            }
-        }
-
-        if let Some(default_model) = &self.default_model {
-            registry.set_default_model(default_model.clone())?;
-        }
-
-        for route in &self.operation_routes {
-            if let Some(backend) = &route.backend {
-                registry.set_operation_default(route.operation, backend.clone())?;
-            }
-            if let Some(model) = &route.model {
-                registry.set_operation_model(route.operation, model.clone())?;
-            }
-        }
-
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -478,7 +412,6 @@ mod tests {
             headers: extra_headers,
             models: vec![crate::llm::ModelConfig {
                 id: "fixture-model".to_string(),
-                aliases: vec![],
                 context_window: 0,
                 supports_vision: false,
                 supports_functions: false,

@@ -1,8 +1,8 @@
 //! APxM Models - Unified LLM Provider Integration Library
 //!
 //! Provides a declarative, minimalistic interface for integrating multiple LLM providers
-//! and protocols (OpenAI, Anthropic, Google, Ollama, vLLM, mock) with intelligent
-//! routing, cost tracking, retry logic, and schema validation.
+//! and protocols (OpenAI, Anthropic, Google, Ollama, vLLM, mock) with exact
+//! model-reference dispatch, cost tracking, retry logic, and schema validation.
 //!
 //! # Design Principles
 //!
@@ -204,8 +204,7 @@ pub mod retry;
 pub mod schema;
 
 pub use catalog::{
-    BUILTIN_MODELS, BUILTIN_PROVIDERS, BuiltinModelSpec, BuiltinProviderSpec,
-    default_model_for_protocol, default_model_for_provider, models_for_protocol,
+    BUILTIN_MODELS, BUILTIN_PROVIDERS, BuiltinModelSpec, BuiltinProviderSpec, models_for_protocol,
     models_for_provider, resolve_builtin_model, resolve_builtin_provider, resolve_provider_spec,
 };
 pub use config::{BackendConfig, BackendType, ModelConfig};
@@ -225,11 +224,9 @@ pub use observability::{
 };
 pub use provider::{Provider, ProviderId, RegisteredProvider};
 pub use rate_limit::{RateLimitConfig, RateLimitConfigError, RateLimitError};
-pub use registration::{
-    BackendRegistration, ModelAliasRegistration, ModelRegistration, OperationRoute, RegistryPolicy,
-};
+pub use registration::{BackendRegistration, ModelRegistration};
 pub use registry::{
-    CorrelatedBatchRoute, HealthMonitor, HealthStatus, LLMRegistry, RequestSelectionError,
+    CorrelatedBatchRoute, HealthMonitor, HealthStatus, LLMRegistry, ModelReferenceError,
     StreamingBackendError, StreamingFailureKind,
 };
 pub use retry::{ErrorClass, RetryConfig, RetryStrategy};
