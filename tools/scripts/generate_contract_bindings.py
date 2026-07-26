@@ -1,5 +1,18 @@
 #!/usr/bin/env python3
-"""Generate canonical agents bindings from the contracts repository."""
+"""Generate canonical agents bindings from the contracts repository.
+
+The owning generator (../contracts/tools/codegen.py) is not itself a fixpoint
+for two of its Rust emitters: `render_agents_manifest` reorders the `use`
+block relative to rustfmt's import-grouping order, and
+`render_context_rust_types` emits an over-width `pub const ...
+SCHEMA_VERSION` line that rustfmt line-wraps. This wrapper runs rustfmt over
+the Rust outputs after invoking the owning generator so `dekk agents gen` is
+a fixpoint here. It is a consumer-side workaround, not a second owner of
+formatting: once Contracts makes those two emitters produce rustfmt-stable
+output directly, this script's rustfmt pass becomes redundant and must be
+deleted along with the `--check` byte-diff step below, leaving a thin
+delegation to the owning generator.
+"""
 
 from __future__ import annotations
 
