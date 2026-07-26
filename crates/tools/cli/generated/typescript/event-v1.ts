@@ -1,4 +1,4 @@
-// AUTO-GENERATED from apxm.event.v1; DO NOT EDIT.
+// AUTO-GENERATED from apxm.core-event.v1; DO NOT EDIT.
 
 import type { CoreEventKindName, EventKind } from "./core-event-kinds";
 
@@ -291,27 +291,6 @@ export interface SchedulerDecisionEventPayload {
   node_id: number;
   delay_ms: number;
   reason: string;
-  [key: string]: unknown;
-}
-
-export interface ModelRouteDecisionEventPayload {
-  kind: "model_route_decision";
-  backend: string;
-  model?: string | null;
-  was_failover: boolean;
-  reason: string;
-  rejected_candidates?: { "candidate": string; "backend": string; "reason_kind": string; "reason": string; [key: string]: unknown; }[];
-  [key: string]: unknown;
-}
-
-export interface AgentRouteDecisionEventPayload {
-  kind: "agent_route_decision";
-  id: string;
-  profile?: string | null;
-  source: "explicit" | "selected" | "deterministic";
-  reason: string;
-  required_capabilities?: string[];
-  rejected_candidates?: { "profile": string; "missing_capabilities"?: string[]; "reason": string; [key: string]: unknown; }[];
   [key: string]: unknown;
 }
 
@@ -659,8 +638,6 @@ export type KnownEventPayload =
   | CheckpointSavedEventPayload
   | CheckpointRestoredEventPayload
   | SchedulerDecisionEventPayload
-  | ModelRouteDecisionEventPayload
-  | AgentRouteDecisionEventPayload
   | HeadOfLineBlockEventPayload
   | GpuUtilizationEventPayload
   | TokenUsageEventPayload
@@ -743,8 +720,6 @@ export const EVENT_KIND_REGISTRY: Readonly<Record<CoreEventKindName, EventKindDe
   "checkpoint_saved": { name: "checkpoint_saved", category: "lifecycle", terminal: false, terminalSense: "n/a" },
   "checkpoint_restored": { name: "checkpoint_restored", category: "lifecycle", terminal: false, terminalSense: "n/a" },
   "scheduler_decision": { name: "scheduler_decision", category: "observability", terminal: false, terminalSense: "n/a" },
-  "model_route_decision": { name: "model_route_decision", category: "observability", terminal: false, terminalSense: "n/a" },
-  "agent_route_decision": { name: "agent_route_decision", category: "observability", terminal: false, terminalSense: "n/a" },
   "head_of_line_block": { name: "head_of_line_block", category: "observability", terminal: false, terminalSense: "n/a" },
   "gpu_utilization": { name: "gpu_utilization", category: "observability", terminal: false, terminalSense: "n/a" },
   "token_usage": { name: "token_usage", category: "observability", terminal: false, terminalSense: "n/a" },

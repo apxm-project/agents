@@ -1,4 +1,4 @@
-# AUTO-GENERATED from apxm.event.v1; DO NOT EDIT.
+# AUTO-GENERATED from apxm.core-event.v1; DO NOT EDIT.
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Any, Final, Literal, TypeAlias, TypedDict
 
 EVENT_KIND_REGISTRY: Final[dict[str, dict[str, object]]] = {'agent_message': {'category': 'agent', 'terminal': False, 'terminal_sense': 'n/a'},
- 'agent_route_decision': {'category': 'observability', 'terminal': False, 'terminal_sense': 'n/a'},
  'agent_spawned': {'category': 'agent', 'terminal': False, 'terminal_sense': 'atomic_no_delta'},
  'approval_request': {'category': 'agent', 'terminal': False, 'terminal_sense': 'n/a'},
  'approval_resolved': {'category': 'agent', 'terminal': False, 'terminal_sense': 'n/a'},
@@ -38,7 +37,6 @@ EVENT_KIND_REGISTRY: Final[dict[str, dict[str, object]]] = {'agent_message': {'c
  'memory_write': {'category': 'observability', 'terminal': False, 'terminal_sense': 'n/a'},
  'model_context_metrics': {'category': 'observability', 'terminal': False, 'terminal_sense': 'n/a'},
  'model_rerouted': {'category': 'lifecycle', 'terminal': False, 'terminal_sense': 'n/a'},
- 'model_route_decision': {'category': 'observability', 'terminal': False, 'terminal_sense': 'n/a'},
  'node_metrics': {'category': 'observability', 'terminal': False, 'terminal_sense': 'n/a'},
  'node_output': {'category': 'observability', 'terminal': False, 'terminal_sense': 'n/a'},
  'operation_end': {'category': 'lifecycle', 'terminal': False, 'terminal_sense': 'n/a'},
@@ -474,40 +472,6 @@ class SchedulerDecisionEventPayload(TypedDict):
     delay_ms: int
     reason: str
 
-class ModelRouteDecisionEventPayloadRejectedCandidatesItem(TypedDict):
-    candidate: str
-    backend: str
-    reason_kind: str
-    reason: str
-
-class _ModelRouteDecisionEventPayloadOptional(TypedDict, total=False):
-    model: str | None
-    rejected_candidates: list[ModelRouteDecisionEventPayloadRejectedCandidatesItem]
-
-class ModelRouteDecisionEventPayload(_ModelRouteDecisionEventPayloadOptional):
-    kind: Literal['model_route_decision']
-    backend: str
-    was_failover: bool
-    reason: str
-
-class _AgentRouteDecisionEventPayloadRejectedCandidatesItemOptional(TypedDict, total=False):
-    missing_capabilities: list[str]
-
-class AgentRouteDecisionEventPayloadRejectedCandidatesItem(_AgentRouteDecisionEventPayloadRejectedCandidatesItemOptional):
-    profile: str
-    reason: str
-
-class _AgentRouteDecisionEventPayloadOptional(TypedDict, total=False):
-    profile: str | None
-    required_capabilities: list[str]
-    rejected_candidates: list[AgentRouteDecisionEventPayloadRejectedCandidatesItem]
-
-class AgentRouteDecisionEventPayload(_AgentRouteDecisionEventPayloadOptional):
-    kind: Literal['agent_route_decision']
-    id: str
-    source: Literal['explicit', 'selected', 'deterministic']
-    reason: str
-
 class HeadOfLineBlockEventPayload(TypedDict):
     kind: Literal['head_of_line_block']
     blocker_node: int
@@ -892,8 +856,6 @@ KnownEventPayload: TypeAlias = (
     CheckpointSavedEventPayload |
     CheckpointRestoredEventPayload |
     SchedulerDecisionEventPayload |
-    ModelRouteDecisionEventPayload |
-    AgentRouteDecisionEventPayload |
     HeadOfLineBlockEventPayload |
     GpuUtilizationEventPayload |
     TokenUsageEventPayload |
@@ -979,8 +941,6 @@ CORE_EVENT_KINDS: Final[tuple[str, ...]] = (
     'checkpoint_saved',
     'checkpoint_restored',
     'scheduler_decision',
-    'model_route_decision',
-    'agent_route_decision',
     'head_of_line_block',
     'gpu_utilization',
     'token_usage',
