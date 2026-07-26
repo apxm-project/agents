@@ -139,13 +139,6 @@ CAPABILITY_MANAGE_TASK = Capability.MANAGE_TASK.value
 
 COMMUNICATE_PROTOCOL_ACP = "acp"
 
-PYTHON_TOOL_MANIFEST_HANDLER_ID = "handler_id"
-PYTHON_TOOL_MANIFEST_MODULE = "module"
-PYTHON_TOOL_MANIFEST_QUALNAME = "qualname"
-PYTHON_TOOL_MANIFEST_NAME = "name"
-PYTHON_TOOL_MANIFEST_DESCRIPTION = "description"
-PYTHON_TOOL_MANIFEST_SCHEMA = "schema"
-
 # Mirror of crates/machine/ais/src/attrs.rs.
 INPUT_ROLES = "input_roles"
 
