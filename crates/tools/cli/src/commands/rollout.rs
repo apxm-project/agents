@@ -139,11 +139,22 @@ pub async fn rollout_replay_command(opts: RolloutReplayOptions) -> Result<()> {
     let _ = tree; // baseline + suffix are reconstructed for parity with the loader API.
     let mut snapshot = RunSnapshot::new(opts.thread_id.clone());
     for line in &items {
-        if let RolloutPayload::Event(event_payload) = &line.payload
-            && let Ok(event) = serde_json::from_value::<ApxmEvent>(event_payload.event.clone())
-        {
-            snapshot.apply(&event);
-        }
+        let RolloutPayload::Event(event_payload) = &line.payload else {
+            continue;
+        };
+        let event = serde_json::from_value::<ApxmEvent>(event_payload.event.clone()).with_context(
+            || {
+                format!(
+                    "rollout {} seq {} carries an undecodable {} event; \
+                     replay is evidence, so an unreadable record fails the command \
+                     instead of rendering a tree that silently omits it",
+                    path.display(),
+                    line.meta.seq,
+                    event_payload.event_kind,
+                )
+            },
+        )?;
+        snapshot.apply(&event);
     }
     println!("{}", render_tree(&snapshot));
     Ok(())
@@ -263,4 +274,154 @@ fn append_file<W: std::io::Write>(
         .append_file(name, &mut file)
         .with_context(|| format!("failed to append {} as {name}", path.display()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use apxm_core::events::EventSource;
+    use apxm_core::events::payload::TokenPayload;
+    use apxm_rollout::{PartialMeta, RolloutRecorder, RolloutRecorderConfig, SessionMetaPayload};
+    use chrono::Utc;
+
+    use super::*;
+
+    fn session_meta(thread_id: &str, started_at: chrono::DateTime<Utc>) -> SessionMetaPayload {
+        SessionMetaPayload {
+            thread_id: thread_id.to_string(),
+            parent_thread_id: None,
+            session_id: format!("session-{thread_id}"),
+            started_at: started_at.to_rfc3339(),
+            cwd: "/tmp".to_string(),
+            apxm_version: "0.1.0".to_string(),
+            agent_role: "test-agent".to_string(),
+            agent_code: None,
+            program_package_id: "package".to_string(),
+            program_package_digest: "digest".to_string(),
+            artifact_hash: "artifact".to_string(),
+            source_hash: "source".to_string(),
+            air_hash: "air".to_string(),
+            compiler_version: None,
+            runtime_version: None,
+            args: vec![],
+            model_provider: None,
+            model_id: None,
+            backend_endpoint: None,
+            tool_use_id_in_parent: None,
+        }
+    }
+
+    /// `apxm rollout replay` renders persisted evidence, so a record it cannot
+    /// decode must fail the command rather than be dropped from the rendered
+    /// tree.
+    ///
+    /// The concrete record here is a `capability_effect_receipt` whose
+    /// `dispatch_path` is `ask_tool` — a name this runtime's
+    /// `CapabilityEffectDispatchPath` does not admit, because a capability
+    /// effect is dispatched only by a graph `INV_CAP` operation. Such a line
+    /// can exist on disk from a writer that predates that closure. Replay must
+    /// surface it: there is no reader that translates the removed name onto a
+    /// canonical one, and there is no silent skip that would let an operator
+    /// read a tree missing a committed external effect and believe it complete.
+    #[tokio::test]
+    async fn replay_fails_closed_on_undecodable_persisted_evidence() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().to_path_buf();
+        let paths = Arc::new(RolloutPaths::new(home.clone()));
+        let thread_id = "thread-undecodable-receipt";
+        let started_at = Utc::now();
+
+        let recorder = RolloutRecorder::open(
+            RolloutRecorderConfig {
+                paths: paths.clone(),
+                thread_id: thread_id.to_string(),
+                session_id: format!("session-{thread_id}"),
+                started_at,
+                is_sidechain: false,
+                spill_threshold_bytes: None,
+                override_path: None,
+            },
+            session_meta(thread_id, started_at),
+        )
+        .await
+        .expect("open recorder");
+
+        // A decodable line, so the failure below cannot be confused with an
+        // empty or structurally broken rollout.
+        recorder
+            .write_event(
+                ApxmEvent::root(
+                    TokenPayload {
+                        text: "first".to_string(),
+                        generation: None,
+                    },
+                    EventSource::Runtime,
+                    thread_id,
+                ),
+                PartialMeta::default(),
+            )
+            .await
+            .expect("write decodable event");
+
+        // The receipt is written as a raw payload line rather than through
+        // `ApxmEvent`, because the typed enum can no longer construct
+        // `ask_tool` — which is exactly the point: only a previously written
+        // record can carry it.
+        recorder
+            .write_line(
+                RolloutPayload::Event(apxm_rollout::EventMsgPayload {
+                    event_kind: "capability_effect_receipt".to_string(),
+                    event: serde_json::json!({
+                        "meta": {
+                            "seq": 2,
+                            "timestamp": started_at.to_rfc3339(),
+                            "trace_id": thread_id,
+                            "source": "runtime",
+                            "span_id": "span-effect-receipt",
+                            "parent_span_id": null,
+                        },
+                        "payload": {
+                            "kind": "capability_effect_receipt",
+                            "receipt_id": "receipt-1",
+                            "execution_id": "execution-1",
+                            "node_id": 7,
+                            "invocation_id": "invocation-1",
+                            "capability_binding": "calendar.write",
+                            "dispatch_path": "ask_tool",
+                            "implementation_kind": "typescript",
+                            "implementation_ref": "package/calendar.write@1",
+                            "request_digest": "sha256:request-1",
+                            "admission_kind": "read_only",
+                            "approval_status": "not_required",
+                            "idempotency_proof": "transaction_verified",
+                            "idempotency_key_digest": "sha256:idempotency-1",
+                            "effect_ref": "effect-1",
+                            "status": "committed",
+                        },
+                    }),
+                }),
+                PartialMeta::default(),
+            )
+            .await
+            .expect("write undecodable receipt line");
+        recorder.close().await.expect("close recorder");
+
+        let error = rollout_replay_command(RolloutReplayOptions {
+            thread_id: thread_id.to_string(),
+            home: Some(home),
+        })
+        .await
+        .expect_err("replay must fail closed on evidence it cannot decode");
+
+        let rendered = format!("{error:#}");
+        assert!(
+            rendered.contains("capability_effect_receipt"),
+            "replay failure must name the undecodable event kind: {rendered}"
+        );
+        assert!(
+            rendered.contains("ask_tool"),
+            "replay failure must surface the undispatchable value that caused it: {rendered}"
+        );
+    }
 }

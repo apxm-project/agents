@@ -1297,7 +1297,10 @@ pub enum CapabilityEffectDispatchPath {
 
 /// Capability implementation family that produced the effect evidence.
 ///
-/// Package-local artifact handlers are TypeScript-only.
+/// The only package-local artifact handler that can produce effect evidence is
+/// a TypeScript handler. `CapabilityBindingHandler` is a wider vocabulary of
+/// declarable bindings; this enum names only the families a committed receipt
+/// can attest to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CapabilityEffectImplementationKind {
