@@ -127,8 +127,8 @@ Current typed inference identity and exact-binding behavior is anchored in
 [`apxm-inference`](../../crates/runtime/inference/src/lib.rs); the first-party
 vLLM adapter mapping is owned by
 [`adapters/crates/runtime/src/vllm.rs`](../../../adapters/crates/runtime/src/vllm.rs),
-and the current composition proof is
-[`crates/runtime/composition/tests/spine.rs`](../../crates/runtime/composition/tests/spine.rs).
+and the composition proof is owned by the adapter conformance suite at
+[`adapters/crates/conformance/tests/spine_assembly.rs`](../../../adapters/crates/conformance/tests/spine_assembly.rs).
 Those implementation pieces do not close the frontend/AIS gaps in section 9;
 the target requires the whole path to share one correlation and conformance
 contract.
