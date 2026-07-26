@@ -801,6 +801,57 @@ fn capability_effect_receipt_round_trips_without_content_fields() {
     );
 }
 
+/// A capability effect is dispatched only by a graph `INV_CAP` operation, and
+/// a package-local artifact handler is TypeScript-only. A receipt naming a
+/// model tool loop as its dispatch surface, or a Python package handler as its
+/// implementation family, describes execution this runtime cannot perform, so
+/// it is rejected rather than decoded. Rejection is the only behavior: there is
+/// no translation of either name onto a canonical one.
+#[test]
+fn capability_effect_receipt_rejects_undispatchable_vocabulary() {
+    let canonical = ApxmEvent::root(
+        CapabilityEffectReceiptPayload {
+            receipt_id: "receipt-1".to_string(),
+            execution_id: "execution-1".to_string(),
+            node_id: 7,
+            invocation_id: "invocation-1".to_string(),
+            capability_binding: "calendar.write".to_string(),
+            dispatch_path: CapabilityEffectDispatchPath::InvCap,
+            implementation_kind: CapabilityEffectImplementationKind::Typescript,
+            implementation_ref: "package/calendar.write@1".to_string(),
+            request_digest: "sha256:request-1".to_string(),
+            admission_kind: CapabilityEffectAdmissionKind::ReadOnly,
+            grant_id: None,
+            approval_status: Some(CapabilityEffectApprovalStatus::NotRequired),
+            approval_id: None,
+            idempotency_proof: CapabilityEffectIdempotencyProof::TransactionVerified,
+            idempotency_key_digest: "sha256:idempotency-1".to_string(),
+            effect_ref: "effect-1".to_string(),
+            status: CapabilityEffectReceiptStatus::Committed,
+        },
+        EventSource::Runtime,
+        "trace-effect-receipt",
+    );
+    let canonical = serde_json::to_value(&canonical).expect("serialize receipt fixture");
+    serde_json::from_value::<ApxmEvent>(canonical.clone())
+        .expect("the canonical receipt vocabulary decodes");
+
+    for (field, undispatchable) in [
+        ("dispatch_path", "ask_tool"),
+        ("implementation_kind", "python"),
+    ] {
+        let mut record = canonical.clone();
+        record["payload"][field] = serde_json::json!(undispatchable);
+        let error = serde_json::from_value::<ApxmEvent>(record)
+            .expect_err("an undispatchable receipt vocabulary must fail closed");
+        let message = error.to_string();
+        assert!(
+            message.contains(undispatchable),
+            "rejection must name the undispatchable {field} value: {message}"
+        );
+    }
+}
+
 /// Terminal-set regression pin. Topology events resolved mid-run
 /// (`agent_spawned`, `communicate_dispatched`, `graph_edge`) must never be
 /// `terminal` — a consumer that trusts `is_terminal()` to close a live feed

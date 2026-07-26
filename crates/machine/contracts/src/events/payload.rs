@@ -1284,23 +1284,25 @@ impl ContextLifecycleEventPayload {
 impl_event_payload!(ContextLifecycleEventPayload, kind::CONTEXT_LIFECYCLE);
 
 /// Capability dispatch surface that committed an effect.
+///
+/// A graph `INV_CAP` operation is the only surface that dispatches a
+/// capability, so this is a single-variant vocabulary: no model tool loop
+/// dispatches effects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CapabilityEffectDispatchPath {
     /// A graph `INV_CAP` operation dispatched the capability.
     InvCap,
-    /// An `ASK` model tool loop dispatched the capability.
-    AskTool,
 }
 
 /// Capability implementation family that produced the effect evidence.
+///
+/// Package-local artifact handlers are TypeScript-only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CapabilityEffectImplementationKind {
     /// A runtime-native capability implementation.
     Native,
-    /// A Python artifact handler.
-    Python,
     /// A TypeScript artifact handler.
     Typescript,
     /// An authenticated host-dispatched implementation.
