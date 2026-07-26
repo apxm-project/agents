@@ -1,4 +1,4 @@
-// AUTO-GENERATED from apxm.event.v1; DO NOT EDIT.
+// AUTO-GENERATED from apxm.core-event.v1; DO NOT EDIT.
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,12 +57,6 @@ pub const SCHEMA_EVENT_KIND_REGISTRY: &[SchemaEventKindEntry] = &[
     SchemaEventKindEntry {
         name: "agent_message",
         category: SchemaEventCategory::Agent,
-        terminal: false,
-        terminal_sense: SchemaTerminalSense::NA,
-    },
-    SchemaEventKindEntry {
-        name: "agent_route_decision",
-        category: SchemaEventCategory::Observability,
         terminal: false,
         terminal_sense: SchemaTerminalSense::NA,
     },
@@ -225,12 +219,6 @@ pub const SCHEMA_EVENT_KIND_REGISTRY: &[SchemaEventKindEntry] = &[
     SchemaEventKindEntry {
         name: "model_rerouted",
         category: SchemaEventCategory::Lifecycle,
-        terminal: false,
-        terminal_sense: SchemaTerminalSense::NA,
-    },
-    SchemaEventKindEntry {
-        name: "model_route_decision",
-        category: SchemaEventCategory::Observability,
         terminal: false,
         terminal_sense: SchemaTerminalSense::NA,
     },
