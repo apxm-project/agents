@@ -1,9 +1,8 @@
 //! Operation Validation
 //!
 //! Provides shared validation logic for compiler and runtime to ensure
-//! operations have all required fields and correct types.
+//! operations carry exactly the fields their closed operation spec declares.
 
-use crate::attrs;
 use crate::operations::{AISOperationType, OperationSpec, get_operation_spec};
 use crate::types::Value;
 use std::collections::HashMap;
@@ -17,17 +16,6 @@ pub enum ValidationError {
     MissingField {
         operation: String,
         field: &'static str,
-    },
-
-    /// A field has an invalid type.
-    #[error(
-        "Invalid type for field '{field}' in operation {operation}: expected {expected}, got {actual}"
-    )]
-    InvalidFieldType {
-        operation: String,
-        field: String,
-        expected: String,
-        actual: String,
     },
 
     /// An unknown field was provided.
@@ -69,9 +57,6 @@ pub fn validate_operation(
         }
     }
 
-    // Operation-specific format validation
-    validate_field_formats(op_type, spec.name, attributes)?;
-
     Ok(())
 }
 
@@ -102,9 +87,6 @@ pub fn validate_operation_strict(
             });
         }
     }
-
-    // Operation-specific format validation
-    validate_field_formats(op_type, spec.name, attributes)?;
 
     Ok(())
 }
@@ -140,46 +122,4 @@ fn require_spec(op_type: AISOperationType) -> Result<&'static OperationSpec, Val
         operation: op_type.to_string(),
         message: "unknown semantic operation".to_string(),
     })
-}
-
-/// Validates format constraints on specific fields (e.g. `python_handler_id`).
-fn validate_field_formats(
-    _op_type: AISOperationType,
-    op_name: &str,
-    attributes: &HashMap<String, Value>,
-) -> Result<(), ValidationError> {
-    if let Some(val) = attributes.get(attrs::PYTHON_HANDLER_ID) {
-        match val.as_str() {
-            Some(s) => {
-                if !is_valid_python_handler_id(s) {
-                    return Err(ValidationError::OperationSpecific {
-                        operation: op_name.to_string(),
-                        message: format!(
-                            "python_handler_id must match sha256:<64 hex chars>, got: {s}"
-                        ),
-                    });
-                }
-            }
-            None => {
-                return Err(ValidationError::InvalidFieldType {
-                    operation: op_name.to_string(),
-                    field: attrs::PYTHON_HANDLER_ID.to_string(),
-                    expected: "string".to_string(),
-                    actual: format!("{val:?}"),
-                });
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Returns `true` if `s` matches `^sha256:[0-9a-f]{64}$`.
-fn is_valid_python_handler_id(s: &str) -> bool {
-    let Some(hex) = s.strip_prefix("sha256:") else {
-        return false;
-    };
-    hex.len() == 64
-        && hex
-            .bytes()
-            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
