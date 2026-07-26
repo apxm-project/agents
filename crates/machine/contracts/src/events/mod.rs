@@ -7,6 +7,8 @@ pub mod builder;
 pub mod emitter;
 pub mod event;
 #[cfg(test)]
+mod generated_client_parity;
+#[cfg(test)]
 mod generated_event_kind_registry;
 pub mod kind;
 pub mod payload;
