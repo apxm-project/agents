@@ -193,7 +193,6 @@ export const ATTR = {
   CAPABILITY_NAME: "capability_name",
   DESCRIPTION: "description",
   PARAMETERS_SCHEMA: "parameters_schema",
-  PYTHON_HANDLER_ID: "python_handler_id",
   HOOK_EVENT: "hook_event",
   HOOK_MATCH: "hook_match",
   HOOK_MODE: "hook_mode",
