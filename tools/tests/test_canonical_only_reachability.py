@@ -16,10 +16,24 @@ RETIRED_DIRECTORIES = (
 )
 RETIRED_FILES = (
     Path("crates/compiler/frontend/python/apxm/proxy.py"),
+    Path("crates/compiler/frontend/python/apxm/tools.py"),
     Path("crates/compiler/frontend/python/apxm_program/conversational.py"),
     Path("crates/compiler/frontend/python/apxm_program/gao.py"),
     Path("crates/compiler/frontend/native/typescript/js/conversational.ts"),
     Path("crates/compiler/frontend/native/typescript/js/gao.ts"),
+)
+PACKAGE_HANDLER_ROOTS = (
+    Path("crates/machine/ais/src"),
+    Path("crates/machine/contracts/src"),
+    Path("crates/compiler/frontend/python/apxm"),
+    Path("crates/compiler/frontend/python/apxm_program"),
+    Path("crates/compiler/frontend/typescript/src"),
+    Path("crates/tools/cli/generated"),
+)
+PYTHON_PACKAGE_HANDLER_MARKERS = (
+    "PythonHandler",
+    "python_handler_id",
+    "PYTHON_TOOL_MANIFEST",
 )
 GENERIC_SEMANTIC_ROOTS = (
     Path("crates/compiler/frontend/python/apxm_program"),
@@ -62,6 +76,21 @@ class CanonicalOnlyReachabilityTests(unittest.TestCase):
                 (REPOSITORY_ROOT / path).exists(),
                 f"retired frontend builder remains reachable: {path}",
             )
+
+    def test_no_python_package_local_handler_surface_remains(self) -> None:
+        """Package-local handlers are TypeScript-only across every owned surface."""
+        offenders: list[str] = []
+        for root in PACKAGE_HANDLER_ROOTS:
+            for path in (REPOSITORY_ROOT / root).rglob("*"):
+                if not path.is_file() or path.suffix not in {".py", ".rs", ".ts", ".json"}:
+                    continue
+                text = path.read_text(errors="ignore")
+                markers = [
+                    marker for marker in PYTHON_PACKAGE_HANDLER_MARKERS if marker in text
+                ]
+                if markers:
+                    offenders.append(f"{path.relative_to(REPOSITORY_ROOT)}: {', '.join(markers)}")
+        self.assertEqual(offenders, [], "\n".join(offenders))
 
     def test_generic_compiler_and_runtime_sources_have_no_named_example_semantics(self) -> None:
         offenders: list[str] = []
