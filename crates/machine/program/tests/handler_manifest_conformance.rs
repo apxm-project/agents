@@ -130,13 +130,14 @@ fn schema_constraints_are_each_enforced_by_the_decode_path() {
             "mode": "observe"
         })
     };
-    let manifest = |descriptor: Value| {
-        serde_json::json!({"version": "apxm.handler-manifest.v1", "handlers": [descriptor]})
-    };
+    let manifest = |descriptor: Value| serde_json::json!({"version": "apxm.handler-manifest.v1", "handlers": [descriptor]});
     // Apply one field mutation; a JSON null removes the field.
     let with = |mut descriptor: Value, field: &str, value: Value| {
         if value.is_null() {
-            descriptor.as_object_mut().expect("descriptor").remove(field);
+            descriptor
+                .as_object_mut()
+                .expect("descriptor")
+                .remove(field);
         } else {
             descriptor[field] = value;
         }
@@ -179,7 +180,9 @@ fn schema_constraints_are_each_enforced_by_the_decode_path() {
             with(
                 tool(),
                 "handler_id",
-                serde_json::json!("1111111111111111111111111111111111111111111111111111111111111111"),
+                serde_json::json!(
+                    "1111111111111111111111111111111111111111111111111111111111111111"
+                ),
             ),
             false,
         ),
@@ -199,16 +202,38 @@ fn schema_constraints_are_each_enforced_by_the_decode_path() {
             with(
                 tool(),
                 "handler_id",
-                serde_json::json!("sha256:111111111111111111111111111111111111111111111111111111111111111"),
+                serde_json::json!(
+                    "sha256:111111111111111111111111111111111111111111111111111111111111111"
+                ),
             ),
             false,
         ),
         // Required tool and hook fields.
-        ("tool without schema", with(tool(), "schema", Value::Null), false),
-        ("tool without source", with(tool(), "source", Value::Null), false),
-        ("hook without mode", with(hook(), "mode", Value::Null), false),
-        ("hook without event", with(hook(), "event", Value::Null), false),
-        ("hook without match", with(hook(), "match", Value::Null), false),
+        (
+            "tool without schema",
+            with(tool(), "schema", Value::Null),
+            false,
+        ),
+        (
+            "tool without source",
+            with(tool(), "source", Value::Null),
+            false,
+        ),
+        (
+            "hook without mode",
+            with(hook(), "mode", Value::Null),
+            false,
+        ),
+        (
+            "hook without event",
+            with(hook(), "event", Value::Null),
+            false,
+        ),
+        (
+            "hook without match",
+            with(hook(), "match", Value::Null),
+            false,
+        ),
         // The two descriptor kinds are disjoint: `oneOf` rejects a descriptor
         // that satisfies both branches or carries the other branch's fields.
         (
@@ -275,7 +300,11 @@ fn schema_constraints_are_each_enforced_by_the_decode_path() {
         // `module`, `qualname`, and `name` are constitution `Identifier`s.
         (
             "module is not an identifier",
-            with(tool(), "module", serde_json::json!("capabilities/echo handler")),
+            with(
+                tool(),
+                "module",
+                serde_json::json!("capabilities/echo handler"),
+            ),
             false,
         ),
         (
@@ -341,7 +370,9 @@ fn manifest_constants_are_read_from_the_published_schema() {
         .expect("HandlerId pattern");
     assert_eq!(
         pattern,
-        format!("^{HANDLER_MANIFEST_HANDLER_ID_PREFIX}[0-9a-f]{{{HANDLER_MANIFEST_HANDLER_ID_HEX_LENGTH}}}$"),
+        format!(
+            "^{HANDLER_MANIFEST_HANDLER_ID_PREFIX}[0-9a-f]{{{HANDLER_MANIFEST_HANDLER_ID_HEX_LENGTH}}}$"
+        ),
         "the handler-id prefix or hex width drifted from the schema pattern",
     );
 

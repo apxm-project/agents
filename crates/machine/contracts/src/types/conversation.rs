@@ -121,7 +121,11 @@ mod tests {
     fn bare_string_message_is_rejected() {
         let error = ConversationMessageInput::try_from(Value::String("hello".to_string()))
             .expect_err("message input requires the typed envelope");
-        assert!(error.to_string().contains("message input must be an object"));
+        assert!(
+            error
+                .to_string()
+                .contains("message input must be an object")
+        );
     }
 
     #[test]

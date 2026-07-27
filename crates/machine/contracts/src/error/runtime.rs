@@ -230,10 +230,9 @@ impl RuntimeError {
                 message.clone(),
                 serde_json::json!({ "capability": capability }),
             ),
-            RuntimeError::LLM { message, backend } => (
-                message.clone(),
-                serde_json::json!({ "backend": backend }),
-            ),
+            RuntimeError::LLM { message, backend } => {
+                (message.clone(), serde_json::json!({ "backend": backend }))
+            }
             RuntimeError::Memory { message, space } => {
                 (message.clone(), serde_json::json!({ "space": space }))
             }
@@ -435,7 +434,8 @@ mod tests {
             "message": "No route found for target 'topic:receivables': none eligible",
             "details": { "target": "topic:receivables" },
         });
-        let decoded = RuntimeError::from_value(&persisted).expect("persisted history still decodes");
+        let decoded =
+            RuntimeError::from_value(&persisted).expect("persisted history still decodes");
         let message = decoded.to_string();
         assert!(
             message.contains("Unknown error kind 'no_route_found'"),
