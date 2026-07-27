@@ -1482,7 +1482,9 @@ impl_event_payload!(SubagentSpawnEndPayload, kind::SUBAGENT_SPAWN_END);
 pub struct SubagentLlmCallBeginPayload {
     /// Stable code of the agent issuing the call.
     pub agent_code: String,
-    /// Model identifier as routed (may differ from the requested model).
+    /// The exact model reference the call names. A call dispatches to the one
+    /// backend bound to this reference, so it is the reference the caller
+    /// requested.
     pub model: String,
     /// Backend identifier (e.g. `"vllm"`, `"openai"`, `"ollama"`).
     pub backend: String,
