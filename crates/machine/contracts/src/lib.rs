@@ -10,6 +10,12 @@
 //! - **`constants`** -- Centralised string keys for graph attributes, inner-plan
 //!   payloads, and diagnostic modes so all front-ends and back-ends stay in sync.
 
+// The `RuntimeError` vocabulary guard counts that enum's variants from the enum
+// itself rather than from a hand-maintained number, so the guard cannot cover a
+// subset of the vocabulary while claiming to cover all of it. Test-only: the
+// shipped library compiles on the stable surface.
+#![cfg_attr(test, feature(variant_count))]
+
 pub mod agent_profile;
 pub mod constants;
 pub mod env;
