@@ -4,8 +4,8 @@ use std::path::Path;
 use anyhow::Result;
 
 use super::registry::{
-    FrontendOperationSpec, agent_templates, builtin_providers, graph_attr_constants,
-    graph_metric_constants, operation_specs, provider_protocols,
+    FrontendOperationSpec, builtin_providers, graph_attr_constants, graph_metric_constants,
+    operation_specs, provider_protocols,
 };
 
 pub fn render_typescript_frontend_files() -> Vec<(&'static str, String)> {
@@ -155,7 +155,6 @@ pub fn render_generated_typescript() -> String {
     render_ts_attr_constants(&mut buf);
     render_ts_graph_metric_constants(&mut buf);
     render_ts_provider_types(&mut buf);
-    render_ts_agents(&mut buf);
 
     buf
 }
@@ -355,46 +354,6 @@ fn render_ts_provider_types(buf: &mut String) {
     buf.push_str("] as const;\n\n");
 }
 
-fn render_ts_agents(buf: &mut String) {
-    buf.push_str("export type AgentTemplate = {\n");
-    buf.push_str("  readonly name: string;\n");
-    buf.push_str("  readonly command: string;\n");
-    buf.push_str("  readonly description: string | null;\n");
-    buf.push_str("  readonly routeCapabilities: readonly string[];\n");
-    buf.push_str("  readonly source: string;\n");
-    buf.push_str("  readonly defaultMode: string | null;\n");
-    buf.push_str("  readonly defaultModel: string | null;\n");
-    buf.push_str("};\n\n");
-
-    let templates = agent_templates();
-    buf.push_str("export const ALL_AGENTS: readonly AgentTemplate[] = [\n");
-    for t in &templates {
-        buf.push_str("  {\n");
-        buf.push_str(&format!("    name: {},\n", ts_string(&t.name)));
-        buf.push_str(&format!("    command: {},\n", ts_string(&t.command)));
-        buf.push_str(&format!(
-            "    description: {},\n",
-            ts_optional_string(t.description.as_deref())
-        ));
-        buf.push_str("    routeCapabilities: [\n");
-        for capability in &t.route_capabilities {
-            buf.push_str(&format!("      {},\n", ts_string(capability)));
-        }
-        buf.push_str("    ],\n");
-        buf.push_str(&format!("    source: {},\n", ts_string(&t.source)));
-        buf.push_str(&format!(
-            "    defaultMode: {},\n",
-            ts_optional_string(t.default_mode.as_deref())
-        ));
-        buf.push_str(&format!(
-            "    defaultModel: {},\n",
-            ts_optional_string(t.default_model.as_deref())
-        ));
-        buf.push_str("  },\n");
-    }
-    buf.push_str("] as const;\n");
-}
-
 fn ts_string(value: &str) -> String {
     serde_json::to_string(value).expect("ts string literal")
 }
@@ -437,5 +396,44 @@ mod tests {
         ] {
             assert!(evidence.contains(required), "{required}");
         }
+    }
+
+    /// The generated TypeScript surface publishes no selection vocabulary.
+    ///
+    /// `generated.ts` is what every TypeScript consumer of this runtime's
+    /// metadata imports, so a name admitted here is admitted on the authoring
+    /// surface. A `model.call` target resolves to exactly one bound Model
+    /// Deployment and a spawn names exactly one profile, so no generated
+    /// constant, type, or table describes routing among candidates, ranking
+    /// them, or reporting which were passed over.
+    ///
+    /// The assertion runs against freshly rendered output rather than the
+    /// checked-in file, so it measures the generator, and it scans for
+    /// selection markers rather than listing the emitters it forbids: adding
+    /// an `ALL_AGENTS` table with `routeCapabilities`, or a routing attribute
+    /// upstream in `ALL_ATTR_NAMES`, fails here without this test being
+    /// edited.
+    #[test]
+    fn generated_typescript_publishes_no_selection_vocabulary() {
+        let generated = render_generated_typescript();
+        let selection_markers = [
+            "routeCapabilities",
+            "route_capabilities",
+            "ROUTE_",
+            "agent_route",
+            "AGENT_ROUTE",
+            "preferred_profiles",
+            "PREFERRED_PROFILES",
+            "eligible_profiles",
+            "rejected_profiles",
+        ];
+        let offenders: Vec<&str> = selection_markers
+            .into_iter()
+            .filter(|marker| generated.contains(marker))
+            .collect();
+        assert!(
+            offenders.is_empty(),
+            "generated TypeScript publishes a selection vocabulary: {offenders:?}"
+        );
     }
 }

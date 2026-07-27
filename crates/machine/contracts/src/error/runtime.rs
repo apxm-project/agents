@@ -142,18 +142,6 @@ pub enum RuntimeError {
         /// Reason why the task is invalid.
         reason: String,
     },
-
-    /// Target-grammar routing found no eligible candidate and no org-declared
-    /// default member exists to fall back to (platform.md rule 5: no
-    /// candidate ⇒ default member or a typed no-route error — never silent
-    /// broadcast).
-    #[error("No route found for target '{target}': {reason}")]
-    NoRouteFound {
-        /// The original routed target expression (e.g. `topic:receivables`).
-        target: String,
-        /// Why no route was found (e.g. no candidates, none eligible).
-        reason: String,
-    },
 }
 
 impl RuntimeError {
@@ -252,11 +240,6 @@ impl RuntimeError {
             RuntimeError::InvalidTask { reason } => {
                 ("invalid_task", reason.clone(), serde_json::Value::Null)
             }
-            RuntimeError::NoRouteFound { target, reason } => (
-                "no_route_found",
-                format!("No route found for target '{}': {}", target, reason),
-                serde_json::json!({ "target": target, "reason": reason }),
-            ),
         };
         serde_json::json!({
             "kind": kind,
@@ -305,16 +288,86 @@ impl RuntimeError {
             "executor" => RuntimeError::Executor(message),
             "state" => RuntimeError::State(message),
             "invalid_task" => RuntimeError::InvalidTask { reason: message },
-            "no_route_found" => RuntimeError::NoRouteFound {
-                target: value
-                    .get("details")
-                    .and_then(|d| d.get("target"))
-                    .and_then(|t| t.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                reason: message,
-            },
             _ => RuntimeError::Executor(format!("Unknown error kind '{}': {}", kind, message)),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RuntimeError;
+
+    /// No runtime error reports a failed selection among candidates.
+    ///
+    /// A `model.call` target resolves to exactly one bound Model Deployment or
+    /// fails closed, and a Capability dispatches through exactly one graph
+    /// operation. There is no candidate set, so no failure mode is "the
+    /// selection step found nothing eligible" — that error can only be raised
+    /// by a router, and a typed error naming one asserts on the wire that the
+    /// execution plane ranks candidates.
+    ///
+    /// The scan runs over the serialized `kind` discriminants this enum
+    /// actually produces, so it fails on any variant that reintroduces a
+    /// routing failure without this test being edited.
+    #[test]
+    fn no_runtime_error_kind_reports_a_failed_selection() {
+        let kinds: Vec<String> = [
+            RuntimeError::Scheduler {
+                message: "m".to_string(),
+            },
+            RuntimeError::SchedulerCancelled,
+            RuntimeError::Executor("m".to_string()),
+            RuntimeError::State("m".to_string()),
+            RuntimeError::Serialization("m".to_string()),
+            RuntimeError::InvalidTask {
+                reason: "m".to_string(),
+            },
+            RuntimeError::LLM {
+                message: "m".to_string(),
+                backend: None,
+            },
+            RuntimeError::Memory {
+                message: "m".to_string(),
+                space: None,
+            },
+        ]
+        .iter()
+        .map(|error| error.to_value()["kind"].as_str().unwrap().to_string())
+        .collect();
+
+        let offenders: Vec<&String> = kinds
+            .iter()
+            .filter(|kind| kind.contains("route") || kind.contains("candidate"))
+            .collect();
+        assert!(
+            offenders.is_empty(),
+            "runtime error kinds report a failed selection: {offenders:?}"
+        );
+    }
+
+    /// A retired error kind decodes into the unknown-kind arm rather than a
+    /// typed routing failure.
+    ///
+    /// This is the one-way reduction, not a legacy reader: the retired name is
+    /// carried through in the message instead of being translated onto a
+    /// canonical routing variant, and the record is not dropped, so an
+    /// operator reading persisted evidence sees exactly what was written.
+    #[test]
+    fn a_retired_routing_error_decodes_as_unknown_rather_than_a_route_failure() {
+        let persisted = serde_json::json!({
+            "kind": "no_route_found",
+            "message": "No route found for target 'topic:receivables': none eligible",
+            "details": { "target": "topic:receivables" },
+        });
+        let decoded = RuntimeError::from_value(&persisted).expect("persisted history still decodes");
+        let message = decoded.to_string();
+        assert!(
+            message.contains("Unknown error kind 'no_route_found'"),
+            "the retired kind must decode as unknown, not as a typed route failure: {message}"
+        );
+        assert!(
+            message.contains("topic:receivables"),
+            "the persisted message must survive verbatim: {message}"
+        );
     }
 }

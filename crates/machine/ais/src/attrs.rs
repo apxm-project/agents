@@ -8,9 +8,7 @@
 pub const AGENT_NAME: &str = "agent_name";
 pub const FLOW_NAME: &str = "flow_name";
 pub const PROFILE: &str = "profile";
-pub const AGENT_ROUTE: &str = "agent_route";
 pub const REQUIRED_CAPABILITIES: &str = "required_capabilities";
-pub const PREFERRED_PROFILES: &str = "preferred_profiles";
 pub const NODE_NAME: &str = "node_name";
 pub const MODE: &str = "mode";
 /// Opaque correlation key for a generic external input wait.
@@ -435,9 +433,7 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
     AGENT_NAME,
     FLOW_NAME,
     PROFILE,
-    AGENT_ROUTE,
     REQUIRED_CAPABILITIES,
-    PREFERRED_PROFILES,
     NODE_NAME,
     MODE,
     WAIT_KEY,
@@ -601,9 +597,41 @@ pub const ALL_ATTR_NAMES: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use super::{
-        INPUT_ROLES, PROMPT_INPUT_ROLE_VALUES, PromptInputRole, PromptInputRolesValidationError,
-        parse_prompt_input_roles,
+        ALL_ATTR_NAMES, INPUT_ROLES, PROMPT_INPUT_ROLE_VALUES, PromptInputRole,
+        PromptInputRolesValidationError, parse_prompt_input_roles,
     };
+
+    /// No graph attribute names a selection among candidates.
+    ///
+    /// `ALL_ATTR_NAMES` is the whole attribute vocabulary: the TypeScript
+    /// `ATTR` table is generated from it, so an attribute admitted here is
+    /// admitted on every authoring and wire surface downstream. A `model.call`
+    /// target resolves to exactly one bound Model Deployment or fails closed,
+    /// so an attribute asking the runtime to pick among preferred, eligible,
+    /// or automatically routed targets describes a step the execution plane
+    /// does not have.
+    ///
+    /// The assertion is a substring scan over the live vocabulary rather than
+    /// a copy of it, so it is not satisfied by the constants it guards: adding
+    /// `preferred_profiles` or `agent_route` back to `ALL_ATTR_NAMES` fails
+    /// here without anyone updating this test.
+    #[test]
+    fn no_graph_attribute_names_a_selection_among_candidates() {
+        let selection_markers = ["route", "preferred_", "eligible_", "rejected_", "candidate_"];
+        let offenders: Vec<&str> = ALL_ATTR_NAMES
+            .iter()
+            .copied()
+            .filter(|name| {
+                selection_markers
+                    .iter()
+                    .any(|marker| name.contains(marker))
+            })
+            .collect();
+        assert!(
+            offenders.is_empty(),
+            "graph attributes name a selection among candidates: {offenders:?}"
+        );
+    }
 
     #[test]
     fn prompt_input_roles_have_one_canonical_serialization() {
