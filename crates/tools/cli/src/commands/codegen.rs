@@ -10,21 +10,21 @@ use super::cli::*;
 
 pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
     match action {
-        CodegenAction::Frontend { output_dir, check } => {
-            let output_dir = output_dir.unwrap_or_else(default_python_frontend_codegen_dir);
-            let rendered = crate::frontend::render_generated_python();
+        CodegenAction::Frontend { check } => {
             let evidence_path = default_python_runtime_evidence_codegen_path();
+            let output_dir = evidence_path
+                .parent()
+                .expect("runtime evidence output has a parent")
+                .to_path_buf();
             let evidence_init_path = evidence_path.with_file_name("__init__.py");
             let evidence = crate::frontend::codegen::render_runtime_evidence_python();
             let evidence_init = "from .runtime_evidence import *\n";
-            let mut files: Vec<String> =
-                rendered.iter().map(|(name, _)| name.to_string()).collect();
-            files.push("apxm_program/_generated/runtime_evidence.py".to_string());
-            files.push("apxm_program/_generated/__init__.py".to_string());
-            files.sort();
+            let files = vec![
+                "apxm_program/_generated/__init__.py".to_string(),
+                "apxm_program/_generated/runtime_evidence.py".to_string(),
+            ];
 
             if check {
-                check_generated_python_dir(&output_dir, &rendered)?;
                 check_generated_file(&evidence_path, &evidence, "python runtime evidence")?;
                 check_generated_file(
                     &evidence_init_path,
@@ -32,12 +32,7 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
                     "python runtime evidence init",
                 )?;
             } else {
-                crate::frontend::codegen::write_generated_python(&output_dir)?;
-                fs::create_dir_all(
-                    evidence_path
-                        .parent()
-                        .expect("runtime evidence output has a parent"),
-                )?;
+                fs::create_dir_all(&output_dir)?;
                 fs::write(&evidence_path, evidence)?;
                 fs::write(&evidence_init_path, evidence_init)?;
             }
@@ -226,55 +221,10 @@ fn check_generated_file(output_path: &Path, rendered: &str, target: &str) -> Res
     Ok(())
 }
 
-fn check_generated_python_dir(
-    output_dir: &Path,
-    rendered: &[(&'static str, String)],
-) -> Result<()> {
-    let expected = rendered
-        .iter()
-        .map(|(name, _)| *name)
-        .collect::<BTreeSet<_>>();
-
-    for (filename, content) in rendered {
-        let output_path = output_dir.join(filename);
-        let current = fs::read_to_string(&output_path).map_err(|error| {
-            anyhow::anyhow!(
-                "frontend generated output is missing: rerun `apxm codegen frontend` for {} ({error})",
-                output_path.display()
-            )
-        })?;
-        if current != *content {
-            bail!(
-                "frontend generated output is stale: rerun `apxm codegen frontend` for {}",
-                output_path.display()
-            );
-        }
-    }
-
-    for entry in fs::read_dir(output_dir)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_file() {
-            continue;
-        }
-        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
-            continue;
-        };
-        if name.ends_with(".py") && !expected.contains(name.as_str()) {
-            bail!(
-                "frontend generated output has unexpected file: remove {} or rerun `apxm codegen frontend`",
-                entry.path().display()
-            );
-        }
-    }
-
-    Ok(())
-}
-
-/// Generic version of `check_generated_python_dir` for a fixed, known set of
-/// generated filenames (rather than an extension-filtered directory scan).
-/// Used by `op-spec`, whose two files (`op-spec.v1.json`,
-/// `op-spec.vectors.v1.json`) are always both present or the directory is
-/// stale/missing.
+/// Check a fixed, known set of generated filenames (rather than an
+/// extension-filtered directory scan). Used by `op-spec`, whose two files
+/// (`op-spec.v1.json`, `op-spec.vectors.v1.json`) are always both present or
+/// the directory is stale/missing.
 fn check_generated_json_dir(
     output_dir: &Path,
     rendered: &[(&'static str, String)],
@@ -342,10 +292,6 @@ fn check_generated_named_files(
         }
     }
     Ok(())
-}
-
-fn default_python_frontend_codegen_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../compiler/frontend/python/apxm/_generated")
 }
 
 fn default_python_runtime_evidence_codegen_path() -> PathBuf {

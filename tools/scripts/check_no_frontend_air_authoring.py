@@ -31,7 +31,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # Only the frontend packages that must use canonical native lowering — not the
 # Rust AIR builders themselves, which legitimately own AIR text.
 SCAN_ROOTS = [
-    REPO_ROOT / "crates" / "compiler" / "frontend" / "python" / "apxm",
     REPO_ROOT / "crates" / "compiler" / "frontend" / "python" / "apxm_program",
     REPO_ROOT / "crates" / "compiler" / "frontend" / "typescript" / "src",
 ]

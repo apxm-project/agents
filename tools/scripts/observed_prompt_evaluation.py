@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from apxm.contract import build_layout
+from apxm_vllm.contract import build_layout
 
 
 EVIDENCE_SCRIPT = Path(__file__).with_name("offline_prompt_evaluation.py")

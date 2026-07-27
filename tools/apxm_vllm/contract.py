@@ -487,7 +487,7 @@ def build_layout(script_file: str | Path) -> RepoLayout:
     vllm_dir = _default_vllm_dir(repo_root)
     # Roaming buckets are relocatable via .apxm/config.toml; pinned
     # buckets always live at <repo>/.apxm/.
-    from apxm.data_config import resolve_data_layout
+    from apxm_vllm.data_config import resolve_data_layout
 
     data_layout = resolve_data_layout(repo_root)
     return RepoLayout(
@@ -532,7 +532,7 @@ def effective_hf_home(
 ) -> str:
     """Resolve the HF cache root via the shared data-layout chain;
     ``dekk agents vllm doctor`` prints the resolved value and its source."""
-    from apxm.data_config import resolve_data_layout
+    from apxm_vllm.data_config import resolve_data_layout
 
     layout = resolve_data_layout(find_repo_root(Path(__file__)), environ=environ)
     return str(layout.hf_cache)
@@ -548,7 +548,7 @@ def effective_hf_cache_roots(
     roots are read-only search locations configured via
     ``data.vllm.hf_cache_roots`` or ``APXM_VLLM_HF_CACHE_ROOTS``.
     """
-    from apxm.data_config import resolve_data_layout
+    from apxm_vllm.data_config import resolve_data_layout
 
     layout = resolve_data_layout(find_repo_root(Path(__file__)), environ=environ)
     return tuple(str(path) for path in layout.hf_cache_roots)
@@ -559,7 +559,7 @@ def effective_model_roots(
     environ: dict[str, str] | os._Environ[str] = os.environ,
 ) -> tuple[str, ...]:
     """Return host directories that APXM bind-mounts for local model paths."""
-    from apxm.data_config import resolve_data_layout
+    from apxm_vllm.data_config import resolve_data_layout
 
     layout = resolve_data_layout(find_repo_root(Path(__file__)), environ=environ)
     return tuple(str(path) for path in layout.model_roots)

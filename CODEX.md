@@ -112,10 +112,14 @@ new content. Skills inside the lifecycle can invoke domain skills (e.g.
 - **`tools/scripts/`** — Python entrypoints Dekk calls into (`cargo.py`,
   `vllm.py`, `release.py`, `apxm_mcp_install.py`). Larger command implementations live in a
   script-local package such as `apxm_release/`.
-- **`crates/compiler/frontend/python/apxm/`** — installable `apxm`
-  Python package. `apxm.contract` owns the APXM/vLLM operational names
-  (env vars, routes, dataclasses, `build_layout()`); `apxm.data_config`
-  resolves the `.apxm/` data buckets.
+- **`crates/compiler/frontend/python/apxm_program/`** — the canonical
+  installable Python Agent Program authoring frontend. It is the only
+  Python package under the authoring frontend.
+- **`tools/apxm_vllm/`** — operator-side APXM/vLLM contract, importable from
+  the `tools/` PYTHONPATH root. `apxm_vllm.contract` owns the operational
+  names (env vars, routes, dataclasses, `build_layout()`);
+  `apxm_vllm.data_config` resolves the `.apxm/` data buckets. Operator
+  tooling only; authoring never imports it.
 - **`deploy/vllm/`** — `zoo.toml` manifests (operator state) and
   `run-vllm.sh` (the deploy script used by zoo services).
 - **`docs/`** — design docs for the core runtime.
@@ -172,7 +176,7 @@ diagnostics, evidence manifests, vLLM logs, or per-run configs under
 Use the helper:
 
 ```python
-from apxm.contract import RepoLayout, build_layout
+from apxm_vllm.contract import RepoLayout, build_layout
 layout = build_layout(__file__)  # paths for benchmarks/evaluation/vllm-*
 ```
 

@@ -69,10 +69,14 @@ def imported_names(text: str, path: Path) -> list[str]:
     """Return authoring imports in teaching snippets, with their source path."""
     violations: list[str] = []
     patterns = (
-        r"from\s+(?:apxm_program|apxm)\s+import\s+([^\n]+)",
+        r"from\s+apxm_program\s+import\s+([^\n]+)",
         r"import\s*\{([^}]+)\}\s*from\s*[\"']@apxm/frontend[\"']",
     )
     allowed = public_names()
+    for match in re.finditer(r"^\s*(?:from|import)\s+apxm(?:\.|\s|$)", text, flags=re.MULTILINE):
+        violations.append(
+            f"{path.relative_to(REPO_ROOT)} imports the retired `apxm` package: {match.group(0).strip()!r}"
+        )
     for pattern in patterns:
         for match in re.finditer(pattern, text):
             names = [name.strip().split(" as ")[0].strip() for name in match.group(1).split(",")]

@@ -18,7 +18,7 @@ import sys
 import time
 from typing import Any
 
-from apxm.contract import build_layout
+from apxm_vllm.contract import build_layout
 
 
 class JsonRpcMethod(enum.StrEnum):
