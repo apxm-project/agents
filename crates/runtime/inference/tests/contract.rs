@@ -90,6 +90,39 @@ fn request_binds_only_its_authored_target() {
     );
 }
 
+#[test]
+fn invocation_admission_keeps_each_exact_model_binding_distinct() {
+    let admission = ModelBindingAdmission::for_invocation(vec![
+        binding("model.alpha", "deploy.alpha", DIGEST_A),
+        binding("model.beta", "deploy.beta", DIGEST_B),
+    ]);
+
+    let alpha = admission
+        .validate(&ModelTargetRef("model.alpha".to_string()))
+        .expect("alpha is admitted");
+    let beta = admission
+        .validate(&ModelTargetRef("model.beta".to_string()))
+        .expect("beta is admitted");
+
+    assert_eq!(alpha.model_deployment_ref.0, "deploy.alpha");
+    assert_eq!(beta.model_deployment_ref.0, "deploy.beta");
+    assert_eq!(alpha.binding_digest(), DIGEST_A);
+    assert_eq!(beta.binding_digest(), DIGEST_B);
+}
+
+#[test]
+fn duplicate_model_binding_target_fails_closed() {
+    let admission = ModelBindingAdmission::for_invocation(vec![
+        binding("model.alpha", "deploy.alpha", DIGEST_A),
+        binding("model.alpha", "deploy.beta", DIGEST_B),
+    ]);
+
+    let err = admission
+        .validate(&ModelTargetRef("model.alpha".to_string()))
+        .expect_err("duplicate target is not an exact admission");
+    assert!(matches!(err, BindingError::DuplicateTarget(_)));
+}
+
 // ── Deterministic fake backend ─────────────────────────────────────────────
 
 struct ScriptedBackend {

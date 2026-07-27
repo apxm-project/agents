@@ -3,9 +3,10 @@
 //! A v1 model effect names exactly one [`ModelTargetRef`]. Admission materializes
 //! one exact `ModelTargetRef -> ModelDeploymentRef -> ExactPortBindingRef`
 //! mapping; [`ResolvedModelBinding`] references that binding by digest and never
-//! duplicates adapter selection. Runtime receives one materialized binding and
-//! only validates that it matches the authored target; there is no collection,
-//! resolver, default, ambient alias, or first-available selection.
+//! duplicates adapter selection. Runtime receives the invocation's exact
+//! materialized bindings and validates the one that matches each authored
+//! target; there is no resolver, default, ambient alias, or first-available
+//! selection.
 
 use serde::{Deserialize, Serialize};
 
@@ -50,6 +51,10 @@ pub enum BindingError {
         authored: ModelTargetRef,
         admitted: ModelTargetRef,
     },
+    /// Admission does not contain the authored target.
+    MissingTarget(ModelTargetRef),
+    /// Admission contains more than one binding for the authored target.
+    DuplicateTarget(ModelTargetRef),
     /// An admitted mapping carried a binding digest that is not a sha256 value.
     InvalidBindingDigest(ModelTargetRef),
 }
@@ -64,6 +69,12 @@ impl std::fmt::Display for BindingError {
                     admitted.0, authored.0
                 )
             }
+            Self::MissingTarget(target) => {
+                write!(f, "admission does not contain binding for {}", target.0)
+            }
+            Self::DuplicateTarget(target) => {
+                write!(f, "admission contains duplicate bindings for {}", target.0)
+            }
             Self::InvalidBindingDigest(t) => {
                 write!(f, "admitted binding for {} has a non-sha256 digest", t.0)
             }
@@ -73,35 +84,54 @@ impl std::fmt::Display for BindingError {
 
 impl std::error::Error for BindingError {}
 
-/// The exact model-target binding admitted for one model effect.
+/// The exact model-target bindings admitted for one Program Invocation.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ModelBindingAdmission {
-    resolved_binding: ResolvedModelBinding,
+    resolved_bindings: Vec<ResolvedModelBinding>,
 }
 
 impl ModelBindingAdmission {
     #[must_use]
     pub fn new(resolved_binding: ResolvedModelBinding) -> Self {
-        Self { resolved_binding }
+        Self {
+            resolved_bindings: vec![resolved_binding],
+        }
     }
 
-    /// Return the materialized binding after validating it against `target`.
+    /// Admit an exact finite set of model bindings for one invocation.
+    #[must_use]
+    pub fn for_invocation(resolved_bindings: Vec<ResolvedModelBinding>) -> Self {
+        Self { resolved_bindings }
+    }
+
+    /// Return the one materialized binding after validating it against `target`.
     ///
     /// # Errors
     ///
-    /// Returns a [`BindingError`] when the admitted binding targets another
-    /// model or carries an invalid digest.
+    /// Returns a [`BindingError`] when the admitted bindings omit or duplicate
+    /// the target, or when its binding digest is invalid.
     pub fn validate(&self, target: &ModelTargetRef) -> Result<ResolvedModelBinding, BindingError> {
-        if &self.resolved_binding.model_target_ref != target {
-            return Err(BindingError::TargetMismatch {
-                authored: target.clone(),
-                admitted: self.resolved_binding.model_target_ref.clone(),
-            });
+        let mut matches = self
+            .resolved_bindings
+            .iter()
+            .filter(|binding| &binding.model_target_ref == target);
+        let Some(resolved_binding) = matches.next() else {
+            return if self.resolved_bindings.len() == 1 {
+                Err(BindingError::TargetMismatch {
+                    authored: target.clone(),
+                    admitted: self.resolved_bindings[0].model_target_ref.clone(),
+                })
+            } else {
+                Err(BindingError::MissingTarget(target.clone()))
+            };
+        };
+        if matches.next().is_some() {
+            return Err(BindingError::DuplicateTarget(target.clone()));
         }
-        if !is_digest(&self.resolved_binding.exact_port_binding.binding_digest) {
+        if !is_digest(&resolved_binding.exact_port_binding.binding_digest) {
             return Err(BindingError::InvalidBindingDigest(target.clone()));
         }
 
-        Ok(self.resolved_binding.clone())
+        Ok(resolved_binding.clone())
     }
 }

@@ -13,8 +13,8 @@ pub mod identity;
 pub mod stream;
 
 pub use effect::{
-    AttemptDisposition, ErrorCategory, ModelCallRequest, ModelInferencePort, ModelOutcome,
-    RetryPolicy, TypedError, Usage, execute,
+    AttemptDisposition, ErrorCategory, ModelCallRequest, ModelExecution, ModelInferencePort,
+    ModelOutcome, RetryPolicy, TypedError, Usage, execute, execute_with_attempt,
 };
 pub use identity::{
     BindingError, ExactPortBindingRef, ModelBindingAdmission, ModelDeploymentRef, ModelTargetRef,

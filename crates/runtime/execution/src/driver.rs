@@ -28,7 +28,7 @@ use serde_json::Value;
 
 use apxm_inference::{
     BindingError, ModelBindingAdmission, ModelCallRequest, ModelInferencePort, ModelOutcome,
-    ModelTargetRef, RetryPolicy, Usage, execute as run_model,
+    ModelTargetRef, RetryPolicy, Usage, execute_with_attempt as run_model,
 };
 use apxm_kernel::{
     AcpPromptRequest, AtomicWriteSet, ExecutionCommitPort, ExecutionCommitRequest,
@@ -46,8 +46,8 @@ use apxm_program::runtime_evidence::{
 };
 
 use crate::operational_usage::{
-    CommittedNativeUsage, CommittedNativeUsageFact, OperationalUsageFactPort,
-    OperationalUsageOutcome,
+    CommittedNativeModelCallUsage, CommittedNativeUsage, NativeModelCallMeasurement,
+    OperationalUsageFactPort, OperationalUsageOutcome,
 };
 use crate::ports::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
@@ -394,6 +394,7 @@ fn runtime_fact_mut(fact: &mut Fact) -> &mut RuntimeFact {
 struct DriveState {
     node_outcomes: Vec<NodeOutcome>,
     native_usage: Usage,
+    native_model_call_measurements: Vec<NativeModelCallMeasurement>,
     external_agent_evidence: Vec<ExternalAgentEvidence>,
     context: Value,
     last_result: Value,
@@ -435,6 +436,7 @@ impl DriveState {
         Self {
             node_outcomes: Vec::new(),
             native_usage: Usage::default(),
+            native_model_call_measurements: Vec::new(),
             external_agent_evidence: Vec::new(),
             context: initial_context,
             last_result: Value::Null,
@@ -764,13 +766,30 @@ async fn drive_from(
                             model_admission,
                         )
                         .map_err(ExecutionError::Binding)?;
-                        let outcome =
+                        let execution =
                             run_model(&*ports.model_inference, &call, RetryPolicy::default());
+                        let outcome = execution.outcome;
                         state.last_operation_succeeded =
                             matches!(&outcome, ModelOutcome::CommittedSuccess { .. });
-                        if let ModelOutcome::CommittedSuccess { usage } = &outcome {
+                        if let (ModelOutcome::CommittedSuccess { usage }, Some(attempt_index)) =
+                            (&outcome, execution.committed_attempt)
+                        {
                             state.native_usage.input_tokens += usage.input_tokens;
                             state.native_usage.output_tokens += usage.output_tokens;
+                            state
+                                .native_model_call_measurements
+                                .push(NativeModelCallMeasurement {
+                                    node_execution_id: node_execution_id.clone(),
+                                    air_node_id: op.node_id.clone(),
+                                    attempt_id: format!(
+                                        "model-attempt.{node_execution_id}.{attempt_index}"
+                                    ),
+                                    attempt_index,
+                                    model_effect_id: call.effect_id.clone(),
+                                    request_digest: call.request_digest.clone(),
+                                    resolved_model_binding: call.resolved_binding.clone(),
+                                    native_usage: CommittedNativeUsage::from(*usage),
+                                });
                         }
                         let result = model_result_value(&outcome);
                         state.last_result = result.clone();
@@ -1137,29 +1156,14 @@ async fn commit_and_report(
         })
         .await;
 
-    let operational_usage = match &commit {
-        ExecutionCommitResult::Committed {
-            evidence_position_ref,
-            ..
-        } if state.native_usage.input_tokens != 0 || state.native_usage.output_tokens != 0 => {
-            match &ports.operational_usage {
-                Some(port) => match port
-                    .publish(CommittedNativeUsageFact {
-                        commit_id: commit_id.to_string(),
-                        invocation_ref: version_scope.to_string(),
-                        evidence_position_ref: evidence_position_ref.clone(),
-                        native_usage: CommittedNativeUsage::from(state.native_usage),
-                    })
-                    .await
-                {
-                    Ok(()) => OperationalUsageOutcome::Published,
-                    Err(error) => OperationalUsageOutcome::Failed(error),
-                },
-                None => OperationalUsageOutcome::NotConfigured,
-            }
-        }
-        _ => OperationalUsageOutcome::NotApplicable,
-    };
+    let operational_usage = publish_committed_native_model_usage(
+        ports,
+        commit_id,
+        version_scope,
+        &commit,
+        &state.native_model_call_measurements,
+    )
+    .await;
 
     RunReport {
         node_outcomes: state.node_outcomes,
@@ -1168,6 +1172,58 @@ async fn commit_and_report(
         final_context: state.context,
         commit,
         operational_usage,
+    }
+}
+
+async fn publish_committed_native_model_usage(
+    ports: &ExecutionPorts,
+    commit_id: &str,
+    invocation_ref: &str,
+    commit: &ExecutionCommitResult,
+    measurements: &[NativeModelCallMeasurement],
+) -> OperationalUsageOutcome {
+    let ExecutionCommitResult::Committed {
+        evidence_position_ref,
+        ..
+    } = commit
+    else {
+        return OperationalUsageOutcome::NotApplicable;
+    };
+    if !measurements.iter().any(|measurement| {
+        measurement.native_usage.input_tokens != 0 || measurement.native_usage.output_tokens != 0
+    }) {
+        return OperationalUsageOutcome::NotApplicable;
+    }
+    let Some(port) = &ports.operational_usage else {
+        return OperationalUsageOutcome::NotConfigured;
+    };
+
+    let mut failure = None;
+    for measurement in measurements {
+        if measurement.native_usage.input_tokens == 0 && measurement.native_usage.output_tokens == 0
+        {
+            continue;
+        }
+        let fact = CommittedNativeModelCallUsage {
+            commit_id: commit_id.to_string(),
+            invocation_ref: invocation_ref.to_string(),
+            evidence_position_ref: evidence_position_ref.clone(),
+            node_execution_id: measurement.node_execution_id.clone(),
+            air_node_id: measurement.air_node_id.clone(),
+            attempt_id: measurement.attempt_id.clone(),
+            attempt_index: measurement.attempt_index,
+            model_effect_id: measurement.model_effect_id.clone(),
+            request_digest: measurement.request_digest.clone(),
+            resolved_model_binding: measurement.resolved_model_binding.clone(),
+            native_usage: measurement.native_usage,
+        };
+        if let Err(error) = port.publish(fact).await {
+            failure.get_or_insert(error);
+        }
+    }
+    match failure {
+        Some(error) => OperationalUsageOutcome::Failed(error),
+        None => OperationalUsageOutcome::Published,
     }
 }
 
@@ -1207,7 +1263,7 @@ async fn commit_suspension(
     ports: &ExecutionPorts,
     continuation: &Continuation,
     mut state: DriveState,
-) -> ExecutionCommitResult {
+) -> (ExecutionCommitResult, OperationalUsageOutcome) {
     let expected = ports
         .execution_commit
         .current_version(&continuation.version_scope)
@@ -1233,7 +1289,8 @@ async fn commit_suspension(
             "event_ref": event_ref,
         })
     });
-    ports
+    let measurements = state.native_model_call_measurements.clone();
+    let commit = ports
         .execution_commit
         .commit(ExecutionCommitRequest {
             commit_id: format!("{}.yield", continuation.commit_id),
@@ -1244,7 +1301,16 @@ async fn commit_suspension(
             tuple: commit_tuple(&state, Some(payload), event_wait),
             evidence_batch: state.batch,
         })
-        .await
+        .await;
+    let operational_usage = publish_committed_native_model_usage(
+        ports,
+        &format!("{}.yield", continuation.commit_id),
+        &continuation.version_scope,
+        &commit,
+        &measurements,
+    )
+    .await;
+    (commit, operational_usage)
 }
 
 /// Execute a canonical AIR program single-shot and commit its effects
@@ -1418,6 +1484,7 @@ async fn resume_from_continuation(
     let mut state = DriveState {
         node_outcomes: Vec::new(),
         native_usage,
+        native_model_call_measurements: Vec::new(),
         external_agent_evidence,
         context,
         last_result: Value::Null,
@@ -1562,10 +1629,12 @@ async fn finish(
                 continuation_id: continuation_id.clone(),
                 event_ref,
             };
-            match commit_suspension(ports, &cont, state).await {
+            let (commit, operational_usage) = commit_suspension(ports, &cont, state).await;
+            match commit {
                 ExecutionCommitResult::Committed { .. } => Ok(RunOutcome::Suspended {
                     continuation_id,
                     event_ref: cont.event_ref,
+                    operational_usage,
                 }),
                 result => Err(ExecutionError::Commit(result)),
             }

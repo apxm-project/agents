@@ -25,7 +25,7 @@ pub use driver::{
     execute_resumable, resume, resume_event,
 };
 pub use operational_usage::{
-    CommittedNativeUsage, CommittedNativeUsageFact, OperationalUsageFactError,
+    CommittedNativeModelCallUsage, CommittedNativeUsage, OperationalUsageFactError,
     OperationalUsageFactPort, OperationalUsageOutcome,
 };
 pub use ports::{
