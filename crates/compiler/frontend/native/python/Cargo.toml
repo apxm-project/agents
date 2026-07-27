@@ -18,4 +18,4 @@ workspace = true
 [dependencies]
 apxm-program.workspace = true
 serde_json.workspace = true
-pyo3 = { version = "0.22", features = ["extension-module"] }
+pyo3 = { version = "0.29", features = ["extension-module"] }
