@@ -1,9 +1,8 @@
 //! `apxm chat` — interactive conversational REPL over a running apxm-server.
 //!
 //! Thin protocol pipe: deliver user input, render SSE events, and answer server
-//! permission prompts. Session ledger turn caps and tool budgets are enforced
-//! server-side — the host does not count turns or track budgets locally
-//! (constitution #2).
+//! permission prompts. Per-tool call budgets are enforced server-side — the
+//! host tracks no budgets locally (constitution #2).
 
 use std::io::Write as _;
 use std::path::PathBuf;
@@ -28,9 +27,9 @@ pub struct ChatOptions {
     pub capability_grant_ids: Vec<String>,
     /// Skill libraries / ids this agent imports (scoped visible set).
     pub import: Vec<String>,
-    /// Pin each turn to a registered backend (agent chat only).
+    /// Pin each model call to a registered backend (agent chat only).
     pub backend: Option<String>,
-    /// Pin each turn to a specific model id (agent chat only).
+    /// Pin each model call to a specific model id (agent chat only).
     pub model: Option<String>,
     /// Tenant/owner scope for per-tool credential resolution.
     pub owner: Option<String>,
@@ -77,7 +76,7 @@ fn artifact_has_await_event(air: &str) -> bool {
 }
 
 /// Dumb-pipe host (constitution #2): POST the artifact ONCE, pipe stdin lines to
-/// the turn-input endpoint, render streamed tokens. No transcript, no
+/// the message-input endpoint, render streamed tokens. No transcript, no
 /// compaction, no budgets host-side — all of that lives in the program/runtime.
 async fn run_dumb_pipe(
     client: &Client,
@@ -126,7 +125,7 @@ async fn run_dumb_pipe(
         if !r.status().is_success() {
             let status = r.status();
             let text = r.text().await.unwrap_or_default();
-            eprintln!("turn-input failed: {status}: {text}");
+            eprintln!("message delivery failed: {status}: {text}");
         }
     }
 
@@ -199,8 +198,8 @@ async fn render_session_stream(resp: crate::client::reqwest::Response, client: C
 }
 
 /// Thin agent chat: start a server-owned session, subscribe to session SSE,
-/// deliver stdin turns via the conversations endpoint — no host transcript or
-/// compaction (constitution #2).
+/// deliver stdin messages via the conversations endpoint — no host transcript
+/// or compaction (constitution #2).
 async fn run_agent_chat(opts: &ChatOptions, agent_id: &str) -> Result<()> {
     let base = resolve_server_base(opts.server.as_deref())?;
     let client = client_for_sse(&base);
@@ -251,17 +250,14 @@ async fn run_agent_chat(opts: &ChatOptions, agent_id: &str) -> Result<()> {
             match meta.split(' ').next().unwrap_or(meta) {
                 "session" => {
                     eprintln!("session_id: {session_id}");
-                    if let Ok(resp) = client.get_session_status(&session_id).await {
-                        print_server_budget(&resp.into_inner());
+                    match client.get_session_status(&session_id).await {
+                        Ok(resp) => print_session_status(&resp.into_inner()),
+                        Err(err) => eprintln!("(session status failed: {err})"),
                     }
                     continue;
                 }
-                "budget" => match client.get_session_status(&session_id).await {
-                    Ok(resp) => print_server_budget(&resp.into_inner()),
-                    Err(err) => eprintln!("(session status failed: {err})"),
-                },
                 "help" => {
-                    eprintln!("meta-commands: /session /budget /exit");
+                    eprintln!("meta-commands: /session /exit");
                     continue;
                 }
                 other => {
@@ -274,7 +270,7 @@ async fn run_agent_chat(opts: &ChatOptions, agent_id: &str) -> Result<()> {
         if !r.status().is_success() {
             let status = r.status();
             let text = r.text().await.unwrap_or_default();
-            eprintln!("turn-input failed: {status}: {text}");
+            eprintln!("message delivery failed: {status}: {text}");
         }
     }
 
@@ -360,23 +356,10 @@ pub async fn chat_command(opts: ChatOptions) -> Result<()> {
     run_dumb_pipe(&client, &session_id, &air, &opts).await
 }
 
-fn print_server_budget(status: &SessionStatus) {
-    let ledger = &status.ledger;
-    if ledger.turn_cap.is_none() && ledger.tool_budgets.is_empty() {
-        eprintln!("(no session budgets set — server ledger empty)");
-        return;
-    }
-    if let Some(cap) = ledger.turn_cap {
-        eprintln!("  turns: {}/{} used", status.turn_count, cap);
-    }
-    if ledger.tool_budgets.is_empty() {
-        return;
-    }
-    let mut names: Vec<_> = ledger.tool_budgets.keys().collect();
-    names.sort();
-    for name in names {
-        let budget = ledger.tool_budgets[name];
-        eprintln!("  {name}: session budget {budget} (server-tracked)");
+fn print_session_status(status: &SessionStatus) {
+    match &status.active_execution_id {
+        Some(execution_id) => eprintln!("  active execution: {execution_id}"),
+        None => eprintln!("  no active execution"),
     }
 }
 
@@ -416,25 +399,25 @@ mod tests {
         );
     }
 
-    /// `chat_renderer_surfaces_unknown_kind_instead_of_dropping` — a
-    /// `turn_started` frame (today: nothing) now produces visible output
+    /// `chat_renderer_surfaces_unknown_kind_instead_of_dropping` — a frame
+    /// the REPL has no dedicated projection for produces visible output
     /// instead of being parsed and silently discarded.
     #[test]
     fn chat_renderer_surfaces_unknown_kind_instead_of_dropping() {
         let frame = serde_json::json!({
             "payload": {
-                "kind": "turn_started",
+                "kind": "execution_started",
                 "execution_id": "exec-1",
             }
         });
         let render = render_chat_frame(&frame);
         assert!(
             render.is_some(),
-            "a turn_started frame must render something, not nothing"
+            "an execution_started frame must render something, not nothing"
         );
         assert_eq!(
             render,
-            Some(ChatFrameRender::Notice("[turn_started]".to_string()))
+            Some(ChatFrameRender::Notice("[execution_started]".to_string()))
         );
     }
 }

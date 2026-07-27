@@ -172,7 +172,7 @@ impl StaticHookHandlerPort for StaticHooks {
     ) -> StaticHookResult {
         assert_eq!(binding.handler_ref, "hooks.after_model");
         StaticHookResult::Replace {
-            assigned_context: Some(json!({"turns": 1})),
+            assigned_context: Some(json!({"iterations": 1})),
             result: json!("hooked"),
         }
     }
@@ -297,7 +297,7 @@ fn request() -> ExecutionRequest {
 async fn executes_all_five_ops_and_commits_atomically() {
     let commit = Arc::new(FakeCommit::new());
 
-    let report = execute(&ports(commit.clone()), request(), json!({"turns": 0}))
+    let report = execute(&ports(commit.clone()), request(), json!({"iterations": 0}))
         .await
         .expect("run");
 
@@ -353,7 +353,7 @@ async fn executes_all_five_ops_and_commits_atomically() {
         assert!(replaced);
         assert!(matches!(outcome, ModelOutcome::CommittedSuccess { .. }));
     }
-    assert_eq!(report.final_context, json!({"turns": 1}));
+    assert_eq!(report.final_context, json!({"iterations": 1}));
 
     // Peer usage is isolated in External Agent evidence, never in native usage.
     assert_eq!(report.external_agent_evidence.len(), 1);

@@ -82,8 +82,7 @@ The discriminator is `payload.kind`.
 | Kind | Purpose | First-line? |
 |---|---|---|
 | `session_meta` | Reproducibility envelope. **Always seq=0.** | yes |
-| `turn_context` | Sandbox / approval policy snapshot per real user turn. | no |
-| `user_message` | Anthropic content-block array for the user turn. | no |
+| `user_message` | Anthropic content-block array for the user message. | no |
 | `assistant_message` | Anthropic content-block array + model + finish_reason. | no |
 | `tool_use` | `{ tool_use_id, name, input }`. | no |
 | `tool_result` | `{ tool_use_id, content, is_error, latency_ms }`. | no |

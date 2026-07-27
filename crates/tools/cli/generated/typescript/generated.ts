@@ -313,7 +313,7 @@ export const GRAPH_METRICS = {
   GRAPH_METRIC_AGGREGATES: "aggregates",
   GRAPH_METRIC_BY_AGENT: "by_agent",
   GRAPH_METRIC_PROCESS_SPAWNS: "process_spawns",
-  GRAPH_METRIC_PROMPT_TURNS: "prompt_turns",
+  GRAPH_METRIC_PROMPTS: "prompts",
 } as const;
 
 export type ProviderProtocol =

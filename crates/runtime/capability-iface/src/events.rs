@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use apxm_core::events::payload::{
     ApprovalRiskLevel, GenerationIdentity, LlmDonePayload, LlmStepCompletedPayload,
-    ToolCallCorrelation, ToolCallPayload, ToolCallStatus, TurnBoundaryPayload, UsagePayload,
+    ToolCallCorrelation, ToolCallPayload, ToolCallStatus, UsagePayload,
     WorkflowStepCompletedPayload,
 };
 use apxm_core::types::NodeMetrics;
@@ -69,7 +69,7 @@ impl ModelContextMetrics {
 
 /// Concurrency-safe scope selection state for shared execution emitters.
 ///
-/// Flow calls may overlap briefly across re-armed conversational turns. Active
+/// Flow calls may overlap briefly across re-armed conversational flows. Active
 /// scopes therefore leave by identity rather than restoring a previously read
 /// value, which prevents an older flow from clearing a newer flow's scope.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -150,9 +150,9 @@ pub trait ExecutionEventEmitter: Send + Sync {
     /// (the CLI dims it; the studio shows a collapsible thinking block).
     fn emit_llm_thought(&self, _content: &str) {}
     /// One model-call step completed. This is non-terminal for the surrounding
-    /// turn because a tool loop may issue another model call.
+    /// loop iteration because a tool loop may issue another model call.
     fn emit_llm_step_completed(&self, _payload: LlmStepCompletedPayload) {}
-    /// The final model response for the current turn completed.
+    /// The final model response for the current loop iteration completed.
     fn emit_llm_done(&self, _payload: LlmDonePayload) {}
     /// One model-requested tool call was accepted for dispatch.
     fn emit_tool_call(&self, _payload: ToolCallPayload) {}
@@ -368,7 +368,7 @@ pub trait ExecutionEventEmitter: Send + Sync {
     fn emit_memoization_hit(&self, _node_id: u64) {}
 
     // ── Conversation-window compaction (the runtime compaction mechanism) ──────────────────────
-    /// The conversation context window was compacted: older turns folded
+    /// The conversation context window was compacted: older messages folded
     /// into a rolling summary. `original_tokens`/`new_tokens` are the
     /// accumulated-window token estimate before/after — must satisfy
     /// `original_tokens > new_tokens` (real reduction, not a no-op stamp).
@@ -386,10 +386,6 @@ pub trait ExecutionEventEmitter: Send + Sync {
         _utilization_pct: f64,
     ) {
     }
-
-    /// A numbered request or response boundary was reached for the
-    /// user-facing conversational turn.
-    fn emit_turn_boundary(&self, _payload: TurnBoundaryPayload) {}
 
     /// Emit aggregate-only context-packing evidence before a model dispatch.
     fn emit_model_context_metrics(&self, _metrics: &ModelContextMetrics) {}
@@ -412,28 +408,6 @@ pub trait ExecutionEventEmitter: Send + Sync {
     // `EmitterAdapter` that bridges to `ApxmEvent`) should override
     // the ones they care about. Layer 2 hooks must stay paired with the
     // corresponding Layer 1 event when they describe the same lifecycle edge.
-
-    /// The outermost executor entry began (top-level turn start).
-    fn emit_turn_started(
-        &self,
-        _execution_id: &str,
-        _turn_id: Option<&str>,
-        _coordinator_label: Option<&str>,
-    ) {
-    }
-
-    /// The outermost executor returned successfully.
-    fn emit_turn_complete(&self, _execution_id: &str, _duration_ms: u64, _had_answer: bool) {}
-
-    /// The outermost executor terminated abnormally.
-    fn emit_turn_aborted(
-        &self,
-        _execution_id: &str,
-        _duration_ms: u64,
-        _reason: &str,
-        _error_message_safe: Option<&str>,
-    ) {
-    }
 
     /// A SPAWN_AGENT node is opening a new sub-agent scope.
     fn emit_subagent_spawn_begin(
@@ -603,13 +577,13 @@ mod tests {
     #[test]
     fn active_scopes_survive_out_of_order_completion() {
         let mut scopes = EventScopeState::new(Some("root".to_string()));
-        scopes.enter("turn-1".to_string());
-        scopes.enter("turn-2".to_string());
+        scopes.enter("flow-1".to_string());
+        scopes.enter("flow-2".to_string());
 
-        scopes.leave("turn-1");
-        assert_eq!(scopes.current().as_deref(), Some("turn-2"));
+        scopes.leave("flow-1");
+        assert_eq!(scopes.current().as_deref(), Some("flow-2"));
 
-        scopes.leave("turn-2");
+        scopes.leave("flow-2");
         assert_eq!(scopes.current().as_deref(), Some("root"));
     }
 }

@@ -15,15 +15,8 @@ export interface TypedError {
   recovery_hint?: string | null;
 }
 
-export interface SessionLedgerView {
-  turn_cap?: number | null;
-  tool_budgets?: Record<string, number>;
-}
-
 export interface SessionStatus {
   session_id: string;
-  turn_count: number;
-  ledger: SessionLedgerView;
   active_execution_id?: string | null;
 }
 
@@ -47,5 +40,5 @@ export interface SessionHistoryResponse {
 export interface CompactSessionResponse {
   ok: boolean;
   session_id: string;
-  folded_turns?: number;
+  folded_messages?: number;
 }

@@ -244,7 +244,7 @@ pub const RECIPIENT: &str = "recipient";
 pub const TARGET: &str = "target";
 pub const TARGET_KIND: &str = "target_kind";
 pub const PROTOCOL: &str = "protocol";
-/// Semantic LLM operation represented by an agent communication turn.
+/// Semantic LLM operation represented by an agent communication exchange.
 ///
 /// `COMMUNICATE` remains the routing/session operation, but frontends can set
 /// this to `ASK`, `THINK`, or `REASON` so analysis and backend telemetry keep

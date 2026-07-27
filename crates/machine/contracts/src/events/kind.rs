@@ -157,10 +157,10 @@ pub const ERROR: EventKind = EventKind::new("error", EventCategory::Error, true)
 // enrichment). These are emitted in addition to OPERATION_START so
 // observers can reconstruct an agent/tool tree without rederiving it.
 // None of these three are terminal: they describe topology resolved
-// mid-run, not the end of a turn/session/execution. Marking them
-// terminal (as before) makes any consumer that trusts `is_terminal()`
-// close its feed on a mid-run topology event, hiding everything after —
-// strictly worse than under-classifying, since it looks like success.
+// mid-run, not the end of a session/execution. Marking them terminal
+// makes any consumer that trusts `is_terminal()` close its feed on a
+// mid-run topology event, hiding everything after — strictly worse than
+// under-classifying, since it looks like success.
 pub const AGENT_SPAWNED: EventKind = EventKind::new("agent_spawned", EventCategory::Agent, false);
 pub const COMMUNICATE_DISPATCHED: EventKind =
     EventKind::new("communicate_dispatched", EventCategory::Agent, false);
@@ -191,8 +191,6 @@ pub const CONTEXT_WINDOW_WARNING: EventKind =
 pub const SESSION_START: EventKind =
     EventKind::new("session_start", EventCategory::Lifecycle, false);
 pub const SESSION_END: EventKind = EventKind::new("session_end", EventCategory::Lifecycle, true);
-pub const TURN_BOUNDARY: EventKind =
-    EventKind::new("turn_boundary", EventCategory::Lifecycle, false);
 
 // ── Layer 2 — agent-layer event kinds ──────────────────────────────
 // These are emitted alongside the existing Layer 1 graph events
@@ -200,10 +198,6 @@ pub const TURN_BOUNDARY: EventKind =
 // `crates/runtime/engine/src/executor/agent_scope.rs`). They are
 // snake_case and follow the host app's dispatch event-kind vocabulary so
 // the relay can stop translating.
-pub const TURN_STARTED: EventKind = EventKind::new("turn_started", EventCategory::Lifecycle, false);
-pub const TURN_COMPLETE: EventKind =
-    EventKind::new("turn_complete", EventCategory::Lifecycle, true);
-pub const TURN_ABORTED: EventKind = EventKind::new("turn_aborted", EventCategory::Lifecycle, true);
 pub const SUBAGENT_SPAWN_BEGIN: EventKind =
     EventKind::new("subagent_spawn_begin", EventCategory::Agent, false);
 pub const SUBAGENT_SPAWN_END: EventKind =
@@ -280,10 +274,6 @@ pub const CORE_EVENT_KINDS: &[EventKind] = &[
     CONTEXT_WINDOW_WARNING,
     SESSION_START,
     SESSION_END,
-    TURN_BOUNDARY,
-    TURN_STARTED,
-    TURN_COMPLETE,
-    TURN_ABORTED,
     SUBAGENT_SPAWN_BEGIN,
     SUBAGENT_SPAWN_END,
     SUBAGENT_LLM_CALL_BEGIN,
