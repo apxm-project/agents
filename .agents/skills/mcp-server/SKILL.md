@@ -70,7 +70,7 @@ A new surface spans the handler, route/tool registration, the MCP manifest, the
 Dekk wrapper, and a smoke test — miss one and it ships half-wired. A REST route
 that should also be an MCP tool needs **both** the handler and the tool wrapper
 (don't ship REST-only). Route paths, env names, response markers, and tool names
-are contract strings — keep them in `contract.rs` / `apxm.contract`, not as
+are contract strings — keep them in `contract.rs` / `apxm_vllm.contract`, not as
 handler literals.
 
 ## Anti-patterns

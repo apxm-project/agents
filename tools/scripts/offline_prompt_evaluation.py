@@ -17,7 +17,7 @@ from pathlib import Path
 from pathlib import PurePosixPath
 from typing import Any
 
-from apxm.contract import build_layout
+from apxm_vllm.contract import build_layout
 
 
 EVIDENCE_SCHEMA_VERSION = 4

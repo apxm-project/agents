@@ -52,8 +52,8 @@ when writing tests load `_shared/apxm-test-rules.md`.
 
 ## Reuse-first
 
-- Before inventing a path string, check `apxm.contract.RepoLayout` /
-  `apxm.contract.build_layout()`.
+- Before inventing a path string, check `apxm_vllm.contract.RepoLayout` /
+  `apxm_vllm.contract.build_layout()`.
 - Before adding a new script, look in `tools/scripts/` — many entrypoints
   already exist (`cargo.py`, `vllm.py`, `release.py`,
   `apxm_mcp_install.py`). Keep public names in

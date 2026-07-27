@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib.util
+import re
 import tomllib
 import unittest
 from pathlib import Path
@@ -14,9 +16,8 @@ RETIRED_DIRECTORIES = (
     Path("crates/runtime/aam"),
     Path("crates/compiler/pipeline/src/air_builder"),
 )
+RETIRED_PACKAGE_DIRECTORIES = (Path("crates/compiler/frontend/python/apxm"),)
 RETIRED_FILES = (
-    Path("crates/compiler/frontend/python/apxm/proxy.py"),
-    Path("crates/compiler/frontend/python/apxm/tools.py"),
     Path("crates/compiler/frontend/python/apxm_program/conversational.py"),
     Path("crates/compiler/frontend/python/apxm_program/gao.py"),
     Path("crates/compiler/frontend/native/typescript/js/conversational.ts"),
@@ -25,7 +26,6 @@ RETIRED_FILES = (
 PACKAGE_HANDLER_ROOTS = (
     Path("crates/machine/ais/src"),
     Path("crates/machine/contracts/src"),
-    Path("crates/compiler/frontend/python/apxm"),
     Path("crates/compiler/frontend/python/apxm_program"),
     Path("crates/compiler/frontend/typescript/src"),
     Path("crates/tools/cli/generated"),
@@ -76,6 +76,40 @@ class CanonicalOnlyReachabilityTests(unittest.TestCase):
                 (REPOSITORY_ROOT / path).exists(),
                 f"retired frontend builder remains reachable: {path}",
             )
+
+    def test_python_authoring_ships_exactly_the_canonical_package(self) -> None:
+        """`apxm_program` is the whole Python authoring frontend."""
+        for path in RETIRED_PACKAGE_DIRECTORIES:
+            self.assertFalse(
+                (REPOSITORY_ROOT / path).exists(),
+                f"retired authoring-frontend package remains reachable: {path}",
+            )
+        frontend_root = REPOSITORY_ROOT / "crates/compiler/frontend/python"
+        packages = sorted(
+            entry.name
+            for entry in frontend_root.iterdir()
+            if entry.is_dir() and (entry / "__init__.py").is_file()
+        )
+        self.assertEqual(packages, ["apxm_program"])
+
+    def test_no_source_imports_the_retired_apxm_package(self) -> None:
+        """Operator tooling imports `apxm_vllm`; authoring imports `apxm_program`."""
+        pattern = re.compile(r"^\s*(?:from|import)\s+apxm(?:\.|\s|$)", re.MULTILINE)
+        offenders: list[str] = []
+        for root in ("tools", "crates/compiler/frontend/python", "examples"):
+            for path in (REPOSITORY_ROOT / root).rglob("*.py"):
+                if pattern.search(path.read_text(errors="ignore")):
+                    offenders.append(str(path.relative_to(REPOSITORY_ROOT)))
+        self.assertEqual(offenders, [], "\n".join(offenders))
+
+    def test_operator_contract_resolves_from_the_declared_import_root(self) -> None:
+        """`apxm_vllm` is importable from `tools/`, the declared PYTHONPATH entry."""
+        package = REPOSITORY_ROOT / "tools" / "apxm_vllm"
+        for module in ("__init__.py", "contract.py", "data_config.py"):
+            self.assertTrue((package / module).is_file(), f"missing operator module: {module}")
+        spec = importlib.util.find_spec("apxm_vllm.contract")
+        self.assertIsNotNone(spec, "apxm_vllm.contract is not importable")
+        self.assertEqual(Path(spec.origin).resolve(), (package / "contract.py").resolve())
 
     def test_no_python_package_local_handler_surface_remains(self) -> None:
         """Package-local handlers are TypeScript-only across every owned surface."""

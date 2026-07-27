@@ -257,11 +257,8 @@ pub enum TemplateAction {
 
 #[derive(Subcommand)]
 pub enum CodegenAction {
-    /// Generate the Python frontend bindings into apxm/_generated
+    /// Generate the Python frontend bindings into apxm_program/_generated
     Frontend {
-        /// Output directory for generated Python files
-        #[arg(long)]
-        output_dir: Option<PathBuf>,
         /// Check that the generated Python files are up to date without writing them
         #[arg(long)]
         check: bool,
