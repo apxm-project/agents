@@ -185,7 +185,7 @@ impl ProgramInstance {
         seq += 1;
         batch.push(lifecycle_fact(
             seq,
-            FactKind::AttemptRecorded,
+            FactKind::InvocationAttemptRecorded,
             None,
             None,
             None,
@@ -437,7 +437,7 @@ impl ProgramInstance {
 }
 
 fn capability_attempt_fact(seq: u64, node_execution_id: &str) -> Fact {
-    let mut fact = lifecycle_fact(seq, FactKind::AttemptRecorded, None, None, None);
+    let mut fact = lifecycle_fact(seq, FactKind::CapabilityAttemptRecorded, None, None, None);
     runtime_fact_mut(&mut fact).node_execution_id = Some(node_execution_id.to_string());
     fact
 }

@@ -58,6 +58,9 @@
           "$ref": "#/$defs/NodeExecutionRecordedFact"
         },
         {
+          "$ref": "#/$defs/ModelAttemptRecordedFact"
+        },
+        {
           "$ref": "#/$defs/RuntimeFact"
         }
       ]
@@ -132,7 +135,8 @@
             "instance.created",
             "invocation.admitted",
             "child.attached",
-            "attempt.recorded",
+            "invocation.attempt_recorded",
+            "capability.attempt_recorded",
             "invocation.committed",
             "invocation.failed",
             "invocation.cancelled",
@@ -275,6 +279,7 @@
         "fact_id",
         "event_sequence",
         "fact_kind",
+        "program_invocation_id",
         "node_execution_id",
         "air_node_id",
         "execution_scope"
@@ -290,6 +295,9 @@
         "fact_kind": {
           "const": "node_execution.recorded"
         },
+        "program_invocation_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
         "node_execution_id": {
           "$ref": "apxm.contract-common.v1#/$defs/Identifier"
         },
@@ -301,6 +309,78 @@
         },
         "execution_scope": {
           "$ref": "#/$defs/NodeExecutionScope"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ModelAttemptRecordedFact": {
+      "type": "object",
+      "required": [
+        "fact_id",
+        "event_sequence",
+        "fact_kind",
+        "program_invocation_id",
+        "node_execution_id",
+        "air_node_id",
+        "attempt_id",
+        "attempt_index",
+        "model_effect_id",
+        "request_digest",
+        "model_target_ref",
+        "model_deployment_ref",
+        "exact_port_binding_digest",
+        "native_input_tokens",
+        "native_output_tokens"
+      ],
+      "properties": {
+        "fact_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "event_sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fact_kind": {
+          "const": "attempt.recorded"
+        },
+        "program_invocation_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "node_execution_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "air_node_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "attempt_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "attempt_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "model_effect_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "request_digest": {
+          "$ref": "apxm.contract-common.v1#/$defs/Digest"
+        },
+        "model_target_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "model_deployment_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "exact_port_binding_digest": {
+          "$ref": "apxm.contract-common.v1#/$defs/Digest"
+        },
+        "native_input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "native_output_tokens": {
+          "type": "integer",
+          "minimum": 0
         }
       },
       "additionalProperties": false

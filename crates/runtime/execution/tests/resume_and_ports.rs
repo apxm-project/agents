@@ -6,10 +6,10 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 
 use apxm_execution::{
-    CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
-    CompositionRequest, Continuation, EventAwait, EventOutcome, EventPort, EventRef,
-    ExecutionPorts, ExecutionRequest, NoopStaticHookHandler, OperationalUsageOutcome, RunOutcome,
-    execute_resumable, resume_event,
+    CapabilityOutcome, CapabilityPort, CapabilityRequest, CommittedNativeModelUsageOutcome,
+    CompositionOutcome, CompositionPort, CompositionRequest, Continuation, EventAwait,
+    EventOutcome, EventPort, EventRef, ExecutionPorts, ExecutionRequest, NoopStaticHookHandler,
+    RunOutcome, execute_resumable, resume_event,
 };
 use apxm_inference::{
     AttemptDisposition, ExactPortBindingRef, ModelBindingAdmission, ModelCallRequest,
@@ -130,6 +130,7 @@ struct Commit {
     version: Mutex<u64>,
     continuation: Mutex<Option<Value>>,
     tuples: Mutex<Vec<apxm_kernel::ExecutionCommitTuple>>,
+    invocation_refs: Mutex<Vec<String>>,
     fail: bool,
 }
 
@@ -145,6 +146,10 @@ impl ExecutionCommitPort for Commit {
         *version = request.expected_program_state_version + 1;
         *self.continuation.lock().unwrap() = request.tuple.continuation.clone();
         self.tuples.lock().unwrap().push(request.tuple);
+        self.invocation_refs
+            .lock()
+            .unwrap()
+            .push(request.invocation_ref);
         ExecutionCommitResult::Committed {
             new_program_state_version: *version,
             evidence_position_ref: "evidence.atomic".into(),
@@ -233,10 +238,14 @@ async fn park_commits_context_continuation_wait_effects_evidence_usage_and_outpu
         RunOutcome::Suspended {
             continuation_id,
             event_ref: Some(event_ref),
-            operational_usage: OperationalUsageOutcome::NotConfigured,
+            operational_usage: CommittedNativeModelUsageOutcome::NotConfigured,
         } if continuation_id == "node.await" && event_ref.as_str() == "evt-atomic"
     ));
     assert_eq!(*commit.version.lock().unwrap(), 1);
+    assert_eq!(
+        *commit.invocation_refs.lock().unwrap(),
+        vec!["invocation.instance.atomic"]
+    );
     let tuples = commit.tuples.lock().unwrap();
     assert_eq!(tuples.len(), 1);
     let tuple = &tuples[0];
@@ -307,6 +316,10 @@ async fn resume_reads_the_committed_structural_continuation() {
     .expect("resume from committed state");
     assert!(matches!(resumed, RunOutcome::Completed(_)));
     assert_eq!(*commit.version.lock().unwrap(), 2);
+    assert_eq!(
+        *commit.invocation_refs.lock().unwrap(),
+        vec!["invocation.instance.replay", "invocation.instance.replay"]
+    );
     let tuples = commit.tuples.lock().unwrap();
     let completions = tuples
         .iter()

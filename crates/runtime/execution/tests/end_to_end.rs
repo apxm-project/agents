@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use apxm_inference::{
     AttemptDisposition, ExactPortBindingRef, ModelBindingAdmission, ModelCallRequest,
@@ -24,11 +25,11 @@ use apxm_program::frontend_graph::{HookBinding, HookPhase, HookReturnMode, HookS
 use apxm_program::runtime_evidence::Fact;
 
 use apxm_execution::{
-    CapabilityOutcome, CapabilityPort, CapabilityRequest, CommittedNativeModelCallUsage,
-    CommittedNativeUsage, CompositionOutcome, CompositionPort, CompositionReceiver,
+    CapabilityOutcome, CapabilityPort, CapabilityRequest, CommittedNativeModelUsage,
+    CommittedNativeModelUsageError, CommittedNativeModelUsageOutcome,
+    CommittedNativeModelUsagePort, CompositionOutcome, CompositionPort, CompositionReceiver,
     CompositionRequest, EventAwait, EventOutcome, EventPort, ExecutionError, ExecutionPorts,
-    ExecutionRequest, NodeOutcome, OperationalUsageFactError, OperationalUsageFactPort,
-    OperationalUsageOutcome, StaticHookHandlerPort, StaticHookResult, execute,
+    ExecutionRequest, NodeOutcome, StaticHookHandlerPort, StaticHookResult, execute,
 };
 
 fn digest(c: char) -> String {
@@ -89,9 +90,23 @@ impl ModelInferencePort for FakeModel {
     }
 }
 
-struct RetryingModel;
+#[derive(Default)]
+struct RetryingModel {
+    request_identities: Mutex<Vec<(String, String)>>,
+}
+
+impl RetryingModel {
+    fn request_identities(&self) -> Vec<(String, String)> {
+        self.request_identities.lock().unwrap().clone()
+    }
+}
+
 impl ModelInferencePort for RetryingModel {
-    fn attempt(&self, _request: &ModelCallRequest, attempt: u32) -> AttemptDisposition {
+    fn attempt(&self, request: &ModelCallRequest, attempt: u32) -> AttemptDisposition {
+        self.request_identities
+            .lock()
+            .unwrap()
+            .push((request.effect_id.clone(), request.request_digest.clone()));
         if attempt == 0 {
             AttemptDisposition::FailedBeforeSend(apxm_inference::TypedError {
                 category: apxm_inference::ErrorCategory::Unavailable,
@@ -206,12 +221,14 @@ impl StaticHookHandlerPort for StaticHooks {
 
 struct FakeCommit {
     state: Mutex<(u64, Vec<Fact>)>,
+    invocation_refs: Mutex<Vec<String>>,
     fail: bool,
 }
 impl FakeCommit {
     fn new() -> Self {
         Self {
             state: Mutex::new((0, Vec::new())),
+            invocation_refs: Mutex::new(Vec::new()),
             fail: false,
         }
     }
@@ -219,11 +236,16 @@ impl FakeCommit {
     fn failing() -> Self {
         Self {
             state: Mutex::new((0, Vec::new())),
+            invocation_refs: Mutex::new(Vec::new()),
             fail: true,
         }
     }
     fn facts(&self) -> Vec<Fact> {
         self.state.lock().unwrap().1.clone()
+    }
+
+    fn invocation_refs(&self) -> Vec<String> {
+        self.invocation_refs.lock().unwrap().clone()
     }
 }
 #[async_trait]
@@ -235,6 +257,10 @@ impl ExecutionCommitPort for FakeCommit {
             };
         }
         let mut state = self.state.lock().unwrap();
+        self.invocation_refs
+            .lock()
+            .unwrap()
+            .push(request.invocation_ref.clone());
         state.0 = request.expected_program_state_version + 1;
         state.1.extend(request.evidence_batch);
         ExecutionCommitResult::Committed {
@@ -249,29 +275,29 @@ impl ExecutionCommitPort for FakeCommit {
 
 #[derive(Default)]
 struct RecordingOperationalUsage {
-    calls: Mutex<Vec<CommittedNativeModelCallUsage>>,
-    fail: Option<OperationalUsageFactError>,
+    calls: Mutex<Vec<CommittedNativeModelUsage>>,
+    fail: Option<CommittedNativeModelUsageError>,
 }
 
 impl RecordingOperationalUsage {
-    fn failing(error: OperationalUsageFactError) -> Self {
+    fn failing(error: CommittedNativeModelUsageError) -> Self {
         Self {
             calls: Mutex::new(Vec::new()),
             fail: Some(error),
         }
     }
 
-    fn calls(&self) -> Vec<CommittedNativeModelCallUsage> {
+    fn calls(&self) -> Vec<CommittedNativeModelUsage> {
         self.calls.lock().unwrap().clone()
     }
 }
 
 #[async_trait]
-impl OperationalUsageFactPort for RecordingOperationalUsage {
+impl CommittedNativeModelUsagePort for RecordingOperationalUsage {
     async fn publish(
         &self,
-        request: CommittedNativeModelCallUsage,
-    ) -> Result<(), OperationalUsageFactError> {
+        request: CommittedNativeModelUsage,
+    ) -> Result<(), CommittedNativeModelUsageError> {
         self.calls.lock().unwrap().push(request);
         match &self.fail {
             Some(error) => Err(error.clone()),
@@ -422,6 +448,7 @@ async fn executes_all_five_ops_and_commits_atomically() {
             evidence_position_ref: "evidence:1".into()
         }
     );
+    assert_eq!(commit.invocation_refs(), vec!["invocation.1"]);
 
     // model.call produced native usage; the Hook replaced the result and set context.
     assert_eq!(
@@ -456,10 +483,11 @@ async fn executes_all_five_ops_and_commits_atomically() {
         "peer 555 never enters native usage"
     );
 
-    // The committed evidence records one attempt per node, the static handler,
+    // The committed evidence records one NodeExecution per node, the successful
+    // native model attempt, the static handler,
     // its explicit Context transition, lifecycle facts, and one ChildAttached
     // lineage fact for each of program.new and program.invoke.
-    assert_eq!(commit.facts().len(), 2 + 6 + 1 + 1 + 1 + 2);
+    assert_eq!(commit.facts().len(), 2 + 6 + 1 + 1 + 1 + 1 + 2);
     assert!(
         commit
             .facts()
@@ -496,17 +524,21 @@ async fn executes_all_five_ops_and_commits_atomically() {
 async fn committed_native_model_usage_carries_runtime_coordinates_and_excludes_acp_usage() {
     let commit = Arc::new(FakeCommit::new());
     let usage = Arc::new(RecordingOperationalUsage::default());
-    let ports = ports(commit).with_operational_usage_port(usage.clone());
+    let ports = ports(commit.clone()).with_committed_native_model_usage_port(usage.clone());
 
     let report = execute(&ports, request(), json!({})).await.expect("run");
 
-    assert_eq!(report.operational_usage, OperationalUsageOutcome::Published);
+    assert_eq!(
+        report.operational_usage,
+        CommittedNativeModelUsageOutcome::Published
+    );
     let calls = usage.calls();
     assert_eq!(calls.len(), 1);
-    let fact = &calls[0];
-    assert_eq!(fact.commit_id, "c1");
-    assert_eq!(fact.invocation_ref, "invocation.1");
-    assert_eq!(fact.evidence_position_ref, "evidence:1");
+    let usage_fact = &calls[0];
+    let fact = &usage_fact.attempt;
+    assert_eq!(usage_fact.commit_id, "c1");
+    assert_eq!(usage_fact.evidence_position_ref.r#ref, "evidence:1");
+    assert_eq!(fact.program_invocation_id, "invocation.1");
     assert_eq!(
         fact.node_execution_id,
         "node-execution.invocation.1.n.model.3"
@@ -517,37 +549,77 @@ async fn committed_native_model_usage_carries_runtime_coordinates_and_excludes_a
         "model-attempt.node-execution.invocation.1.n.model.3.0"
     );
     assert_eq!(fact.attempt_index, 0);
-    assert_eq!(fact.model_effect_id, "n.model");
-    assert_eq!(fact.request_digest, "n.model");
+    assert!(fact.model_effect_id.starts_with("model-effect."));
+    assert!(fact.request_digest.starts_with("sha256:"));
+    assert_eq!(fact.model_target_ref, "model.target.v1");
+    assert_eq!(fact.model_deployment_ref, "deploy.default");
+    assert_eq!(fact.exact_port_binding_digest, digest('a'));
+    assert_eq!(fact.native_input_tokens, 10);
+    assert_eq!(fact.native_output_tokens, 20);
+    let schema_bytes = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../contracts/schemas/apxm.committed-native-model-usage.v1.json"),
+    )
+    .expect("owning schema bytes");
     assert_eq!(
-        fact.resolved_model_binding,
-        admission()
-            .validate(&ModelTargetRef("model.target.v1".into()))
-            .expect("admitted target")
+        usage_fact.source_contract_digest,
+        format!("sha256:{:x}", Sha256::digest(schema_bytes))
     );
     assert_eq!(
-        fact.native_usage,
-        CommittedNativeUsage {
-            input_tokens: 10,
-            output_tokens: 20
-        }
+        usage_fact.usage_measurement_id,
+        CommittedNativeModelUsage::measurement_id(&usage_fact.commit_id, &fact.fact_id)
     );
+    let committed_facts = commit.facts();
+    let committed_attempt = committed_facts
+        .iter()
+        .find_map(Fact::model_attempt_recorded)
+        .expect("attempt is committed atomically");
+    assert_eq!(committed_attempt, fact);
     assert_eq!(
         report.external_agent_evidence[0].peer_usage[0].reported_value,
         "555"
     );
     assert_ne!(
-        usage.calls()[0].native_usage.input_tokens,
+        usage.calls()[0].attempt.native_input_tokens,
         555,
         "ACP peer usage never becomes native operational usage"
     );
 }
 
 #[tokio::test]
+async fn committed_native_model_usage_decode_rejects_missing_and_unknown_fields() {
+    let commit = Arc::new(FakeCommit::new());
+    let usage = Arc::new(RecordingOperationalUsage::default());
+    let ports = ports(commit).with_committed_native_model_usage_port(usage.clone());
+    execute(&ports, request(), json!({}))
+        .await
+        .expect("usage-producing execution commits");
+
+    let canonical = serde_json::to_value(&usage.calls()[0]).expect("closed usage serializes");
+    let mut missing = canonical.clone();
+    missing
+        .as_object_mut()
+        .expect("usage object")
+        .remove("source_contract_digest");
+    assert!(serde_json::from_value::<CommittedNativeModelUsage>(missing).is_err());
+
+    let mut unknown = canonical.clone();
+    unknown
+        .as_object_mut()
+        .expect("usage object")
+        .insert("company_ref".into(), json!("company.forbidden"));
+    assert!(serde_json::from_value::<CommittedNativeModelUsage>(unknown).is_err());
+
+    let mut nested_unknown = canonical;
+    nested_unknown["attempt"]["price_microunits"] = json!(1);
+    assert!(serde_json::from_value::<CommittedNativeModelUsage>(nested_unknown).is_err());
+}
+
+#[tokio::test]
 async fn each_native_model_call_is_published_as_a_distinct_measurement() {
     let commit = Arc::new(FakeCommit::new());
     let usage = Arc::new(RecordingOperationalUsage::default());
-    let ports = ports(commit).with_operational_usage_port(usage.clone());
+    let ports = ports(commit).with_committed_native_model_usage_port(usage.clone());
     let two_models: AirModule = serde_json::from_value(json!({
         "schema_version": "apxm.air.v1",
         "semantic_operations": [
@@ -578,22 +650,30 @@ async fn each_native_model_call_is_published_as_a_distinct_measurement() {
 
     let report = execute(&ports, req, json!({})).await.expect("run");
 
-    assert_eq!(report.operational_usage, OperationalUsageOutcome::Published);
+    assert_eq!(
+        report.operational_usage,
+        CommittedNativeModelUsageOutcome::Published
+    );
     let calls = usage.calls();
     assert_eq!(calls.len(), 2);
-    assert_eq!(calls[0].air_node_id, "n.model.first");
-    assert_eq!(calls[1].air_node_id, "n.model.second");
-    assert_ne!(calls[0].node_execution_id, calls[1].node_execution_id);
-    assert_ne!(calls[0].attempt_id, calls[1].attempt_id);
-    assert_eq!(calls[0].attempt_index, 0);
-    assert_eq!(calls[1].attempt_index, 0);
-    assert_eq!(
-        calls[0].resolved_model_binding.model_target_ref.0,
-        "model.target.v1"
+    assert_eq!(calls[0].attempt.air_node_id, "n.model.first");
+    assert_eq!(calls[1].attempt.air_node_id, "n.model.second");
+    assert_ne!(
+        calls[0].attempt.node_execution_id,
+        calls[1].attempt.node_execution_id
     );
-    assert_eq!(
-        calls[1].resolved_model_binding.model_target_ref.0,
-        "model.target.v2"
+    assert_ne!(calls[0].attempt.attempt_id, calls[1].attempt.attempt_id);
+    assert_eq!(calls[0].attempt.attempt_index, 0);
+    assert_eq!(calls[1].attempt.attempt_index, 0);
+    assert_eq!(calls[0].attempt.model_target_ref, "model.target.v1");
+    assert_eq!(calls[1].attempt.model_target_ref, "model.target.v2");
+    assert_ne!(
+        calls[0].attempt.model_effect_id,
+        calls[1].attempt.model_effect_id
+    );
+    assert_ne!(
+        calls[0].attempt.request_digest,
+        calls[1].attempt.request_digest
     );
     assert_eq!(
         report.native_usage,
@@ -608,32 +688,34 @@ async fn each_native_model_call_is_published_as_a_distinct_measurement() {
 async fn retrying_model_usage_keeps_the_successful_attempt_coordinate() {
     let commit = Arc::new(FakeCommit::new());
     let usage = Arc::new(RecordingOperationalUsage::default());
-    let ports = ports_with_model(commit, Arc::new(RetryingModel))
-        .with_operational_usage_port(usage.clone());
+    let retrying_model = Arc::new(RetryingModel::default());
+    let ports = ports_with_model(commit, retrying_model.clone())
+        .with_committed_native_model_usage_port(usage.clone());
 
     let report = execute(&ports, request(), json!({})).await.expect("run");
 
-    assert_eq!(report.operational_usage, OperationalUsageOutcome::Published);
+    assert_eq!(
+        report.operational_usage,
+        CommittedNativeModelUsageOutcome::Published
+    );
     let calls = usage.calls();
     assert_eq!(calls.len(), 1);
-    assert_eq!(calls[0].attempt_index, 1);
-    assert!(calls[0].attempt_id.ends_with(".1"));
-    assert_eq!(
-        calls[0].native_usage,
-        CommittedNativeUsage {
-            input_tokens: 7,
-            output_tokens: 11
-        }
-    );
+    assert_eq!(calls[0].attempt.attempt_index, 1);
+    assert!(calls[0].attempt.attempt_id.ends_with(".1"));
+    assert_eq!(calls[0].attempt.native_input_tokens, 7);
+    assert_eq!(calls[0].attempt.native_output_tokens, 11);
+    let request_identities = retrying_model.request_identities();
+    assert_eq!(request_identities.len(), 2);
+    assert_eq!(request_identities[0], request_identities[1]);
 }
 
 #[tokio::test]
 async fn usage_presentation_failure_is_reported_after_commit_not_as_success_or_rollback() {
     let commit = Arc::new(FakeCommit::new());
     let usage = Arc::new(RecordingOperationalUsage::failing(
-        OperationalUsageFactError::Unavailable,
+        CommittedNativeModelUsageError::Unavailable,
     ));
-    let ports = ports(commit).with_operational_usage_port(usage.clone());
+    let ports = ports(commit).with_committed_native_model_usage_port(usage.clone());
 
     let report = execute(&ports, request(), json!({}))
         .await
@@ -645,7 +727,7 @@ async fn usage_presentation_failure_is_reported_after_commit_not_as_success_or_r
     ));
     assert_eq!(
         report.operational_usage,
-        OperationalUsageOutcome::Failed(OperationalUsageFactError::Unavailable)
+        CommittedNativeModelUsageOutcome::Failed(CommittedNativeModelUsageError::Unavailable)
     );
     assert_eq!(usage.calls().len(), 1);
 }
@@ -672,30 +754,33 @@ async fn zero_native_usage_and_uncommitted_execution_emit_nothing() {
     let mut no_model_request = request();
     no_model_request.air = no_model_air;
     no_model_request.hook_bindings = Vec::new();
-    let zero_ports = ports(Arc::new(FakeCommit::new())).with_operational_usage_port(usage.clone());
+    let zero_ports =
+        ports(Arc::new(FakeCommit::new())).with_committed_native_model_usage_port(usage.clone());
 
     let zero_report = execute(&zero_ports, no_model_request, json!({}))
         .await
         .expect("zero-usage execution commits");
     assert_eq!(
         zero_report.operational_usage,
-        OperationalUsageOutcome::NotApplicable
+        CommittedNativeModelUsageOutcome::NotApplicable
     );
     assert!(usage.calls().is_empty());
 
     let zero_model_ports = ports_with_model(Arc::new(FakeCommit::new()), Arc::new(ZeroUsageModel))
-        .with_operational_usage_port(usage.clone());
+        .with_committed_native_model_usage_port(usage.clone());
     let zero_model_report = execute(&zero_model_ports, request(), json!({}))
         .await
         .expect("zero model usage commits");
     assert_eq!(
         zero_model_report.operational_usage,
-        OperationalUsageOutcome::NotApplicable
+        CommittedNativeModelUsageOutcome::Published
     );
-    assert!(usage.calls().is_empty());
+    assert_eq!(usage.calls().len(), 1);
+    assert_eq!(usage.calls()[0].attempt.native_input_tokens, 0);
+    assert_eq!(usage.calls()[0].attempt.native_output_tokens, 0);
 
-    let uncommitted_ports =
-        ports(Arc::new(FakeCommit::failing())).with_operational_usage_port(usage.clone());
+    let uncommitted_ports = ports(Arc::new(FakeCommit::failing()))
+        .with_committed_native_model_usage_port(usage.clone());
     let uncommitted_report = execute(&uncommitted_ports, request(), json!({}))
         .await
         .expect("driver reports failed commit");
@@ -705,9 +790,9 @@ async fn zero_native_usage_and_uncommitted_execution_emit_nothing() {
     ));
     assert_eq!(
         uncommitted_report.operational_usage,
-        OperationalUsageOutcome::NotApplicable
+        CommittedNativeModelUsageOutcome::NotApplicable
     );
-    assert!(usage.calls().is_empty());
+    assert_eq!(usage.calls().len(), 1);
 }
 
 #[tokio::test]
@@ -743,7 +828,7 @@ async fn repeated_instance_invocations_keep_evidence_identities_disjoint() {
 async fn distinct_invocations_do_not_reuse_published_invocation_coordinates() {
     let commit = Arc::new(FakeCommit::new());
     let usage = Arc::new(RecordingOperationalUsage::default());
-    let ports = ports(commit).with_operational_usage_port(usage.clone());
+    let ports = ports(commit).with_committed_native_model_usage_port(usage.clone());
 
     execute(&ports, request(), json!({}))
         .await
@@ -757,9 +842,21 @@ async fn distinct_invocations_do_not_reuse_published_invocation_coordinates() {
 
     let calls = usage.calls();
     assert_eq!(calls.len(), 2);
-    assert_eq!(calls[0].invocation_ref, "invocation.1");
-    assert_eq!(calls[1].invocation_ref, "invocation.2");
-    assert_ne!(calls[0].node_execution_id, calls[1].node_execution_id);
+    assert_eq!(calls[0].attempt.program_invocation_id, "invocation.1");
+    assert_eq!(calls[1].attempt.program_invocation_id, "invocation.2");
+    assert_ne!(
+        calls[0].attempt.node_execution_id,
+        calls[1].attempt.node_execution_id
+    );
+    assert_ne!(
+        calls[0].attempt.model_effect_id,
+        calls[1].attempt.model_effect_id
+    );
+    assert_ne!(
+        calls[0].attempt.request_digest,
+        calls[1].attempt.request_digest
+    );
+    assert_ne!(calls[0].usage_measurement_id, calls[1].usage_measurement_id);
 }
 
 /// A composition port that records every receiver it is handed, so a test can

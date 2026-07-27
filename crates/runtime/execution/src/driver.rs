@@ -24,7 +24,9 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use serde::Serialize;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use apxm_inference::{
     BindingError, ModelBindingAdmission, ModelCallRequest, ModelInferencePort, ModelOutcome,
@@ -41,13 +43,13 @@ use apxm_program::external_agent::ExternalAgentEvidence;
 use apxm_program::frontend_graph::HookBinding;
 use apxm_program::runtime_evidence::{
     Fact, FactKind, HookPhase as EvidenceHookPhase, HookScope as EvidenceHookScope, InstanceState,
-    InvocationState, LoopIterationCompletedFact, LoopMembership, NodeExecutionRecordedFact,
-    NodeExecutionScope, RuntimeFact,
+    InvocationState, LoopIterationCompletedFact, LoopMembership, ModelAttemptRecordedFact,
+    NodeExecutionRecordedFact, NodeExecutionScope, RuntimeFact,
 };
 
 use crate::operational_usage::{
-    CommittedNativeModelCallUsage, CommittedNativeUsage, NativeModelCallMeasurement,
-    OperationalUsageFactPort, OperationalUsageOutcome,
+    CommittedNativeModelUsage, CommittedNativeModelUsageOutcome, CommittedNativeModelUsagePort,
+    CommittedNativeModelUsageVersion, EvidencePositionRef, EvidencePositionRefType,
 };
 use crate::ports::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
@@ -67,7 +69,7 @@ pub struct ExecutionPorts {
     composition: Arc<dyn CompositionPort>,
     execution_commit: Arc<dyn ExecutionCommitPort>,
     hook_handlers: Arc<dyn StaticHookHandlerPort>,
-    operational_usage: Option<Arc<dyn OperationalUsageFactPort>>,
+    operational_usage: Option<Arc<dyn CommittedNativeModelUsagePort>>,
 }
 
 /// Why the canonical driver cannot be constructed from a port bundle.
@@ -126,13 +128,12 @@ impl ExecutionPorts {
         })
     }
 
-    /// Attach the single runtime-owned operational-usage publisher admitted by
-    /// composition. The driver does not construct this port or discover a
-    /// destination: Server owns fact preparation and the configured port owns
-    /// the direct Auth-to-Server delivery exchange.
-    pub fn with_operational_usage_port(
+    /// Attach the single committed-native-model-usage publisher admitted by
+    /// composition. The driver owns the closed measurement but does not
+    /// discover a destination or add Server-owned authority or pricing data.
+    pub fn with_committed_native_model_usage_port(
         mut self,
-        operational_usage: Arc<dyn OperationalUsageFactPort>,
+        operational_usage: Arc<dyn CommittedNativeModelUsagePort>,
     ) -> Self {
         self.operational_usage = Some(operational_usage);
         self
@@ -237,10 +238,9 @@ pub struct RunReport {
     pub external_agent_evidence: Vec<ExternalAgentEvidence>,
     pub final_context: Value,
     pub commit: ExecutionCommitResult,
-    /// The outcome of direct Server operational-usage presentation. This is
-    /// only attempted after a successful atomic execution commit with nonzero
-    /// native `model.call` usage; external-agent/ACP usage never enters it.
-    pub operational_usage: OperationalUsageOutcome,
+    /// The outcome of publishing the exact committed native model attempts.
+    /// External-agent/ACP usage never enters this Agents-owned contract.
+    pub operational_usage: CommittedNativeModelUsageOutcome,
 }
 
 /// Why a canonical run could not be driven.
@@ -396,7 +396,7 @@ fn runtime_fact_mut(fact: &mut Fact) -> &mut RuntimeFact {
 struct DriveState {
     node_outcomes: Vec<NodeOutcome>,
     native_usage: Usage,
-    native_model_call_measurements: Vec<NativeModelCallMeasurement>,
+    committed_model_attempts: Vec<ModelAttemptRecordedFact>,
     external_agent_evidence: Vec<ExternalAgentEvidence>,
     context: Value,
     last_result: Value,
@@ -407,6 +407,46 @@ struct DriveState {
     active_loops: Vec<DurableLoopFrame>,
     last_model_node_execution_id: Option<String>,
     last_program_new_node_execution_id: Option<String>,
+}
+
+/// Canonical dynamic request identity at the native model boundary. Sensitive
+/// Context content is represented only by its digest.
+#[derive(Serialize)]
+struct CanonicalModelRequestEnvelope<'a> {
+    schema_version: &'static str,
+    program_invocation_id: &'a str,
+    node_execution_id: &'a str,
+    operation: &'a SemanticOp,
+    context_digest: String,
+}
+
+fn model_effect_identity(program_invocation_id: &str, node_execution_id: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"apxm.model-effect.v1\0");
+    hasher.update(program_invocation_id.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(node_execution_id.as_bytes());
+    format!("model-effect.{:x}", hasher.finalize())
+}
+
+fn model_request_digest(
+    program_invocation_id: &str,
+    node_execution_id: &str,
+    operation: &SemanticOp,
+    context: &Value,
+) -> String {
+    let context_bytes = serde_json::to_vec(context)
+        .expect("canonical runtime Context serializes deterministically");
+    let envelope = CanonicalModelRequestEnvelope {
+        schema_version: "apxm.model-request-identity.v1",
+        program_invocation_id,
+        node_execution_id,
+        operation,
+        context_digest: format!("sha256:{:x}", Sha256::digest(context_bytes)),
+    };
+    let request_bytes = serde_json::to_vec(&envelope)
+        .expect("canonical model request envelope serializes deterministically");
+    format!("sha256:{:x}", Sha256::digest(request_bytes))
 }
 
 impl DriveState {
@@ -438,7 +478,7 @@ impl DriveState {
         Self {
             node_outcomes: Vec::new(),
             native_usage: Usage::default(),
-            native_model_call_measurements: Vec::new(),
+            committed_model_attempts: Vec::new(),
             external_agent_evidence: Vec::new(),
             context: initial_context,
             last_result: Value::Null,
@@ -738,6 +778,7 @@ async fn drive_from(
                 let node_fact = Fact::NodeExecutionRecorded(NodeExecutionRecordedFact {
                     fact_id: format!("fact.{}.{}", state.program_invocation_id, state.seq),
                     event_sequence: state.seq,
+                    program_invocation_id: state.program_invocation_id.clone(),
                     node_execution_id: node_execution_id.clone(),
                     air_node_id: op.node_id.clone(),
                     parent_node_execution_id: match op.op {
@@ -761,9 +802,17 @@ async fn drive_from(
                                 operand: "model_ref",
                             }
                         })?;
+                        let effect_id =
+                            model_effect_identity(&state.program_invocation_id, &node_execution_id);
+                        let request_digest = model_request_digest(
+                            &state.program_invocation_id,
+                            &node_execution_id,
+                            op,
+                            &state.context,
+                        );
                         let call = ModelCallRequest::authorize(
-                            op.node_id.clone(),
-                            op.node_id.clone(),
+                            effect_id,
+                            request_digest,
                             &ModelTargetRef(target),
                             model_admission,
                         )
@@ -778,20 +827,38 @@ async fn drive_from(
                         {
                             state.native_usage.input_tokens += usage.input_tokens;
                             state.native_usage.output_tokens += usage.output_tokens;
-                            state
-                                .native_model_call_measurements
-                                .push(NativeModelCallMeasurement {
-                                    node_execution_id: node_execution_id.clone(),
-                                    air_node_id: op.node_id.clone(),
-                                    attempt_id: format!(
-                                        "model-attempt.{node_execution_id}.{attempt_index}"
-                                    ),
-                                    attempt_index,
-                                    model_effect_id: call.effect_id.clone(),
-                                    request_digest: call.request_digest.clone(),
-                                    resolved_model_binding: call.resolved_binding.clone(),
-                                    native_usage: CommittedNativeUsage::from(*usage),
-                                });
+                            state.seq += 1;
+                            let attempt = ModelAttemptRecordedFact {
+                                fact_id: format!(
+                                    "fact.{}.{}",
+                                    state.program_invocation_id, state.seq
+                                ),
+                                event_sequence: state.seq,
+                                program_invocation_id: state.program_invocation_id.clone(),
+                                node_execution_id: node_execution_id.clone(),
+                                air_node_id: op.node_id.clone(),
+                                attempt_id: format!(
+                                    "model-attempt.{node_execution_id}.{attempt_index}"
+                                ),
+                                attempt_index,
+                                model_effect_id: call.effect_id.clone(),
+                                request_digest: call.request_digest.clone(),
+                                model_target_ref: call.resolved_binding.model_target_ref.0.clone(),
+                                model_deployment_ref: call
+                                    .resolved_binding
+                                    .model_deployment_ref
+                                    .0
+                                    .clone(),
+                                exact_port_binding_digest: call
+                                    .resolved_binding
+                                    .exact_port_binding
+                                    .binding_digest
+                                    .clone(),
+                                native_input_tokens: usage.input_tokens,
+                                native_output_tokens: usage.output_tokens,
+                            };
+                            state.batch.push(Fact::AttemptRecorded(attempt.clone()));
+                            state.committed_model_attempts.push(attempt);
                         }
                         let result = model_result_value(&outcome);
                         state.last_result = result.clone();
@@ -1129,7 +1196,6 @@ async fn apply_static_hook(
 async fn commit_and_report(
     ports: &ExecutionPorts,
     version_scope: &str,
-    invocation_ref: &str,
     commit_id: &str,
     write_set: AtomicWriteSet,
     mut state: DriveState,
@@ -1150,7 +1216,7 @@ async fn commit_and_report(
         .execution_commit
         .commit(ExecutionCommitRequest {
             commit_id: commit_id.to_string(),
-            invocation_ref: version_scope.to_string(),
+            invocation_ref: state.program_invocation_id.clone(),
             idempotency_key: format!("idem.{commit_id}"),
             expected_program_state_version: expected,
             write_set,
@@ -1162,9 +1228,8 @@ async fn commit_and_report(
     let operational_usage = publish_committed_native_model_usage(
         ports,
         commit_id,
-        invocation_ref,
         &commit,
-        &state.native_model_call_measurements,
+        &state.committed_model_attempts,
     )
     .await;
 
@@ -1181,52 +1246,46 @@ async fn commit_and_report(
 async fn publish_committed_native_model_usage(
     ports: &ExecutionPorts,
     commit_id: &str,
-    invocation_ref: &str,
     commit: &ExecutionCommitResult,
-    measurements: &[NativeModelCallMeasurement],
-) -> OperationalUsageOutcome {
+    attempts: &[ModelAttemptRecordedFact],
+) -> CommittedNativeModelUsageOutcome {
     let ExecutionCommitResult::Committed {
         evidence_position_ref,
         ..
     } = commit
     else {
-        return OperationalUsageOutcome::NotApplicable;
+        return CommittedNativeModelUsageOutcome::NotApplicable;
     };
-    if !measurements.iter().any(|measurement| {
-        measurement.native_usage.input_tokens != 0 || measurement.native_usage.output_tokens != 0
-    }) {
-        return OperationalUsageOutcome::NotApplicable;
+    if attempts.is_empty() {
+        return CommittedNativeModelUsageOutcome::NotApplicable;
     }
     let Some(port) = &ports.operational_usage else {
-        return OperationalUsageOutcome::NotConfigured;
+        return CommittedNativeModelUsageOutcome::NotConfigured;
     };
 
     let mut failure = None;
-    for measurement in measurements {
-        if measurement.native_usage.input_tokens == 0 && measurement.native_usage.output_tokens == 0
-        {
-            continue;
-        }
-        let fact = CommittedNativeModelCallUsage {
+    for attempt in attempts {
+        let usage = CommittedNativeModelUsage {
+            schema_version: CommittedNativeModelUsageVersion::V1,
+            source_contract_digest: CommittedNativeModelUsage::SOURCE_CONTRACT_DIGEST.to_string(),
+            usage_measurement_id: CommittedNativeModelUsage::measurement_id(
+                commit_id,
+                &attempt.fact_id,
+            ),
             commit_id: commit_id.to_string(),
-            invocation_ref: invocation_ref.to_string(),
-            evidence_position_ref: evidence_position_ref.clone(),
-            node_execution_id: measurement.node_execution_id.clone(),
-            air_node_id: measurement.air_node_id.clone(),
-            attempt_id: measurement.attempt_id.clone(),
-            attempt_index: measurement.attempt_index,
-            model_effect_id: measurement.model_effect_id.clone(),
-            request_digest: measurement.request_digest.clone(),
-            resolved_model_binding: measurement.resolved_model_binding.clone(),
-            native_usage: measurement.native_usage,
+            evidence_position_ref: EvidencePositionRef {
+                ref_type: EvidencePositionRefType::EvidencePositionRef,
+                r#ref: evidence_position_ref.clone(),
+            },
+            attempt: attempt.clone(),
         };
-        if let Err(error) = port.publish(fact).await {
+        if let Err(error) = port.publish(usage).await {
             failure.get_or_insert(error);
         }
     }
     match failure {
-        Some(error) => OperationalUsageOutcome::Failed(error),
-        None => OperationalUsageOutcome::Published,
+        Some(error) => CommittedNativeModelUsageOutcome::Failed(error),
+        None => CommittedNativeModelUsageOutcome::Published,
     }
 }
 
@@ -1266,7 +1325,7 @@ async fn commit_suspension(
     ports: &ExecutionPorts,
     continuation: &Continuation,
     mut state: DriveState,
-) -> (ExecutionCommitResult, OperationalUsageOutcome) {
+) -> (ExecutionCommitResult, CommittedNativeModelUsageOutcome) {
     let expected = ports
         .execution_commit
         .current_version(&continuation.version_scope)
@@ -1292,12 +1351,12 @@ async fn commit_suspension(
             "event_ref": event_ref,
         })
     });
-    let measurements = state.native_model_call_measurements.clone();
+    let attempts = state.committed_model_attempts.clone();
     let commit = ports
         .execution_commit
         .commit(ExecutionCommitRequest {
             commit_id: format!("{}.yield", continuation.commit_id),
-            invocation_ref: continuation.version_scope.clone(),
+            invocation_ref: continuation.invocation_ref.clone(),
             idempotency_key: format!("idem.{}.yield", continuation.commit_id),
             expected_program_state_version: expected,
             write_set: continuation.write_set.clone(),
@@ -1308,9 +1367,8 @@ async fn commit_suspension(
     let operational_usage = publish_committed_native_model_usage(
         ports,
         &format!("{}.yield", continuation.commit_id),
-        &continuation.invocation_ref,
         &commit,
-        &measurements,
+        &attempts,
     )
     .await;
     (commit, operational_usage)
@@ -1349,7 +1407,6 @@ pub async fn execute(
     Ok(commit_and_report(
         ports,
         &request.version_scope,
-        &request.invocation_ref,
         &request.commit_id,
         request.write_set,
         state,
@@ -1489,7 +1546,7 @@ async fn resume_from_continuation(
     let mut state = DriveState {
         node_outcomes: Vec::new(),
         native_usage,
-        native_model_call_measurements: Vec::new(),
+        committed_model_attempts: Vec::new(),
         external_agent_evidence,
         context,
         last_result: Value::Null,
@@ -1603,7 +1660,6 @@ async fn finish(
             let report = commit_and_report(
                 ports,
                 &parts.version_scope,
-                &parts.invocation_ref,
                 &parts.commit_id,
                 parts.write_set,
                 state,
@@ -1698,6 +1754,7 @@ mod loop_evidence_tests {
             .push(Fact::NodeExecutionRecorded(NodeExecutionRecordedFact {
                 fact_id: format!("fact.{}", state.seq),
                 event_sequence: state.seq,
+                program_invocation_id: "invocation.1".into(),
                 node_execution_id: "node-execution.1".into(),
                 air_node_id: "node.1".into(),
                 parent_node_execution_id: None,
