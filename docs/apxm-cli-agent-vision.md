@@ -167,6 +167,8 @@ want zero host logic (the agent fully portable as one artifact), you need Model 
 
 ```python
 # default agent.py — the editable turn body (host loops over it)
+# Historical snippet: `apxm` and its recorder API do not exist. Canonical
+# authoring imports `Agent`, `Context`, `Model`, and `Tool` from `apxm_program`.
 from apxm import compile, GraphRecorder, tool
 
 @tool

@@ -385,6 +385,9 @@ spawns a coding agent.
 # No bot token needed anywhere in the skill.
 
 import json
+
+# Historical snippet: `apxm` and its decorator API do not exist. Canonical
+# authoring imports `Agent`, `Context`, `Model`, and `Tool` from `apxm_program`.
 from apxm import compile, ask
 
 @compile()
