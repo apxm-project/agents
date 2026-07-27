@@ -94,6 +94,7 @@ struct HarnessRequest<'a> {
 
 /// The single-field document a capture harness writes on success.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct HarnessResponse {
     frontend_graph: serde_json::Value,
 }
@@ -129,7 +130,20 @@ pub(crate) fn capture(
         return Err(harness_rejection(frontend, &output.stderr));
     }
 
-    let response: HarnessResponse = serde_json::from_slice(&output.stdout).map_err(|error| {
+    decode_response(frontend, &output.stdout)
+}
+
+/// Decode the whole capture output as exactly one `HarnessResponse`.
+///
+/// The entire byte stream is decoded as one document carrying exactly one
+/// field. Trailing bytes, leading bytes, and any field beyond `frontend_graph`
+/// each reject: a capture that emitted anything besides the typed graph — AIR
+/// among it — is not a capture this port accepts a graph from.
+fn decode_response(
+    frontend: Frontend,
+    stdout: &[u8],
+) -> Result<serde_json::Value, SourceDiagnostic> {
+    let response: HarnessResponse = serde_json::from_slice(stdout).map_err(|error| {
         SourceDiagnostic::new(
             SourceDiagnosticCode::FrontendOutputInvalid,
             format!(
@@ -233,5 +247,43 @@ fn harness_rejection(frontend: Frontend, stderr: &[u8]) -> SourceDiagnostic {
                 rendered.trim()
             ),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Frontend, decode_response};
+    use crate::diagnostic::SourceDiagnosticCode;
+
+    /// The one accepted shape: exactly one document carrying exactly the graph.
+    #[test]
+    fn exactly_one_graph_field_decodes() {
+        let graph = decode_response(Frontend::Python, br#"{"frontend_graph": {"k": 1}}"#)
+            .expect("a capture output holding exactly the graph decodes");
+        assert_eq!(graph, serde_json::json!({"k": 1}));
+    }
+
+    /// A capture that emitted AIR alongside the graph is rejected rather than
+    /// having the AIR ignored. Only Rust lowering produces AIR, so a frontend
+    /// that produced any is a frontend this port takes no graph from.
+    #[test]
+    fn a_capture_that_also_emitted_air_is_rejected() {
+        let diagnostic = decode_response(
+            Frontend::Python,
+            br#"{"frontend_graph": {"k": 1}, "air": "module { }"}"#,
+        )
+        .expect_err("a capture output carrying AIR beside the graph is rejected");
+        assert_eq!(diagnostic.code, SourceDiagnosticCode::FrontendOutputInvalid);
+    }
+
+    /// Bytes after the document reject: the whole output is the document.
+    #[test]
+    fn output_with_trailing_bytes_is_rejected() {
+        let diagnostic = decode_response(
+            Frontend::Typescript,
+            br#"{"frontend_graph": {"k": 1}} trailing"#,
+        )
+        .expect_err("a capture output with trailing bytes is rejected");
+        assert_eq!(diagnostic.code, SourceDiagnosticCode::FrontendOutputInvalid);
     }
 }
