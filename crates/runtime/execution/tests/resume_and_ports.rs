@@ -8,8 +8,8 @@ use serde_json::{Value, json};
 use apxm_execution::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
     CompositionRequest, Continuation, EventAwait, EventOutcome, EventPort, EventRef,
-    ExecutionPorts, ExecutionRequest, NoopStaticHookHandler, RunOutcome, execute_resumable,
-    resume_event,
+    ExecutionPorts, ExecutionRequest, NoopStaticHookHandler, OperationalUsageOutcome, RunOutcome,
+    execute_resumable, resume_event,
 };
 use apxm_inference::{
     AttemptDisposition, ExactPortBindingRef, ModelBindingAdmission, ModelCallRequest,
@@ -232,6 +232,7 @@ async fn park_commits_context_continuation_wait_effects_evidence_usage_and_outpu
         RunOutcome::Suspended {
             continuation_id,
             event_ref: Some(event_ref),
+            operational_usage: OperationalUsageOutcome::NotConfigured,
         } if continuation_id == "node.await" && event_ref.as_str() == "evt-atomic"
     ));
     assert_eq!(*commit.version.lock().unwrap(), 1);

@@ -9,7 +9,7 @@ use std::fmt;
 
 use async_trait::async_trait;
 
-use apxm_inference::Usage;
+use apxm_inference::{ResolvedModelBinding, Usage};
 
 /// The immutable native measurement associated with a successful runtime
 /// execution commit. Peer/ACP usage has no representation here.
@@ -28,13 +28,34 @@ impl From<Usage> for CommittedNativeUsage {
     }
 }
 
-/// The generic committed native measurement a composition-owned publisher
-/// receives after the atomic execution commit succeeds.
+/// One runtime-owned native model-call measurement prepared before the
+/// execution commit. It never represents ACP or other Capability usage.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CommittedNativeUsageFact {
+pub(crate) struct NativeModelCallMeasurement {
+    pub node_execution_id: String,
+    pub air_node_id: String,
+    pub attempt_id: String,
+    pub attempt_index: u32,
+    pub model_effect_id: String,
+    pub request_digest: String,
+    pub resolved_model_binding: ResolvedModelBinding,
+    pub native_usage: CommittedNativeUsage,
+}
+
+/// The one committed native model-call measurement a composition-owned
+/// publisher receives after the atomic execution commit succeeds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommittedNativeModelCallUsage {
     pub commit_id: String,
     pub invocation_ref: String,
     pub evidence_position_ref: String,
+    pub node_execution_id: String,
+    pub air_node_id: String,
+    pub attempt_id: String,
+    pub attempt_index: u32,
+    pub model_effect_id: String,
+    pub request_digest: String,
+    pub resolved_model_binding: ResolvedModelBinding,
     pub native_usage: CommittedNativeUsage,
 }
 
@@ -45,7 +66,7 @@ pub struct CommittedNativeUsageFact {
 pub trait OperationalUsageFactPort: Send + Sync {
     async fn publish(
         &self,
-        fact: CommittedNativeUsageFact,
+        fact: CommittedNativeModelCallUsage,
     ) -> Result<(), OperationalUsageFactError>;
 }
 

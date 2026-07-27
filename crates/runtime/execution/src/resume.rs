@@ -67,6 +67,7 @@ pub enum RunOutcome {
     Suspended {
         continuation_id: String,
         event_ref: Option<EventRef>,
+        operational_usage: crate::operational_usage::OperationalUsageOutcome,
     },
 }
 

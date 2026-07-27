@@ -58,6 +58,14 @@ pub enum ModelOutcome {
     },
 }
 
+/// The terminal result of one model effect together with the runtime attempt
+/// that committed its native usage, when one committed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModelExecution {
+    pub outcome: ModelOutcome,
+    pub committed_attempt: Option<u32>,
+}
+
 /// A stable model-effect request identity plus its resolved binding.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelCallRequest {
@@ -149,37 +157,68 @@ pub fn execute<P: ModelInferencePort + ?Sized>(
     request: &ModelCallRequest,
     policy: RetryPolicy,
 ) -> ModelOutcome {
+    execute_with_attempt(port, request, policy).outcome
+}
+
+/// Drive a model effect and retain the successful attempt coordinate for
+/// runtime-owned evidence and post-commit usage measurement.
+#[must_use]
+pub fn execute_with_attempt<P: ModelInferencePort + ?Sized>(
+    port: &P,
+    request: &ModelCallRequest,
+    policy: RetryPolicy,
+) -> ModelExecution {
     let max = policy.max_attempts.max(1);
     for attempt in 0..max {
         let last = attempt + 1 == max;
         match port.attempt(request, attempt) {
             AttemptDisposition::Success(usage) => {
-                return ModelOutcome::CommittedSuccess { usage };
+                return ModelExecution {
+                    outcome: ModelOutcome::CommittedSuccess { usage },
+                    committed_attempt: Some(attempt),
+                };
             }
-            AttemptDisposition::Cancelled => return ModelOutcome::Cancelled,
+            AttemptDisposition::Cancelled => {
+                return ModelExecution {
+                    outcome: ModelOutcome::Cancelled,
+                    committed_attempt: None,
+                };
+            }
             AttemptDisposition::FailedBeforeSend(error) => {
                 if last {
-                    return ModelOutcome::TypedFailure { error };
+                    return ModelExecution {
+                        outcome: ModelOutcome::TypedFailure { error },
+                        committed_attempt: None,
+                    };
                 }
                 // Safe to retry: nothing was sent.
             }
             AttemptDisposition::FailedAfterSend(error) => {
                 if port.proves_idempotency() {
                     if last {
-                        return ModelOutcome::TypedFailure { error };
+                        return ModelExecution {
+                            outcome: ModelOutcome::TypedFailure { error },
+                            committed_attempt: None,
+                        };
                     }
                     // Reconcilable: retry the same identity.
                 } else {
                     // Uncertain: never duplicate the request.
-                    return ModelOutcome::ModelOutcomeUnknown {
-                        uncertain_usage: None,
+                    return ModelExecution {
+                        outcome: ModelOutcome::ModelOutcomeUnknown {
+                            uncertain_usage: None,
+                        },
+                        committed_attempt: None,
                     };
                 }
             }
         }
     }
     // Unreachable for max >= 1, but fail closed rather than assume success.
-    ModelOutcome::ModelOutcomeUnknown {
-        uncertain_usage: None,
+    ModelExecution {
+        outcome: ModelOutcome::ModelOutcomeUnknown {
+            uncertain_usage: None,
+        },
+        committed_attempt: None,
     }
 }
