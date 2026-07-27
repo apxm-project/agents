@@ -6,6 +6,7 @@ members = [
 	"crates/machine/program",
 	# ── Compiler (Compilation) ────────────────────
 	"crates/compiler/pipeline",
+	"crates/compiler/source-port",
 	"crates/compiler/frontend/native/python",
 	"crates/compiler/frontend/native/typescript",
 	# ── Runtime (Execution + Backend) ─────────────
@@ -45,6 +46,7 @@ apxm-ais = { version = "0.1.0", path = "crates/machine/ais" }
 apxm-core = { version = "0.1.0", path = "crates/machine/contracts" }
 apxm-program = { version = "0.1.0", path = "crates/machine/program" }
 apxm-compiler = { version = "0.1.0", path = "crates/compiler/pipeline" }
+apxm-source-port = { version = "0.1.0", path = "crates/compiler/source-port" }
 apxm-capability-iface = { version = "0.1.0", path = "crates/runtime/capability-iface" }
 apxm-capability = { version = "0.1.0", path = "crates/runtime/capability" }
 apxm-memory = { version = "0.1.0", path = "crates/runtime/memory" }

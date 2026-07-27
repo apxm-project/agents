@@ -1,0 +1,237 @@
+//! The frontend selector and the interpreter boundary each selector owns.
+//!
+//! Capturing typed intent from Python source requires the Python authoring
+//! frontend to run, and the same holds for TypeScript. That is the mechanism the
+//! frontends require; it is not something a caller of this port configures,
+//! observes, or works around. This module holds the whole of it: which
+//! interpreter each selector runs, how the interpreter is confined, and how its
+//! exit is translated into one closed diagnostic.
+
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+
+use serde::{Deserialize, Serialize};
+
+use crate::diagnostic::{SourceDiagnostic, SourceDiagnosticCode};
+
+/// The closed authoring-frontend selector. It matches the source-language
+/// closure of the semantic surface exactly: there is no third frontend and no
+/// alternate path within a selector.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Frontend {
+    Python,
+    Typescript,
+}
+
+impl Frontend {
+    /// The canonical wire string for this selector.
+    #[must_use]
+    pub const fn wire(self) -> &'static str {
+        match self {
+            Self::Python => "python",
+            Self::Typescript => "typescript",
+        }
+    }
+
+    /// The source language the captured graph declares for this selector.
+    #[must_use]
+    pub const fn source_language(self) -> apxm_program::SourceLanguage {
+        match self {
+            Self::Python => apxm_program::SourceLanguage::Python,
+            Self::Typescript => apxm_program::SourceLanguage::Typescript,
+        }
+    }
+
+    /// The interpreter names tried, in order, for this selector.
+    const fn interpreters(self) -> &'static [&'static str] {
+        match self {
+            Self::Python => &["python3", "python"],
+            Self::Typescript => &["node"],
+        }
+    }
+
+    /// The capture harness this selector runs. The harness is embedded in the
+    /// binary, so the port has no installed script to locate and no path a
+    /// caller can redirect.
+    const fn harness(self) -> &'static str {
+        match self {
+            Self::Python => include_str!("../harness/capture_python.py"),
+            Self::Typescript => include_str!("../harness/capture_typescript.mjs"),
+        }
+    }
+
+    /// The subdirectory of the frontend root the interpreter is allowed to read,
+    /// where the interpreter enforces a read wall of its own.
+    fn confinement_arguments(self, frontend_root: &Path) -> Vec<String> {
+        match self {
+            // The isolated interpreter ignores every `PYTHON*` variable and the
+            // user site directory, and reads its program text from the argument
+            // rather than from a file. Confinement inside the interpreter is the
+            // harness's audit hook and resource limits.
+            Self::Python => vec!["-I".to_string(), "-B".to_string(), "-c".to_string()],
+            // Node's permission model is an OS-level read wall: the process can
+            // read the declared frontend package and nothing else on the
+            // filesystem, and can write nowhere at all.
+            Self::Typescript => vec![
+                "--permission".to_string(),
+                format!("--allow-fs-read={}", frontend_root.display()),
+                "--input-type=module".to_string(),
+                "--eval".to_string(),
+            ],
+        }
+    }
+}
+
+/// One capture request handed to an interpreter on its standard input.
+#[derive(Debug, Serialize)]
+struct HarnessRequest<'a> {
+    frontend_root: &'a Path,
+    entrypoint: &'a str,
+    source: &'a str,
+}
+
+/// The single-field document a capture harness writes on success.
+#[derive(Debug, Deserialize)]
+struct HarnessResponse {
+    frontend_graph: serde_json::Value,
+}
+
+/// Run one capture and return the FrontendGraph JSON value the frontend
+/// recorded, or the one closed diagnostic that rejects it.
+///
+/// Whether a frontend package is usable is decided in exactly one place: the
+/// harness, which resolves the package the way the language actually resolves
+/// it. Re-deciding it here from the shape of the path would be a second answer
+/// to the same question, and the two would drift.
+pub(crate) fn capture(
+    frontend: Frontend,
+    frontend_root: &Path,
+    entrypoint: &str,
+    source: &str,
+) -> Result<serde_json::Value, SourceDiagnostic> {
+    let request = serde_json::to_vec(&HarnessRequest {
+        frontend_root,
+        entrypoint,
+        source,
+    })
+    .map_err(|error| {
+        SourceDiagnostic::new(
+            SourceDiagnosticCode::RequestInvalid,
+            format!("the capture request does not serialize: {error}"),
+        )
+    })?;
+
+    let output = spawn(frontend, frontend_root, &request)?;
+
+    if !output.status.success() {
+        return Err(harness_rejection(frontend, &output.stderr));
+    }
+
+    let response: HarnessResponse = serde_json::from_slice(&output.stdout).map_err(|error| {
+        SourceDiagnostic::new(
+            SourceDiagnosticCode::FrontendOutputInvalid,
+            format!(
+                "the {} authoring frontend did not emit exactly one FrontendGraph document: {error}",
+                frontend.wire()
+            ),
+        )
+    })?;
+    Ok(response.frontend_graph)
+}
+
+/// Try each interpreter for the selector in order. A missing interpreter is
+/// unavailability, never a panic and never a silent success.
+fn spawn(
+    frontend: Frontend,
+    frontend_root: &Path,
+    request: &[u8],
+) -> Result<std::process::Output, SourceDiagnostic> {
+    let mut absent = Vec::new();
+    for interpreter in frontend.interpreters() {
+        let mut command = Command::new(interpreter);
+        command
+            .args(frontend.confinement_arguments(frontend_root))
+            .arg(frontend.harness())
+            .env_clear()
+            .env("PATH", inherited_path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                absent.push(*interpreter);
+                continue;
+            }
+            Err(error) => {
+                return Err(SourceDiagnostic::new(
+                    SourceDiagnosticCode::FrontendUnavailable,
+                    format!(
+                        "the {} authoring frontend interpreter '{interpreter}' could not start: {error}",
+                        frontend.wire()
+                    ),
+                ));
+            }
+        };
+
+        if let Some(stdin) = child.stdin.as_mut() {
+            // A harness that exits before reading closes the pipe; that is a
+            // rejection to read from its status, not a failure to report here.
+            let _ = stdin.write_all(request);
+        }
+        drop(child.stdin.take());
+
+        return child.wait_with_output().map_err(|error| {
+            SourceDiagnostic::new(
+                SourceDiagnosticCode::FrontendUnavailable,
+                format!(
+                    "the {} authoring frontend interpreter '{interpreter}' did not complete: {error}",
+                    frontend.wire()
+                ),
+            )
+        });
+    }
+
+    Err(SourceDiagnostic::new(
+        SourceDiagnosticCode::FrontendUnavailable,
+        format!(
+            "the {} authoring frontend requires an interpreter on this host; none of [{}] is present",
+            frontend.wire(),
+            absent.join(", ")
+        ),
+    ))
+}
+
+/// The interpreter is located through `PATH` and receives nothing else from the
+/// caller's environment: no ambient module path, no credential, no configuration.
+fn inherited_path() -> PathBuf {
+    std::env::var_os("PATH").map_or_else(PathBuf::new, PathBuf::from)
+}
+
+/// Translate a harness exit into one closed diagnostic. The first stderr line is
+/// the closed reason token; the rest is its detail.
+fn harness_rejection(frontend: Frontend, stderr: &[u8]) -> SourceDiagnostic {
+    let rendered = String::from_utf8_lossy(stderr);
+    let mut lines = rendered.splitn(2, '\n');
+    let token = lines.next().unwrap_or("").trim();
+    let detail = lines.next().unwrap_or("").trim();
+
+    match SourceDiagnosticCode::from_harness_token(token) {
+        Some(code) => SourceDiagnostic::new(code, detail.to_string()),
+        // A harness that died without reporting a closed reason — killed by a
+        // resource limit, or crashed — is unavailability of the capture boundary
+        // itself. It is never reported as an accepted or partially captured
+        // program.
+        None => SourceDiagnostic::new(
+            SourceDiagnosticCode::FrontendUnavailable,
+            format!(
+                "the {} authoring frontend capture ended without a reported reason: {}",
+                frontend.wire(),
+                rendered.trim()
+            ),
+        ),
+    }
+}
