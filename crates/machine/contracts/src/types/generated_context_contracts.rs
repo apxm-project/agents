@@ -245,7 +245,8 @@ pub struct AgentInvocationEnvelope {
     pub trace: TraceContext,
 }
 
-pub const AUTHENTICATED_PRINCIPAL_CLAIMS_SCHEMA_VERSION: &str = "apxm.authenticated-principal-attestation.v1";
+pub const AUTHENTICATED_PRINCIPAL_CLAIMS_SCHEMA_VERSION: &str =
+    "apxm.authenticated-principal-attestation.v1";
 pub const AUTHENTICATED_PRINCIPAL_CLAIMS_AUDIENCE: &str = "apxm.server";
 pub const AUTHENTICATED_PRINCIPAL_CLAIMS_KEY_ID: &str = "auth-server-v1";
 
