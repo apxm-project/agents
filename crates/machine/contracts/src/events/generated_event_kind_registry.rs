@@ -379,30 +379,6 @@ pub const SCHEMA_EVENT_KIND_REGISTRY: &[SchemaEventKindEntry] = &[
         terminal_sense: SchemaTerminalSense::NA,
     },
     SchemaEventKindEntry {
-        name: "turn_aborted",
-        category: SchemaEventCategory::Lifecycle,
-        terminal: true,
-        terminal_sense: SchemaTerminalSense::RunEnd,
-    },
-    SchemaEventKindEntry {
-        name: "turn_boundary",
-        category: SchemaEventCategory::Lifecycle,
-        terminal: false,
-        terminal_sense: SchemaTerminalSense::NA,
-    },
-    SchemaEventKindEntry {
-        name: "turn_complete",
-        category: SchemaEventCategory::Lifecycle,
-        terminal: true,
-        terminal_sense: SchemaTerminalSense::RunEnd,
-    },
-    SchemaEventKindEntry {
-        name: "turn_started",
-        category: SchemaEventCategory::Lifecycle,
-        terminal: false,
-        terminal_sense: SchemaTerminalSense::NA,
-    },
-    SchemaEventKindEntry {
         name: "usage",
         category: SchemaEventCategory::Observability,
         terminal: false,
