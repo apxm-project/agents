@@ -616,6 +616,50 @@ class Capture {
     return this.input.outputTypeRef;
   }
 
+  // A value expression stands for data, not for an effect. The only call a
+  // value position admits is constructing a bound Context schema. A Model,
+  // Tool, or Capability call is an effect and reaches the graph only through
+  // await; any other callee is unresolved. Both are rejected here so an
+  // unresolved or effectful call can never be silently folded into an untyped
+  // literal operand.
+  private rejectUnboundCalls(expression: ts.Expression): void {
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node)) {
+        this.rejectValuePositionCall(node);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(expression);
+  }
+
+  private rejectValuePositionCall(call: ts.CallExpression): void {
+    const callee = call.expression;
+    if (!ts.isIdentifier(callee)) {
+      throw new CaptureError(
+        "value expressions call only a bound Context schema by name",
+      );
+    }
+    const bindingName = this.bindingNameFor(callee);
+    const binding = bindingName === undefined
+      ? undefined
+      : this.input.bindings.get(bindingName);
+    if (binding?.kind === "context") {
+      return;
+    }
+    if (
+      binding?.kind === "model_binding" ||
+      binding?.kind === "tool_binding" ||
+      binding?.kind === "capability_binding"
+    ) {
+      throw new CaptureError(
+        `'${callee.text}' is a typed effect and is called with await, not used as a value`,
+      );
+    }
+    throw new CaptureError(
+      `call target '${callee.text}' is not a bound Context schema`,
+    );
+  }
+
   private callOperands(
     call: ts.CallExpression,
     nodeId: string,
@@ -623,6 +667,9 @@ class Capture {
   ): string[] {
     if (call.arguments.length === 0) {
       return [];
+    }
+    for (const argument of call.arguments) {
+      this.rejectUnboundCalls(argument);
     }
     const valueId = this.next("value");
     this.values.push({
@@ -903,8 +950,12 @@ class Capture {
     regionId: string,
     source: ts.SourceFile,
   ): void {
-    if (stmt.expression !== undefined && ts.isAwaitExpression(stmt.expression)) {
-      this.visitAwait(stmt.expression, regionId, source);
+    if (stmt.expression !== undefined) {
+      if (ts.isAwaitExpression(stmt.expression)) {
+        this.visitAwait(stmt.expression, regionId, source);
+      } else {
+        this.rejectUnboundCalls(stmt.expression);
+      }
     }
     const nodeId = this.next("return");
     this.controls.push({

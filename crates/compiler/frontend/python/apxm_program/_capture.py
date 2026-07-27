@@ -469,10 +469,46 @@ class _Capture:
             )
         self._last_node_by_region[region_id] = node_id
 
+    def _reject_unbound_calls(self, expression: ast.AST) -> None:
+        """Reject every call in a value expression that is not a Context literal.
+
+        A value expression stands for data, not for an effect. The only call a
+        value position admits is constructing a bound ``Context`` schema. A
+        Model, Tool, or Capability call is an effect and reaches the graph only
+        through ``await``; any other callee is unresolved. Both are rejected
+        here so an unresolved or effectful call can never be silently folded
+        into an untyped literal operand.
+        """
+        for node in ast.walk(expression):
+            if not isinstance(node, ast.Call):
+                continue
+            callee = node.func
+            if isinstance(callee, ast.Name):
+                binding = self.bindings.get(callee.id)
+                if isinstance(binding, ContextSchema):
+                    continue
+                if isinstance(
+                    binding, (ModelBinding, ToolBinding, CapabilityBinding)
+                ):
+                    raise CaptureError(
+                        f"'{callee.id}' is a typed effect and is called with await, "
+                        "not used as a value",
+                        node,
+                    )
+                raise CaptureError(
+                    f"call target '{callee.id}' is not a bound Context schema",
+                    node,
+                )
+            raise CaptureError(
+                "value expressions call only a bound Context schema by name",
+                node,
+            )
+
     def _value_for_expression(self, expression: ast.AST, node_id: str) -> str:
         """Resolve one source expression to a prior value or a typed literal."""
         if isinstance(expression, ast.Name) and expression.id in self._values_by_name:
             return self._values_by_name[expression.id]
+        self._reject_unbound_calls(expression)
         value_id = self._next("value")
         self.values.append(
             BoundValue(
