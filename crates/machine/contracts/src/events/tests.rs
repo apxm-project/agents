@@ -449,27 +449,7 @@ fn representative_core_payloads() -> Vec<Box<dyn EventPayload>> {
         }),
         Box::new(SessionEndPayload {
             session_id: "sess-1".to_string(),
-            total_turns: 5,
-        }),
-        Box::new(TurnBoundaryPayload {
-            turn_number: 1,
-            direction: TurnDirection::Request,
-        }),
-        Box::new(TurnStartedPayload {
-            execution_id: "exec-1".to_string(),
-            turn_id: Some("turn-1".to_string()),
-            coordinator_label: Some("Cleo".to_string()),
-        }),
-        Box::new(TurnCompletePayload {
-            execution_id: "exec-1".to_string(),
-            duration_ms: 100,
-            had_answer: true,
-        }),
-        Box::new(TurnAbortedPayload {
-            execution_id: "exec-1".to_string(),
-            duration_ms: 100,
-            reason: "error".to_string(),
-            error_message_safe: Some("boom".to_string()),
+            total_invocations: 5,
         }),
         Box::new(SubagentSpawnBeginPayload {
             agent_code: "agent-1".to_string(),
@@ -844,8 +824,7 @@ fn terminal_kinds_exclude_topology_events() {
     assert!(!kind::LLM_STEP_COMPLETED.is_terminal());
     assert!(!kind::CANCELLED.is_terminal());
 
-    assert!(kind::TURN_COMPLETE.is_terminal());
     assert!(kind::SESSION_END.is_terminal());
-    assert!(kind::TURN_ABORTED.is_terminal());
+    assert!(kind::EXECUTE_COMPLETE.is_terminal());
     assert!(kind::ERROR.is_terminal());
 }

@@ -9,7 +9,7 @@ paths:
   /v1/sessions/{session_id}/status:
     get:
       operationId: getSessionStatus
-      summary: Session status, ledger snapshot, linked runs
+      summary: Session status and the active execution, when one is running
       parameters:
         - name: session_id
           in: path
@@ -100,17 +100,10 @@ components:
   schemas:
     SessionStatus:
       type: object
-      required: [session_id, turn_count, ledger]
+      required: [session_id]
       properties:
         session_id: { type: string }
-        turn_count: { type: integer }
-        ledger: { $ref: '#/components/schemas/SessionLedgerView' }
         active_execution_id: { type: string, nullable: true }
-    SessionLedgerView:
-      type: object
-      properties:
-        turn_cap: { type: integer, nullable: true }
-        tool_budgets: { type: object, additionalProperties: { type: integer } }
     PermissionResponse:
       type: object
       required: [decision]

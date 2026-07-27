@@ -42,8 +42,8 @@ def test_canonical_session_package_emits_valid_five_op_air_with_await_event():
     ops = [op["op"] for op in air["semantic_operations"]]
     for op in ops:
         assert op in FIVE_OPS, op
-    # The session parks on await.event each turn — the exact point the durable
-    # ContinuationPort suspends on and a delivered turn resumes.
+    # The session parks on await.event each iteration — the exact point the
+    # durable ContinuationPort suspends on and a delivered message resumes.
     assert "await.event" in ops, ops
     assert "model.call" in ops, ops
 

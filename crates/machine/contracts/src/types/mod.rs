@@ -60,7 +60,9 @@ pub use compiler::{
     PassInfo, PassMetadata, PipelineConfig, PromptContractSummary, ReplaySafety,
     TransformationLegality, find_pass_metadata, list_pass_metadata, stage_rank,
 };
-pub use conversation::{TurnInput, TurnInputError};
+pub use conversation::{
+    ConversationMessageContext, ConversationMessageInput, ConversationMessageInputError,
+};
 pub use execution::{
     Agent, AgentFlow, AgentId, AgentMetadata, CapabilityDeclaration, ChildExecutionAdmission,
     DagMetadata, DependencyType, Edge, ExecutionDag, ExecutionStats, GraphMetricAggregates,

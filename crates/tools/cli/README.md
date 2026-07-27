@@ -50,7 +50,7 @@ Command-line interface for the APXM workflow compiler and runtime toolchain.
 
 Use `chat` for a conversational loop over `apxm-server`. Pass `--agent <id>` to
 open a server-backed session (`POST /v1/agents/{id}/sessions`) and pipe stdin
-turns to it. The server address must be given explicitly via `--server <URL>`
+messages to it. The server address must be given explicitly via `--server <URL>`
 or `APXM_SERVER_BASE` (there is no hardcoded default):
 
 ```bash

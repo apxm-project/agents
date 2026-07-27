@@ -84,10 +84,6 @@ export enum CoreEventKind {
   CONTEXT_WINDOW_WARNING = "context_window_warning",
   SESSION_START = "session_start",
   SESSION_END = "session_end",
-  TURN_BOUNDARY = "turn_boundary",
-  TURN_STARTED = "turn_started",
-  TURN_COMPLETE = "turn_complete",
-  TURN_ABORTED = "turn_aborted",
   SUBAGENT_SPAWN_BEGIN = "subagent_spawn_begin",
   SUBAGENT_SPAWN_END = "subagent_spawn_end",
   SUBAGENT_LLM_CALL_BEGIN = "subagent_llm_call_begin",
@@ -151,10 +147,6 @@ export const LOOP_DETECTED = kind(CoreEventKind.LOOP_DETECTED, EventCategoryKind
 export const CONTEXT_WINDOW_WARNING = kind(CoreEventKind.CONTEXT_WINDOW_WARNING, EventCategoryKind.ERROR);
 export const SESSION_START = kind(CoreEventKind.SESSION_START, EventCategoryKind.LIFECYCLE);
 export const SESSION_END = kind(CoreEventKind.SESSION_END, EventCategoryKind.LIFECYCLE, true);
-export const TURN_BOUNDARY = kind(CoreEventKind.TURN_BOUNDARY, EventCategoryKind.LIFECYCLE);
-export const TURN_STARTED = kind(CoreEventKind.TURN_STARTED, EventCategoryKind.LIFECYCLE);
-export const TURN_COMPLETE = kind(CoreEventKind.TURN_COMPLETE, EventCategoryKind.LIFECYCLE, true);
-export const TURN_ABORTED = kind(CoreEventKind.TURN_ABORTED, EventCategoryKind.LIFECYCLE, true);
 export const SUBAGENT_SPAWN_BEGIN = kind(CoreEventKind.SUBAGENT_SPAWN_BEGIN, EventCategoryKind.AGENT);
 export const SUBAGENT_SPAWN_END = kind(CoreEventKind.SUBAGENT_SPAWN_END, EventCategoryKind.AGENT);
 export const SUBAGENT_LLM_CALL_BEGIN = kind(CoreEventKind.SUBAGENT_LLM_CALL_BEGIN, EventCategoryKind.AGENT);
@@ -218,10 +210,6 @@ export const CORE_EVENT_KINDS = [
   CONTEXT_WINDOW_WARNING,
   SESSION_START,
   SESSION_END,
-  TURN_BOUNDARY,
-  TURN_STARTED,
-  TURN_COMPLETE,
-  TURN_ABORTED,
   SUBAGENT_SPAWN_BEGIN,
   SUBAGENT_SPAWN_END,
   SUBAGENT_LLM_CALL_BEGIN,

@@ -60,7 +60,7 @@ pub struct RunSnapshot {
     /// right row.
     node_to_agent: std::collections::HashMap<u64, String>,
     /// Wire kind name → count, for every event `apply` saw but had no
-    /// dedicated projection for (most Layer-2 kinds today: `turn_started`,
+    /// dedicated projection for (most Layer-2 kinds today:
     /// `subagent_spawn_begin`/`tool_call_begin`/…). `render_tree` surfaces
     /// this as a visible "unrecognized" line instead of the previous
     /// silent drop — never crashing or hanging the tree view on a kind it
@@ -291,14 +291,14 @@ mod tests {
     use super::*;
     use apxm_core::events::EventSource;
     use apxm_core::events::payload::{
-        SubagentSpawnBeginPayload, ToolCallBeginPayload, TurnCompletePayload,
+        AgentMessagePayload, SubagentSpawnBeginPayload, ToolCallBeginPayload,
     };
 
     /// `watch_tree_reflects_layer2_events` — `subagent_spawn_begin`,
-    /// `tool_call_begin`, and `turn_complete` each change `render_tree`'s
-    /// output. Before this WP, `RunSnapshot::apply` silently dropped every
-    /// one of these (no downcast case existed), so `render_tree` output
-    /// was byte-identical whether or not they were folded in.
+    /// `tool_call_begin`, and `agent_message` each change `render_tree`'s
+    /// output. `RunSnapshot::apply` must fold every one of these in rather
+    /// than silently dropping it, which would leave `render_tree` output
+    /// byte-identical.
     #[test]
     fn watch_tree_reflects_layer2_events() {
         let mut snapshot = RunSnapshot::new("thread-1");
@@ -339,26 +339,26 @@ mod tests {
         );
 
         snapshot.apply(&ApxmEvent::root(
-            TurnCompletePayload {
-                execution_id: "exec-1".to_string(),
-                duration_ms: 100,
-                had_answer: true,
+            AgentMessagePayload {
+                text: "done".to_string(),
+                item_id: None,
+                response_id: None,
+                usage: None,
             },
             EventSource::Runtime,
             "trace-1",
         ));
-        let after_turn_complete = render_tree(&snapshot);
+        let after_agent_message = render_tree(&snapshot);
         assert_ne!(
-            after_tool_call_begin, after_turn_complete,
-            "turn_complete must change render_tree output"
+            after_tool_call_begin, after_agent_message,
+            "agent_message must change render_tree output"
         );
 
         assert!(
-            after_turn_complete.contains("turn_started")
-                || after_turn_complete.contains("turn_complete")
-                || after_turn_complete.contains("subagent_spawn_begin")
-                || after_turn_complete.contains("tool_call_begin"),
-            "unrecognized Layer-2 kinds must be visibly surfaced, not silently dropped: {after_turn_complete}"
+            after_agent_message.contains("agent_message")
+                || after_agent_message.contains("subagent_spawn_begin")
+                || after_agent_message.contains("tool_call_begin"),
+            "unrecognized Layer-2 kinds must be visibly surfaced, not silently dropped: {after_agent_message}"
         );
     }
 }

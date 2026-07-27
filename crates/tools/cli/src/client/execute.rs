@@ -1,4 +1,5 @@
-//! Execute and turn client paths outside the generated session client.
+//! Execute and conversation-message client paths outside the generated
+//! session client.
 
 use std::collections::HashMap;
 
@@ -193,13 +194,14 @@ mod tests {
 
     /// `apxm chat`'s in-program-loop path (`run_dumb_pipe`, `chat.rs`) and
     /// apxm-os's channel-chat convergence target both name
-    /// `POST /v1/conversations/{session_id}/message` as the shared turn-input
+    /// `POST /v1/conversations/{session_id}/message` as the shared
+    /// message-input
     /// primitive (`server/crates/core/src/conversations.rs`,
     /// `CONVERSATION_MESSAGE` route constant). This pins the CLI side of that
     /// contract: the exact path shape and body — so a change to either drifts
     /// loudly instead of silently.
     #[tokio::test]
-    async fn post_conversation_message_hits_the_shared_turn_input_route() {
+    async fn post_conversation_message_hits_the_shared_message_input_route() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
@@ -225,7 +227,7 @@ mod tests {
         let request_line = request.lines().next().unwrap_or_default();
         assert_eq!(
             request_line, "POST /v1/conversations/sess-abc123/message HTTP/1.1",
-            "apxm chat must address the session-scoped turn-input route, not a bespoke path"
+            "apxm chat must address the session-scoped message-input route, not a bespoke path"
         );
         let body = request.split("\r\n\r\n").nth(1).unwrap_or_default();
         let parsed: serde_json::Value =

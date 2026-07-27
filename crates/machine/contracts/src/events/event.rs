@@ -118,7 +118,7 @@ pub enum EventSource {
     Backend(String),
     /// The APXM runtime / executor.
     Runtime,
-    /// A session-level component (context manager, turn tracker).
+    /// A session-level component (context manager, Invocation tracker).
     Session,
     /// The APXM server / API layer.
     Server,

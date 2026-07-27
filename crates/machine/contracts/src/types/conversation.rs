@@ -1,6 +1,6 @@
-//! Canonical conversation turn-input types.
+//! Canonical conversation message-input types.
 //!
-//! The host-facing conversations route accepts a typed turn envelope with a
+//! The host-facing conversations route accepts a typed message envelope with a
 //! stable `message` field and optional structured `context`.
 
 use std::collections::HashMap;
@@ -11,18 +11,18 @@ use thiserror::Error;
 
 use crate::types::values::{Number, Value, ValueError};
 
-/// Structured context attached to one conversation turn.
-pub type TurnContext = JsonMap<String, JsonValue>;
+/// Structured context attached to one conversation message.
+pub type ConversationMessageContext = JsonMap<String, JsonValue>;
 
-/// Canonical host turn-input envelope.
+/// Canonical host message-input envelope.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TurnInput {
+pub struct ConversationMessageInput {
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context: Option<TurnContext>,
+    pub context: Option<ConversationMessageContext>,
 }
 
-impl TurnInput {
+impl ConversationMessageInput {
     pub fn message_only(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -31,35 +31,35 @@ impl TurnInput {
     }
 }
 
-/// Invalid conversation turn-input data.
+/// Invalid conversation message-input data.
 #[derive(Debug, Error)]
-pub enum TurnInputError {
-    #[error("turn input is not representable as JSON: {0}")]
+pub enum ConversationMessageInputError {
+    #[error("message input is not representable as JSON: {0}")]
     ValueContract(#[from] ValueError),
     #[error(
-        "turn input must be an object with string field 'message' and optional object field 'context': {0}"
+        "message input must be an object with string field 'message' and optional object field 'context': {0}"
     )]
     Envelope(#[from] serde_json::Error),
 }
 
-impl TryFrom<Value> for TurnInput {
-    type Error = TurnInputError;
+impl TryFrom<Value> for ConversationMessageInput {
+    type Error = ConversationMessageInputError;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         serde_json::from_value(value.to_json()?).map_err(Self::Error::from)
     }
 }
 
-impl TryFrom<&Value> for TurnInput {
-    type Error = TurnInputError;
+impl TryFrom<&Value> for ConversationMessageInput {
+    type Error = ConversationMessageInputError;
 
     fn try_from(value: &Value) -> Result<Self, Self::Error> {
         Self::try_from(value.clone())
     }
 }
 
-impl From<TurnInput> for Value {
-    fn from(value: TurnInput) -> Self {
+impl From<ConversationMessageInput> for Value {
+    fn from(value: ConversationMessageInput) -> Self {
         let mut object = HashMap::from([("message".to_string(), Value::String(value.message))]);
         if let Some(context) = value.context {
             object.insert(
@@ -76,8 +76,8 @@ impl From<TurnInput> for Value {
     }
 }
 
-impl From<&TurnInput> for Value {
-    fn from(value: &TurnInput) -> Self {
+impl From<&ConversationMessageInput> for Value {
+    fn from(value: &ConversationMessageInput) -> Self {
         value.clone().into()
     }
 }
@@ -118,15 +118,15 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn bare_string_turn_is_rejected() {
-        let error = TurnInput::try_from(Value::String("hello".to_string()))
-            .expect_err("turn input requires the typed envelope");
-        assert!(error.to_string().contains("turn input must be an object"));
+    fn bare_string_message_is_rejected() {
+        let error = ConversationMessageInput::try_from(Value::String("hello".to_string()))
+            .expect_err("message input requires the typed envelope");
+        assert!(error.to_string().contains("message input must be an object"));
     }
 
     #[test]
-    fn typed_turn_round_trips_through_runtime_value() {
-        let turn = TurnInput {
+    fn typed_message_round_trips_through_runtime_value() {
+        let message = ConversationMessageInput {
             message: "hello".to_string(),
             context: Some(JsonMap::from_iter([
                 ("channel".to_string(), json!("slack")),
@@ -137,10 +137,10 @@ mod tests {
             ])),
         };
 
-        let runtime_value: Value = turn.clone().into();
-        let reparsed = TurnInput::try_from(runtime_value).expect("typed turn");
+        let runtime_value: Value = message.clone().into();
+        let reparsed = ConversationMessageInput::try_from(runtime_value).expect("typed message");
 
-        assert_eq!(reparsed, turn);
+        assert_eq!(reparsed, message);
     }
 
     #[test]
@@ -150,8 +150,9 @@ mod tests {
             Value::Object(HashMap::new()),
         )]));
 
-        let error = TurnInput::try_from(invalid).expect_err("message field required");
-        assert!(error.to_string().contains("turn input must be"));
+        let error =
+            ConversationMessageInput::try_from(invalid).expect_err("message field required");
+        assert!(error.to_string().contains("message input must be"));
     }
 
     #[test]
@@ -164,7 +165,8 @@ mod tests {
             ),
         ]));
 
-        let error = TurnInput::try_from(invalid).expect_err("context must be an object");
-        assert!(error.to_string().contains("turn input must be"));
+        let error =
+            ConversationMessageInput::try_from(invalid).expect_err("context must be an object");
+        assert!(error.to_string().contains("message input must be"));
     }
 }

@@ -162,7 +162,7 @@ pub enum Commands {
     /// custom in-graph artifact with an in-program recv loop.
     Chat {
         /// Agent id for thin server-backed chat. Starts
-        /// `POST /v1/agents/{{id}}/sessions` and pipes stdin turns to the
+        /// `POST /v1/agents/{{id}}/sessions` and pipes stdin messages to the
         /// server session.
         #[arg(long = "agent", value_name = "ID", conflicts_with = "air")]
         agent: Option<String>,
@@ -177,7 +177,7 @@ pub enum Commands {
         /// a fresh one.
         #[arg(long)]
         session_id: Option<String>,
-        /// Runtime-minted capability grant id for write-tool turns (repeatable).
+        /// Runtime-minted capability grant id for write-tool calls (repeatable).
         #[arg(long = "capability-grant-id", value_name = "GRANT_ID")]
         capability_grant_ids: Vec<String>,
         /// Skill library / id to import into the agent's visible catalogue
