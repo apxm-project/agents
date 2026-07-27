@@ -48,7 +48,12 @@
     {
       "schema_id": "apxm.runtime-evidence.v1",
       "path": "schemas/apxm.runtime-evidence.v1.json",
-      "digest": "sha256:c83bf7888d7ca285132d0c29ef4ce8bf6e72df4f0a701115da8fd86912552665"
+      "digest": "sha256:901ffd649b92b717f6401b5c051d370927ed2953f3d9c28d14e6598572344e4f"
+    },
+    {
+      "schema_id": "apxm.committed-native-model-usage.v1",
+      "path": "schemas/apxm.committed-native-model-usage.v1.json",
+      "digest": "sha256:ba043c85bd930c234cd5bdf3517444f9f0abb9ed0aebd5d6fc227306f7024828"
     },
     {
       "schema_id": "apxm.source-map.v1",
@@ -291,12 +296,23 @@
     {
       "schema_id": "apxm.runtime-evidence.v1",
       "path": "vectors/apxm.runtime-evidence.v1.json",
-      "digest": "sha256:0e38e3e11e71bd04e800088f9d18ba0b662aa8688b986523b24406074f647780",
+      "digest": "sha256:9a74f9d41252045e5239efce43824264923242b4bc16f384622e632313fb0995",
       "coverage": [
         "positive",
         "replay",
         "atomicity",
         "skew",
+        "mutation",
+        "unknown_discriminant"
+      ]
+    },
+    {
+      "schema_id": "apxm.committed-native-model-usage.v1",
+      "path": "vectors/apxm.committed-native-model-usage.v1.json",
+      "digest": "sha256:d2f9778f4ffc5eb95dcc93bff94314048e53459b7ffdb6b3479b1f030dfa2b3e",
+      "coverage": [
+        "positive",
+        "replay",
         "mutation",
         "unknown_discriminant"
       ]
@@ -394,5 +410,5 @@
     "algorithm": "ed25519",
     "status": "signing_pending_no_key"
   },
-  "descriptor_digest": "sha256:0bbacd3c90107a8babeab142ff18b53d01ce781e4b18e981b581987318b13474"
+  "descriptor_digest": "sha256:e96fd15484f6892639cbe42d8fc49ec853382b453740a834789168b98e00473b"
 }

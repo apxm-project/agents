@@ -39,8 +39,8 @@ pub use frontend_graph::{FrontendGraph, verify_frontend_graph_json};
 pub use lower::{frontend_graph_to_air, lower_frontend_graph_json};
 pub use runtime_evidence::{
     Fact, FactKind, HookPhase as EvidenceHookPhase, HookScope as EvidenceHookScope, InstanceState,
-    InvocationState, LoopIterationCompletedFact, LoopMembership, ModelOutcome,
-    NodeExecutionRecordedFact, NodeExecutionScope, ProgramIdentity, RuntimeEvidence, RuntimeFact,
-    verify_runtime_evidence_json,
+    InvocationState, LoopIterationCompletedFact, LoopMembership, ModelAttemptRecordedFact,
+    ModelOutcome, NodeExecutionRecordedFact, NodeExecutionScope, ProgramIdentity, RuntimeEvidence,
+    RuntimeFact, verify_runtime_evidence_json,
 };
 pub use source_map::{SourceLanguage, SourceMap, verify_source_map_json};

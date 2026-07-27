@@ -241,7 +241,7 @@ async fn atomic_commit_publishes_full_write_set_and_all_facts() {
 
     assert_eq!(port.version("instance.1"), 1);
     let evidence = port.evidence_for("instance.1");
-    // instance.created + invocation.admitted + attempt.recorded + invocation.committed
+    // instance.created + invocation.admitted + invocation.attempt_recorded + invocation.committed
     assert_eq!(evidence.facts.len(), 4);
     assert!(
         evidence.verify().is_accepted(),

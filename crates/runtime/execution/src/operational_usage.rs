@@ -1,97 +1,99 @@
-//! Runtime-owned post-commit native-usage handoff.
+//! Runtime-owned post-commit native model usage handoff.
 //!
-//! The runtime publishes only a committed native `model.call` measurement to
-//! an injected composition port. Server owns whether and how that measurement
-//! becomes an admitted operational usage fact, including its authority,
-//! pricing, reservation, evidence shape, and delivery transport.
+//! The runtime publishes the exact typed attempt already present in the atomic
+//! evidence commit. Composition can therefore verify membership without
+//! trusting a parallel, independently assembled DTO.
 
 use std::fmt;
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 
-use apxm_inference::{ResolvedModelBinding, Usage};
+use apxm_program::runtime_evidence::ModelAttemptRecordedFact;
 
-/// The immutable native measurement associated with a successful runtime
-/// execution commit. Peer/ACP usage has no representation here.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct CommittedNativeUsage {
-    pub input_tokens: u64,
-    pub output_tokens: u64,
+/// The single accepted schema version.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CommittedNativeModelUsageVersion {
+    #[serde(rename = "apxm.committed-native-model-usage.v1")]
+    V1,
 }
 
-impl From<Usage> for CommittedNativeUsage {
-    fn from(value: Usage) -> Self {
-        Self {
-            input_tokens: value.input_tokens,
-            output_tokens: value.output_tokens,
-        }
+/// The closed evidence-position reference kind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EvidencePositionRefType {
+    #[serde(rename = "EvidencePositionRef")]
+    EvidencePositionRef,
+}
+
+/// The committed evidence position returned by the atomic commit port.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidencePositionRef {
+    pub ref_type: EvidencePositionRefType,
+    pub r#ref: String,
+}
+
+/// One Agents-owned native model usage measurement published only after the
+/// atomic commit succeeds.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommittedNativeModelUsage {
+    pub schema_version: CommittedNativeModelUsageVersion,
+    pub source_contract_digest: String,
+    pub usage_measurement_id: String,
+    pub commit_id: String,
+    pub evidence_position_ref: EvidencePositionRef,
+    pub attempt: ModelAttemptRecordedFact,
+}
+
+impl CommittedNativeModelUsage {
+    /// Digest of the exact schema bytes hashed by this crate's build script.
+    pub const SOURCE_CONTRACT_DIGEST: &'static str =
+        env!("APXM_COMMITTED_NATIVE_MODEL_USAGE_SCHEMA_DIGEST");
+
+    /// Derive the replay-stable identity for one committed attempt.
+    #[must_use]
+    pub fn measurement_id(commit_id: &str, attempt_fact_id: &str) -> String {
+        use sha2::{Digest, Sha256};
+
+        let mut hasher = Sha256::new();
+        hasher.update(b"apxm.committed-native-model-usage.v1\0");
+        hasher.update(commit_id.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(attempt_fact_id.as_bytes());
+        format!("sha256:{:x}", hasher.finalize())
     }
 }
 
-/// One runtime-owned native model-call measurement prepared before the
-/// execution commit. It never represents ACP or other Capability usage.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct NativeModelCallMeasurement {
-    pub node_execution_id: String,
-    pub air_node_id: String,
-    pub attempt_id: String,
-    pub attempt_index: u32,
-    pub model_effect_id: String,
-    pub request_digest: String,
-    pub resolved_model_binding: ResolvedModelBinding,
-    pub native_usage: CommittedNativeUsage,
-}
-
-/// The one committed native model-call measurement a composition-owned
-/// publisher receives after the atomic execution commit succeeds.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CommittedNativeModelCallUsage {
-    pub commit_id: String,
-    pub invocation_ref: String,
-    pub evidence_position_ref: String,
-    pub node_execution_id: String,
-    pub air_node_id: String,
-    pub attempt_id: String,
-    pub attempt_index: u32,
-    pub model_effect_id: String,
-    pub request_digest: String,
-    pub resolved_model_binding: ResolvedModelBinding,
-    pub native_usage: CommittedNativeUsage,
-}
-
-/// The narrow post-commit publication seam. Its implementation is supplied by
-/// composition; the runtime neither discovers a destination nor owns the
-/// admitted operational-usage representation.
+/// The narrow post-commit publication seam supplied by composition.
 #[async_trait]
-pub trait OperationalUsageFactPort: Send + Sync {
+pub trait CommittedNativeModelUsagePort: Send + Sync {
     async fn publish(
         &self,
-        fact: CommittedNativeModelCallUsage,
-    ) -> Result<(), OperationalUsageFactError>;
+        usage: CommittedNativeModelUsage,
+    ) -> Result<(), CommittedNativeModelUsageError>;
 }
 
 /// A composition publisher's closed delivery result as reported by runtime.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum OperationalUsageFactError {
+pub enum CommittedNativeModelUsageError {
     Unavailable,
     Rejected,
 }
 
-impl fmt::Display for OperationalUsageFactError {
+impl fmt::Display for CommittedNativeModelUsageError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{self:?}")
     }
 }
 
-impl std::error::Error for OperationalUsageFactError {}
+impl std::error::Error for CommittedNativeModelUsageError {}
 
-/// The report-visible post-commit publication outcome. A failed publication
-/// remains explicit and cannot turn a committed runtime execution into a
-/// fabricated admitted usage fact.
+/// The report-visible post-commit publication outcome.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum OperationalUsageOutcome {
+pub enum CommittedNativeModelUsageOutcome {
     NotApplicable,
     NotConfigured,
     Published,
-    Failed(OperationalUsageFactError),
+    Failed(CommittedNativeModelUsageError),
 }

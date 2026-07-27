@@ -72,6 +72,7 @@
           "fact_id": "node.1",
           "event_sequence": 1,
           "fact_kind": "node_execution.recorded",
+          "program_invocation_id": "invocation.1",
           "node_execution_id": "node-execution.1",
           "air_node_id": "node.model",
           "execution_scope": {
@@ -163,6 +164,7 @@
           "fact_id": "node.foreign",
           "event_sequence": 1,
           "fact_kind": "node_execution.recorded",
+          "program_invocation_id": "invocation.1",
           "node_execution_id": "node-execution.foreign",
           "air_node_id": "node.foreign",
           "execution_scope": {
@@ -234,6 +236,7 @@
           "fact_id": "node.1",
           "event_sequence": 1,
           "fact_kind": "node_execution.recorded",
+          "program_invocation_id": "invocation.1",
           "node_execution_id": "node-execution.1",
           "air_node_id": "node.model",
           "execution_scope": {
@@ -363,6 +366,7 @@
           "fact_id": "model.1",
           "event_sequence": 2,
           "fact_kind": "node_execution.recorded",
+          "program_invocation_id": "invocation.1",
           "node_execution_id": "node-execution.model.1",
           "air_node_id": "node.model",
           "execution_scope": {
@@ -414,6 +418,7 @@
           "fact_id": "node.non-loop",
           "event_sequence": 1,
           "fact_kind": "node_execution.recorded",
+          "program_invocation_id": "invocation.1",
           "node_execution_id": "node-execution.non-loop",
           "air_node_id": "node.root",
           "execution_scope": {
@@ -424,6 +429,7 @@
           "fact_id": "node.non-loop.replay",
           "event_sequence": 2,
           "fact_kind": "node_execution.recorded",
+          "program_invocation_id": "invocation.1",
           "node_execution_id": "node-execution.non-loop.replay",
           "air_node_id": "node.root",
           "execution_scope": {
@@ -448,6 +454,7 @@
           "fact_id": "node.half-loop",
           "event_sequence": 1,
           "fact_kind": "node_execution.recorded",
+          "program_invocation_id": "invocation.1",
           "node_execution_id": "node-execution.half-loop",
           "air_node_id": "node.loop",
           "execution_scope": {
@@ -474,9 +481,397 @@
           "fact_id": "model.1",
           "event_sequence": 1,
           "fact_kind": "node_execution.recorded",
+          "program_invocation_id": "invocation.1",
           "region_occurrence_id": "loop-occurrence.1",
           "static_region_id": "loop.1",
           "node_execution_id": "node-execution.model.1"
+        }
+      ]
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "model-attempt-records-the-exact-committed-usage-coordinate",
+    "input": {
+      "schema_version": "apxm.runtime-evidence.v1",
+      "program_identity": {
+        "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "entrypoint": "run",
+        "agent_identity_binding": "agent-identity.1"
+      },
+      "facts": [
+        {
+          "fact_id": "node.model.1",
+          "event_sequence": 1,
+          "fact_kind": "node_execution.recorded",
+          "program_invocation_id": "invocation.1",
+          "node_execution_id": "node-execution.model.1",
+          "air_node_id": "model.1",
+          "execution_scope": {
+            "scope_kind": "non_loop"
+          }
+        },
+        {
+          "fact_id": "attempt.model.1.0",
+          "event_sequence": 2,
+          "fact_kind": "attempt.recorded",
+          "program_invocation_id": "invocation.1",
+          "node_execution_id": "node-execution.model.1",
+          "air_node_id": "model.1",
+          "attempt_id": "model-attempt.node-execution.model.1.0",
+          "attempt_index": 0,
+          "model_effect_id": "model-effect.1",
+          "request_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "model_target_ref": "model-target:qwen3-32b-instruct",
+          "model_deployment_ref": "model-deployment:qwen3-32b-vllm-us",
+          "exact_port_binding_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "native_input_tokens": 13,
+          "native_output_tokens": 29
+        }
+      ]
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "model-attempt-before-node-execution-is-rejected",
+    "input": {
+      "schema_version": "apxm.runtime-evidence.v1",
+      "program_identity": {
+        "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "entrypoint": "run",
+        "agent_identity_binding": "agent-identity.1"
+      },
+      "facts": [
+        {
+          "fact_id": "attempt.model.1.0",
+          "event_sequence": 1,
+          "fact_kind": "attempt.recorded",
+          "program_invocation_id": "invocation.1",
+          "node_execution_id": "node-execution.model.1",
+          "air_node_id": "model.1",
+          "attempt_id": "model-attempt.node-execution.model.1.0",
+          "attempt_index": 0,
+          "model_effect_id": "model-effect.1",
+          "request_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "model_target_ref": "model-target:qwen3-32b-instruct",
+          "model_deployment_ref": "model-deployment:qwen3-32b-vllm-us",
+          "exact_port_binding_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "native_input_tokens": 13,
+          "native_output_tokens": 29
+        }
+      ]
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "model-attempt-static-node-mismatch-is-rejected",
+    "input": {
+      "schema_version": "apxm.runtime-evidence.v1",
+      "program_identity": {
+        "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "entrypoint": "run",
+        "agent_identity_binding": "agent-identity.1"
+      },
+      "facts": [
+        {
+          "fact_id": "node.model.1",
+          "event_sequence": 1,
+          "fact_kind": "node_execution.recorded",
+          "program_invocation_id": "invocation.1",
+          "node_execution_id": "node-execution.model.1",
+          "air_node_id": "model.1",
+          "execution_scope": {
+            "scope_kind": "non_loop"
+          }
+        },
+        {
+          "fact_id": "attempt.model.1.0",
+          "event_sequence": 2,
+          "fact_kind": "attempt.recorded",
+          "program_invocation_id": "invocation.1",
+          "node_execution_id": "node-execution.model.1",
+          "air_node_id": "model.other",
+          "attempt_id": "model-attempt.node-execution.model.1.0",
+          "attempt_index": 0,
+          "model_effect_id": "model-effect.1",
+          "request_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "model_target_ref": "model-target:qwen3-32b-instruct",
+          "model_deployment_ref": "model-deployment:qwen3-32b-vllm-us",
+          "exact_port_binding_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "native_input_tokens": 13,
+          "native_output_tokens": 29
+        }
+      ]
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "model-attempt-replay-conflict-is-rejected",
+    "input": {
+      "schema_version": "apxm.runtime-evidence.v1",
+      "program_identity": {
+        "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "entrypoint": "run",
+        "agent_identity_binding": "agent-identity.1"
+      },
+      "facts": [
+        {
+          "fact_id": "node.model.1",
+          "event_sequence": 1,
+          "fact_kind": "node_execution.recorded",
+          "program_invocation_id": "invocation.1",
+          "node_execution_id": "node-execution.model.1",
+          "air_node_id": "model.1",
+          "execution_scope": {
+            "scope_kind": "non_loop"
+          }
+        },
+        {
+          "fact_id": "attempt.model.1.0",
+          "event_sequence": 2,
+          "fact_kind": "attempt.recorded",
+          "program_invocation_id": "invocation.1",
+          "node_execution_id": "node-execution.model.1",
+          "air_node_id": "model.1",
+          "attempt_id": "model-attempt.node-execution.model.1.0",
+          "attempt_index": 0,
+          "model_effect_id": "model-effect.1",
+          "request_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "model_target_ref": "model-target:qwen3-32b-instruct",
+          "model_deployment_ref": "model-deployment:qwen3-32b-vllm-us",
+          "exact_port_binding_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "native_input_tokens": 13,
+          "native_output_tokens": 29
+        },
+        {
+          "fact_id": "attempt.model.1.0.replayed",
+          "event_sequence": 3,
+          "fact_kind": "attempt.recorded",
+          "program_invocation_id": "invocation.1",
+          "node_execution_id": "node-execution.model.1",
+          "air_node_id": "model.1",
+          "attempt_id": "model-attempt.node-execution.model.1.0",
+          "attempt_index": 0,
+          "model_effect_id": "model-effect.1",
+          "request_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "model_target_ref": "model-target:qwen3-32b-instruct",
+          "model_deployment_ref": "model-deployment:qwen3-32b-vllm-us",
+          "exact_port_binding_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "native_input_tokens": 13,
+          "native_output_tokens": 30
+        }
+      ]
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "model-attempt-missing-request-digest-is-rejected",
+    "input": {
+      "schema_version": "apxm.runtime-evidence.v1",
+      "program_identity": {
+        "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "entrypoint": "run",
+        "agent_identity_binding": "agent-identity.1"
+      },
+      "facts": [
+        {
+          "fact_id": "node.model.1",
+          "event_sequence": 1,
+          "fact_kind": "node_execution.recorded",
+          "program_invocation_id": "invocation.1",
+          "node_execution_id": "node-execution.model.1",
+          "air_node_id": "model.1",
+          "execution_scope": {
+            "scope_kind": "non_loop"
+          }
+        },
+        {
+          "fact_id": "attempt.model.1.0",
+          "event_sequence": 2,
+          "fact_kind": "attempt.recorded",
+          "program_invocation_id": "invocation.1",
+          "node_execution_id": "node-execution.model.1",
+          "air_node_id": "model.1",
+          "attempt_id": "model-attempt.node-execution.model.1.0",
+          "attempt_index": 0,
+          "model_effect_id": "model-effect.1",
+          "model_target_ref": "model-target:qwen3-32b-instruct",
+          "model_deployment_ref": "model-deployment:qwen3-32b-vllm-us",
+          "exact_port_binding_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "native_input_tokens": 13,
+          "native_output_tokens": 29
+        }
+      ]
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "model-attempt-unknown-commercial-field-is-rejected",
+    "input": {
+      "schema_version": "apxm.runtime-evidence.v1",
+      "program_identity": {
+        "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "entrypoint": "run",
+        "agent_identity_binding": "agent-identity.1"
+      },
+      "facts": [
+        {
+          "fact_id": "node.model.1",
+          "event_sequence": 1,
+          "fact_kind": "node_execution.recorded",
+          "program_invocation_id": "invocation.1",
+          "node_execution_id": "node-execution.model.1",
+          "air_node_id": "model.1",
+          "execution_scope": {
+            "scope_kind": "non_loop"
+          }
+        },
+        {
+          "fact_id": "attempt.model.1.0",
+          "event_sequence": 2,
+          "fact_kind": "attempt.recorded",
+          "program_invocation_id": "invocation.1",
+          "node_execution_id": "node-execution.model.1",
+          "air_node_id": "model.1",
+          "attempt_id": "model-attempt.node-execution.model.1.0",
+          "attempt_index": 0,
+          "model_effect_id": "model-effect.1",
+          "request_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "model_target_ref": "model-target:qwen3-32b-instruct",
+          "model_deployment_ref": "model-deployment:qwen3-32b-vllm-us",
+          "exact_port_binding_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "native_input_tokens": 13,
+          "native_output_tokens": 29,
+          "currency": "USD"
+        }
+      ]
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "model-attempt-program-invocation-mismatch-is-rejected",
+    "input": {
+      "schema_version": "apxm.runtime-evidence.v1",
+      "program_identity": {
+        "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "entrypoint": "run",
+        "agent_identity_binding": "agent-identity.1"
+      },
+      "facts": [
+        {
+          "fact_id": "node.model.1",
+          "event_sequence": 1,
+          "fact_kind": "node_execution.recorded",
+          "program_invocation_id": "invocation.1",
+          "node_execution_id": "node-execution.model.1",
+          "air_node_id": "model.1",
+          "execution_scope": {"scope_kind": "non_loop"}
+        },
+        {
+          "fact_id": "attempt.model.1.0",
+          "event_sequence": 2,
+          "fact_kind": "attempt.recorded",
+          "program_invocation_id": "invocation.2",
+          "node_execution_id": "node-execution.model.1",
+          "air_node_id": "model.1",
+          "attempt_id": "model-attempt.node-execution.model.1.0",
+          "attempt_index": 0,
+          "model_effect_id": "model-effect.1",
+          "request_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "model_target_ref": "model-target:qwen3-32b-instruct",
+          "model_deployment_ref": "model-deployment:qwen3-32b-vllm-us",
+          "exact_port_binding_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "native_input_tokens": 13,
+          "native_output_tokens": 29
+        }
+      ]
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "model-attempt-index-replay-with-another-id-is-rejected",
+    "input": {
+      "schema_version": "apxm.runtime-evidence.v1",
+      "program_identity": {
+        "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "entrypoint": "run",
+        "agent_identity_binding": "agent-identity.1"
+      },
+      "facts": [
+        {
+          "fact_id": "node.model.1",
+          "event_sequence": 1,
+          "fact_kind": "node_execution.recorded",
+          "program_invocation_id": "invocation.1",
+          "node_execution_id": "node-execution.model.1",
+          "air_node_id": "model.1",
+          "execution_scope": {"scope_kind": "non_loop"}
+        },
+        {
+          "fact_id": "attempt.model.1.0",
+          "event_sequence": 2,
+          "fact_kind": "attempt.recorded",
+          "program_invocation_id": "invocation.1",
+          "node_execution_id": "node-execution.model.1",
+          "air_node_id": "model.1",
+          "attempt_id": "model-attempt.node-execution.model.1.0",
+          "attempt_index": 0,
+          "model_effect_id": "model-effect.1",
+          "request_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "model_target_ref": "model-target:qwen3-32b-instruct",
+          "model_deployment_ref": "model-deployment:qwen3-32b-vllm-us",
+          "exact_port_binding_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "native_input_tokens": 13,
+          "native_output_tokens": 29
+        },
+        {
+          "fact_id": "attempt.model.1.0.conflict",
+          "event_sequence": 3,
+          "fact_kind": "attempt.recorded",
+          "program_invocation_id": "invocation.1",
+          "node_execution_id": "node-execution.model.1",
+          "air_node_id": "model.1",
+          "attempt_id": "model-attempt.node-execution.model.1.alternate",
+          "attempt_index": 0,
+          "model_effect_id": "model-effect.1",
+          "request_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "model_target_ref": "model-target:qwen3-32b-instruct",
+          "model_deployment_ref": "model-deployment:qwen3-32b-vllm-us",
+          "exact_port_binding_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "native_input_tokens": 13,
+          "native_output_tokens": 29
+        }
+      ]
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "duplicate-node-execution-id-is-rejected",
+    "input": {
+      "schema_version": "apxm.runtime-evidence.v1",
+      "program_identity": {
+        "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "entrypoint": "run",
+        "agent_identity_binding": "agent-identity.1"
+      },
+      "facts": [
+        {
+          "fact_id": "node.model.1",
+          "event_sequence": 1,
+          "fact_kind": "node_execution.recorded",
+          "program_invocation_id": "invocation.1",
+          "node_execution_id": "node-execution.model.1",
+          "air_node_id": "model.1",
+          "execution_scope": {"scope_kind": "non_loop"}
+        },
+        {
+          "fact_id": "node.model.1.replayed",
+          "event_sequence": 2,
+          "fact_kind": "node_execution.recorded",
+          "program_invocation_id": "invocation.1",
+          "node_execution_id": "node-execution.model.1",
+          "air_node_id": "model.other",
+          "execution_scope": {"scope_kind": "non_loop"}
         }
       ]
     },

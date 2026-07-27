@@ -37,6 +37,10 @@ pub enum FactKind {
     ChildAttached,
     #[serde(rename = "attempt.recorded")]
     AttemptRecorded,
+    #[serde(rename = "invocation.attempt_recorded")]
+    InvocationAttemptRecorded,
+    #[serde(rename = "capability.attempt_recorded")]
+    CapabilityAttemptRecorded,
     #[serde(rename = "invocation.committed")]
     InvocationCommitted,
     #[serde(rename = "invocation.failed")]
@@ -73,7 +77,7 @@ pub enum FactKind {
 
 impl FactKind {
     #[must_use]
-    pub const fn all() -> [Self; 22] {
+    pub const fn all() -> [Self; 24] {
         [
             Self::InstanceStateChanged,
             Self::InvocationStateChanged,
@@ -81,6 +85,8 @@ impl FactKind {
             Self::InvocationAdmitted,
             Self::ChildAttached,
             Self::AttemptRecorded,
+            Self::InvocationAttemptRecorded,
+            Self::CapabilityAttemptRecorded,
             Self::InvocationCommitted,
             Self::InvocationFailed,
             Self::InvocationCancelled,
@@ -109,6 +115,8 @@ impl FactKind {
             Self::InvocationAdmitted => "invocation.admitted",
             Self::ChildAttached => "child.attached",
             Self::AttemptRecorded => "attempt.recorded",
+            Self::InvocationAttemptRecorded => "invocation.attempt_recorded",
+            Self::CapabilityAttemptRecorded => "capability.attempt_recorded",
             Self::InvocationCommitted => "invocation.committed",
             Self::InvocationFailed => "invocation.failed",
             Self::InvocationCancelled => "invocation.cancelled",
@@ -312,11 +320,34 @@ pub enum NodeExecutionScope {
 pub struct NodeExecutionRecordedFact {
     pub fact_id: String,
     pub event_sequence: u64,
+    pub program_invocation_id: String,
     pub node_execution_id: String,
     pub air_node_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_node_execution_id: Option<String>,
     pub execution_scope: NodeExecutionScope,
+}
+
+/// One successful native model attempt committed in the runtime evidence batch.
+/// Every coordinate is required so a post-commit consumer can prove exact
+/// membership without trusting a parallel callback payload.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelAttemptRecordedFact {
+    pub fact_id: String,
+    pub event_sequence: u64,
+    pub program_invocation_id: String,
+    pub node_execution_id: String,
+    pub air_node_id: String,
+    pub attempt_id: String,
+    pub attempt_index: u32,
+    pub model_effect_id: String,
+    pub request_digest: String,
+    pub model_target_ref: String,
+    pub model_deployment_ref: String,
+    pub exact_port_binding_digest: String,
+    pub native_input_tokens: u64,
+    pub native_output_tokens: u64,
 }
 
 /// Closed runtime evidence variants.
@@ -334,7 +365,11 @@ pub enum Fact {
     #[serde(rename = "child.attached")]
     ChildAttached(RuntimeFact),
     #[serde(rename = "attempt.recorded")]
-    AttemptRecorded(RuntimeFact),
+    AttemptRecorded(ModelAttemptRecordedFact),
+    #[serde(rename = "invocation.attempt_recorded")]
+    InvocationAttemptRecorded(RuntimeFact),
+    #[serde(rename = "capability.attempt_recorded")]
+    CapabilityAttemptRecorded(RuntimeFact),
     #[serde(rename = "invocation.committed")]
     InvocationCommitted(RuntimeFact),
     #[serde(rename = "invocation.failed")]
@@ -379,7 +414,11 @@ impl Fact {
             FactKind::InstanceCreated => Self::InstanceCreated(fact),
             FactKind::InvocationAdmitted => Self::InvocationAdmitted(fact),
             FactKind::ChildAttached => Self::ChildAttached(fact),
-            FactKind::AttemptRecorded => Self::AttemptRecorded(fact),
+            FactKind::AttemptRecorded => {
+                panic!("AttemptRecorded requires its typed constructor")
+            }
+            FactKind::InvocationAttemptRecorded => Self::InvocationAttemptRecorded(fact),
+            FactKind::CapabilityAttemptRecorded => Self::CapabilityAttemptRecorded(fact),
             FactKind::InvocationCommitted => Self::InvocationCommitted(fact),
             FactKind::InvocationFailed => Self::InvocationFailed(fact),
             FactKind::InvocationCancelled => Self::InvocationCancelled(fact),
@@ -406,6 +445,7 @@ impl Fact {
         match self {
             Self::LoopIterationCompleted(fact) => &fact.fact_id,
             Self::NodeExecutionRecorded(fact) => &fact.fact_id,
+            Self::AttemptRecorded(fact) => &fact.fact_id,
             _ => &self.runtime().expect("runtime variant").fact_id,
         }
     }
@@ -415,6 +455,7 @@ impl Fact {
         match self {
             Self::LoopIterationCompleted(fact) => fact.event_sequence,
             Self::NodeExecutionRecorded(fact) => fact.event_sequence,
+            Self::AttemptRecorded(fact) => fact.event_sequence,
             _ => self.runtime().expect("runtime variant").event_sequence,
         }
     }
@@ -454,6 +495,14 @@ impl Fact {
     }
 
     #[must_use]
+    pub fn model_attempt_recorded(&self) -> Option<&ModelAttemptRecordedFact> {
+        match self {
+            Self::AttemptRecorded(fact) => Some(fact),
+            _ => None,
+        }
+    }
+
+    #[must_use]
     pub fn kind(&self) -> Option<FactKind> {
         Some(match self {
             Self::InstanceStateChanged(_) => FactKind::InstanceStateChanged,
@@ -462,6 +511,8 @@ impl Fact {
             Self::InvocationAdmitted(_) => FactKind::InvocationAdmitted,
             Self::ChildAttached(_) => FactKind::ChildAttached,
             Self::AttemptRecorded(_) => FactKind::AttemptRecorded,
+            Self::InvocationAttemptRecorded(_) => FactKind::InvocationAttemptRecorded,
+            Self::CapabilityAttemptRecorded(_) => FactKind::CapabilityAttemptRecorded,
             Self::InvocationCommitted(_) => FactKind::InvocationCommitted,
             Self::InvocationFailed(_) => FactKind::InvocationFailed,
             Self::InvocationCancelled(_) => FactKind::InvocationCancelled,
@@ -490,7 +541,8 @@ fn runtime_fact_ref(fact: &Fact) -> Option<&RuntimeFact> {
         | Fact::InstanceCreated(value)
         | Fact::InvocationAdmitted(value)
         | Fact::ChildAttached(value)
-        | Fact::AttemptRecorded(value)
+        | Fact::InvocationAttemptRecorded(value)
+        | Fact::CapabilityAttemptRecorded(value)
         | Fact::InvocationCommitted(value)
         | Fact::InvocationFailed(value)
         | Fact::InvocationCancelled(value)
@@ -506,7 +558,9 @@ fn runtime_fact_ref(fact: &Fact) -> Option<&RuntimeFact> {
         | Fact::RegionOccurrenceStarted(value)
         | Fact::HookExecuted(value)
         | Fact::ContextTransitioned(value) => Some(value),
-        Fact::NodeExecutionRecorded(_) | Fact::LoopIterationCompleted(_) => None,
+        Fact::AttemptRecorded(_)
+        | Fact::NodeExecutionRecorded(_)
+        | Fact::LoopIterationCompleted(_) => None,
     }
 }
 
@@ -517,7 +571,8 @@ fn runtime_fact_mut(fact: &mut Fact) -> Option<&mut RuntimeFact> {
         | Fact::InstanceCreated(value)
         | Fact::InvocationAdmitted(value)
         | Fact::ChildAttached(value)
-        | Fact::AttemptRecorded(value)
+        | Fact::InvocationAttemptRecorded(value)
+        | Fact::CapabilityAttemptRecorded(value)
         | Fact::InvocationCommitted(value)
         | Fact::InvocationFailed(value)
         | Fact::InvocationCancelled(value)
@@ -533,7 +588,9 @@ fn runtime_fact_mut(fact: &mut Fact) -> Option<&mut RuntimeFact> {
         | Fact::RegionOccurrenceStarted(value)
         | Fact::HookExecuted(value)
         | Fact::ContextTransitioned(value) => Some(value),
-        Fact::NodeExecutionRecorded(_) | Fact::LoopIterationCompleted(_) => None,
+        Fact::AttemptRecorded(_)
+        | Fact::NodeExecutionRecorded(_)
+        | Fact::LoopIterationCompleted(_) => None,
     }
 }
 
@@ -598,7 +655,10 @@ impl RuntimeEvidence {
 
         let mut previous: Option<u64> = None;
         let mut seen_fact_ids = HashSet::new();
-        let mut seen_node_executions: HashMap<&str, HashSet<(&str, &str)>> = HashMap::new();
+        let mut seen_node_executions: HashMap<&str, (&str, &str, HashSet<(&str, &str)>)> =
+            HashMap::new();
+        let mut seen_model_attempt_ids = HashSet::new();
+        let mut seen_model_attempt_indexes = HashSet::new();
         let mut completed_iterations = HashSet::new();
         let mut next_iteration: HashMap<(String, String, String), u64> = HashMap::new();
         for fact in &self.facts {
@@ -639,7 +699,7 @@ impl RuntimeEvidence {
                             ));
                         }
                         match seen_node_executions.get(causal_id.as_str()) {
-                            Some(memberships)
+                            Some((_, _, memberships))
                                 if memberships.contains(&(
                                     completed.static_loop_id.as_str(),
                                     completed.loop_occurrence_id.as_str(),
@@ -711,7 +771,84 @@ impl RuntimeEvidence {
                             memberships
                         }
                     };
-                    seen_node_executions.insert(&node.node_execution_id, memberships);
+                    if seen_node_executions
+                        .insert(
+                            &node.node_execution_id,
+                            (&node.program_invocation_id, &node.air_node_id, memberships),
+                        )
+                        .is_some()
+                    {
+                        verdict.push(Diagnostic::new(
+                            DiagnosticCode::SchemaViolation,
+                            &node.fact_id,
+                            "node_execution_id conflicts with replay",
+                        ));
+                    }
+                }
+                Fact::AttemptRecorded(attempt) => {
+                    match seen_node_executions.get(attempt.node_execution_id.as_str()) {
+                        None => verdict.push(Diagnostic::new(
+                            DiagnosticCode::SchemaViolation,
+                            &attempt.fact_id,
+                            "a model attempt requires a preceding committed NodeExecution",
+                        )),
+                        Some((program_invocation_id, _, _))
+                            if *program_invocation_id != attempt.program_invocation_id =>
+                        {
+                            verdict.push(Diagnostic::new(
+                                DiagnosticCode::SchemaViolation,
+                                &attempt.fact_id,
+                                "a model attempt must match its NodeExecution Program Invocation",
+                            ));
+                        }
+                        Some((_, air_node_id, _)) if *air_node_id != attempt.air_node_id => {
+                            verdict.push(Diagnostic::new(
+                                DiagnosticCode::SchemaViolation,
+                                &attempt.fact_id,
+                                "a model attempt must match its NodeExecution AIR node",
+                            ));
+                        }
+                        Some(_) => {}
+                    }
+                    let attempt_id_identity = (
+                        attempt.program_invocation_id.as_str(),
+                        attempt.node_execution_id.as_str(),
+                        attempt.attempt_id.as_str(),
+                    );
+                    if !seen_model_attempt_ids.insert(attempt_id_identity) {
+                        verdict.push(Diagnostic::new(
+                            DiagnosticCode::SchemaViolation,
+                            &attempt.fact_id,
+                            "model attempt identity conflicts with replay",
+                        ));
+                    }
+                    let attempt_index_identity = (
+                        attempt.program_invocation_id.as_str(),
+                        attempt.node_execution_id.as_str(),
+                        attempt.attempt_index,
+                    );
+                    if !seen_model_attempt_indexes.insert(attempt_index_identity) {
+                        verdict.push(Diagnostic::new(
+                            DiagnosticCode::SchemaViolation,
+                            &attempt.fact_id,
+                            "model attempt index conflicts with replay",
+                        ));
+                    }
+                    for (path, value) in [
+                        ("request_digest", attempt.request_digest.as_str()),
+                        (
+                            "exact_port_binding_digest",
+                            attempt.exact_port_binding_digest.as_str(),
+                        ),
+                    ] {
+                        if !is_digest(value) {
+                            verdict.push(Diagnostic::new(
+                                DiagnosticCode::InvalidDigest,
+                                format!("{}.{}", attempt.fact_id, path),
+                                "model attempt digest is not a lowercase sha256 value",
+                            ));
+                        }
+                    }
                 }
                 runtime_variant => {
                     let runtime = runtime_variant

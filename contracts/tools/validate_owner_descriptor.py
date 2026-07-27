@@ -49,6 +49,7 @@ VECTOR_SCHEMA = {
     "apxm.air.v1.json": "apxm.air.v1",
     "apxm.executable-artifact.v1.json": "apxm.executable-artifact.v1",
     "apxm.runtime-evidence.v1.json": "apxm.runtime-evidence.v1",
+    "apxm.committed-native-model-usage.v1.json": "apxm.committed-native-model-usage.v1",
     "apxm.source-map.v1.json": "apxm.source-map.v1",
     "apxm.execution-commit.v1.json": "apxm.execution-commit.v1",
     "apxm.external-agent-session.v1.json": "apxm.external-agent-session.v1",
@@ -237,6 +238,21 @@ def semantic_errors(schema_id: str, instance: object) -> list[str]:
         return execution_commit_atomicity_errors(instance)
     if schema_id == "apxm.runtime-evidence.v1":
         return runtime_evidence_errors(instance)
+    if schema_id == "apxm.committed-native-model-usage.v1":
+        expected = file_digest(SCHEMAS_DIR / "apxm.committed-native-model-usage.v1.json")
+        if instance.get("source_contract_digest") != expected:
+            return ["source_contract_digest must match the exact owning schema bytes"]
+        attempt = instance.get("attempt")
+        if isinstance(attempt, dict):
+            payload = (
+                "apxm.committed-native-model-usage.v1\0"
+                + str(instance.get("commit_id", ""))
+                + "\0"
+                + str(attempt.get("fact_id", ""))
+            ).encode("utf-8")
+            measurement_id = "sha256:" + hashlib.sha256(payload).hexdigest()
+            if instance.get("usage_measurement_id") != measurement_id:
+                return ["usage_measurement_id must match the exact committed attempt tuple"]
     if schema_id == "apxm.external-agent-evidence.v1":
         return external_agent_evidence_errors(instance)
     return []
@@ -319,7 +335,9 @@ def runtime_evidence_errors(instance: dict[str, Any]) -> list[str]:
         return []
     last_sequence: int | None = None
     seen_fact_ids: set[str] = set()
-    seen_node_executions: dict[str, set[tuple[str, str]]] = {}
+    seen_node_executions: dict[str, tuple[str, str, set[tuple[str, str]]]] = {}
+    seen_model_attempt_ids: set[tuple[str, str, str]] = set()
+    seen_model_attempt_indexes: set[tuple[str, str, int]] = set()
     seen_iterations: set[tuple[str, str, int]] = set()
     next_iterations: dict[tuple[str, str, str], int] = {}
     for index, fact in enumerate(facts):
@@ -360,13 +378,50 @@ def runtime_evidence_errors(instance: dict[str, Any]) -> list[str]:
                 ]
             scope = fact["execution_scope"]
             memberships = scope.get("loop_memberships", []) if isinstance(scope, dict) else []
-            seen_node_executions[fact["node_execution_id"]] = {
-                (membership["static_loop_id"], membership["loop_occurrence_id"])
-                for membership in memberships
-                if isinstance(membership, dict)
-                and "static_loop_id" in membership
-                and "loop_occurrence_id" in membership
-            }
+            node_execution_id = fact["node_execution_id"]
+            if node_execution_id in seen_node_executions:
+                return [f"facts[{index}]: node_execution_id conflicts with replay"]
+            seen_node_executions[node_execution_id] = (
+                fact["program_invocation_id"],
+                fact["air_node_id"],
+                {
+                    (membership["static_loop_id"], membership["loop_occurrence_id"])
+                    for membership in memberships
+                    if isinstance(membership, dict)
+                    and "static_loop_id" in membership
+                    and "loop_occurrence_id" in membership
+                },
+            )
+        if fact.get("fact_kind") == "attempt.recorded":
+            node = seen_node_executions.get(fact.get("node_execution_id"))
+            if node is None:
+                return [
+                    f"facts[{index}]: a model attempt requires a preceding committed NodeExecution"
+                ]
+            if node[0] != fact.get("program_invocation_id"):
+                return [
+                    f"facts[{index}]: a model attempt must match its NodeExecution Program Invocation"
+                ]
+            if node[1] != fact.get("air_node_id"):
+                return [
+                    f"facts[{index}]: a model attempt must match its NodeExecution AIR node"
+                ]
+            attempt_id_identity = (
+                fact.get("program_invocation_id"),
+                fact.get("node_execution_id"),
+                fact.get("attempt_id"),
+            )
+            if attempt_id_identity in seen_model_attempt_ids:
+                return [f"facts[{index}]: model attempt identity conflicts with replay"]
+            seen_model_attempt_ids.add(attempt_id_identity)
+            attempt_index_identity = (
+                fact.get("program_invocation_id"),
+                fact.get("node_execution_id"),
+                fact.get("attempt_index"),
+            )
+            if attempt_index_identity in seen_model_attempt_indexes:
+                return [f"facts[{index}]: model attempt index conflicts with replay"]
+            seen_model_attempt_indexes.add(attempt_index_identity)
         if fact.get("fact_kind") == "LoopIterationCompleted":
             required = (
                 "static_loop_id",
@@ -389,7 +444,7 @@ def runtime_evidence_errors(instance: dict[str, Any]) -> list[str]:
                         fact["static_loop_id"],
                         fact["loop_occurrence_id"],
                     )
-                    not in seen_node_executions.get(value, set())
+                    not in seen_node_executions.get(value, ("", "", set()))[2]
                     for value in causal_ids
                 )
             ):

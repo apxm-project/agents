@@ -25,8 +25,9 @@ pub use driver::{
     execute_resumable, resume, resume_event,
 };
 pub use operational_usage::{
-    CommittedNativeModelCallUsage, CommittedNativeUsage, OperationalUsageFactError,
-    OperationalUsageFactPort, OperationalUsageOutcome,
+    CommittedNativeModelUsage, CommittedNativeModelUsageError, CommittedNativeModelUsageOutcome,
+    CommittedNativeModelUsagePort, CommittedNativeModelUsageVersion, EvidencePositionRef,
+    EvidencePositionRefType,
 };
 pub use ports::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
