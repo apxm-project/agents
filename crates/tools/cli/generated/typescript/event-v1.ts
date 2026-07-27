@@ -411,8 +411,8 @@ export interface CapabilityEffectReceiptEventPayload {
   invocation_id: string;
   call_id?: string;
   capability_binding: string;
-  dispatch_path: "inv_cap" | "ask_tool";
-  implementation_kind: "native" | "python" | "typescript" | "host";
+  dispatch_path: "inv_cap";
+  implementation_kind: "native" | "typescript" | "host";
   implementation_ref: string;
   request_digest: string;
   admission_kind: "read_only" | "sandbox" | "grant";
