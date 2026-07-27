@@ -189,7 +189,6 @@ impl AppMetrics {
         self.token_usage_total
             .add(count, &[KeyValue::new("token_kind", token_kind)]);
     }
-
 }
 
 #[cfg(test)]

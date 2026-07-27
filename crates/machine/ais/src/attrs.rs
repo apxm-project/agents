@@ -617,15 +617,17 @@ mod tests {
     /// here without anyone updating this test.
     #[test]
     fn no_graph_attribute_names_a_selection_among_candidates() {
-        let selection_markers = ["route", "preferred_", "eligible_", "rejected_", "candidate_"];
+        let selection_markers = [
+            "route",
+            "preferred_",
+            "eligible_",
+            "rejected_",
+            "candidate_",
+        ];
         let offenders: Vec<&str> = ALL_ATTR_NAMES
             .iter()
             .copied()
-            .filter(|name| {
-                selection_markers
-                    .iter()
-                    .any(|marker| name.contains(marker))
-            })
+            .filter(|name| selection_markers.iter().any(|marker| name.contains(marker)))
             .collect();
         assert!(
             offenders.is_empty(),

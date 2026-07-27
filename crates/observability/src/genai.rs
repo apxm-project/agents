@@ -619,9 +619,7 @@ pub fn operation_name(kind: EventKind) -> &'static str {
         }
         "subagent_spawn_begin" | "subagent_spawn_end" => GENAI_OPERATION_CREATE_AGENT,
         "subagent_done" | "subagent_failed" | "agent_message" | "approval_request"
-        | "approval_resolved" => {
-            GENAI_OPERATION_INVOKE_AGENT
-        }
+        | "approval_resolved" => GENAI_OPERATION_INVOKE_AGENT,
         "operation_start"
         | "operation_end"
         | "workflow_started"

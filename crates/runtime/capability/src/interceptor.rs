@@ -95,9 +95,7 @@ impl<'a> PreInvokeContext<'a> {
     ///
     /// Returns the absent field when the context carries no acting agent or no
     /// grant. Neither field has a substitute.
-    pub fn invocation_identity(
-        &self,
-    ) -> Result<InvocationIdentity<'a>, MissingInvocationIdentity> {
+    pub fn invocation_identity(&self) -> Result<InvocationIdentity<'a>, MissingInvocationIdentity> {
         let agent_code = self
             .agent_code
             .filter(|value| !value.is_empty())

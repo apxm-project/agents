@@ -180,9 +180,7 @@ pub enum ModelReferenceError {
     UnknownModel { model: String },
 
     /// An explicit backend contradicts the model's registered binding.
-    #[error(
-        "LLM model '{model}' is bound to backend '{bound_backend}', not '{requested_backend}'"
-    )]
+    #[error("LLM model '{model}' is bound to backend '{bound_backend}', not '{requested_backend}'")]
     ModelBackendMismatch {
         model: String,
         bound_backend: String,
@@ -369,11 +367,7 @@ impl LLMRegistry {
     ///
     /// The reference is stored verbatim and must already be exact, so the key a
     /// request resolves is the key that was bound.
-    pub fn bind_model(
-        &self,
-        model: impl Into<String>,
-        backend: impl Into<String>,
-    ) -> Result<()> {
+    pub fn bind_model(&self, model: impl Into<String>, backend: impl Into<String>) -> Result<()> {
         let backend_name = backend.into();
         if !self.backends.read().contains_key(&backend_name) {
             anyhow::bail!("Backend '{}' not registered", backend_name);
@@ -1322,7 +1316,11 @@ mod request_recording_tests {
             .expect("bind fixture model");
 
         let error = registry
-            .resolve_backend(&LLMRequest::new("hi").with_model("fixture-model").with_backend("other"))
+            .resolve_backend(
+                &LLMRequest::new("hi")
+                    .with_model("fixture-model")
+                    .with_backend("other"),
+            )
             .expect_err("a non-bound backend must fail closed");
 
         assert!(matches!(
