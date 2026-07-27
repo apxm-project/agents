@@ -144,9 +144,7 @@ export const ATTR = {
   AGENT_NAME: "agent_name",
   FLOW_NAME: "flow_name",
   PROFILE: "profile",
-  AGENT_ROUTE: "agent_route",
   REQUIRED_CAPABILITIES: "required_capabilities",
-  PREFERRED_PROFILES: "preferred_profiles",
   NODE_NAME: "node_name",
   MODE: "mode",
   WAIT_KEY: "wait_key",
@@ -384,15 +382,3 @@ export const BUILTIN_PROVIDERS: readonly ProviderSpec[] = [
   },
 ] as const;
 
-export type AgentTemplate = {
-  readonly name: string;
-  readonly command: string;
-  readonly description: string | null;
-  readonly routeCapabilities: readonly string[];
-  readonly source: string;
-  readonly defaultMode: string | null;
-  readonly defaultModel: string | null;
-};
-
-export const ALL_AGENTS: readonly AgentTemplate[] = [
-] as const;

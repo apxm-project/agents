@@ -35,17 +35,6 @@ pub struct FrontendOperationSpec {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FrontendAgentTemplate {
-    pub name: String,
-    pub command: String,
-    pub description: Option<String>,
-    pub route_capabilities: Vec<String>,
-    pub source: String,
-    pub default_mode: Option<String>,
-    pub default_model: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FrontendProviderSpec {
     pub id: &'static str,
     pub protocol: &'static str,
@@ -150,10 +139,6 @@ pub fn provider_protocols() -> Vec<&'static str> {
         .iter()
         .map(|p| p.as_str())
         .collect()
-}
-
-pub fn agent_templates() -> Vec<FrontendAgentTemplate> {
-    Vec::new()
 }
 
 fn category_label(category: OperationCategory) -> &'static str {

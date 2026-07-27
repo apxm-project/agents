@@ -32,32 +32,23 @@ must not infer those relationships from the ProcessTable or scheduler state. See
 
 ### Phase 1: Spawn
 
-When `SPAWN_AGENT` includes a `profile` attribute or `agent_route = "auto"`,
-the runtime spawns a real ACP subprocess:
+When `SPAWN_AGENT` names an exact `profile`, the runtime spawns a real ACP
+subprocess:
 
-1. **Profile lookup**: the agent registry resolves the profile to a command and configuration.
-   With `agent_route = "auto"`, APXM first selects a profile from host-supplied
-   route candidates using `required_capabilities` and `preferred_profiles`.
+1. **Profile lookup**: the agent registry resolves the named profile to a command and configuration.
 2. **Process spawn**: an OS child process is created with stdin/stdout pipes and its own address space.
 3. **ACP handshake**: the initialize/authenticate/session-create protocol establishes a live session.
 4. **Registration**: the process is recorded in the ProcessTable, and AAM beliefs are updated to reflect the child agent's existence.
 
-Without `profile` or `agent_route`, SPAWN_AGENT performs metadata-only registration for local flow agents.
+Without `profile`, SPAWN_AGENT performs metadata-only registration for local flow agents.
 
-#### Runtime Agent Routing
+#### Exact-reference spawn binding
 
-Agent routing is a runtime binding step, not a goal-only planner feature.
-Any workflow can set `agent_route = "auto"` on `SPAWN_AGENT` and leave
-`profile` unset. The runtime then evaluates host-discovered route candidates
-from the configured `AgentSpawner`, applies the request requirements, and
-records an explainable route decision.
+A spawn names exactly one profile or it names none. There is no candidate set,
+no automatic routing mode, no selector, and no tie-breaking among discovered
+profiles, so nothing describes which profiles were passed over. A profile that
+does not resolve fails closed rather than falling through to another one.
 
-The default selector is deterministic: it validates explicit profiles, filters
-automatic candidates by `required_capabilities`, then uses active load,
-capability fit, caller `preferred_profiles`, and registry order as tie-breakers.
-
-The `SPAWN_AGENT` result includes the selected `profile`, `route_source`,
-`route_selector`, `route_reason`, and compact route diagnostics for traces.
 No native AIR authoring example is retained: executable examples use the
 source-first frontend and compile through the Rust bridge.
 

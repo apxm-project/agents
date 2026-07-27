@@ -32,16 +32,11 @@ Trigger:
 - Prompt file: `{{ worker.prompt_path }}`
 - Report file: `{{ worker.report_path }}`
 
-## Agent Route
+## Transport
 
 - Transport: `{{ worker.transport }}`
-{% if worker.agent_route %}- Agent route: `{{ worker.agent_route }}`
-{% elif worker.profile %}- Profile: `{{ worker.profile }}`
-{% endif %}{% if worker.selected_profile_hint %}- Selected profile hint: `{{ worker.selected_profile_hint }}`
-{% endif %}- Required route capabilities: {{ worker.required_capabilities }}
-- Preferred profiles: {{ worker.preferred_profiles }}
-- Route selector: `{{ worker.route_selector }}`
-- Route decision: {{ worker.route_reason }}
+- Profile: `{{ worker.profile }}`
+- Required capabilities: {{ worker.required_capabilities }}
 
 ## Read First
 
