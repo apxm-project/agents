@@ -78,7 +78,6 @@ export enum CoreEventKind {
   MODEL_CONTEXT_METRICS = "model_context_metrics",
   CONTEXT_LIFECYCLE = "context_lifecycle",
   CAPABILITY_EFFECT_RECEIPT = "capability_effect_receipt",
-  MODEL_REROUTED = "model_rerouted",
   CANCELLED = "cancelled",
   LOOP_DETECTED = "loop_detected",
   CONTEXT_WINDOW_WARNING = "context_window_warning",
@@ -141,7 +140,6 @@ export const CONTEXT_COMPACTED = kind(CoreEventKind.CONTEXT_COMPACTED, EventCate
 export const MODEL_CONTEXT_METRICS = kind(CoreEventKind.MODEL_CONTEXT_METRICS, EventCategoryKind.OBSERVABILITY);
 export const CONTEXT_LIFECYCLE = kind(CoreEventKind.CONTEXT_LIFECYCLE, EventCategoryKind.OBSERVABILITY);
 export const CAPABILITY_EFFECT_RECEIPT = kind(CoreEventKind.CAPABILITY_EFFECT_RECEIPT, EventCategoryKind.OBSERVABILITY);
-export const MODEL_REROUTED = kind(CoreEventKind.MODEL_REROUTED, EventCategoryKind.LIFECYCLE);
 export const CANCELLED = kind(CoreEventKind.CANCELLED, EventCategoryKind.ERROR);
 export const LOOP_DETECTED = kind(CoreEventKind.LOOP_DETECTED, EventCategoryKind.ERROR);
 export const CONTEXT_WINDOW_WARNING = kind(CoreEventKind.CONTEXT_WINDOW_WARNING, EventCategoryKind.ERROR);
@@ -204,7 +202,6 @@ export const CORE_EVENT_KINDS = [
   MODEL_CONTEXT_METRICS,
   CONTEXT_LIFECYCLE,
   CAPABILITY_EFFECT_RECEIPT,
-  MODEL_REROUTED,
   CANCELLED,
   LOOP_DETECTED,
   CONTEXT_WINDOW_WARNING,
