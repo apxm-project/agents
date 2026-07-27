@@ -45,6 +45,10 @@ use apxm_program::runtime_evidence::{
     NodeExecutionScope, RuntimeFact,
 };
 
+use crate::operational_usage::{
+    CommittedNativeUsage, OperationalUsageFactPort, OperationalUsageFactPublishRequest,
+    OperationalUsageOutcome,
+};
 use crate::ports::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
     CompositionReceiver, CompositionRequest, EventAwait, EventOutcome, EventPort, EventRef,
@@ -63,6 +67,7 @@ pub struct ExecutionPorts {
     composition: Arc<dyn CompositionPort>,
     execution_commit: Arc<dyn ExecutionCommitPort>,
     hook_handlers: Arc<dyn StaticHookHandlerPort>,
+    operational_usage: Option<Arc<dyn OperationalUsageFactPort>>,
 }
 
 /// Why the canonical driver cannot be constructed from a port bundle.
@@ -117,7 +122,20 @@ impl ExecutionPorts {
             composition,
             execution_commit: bundle.execution_commit().clone(),
             hook_handlers,
+            operational_usage: None,
         })
+    }
+
+    /// Attach the single runtime-owned operational-usage publisher admitted by
+    /// composition. The driver does not construct this port or discover a
+    /// destination: Server owns fact preparation and the configured port owns
+    /// the direct Auth-to-Server delivery exchange.
+    pub fn with_operational_usage_port(
+        mut self,
+        operational_usage: Arc<dyn OperationalUsageFactPort>,
+    ) -> Self {
+        self.operational_usage = Some(operational_usage);
+        self
     }
 }
 
@@ -217,6 +235,10 @@ pub struct RunReport {
     pub external_agent_evidence: Vec<ExternalAgentEvidence>,
     pub final_context: Value,
     pub commit: ExecutionCommitResult,
+    /// The outcome of direct Server operational-usage presentation. This is
+    /// only attempted after a successful atomic execution commit with nonzero
+    /// native `model.call` usage; external-agent/ACP usage never enters it.
+    pub operational_usage: OperationalUsageOutcome,
 }
 
 /// Why a canonical run could not be driven.
@@ -1115,12 +1137,37 @@ async fn commit_and_report(
         })
         .await;
 
+    let operational_usage = match &commit {
+        ExecutionCommitResult::Committed {
+            evidence_position_ref,
+            ..
+        } if state.native_usage.input_tokens != 0 || state.native_usage.output_tokens != 0 => {
+            match &ports.operational_usage {
+                Some(port) => match port
+                    .publish(OperationalUsageFactPublishRequest {
+                        commit_id: commit_id.to_string(),
+                        invocation_ref: version_scope.to_string(),
+                        evidence_position_ref: evidence_position_ref.clone(),
+                        native_usage: CommittedNativeUsage::from(state.native_usage),
+                    })
+                    .await
+                {
+                    Ok(()) => OperationalUsageOutcome::Published,
+                    Err(error) => OperationalUsageOutcome::Failed(error),
+                },
+                None => OperationalUsageOutcome::NotConfigured,
+            }
+        }
+        _ => OperationalUsageOutcome::NotApplicable,
+    };
+
     RunReport {
         node_outcomes: state.node_outcomes,
         native_usage: state.native_usage,
         external_agent_evidence: state.external_agent_evidence,
         final_context: state.context,
         commit,
+        operational_usage,
     }
 }
 

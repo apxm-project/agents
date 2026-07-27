@@ -13,6 +13,7 @@
 //! durable implementations are owned by the lifecycle/persistence plane.
 
 pub mod driver;
+pub mod operational_usage;
 pub mod ports;
 pub mod resume;
 pub mod session_ledger;
@@ -22,6 +23,13 @@ pub use driver::{
     ExecutionError, ExecutionPorts, ExecutionPortsError, ExecutionRequest, NodeOutcome,
     NoopStaticHookHandler, RunReport, StaticHookHandlerPort, StaticHookResult, execute,
     execute_resumable, resume, resume_event,
+};
+pub use operational_usage::{
+    AuthenticatedUsageFactPublisher, CommittedNativeUsage, OperationalUsageFactPort,
+    OperationalUsageFactPublishRequest, OperationalUsageOutcome, PreparedOperationalUsageFact,
+    ReqwestWorkloadHttpTransport, RuntimeWorkloadEndpoints, ServerUsageFactPreparationPort,
+    UsageFactDeliveryError, WorkloadHttpRequest, WorkloadHttpResponse, WorkloadHttpTransport,
+    workload_admission_digest,
 };
 pub use ports::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
