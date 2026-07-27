@@ -423,6 +423,8 @@ name = "apxm-program"
 version = "0.1.0"
 dependencies = [
  "apxm-ais",
+ "apxm-core",
+ "jsonschema",
  "serde",
  "serde_json",
  "sha2",
