@@ -33,7 +33,7 @@ parking_lot.workspace = true
 regex.workspace = true
 
 # Random
-rand = "0.9"
+rand = "0.9.5"
 
 # JSON Schema
 jsonschema.workspace = true
