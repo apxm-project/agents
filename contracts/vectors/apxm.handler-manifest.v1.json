@@ -150,7 +150,7 @@
           "qualname": "echo",
           "name": "echo",
           "source": {
-            "artifact_path": "/home/build/handler.mjs",
+            "artifact_path": "/build/handler.mjs",
             "content": "export function echo() {}\n"
           },
           "schema": { "type": "object" }

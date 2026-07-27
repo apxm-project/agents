@@ -167,7 +167,7 @@ test("the gate rejects a manifest the published schema rejects", () => {
           module: "capabilities/echo/handler",
           qualname: "echo",
           name: "echo",
-          source: { artifact_path: "/home/build/echo.mjs", content: "export function echo() {}\n" },
+          source: { artifact_path: "/build/echo.mjs", content: "export function echo() {}\n" },
           schema: { type: "object" },
         }],
       },
