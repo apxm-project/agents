@@ -82,7 +82,7 @@ impl std::str::FromStr for ProviderId {
             "anthropic" => Ok(ProviderId::Anthropic),
             "google" => Ok(ProviderId::Google),
             "ollama" => Ok(ProviderId::Ollama),
-            "vllm" | "vllm-graph-aware" => Ok(ProviderId::Vllm),
+            "vllm" => Ok(ProviderId::Vllm),
             "mock" => Ok(ProviderId::Mock),
             _ => Err(anyhow::anyhow!("Unknown provider: {}", s)),
         }
@@ -269,5 +269,46 @@ impl RegisteredProvider {
         let provider = Provider::from_protocol(spec.protocol, api_key, config).await?;
         let backend: Arc<dyn LLMBackend> = Arc::new(provider);
         Ok(Self { spec, backend })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn a_provider_id_parses_from_exactly_its_own_spelling() {
+        for id in ProviderId::all_variants() {
+            assert_eq!(
+                ProviderId::from_str(id.as_str()).expect("a provider id parses from its own name"),
+                *id,
+            );
+        }
+
+        for other_name in ["vllm-graph-aware", "gemini"] {
+            assert!(
+                ProviderId::from_str(other_name).is_err(),
+                "'{other_name}' is not a provider id, so it names no provider"
+            );
+        }
+    }
+
+    #[test]
+    fn a_provider_protocol_parses_from_exactly_its_own_spelling() {
+        for protocol in ProviderProtocol::all_variants() {
+            assert_eq!(
+                ProviderProtocol::from_str(protocol.as_str())
+                    .expect("a protocol parses from its own name"),
+                *protocol,
+            );
+        }
+
+        for other_name in ["vllm-graph-aware", "gemini"] {
+            assert!(
+                ProviderProtocol::from_str(other_name).is_err(),
+                "'{other_name}' is not a protocol name, so it names no protocol"
+            );
+        }
     }
 }

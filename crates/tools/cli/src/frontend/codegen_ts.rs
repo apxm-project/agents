@@ -327,7 +327,6 @@ fn render_ts_provider_types(buf: &mut String) {
     buf.push_str("  readonly defaultBaseUrl: string | null;\n");
     buf.push_str("  readonly requiresApiKey: boolean;\n");
     buf.push_str("  readonly apiKeyEnvVar: string | null;\n");
-    buf.push_str("  readonly aliases: readonly string[];\n");
     buf.push_str("};\n\n");
 
     let providers = builtin_providers();
@@ -350,14 +349,6 @@ fn render_ts_provider_types(buf: &mut String) {
         buf.push_str(&format!(
             "    apiKeyEnvVar: {},\n",
             ts_optional_string(p.api_key_env_var)
-        ));
-        buf.push_str(&format!(
-            "    aliases: [{}],\n",
-            p.aliases
-                .iter()
-                .map(|a| ts_string(a))
-                .collect::<Vec<_>>()
-                .join(", ")
         ));
         buf.push_str("  },\n");
     }

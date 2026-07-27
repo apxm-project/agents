@@ -1,5 +1,5 @@
 use apxm_backends::llm::ProviderProtocol;
-use apxm_backends::llm::catalog::{BUILTIN_MODELS, BUILTIN_PROVIDERS};
+use apxm_backends::llm::catalog::BUILTIN_PROVIDERS;
 use apxm_core::constants;
 use apxm_core::types::operations::{
     OperationCategory, OperationField, SemanticOpKind as AISOperationType, get_all_operations,
@@ -52,36 +52,6 @@ pub struct FrontendProviderSpec {
     pub default_base_url: Option<&'static str>,
     pub requires_api_key: bool,
     pub api_key_env_var: Option<&'static str>,
-    pub aliases: &'static [&'static str],
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FrontendModelSpec {
-    pub id: &'static str,
-    pub provider: &'static str,
-}
-
-pub fn builtin_models() -> Vec<FrontendModelSpec> {
-    BUILTIN_MODELS
-        .iter()
-        .map(|m| FrontendModelSpec {
-            id: m.id,
-            provider: m.protocol.as_str(),
-        })
-        .collect()
-}
-
-pub fn graph_metadata_constants() -> Vec<FrontendConstant> {
-    vec![
-        FrontendConstant {
-            name: "IS_ENTRY".to_string(),
-            value: constants::graph::metadata::IS_ENTRY,
-        },
-        FrontendConstant {
-            name: "AIR_PAYLOAD".to_string(),
-            value: constants::inner_plan::AIR_PAYLOAD,
-        },
-    ]
 }
 
 /// Derives attribute constants directly from `ALL_ATTR_NAMES` — no hand-maintained list.
@@ -171,7 +141,6 @@ pub fn builtin_providers() -> Vec<FrontendProviderSpec> {
             default_base_url: p.default_base_url,
             requires_api_key: p.requires_api_key,
             api_key_env_var: p.api_key_env_var,
-            aliases: p.aliases,
         })
         .collect()
 }
@@ -181,10 +150,6 @@ pub fn provider_protocols() -> Vec<&'static str> {
         .iter()
         .map(|p| p.as_str())
         .collect()
-}
-
-pub fn valid_param_types() -> &'static [&'static str] {
-    constants::parameters::VALID_TYPES
 }
 
 pub fn agent_templates() -> Vec<FrontendAgentTemplate> {
