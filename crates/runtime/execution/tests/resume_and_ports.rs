@@ -54,6 +54,7 @@ fn request(scope: &str) -> ExecutionRequest {
                 binding_digest: digest('a'),
             },
         }),
+        invocation_ref: format!("invocation.{scope}"),
         version_scope: scope.into(),
         commit_id: format!("commit.{scope}"),
         write_set: AtomicWriteSet {
@@ -243,6 +244,7 @@ async fn park_commits_context_continuation_wait_effects_evidence_usage_and_outpu
     assert!(tuple.continuation.is_some());
     let continuation: Continuation =
         serde_json::from_value(tuple.continuation.clone().unwrap()).expect("typed continuation");
+    assert_eq!(continuation.invocation_ref, "invocation.instance.atomic");
     assert!(continuation.next_schedule_position > 0);
     assert_eq!(continuation.loop_frames.len(), 1);
     assert_eq!(continuation.loop_frames[0].static_loop_id, "loop.main");

@@ -48,6 +48,7 @@ pub struct Continuation {
     pub external_agent_evidence: Vec<ExternalAgentEvidence>,
     pub evidence_batch: Vec<Fact>,
     pub event_sequence: u64,
+    pub invocation_ref: String,
     pub version_scope: String,
     pub commit_id: String,
     pub write_set: AtomicWriteSet,
