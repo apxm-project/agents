@@ -21,6 +21,11 @@
 //   is rejected, so the submitted text reaches no Node builtin and no package.
 // * The typecheck runs first and rejects before any evaluation, so a source that
 //   does not typecheck never executes.
+// * The process runs under Node's permission model with read access to the
+//   declared frontend package alone and write access to nothing. That wall is
+//   enforced below the module system, so it also holds against the filesystem
+//   reachable through the running process itself, which names no module and
+//   therefore passes both the typecheck and the resolve table above.
 //
 // The submitted text shares this process's standard output. It cannot forge a
 // result by writing to it: the port decodes the entire standard output as
