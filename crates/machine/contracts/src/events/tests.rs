@@ -427,11 +427,6 @@ fn representative_core_payloads() -> Vec<Box<dyn EventPayload>> {
             effect_ref: "effect-1".to_string(),
             status: CapabilityEffectReceiptStatus::Committed,
         }),
-        Box::new(ModelReroutedPayload {
-            original_model: "gpt-test".to_string(),
-            new_model: "llama-70b".to_string(),
-            reason: "failover".to_string(),
-        }),
         Box::new(CancelledPayload {
             reason: Some("user_requested".to_string()),
         }),
@@ -806,6 +801,53 @@ fn capability_effect_receipt_rejects_undispatchable_vocabulary() {
             "rejection must name the undispatchable {field} value: {message}"
         );
     }
+}
+
+/// A `model.call` target resolves to exactly one bound Model Deployment or
+/// fails closed. There is no candidate set, so no core event kind describes a
+/// model being moved from the backend it named onto another one.
+///
+/// The two assertions are deliberately different claims. The first is the
+/// reduction: `model_rerouted` is not a core kind, so nothing typed can
+/// construct or decode it, and readmitting the kind fails here. The second is
+/// the one-way migration: a record persisted before the reduction still
+/// decodes, as an opaque payload that preserves its original bytes. That is
+/// what makes this a reduction rather than a legacy reader — there is no arm
+/// that translates the retired name onto a canonical one, and no branch that
+/// drops the record so an operator reads a tree silently missing it.
+#[test]
+fn model_reroute_is_not_a_core_event_kind_and_persisted_history_reads_back_opaque() {
+    assert!(
+        kind::core_event_kind("model_rerouted").is_none(),
+        "a rerouted model names a second candidate; exact-reference selection has none"
+    );
+    assert!(
+        !CORE_EVENT_KINDS
+            .iter()
+            .any(|kind| kind.name() == "model_rerouted"),
+    );
+
+    let persisted = serde_json::json!({
+        "meta": sample_meta_json(),
+        "payload": {
+            "kind": "model_rerouted",
+            "original_model": "model-a",
+            "new_model": "model-b",
+            "reason": "failover",
+        },
+    });
+    let event: ApxmEvent = serde_json::from_value(persisted)
+        .expect("history written before the reduction still decodes");
+
+    let reencoded = serde_json::to_value(&event).expect("serialize the decoded record");
+    assert_eq!(
+        reencoded["payload"]["kind"], "model_rerouted",
+        "the retired name is preserved, not rewritten onto a canonical kind"
+    );
+    assert_eq!(
+        reencoded["payload"]["new_model"], "model-b",
+        "the opaque payload keeps the fields it was persisted with"
+    );
 }
 
 /// Terminal-set regression pin. Topology events resolved mid-run

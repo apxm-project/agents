@@ -430,14 +430,6 @@ export interface CapabilityEffectReceiptEventPayload {
   status: "committed";
 }
 
-export interface ModelReroutedEventPayload {
-  kind: "model_rerouted";
-  original_model: string;
-  new_model: string;
-  reason: string;
-  [key: string]: unknown;
-}
-
 export interface CancelledEventPayload {
   kind: "cancelled";
   reason: string | null;
@@ -650,7 +642,6 @@ export type KnownEventPayload =
   | ModelContextMetricsEventPayload
   | ContextLifecycleEventPayload
   | CapabilityEffectReceiptEventPayload
-  | ModelReroutedEventPayload
   | CancelledEventPayload
   | LoopDetectedEventPayload
   | ContextWindowWarningEventPayload
@@ -732,7 +723,6 @@ export const EVENT_KIND_REGISTRY: Readonly<Record<CoreEventKindName, EventKindDe
   "model_context_metrics": { name: "model_context_metrics", category: "observability", terminal: false, terminalSense: "n/a" },
   "context_lifecycle": { name: "context_lifecycle", category: "observability", terminal: false, terminalSense: "n/a" },
   "capability_effect_receipt": { name: "capability_effect_receipt", category: "observability", terminal: false, terminalSense: "n/a" },
-  "model_rerouted": { name: "model_rerouted", category: "lifecycle", terminal: false, terminalSense: "n/a" },
   "cancelled": { name: "cancelled", category: "error", terminal: false, terminalSense: "n/a" },
   "loop_detected": { name: "loop_detected", category: "error", terminal: false, terminalSense: "n/a" },
   "context_window_warning": { name: "context_window_warning", category: "error", terminal: false, terminalSense: "n/a" },

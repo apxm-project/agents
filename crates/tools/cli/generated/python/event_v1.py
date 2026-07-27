@@ -36,7 +36,6 @@ EVENT_KIND_REGISTRY: Final[dict[str, dict[str, object]]] = {'agent_message': {'c
  'memory_read': {'category': 'observability', 'terminal': False, 'terminal_sense': 'n/a'},
  'memory_write': {'category': 'observability', 'terminal': False, 'terminal_sense': 'n/a'},
  'model_context_metrics': {'category': 'observability', 'terminal': False, 'terminal_sense': 'n/a'},
- 'model_rerouted': {'category': 'lifecycle', 'terminal': False, 'terminal_sense': 'n/a'},
  'node_metrics': {'category': 'observability', 'terminal': False, 'terminal_sense': 'n/a'},
  'node_output': {'category': 'observability', 'terminal': False, 'terminal_sense': 'n/a'},
  'operation_end': {'category': 'lifecycle', 'terminal': False, 'terminal_sense': 'n/a'},
@@ -607,12 +606,6 @@ class CapabilityEffectReceiptEventPayload(_CapabilityEffectReceiptEventPayloadOp
     effect_ref: str
     status: Literal['committed']
 
-class ModelReroutedEventPayload(TypedDict):
-    kind: Literal['model_rerouted']
-    original_model: str
-    new_model: str
-    reason: str
-
 class CancelledEventPayload(TypedDict):
     kind: Literal['cancelled']
     reason: str | None
@@ -868,7 +861,6 @@ KnownEventPayload: TypeAlias = (
     ModelContextMetricsEventPayload |
     ContextLifecycleEventPayload |
     CapabilityEffectReceiptEventPayload |
-    ModelReroutedEventPayload |
     CancelledEventPayload |
     LoopDetectedEventPayload |
     ContextWindowWarningEventPayload |
@@ -953,7 +945,6 @@ CORE_EVENT_KINDS: Final[tuple[str, ...]] = (
     'model_context_metrics',
     'context_lifecycle',
     'capability_effect_receipt',
-    'model_rerouted',
     'cancelled',
     'loop_detected',
     'context_window_warning',

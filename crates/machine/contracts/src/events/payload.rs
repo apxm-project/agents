@@ -220,8 +220,6 @@ fn boxed_core_payload_from_json(
             .validate()
             .map_err(<serde_json::Error as serde::de::Error>::custom)?;
         Ok(Some(Box::new(receipt)))
-    } else if kind_name == kind::MODEL_REROUTED.name() {
-        boxed!(ModelReroutedPayload)
     } else if kind_name == kind::CANCELLED.name() {
         boxed!(CancelledPayload)
     } else if kind_name == kind::LOOP_DETECTED.name() {
@@ -1375,18 +1373,6 @@ impl_event_payload!(
     CapabilityEffectReceiptPayload,
     kind::CAPABILITY_EFFECT_RECEIPT
 );
-
-/// The model was rerouted to a different backend.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelReroutedPayload {
-    /// Originally requested model.
-    pub original_model: String,
-    /// The model that will actually be used.
-    pub new_model: String,
-    /// Why the reroute happened.
-    pub reason: String,
-}
-impl_event_payload!(ModelReroutedPayload, kind::MODEL_REROUTED);
 
 /// The request was cancelled.
 #[derive(Debug, Clone, Serialize, Deserialize)]
