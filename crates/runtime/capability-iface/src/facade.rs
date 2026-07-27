@@ -56,6 +56,11 @@ pub enum CapabilitySandboxPreflight {
 /// facade implementation is responsible for consulting its own capability
 /// registry to decide whether the named capability actually requires
 /// approval.
+///
+/// An approval-gated call is admitted only when the caller supplies both
+/// `agent_code` (the acting agent) and `grant_id` (the grant the effect is
+/// admitted under). The gate denies a gated call that carries neither; it
+/// never substitutes a value for an absent identity field.
 pub struct ApprovalContext<'a> {
     pub call_id: &'a str,
     pub tool_call_correlation: Option<&'a ToolCallCorrelation>,

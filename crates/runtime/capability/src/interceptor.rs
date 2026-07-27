@@ -21,6 +21,11 @@ use apxm_capability_iface::events::ExecutionEventEmitter;
 pub const DEFAULT_PERMISSION_TIMEOUT_SECS: u64 = 120;
 
 /// Execution-scoped context for approval-gated capability invocation.
+///
+/// An approval-gated invocation carries the identity that grants it:
+/// `agent_code` names the acting agent and `grant_id` names the grant under
+/// which the effect is admitted. Both are supplied by the caller; the gate
+/// never substitutes a value for either one.
 pub struct PreInvokeContext<'a> {
     pub registry: &'a CapabilityRegistry,
     pub call_id: &'a str,
@@ -33,7 +38,45 @@ pub struct PreInvokeContext<'a> {
     pub permission_timeout: Duration,
 }
 
-impl PreInvokeContext<'_> {
+/// Identity field an approval-gated invocation failed to carry.
+///
+/// Approval evidence attributes an effect to the identity that granted it, so
+/// an absent field is a denial rather than a substituted value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MissingInvocationIdentity {
+    /// No acting agent was supplied.
+    AgentCode,
+    /// No grant was supplied.
+    GrantId,
+}
+
+impl MissingInvocationIdentity {
+    /// Exact context field name that was absent.
+    #[must_use]
+    pub const fn field(self) -> &'static str {
+        match self {
+            Self::AgentCode => "agent_code",
+            Self::GrantId => "grant_id",
+        }
+    }
+}
+
+impl std::fmt::Display for MissingInvocationIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.field())
+    }
+}
+
+/// Acting identity resolved from a [`PreInvokeContext`].
+#[derive(Debug, Clone, Copy)]
+pub struct InvocationIdentity<'a> {
+    /// Agent the effect is attributed to.
+    pub agent_code: &'a str,
+    /// Grant the effect is admitted under.
+    pub grant_id: &'a str,
+}
+
+impl<'a> PreInvokeContext<'a> {
     /// Resolve timeout from `APXM_PERMISSION_TIMEOUT_SECS` (default 120s).
     pub fn permission_timeout_from_env() -> Duration {
         std::env::var(apxm_core::constants::env::APXM_PERMISSION_TIMEOUT_SECS)
@@ -44,6 +87,29 @@ impl PreInvokeContext<'_> {
                 || Duration::from_secs(DEFAULT_PERMISSION_TIMEOUT_SECS),
                 Duration::from_secs,
             )
+    }
+
+    /// Resolve the identity an approval-gated effect is attributed to.
+    ///
+    /// # Errors
+    ///
+    /// Returns the absent field when the context carries no acting agent or no
+    /// grant. Neither field has a substitute.
+    pub fn invocation_identity(
+        &self,
+    ) -> Result<InvocationIdentity<'a>, MissingInvocationIdentity> {
+        let agent_code = self
+            .agent_code
+            .filter(|value| !value.is_empty())
+            .ok_or(MissingInvocationIdentity::AgentCode)?;
+        let grant_id = self
+            .grant_id
+            .filter(|value| !value.is_empty())
+            .ok_or(MissingInvocationIdentity::GrantId)?;
+        Ok(InvocationIdentity {
+            agent_code,
+            grant_id,
+        })
     }
 }
 
@@ -93,6 +159,17 @@ pub(crate) async fn pre_invoke_policy_ctx(
         return InterceptDecision::Allow;
     }
 
+    let identity = match ctx.invocation_identity() {
+        Ok(identity) => identity,
+        Err(missing) => {
+            return InterceptDecision::Deny {
+                reason: format!(
+                    "capability '{name}' requires approval but the invocation context carries no {missing}"
+                ),
+            };
+        }
+    };
+
     let prompt_id = uuid::Uuid::new_v4().to_string();
     let args_digest = args_digest_for(args);
     let args_preview = serde_json::to_value(args).unwrap_or_else(|_| serde_json::json!({}));
@@ -102,10 +179,9 @@ pub(crate) async fn pre_invoke_policy_ctx(
         ))
     .to_rfc3339();
 
-    let agent_code = ctx.agent_code.unwrap_or("runtime");
     if let Some(emitter) = ctx.event_emitter {
         emitter.emit_approval_request_with_correlation(
-            agent_code,
+            identity.agent_code,
             name,
             &prompt_id,
             ApprovalRiskLevel::High,
@@ -116,7 +192,7 @@ pub(crate) async fn pre_invoke_policy_ctx(
     let prompt = PermissionPrompt {
         prompt_id: prompt_id.clone(),
         call_id: ctx.call_id.to_string(),
-        grant_id: ctx.grant_id.unwrap_or("runtime-grant").to_string(),
+        grant_id: identity.grant_id.to_string(),
         capability_id: name.to_string(),
         capability_binding: name.to_string(),
         host_id: ctx.host_id.map(str::to_string),
@@ -326,15 +402,26 @@ mod tests {
 
     struct StubBroker {
         decision: ConsentDecision,
+        prompts: parking_lot::Mutex<Vec<PermissionPrompt>>,
+    }
+
+    impl StubBroker {
+        fn new(decision: ConsentDecision) -> Self {
+            Self {
+                decision,
+                prompts: parking_lot::Mutex::new(Vec::new()),
+            }
+        }
     }
 
     #[async_trait::async_trait]
     impl ConsentBroker for StubBroker {
         async fn request_consent(
             &self,
-            _prompt: PermissionPrompt,
+            prompt: PermissionPrompt,
             _timeout: Duration,
         ) -> ConsentDecision {
+            self.prompts.lock().push(prompt);
             self.decision.clone()
         }
     }
@@ -365,14 +452,12 @@ mod tests {
     async fn pre_invoke_ctx_allows_on_approval() {
         let registry = CapabilityRegistry::new();
         registry.register(gated_echo()).unwrap();
-        let broker = StubBroker {
-            decision: ConsentDecision::Approved {
-                evidence: ApprovalEvidence::Interactive(InteractiveApproval {
-                    decided_at: "2026-01-01T00:00:00Z".into(),
-                    responder_subject: Some("user".into()),
-                }),
-            },
-        };
+        let broker = StubBroker::new(ConsentDecision::Approved {
+            evidence: ApprovalEvidence::Interactive(InteractiveApproval {
+                decided_at: "2026-01-01T00:00:00Z".into(),
+                responder_subject: Some("user".into()),
+            }),
+        });
         let emitter = RecordingEmitter::new();
         let ctx = PreInvokeContext {
             registry: &registry,
@@ -382,7 +467,7 @@ mod tests {
             event_emitter: Some(&emitter),
             host_id: Some("host-1"),
             agent_code: Some("agent-a"),
-            grant_id: None,
+            grant_id: Some("grant-a"),
             permission_timeout: Duration::from_secs(5),
         };
         let mut args = HashMap::new();
@@ -397,12 +482,123 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pre_invoke_ctx_attributes_the_prompt_to_the_supplied_identity() {
+        let registry = CapabilityRegistry::new();
+        registry.register(gated_echo()).unwrap();
+        let broker = StubBroker::new(ConsentDecision::Approved {
+            evidence: ApprovalEvidence::Interactive(InteractiveApproval {
+                decided_at: "2026-01-01T00:00:00Z".into(),
+                responder_subject: Some("user".into()),
+            }),
+        });
+        let emitter = RecordingEmitter::new();
+        let ctx = PreInvokeContext {
+            registry: &registry,
+            call_id: "call-identity",
+            tool_call_correlation: None,
+            consent_broker: &broker,
+            event_emitter: Some(&emitter),
+            host_id: Some("host-1"),
+            agent_code: Some("agent-a"),
+            grant_id: Some("grant-a"),
+            permission_timeout: Duration::from_secs(5),
+        };
+
+        let decision = pre_invoke_ctx(&ctx, "gated-echo", &HashMap::new()).await;
+
+        assert!(matches!(decision, InterceptDecision::Allow));
+        let prompts = broker.prompts.lock();
+        assert_eq!(prompts.len(), 1);
+        assert_eq!(
+            prompts[0].grant_id, "grant-a",
+            "the prompt carries the grant supplied by the caller"
+        );
+        assert_eq!(
+            emitter.requests.lock()[0].0,
+            "agent-a",
+            "the approval request names the agent supplied by the caller"
+        );
+    }
+
+    #[tokio::test]
+    async fn pre_invoke_ctx_denies_a_gated_call_carrying_no_grant() {
+        let registry = CapabilityRegistry::new();
+        registry.register(gated_echo()).unwrap();
+        let broker = StubBroker::new(ConsentDecision::Approved {
+            evidence: ApprovalEvidence::Interactive(InteractiveApproval {
+                decided_at: "2026-01-01T00:00:00Z".into(),
+                responder_subject: Some("user".into()),
+            }),
+        });
+        let emitter = RecordingEmitter::new();
+        let ctx = PreInvokeContext {
+            registry: &registry,
+            call_id: "call-no-grant",
+            tool_call_correlation: None,
+            consent_broker: &broker,
+            event_emitter: Some(&emitter),
+            host_id: Some("host-1"),
+            agent_code: Some("agent-a"),
+            grant_id: None,
+            permission_timeout: Duration::from_secs(5),
+        };
+
+        let decision = pre_invoke_ctx(&ctx, "gated-echo", &HashMap::new()).await;
+
+        assert!(
+            matches!(decision, InterceptDecision::Deny { ref reason } if reason.contains("grant_id")),
+            "a gated call carrying no grant is denied and names the absent field"
+        );
+        assert!(
+            broker.prompts.lock().is_empty(),
+            "no prompt is raised for an invocation with no grant"
+        );
+        assert!(
+            emitter.requests.lock().is_empty(),
+            "no approval request attributes the effect to a substituted identity"
+        );
+    }
+
+    #[tokio::test]
+    async fn pre_invoke_ctx_denies_a_gated_call_carrying_no_agent_code() {
+        let registry = CapabilityRegistry::new();
+        registry.register(gated_echo()).unwrap();
+        let broker = StubBroker::new(ConsentDecision::Approved {
+            evidence: ApprovalEvidence::Interactive(InteractiveApproval {
+                decided_at: "2026-01-01T00:00:00Z".into(),
+                responder_subject: Some("user".into()),
+            }),
+        });
+        let emitter = RecordingEmitter::new();
+        let ctx = PreInvokeContext {
+            registry: &registry,
+            call_id: "call-no-agent",
+            tool_call_correlation: None,
+            consent_broker: &broker,
+            event_emitter: Some(&emitter),
+            host_id: Some("host-1"),
+            agent_code: None,
+            grant_id: Some("grant-a"),
+            permission_timeout: Duration::from_secs(5),
+        };
+
+        let decision = pre_invoke_ctx(&ctx, "gated-echo", &HashMap::new()).await;
+
+        assert!(
+            matches!(decision, InterceptDecision::Deny { ref reason } if reason.contains("agent_code")),
+            "a gated call carrying no acting agent is denied and names the absent field"
+        );
+        assert!(
+            emitter.requests.lock().is_empty(),
+            "no approval request attributes the effect to a substituted identity"
+        );
+    }
+
+    #[tokio::test]
     async fn pre_invoke_ctx_denies_on_timeout() {
         let registry = CapabilityRegistry::new();
         registry.register(gated_echo()).unwrap();
-        let broker = StubBroker {
-            decision: ConsentDecision::Expired,
-        };
+        let broker = StubBroker::new(ConsentDecision::Expired);
         let emitter = RecordingEmitter::new();
         let ctx = PreInvokeContext {
             registry: &registry,
@@ -411,8 +607,8 @@ mod tests {
             consent_broker: &broker,
             event_emitter: Some(&emitter),
             host_id: None,
-            agent_code: None,
-            grant_id: None,
+            agent_code: Some("agent-a"),
+            grant_id: Some("grant-a"),
             permission_timeout: Duration::from_secs(1),
         };
         let decision = pre_invoke_ctx(&ctx, "gated-echo", &HashMap::new()).await;
@@ -433,8 +629,8 @@ mod tests {
             consent_broker: &broker,
             event_emitter: Some(&emitter),
             host_id: None,
-            agent_code: None,
-            grant_id: None,
+            agent_code: Some("agent-a"),
+            grant_id: Some("grant-a"),
             permission_timeout: Duration::from_secs(1),
         };
 
@@ -452,11 +648,9 @@ mod tests {
     async fn pre_invoke_ctx_emits_denied_for_explicit_rejection() {
         let registry = CapabilityRegistry::new();
         registry.register(gated_echo()).unwrap();
-        let broker = StubBroker {
-            decision: ConsentDecision::Denied {
-                reason: "operator rejected".into(),
-            },
-        };
+        let broker = StubBroker::new(ConsentDecision::Denied {
+            reason: "operator rejected".into(),
+        });
         let emitter = RecordingEmitter::new();
         let ctx = PreInvokeContext {
             registry: &registry,
@@ -465,8 +659,8 @@ mod tests {
             consent_broker: &broker,
             event_emitter: Some(&emitter),
             host_id: None,
-            agent_code: None,
-            grant_id: None,
+            agent_code: Some("agent-a"),
+            grant_id: Some("grant-a"),
             permission_timeout: Duration::from_secs(1),
         };
 
@@ -483,11 +677,9 @@ mod tests {
     async fn pre_invoke_ctx_skips_non_gated_capabilities() {
         let registry = CapabilityRegistry::new();
         registry.register(Arc::new(EchoCapability::new())).unwrap();
-        let broker = StubBroker {
-            decision: ConsentDecision::Denied {
-                reason: "should not run".into(),
-            },
-        };
+        let broker = StubBroker::new(ConsentDecision::Denied {
+            reason: "should not run".into(),
+        });
         let ctx = PreInvokeContext {
             registry: &registry,
             call_id: "call-5",
