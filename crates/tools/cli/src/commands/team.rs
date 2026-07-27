@@ -109,11 +109,13 @@ struct TeamMember {
     system_prompt: Option<String>,
 }
 
+/// A team document declares its roster under exactly one key: `members`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct TeamDefinition {
     name: String,
     description: String,
-    #[serde(default, alias = "member")]
+    #[serde(default)]
     members: Vec<TeamMember>,
 }
 
@@ -249,6 +251,32 @@ profile = "canonical-driver"
         assert_eq!(team.members.len(), 1);
         assert_eq!(team.members[0].role, "driver");
         assert_eq!(team.members[0].profile, "canonical-driver");
+    }
+
+    #[test]
+    fn team_registry_rejects_singular_member_key() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("teams.toml");
+        std::fs::write(
+            &path,
+            r#"
+[[team]]
+name = "core"
+description = "Core team"
+
+[[team.member]]
+role = "driver"
+profile = "canonical-driver"
+"#,
+        )
+        .expect("write teams");
+
+        let registry = TeamRegistry::load_from_path(&path);
+
+        assert!(
+            registry.get("core").is_none(),
+            "`member` is not a roster key; only `members` declares a team roster"
+        );
     }
 
     #[test]
