@@ -159,19 +159,42 @@ impl RuntimeError {
         }
     }
 
+    /// The serialized `kind` discriminant this error records itself under.
+    ///
+    /// This is the single place a variant's wire name is written, and the
+    /// match is exhaustive with no wildcard arm: a variant added to
+    /// `RuntimeError` does not compile until it names the kind it records.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            RuntimeError::Scheduler { .. } => "scheduler",
+            RuntimeError::SchedulerMissingToken { .. } => "scheduler_missing_token",
+            RuntimeError::SchedulerDuplicateProducer { .. } => "scheduler_duplicate_producer",
+            RuntimeError::SchedulerDeadlock { .. } => "scheduler_deadlock",
+            RuntimeError::SchedulerCancelled => "scheduler_cancelled",
+            RuntimeError::SchedulerRetryExhausted { .. } => "scheduler_retry_exhausted",
+            RuntimeError::Operation { .. } => "operation",
+            RuntimeError::OperationParked { .. } => "operation_parked",
+            RuntimeError::Capability { .. } => "capability",
+            RuntimeError::LLM { .. } => "llm",
+            RuntimeError::Memory { .. } => "memory",
+            RuntimeError::Security(_) => "security",
+            RuntimeError::Timeout { .. } => "timeout",
+            RuntimeError::Serialization(_) => "serialization",
+            RuntimeError::Executor(_) => "executor",
+            RuntimeError::State(_) => "state",
+            RuntimeError::InvalidTask { .. } => "invalid_task",
+        }
+    }
+
     /// Serialize this error into a JSON `Value` for the catch-branch input slot.
     pub fn to_value(&self) -> serde_json::Value {
-        let (kind, message, details) = match self {
-            RuntimeError::Scheduler { message } => {
-                ("scheduler", message.clone(), serde_json::Value::Null)
-            }
+        let (message, details) = match self {
+            RuntimeError::Scheduler { message } => (message.clone(), serde_json::Value::Null),
             RuntimeError::SchedulerMissingToken { node_id, token_id } => (
-                "scheduler_missing_token",
                 format!("Missing token {} for node {}", token_id, node_id),
                 serde_json::json!({ "node_id": node_id, "token_id": token_id }),
             ),
             RuntimeError::SchedulerDuplicateProducer { token_id } => (
-                "scheduler_duplicate_producer",
                 format!("Duplicate producer for token {}", token_id),
                 serde_json::json!({ "token_id": token_id }),
             ),
@@ -179,30 +202,24 @@ impl RuntimeError {
                 timeout_ms,
                 remaining,
             } => (
-                "scheduler_deadlock",
                 format!(
                     "Deadlock detected after {}ms with {} nodes remaining",
                     timeout_ms, remaining
                 ),
                 serde_json::json!({ "timeout_ms": timeout_ms, "remaining": remaining }),
             ),
-            RuntimeError::SchedulerCancelled => (
-                "scheduler_cancelled",
-                "Execution cancelled".to_string(),
-                serde_json::Value::Null,
-            ),
+            RuntimeError::SchedulerCancelled => {
+                ("Execution cancelled".to_string(), serde_json::Value::Null)
+            }
             RuntimeError::SchedulerRetryExhausted { node_id, reason } => (
-                "scheduler_retry_exhausted",
                 format!("Node {} failed after retries: {}", node_id, reason),
                 serde_json::json!({ "node_id": node_id, "reason": reason }),
             ),
             RuntimeError::Operation { op_type, message } => (
-                "operation",
                 message.clone(),
                 serde_json::json!({ "op_type": format!("{}", op_type) }),
             ),
             RuntimeError::OperationParked { wait_key } => (
-                "operation_parked",
                 format!("parked awaiting event: {}", wait_key),
                 serde_json::json!({ "wait_key": wait_key }),
             ),
@@ -210,39 +227,28 @@ impl RuntimeError {
                 capability,
                 message,
             } => (
-                "capability",
                 message.clone(),
                 serde_json::json!({ "capability": capability }),
             ),
             RuntimeError::LLM { message, backend } => (
-                "llm",
                 message.clone(),
                 serde_json::json!({ "backend": backend }),
             ),
-            RuntimeError::Memory { message, space } => (
-                "memory",
-                message.clone(),
-                serde_json::json!({ "space": space }),
-            ),
-            RuntimeError::Security(sec) => {
-                ("security", format!("{}", sec), serde_json::Value::Null)
+            RuntimeError::Memory { message, space } => {
+                (message.clone(), serde_json::json!({ "space": space }))
             }
+            RuntimeError::Security(sec) => (format!("{}", sec), serde_json::Value::Null),
             RuntimeError::Timeout { op_id, timeout } => (
-                "timeout",
                 format!("Operation {:?} exceeded timeout {:?}", op_id, timeout),
                 serde_json::json!({ "timeout_ms": timeout.as_millis() as u64 }),
             ),
-            RuntimeError::Serialization(msg) => {
-                ("serialization", msg.clone(), serde_json::Value::Null)
-            }
-            RuntimeError::Executor(msg) => ("executor", msg.clone(), serde_json::Value::Null),
-            RuntimeError::State(msg) => ("state", msg.clone(), serde_json::Value::Null),
-            RuntimeError::InvalidTask { reason } => {
-                ("invalid_task", reason.clone(), serde_json::Value::Null)
-            }
+            RuntimeError::Serialization(msg) => (msg.clone(), serde_json::Value::Null),
+            RuntimeError::Executor(msg) => (msg.clone(), serde_json::Value::Null),
+            RuntimeError::State(msg) => (msg.clone(), serde_json::Value::Null),
+            RuntimeError::InvalidTask { reason } => (reason.clone(), serde_json::Value::Null),
         };
         serde_json::json!({
-            "kind": kind,
+            "kind": self.kind(),
             "message": message,
             "details": details,
         })
@@ -295,7 +301,70 @@ impl RuntimeError {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::RuntimeError;
+    use crate::error::security::SecurityError;
+    use crate::types::AISOperationType;
+
+    /// One representative value of every `RuntimeError` variant.
+    ///
+    /// The `variant_count` assertion below is what makes this list total: it
+    /// reads the arity from the enum definition, so adding a variant without
+    /// adding it here fails the guard rather than being silently skipped.
+    fn every_runtime_error_variant() -> Vec<RuntimeError> {
+        vec![
+            RuntimeError::Scheduler {
+                message: "m".to_string(),
+            },
+            RuntimeError::SchedulerMissingToken {
+                node_id: 1,
+                token_id: 2,
+            },
+            RuntimeError::SchedulerDuplicateProducer { token_id: 2 },
+            RuntimeError::SchedulerDeadlock {
+                timeout_ms: 1,
+                remaining: 1,
+            },
+            RuntimeError::SchedulerCancelled,
+            RuntimeError::SchedulerRetryExhausted {
+                node_id: 1,
+                reason: "m".to_string(),
+            },
+            RuntimeError::Operation {
+                op_type: AISOperationType::ModelCall,
+                message: "m".to_string(),
+            },
+            RuntimeError::OperationParked {
+                wait_key: "k".to_string(),
+            },
+            RuntimeError::Capability {
+                capability: "c".to_string(),
+                message: "m".to_string(),
+            },
+            RuntimeError::LLM {
+                message: "m".to_string(),
+                backend: None,
+            },
+            RuntimeError::Memory {
+                message: "m".to_string(),
+                space: None,
+            },
+            RuntimeError::Security(SecurityError::SandboxError {
+                message: "m".to_string(),
+            }),
+            RuntimeError::Timeout {
+                op_id: 1,
+                timeout: Duration::from_secs(1),
+            },
+            RuntimeError::Serialization("m".to_string()),
+            RuntimeError::Executor("m".to_string()),
+            RuntimeError::State("m".to_string()),
+            RuntimeError::InvalidTask {
+                reason: "m".to_string(),
+            },
+        ]
+    }
 
     /// No runtime error reports a failed selection among candidates.
     ///
@@ -306,36 +375,29 @@ mod tests {
     /// by a router, and a typed error naming one asserts on the wire that the
     /// execution plane ranks candidates.
     ///
-    /// The scan runs over the serialized `kind` discriminants this enum
-    /// actually produces, so it fails on any variant that reintroduces a
-    /// routing failure without this test being edited.
+    /// The scan covers the whole enum, not a sample of it. Two things hold it
+    /// total: `RuntimeError::kind` matches exhaustively with no wildcard arm,
+    /// so a new variant does not compile until it names its wire kind, and the
+    /// representative list is checked against the enum's own variant count, so
+    /// a new variant does not pass this test until it is scanned here.
     #[test]
     fn no_runtime_error_kind_reports_a_failed_selection() {
-        let kinds: Vec<String> = [
-            RuntimeError::Scheduler {
-                message: "m".to_string(),
-            },
-            RuntimeError::SchedulerCancelled,
-            RuntimeError::Executor("m".to_string()),
-            RuntimeError::State("m".to_string()),
-            RuntimeError::Serialization("m".to_string()),
-            RuntimeError::InvalidTask {
-                reason: "m".to_string(),
-            },
-            RuntimeError::LLM {
-                message: "m".to_string(),
-                backend: None,
-            },
-            RuntimeError::Memory {
-                message: "m".to_string(),
-                space: None,
-            },
-        ]
-        .iter()
-        .map(|error| error.to_value()["kind"].as_str().unwrap().to_string())
-        .collect();
+        let variants = every_runtime_error_variant();
+        assert_eq!(
+            variants.len(),
+            std::mem::variant_count::<RuntimeError>(),
+            "the guard must scan every RuntimeError variant, not a hand-picked subset"
+        );
 
-        let offenders: Vec<&String> = kinds
+        let kinds: Vec<&'static str> = variants.iter().map(RuntimeError::kind).collect();
+        let distinct: std::collections::BTreeSet<&'static str> = kinds.iter().copied().collect();
+        assert_eq!(
+            distinct.len(),
+            kinds.len(),
+            "two variants share a wire kind, so the scan does not reach them both: {kinds:?}"
+        );
+
+        let offenders: Vec<&&str> = kinds
             .iter()
             .filter(|kind| kind.contains("route") || kind.contains("candidate"))
             .collect();
@@ -343,6 +405,20 @@ mod tests {
             offenders.is_empty(),
             "runtime error kinds report a failed selection: {offenders:?}"
         );
+    }
+
+    /// The serialized envelope records the same kind the variant declares, so
+    /// scanning `RuntimeError::kind` scans what is actually written to
+    /// evidence.
+    #[test]
+    fn the_serialized_kind_is_the_kind_the_variant_declares() {
+        for error in every_runtime_error_variant() {
+            assert_eq!(
+                error.to_value()["kind"].as_str(),
+                Some(error.kind()),
+                "serialized kind drifted from the declared kind for {error}"
+            );
+        }
     }
 
     /// A retired error kind decodes into the unknown-kind arm rather than a
