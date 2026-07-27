@@ -24,11 +24,11 @@ use apxm_program::frontend_graph::{HookBinding, HookPhase, HookReturnMode, HookS
 use apxm_program::runtime_evidence::Fact;
 
 use apxm_execution::{
-    CapabilityOutcome, CapabilityPort, CapabilityRequest, CommittedNativeUsage, CompositionOutcome,
-    CompositionPort, CompositionReceiver, CompositionRequest, EventAwait, EventOutcome, EventPort,
-    ExecutionError, ExecutionPorts, ExecutionRequest, NodeOutcome, OperationalUsageFactPort,
-    OperationalUsageFactPublishRequest, OperationalUsageOutcome, StaticHookHandlerPort,
-    StaticHookResult, UsageFactDeliveryError, execute,
+    CapabilityOutcome, CapabilityPort, CapabilityRequest, CommittedNativeUsage,
+    CommittedNativeUsageFact, CompositionOutcome, CompositionPort, CompositionReceiver,
+    CompositionRequest, EventAwait, EventOutcome, EventPort, ExecutionError, ExecutionPorts,
+    ExecutionRequest, NodeOutcome, OperationalUsageFactError, OperationalUsageFactPort,
+    OperationalUsageOutcome, StaticHookHandlerPort, StaticHookResult, execute,
 };
 
 fn digest(c: char) -> String {
@@ -224,19 +224,19 @@ impl ExecutionCommitPort for FakeCommit {
 
 #[derive(Default)]
 struct RecordingOperationalUsage {
-    calls: Mutex<Vec<OperationalUsageFactPublishRequest>>,
-    fail: Option<UsageFactDeliveryError>,
+    calls: Mutex<Vec<CommittedNativeUsageFact>>,
+    fail: Option<OperationalUsageFactError>,
 }
 
 impl RecordingOperationalUsage {
-    fn failing(error: UsageFactDeliveryError) -> Self {
+    fn failing(error: OperationalUsageFactError) -> Self {
         Self {
             calls: Mutex::new(Vec::new()),
             fail: Some(error),
         }
     }
 
-    fn calls(&self) -> Vec<OperationalUsageFactPublishRequest> {
+    fn calls(&self) -> Vec<CommittedNativeUsageFact> {
         self.calls.lock().unwrap().clone()
     }
 }
@@ -245,8 +245,8 @@ impl RecordingOperationalUsage {
 impl OperationalUsageFactPort for RecordingOperationalUsage {
     async fn publish(
         &self,
-        request: OperationalUsageFactPublishRequest,
-    ) -> Result<(), UsageFactDeliveryError> {
+        request: CommittedNativeUsageFact,
+    ) -> Result<(), OperationalUsageFactError> {
         self.calls.lock().unwrap().push(request);
         match &self.fail {
             Some(error) => Err(error.clone()),
@@ -462,7 +462,7 @@ async fn committed_native_usage_is_presented_once_and_excludes_acp_peer_usage() 
     assert_eq!(report.operational_usage, OperationalUsageOutcome::Published);
     assert_eq!(
         usage.calls(),
-        vec![OperationalUsageFactPublishRequest {
+        vec![CommittedNativeUsageFact {
             commit_id: "c1".into(),
             invocation_ref: "instance.1".into(),
             evidence_position_ref: "evidence:1".into(),
@@ -487,7 +487,7 @@ async fn committed_native_usage_is_presented_once_and_excludes_acp_peer_usage() 
 async fn usage_presentation_failure_is_reported_after_commit_not_as_success_or_rollback() {
     let commit = Arc::new(FakeCommit::new());
     let usage = Arc::new(RecordingOperationalUsage::failing(
-        UsageFactDeliveryError::TransportUnavailable,
+        OperationalUsageFactError::Unavailable,
     ));
     let ports = ports(commit).with_operational_usage_port(usage.clone());
 
@@ -501,7 +501,7 @@ async fn usage_presentation_failure_is_reported_after_commit_not_as_success_or_r
     ));
     assert_eq!(
         report.operational_usage,
-        OperationalUsageOutcome::Failed(UsageFactDeliveryError::TransportUnavailable)
+        OperationalUsageOutcome::Failed(OperationalUsageFactError::Unavailable)
     );
     assert_eq!(usage.calls().len(), 1);
 }

@@ -46,7 +46,7 @@ use apxm_program::runtime_evidence::{
 };
 
 use crate::operational_usage::{
-    CommittedNativeUsage, OperationalUsageFactPort, OperationalUsageFactPublishRequest,
+    CommittedNativeUsage, CommittedNativeUsageFact, OperationalUsageFactPort,
     OperationalUsageOutcome,
 };
 use crate::ports::{
@@ -1144,7 +1144,7 @@ async fn commit_and_report(
         } if state.native_usage.input_tokens != 0 || state.native_usage.output_tokens != 0 => {
             match &ports.operational_usage {
                 Some(port) => match port
-                    .publish(OperationalUsageFactPublishRequest {
+                    .publish(CommittedNativeUsageFact {
                         commit_id: commit_id.to_string(),
                         invocation_ref: version_scope.to_string(),
                         evidence_position_ref: evidence_position_ref.clone(),

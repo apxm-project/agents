@@ -25,11 +25,8 @@ pub use driver::{
     execute_resumable, resume, resume_event,
 };
 pub use operational_usage::{
-    AuthenticatedUsageFactPublisher, CommittedNativeUsage, OperationalUsageFactPort,
-    OperationalUsageFactPublishRequest, OperationalUsageOutcome, PreparedOperationalUsageFact,
-    ReqwestWorkloadHttpTransport, RuntimeWorkloadEndpoints, ServerUsageFactPreparationPort,
-    UsageFactDeliveryError, WorkloadHttpRequest, WorkloadHttpResponse, WorkloadHttpTransport,
-    workload_admission_digest,
+    CommittedNativeUsage, CommittedNativeUsageFact, OperationalUsageFactError,
+    OperationalUsageFactPort, OperationalUsageOutcome,
 };
 pub use ports::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
