@@ -63,10 +63,6 @@ EVENT_KIND_REGISTRY: Final[dict[str, dict[str, object]]] = {'agent_message': {'c
  'tool_call_end': {'category': 'agent', 'terminal': False, 'terminal_sense': 'n/a'},
  'tool_end': {'category': 'lifecycle', 'terminal': False, 'terminal_sense': 'n/a'},
  'tool_start': {'category': 'lifecycle', 'terminal': False, 'terminal_sense': 'n/a'},
- 'turn_aborted': {'category': 'lifecycle', 'terminal': True, 'terminal_sense': 'run_end'},
- 'turn_boundary': {'category': 'lifecycle', 'terminal': False, 'terminal_sense': 'n/a'},
- 'turn_complete': {'category': 'lifecycle', 'terminal': True, 'terminal_sense': 'run_end'},
- 'turn_started': {'category': 'lifecycle', 'terminal': False, 'terminal_sense': 'n/a'},
  'usage': {'category': 'observability', 'terminal': False, 'terminal_sense': 'n/a'},
  'warning': {'category': 'error', 'terminal': False, 'terminal_sense': 'n/a'},
  'workflow_finished': {'category': 'lifecycle', 'terminal': False, 'terminal_sense': 'n/a'},
@@ -630,34 +626,6 @@ class SessionEndEventPayload(TypedDict):
     session_id: str
     total_turns: int
 
-class TurnBoundaryEventPayload(TypedDict):
-    kind: Literal['turn_boundary']
-    turn_number: int
-    direction: Literal['request', 'response']
-
-class _TurnStartedEventPayloadOptional(TypedDict, total=False):
-    turn_id: str
-    coordinator_label: str
-
-class TurnStartedEventPayload(_TurnStartedEventPayloadOptional):
-    kind: Literal['turn_started']
-    execution_id: str
-
-class TurnCompleteEventPayload(TypedDict):
-    kind: Literal['turn_complete']
-    execution_id: str
-    duration_ms: int
-    had_answer: bool
-
-class _TurnAbortedEventPayloadOptional(TypedDict, total=False):
-    error_message_safe: str
-
-class TurnAbortedEventPayload(_TurnAbortedEventPayloadOptional):
-    kind: Literal['turn_aborted']
-    execution_id: str
-    duration_ms: int
-    reason: str
-
 class _SubagentSpawnBeginEventPayloadOptional(TypedDict, total=False):
     agent_name: str
     agent_type: str
@@ -866,10 +834,6 @@ KnownEventPayload: TypeAlias = (
     ContextWindowWarningEventPayload |
     SessionStartEventPayload |
     SessionEndEventPayload |
-    TurnBoundaryEventPayload |
-    TurnStartedEventPayload |
-    TurnCompleteEventPayload |
-    TurnAbortedEventPayload |
     SubagentSpawnBeginEventPayload |
     SubagentSpawnEndEventPayload |
     SubagentLlmCallBeginEventPayload |
@@ -950,10 +914,6 @@ CORE_EVENT_KINDS: Final[tuple[str, ...]] = (
     'context_window_warning',
     'session_start',
     'session_end',
-    'turn_boundary',
-    'turn_started',
-    'turn_complete',
-    'turn_aborted',
     'subagent_spawn_begin',
     'subagent_spawn_end',
     'subagent_llm_call_begin',

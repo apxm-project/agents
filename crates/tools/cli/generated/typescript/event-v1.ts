@@ -464,38 +464,6 @@ export interface SessionEndEventPayload {
   [key: string]: unknown;
 }
 
-export interface TurnBoundaryEventPayload {
-  kind: "turn_boundary";
-  turn_number: number;
-  direction: "request" | "response";
-  [key: string]: unknown;
-}
-
-export interface TurnStartedEventPayload {
-  kind: "turn_started";
-  execution_id: string;
-  turn_id?: string;
-  coordinator_label?: string;
-  [key: string]: unknown;
-}
-
-export interface TurnCompleteEventPayload {
-  kind: "turn_complete";
-  execution_id: string;
-  duration_ms: number;
-  had_answer: boolean;
-  [key: string]: unknown;
-}
-
-export interface TurnAbortedEventPayload {
-  kind: "turn_aborted";
-  execution_id: string;
-  duration_ms: number;
-  reason: string;
-  error_message_safe?: string;
-  [key: string]: unknown;
-}
-
 export interface SubagentSpawnBeginEventPayload {
   kind: "subagent_spawn_begin";
   agent_code: string;
@@ -647,10 +615,6 @@ export type KnownEventPayload =
   | ContextWindowWarningEventPayload
   | SessionStartEventPayload
   | SessionEndEventPayload
-  | TurnBoundaryEventPayload
-  | TurnStartedEventPayload
-  | TurnCompleteEventPayload
-  | TurnAbortedEventPayload
   | SubagentSpawnBeginEventPayload
   | SubagentSpawnEndEventPayload
   | SubagentLlmCallBeginEventPayload
@@ -728,10 +692,6 @@ export const EVENT_KIND_REGISTRY: Readonly<Record<CoreEventKindName, EventKindDe
   "context_window_warning": { name: "context_window_warning", category: "error", terminal: false, terminalSense: "n/a" },
   "session_start": { name: "session_start", category: "lifecycle", terminal: false, terminalSense: "n/a" },
   "session_end": { name: "session_end", category: "lifecycle", terminal: true, terminalSense: "run_end" },
-  "turn_boundary": { name: "turn_boundary", category: "lifecycle", terminal: false, terminalSense: "n/a" },
-  "turn_started": { name: "turn_started", category: "lifecycle", terminal: false, terminalSense: "n/a" },
-  "turn_complete": { name: "turn_complete", category: "lifecycle", terminal: true, terminalSense: "run_end" },
-  "turn_aborted": { name: "turn_aborted", category: "lifecycle", terminal: true, terminalSense: "run_end" },
   "subagent_spawn_begin": { name: "subagent_spawn_begin", category: "agent", terminal: false, terminalSense: "n/a" },
   "subagent_spawn_end": { name: "subagent_spawn_end", category: "agent", terminal: false, terminalSense: "n/a" },
   "subagent_llm_call_begin": { name: "subagent_llm_call_begin", category: "agent", terminal: false, terminalSense: "n/a" },
