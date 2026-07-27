@@ -168,6 +168,13 @@ pub enum ModelReferenceError {
     #[error("LLM request has no model reference; every request names exactly one model")]
     MissingModel,
 
+    /// The reference is not byte-exact: it carries surrounding whitespace and
+    /// so names a model only under normalization.
+    #[error(
+        "LLM model reference {model:?} is not exact; a reference names its model byte-for-byte and is never normalized to one"
+    )]
+    InexactModel { model: String },
+
     /// The referenced model is bound to no backend.
     #[error("LLM model '{model}' is not bound to a backend")]
     UnknownModel { model: String },
@@ -188,6 +195,26 @@ pub enum ModelReferenceError {
         model: String,
         bound_backend: String,
     },
+}
+
+/// Accept a model reference only if it names its model byte-for-byte.
+///
+/// An empty reference names nothing. A reference carrying surrounding
+/// whitespace names its model only after normalization, and a normalized
+/// lookup makes many spellings resolve to one binding — an alias. Both are
+/// rejected here, at the one place binding and resolution share, so a
+/// reference that binds is the same bytes as the reference that dispatches.
+fn exact_model_reference(model: &str) -> Result<&str> {
+    if model.is_empty() {
+        return Err(ModelReferenceError::MissingModel.into());
+    }
+    if model.trim() != model {
+        return Err(ModelReferenceError::InexactModel {
+            model: model.to_string(),
+        }
+        .into());
+    }
+    Ok(model)
 }
 
 /// Runtime capability evidence for one exact backend/model binding.
@@ -339,6 +366,9 @@ impl LLMRegistry {
     /// A model reference has exactly one backend. Rebinding it to a different
     /// backend is rejected: the caller must unregister the current backend
     /// first, so no request can ever observe two backends for one reference.
+    ///
+    /// The reference is stored verbatim and must already be exact, so the key a
+    /// request resolves is the key that was bound.
     pub fn bind_model(
         &self,
         model: impl Into<String>,
@@ -349,6 +379,7 @@ impl LLMRegistry {
             anyhow::bail!("Backend '{}' not registered", backend_name);
         }
         let model = model.into();
+        exact_model_reference(&model)?;
         if let Some(existing) = self.model_backends.get(&model) {
             let bound_backend = existing.value().clone();
             if bound_backend != backend_name {
@@ -614,7 +645,8 @@ impl LLMRegistry {
         let model = request
             .model
             .as_deref()
-            .context("context-window admission requires an exact model reference")?;
+            .context("context-window admission requires an exact model reference")
+            .and_then(|model| exact_model_reference(model))?;
         let Some(context_window) = backend.context_window_for_model(model) else {
             return Ok(());
         };
@@ -811,14 +843,15 @@ impl LLMRegistry {
     /// The exact model reference a request names.
     ///
     /// A request without a model reference is rejected; the registry has no
-    /// default, ambient, or inferred model.
+    /// default, ambient, or inferred model. The reference is used verbatim:
+    /// normalizing it would make several spellings name one binding, which is
+    /// aliasing by another name.
     fn require_model_reference<'a>(&self, request: &'a LLMRequest) -> Result<&'a str> {
-        request
+        let model = request
             .model
             .as_deref()
-            .map(str::trim)
-            .filter(|model| !model.is_empty())
-            .ok_or_else(|| ModelReferenceError::MissingModel.into())
+            .ok_or(ModelReferenceError::MissingModel)?;
+        exact_model_reference(model)
     }
 
     /// Return the one backend bound to the request's exact model reference.
@@ -1208,6 +1241,54 @@ mod request_recording_tests {
                 "expected UnknownModel for the unbound reference, got: {error}"
             ),
         }
+    }
+
+    /// A model reference that names its model only after normalization is
+    /// rejected, and dispatch resolves the bound reference byte-for-byte.
+    ///
+    /// `" fixture-model "` is not the reference `"fixture-model"`; it is a
+    /// second spelling of it. If either binding or resolution normalized the
+    /// reference, both spellings would name one backend — an alias, and with
+    /// it a model reference that is exact only by convention. The bound
+    /// spelling still resolving proves the rejection is exactness, not a
+    /// blanket refusal.
+    #[test]
+    fn registry_rejects_a_model_reference_that_is_exact_only_after_normalization() {
+        let registry = LLMRegistry::new();
+        registry
+            .register("mock", MockLLMBackend::static_response("hello"))
+            .expect("register mock backend");
+        registry
+            .bind_model("fixture-model", "mock")
+            .expect("bind fixture model");
+
+        for spelling in [" fixture-model", "fixture-model ", " fixture-model "] {
+            match registry.resolve_backend(&LLMRequest::new("hi").with_model(spelling)) {
+                Ok(backend) => panic!(
+                    "reference {spelling:?} resolved to backend {backend:?}: a normalized \
+                     lookup aliased it onto the binding for \"fixture-model\""
+                ),
+                Err(error) => assert!(
+                    matches!(
+                        error.downcast_ref::<ModelReferenceError>(),
+                        Some(ModelReferenceError::InexactModel { model }) if model == spelling
+                    ),
+                    "expected InexactModel for {spelling:?}, got: {error}"
+                ),
+            }
+
+            registry
+                .bind_model(spelling, "mock")
+                .expect_err("binding an inexact reference must fail closed");
+        }
+
+        assert_eq!(
+            registry
+                .resolve_backend(&LLMRequest::new("hi").with_model("fixture-model"))
+                .expect("the exact reference still dispatches"),
+            "mock",
+            "dispatch resolves the bound reference byte-for-byte"
+        );
     }
 
     #[test]
