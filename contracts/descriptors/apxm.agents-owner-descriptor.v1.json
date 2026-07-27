@@ -382,7 +382,7 @@
     {
       "schema_id": "apxm.handler-manifest.v1",
       "path": "vectors/apxm.handler-manifest.v1.json",
-      "digest": "sha256:219aec0ff783ca8ad81971a26dc922c6b2f7cb5a09ca64db77979bc2d81b5d63",
+      "digest": "sha256:568aee021107613425f77beebbdf4d58a8336f76d1c3b50550828187f7251d24",
       "coverage": [
         "positive",
         "abstraction",
@@ -394,5 +394,5 @@
     "algorithm": "ed25519",
     "status": "signing_pending_no_key"
   },
-  "descriptor_digest": "sha256:88cebf6b8f6781eb0db1617f26980bfbbb5824cecac508446330026eef00f162"
+  "descriptor_digest": "sha256:0bbacd3c90107a8babeab142ff18b53d01ce781e4b18e981b581987318b13474"
 }

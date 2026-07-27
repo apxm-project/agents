@@ -501,7 +501,7 @@ class OfflinePromptEvaluationTests(unittest.TestCase):
                 ),
                 (
                     {
-                        "repository": "/home/evaluator/agents",
+                        "repository": "/build/evaluator/agents",
                         "revision": TEST_REVISION,
                         "bundle_id": "held-out-prompt-fixture-v1",
                     },
@@ -586,7 +586,7 @@ class OfflinePromptEvaluationTests(unittest.TestCase):
             self.assertNotIn(str(root), json.dumps(provenance))
 
     def test_rejects_machine_local_working_tree_paths(self) -> None:
-        for value in ("/home/evaluator/file", "../outside", r"C:\\workspace\\file"):
+        for value in ("/build/evaluator/file", "../outside", r"C:\\workspace\\file"):
             with self.subTest(value=value), self.assertRaisesRegex(
                 ValueError, "repository-relative path"
             ):

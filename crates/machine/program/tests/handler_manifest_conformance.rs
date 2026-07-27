@@ -245,7 +245,7 @@ fn schema_constraints_are_each_enforced_by_the_decode_path() {
                 tool(),
                 "source",
                 serde_json::json!({
-                    "artifact_path": "/home/build/echo.mjs",
+                    "artifact_path": "/build/echo.mjs",
                     "content": "export function echo() {}\n"
                 }),
             ),
