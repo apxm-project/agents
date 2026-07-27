@@ -54,6 +54,37 @@ pub fn load_vectors(file: &str) -> Vec<Vector> {
         .collect()
 }
 
+/// Compile a published owner schema into an executable validator.
+///
+/// The checked-in schemas address each other by bare `$id` (`apxm.…v1`), which
+/// is a relative URI reference. Both the schema under test and every schema it
+/// references are rebased onto the validator's default `json-schema:///` scope
+/// so the published `$ref`s resolve without a network fetch and without editing
+/// the checked-in bytes. Only the `$id` is rebased; every constraint the schema
+/// states is compiled exactly as published.
+#[must_use]
+pub fn compile_schema(relative: &str, referenced_constitution: &[&str]) -> jsonschema::JSONSchema {
+    fn rebase(mut schema: Value) -> (String, Value) {
+        let id = schema["$id"]
+            .as_str()
+            .expect("schema declares an $id")
+            .to_string();
+        let scoped = format!("json-schema:///{id}");
+        schema["$id"] = Value::String(scoped.clone());
+        (scoped, schema)
+    }
+
+    let (_, schema) = rebase(load_contract(relative));
+    let mut options = jsonschema::JSONSchema::options();
+    for reference in referenced_constitution {
+        let (scoped, document) = rebase(load_constitution(reference));
+        options.with_document(scoped, document);
+    }
+    options
+        .compile(&schema)
+        .unwrap_or_else(|e| panic!("compile {relative}: {e}"))
+}
+
 /// The closed string members of a schema `enum` at a `$defs` path.
 #[must_use]
 pub fn schema_enum(schema: &Value, def: &str, property: &str) -> Vec<String> {

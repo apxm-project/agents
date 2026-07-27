@@ -22,6 +22,10 @@ pub const HANDLER_MANIFEST_SOURCE_DIRECTORY: &str = "handlers";
 pub const HANDLER_MANIFEST_HANDLER_ID_PREFIX: &str = "sha256:";
 /// Hexadecimal character count in a SHA-256 handler identity.
 pub const HANDLER_MANIFEST_HANDLER_ID_HEX_LENGTH: usize = 64;
+/// Maximum character count of a `module`, `qualname`, or `name` identifier.
+pub const HANDLER_MANIFEST_IDENTIFIER_MAX_LENGTH: usize = 256;
+/// The closed set of hook dispatch modes.
+pub const HANDLER_MANIFEST_HOOK_MODES: [&str; 2] = ["observe", "gate"];
 
 /// The authoring language for the private package-handler worker.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -70,12 +74,13 @@ pub struct HandlerDescriptor {
     pub name: String,
     /// Artifact-local executable source.
     pub source: HandlerSource,
-    /// Tool description. Empty for hooks.
-    #[serde(default)]
-    pub description: String,
-    /// Tool argument schema. Hooks carry an empty object.
-    #[serde(default = "empty_schema")]
-    pub schema: Value,
+    /// Handler description. Absent when the producer supplies none; an absent
+    /// description is never materialized as an empty one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Tool argument schema. Absent for hooks, which carry no argument shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<Value>,
     /// Whether a tool is guaranteed not to mutate external state.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub read_only: Option<bool>,
@@ -130,10 +135,15 @@ pub enum HandlerManifestError {
     /// A hook descriptor omits an event, matcher, or mode.
     #[error("hook '{0}' must carry event, match, and mode")]
     IncompleteHook(String),
-}
-
-fn empty_schema() -> Value {
-    Value::Object(serde_json::Map::new())
+    /// A `module`, `qualname`, or `name` is not a contract identifier.
+    #[error("handler '{0}' has an invalid {1} '{2}'")]
+    InvalidIdentifier(String, &'static str, String),
+    /// A hook mode is outside the closed dispatch set.
+    #[error("hook '{0}' has an unsupported mode '{1}'")]
+    InvalidHookMode(String, String),
+    /// A tool carries hook lifecycle fields, or a hook carries tool fields.
+    #[error("handler '{0}' carries the field '{1}', which belongs only to a {2}")]
+    CrossKindField(String, &'static str, &'static str),
 }
 
 impl HandlerManifest {
@@ -207,22 +217,77 @@ fn validate_descriptor(descriptor: &HandlerDescriptor) -> Result<(), HandlerMani
             descriptor.source.artifact_path.clone(),
         ));
     }
+    for (field, value) in [
+        ("module", descriptor.module.as_str()),
+        ("qualname", descriptor.qualname.as_str()),
+        ("name", descriptor.name.as_str()),
+    ] {
+        if !is_identifier(value) {
+            return Err(HandlerManifestError::InvalidIdentifier(
+                descriptor.handler_id.clone(),
+                field,
+                value.to_string(),
+            ));
+        }
+    }
 
+    // A descriptor is exactly one of the two closed kinds. Each kind requires
+    // its own fields and forbids the other kind's: a tool carrying lifecycle
+    // fields, or a hook carrying an argument schema or authority flags, is a
+    // shape no consumer may dispatch on.
     match descriptor.kind {
-        HandlerKind::Tool if !descriptor.schema.is_object() => Err(
-            HandlerManifestError::InvalidToolSchema(descriptor.name.clone()),
-        ),
-        HandlerKind::Hook
+        HandlerKind::Tool => {
+            if !descriptor.schema.as_ref().is_some_and(Value::is_object) {
+                return Err(HandlerManifestError::InvalidToolSchema(
+                    descriptor.name.clone(),
+                ));
+            }
+            for (field, present) in [
+                ("event", descriptor.event.is_some()),
+                ("match", descriptor.r#match.is_some()),
+                ("mode", descriptor.mode.is_some()),
+            ] {
+                if present {
+                    return Err(HandlerManifestError::CrossKindField(
+                        descriptor.handler_id.clone(),
+                        field,
+                        "hook",
+                    ));
+                }
+            }
+        }
+        HandlerKind::Hook => {
             if descriptor.event.as_deref().is_none_or(str::is_empty)
                 || descriptor.r#match.as_deref().is_none_or(str::is_empty)
-                || descriptor.mode.as_deref().is_none_or(str::is_empty) =>
-        {
-            Err(HandlerManifestError::IncompleteHook(
-                descriptor.handler_id.clone(),
-            ))
+                || descriptor.mode.as_deref().is_none_or(str::is_empty)
+            {
+                return Err(HandlerManifestError::IncompleteHook(
+                    descriptor.handler_id.clone(),
+                ));
+            }
+            let mode = descriptor.mode.as_deref().unwrap_or_default();
+            if !HANDLER_MANIFEST_HOOK_MODES.contains(&mode) {
+                return Err(HandlerManifestError::InvalidHookMode(
+                    descriptor.handler_id.clone(),
+                    mode.to_string(),
+                ));
+            }
+            for (field, present) in [
+                ("schema", descriptor.schema.is_some()),
+                ("read_only", descriptor.read_only.is_some()),
+                ("requires_approval", descriptor.requires_approval.is_some()),
+            ] {
+                if present {
+                    return Err(HandlerManifestError::CrossKindField(
+                        descriptor.handler_id.clone(),
+                        field,
+                        "tool",
+                    ));
+                }
+            }
         }
-        HandlerKind::Tool | HandlerKind::Hook => Ok(()),
     }
+    Ok(())
 }
 
 fn is_handler_id(value: &str) -> bool {
@@ -233,6 +298,19 @@ fn is_handler_id(value: &str) -> bool {
         && hex
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+/// The published contract identifier grammar: a leading ASCII alphanumeric
+/// followed by up to 255 further alphanumerics or `. _ : / @ -`.
+fn is_identifier(value: &str) -> bool {
+    let mut characters = value.chars();
+    let Some(first) = characters.next() else {
+        return false;
+    };
+    first.is_ascii_alphanumeric()
+        && value.chars().count() <= HANDLER_MANIFEST_IDENTIFIER_MAX_LENGTH
+        && characters
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '/' | '@' | '-'))
 }
 
 fn is_artifact_relative_path(value: &str) -> bool {
@@ -266,8 +344,8 @@ mod tests {
                 artifact_path: format!("handlers/{name}.mjs"),
                 content: "export function handler() {}\n".to_string(),
             },
-            description: "example".to_string(),
-            schema: empty_schema(),
+            description: Some("example".to_string()),
+            schema: (kind == HandlerKind::Tool).then(|| Value::Object(serde_json::Map::new())),
             read_only: (kind == HandlerKind::Tool).then_some(true),
             requires_approval: (kind == HandlerKind::Tool).then_some(false),
             event: (kind == HandlerKind::Hook).then(|| "pre_turn".to_string()),
