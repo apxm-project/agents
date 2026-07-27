@@ -180,8 +180,6 @@ pub const CAPABILITY_EFFECT_RECEIPT: EventKind = EventKind::new(
     EventCategory::Observability,
     false,
 );
-pub const MODEL_REROUTED: EventKind =
-    EventKind::new("model_rerouted", EventCategory::Lifecycle, false);
 /// Typed cancellation signal. The corresponding `execute_complete` event is
 /// the single run-ending event after host-owned finalization settles.
 pub const CANCELLED: EventKind = EventKind::new("cancelled", EventCategory::Error, false);
@@ -268,7 +266,6 @@ pub const CORE_EVENT_KINDS: &[EventKind] = &[
     MODEL_CONTEXT_METRICS,
     CONTEXT_LIFECYCLE,
     CAPABILITY_EFFECT_RECEIPT,
-    MODEL_REROUTED,
     CANCELLED,
     LOOP_DETECTED,
     CONTEXT_WINDOW_WARNING,
