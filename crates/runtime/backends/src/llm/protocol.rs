@@ -63,7 +63,7 @@ impl std::str::FromStr for ProviderProtocol {
             "anthropic" => Ok(Self::Anthropic),
             "google" => Ok(Self::Google),
             "ollama" => Ok(Self::Ollama),
-            "vllm" | "vllm-graph-aware" => Ok(Self::Vllm),
+            "vllm" => Ok(Self::Vllm),
             "mock" => Ok(Self::Mock),
             _ => Err(format!("Unknown provider protocol: '{value}'")),
         }
@@ -71,6 +71,8 @@ impl std::str::FromStr for ProviderProtocol {
 }
 
 /// Data-driven provider metadata exposed to generated frontends.
+///
+/// `id` is the provider's only name; a provider has no alternative spelling.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderSpec {
     /// Canonical provider identifier.
@@ -83,9 +85,6 @@ pub struct ProviderSpec {
     pub requires_api_key: bool,
     /// The wire protocol this provider speaks.
     pub protocol: ProviderProtocol,
-    /// Alternative names for this provider.
-    #[serde(default)]
-    pub aliases: Vec<String>,
 }
 
 /// Normalize provider endpoints so versioned APIs store `/v1` exactly once.

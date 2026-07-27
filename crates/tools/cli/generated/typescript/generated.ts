@@ -330,7 +330,6 @@ export type ProviderSpec = {
   readonly defaultBaseUrl: string | null;
   readonly requiresApiKey: boolean;
   readonly apiKeyEnvVar: string | null;
-  readonly aliases: readonly string[];
 };
 
 export const BUILTIN_PROVIDERS: readonly ProviderSpec[] = [
@@ -340,7 +339,6 @@ export const BUILTIN_PROVIDERS: readonly ProviderSpec[] = [
     defaultBaseUrl: null,
     requiresApiKey: false,
     apiKeyEnvVar: "OLLAMA_API_KEY",
-    aliases: [],
   },
   {
     id: "openai",
@@ -348,7 +346,6 @@ export const BUILTIN_PROVIDERS: readonly ProviderSpec[] = [
     defaultBaseUrl: null,
     requiresApiKey: true,
     apiKeyEnvVar: "OPENAI_API_KEY",
-    aliases: [],
   },
   {
     id: "anthropic",
@@ -356,7 +353,6 @@ export const BUILTIN_PROVIDERS: readonly ProviderSpec[] = [
     defaultBaseUrl: null,
     requiresApiKey: true,
     apiKeyEnvVar: "ANTHROPIC_API_KEY",
-    aliases: [],
   },
   {
     id: "google",
@@ -364,7 +360,6 @@ export const BUILTIN_PROVIDERS: readonly ProviderSpec[] = [
     defaultBaseUrl: null,
     requiresApiKey: true,
     apiKeyEnvVar: "GOOGLE_API_KEY",
-    aliases: ["gemini"],
   },
   {
     id: "vllm",
@@ -372,7 +367,6 @@ export const BUILTIN_PROVIDERS: readonly ProviderSpec[] = [
     defaultBaseUrl: null,
     requiresApiKey: false,
     apiKeyEnvVar: null,
-    aliases: ["vllm-graph-aware"],
   },
   {
     id: "openrouter",
@@ -380,7 +374,6 @@ export const BUILTIN_PROVIDERS: readonly ProviderSpec[] = [
     defaultBaseUrl: null,
     requiresApiKey: true,
     apiKeyEnvVar: "OPENROUTER_API_KEY",
-    aliases: [],
   },
   {
     id: "mock",
@@ -388,7 +381,6 @@ export const BUILTIN_PROVIDERS: readonly ProviderSpec[] = [
     defaultBaseUrl: null,
     requiresApiKey: false,
     apiKeyEnvVar: null,
-    aliases: [],
   },
 ] as const;
 

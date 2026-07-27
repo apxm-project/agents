@@ -62,7 +62,7 @@ pub struct BackendRegistration {
     pub name: String,
     pub protocol: ProviderProtocol,
     pub api_key: String,
-    #[serde(default, alias = "model")]
+    #[serde(default)]
     pub default_model: Option<String>,
     #[serde(default)]
     pub models: Vec<ModelRegistration>,
@@ -425,6 +425,32 @@ mod tests {
             auto_tool_choice: None,
             supports_structured_outputs: None,
         }
+    }
+
+    #[test]
+    fn backend_registration_reads_the_default_model_under_exactly_one_key() {
+        let canonical: BackendRegistration = serde_json::from_value(serde_json::json!({
+            "name": "openai",
+            "protocol": "openai",
+            "api_key": "env:OPENAI_API_KEY",
+            "default_model": "fixture-model",
+            "endpoint": "https://api.openai.com/v1",
+        }))
+        .expect("`default_model` is the registration key for the default model");
+        assert_eq!(canonical.default_model.as_deref(), Some("fixture-model"));
+
+        let singular: BackendRegistration = serde_json::from_value(serde_json::json!({
+            "name": "openai",
+            "protocol": "openai",
+            "api_key": "env:OPENAI_API_KEY",
+            "model": "fixture-model",
+            "endpoint": "https://api.openai.com/v1",
+        }))
+        .expect("unknown registration keys are ignored, not aliased");
+        assert_eq!(
+            singular.default_model, None,
+            "`model` is not a registration key; only `default_model` carries the default model"
+        );
     }
 
     #[test]

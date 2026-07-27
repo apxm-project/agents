@@ -7,6 +7,9 @@
 use super::{ProviderProtocol, ProviderSpec};
 
 /// Static provider spec (const-friendly, no heap allocations).
+///
+/// A provider is named by exactly one identifier, `id`. There is no alternative
+/// spelling for a provider and no alias table to resolve one.
 #[derive(Debug, Clone, Copy)]
 pub struct BuiltinProviderSpec {
     pub id: &'static str,
@@ -14,7 +17,6 @@ pub struct BuiltinProviderSpec {
     pub default_base_url: Option<&'static str>,
     pub requires_api_key: bool,
     pub protocol: ProviderProtocol,
-    pub aliases: &'static [&'static str],
 }
 
 impl BuiltinProviderSpec {
@@ -26,11 +28,6 @@ impl BuiltinProviderSpec {
             default_base_url: self.default_base_url.map(str::to_string),
             requires_api_key: self.requires_api_key,
             protocol: self.protocol,
-            aliases: self
-                .aliases
-                .iter()
-                .map(|alias| (*alias).to_string())
-                .collect(),
         }
     }
 }
@@ -43,7 +40,6 @@ pub const BUILTIN_PROVIDERS: &[BuiltinProviderSpec] = &[
         default_base_url: None,
         requires_api_key: false,
         protocol: ProviderProtocol::Ollama,
-        aliases: &[],
     },
     BuiltinProviderSpec {
         id: "openai",
@@ -51,7 +47,6 @@ pub const BUILTIN_PROVIDERS: &[BuiltinProviderSpec] = &[
         default_base_url: None,
         requires_api_key: true,
         protocol: ProviderProtocol::OpenAI,
-        aliases: &[],
     },
     BuiltinProviderSpec {
         id: "anthropic",
@@ -59,7 +54,6 @@ pub const BUILTIN_PROVIDERS: &[BuiltinProviderSpec] = &[
         default_base_url: None,
         requires_api_key: true,
         protocol: ProviderProtocol::Anthropic,
-        aliases: &[],
     },
     BuiltinProviderSpec {
         id: "google",
@@ -67,7 +61,6 @@ pub const BUILTIN_PROVIDERS: &[BuiltinProviderSpec] = &[
         default_base_url: None,
         requires_api_key: true,
         protocol: ProviderProtocol::Google,
-        aliases: &["gemini"],
     },
     BuiltinProviderSpec {
         id: "vllm",
@@ -75,7 +68,6 @@ pub const BUILTIN_PROVIDERS: &[BuiltinProviderSpec] = &[
         default_base_url: None,
         requires_api_key: false,
         protocol: ProviderProtocol::Vllm,
-        aliases: &["vllm-graph-aware"],
     },
     BuiltinProviderSpec {
         id: "openrouter",
@@ -83,7 +75,6 @@ pub const BUILTIN_PROVIDERS: &[BuiltinProviderSpec] = &[
         default_base_url: None,
         requires_api_key: true,
         protocol: ProviderProtocol::OpenAI,
-        aliases: &[],
     },
     BuiltinProviderSpec {
         id: "mock",
@@ -91,16 +82,13 @@ pub const BUILTIN_PROVIDERS: &[BuiltinProviderSpec] = &[
         default_base_url: None,
         requires_api_key: false,
         protocol: ProviderProtocol::Mock,
-        aliases: &[],
     },
 ];
 
-/// Look up a built-in provider by id or alias.
+/// Look up a built-in provider by its exact id.
 pub fn resolve_builtin_provider(name: &str) -> Option<&'static BuiltinProviderSpec> {
     let lower = name.to_lowercase();
-    BUILTIN_PROVIDERS
-        .iter()
-        .find(|spec| spec.id == lower || spec.aliases.iter().any(|alias| *alias == lower))
+    BUILTIN_PROVIDERS.iter().find(|spec| spec.id == lower)
 }
 
 /// Resolve a provider spec from name, checking builtins first.
@@ -263,4 +251,49 @@ pub fn models_for_protocol(
 /// Look up a builtin model by exact id.
 pub fn resolve_builtin_model(id: &str) -> Option<&'static BuiltinModelSpec> {
     BUILTIN_MODELS.iter().find(|model| model.id == id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_provider_resolves_only_under_its_own_id() {
+        for spec in BUILTIN_PROVIDERS {
+            assert_eq!(
+                resolve_builtin_provider(spec.id).map(|resolved| resolved.id),
+                Some(spec.id),
+                "every built-in provider resolves under its own id"
+            );
+        }
+
+        for other_name in ["gemini", "vllm-graph-aware", "claude", "gpt"] {
+            assert!(
+                resolve_builtin_provider(other_name).is_none(),
+                "'{other_name}' is not a provider id, so it resolves to no provider"
+            );
+        }
+    }
+
+    #[test]
+    fn provider_ids_are_unique_across_the_catalog() {
+        let mut ids: Vec<&str> = BUILTIN_PROVIDERS.iter().map(|spec| spec.id).collect();
+        let count = ids.len();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(count, ids.len(), "each provider is named exactly once");
+    }
+
+    #[test]
+    fn models_resolve_for_a_provider_only_under_its_own_id() {
+        assert!(
+            models_for_provider("google").any(|model| model.id == "gemini-2.5-flash"),
+            "'google' is the provider id serving the Gemini models"
+        );
+        assert_eq!(
+            models_for_provider("gemini").count(),
+            0,
+            "'gemini' names models, not a provider, so it selects no provider catalogue"
+        );
+    }
 }
