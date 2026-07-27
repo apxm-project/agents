@@ -25,7 +25,7 @@ pub use bundle::{
 pub use capability::{CapabilityOutcome, CapabilityPort, CapabilityRequest};
 pub use commit::{
     ATOMIC_WRITE_SET, AtomicWriteSet, ExecutionCommitPort, ExecutionCommitRequest,
-    ExecutionCommitResult, ExecutionCommitTuple,
+    ExecutionCommitResult, ExecutionCommitTuple, ProgramInstanceRef, ProgramInvocationRef,
 };
 pub use confinement::{
     ConfinementAttestation, ConfinementError, ConfinementPort, ConfinementRequest, ConfinementType,

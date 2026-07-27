@@ -55,6 +55,7 @@ pub enum CommitResult {
 pub struct ExecutionCommit {
     pub schema_version: ExecutionCommitVersion,
     pub commit_id: String,
+    pub program_instance_ref: TypedRef,
     pub invocation_ref: TypedRef,
     pub idempotency_key: IdempotencyKey,
     pub expected_program_state_version: u64,
@@ -86,6 +87,35 @@ impl ExecutionCommit {
                 DiagnosticCode::NonAtomicWriteSet,
                 "atomic_write_set",
                 "the atomic write set must be exactly the canonical five members in order",
+            ));
+        }
+
+        for (location, reference, expected_type) in [
+            (
+                "program_instance_ref",
+                &self.program_instance_ref,
+                "ProgramInstanceRef",
+            ),
+            (
+                "invocation_ref",
+                &self.invocation_ref,
+                "ProgramInvocationRef",
+            ),
+        ] {
+            if reference.ref_type != expected_type {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    location,
+                    format!("{location} must carry {expected_type}"),
+                ));
+            }
+        }
+
+        if self.idempotency_key.scope_ref != self.invocation_ref.target {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                "idempotency_key.scope_ref",
+                "idempotency scope must equal invocation_ref.ref",
             ));
         }
 

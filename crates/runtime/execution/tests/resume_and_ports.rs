@@ -18,7 +18,8 @@ use apxm_inference::{
 use apxm_kernel::{
     AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, ExactPortBinding, ExecutionCommitPort,
     ExecutionCommitRequest, ExecutionCommitResult, ExternalAgentCapabilityPort, PortBundle,
-    PortBundleSpec, PortImplementation, PortSlot, PromptEffectState,
+    PortBundleSpec, PortImplementation, PortSlot, ProgramInstanceRef, ProgramInvocationRef,
+    PromptEffectState,
 };
 use apxm_program::air::AirModule;
 use apxm_program::artifact::SchemaDigestRef;
@@ -54,8 +55,8 @@ fn request(scope: &str) -> ExecutionRequest {
                 binding_digest: digest('a'),
             },
         }),
-        invocation_ref: format!("invocation.{scope}"),
-        version_scope: scope.into(),
+        program_instance_ref: ProgramInstanceRef::new(scope),
+        program_invocation_ref: ProgramInvocationRef::new(format!("invocation.{scope}")),
         commit_id: format!("commit.{scope}"),
         write_set: AtomicWriteSet {
             next_program_state_digest: digest('1'),
@@ -130,7 +131,9 @@ struct Commit {
     version: Mutex<u64>,
     continuation: Mutex<Option<Value>>,
     tuples: Mutex<Vec<apxm_kernel::ExecutionCommitTuple>>,
+    instance_refs: Mutex<Vec<String>>,
     invocation_refs: Mutex<Vec<String>>,
+    continuation_load_refs: Mutex<Vec<String>>,
     fail: bool,
 }
 
@@ -146,21 +149,33 @@ impl ExecutionCommitPort for Commit {
         *version = request.expected_program_state_version + 1;
         *self.continuation.lock().unwrap() = request.tuple.continuation.clone();
         self.tuples.lock().unwrap().push(request.tuple);
+        self.instance_refs
+            .lock()
+            .unwrap()
+            .push(request.program_instance_ref.as_str().to_string());
         self.invocation_refs
             .lock()
             .unwrap()
-            .push(request.invocation_ref);
+            .push(request.program_invocation_ref.as_str().to_string());
         ExecutionCommitResult::Committed {
             new_program_state_version: *version,
             evidence_position_ref: "evidence.atomic".into(),
         }
     }
 
-    async fn current_version(&self, _invocation_ref: &str) -> u64 {
+    async fn current_version(&self, program_instance_ref: &ProgramInstanceRef) -> u64 {
+        self.instance_refs
+            .lock()
+            .unwrap()
+            .push(program_instance_ref.as_str().to_string());
         *self.version.lock().unwrap()
     }
 
-    async fn load_continuation(&self, _invocation_ref: &str) -> Option<Value> {
+    async fn load_continuation(&self, program_instance_ref: &ProgramInstanceRef) -> Option<Value> {
+        self.continuation_load_refs
+            .lock()
+            .unwrap()
+            .push(program_instance_ref.as_str().to_string());
         self.continuation.lock().unwrap().clone()
     }
 }
@@ -253,7 +268,14 @@ async fn park_commits_context_continuation_wait_effects_evidence_usage_and_outpu
     assert!(tuple.continuation.is_some());
     let continuation: Continuation =
         serde_json::from_value(tuple.continuation.clone().unwrap()).expect("typed continuation");
-    assert_eq!(continuation.invocation_ref, "invocation.instance.atomic");
+    assert_eq!(
+        continuation.program_instance_ref,
+        ProgramInstanceRef::new("instance.atomic")
+    );
+    assert_eq!(
+        continuation.program_invocation_ref,
+        ProgramInvocationRef::new("invocation.instance.atomic")
+    );
     assert!(continuation.next_schedule_position > 0);
     assert_eq!(continuation.loop_frames.len(), 1);
     assert_eq!(continuation.loop_frames[0].static_loop_id, "loop.main");
@@ -308,7 +330,7 @@ async fn resume_reads_the_committed_structural_continuation() {
 
     let resumed = resume_event(
         &ports(commit.clone()),
-        "instance.replay",
+        &ProgramInstanceRef::new("instance.replay"),
         EventRef::new("evt-atomic").expect("non-empty event ref"),
         json!({"iteration": 2}),
     )
@@ -319,6 +341,19 @@ async fn resume_reads_the_committed_structural_continuation() {
     assert_eq!(
         *commit.invocation_refs.lock().unwrap(),
         vec!["invocation.instance.replay", "invocation.instance.replay"]
+    );
+    assert_eq!(
+        *commit.continuation_load_refs.lock().unwrap(),
+        vec!["instance.replay"]
+    );
+    assert_eq!(
+        *commit.instance_refs.lock().unwrap(),
+        vec![
+            "instance.replay",
+            "instance.replay",
+            "instance.replay",
+            "instance.replay",
+        ]
     );
     let tuples = commit.tuples.lock().unwrap();
     let completions = tuples
@@ -358,7 +393,7 @@ async fn final_await_resumes_directly_to_one_committed_back_edge() {
 
     resume_event(
         &ports(commit.clone()),
-        "instance.final-await",
+        &ProgramInstanceRef::new("instance.final-await"),
         EventRef::new("evt-atomic").unwrap(),
         json!({"phase": "after"}),
     )
@@ -422,7 +457,7 @@ async fn nested_loop_park_restores_exact_stack_without_duplicate_work() {
 
     resume_event(
         &ports(commit.clone()),
-        "instance.nested",
+        &ProgramInstanceRef::new("instance.nested"),
         EventRef::new("evt-atomic").unwrap(),
         Value::Null,
     )

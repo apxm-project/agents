@@ -18,7 +18,8 @@ use apxm_inference::{
 use apxm_kernel::{
     AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, ExactPortBinding, ExecutionCommitPort,
     ExecutionCommitRequest, ExecutionCommitResult, ExternalAgentCapabilityPort, PortBundle,
-    PortBundleSpec, PortImplementation, PortSlot, PromptEffectState,
+    PortBundleSpec, PortImplementation, PortSlot, ProgramInstanceRef, ProgramInvocationRef,
+    PromptEffectState,
 };
 use apxm_program::air::AirModule;
 use apxm_program::artifact::SchemaDigestRef;
@@ -83,8 +84,8 @@ fn request(air: AirModule, commit_id: &str) -> ExecutionRequest {
         air,
         hook_bindings: Vec::new(),
         model_admission: admission(),
-        invocation_ref: format!("invocation.{commit_id}"),
-        version_scope: "invocation.1".into(),
+        program_instance_ref: ProgramInstanceRef::new("instance.1"),
+        program_invocation_ref: ProgramInvocationRef::new(format!("invocation.{commit_id}")),
         commit_id: commit_id.into(),
         write_set: write_set(),
     }
@@ -394,7 +395,7 @@ impl ExecutionCommitPort for RecordingCommit {
         }
     }
 
-    async fn current_version(&self, _invocation_ref: &str) -> u64 {
+    async fn current_version(&self, _program_instance_ref: &ProgramInstanceRef) -> u64 {
         *self.version.lock().unwrap()
     }
 }

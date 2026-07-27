@@ -18,11 +18,13 @@ use apxm_program::runtime_evidence::{
 use crate::bundle::PortBundle;
 use crate::commit::{
     AtomicWriteSet, ExecutionCommitRequest, ExecutionCommitResult, ExecutionCommitTuple,
+    ProgramInstanceRef, ProgramInvocationRef,
 };
 
 /// One invocation request against an instance.
 pub struct Invocation {
     pub commit_id: String,
+    pub program_invocation_ref: ProgramInvocationRef,
     pub write_set: AtomicWriteSet,
 }
 
@@ -39,6 +41,14 @@ pub enum InvocationReport {
 /// Why an invocation could not even start.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InstanceError {
+    /// Runtime evidence omitted the Program Instance identity required to scope
+    /// the atomic commit boundary.
+    MissingProgramInstanceIdentity,
+    /// The supplied Program Instance key and runtime-evidence identity differ.
+    ProgramInstanceIdentityMismatch {
+        expected: ProgramInstanceRef,
+        actual: String,
+    },
     /// The instance is single-flight and already has an invocation in flight.
     Busy,
     /// The invocation needs a port the bundle does not carry.
@@ -48,6 +58,14 @@ pub enum InstanceError {
 impl std::fmt::Display for InstanceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::MissingProgramInstanceIdentity => {
+                write!(f, "Program Instance identity is required")
+            }
+            Self::ProgramInstanceIdentityMismatch { expected, actual } => write!(
+                f,
+                "Program Instance identity mismatch: expected {}, got {actual}",
+                expected.as_str()
+            ),
             Self::Busy => write!(f, "instance is single-flight and busy"),
             Self::MissingPort(slot) => write!(f, "bundle has no {} port", slot.as_str()),
         }
@@ -66,7 +84,7 @@ struct Inner {
 /// A running Program Instance.
 pub struct ProgramInstance {
     identity: ProgramIdentity,
-    version_scope: String,
+    program_instance_ref: ProgramInstanceRef,
     bundle: PortBundle,
     busy: AtomicBool,
     inner: Mutex<Inner>,
@@ -83,16 +101,26 @@ impl Drop for BusyGuard<'_> {
 
 impl ProgramInstance {
     /// Create a ready instance bound to an already-constructed, validated port
-    /// bundle. The version scope keys the compare-and-commit for this instance.
-    #[must_use]
+    /// bundle. The Program Instance reference keys compare-and-commit and
+    /// continuation reads for this instance.
     pub fn new(
         identity: ProgramIdentity,
-        version_scope: impl Into<String>,
+        program_instance_ref: ProgramInstanceRef,
         bundle: PortBundle,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, InstanceError> {
+        let actual = identity
+            .program_instance_id
+            .as_deref()
+            .ok_or(InstanceError::MissingProgramInstanceIdentity)?;
+        if actual != program_instance_ref.as_str() {
+            return Err(InstanceError::ProgramInstanceIdentityMismatch {
+                expected: program_instance_ref,
+                actual: actual.to_string(),
+            });
+        }
+        Ok(Self {
             identity,
-            version_scope: version_scope.into(),
+            program_instance_ref,
             bundle,
             busy: AtomicBool::new(false),
             inner: Mutex::new(Inner {
@@ -101,7 +129,7 @@ impl ProgramInstance {
                 created_recorded: false,
                 durable_facts: Vec::new(),
             }),
-        }
+        })
     }
 
     #[must_use]
@@ -151,7 +179,7 @@ impl ProgramInstance {
         let expected = self
             .bundle
             .execution_commit()
-            .current_version(&self.version_scope)
+            .current_version(&self.program_instance_ref)
             .await;
 
         // Build the full evidence batch this atomic commit will publish,
@@ -202,7 +230,8 @@ impl ProgramInstance {
 
         let request = ExecutionCommitRequest {
             commit_id: invocation.commit_id.clone(),
-            invocation_ref: self.version_scope.clone(),
+            program_instance_ref: self.program_instance_ref.clone(),
+            program_invocation_ref: invocation.program_invocation_ref,
             idempotency_key: format!("idem.{}", invocation.commit_id),
             expected_program_state_version: expected,
             write_set: invocation.write_set,
@@ -250,6 +279,7 @@ impl ProgramInstance {
     pub async fn cancel(
         &self,
         commit_id: impl Into<String>,
+        program_invocation_ref: ProgramInvocationRef,
         write_set: AtomicWriteSet,
     ) -> Result<InvocationReport, InstanceError> {
         let _guard = self.acquire()?;
@@ -257,7 +287,7 @@ impl ProgramInstance {
         let expected = self
             .bundle
             .execution_commit()
-            .current_version(&self.version_scope)
+            .current_version(&self.program_instance_ref)
             .await;
 
         let mut seq = { self.inner.lock().expect("instance inner").durable_seq };
@@ -273,7 +303,8 @@ impl ProgramInstance {
 
         let request = ExecutionCommitRequest {
             commit_id: commit_id.clone(),
-            invocation_ref: self.version_scope.clone(),
+            program_instance_ref: self.program_instance_ref.clone(),
+            program_invocation_ref,
             idempotency_key: format!("idem.{commit_id}"),
             expected_program_state_version: expected,
             write_set,
@@ -304,6 +335,7 @@ impl ProgramInstance {
 /// NodeExecution id, the ACP prompt request, and the prepared write set.
 pub struct CapabilityInvocation {
     pub commit_id: String,
+    pub program_invocation_ref: ProgramInvocationRef,
     pub capability_node_execution_id: String,
     pub request: crate::external_agent::AcpPromptRequest,
     pub write_set: AtomicWriteSet,
@@ -350,7 +382,7 @@ impl ProgramInstance {
         let expected = self
             .bundle
             .execution_commit()
-            .current_version(&self.version_scope)
+            .current_version(&self.program_instance_ref)
             .await;
         let target_version = expected + 1;
 
@@ -390,7 +422,8 @@ impl ProgramInstance {
 
         let request = ExecutionCommitRequest {
             commit_id: invocation.commit_id.clone(),
-            invocation_ref: self.version_scope.clone(),
+            program_instance_ref: self.program_instance_ref.clone(),
+            program_invocation_ref: invocation.program_invocation_ref,
             idempotency_key: format!("idem.{}", invocation.commit_id),
             expected_program_state_version: expected,
             write_set: invocation.write_set,

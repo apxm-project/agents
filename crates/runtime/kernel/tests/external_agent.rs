@@ -15,7 +15,8 @@ use apxm_kernel::{
     AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, CapabilityInvocation, ExactPortBinding,
     ExecutionCommitPort, ExecutionCommitRequest, ExecutionCommitResult,
     ExternalAgentCapabilityPort, InstanceError, InvocationReport, PortBundle, PortBundleSpec,
-    PortImplementation, PortSlot, ProgramInstance, PromptEffectState, reconstruct,
+    PortImplementation, PortSlot, ProgramInstance, ProgramInstanceRef, ProgramInvocationRef,
+    PromptEffectState, reconstruct,
 };
 
 fn digest(c: char) -> String {
@@ -82,7 +83,7 @@ impl ExecutionCommitPort for FixtureCommit {
             evidence_position_ref: "evidence:1".into(),
         }
     }
-    async fn current_version(&self, _invocation_ref: &str) -> u64 {
+    async fn current_version(&self, _program_instance_ref: &ProgramInstanceRef) -> u64 {
         self.state.lock().unwrap().0
     }
 }
@@ -140,12 +141,14 @@ fn instance(commit: Arc<FixtureCommit>, peer: Arc<ScriptedAcpPeer>) -> ProgramIn
         ],
     )
     .expect("valid bundle");
-    ProgramInstance::new(identity(), "instance.1", bundle)
+    ProgramInstance::new(identity(), ProgramInstanceRef::new("instance.1"), bundle)
+        .expect("Program Instance identity matches its commit key")
 }
 
 fn invocation(profile: &str) -> CapabilityInvocation {
     CapabilityInvocation {
         commit_id: "c1".into(),
+        program_invocation_ref: ProgramInvocationRef::new("invocation.acp.1"),
         capability_node_execution_id: "nodeexec.cap.1".into(),
         request: AcpPromptRequest {
             effect_ref: "effect.1".into(),
@@ -312,7 +315,8 @@ async fn missing_external_agent_port_fails_closed() {
         )],
     )
     .expect("valid bundle");
-    let inst = ProgramInstance::new(identity(), "instance.1", bundle);
+    let inst = ProgramInstance::new(identity(), ProgramInstanceRef::new("instance.1"), bundle)
+        .expect("Program Instance identity matches its commit key");
     let err = inst
         .invoke_capability(invocation("acp:claude-code"))
         .await

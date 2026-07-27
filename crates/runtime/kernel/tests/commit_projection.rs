@@ -4,6 +4,7 @@
 
 use apxm_kernel::{
     AtomicWriteSet, ExecutionCommitRequest, ExecutionCommitResult, ExecutionCommitTuple,
+    ProgramInstanceRef, ProgramInvocationRef,
 };
 use apxm_program::verify_execution_commit_json;
 
@@ -14,7 +15,8 @@ fn digest(c: char) -> String {
 fn request() -> ExecutionCommitRequest {
     ExecutionCommitRequest {
         commit_id: "commit.1".into(),
-        invocation_ref: "invoke.1".into(),
+        program_instance_ref: ProgramInstanceRef::new("instance.1"),
+        program_invocation_ref: ProgramInvocationRef::new("invoke.1"),
         idempotency_key: "idem.commit.1".into(),
         expected_program_state_version: 7,
         write_set: AtomicWriteSet {
@@ -40,6 +42,17 @@ fn committed_projection_is_a_valid_contract() {
     assert!(
         json.get("state_commit_ref").is_none(),
         "no per-member split field"
+    );
+    assert_eq!(
+        json["program_instance_ref"]["ref_type"],
+        "ProgramInstanceRef"
+    );
+    assert_eq!(json["invocation_ref"]["ref_type"], "ProgramInvocationRef");
+    let mut collapsed = json;
+    collapsed["invocation_ref"]["ref_type"] = "ProgramInstanceRef".into();
+    assert!(
+        !verify_execution_commit_json(&collapsed).is_accepted(),
+        "Program Invocation evidence identity cannot collapse into the Program Instance CAS key"
     );
 }
 
