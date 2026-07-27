@@ -597,8 +597,8 @@ class CapabilityEffectReceiptEventPayload(_CapabilityEffectReceiptEventPayloadOp
     node_id: int
     invocation_id: str
     capability_binding: str
-    dispatch_path: Literal['inv_cap', 'ask_tool']
-    implementation_kind: Literal['native', 'python', 'typescript', 'host']
+    dispatch_path: Literal['inv_cap']
+    implementation_kind: Literal['native', 'typescript', 'host']
     implementation_ref: str
     request_digest: str
     admission_kind: Literal['read_only', 'sandbox', 'grant']
