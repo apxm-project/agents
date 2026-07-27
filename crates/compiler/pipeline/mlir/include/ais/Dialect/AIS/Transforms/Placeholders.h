@@ -45,7 +45,6 @@ enum class PromptInputRole {
 
 // Mirror of `attrs::INPUT_ROLES` in apxm-ais.
 inline constexpr llvm::StringLiteral kInputRolesAttrName = "input_roles";
-inline constexpr llvm::StringLiteral kLegacySystemPromptInputName = "__system";
 
 /// Parse one exact serialized input role.
 inline PromptInputRole parseInputRole(llvm::StringRef role) {
@@ -80,13 +79,6 @@ inline llvm::StringRef inputRoleName(PromptInputRole role) {
 /// Return whether a role may be rendered as a user-template placeholder.
 inline bool isUserRole(PromptInputRole role) {
   return role == PromptInputRole::User;
-}
-
-/// Normalize the legacy system input name only when no explicit role exists.
-inline PromptInputRole roleForLegacyInputName(llvm::StringRef inputName) {
-  // Mirror of `attrs::LEGACY_SYSTEM_PROMPT_INPUT_NAME` in apxm-ais.
-  return inputName == kLegacySystemPromptInputName ? PromptInputRole::System
-                                                    : PromptInputRole::User;
 }
 
 /// Walk a template string and append every `{name}` identifier (the bare
