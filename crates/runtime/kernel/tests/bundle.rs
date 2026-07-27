@@ -13,7 +13,7 @@ use apxm_kernel::{
     BundleError, CapabilityOutcome, CapabilityPort, CapabilityRequest, ConfinementAttestation,
     ConfinementError, ConfinementPort, ConfinementRequest, ExactPortBinding, ExecutionCommitPort,
     ExecutionCommitRequest, ExecutionCommitResult, PortBundle, PortBundleSpec, PortImplementation,
-    PortSlot,
+    PortSlot, ProgramInstanceRef,
 };
 
 fn digest(c: char) -> String {
@@ -36,7 +36,7 @@ impl ExecutionCommitPort for NoopCommit {
             current_program_state_version: 0,
         }
     }
-    async fn current_version(&self, _invocation_ref: &str) -> u64 {
+    async fn current_version(&self, _program_instance_ref: &ProgramInstanceRef) -> u64 {
         0
     }
 }

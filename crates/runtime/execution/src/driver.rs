@@ -35,7 +35,7 @@ use apxm_inference::{
 use apxm_kernel::{
     AcpPromptRequest, AtomicWriteSet, ExecutionCommitPort, ExecutionCommitRequest,
     ExecutionCommitResult, ExecutionCommitTuple, ExternalAgentCapabilityPort, PortBundle, PortSlot,
-    assemble_evidence,
+    ProgramInstanceRef, ProgramInvocationRef, assemble_evidence,
 };
 use apxm_program::air::{AirModule, SemanticOp, SemanticOpKind};
 use apxm_program::common::TypedRef;
@@ -184,14 +184,14 @@ impl StaticHookHandlerPort for NoopStaticHookHandler {
 }
 
 /// One canonical execution request: the AIR to run, the materialized
-/// model-binding admission, immutable invocation identity, commit scope, and
+/// model-binding admission, immutable instance and invocation identities, and
 /// prepared write set.
 pub struct ExecutionRequest {
     pub air: AirModule,
     pub hook_bindings: Vec<HookBinding>,
     pub model_admission: ModelBindingAdmission,
-    pub invocation_ref: String,
-    pub version_scope: String,
+    pub program_instance_ref: ProgramInstanceRef,
+    pub program_invocation_ref: ProgramInvocationRef,
     pub commit_id: String,
     pub write_set: AtomicWriteSet,
 }
@@ -261,7 +261,7 @@ pub enum ExecutionError {
         delivered: EventRef,
     },
     EventDeliveryRequiresRef {
-        invocation_ref: String,
+        program_instance_ref: ProgramInstanceRef,
     },
     Commit(ExecutionCommitResult),
 }
@@ -286,10 +286,13 @@ impl std::fmt::Display for ExecutionError {
                     "event reference mismatch: expected {expected}, delivered {delivered}"
                 )
             }
-            Self::EventDeliveryRequiresRef { invocation_ref } => {
+            Self::EventDeliveryRequiresRef {
+                program_instance_ref,
+            } => {
                 write!(
                     f,
-                    "continuation for {invocation_ref} requires an EventRef delivery"
+                    "continuation for Program Instance {} requires an EventRef delivery",
+                    program_instance_ref.as_str()
                 )
             }
             Self::Commit(result) => write!(f, "atomic execution commit failed: {}", result.label()),
@@ -1195,12 +1198,16 @@ async fn apply_static_hook(
 /// single-shot path has always done.
 async fn commit_and_report(
     ports: &ExecutionPorts,
-    version_scope: &str,
+    program_instance_ref: &ProgramInstanceRef,
+    program_invocation_ref: &ProgramInvocationRef,
     commit_id: &str,
     write_set: AtomicWriteSet,
     mut state: DriveState,
 ) -> RunReport {
-    let expected = ports.execution_commit.current_version(version_scope).await;
+    let expected = ports
+        .execution_commit
+        .current_version(program_instance_ref)
+        .await;
     state.seq += 1;
     state.batch.push(fact(
         &state.program_invocation_id,
@@ -1216,7 +1223,8 @@ async fn commit_and_report(
         .execution_commit
         .commit(ExecutionCommitRequest {
             commit_id: commit_id.to_string(),
-            invocation_ref: state.program_invocation_id.clone(),
+            program_instance_ref: program_instance_ref.clone(),
+            program_invocation_ref: program_invocation_ref.clone(),
             idempotency_key: format!("idem.{commit_id}"),
             expected_program_state_version: expected,
             write_set,
@@ -1328,7 +1336,7 @@ async fn commit_suspension(
 ) -> (ExecutionCommitResult, CommittedNativeModelUsageOutcome) {
     let expected = ports
         .execution_commit
-        .current_version(&continuation.version_scope)
+        .current_version(&continuation.program_instance_ref)
         .await;
     state.seq += 1;
     state.batch.push(fact(
@@ -1356,7 +1364,8 @@ async fn commit_suspension(
         .execution_commit
         .commit(ExecutionCommitRequest {
             commit_id: format!("{}.yield", continuation.commit_id),
-            invocation_ref: continuation.invocation_ref.clone(),
+            program_instance_ref: continuation.program_instance_ref.clone(),
+            program_invocation_ref: continuation.program_invocation_ref.clone(),
             idempotency_key: format!("idem.{}.yield", continuation.commit_id),
             expected_program_state_version: expected,
             write_set: continuation.write_set.clone(),
@@ -1387,7 +1396,11 @@ pub async fn execute(
     request: ExecutionRequest,
     initial_context: Value,
 ) -> Result<RunReport, ExecutionError> {
-    let state = DriveState::new(initial_context, &request.air, &request.invocation_ref);
+    let state = DriveState::new(
+        initial_context,
+        &request.air,
+        request.program_invocation_ref.as_str(),
+    );
     let end = drive_from(
         ports,
         &request.air,
@@ -1406,7 +1419,8 @@ pub async fn execute(
     };
     Ok(commit_and_report(
         ports,
-        &request.version_scope,
+        &request.program_instance_ref,
+        &request.program_invocation_ref,
         &request.commit_id,
         request.write_set,
         state,
@@ -1429,7 +1443,11 @@ pub async fn execute_resumable(
     request: ExecutionRequest,
     initial_context: Value,
 ) -> Result<RunOutcome, ExecutionError> {
-    let state = DriveState::new(initial_context, &request.air, &request.invocation_ref);
+    let state = DriveState::new(
+        initial_context,
+        &request.air,
+        request.program_invocation_ref.as_str(),
+    );
     let end = drive_from(
         ports,
         &request.air,
@@ -1454,13 +1472,13 @@ pub async fn execute_resumable(
 /// # Errors
 ///
 /// Returns [`ExecutionError::Continuation`] when the atomic commit has no
-/// continuation payload for `version_scope`.
+/// continuation payload for `program_instance_ref`.
 pub async fn resume(
     ports: &ExecutionPorts,
-    version_scope: &str,
+    program_instance_ref: &ProgramInstanceRef,
     delivered: Value,
 ) -> Result<RunOutcome, ExecutionError> {
-    resume_from_continuation(ports, version_scope, None, delivered).await
+    resume_from_continuation(ports, program_instance_ref, None, delivered).await
 }
 
 /// Resume a committed `await.event` continuation with one exact EventRef.
@@ -1471,26 +1489,26 @@ pub async fn resume(
 /// different durable event than the one atomically registered at park time.
 pub async fn resume_event(
     ports: &ExecutionPorts,
-    version_scope: &str,
+    program_instance_ref: &ProgramInstanceRef,
     event_ref: EventRef,
     delivered: Value,
 ) -> Result<RunOutcome, ExecutionError> {
-    resume_from_continuation(ports, version_scope, Some(event_ref), delivered).await
+    resume_from_continuation(ports, program_instance_ref, Some(event_ref), delivered).await
 }
 
 async fn resume_from_continuation(
     ports: &ExecutionPorts,
-    version_scope: &str,
+    program_instance_ref: &ProgramInstanceRef,
     delivered_event_ref: Option<EventRef>,
     delivered: Value,
 ) -> Result<RunOutcome, ExecutionError> {
     let payload = ports
         .execution_commit
-        .load_continuation(version_scope)
+        .load_continuation(program_instance_ref)
         .await
         .ok_or_else(|| {
             ExecutionError::Continuation(ContinuationError::NotCommitted {
-                invocation_ref: version_scope.to_string(),
+                program_instance_ref: program_instance_ref.clone(),
             })
         })?;
     let parked: Continuation = serde_json::from_value(payload).map_err(|error| {
@@ -1512,13 +1530,22 @@ async fn resume_from_continuation(
         external_agent_evidence,
         evidence_batch: _,
         event_sequence,
-        invocation_ref,
-        version_scope,
+        program_invocation_ref,
+        program_instance_ref: committed_program_instance_ref,
         commit_id,
         write_set,
         continuation_id,
         event_ref,
     } = parked;
+
+    if committed_program_instance_ref != *program_instance_ref {
+        return Err(ExecutionError::Continuation(
+            ContinuationError::InstanceScopeMismatch {
+                requested: program_instance_ref.clone(),
+                committed: committed_program_instance_ref,
+            },
+        ));
+    }
 
     match (event_ref.as_ref(), delivered_event_ref.as_ref()) {
         (Some(expected), Some(delivered_event_ref)) if expected == delivered_event_ref => {}
@@ -1530,7 +1557,7 @@ async fn resume_from_continuation(
         }
         (Some(_), None) => {
             return Err(ExecutionError::EventDeliveryRequiresRef {
-                invocation_ref: version_scope.clone(),
+                program_instance_ref: program_instance_ref.clone(),
             });
         }
         (None, Some(delivered_event_ref)) => {
@@ -1553,7 +1580,7 @@ async fn resume_from_continuation(
         last_operation_succeeded: true,
         batch: Vec::new(),
         seq: event_sequence,
-        program_invocation_id: invocation_ref.clone(),
+        program_invocation_id: program_invocation_ref.as_str().to_string(),
         active_loops: loop_frames,
         last_model_node_execution_id: None,
         last_program_new_node_execution_id: None,
@@ -1564,7 +1591,7 @@ async fn resume_from_continuation(
             event_ref
                 .clone()
                 .ok_or_else(|| ExecutionError::EventDeliveryRequiresRef {
-                    invocation_ref: version_scope.clone(),
+                    program_instance_ref: program_instance_ref.clone(),
                 })?;
         let payload = match &delivered {
             Value::String(text) => text.clone(),
@@ -1616,8 +1643,8 @@ async fn resume_from_continuation(
         air,
         hook_bindings,
         model_admission,
-        invocation_ref,
-        version_scope,
+        program_invocation_ref,
+        program_instance_ref: committed_program_instance_ref,
         commit_id,
         write_set,
     };
@@ -1630,8 +1657,8 @@ struct CommitParts {
     air: AirModule,
     hook_bindings: Vec<HookBinding>,
     model_admission: ModelBindingAdmission,
-    invocation_ref: String,
-    version_scope: String,
+    program_invocation_ref: ProgramInvocationRef,
+    program_instance_ref: ProgramInstanceRef,
     commit_id: String,
     write_set: AtomicWriteSet,
 }
@@ -1641,8 +1668,8 @@ fn request_parts(request: ExecutionRequest) -> CommitParts {
         air: request.air,
         hook_bindings: request.hook_bindings,
         model_admission: request.model_admission,
-        invocation_ref: request.invocation_ref,
-        version_scope: request.version_scope,
+        program_invocation_ref: request.program_invocation_ref,
+        program_instance_ref: request.program_instance_ref,
         commit_id: request.commit_id,
         write_set: request.write_set,
     }
@@ -1659,7 +1686,8 @@ async fn finish(
         DriveEnd::RanToEnd(state) => {
             let report = commit_and_report(
                 ports,
-                &parts.version_scope,
+                &parts.program_instance_ref,
+                &parts.program_invocation_ref,
                 &parts.commit_id,
                 parts.write_set,
                 state,
@@ -1688,8 +1716,8 @@ async fn finish(
                 external_agent_evidence: state.external_agent_evidence.clone(),
                 evidence_batch: state.batch.clone(),
                 event_sequence: state.seq,
-                invocation_ref: parts.invocation_ref,
-                version_scope: parts.version_scope,
+                program_invocation_ref: parts.program_invocation_ref,
+                program_instance_ref: parts.program_instance_ref,
                 commit_id: parts.commit_id,
                 write_set: parts.write_set,
                 continuation_id: continuation_id.clone(),

@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::ports::EventRef;
 use apxm_inference::{ModelBindingAdmission, Usage};
-use apxm_kernel::AtomicWriteSet;
+use apxm_kernel::{AtomicWriteSet, ProgramInstanceRef, ProgramInvocationRef};
 use apxm_program::air::AirModule;
 use apxm_program::external_agent::ExternalAgentEvidence;
 use apxm_program::frontend_graph::HookBinding;
@@ -31,7 +31,8 @@ pub struct DurableLoopFrame {
 /// `await.event`. It carries exactly the state required to resume: the AIR, the
 /// index of the next operation, the threaded Context, the accumulated native
 /// usage and External Agent evidence, the in-progress evidence batch and
-/// sequence, and the commit scope/write-set used by the next atomic commit.
+/// sequence, and the exact instance/invocation identities used by the next
+/// atomic commit.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Continuation {
     pub air: AirModule,
@@ -48,8 +49,8 @@ pub struct Continuation {
     pub external_agent_evidence: Vec<ExternalAgentEvidence>,
     pub evidence_batch: Vec<Fact>,
     pub event_sequence: u64,
-    pub invocation_ref: String,
-    pub version_scope: String,
+    pub program_instance_ref: ProgramInstanceRef,
+    pub program_invocation_ref: ProgramInvocationRef,
     pub commit_id: String,
     pub write_set: AtomicWriteSet,
     /// The compiler-provided identity of the structural continuation.
@@ -76,7 +77,15 @@ pub enum RunOutcome {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ContinuationError {
     /// No committed continuation is available for the requested Program Instance.
-    NotCommitted { invocation_ref: String },
+    NotCommitted {
+        program_instance_ref: ProgramInstanceRef,
+    },
+    /// The commit port returned a continuation for a different Program Instance
+    /// than the one used as its continuation key.
+    InstanceScopeMismatch {
+        requested: ProgramInstanceRef,
+        committed: ProgramInstanceRef,
+    },
     /// The authoritative commit record contained an invalid continuation payload.
     InvalidCommittedState { message: String },
 }
@@ -84,12 +93,24 @@ pub enum ContinuationError {
 impl std::fmt::Display for ContinuationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NotCommitted { invocation_ref } => {
+            Self::NotCommitted {
+                program_instance_ref,
+            } => {
                 write!(
                     f,
-                    "no committed continuation for invocation {invocation_ref}"
+                    "no committed continuation for Program Instance {}",
+                    program_instance_ref.as_str()
                 )
             }
+            Self::InstanceScopeMismatch {
+                requested,
+                committed,
+            } => write!(
+                f,
+                "continuation key mismatch: requested Program Instance {}, committed Program Instance {}",
+                requested.as_str(),
+                committed.as_str()
+            ),
             Self::InvalidCommittedState { message } => {
                 write!(f, "invalid committed continuation state: {message}")
             }

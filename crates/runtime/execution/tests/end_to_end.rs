@@ -16,7 +16,8 @@ use apxm_inference::{
 use apxm_kernel::{
     AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, ExactPortBinding, ExecutionCommitPort,
     ExecutionCommitRequest, ExecutionCommitResult, ExternalAgentCapabilityPort, PortBundle,
-    PortBundleSpec, PortImplementation, PortSlot, PromptEffectState,
+    PortBundleSpec, PortImplementation, PortSlot, ProgramInstanceRef, ProgramInvocationRef,
+    PromptEffectState,
 };
 use apxm_program::air::AirModule;
 use apxm_program::artifact::SchemaDigestRef;
@@ -260,7 +261,7 @@ impl ExecutionCommitPort for FakeCommit {
         self.invocation_refs
             .lock()
             .unwrap()
-            .push(request.invocation_ref.clone());
+            .push(request.program_invocation_ref.as_str().to_string());
         state.0 = request.expected_program_state_version + 1;
         state.1.extend(request.evidence_batch);
         ExecutionCommitResult::Committed {
@@ -268,7 +269,7 @@ impl ExecutionCommitPort for FakeCommit {
             evidence_position_ref: "evidence:1".into(),
         }
     }
-    async fn current_version(&self, _invocation_ref: &str) -> u64 {
+    async fn current_version(&self, _program_instance_ref: &ProgramInstanceRef) -> u64 {
         self.state.lock().unwrap().0
     }
 }
@@ -401,8 +402,8 @@ fn request() -> ExecutionRequest {
             return_mode: HookReturnMode::ReplaceResult,
         }],
         model_admission: admission(),
-        invocation_ref: "invocation.1".into(),
-        version_scope: "instance.1".into(),
+        program_instance_ref: ProgramInstanceRef::new("instance.1"),
+        program_invocation_ref: ProgramInvocationRef::new("invocation.1"),
         commit_id: "c1".into(),
         write_set: write_set(),
     }
@@ -804,7 +805,7 @@ async fn repeated_instance_invocations_keep_evidence_identities_disjoint() {
 
     let mut second = request();
     second.commit_id = "c2".into();
-    second.invocation_ref = "invocation.2".into();
+    second.program_invocation_ref = ProgramInvocationRef::new("invocation.2");
     execute(&ports(commit.clone()), second, json!({"invocation": 2}))
         .await
         .expect("second invocation");
@@ -835,7 +836,7 @@ async fn distinct_invocations_do_not_reuse_published_invocation_coordinates() {
         .expect("first invocation commits");
     let mut second = request();
     second.commit_id = "c2".into();
-    second.invocation_ref = "invocation.2".into();
+    second.program_invocation_ref = ProgramInvocationRef::new("invocation.2");
     execute(&ports, second, json!({}))
         .await
         .expect("second invocation commits");
@@ -988,8 +989,8 @@ async fn unbound_model_target_fails_closed() {
         air: bad_air,
         hook_bindings: Vec::new(),
         model_admission: admission(),
-        invocation_ref: "invocation.unbound".into(),
-        version_scope: "instance.1".into(),
+        program_instance_ref: ProgramInstanceRef::new("instance.1"),
+        program_invocation_ref: ProgramInvocationRef::new("invocation.unbound"),
         commit_id: "c1".into(),
         write_set: write_set(),
     };

@@ -15,6 +15,70 @@ use serde_json::{Value, json};
 
 use apxm_program::runtime_evidence::Fact;
 
+/// The durable Program Instance identity that scopes compare-and-commit state
+/// and continuation reads.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ProgramInstanceRef(String);
+
+impl ProgramInstanceRef {
+    /// Construct one exact Program Instance reference.
+    #[must_use]
+    pub fn new(reference: impl Into<String>) -> Self {
+        Self(reference.into())
+    }
+
+    /// Borrow the exact reference value.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for ProgramInstanceRef {
+    fn from(reference: String) -> Self {
+        Self::new(reference)
+    }
+}
+
+impl From<&str> for ProgramInstanceRef {
+    fn from(reference: &str) -> Self {
+        Self::new(reference)
+    }
+}
+
+/// The admitted Program Invocation identity that scopes one committed evidence
+/// and idempotency record.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ProgramInvocationRef(String);
+
+impl ProgramInvocationRef {
+    /// Construct one exact Program Invocation reference.
+    #[must_use]
+    pub fn new(reference: impl Into<String>) -> Self {
+        Self(reference.into())
+    }
+
+    /// Borrow the exact reference value.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for ProgramInvocationRef {
+    fn from(reference: String) -> Self {
+        Self::new(reference)
+    }
+}
+
+impl From<&str> for ProgramInvocationRef {
+    fn from(reference: &str) -> Self {
+        Self::new(reference)
+    }
+}
+
 /// The exact ordered atomic write-set members. This is the only legal write set.
 pub const ATOMIC_WRITE_SET: [&str; 5] = [
     "state_continuation",
@@ -74,7 +138,8 @@ impl ExecutionCommitTuple {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExecutionCommitRequest {
     pub commit_id: String,
-    pub invocation_ref: String,
+    pub program_instance_ref: ProgramInstanceRef,
+    pub program_invocation_ref: ProgramInvocationRef,
     pub idempotency_key: String,
     pub expected_program_state_version: u64,
     pub write_set: AtomicWriteSet,
@@ -121,10 +186,17 @@ impl ExecutionCommitRequest {
         let mut object = json!({
             "schema_version": "apxm.execution-commit.v1",
             "commit_id": self.commit_id,
-            "invocation_ref": { "ref_type": "ProgramInvocationRef", "ref": self.invocation_ref },
+            "program_instance_ref": {
+                "ref_type": "ProgramInstanceRef",
+                "ref": self.program_instance_ref.as_str(),
+            },
+            "invocation_ref": {
+                "ref_type": "ProgramInvocationRef",
+                "ref": self.program_invocation_ref.as_str(),
+            },
             "idempotency_key": {
                 "key_id": self.idempotency_key,
-                "scope_ref": self.invocation_ref,
+                "scope_ref": self.program_invocation_ref.as_str(),
                 "request_digest": self.write_set.next_program_state_digest,
             },
             "expected_program_state_version": self.expected_program_state_version,
@@ -168,18 +240,20 @@ impl ExecutionCommitRequest {
 /// state; there is no split commit surface.
 #[async_trait]
 pub trait ExecutionCommitPort: Send + Sync {
-    /// Compare `expected_program_state_version` against the invocation's current
-    /// version and, only on an exact match, atomically publish the whole write
-    /// set and its evidence batch. Idempotent on `commit_id`.
+    /// Compare `expected_program_state_version` against the Program Instance's
+    /// current version and, only on an exact match, atomically publish the
+    /// whole write set and its evidence batch. Idempotency remains scoped to
+    /// the admitted Program Invocation carried by the request.
     async fn commit(&self, request: ExecutionCommitRequest) -> ExecutionCommitResult;
 
-    /// The current committed version for an invocation (0 before any commit).
-    async fn current_version(&self, invocation_ref: &str) -> u64;
+    /// The current committed version for one Program Instance (0 before any
+    /// commit).
+    async fn current_version(&self, program_instance_ref: &ProgramInstanceRef) -> u64;
 
     /// Read the current continuation payload from the same authoritative commit
     /// record. Implementations that do not support resumption return `None`;
     /// they never route execution through a secondary persistence authority.
-    async fn load_continuation(&self, _invocation_ref: &str) -> Option<Value> {
+    async fn load_continuation(&self, _program_instance_ref: &ProgramInstanceRef) -> Option<Value> {
         None
     }
 }

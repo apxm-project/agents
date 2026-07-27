@@ -326,6 +326,21 @@ def execution_commit_atomicity_errors(instance: dict[str, Any]) -> list[str]:
     ]
     if instance.get("atomic_write_set") != expected:
         return ["execution commit atomic_write_set must cover exactly the canonical atomic members"]
+    for field, expected_type in (
+        ("program_instance_ref", "ProgramInstanceRef"),
+        ("invocation_ref", "ProgramInvocationRef"),
+    ):
+        reference = instance.get(field)
+        if not isinstance(reference, dict) or reference.get("ref_type") != expected_type:
+            return [f"execution commit {field} must carry {expected_type}"]
+    idempotency_key = instance.get("idempotency_key")
+    invocation_ref = instance.get("invocation_ref")
+    if (
+        isinstance(idempotency_key, dict)
+        and isinstance(invocation_ref, dict)
+        and idempotency_key.get("scope_ref") != invocation_ref.get("ref")
+    ):
+        return ["execution commit idempotency scope must equal invocation_ref.ref"]
     return []
 
 

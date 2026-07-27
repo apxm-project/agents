@@ -21,7 +21,7 @@
     },
     {
       "schema_id": "apxm.execution-commit.v1",
-      "digest": "sha256:760f5393a62e2462c5a94850681d18b6f0c40572d5076411cab4a0e65d0a83a7"
+      "digest": "sha256:7db4b1742194c1bb59afb73f3795eeee8893c0ad8fa58960b4ea6e0ef418ef86"
     }
   ],
   "owned_schemas": [
@@ -96,7 +96,7 @@
       "port_contract_id": "apxm.execution-commit.v1",
       "built_on": "apxm.execution-commit.v1",
       "path": "port-contracts/apxm.execution-commit.port-contract.v1.json",
-      "digest": "sha256:8653249de3ecb487f002ecfae89ec969f649147b05b148c753f9b0cdfd6b5ce0"
+      "digest": "sha256:b64becdf1c246b6a05bf02206dcf2306171501079257f188a7d76d88af9f26f7"
     }
   ],
   "source_scope_invariant": "artifact_semantic",
@@ -329,7 +329,7 @@
     {
       "schema_id": "apxm.execution-commit.v1",
       "path": "vectors/apxm.execution-commit.v1.json",
-      "digest": "sha256:918fa75f97b5f0bd9419b0f06d79e6d900f62e895ff8b4f51b2f5356bf293d7a",
+      "digest": "sha256:e255d19a5b8f284c265c72f122f646fa4323cac0827d6087bb85df31104643df",
       "coverage": [
         "positive",
         "atomicity",
@@ -410,5 +410,5 @@
     "algorithm": "ed25519",
     "status": "signing_pending_no_key"
   },
-  "descriptor_digest": "sha256:e96fd15484f6892639cbe42d8fc49ec853382b453740a834789168b98e00473b"
+  "descriptor_digest": "sha256:6b7b274023624bf685bae62cfc8283f8556bea02166e3124d302f577427682e0"
 }

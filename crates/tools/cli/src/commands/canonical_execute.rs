@@ -20,7 +20,8 @@ use apxm_inference::{
 use apxm_kernel::{
     AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, ExactPortBinding, ExecutionCommitPort,
     ExecutionCommitRequest, ExecutionCommitResult, ExternalAgentCapabilityPort, PortBundle,
-    PortBundleSpec, PortImplementation, PortSlot, PromptEffectState,
+    PortBundleSpec, PortImplementation, PortSlot, ProgramInstanceRef, ProgramInvocationRef,
+    PromptEffectState,
 };
 use apxm_program::air::{AirModule, SemanticOpKind};
 use apxm_program::artifact::SchemaDigestRef;
@@ -37,8 +38,8 @@ pub async fn execute_canonical_command(input: PathBuf, _json_output: bool) -> Re
         air,
         hook_bindings: Vec::new(),
         model_admission: dev_model_admission(target),
-        invocation_ref: "dev.invocation.1".to_string(),
-        version_scope: "dev.instance".to_string(),
+        program_instance_ref: ProgramInstanceRef::new("dev.instance"),
+        program_invocation_ref: ProgramInvocationRef::new("dev.invocation.1"),
         commit_id: "dev.commit.1".to_string(),
         write_set: dev_write_set(),
     };
@@ -248,7 +249,7 @@ impl ExecutionCommitPort for DevCommit {
         }
     }
 
-    async fn current_version(&self, _invocation_ref: &str) -> u64 {
+    async fn current_version(&self, _program_instance_ref: &ProgramInstanceRef) -> u64 {
         *self.version.lock().expect("dev commit mutex poisoned")
     }
 }
@@ -462,8 +463,8 @@ mod tests {
                 air,
                 hook_bindings: Vec::new(),
                 model_admission: dev_model_admission("model.target.v1".into()),
-                invocation_ref: "test.invocation".into(),
-                version_scope: "test.instance".into(),
+                program_instance_ref: ProgramInstanceRef::new("test.instance"),
+                program_invocation_ref: ProgramInvocationRef::new("test.invocation"),
                 commit_id: "test.commit".into(),
                 write_set: dev_write_set(),
             },

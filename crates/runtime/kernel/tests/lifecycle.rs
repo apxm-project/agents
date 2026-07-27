@@ -19,7 +19,8 @@ use apxm_program::runtime_evidence::{
 use apxm_kernel::{
     AtomicWriteSet, ExactPortBinding, ExecutionCommitPort, ExecutionCommitRequest,
     ExecutionCommitResult, ExecutionCommitTuple, InstanceError, Invocation, InvocationReport,
-    PortBundle, PortBundleSpec, PortImplementation, PortSlot, ProgramInstance, reconstruct,
+    PortBundle, PortBundleSpec, PortImplementation, PortSlot, ProgramInstance, ProgramInstanceRef,
+    ProgramInvocationRef, reconstruct,
 };
 
 fn digest(c: char) -> String {
@@ -69,7 +70,8 @@ fn bundle(port: Arc<dyn ExecutionCommitPort>) -> PortBundle {
 }
 
 fn instance_on(port: Arc<dyn ExecutionCommitPort>, id: &str) -> ProgramInstance {
-    ProgramInstance::new(identity(id), id, bundle(port))
+    ProgramInstance::new(identity(id), ProgramInstanceRef::new(id), bundle(port))
+        .expect("Program Instance identity matches its commit key")
 }
 
 // ── Deterministic fixture commit port ──────────────────────────────────────
@@ -136,24 +138,31 @@ impl ExecutionCommitPort for FixtureCommit {
                 reconciliation_ref: format!("reconcile:{}", request.commit_id),
             };
         }
-        let current = *state.versions.get(&request.invocation_ref).unwrap_or(&0);
+        let current = *state
+            .versions
+            .get(request.program_instance_ref.as_str())
+            .unwrap_or(&0);
         if request.expected_program_state_version != current {
             return ExecutionCommitResult::CompareConflict {
                 current_program_state_version: current,
             };
         }
         let new_version = current + 1;
-        state
-            .versions
-            .insert(request.invocation_ref.clone(), new_version);
+        state.versions.insert(
+            request.program_instance_ref.as_str().to_string(),
+            new_version,
+        );
         state
             .evidence
-            .entry(request.invocation_ref.clone())
+            .entry(request.program_instance_ref.as_str().to_string())
             .or_default()
             .extend(request.evidence_batch.clone());
         let result = ExecutionCommitResult::Committed {
             new_program_state_version: new_version,
-            evidence_position_ref: format!("evidence:{}:{new_version}", request.invocation_ref),
+            evidence_position_ref: format!(
+                "evidence:{}:{new_version}",
+                request.program_invocation_ref.as_str()
+            ),
         };
         state
             .by_id
@@ -161,8 +170,8 @@ impl ExecutionCommitPort for FixtureCommit {
         result
     }
 
-    async fn current_version(&self, invocation_ref: &str) -> u64 {
-        self.version(invocation_ref)
+    async fn current_version(&self, program_instance_ref: &ProgramInstanceRef) -> u64 {
+        self.version(program_instance_ref.as_str())
     }
 }
 
@@ -186,7 +195,8 @@ async fn rolled_back_loop_body_publishes_no_completion_and_replay_is_idempotent(
     let completion = completed_loop_iteration();
     let request = |expected_program_state_version, commit_id: &str| ExecutionCommitRequest {
         commit_id: commit_id.into(),
-        invocation_ref: "invocation.1".into(),
+        program_instance_ref: ProgramInstanceRef::new("instance.1"),
+        program_invocation_ref: ProgramInvocationRef::new("invocation.1"),
         idempotency_key: format!("idem.{commit_id}"),
         expected_program_state_version,
         write_set: write_set(),
@@ -201,7 +211,7 @@ async fn rolled_back_loop_body_publishes_no_completion_and_replay_is_idempotent(
             current_program_state_version: 0
         }
     ));
-    assert!(port.committed_evidence("invocation.1").is_empty());
+    assert!(port.committed_evidence("instance.1").is_empty());
 
     let committed = port.commit(request(0, "commit.1")).await;
     assert!(matches!(
@@ -214,7 +224,7 @@ async fn rolled_back_loop_body_publishes_no_completion_and_replay_is_idempotent(
     let replayed = port.commit(request(0, "commit.1")).await;
     assert_eq!(replayed, committed);
     assert_eq!(
-        port.committed_evidence("invocation.1"),
+        port.committed_evidence("instance.1"),
         vec![completion],
         "replay never duplicates the authoritative completion fact"
     );
@@ -228,6 +238,7 @@ async fn atomic_commit_publishes_full_write_set_and_all_facts() {
     let report = instance
         .invoke(Invocation {
             commit_id: "c1".into(),
+            program_invocation_ref: ProgramInvocationRef::new("invocation.1"),
             write_set: write_set(),
         })
         .await
@@ -256,13 +267,40 @@ async fn atomic_commit_publishes_full_write_set_and_all_facts() {
     );
 }
 
+#[test]
+fn program_instance_commit_key_requires_matching_evidence_identity() {
+    let port = Arc::new(FixtureCommit::new());
+    let mut missing = identity("instance.1");
+    missing.program_instance_id = None;
+    assert!(matches!(
+        ProgramInstance::new(
+            missing,
+            ProgramInstanceRef::new("instance.1"),
+            bundle(port.clone())
+        ),
+        Err(InstanceError::MissingProgramInstanceIdentity)
+    ));
+    assert!(matches!(
+        ProgramInstance::new(
+            identity("instance.other"),
+            ProgramInstanceRef::new("instance.1"),
+            bundle(port),
+        ),
+        Err(InstanceError::ProgramInstanceIdentityMismatch {
+            expected,
+            actual,
+        }) if expected == ProgramInstanceRef::new("instance.1") && actual == "instance.other"
+    ));
+}
+
 #[tokio::test]
 async fn compare_conflict_publishes_nothing() {
     // A stale expected version conflicts and the atomic commit writes nothing.
     let port = Arc::new(FixtureCommit::new());
     let request = ExecutionCommitRequest {
         commit_id: "c1".into(),
-        invocation_ref: "instance.1".into(),
+        program_instance_ref: ProgramInstanceRef::new("instance.1"),
+        program_invocation_ref: ProgramInvocationRef::new("invocation.1"),
         idempotency_key: "idem.c1".into(),
         expected_program_state_version: 5,
         write_set: write_set(),
@@ -289,6 +327,7 @@ async fn outcome_unknown_publishes_nothing_and_is_not_success() {
     let report = instance
         .invoke(Invocation {
             commit_id: "c1".into(),
+            program_invocation_ref: ProgramInvocationRef::new("invocation.1"),
             write_set: write_set(),
         })
         .await
@@ -313,6 +352,7 @@ async fn crash_after_commit_reconciles_to_committed() {
         instance
             .invoke(Invocation {
                 commit_id: "c1".into(),
+                program_invocation_ref: ProgramInvocationRef::new("invocation.1"),
                 write_set: write_set(),
             })
             .await
@@ -332,6 +372,7 @@ async fn crash_before_commit_reconciles_to_uncommitted() {
     let _ = instance
         .invoke(Invocation {
             commit_id: "c1".into(),
+            program_invocation_ref: ProgramInvocationRef::new("invocation.1"),
             write_set: write_set(),
         })
         .await;
@@ -347,6 +388,7 @@ async fn idempotent_recommit_applies_once() {
     let first = instance
         .invoke(Invocation {
             commit_id: "c1".into(),
+            program_invocation_ref: ProgramInvocationRef::new("invocation.1"),
             write_set: write_set(),
         })
         .await
@@ -354,6 +396,7 @@ async fn idempotent_recommit_applies_once() {
     let second = instance
         .invoke(Invocation {
             commit_id: "c1".into(),
+            program_invocation_ref: ProgramInvocationRef::new("invocation.1"),
             write_set: write_set(),
         })
         .await
@@ -383,6 +426,7 @@ async fn replay_from_durable_evidence_is_monotonic() {
     instance
         .invoke(Invocation {
             commit_id: "c1".into(),
+            program_invocation_ref: ProgramInvocationRef::new("invocation.1"),
             write_set: write_set(),
         })
         .await
@@ -412,7 +456,14 @@ async fn replay_from_durable_evidence_is_monotonic() {
 async fn cancel_commits_cancellation() {
     let port = Arc::new(FixtureCommit::new());
     let instance = instance_on(port.clone(), "instance.1");
-    let report = instance.cancel("cx", write_set()).await.expect("cancel");
+    let report = instance
+        .cancel(
+            "cx",
+            ProgramInvocationRef::new("invocation.cancel.1"),
+            write_set(),
+        )
+        .await
+        .expect("cancel");
     assert_eq!(report, InvocationReport::Cancelled);
     let view = reconstruct(&port.evidence_for("instance.1"));
     assert_eq!(view.invocation_state, Some(InvocationState::Cancelled));
@@ -427,6 +478,7 @@ async fn instances_are_isolated() {
 
     a.invoke(Invocation {
         commit_id: "c1".into(),
+        program_invocation_ref: ProgramInvocationRef::new("invocation.a.1"),
         write_set: write_set(),
     })
     .await
@@ -438,6 +490,7 @@ async fn instances_are_isolated() {
 
     b.invoke(Invocation {
         commit_id: "c1".into(),
+        program_invocation_ref: ProgramInvocationRef::new("invocation.b.1"),
         write_set: write_set(),
     })
     .await
@@ -462,8 +515,8 @@ impl ExecutionCommitPort for GatedCommit {
         self.inner.commit(request).await
     }
 
-    async fn current_version(&self, invocation_ref: &str) -> u64 {
-        self.inner.current_version(invocation_ref).await
+    async fn current_version(&self, program_instance_ref: &ProgramInstanceRef) -> u64 {
+        self.inner.current_version(program_instance_ref).await
     }
 }
 
@@ -482,6 +535,7 @@ async fn single_flight_rejects_concurrent_invocation() {
         driver
             .invoke(Invocation {
                 commit_id: "c1".into(),
+                program_invocation_ref: ProgramInvocationRef::new("invocation.1"),
                 write_set: write_set(),
             })
             .await
@@ -495,6 +549,7 @@ async fn single_flight_rejects_concurrent_invocation() {
     let busy = instance
         .invoke(Invocation {
             commit_id: "c2".into(),
+            program_invocation_ref: ProgramInvocationRef::new("invocation.2"),
             write_set: write_set(),
         })
         .await;
