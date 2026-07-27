@@ -183,11 +183,13 @@ impl StaticHookHandlerPort for NoopStaticHookHandler {
 }
 
 /// One canonical execution request: the AIR to run, the materialized
-/// model-binding admission, and the commit scope and prepared write set.
+/// model-binding admission, immutable invocation identity, commit scope, and
+/// prepared write set.
 pub struct ExecutionRequest {
     pub air: AirModule,
     pub hook_bindings: Vec<HookBinding>,
     pub model_admission: ModelBindingAdmission,
+    pub invocation_ref: String,
     pub version_scope: String,
     pub commit_id: String,
     pub write_set: AtomicWriteSet,
@@ -1127,6 +1129,7 @@ async fn apply_static_hook(
 async fn commit_and_report(
     ports: &ExecutionPorts,
     version_scope: &str,
+    invocation_ref: &str,
     commit_id: &str,
     write_set: AtomicWriteSet,
     mut state: DriveState,
@@ -1159,7 +1162,7 @@ async fn commit_and_report(
     let operational_usage = publish_committed_native_model_usage(
         ports,
         commit_id,
-        version_scope,
+        invocation_ref,
         &commit,
         &state.native_model_call_measurements,
     )
@@ -1305,7 +1308,7 @@ async fn commit_suspension(
     let operational_usage = publish_committed_native_model_usage(
         ports,
         &format!("{}.yield", continuation.commit_id),
-        &continuation.version_scope,
+        &continuation.invocation_ref,
         &commit,
         &measurements,
     )
@@ -1326,7 +1329,7 @@ pub async fn execute(
     request: ExecutionRequest,
     initial_context: Value,
 ) -> Result<RunReport, ExecutionError> {
-    let state = DriveState::new(initial_context, &request.air, &request.commit_id);
+    let state = DriveState::new(initial_context, &request.air, &request.invocation_ref);
     let end = drive_from(
         ports,
         &request.air,
@@ -1346,6 +1349,7 @@ pub async fn execute(
     Ok(commit_and_report(
         ports,
         &request.version_scope,
+        &request.invocation_ref,
         &request.commit_id,
         request.write_set,
         state,
@@ -1368,7 +1372,7 @@ pub async fn execute_resumable(
     request: ExecutionRequest,
     initial_context: Value,
 ) -> Result<RunOutcome, ExecutionError> {
-    let state = DriveState::new(initial_context, &request.air, &request.commit_id);
+    let state = DriveState::new(initial_context, &request.air, &request.invocation_ref);
     let end = drive_from(
         ports,
         &request.air,
@@ -1451,6 +1455,7 @@ async fn resume_from_continuation(
         external_agent_evidence,
         evidence_batch: _,
         event_sequence,
+        invocation_ref,
         version_scope,
         commit_id,
         write_set,
@@ -1491,7 +1496,7 @@ async fn resume_from_continuation(
         last_operation_succeeded: true,
         batch: Vec::new(),
         seq: event_sequence,
-        program_invocation_id: commit_id.clone(),
+        program_invocation_id: invocation_ref.clone(),
         active_loops: loop_frames,
         last_model_node_execution_id: None,
         last_program_new_node_execution_id: None,
@@ -1554,6 +1559,7 @@ async fn resume_from_continuation(
         air,
         hook_bindings,
         model_admission,
+        invocation_ref,
         version_scope,
         commit_id,
         write_set,
@@ -1567,6 +1573,7 @@ struct CommitParts {
     air: AirModule,
     hook_bindings: Vec<HookBinding>,
     model_admission: ModelBindingAdmission,
+    invocation_ref: String,
     version_scope: String,
     commit_id: String,
     write_set: AtomicWriteSet,
@@ -1577,6 +1584,7 @@ fn request_parts(request: ExecutionRequest) -> CommitParts {
         air: request.air,
         hook_bindings: request.hook_bindings,
         model_admission: request.model_admission,
+        invocation_ref: request.invocation_ref,
         version_scope: request.version_scope,
         commit_id: request.commit_id,
         write_set: request.write_set,
@@ -1595,6 +1603,7 @@ async fn finish(
             let report = commit_and_report(
                 ports,
                 &parts.version_scope,
+                &parts.invocation_ref,
                 &parts.commit_id,
                 parts.write_set,
                 state,
@@ -1623,6 +1632,7 @@ async fn finish(
                 external_agent_evidence: state.external_agent_evidence.clone(),
                 evidence_batch: state.batch.clone(),
                 event_sequence: state.seq,
+                invocation_ref: parts.invocation_ref,
                 version_scope: parts.version_scope,
                 commit_id: parts.commit_id,
                 write_set: parts.write_set,

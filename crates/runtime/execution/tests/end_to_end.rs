@@ -375,6 +375,7 @@ fn request() -> ExecutionRequest {
             return_mode: HookReturnMode::ReplaceResult,
         }],
         model_admission: admission(),
+        invocation_ref: "invocation.1".into(),
         version_scope: "instance.1".into(),
         commit_id: "c1".into(),
         write_set: write_set(),
@@ -504,13 +505,16 @@ async fn committed_native_model_usage_carries_runtime_coordinates_and_excludes_a
     assert_eq!(calls.len(), 1);
     let fact = &calls[0];
     assert_eq!(fact.commit_id, "c1");
-    assert_eq!(fact.invocation_ref, "instance.1");
+    assert_eq!(fact.invocation_ref, "invocation.1");
     assert_eq!(fact.evidence_position_ref, "evidence:1");
-    assert_eq!(fact.node_execution_id, "node-execution.c1.n.model.3");
+    assert_eq!(
+        fact.node_execution_id,
+        "node-execution.invocation.1.n.model.3"
+    );
     assert_eq!(fact.air_node_id, "n.model");
     assert_eq!(
         fact.attempt_id,
-        "model-attempt.node-execution.c1.n.model.3.0"
+        "model-attempt.node-execution.invocation.1.n.model.3.0"
     );
     assert_eq!(fact.attempt_index, 0);
     assert_eq!(fact.model_effect_id, "n.model");
@@ -715,6 +719,7 @@ async fn repeated_instance_invocations_keep_evidence_identities_disjoint() {
 
     let mut second = request();
     second.commit_id = "c2".into();
+    second.invocation_ref = "invocation.2".into();
     execute(&ports(commit.clone()), second, json!({"invocation": 2}))
         .await
         .expect("second invocation");
@@ -722,8 +727,39 @@ async fn repeated_instance_invocations_keep_evidence_identities_disjoint() {
     let facts = commit.facts();
     let fact_ids: std::collections::HashSet<_> = facts.iter().map(Fact::fact_id).collect();
     assert_eq!(fact_ids.len(), facts.len());
-    assert!(fact_ids.iter().any(|fact_id| fact_id.contains(".c1.")));
-    assert!(fact_ids.iter().any(|fact_id| fact_id.contains(".c2.")));
+    assert!(
+        fact_ids
+            .iter()
+            .any(|fact_id| fact_id.contains(".invocation.1."))
+    );
+    assert!(
+        fact_ids
+            .iter()
+            .any(|fact_id| fact_id.contains(".invocation.2."))
+    );
+}
+
+#[tokio::test]
+async fn distinct_invocations_do_not_reuse_published_invocation_coordinates() {
+    let commit = Arc::new(FakeCommit::new());
+    let usage = Arc::new(RecordingOperationalUsage::default());
+    let ports = ports(commit).with_operational_usage_port(usage.clone());
+
+    execute(&ports, request(), json!({}))
+        .await
+        .expect("first invocation commits");
+    let mut second = request();
+    second.commit_id = "c2".into();
+    second.invocation_ref = "invocation.2".into();
+    execute(&ports, second, json!({}))
+        .await
+        .expect("second invocation commits");
+
+    let calls = usage.calls();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].invocation_ref, "invocation.1");
+    assert_eq!(calls[1].invocation_ref, "invocation.2");
+    assert_ne!(calls[0].node_execution_id, calls[1].node_execution_id);
 }
 
 /// A composition port that records every receiver it is handed, so a test can
@@ -855,6 +891,7 @@ async fn unbound_model_target_fails_closed() {
         air: bad_air,
         hook_bindings: Vec::new(),
         model_admission: admission(),
+        invocation_ref: "invocation.unbound".into(),
         version_scope: "instance.1".into(),
         commit_id: "c1".into(),
         write_set: write_set(),

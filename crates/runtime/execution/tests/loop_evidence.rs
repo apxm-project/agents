@@ -83,6 +83,7 @@ fn request(air: AirModule, commit_id: &str) -> ExecutionRequest {
         air,
         hook_bindings: Vec::new(),
         model_admission: admission(),
+        invocation_ref: format!("invocation.{commit_id}"),
         version_scope: "invocation.1".into(),
         commit_id: commit_id.into(),
         write_set: write_set(),
