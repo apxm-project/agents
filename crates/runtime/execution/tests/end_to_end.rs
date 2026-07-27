@@ -24,10 +24,11 @@ use apxm_program::frontend_graph::{HookBinding, HookPhase, HookReturnMode, HookS
 use apxm_program::runtime_evidence::Fact;
 
 use apxm_execution::{
-    CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
-    CompositionReceiver, CompositionRequest, EventAwait, EventOutcome, EventPort, ExecutionError,
-    ExecutionPorts, ExecutionRequest, NodeOutcome, StaticHookHandlerPort, StaticHookResult,
-    execute,
+    CapabilityOutcome, CapabilityPort, CapabilityRequest, CommittedNativeUsage, CompositionOutcome,
+    CompositionPort, CompositionReceiver, CompositionRequest, EventAwait, EventOutcome, EventPort,
+    ExecutionError, ExecutionPorts, ExecutionRequest, NodeOutcome, OperationalUsageFactPort,
+    OperationalUsageFactPublishRequest, OperationalUsageOutcome, StaticHookHandlerPort,
+    StaticHookResult, UsageFactDeliveryError, execute,
 };
 
 fn digest(c: char) -> String {
@@ -180,11 +181,20 @@ impl StaticHookHandlerPort for StaticHooks {
 
 struct FakeCommit {
     state: Mutex<(u64, Vec<Fact>)>,
+    fail: bool,
 }
 impl FakeCommit {
     fn new() -> Self {
         Self {
             state: Mutex::new((0, Vec::new())),
+            fail: false,
+        }
+    }
+
+    fn failing() -> Self {
+        Self {
+            state: Mutex::new((0, Vec::new())),
+            fail: true,
         }
     }
     fn facts(&self) -> Vec<Fact> {
@@ -194,6 +204,11 @@ impl FakeCommit {
 #[async_trait]
 impl ExecutionCommitPort for FakeCommit {
     async fn commit(&self, request: ExecutionCommitRequest) -> ExecutionCommitResult {
+        if self.fail {
+            return ExecutionCommitResult::CompareConflict {
+                current_program_state_version: request.expected_program_state_version + 1,
+            };
+        }
         let mut state = self.state.lock().unwrap();
         state.0 = request.expected_program_state_version + 1;
         state.1.extend(request.evidence_batch);
@@ -204,6 +219,39 @@ impl ExecutionCommitPort for FakeCommit {
     }
     async fn current_version(&self, _invocation_ref: &str) -> u64 {
         self.state.lock().unwrap().0
+    }
+}
+
+#[derive(Default)]
+struct RecordingOperationalUsage {
+    calls: Mutex<Vec<OperationalUsageFactPublishRequest>>,
+    fail: Option<UsageFactDeliveryError>,
+}
+
+impl RecordingOperationalUsage {
+    fn failing(error: UsageFactDeliveryError) -> Self {
+        Self {
+            calls: Mutex::new(Vec::new()),
+            fail: Some(error),
+        }
+    }
+
+    fn calls(&self) -> Vec<OperationalUsageFactPublishRequest> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl OperationalUsageFactPort for RecordingOperationalUsage {
+    async fn publish(
+        &self,
+        request: OperationalUsageFactPublishRequest,
+    ) -> Result<(), UsageFactDeliveryError> {
+        self.calls.lock().unwrap().push(request);
+        match &self.fail {
+            Some(error) => Err(error.clone()),
+            None => Ok(()),
+        }
     }
 }
 
@@ -401,6 +449,110 @@ async fn executes_all_five_ops_and_commits_atomically() {
             .is_some()),
         "program.invoke ChildAttached carries parent lineage"
     );
+}
+
+#[tokio::test]
+async fn committed_native_usage_is_presented_once_and_excludes_acp_peer_usage() {
+    let commit = Arc::new(FakeCommit::new());
+    let usage = Arc::new(RecordingOperationalUsage::default());
+    let ports = ports(commit).with_operational_usage_port(usage.clone());
+
+    let report = execute(&ports, request(), json!({})).await.expect("run");
+
+    assert_eq!(report.operational_usage, OperationalUsageOutcome::Published);
+    assert_eq!(
+        usage.calls(),
+        vec![OperationalUsageFactPublishRequest {
+            commit_id: "c1".into(),
+            invocation_ref: "instance.1".into(),
+            evidence_position_ref: "evidence:1".into(),
+            native_usage: CommittedNativeUsage {
+                input_tokens: 10,
+                output_tokens: 20
+            },
+        }]
+    );
+    assert_eq!(
+        report.external_agent_evidence[0].peer_usage[0].reported_value,
+        "555"
+    );
+    assert_ne!(
+        usage.calls()[0].native_usage.input_tokens,
+        555,
+        "ACP peer usage never becomes native operational usage"
+    );
+}
+
+#[tokio::test]
+async fn usage_presentation_failure_is_reported_after_commit_not_as_success_or_rollback() {
+    let commit = Arc::new(FakeCommit::new());
+    let usage = Arc::new(RecordingOperationalUsage::failing(
+        UsageFactDeliveryError::TransportUnavailable,
+    ));
+    let ports = ports(commit).with_operational_usage_port(usage.clone());
+
+    let report = execute(&ports, request(), json!({}))
+        .await
+        .expect("execution commits");
+
+    assert!(matches!(
+        report.commit,
+        ExecutionCommitResult::Committed { .. }
+    ));
+    assert_eq!(
+        report.operational_usage,
+        OperationalUsageOutcome::Failed(UsageFactDeliveryError::TransportUnavailable)
+    );
+    assert_eq!(usage.calls().len(), 1);
+}
+
+#[tokio::test]
+async fn zero_native_usage_and_uncommitted_execution_emit_nothing() {
+    let usage = Arc::new(RecordingOperationalUsage::default());
+    let no_model_air: AirModule = serde_json::from_value(json!({
+        "schema_version": "apxm.air.v1",
+        "semantic_operations": [{
+            "node_id": "n.cap", "op": "capability.invoke", "parent_region_id": "r.fn", "execution_order": 0,
+            "operands": [
+                {"slot": "capability_ref", "value_id": "cap.search", "type_ref": "CapabilityRef"},
+                {"slot": "arguments", "value_id": "value.cap.arguments", "type_ref": "CapabilityArguments"}
+            ],
+            "result": {"value_id": "value.cap.output", "type_ref": "CapabilityOutput"}
+        }],
+        "structural_ir": [{"region_id": "r.fn", "kind": "function", "execution_order": 0}],
+        "context_flow": [],
+        "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
+    }))
+    .expect("valid no-model AIR");
+    assert!(no_model_air.verify().is_accepted());
+    let mut no_model_request = request();
+    no_model_request.air = no_model_air;
+    no_model_request.hook_bindings = Vec::new();
+    let zero_ports = ports(Arc::new(FakeCommit::new())).with_operational_usage_port(usage.clone());
+
+    let zero_report = execute(&zero_ports, no_model_request, json!({}))
+        .await
+        .expect("zero-usage execution commits");
+    assert_eq!(
+        zero_report.operational_usage,
+        OperationalUsageOutcome::NotApplicable
+    );
+    assert!(usage.calls().is_empty());
+
+    let uncommitted_ports =
+        ports(Arc::new(FakeCommit::failing())).with_operational_usage_port(usage.clone());
+    let uncommitted_report = execute(&uncommitted_ports, request(), json!({}))
+        .await
+        .expect("driver reports failed commit");
+    assert!(matches!(
+        uncommitted_report.commit,
+        ExecutionCommitResult::CompareConflict { .. }
+    ));
+    assert_eq!(
+        uncommitted_report.operational_usage,
+        OperationalUsageOutcome::NotApplicable
+    );
+    assert!(usage.calls().is_empty());
 }
 
 #[tokio::test]
