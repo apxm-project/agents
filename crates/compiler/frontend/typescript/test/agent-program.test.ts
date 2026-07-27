@@ -238,6 +238,49 @@ describe("source-first TypeScript authoring", () => {
     })).toThrow(CaptureError);
   });
 
+  it("rejects an unresolved or effectful call standing in a value position", () => {
+    const captureValuePosition = (body: string) =>
+      captureProgram({
+        programId: "ValuePosition",
+        entrypoint: "run",
+        inputTypeRef: "Input",
+        outputTypeRef: "Output",
+        hasDefaultContext: false,
+        bindings: new Map([["BoundModel", Model("value.position.model.v1")]]),
+        bindingDeclIds: new Map([["BoundModel", "decl.model.BoundModel"]]),
+        source: {
+          fileName: "value-position-agent.ts",
+          text: `
+            import { Agent, Model } from "@apxm/frontend";
+            const BoundModel = Model("value.position.model.v1");
+            const ValuePosition = Agent({
+              name: "ValuePosition",
+              use: { BoundModel },
+              async run(agent, input) {
+                ${body}
+              },
+            });
+          `,
+        },
+      });
+
+    // A returned call the frontend cannot resolve was previously dropped, so
+    // the graph silently lost the author's whole result expression.
+    expect(() => captureValuePosition("return Unresolved(input);")).toThrow(
+      /call target 'Unresolved' is not a bound Context schema/,
+    );
+    // An unresolved call nested in an operand was previously folded into an
+    // untyped literal operand, hiding it from lowering and from admission.
+    expect(() =>
+      captureValuePosition("return await BoundModel(Unresolved(input));"),
+    ).toThrow(/call target 'Unresolved' is not a bound Context schema/);
+    // A typed effect is an effect wherever it is written: reaching it without
+    // await must not degrade it to data.
+    expect(() => captureValuePosition("return BoundModel(input);")).toThrow(
+      /'BoundModel' is a typed effect and is called with await/,
+    );
+  });
+
   it("lowers a Tool call to capability.invoke inside ais.loop", () => {
     const air = JSON.parse(Support.canonicalAir()) as {
       semantic_operations: Array<{ op: string }>;

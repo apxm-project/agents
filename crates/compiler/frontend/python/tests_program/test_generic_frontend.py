@@ -268,6 +268,49 @@ def test_hook_decorator_resolves_a_static_call_target() -> None:
     assert Coordinator.diagnostics() is None
 
 
+def test_value_position_rejects_an_unresolved_or_effectful_call() -> None:
+    ValuePositionModel = Model[object, object]("value.position.model.v1")
+
+    # A returned call the frontend cannot resolve was previously dropped, so
+    # the graph silently lost the author's whole result expression.
+    try:
+
+        @Agent(input="Input", output="Output")
+        async def ReturnsUnresolved(agent, request):
+            return Unresolved(request)  # noqa: F821 - unresolved on purpose
+
+    except ValueError as error:
+        assert "call target 'Unresolved' is not a bound Context schema" in str(error)
+    else:
+        raise AssertionError("an unresolved returned call must not capture")
+
+    # An unresolved call nested in an operand was previously folded into an
+    # untyped literal operand, hiding it from lowering and from admission.
+    try:
+
+        @Agent(input="Input", output="Output")
+        async def OperandUnresolved(agent, request):
+            return await ValuePositionModel(Unresolved(request))  # noqa: F821
+
+    except ValueError as error:
+        assert "call target 'Unresolved' is not a bound Context schema" in str(error)
+    else:
+        raise AssertionError("an unresolved operand call must not capture")
+
+    # A typed effect is an effect wherever it is written: reaching it without
+    # await must not degrade it to data.
+    try:
+
+        @Agent(input="Input", output="Output")
+        async def EffectAsValue(agent, request):
+            return ValuePositionModel(request)
+
+    except ValueError as error:
+        assert "is a typed effect and is called with await" in str(error)
+    else:
+        raise AssertionError("an un-awaited typed effect must not capture as data")
+
+
 def _value(graph: dict, value_id: str) -> dict:
     """Find one emitted FrontendGraph value by its stable identifier."""
     return next(value for value in graph["values"] if value["value_id"] == value_id)
