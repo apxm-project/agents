@@ -11,7 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
-use apxm_source_port::{Frontend, FrontendRoots};
+use apxm_source_port::{Frontend, FrontendDrivers, FrontendRoots};
 
 /// The name every fixture program is authored and captured under.
 pub const ENTRYPOINT: &str = "Reviewer";
@@ -37,6 +37,18 @@ pub fn roots() -> FrontendRoots {
     )
 }
 
+/// The exact interpreter drivers supplied by this test composition root.
+///
+/// The port receives these paths as data and never searches `PATH`; test
+/// fixtures resolve the Dekk-managed toolchain once at their own boundary.
+pub fn drivers() -> FrontendDrivers {
+    let root = repository_root();
+    FrontendDrivers::new(
+        root.join(".dekk/env/bin/python"),
+        root.join(".dekk/env/bin/node"),
+    )
+}
+
 /// Whether one authoring frontend can capture here. Each frontend's compiler
 /// bridge is a build product, so a checkout that has not built it cannot
 /// capture, and a capture assertion there would be asserting the build rather
@@ -44,6 +56,10 @@ pub fn roots() -> FrontendRoots {
 /// that need no build product, so those always run.
 pub fn frontend_present(frontend: Frontend) -> bool {
     let root = roots().root(frontend).to_path_buf();
+    let driver = drivers().driver(frontend).to_path_buf();
+    if !driver.is_file() {
+        return false;
+    }
     match frontend {
         Frontend::Python => root.join("apxm_program/_native.so").is_file(),
         Frontend::Typescript => {

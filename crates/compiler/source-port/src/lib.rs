@@ -3,8 +3,9 @@
 //! This crate is the one library entry point that turns submitted authoring
 //! source text into a typed FrontendGraph, canonical AIR, and a source map. A
 //! caller binds it exactly as it binds `apxm_program::lower_frontend_graph_json`
-//! and calls [`compile_source_bundle`]. It shells out to nothing, spawns no
-//! interpreter of its own, and reimplements no capture.
+//! and calls [`compile_source_bundle`]. The caller supplies the exact frontend
+//! package roots and interpreter drivers at its composition boundary; this
+//! crate reimplements no capture and discovers no checkout or driver path.
 //!
 //! # What the port owns
 //!
@@ -50,7 +51,8 @@ pub const MAX_SOURCE_BYTES: usize = 1_048_576;
 
 /// One submitted source bundle: which frontend authored it, which exported
 /// definition is the program, and the source text itself.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct SourceBundleRequest {
     /// The authoring frontend that recorded this source.
     pub frontend: Frontend,
@@ -100,11 +102,70 @@ impl SourceBundleRequest {
 }
 
 /// Where each authoring frontend package is installed on this host. A caller
-/// declares these roots once; nothing is discovered from an ambient module path.
+/// declares these roots once; nothing is discovered from an ambient module path
+/// or checkout layout.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FrontendRoots {
     python: PathBuf,
     typescript: PathBuf,
+}
+
+/// The exact interpreter driver for each authoring frontend.
+///
+/// Drivers are explicit composition data, alongside [`FrontendRoots`]. The
+/// source port never searches `PATH`, substitutes an interpreter, or derives a
+/// driver from a checkout. That keeps compiler composition outside submitted
+/// source and makes a missing declared driver a closed unavailability result.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FrontendDrivers {
+    python: PathBuf,
+    typescript: PathBuf,
+}
+
+impl FrontendDrivers {
+    /// Bind the exact Python and Node executables that may capture source.
+    #[must_use]
+    pub fn new(python: impl Into<PathBuf>, typescript: impl Into<PathBuf>) -> Self {
+        Self {
+            python: python.into(),
+            typescript: typescript.into(),
+        }
+    }
+
+    /// The declared interpreter driver for one selector.
+    #[must_use]
+    pub fn driver(&self, frontend: Frontend) -> &Path {
+        match frontend {
+            Frontend::Python => &self.python,
+            Frontend::Typescript => &self.typescript,
+        }
+    }
+
+    /// Verify that a driver is an exact usable file rather than a path subject
+    /// to current-directory or `PATH` resolution.
+    fn validate(&self, frontend: Frontend) -> Result<(), SourceDiagnostic> {
+        let driver = self.driver(frontend);
+        if !driver.is_absolute() {
+            return Err(SourceDiagnostic::new(
+                SourceDiagnosticCode::FrontendUnavailable,
+                format!(
+                    "the declared {} authoring frontend driver must be an absolute path",
+                    frontend.wire()
+                ),
+            ));
+        }
+        if !driver.is_file() {
+            return Err(SourceDiagnostic::new(
+                SourceDiagnosticCode::FrontendUnavailable,
+                format!(
+                    "the declared {} authoring frontend driver '{}' is not a file",
+                    frontend.wire(),
+                    driver.display()
+                ),
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl FrontendRoots {
@@ -122,6 +183,32 @@ impl FrontendRoots {
             Frontend::Python => &self.python,
             Frontend::Typescript => &self.typescript,
         }
+    }
+
+    /// Verify that a package root is exact composition data rather than a path
+    /// resolved through the process working directory.
+    fn validate(&self, frontend: Frontend) -> Result<(), SourceDiagnostic> {
+        let root = self.root(frontend);
+        if !root.is_absolute() {
+            return Err(SourceDiagnostic::new(
+                SourceDiagnosticCode::FrontendUnavailable,
+                format!(
+                    "the declared {} authoring frontend root must be an absolute path",
+                    frontend.wire()
+                ),
+            ));
+        }
+        if !root.is_dir() {
+            return Err(SourceDiagnostic::new(
+                SourceDiagnosticCode::FrontendUnavailable,
+                format!(
+                    "the declared {} authoring frontend root '{}' is not a directory",
+                    frontend.wire(),
+                    root.display()
+                ),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -149,12 +236,20 @@ pub struct CompiledSource {
 pub fn compile_source_bundle(
     request: &SourceBundleRequest,
     roots: &FrontendRoots,
+    drivers: &FrontendDrivers,
 ) -> Result<CompiledSource, Vec<SourceDiagnostic>> {
     request.validate().map_err(|diagnostic| vec![diagnostic])?;
+    roots
+        .validate(request.frontend)
+        .map_err(|diagnostic| vec![diagnostic])?;
+    drivers
+        .validate(request.frontend)
+        .map_err(|diagnostic| vec![diagnostic])?;
 
     let captured = frontend::capture(
         request.frontend,
         roots.root(request.frontend),
+        drivers.driver(request.frontend),
         &request.entrypoint,
         &request.source,
     )

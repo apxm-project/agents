@@ -13,7 +13,7 @@ mod common;
 
 use apxm_source_port::{Frontend, SourceDiagnosticCode, compile_source_bundle};
 
-use crate::common::{ENTRYPOINT, FRONTENDS, frontend_present, roots};
+use crate::common::{ENTRYPOINT, FRONTENDS, drivers, frontend_present, roots};
 
 use apxm_source_port::SourceBundleRequest;
 
@@ -24,7 +24,7 @@ use apxm_source_port::SourceBundleRequest;
 /// and not to a program that never defined its entrypoint.
 fn codes(frontend: Frontend, source: String) -> Vec<SourceDiagnosticCode> {
     let request = SourceBundleRequest::new(frontend, ENTRYPOINT, source);
-    match compile_source_bundle(&request, &roots()) {
+    match compile_source_bundle(&request, &roots(), &drivers()) {
         Ok(compiled) => panic!(
             "expected the {} boundary to reject this source; it captured {} call intents",
             frontend.wire(),
@@ -87,7 +87,7 @@ fn the_confinement_fixture_program_compiles_when_it_reaches_for_nothing() {
         }
         let request =
             SourceBundleRequest::new(frontend, ENTRYPOINT, reaching_program(frontend, "", ""));
-        compile_source_bundle(&request, &roots()).unwrap_or_else(|diagnostics| {
+        compile_source_bundle(&request, &roots(), &drivers()).unwrap_or_else(|diagnostics| {
             panic!(
                 "the {} confinement fixture program compiles on its own; \
                  rejected with {diagnostics:?}",

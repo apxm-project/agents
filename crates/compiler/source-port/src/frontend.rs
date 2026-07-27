@@ -8,7 +8,7 @@
 //! exit is translated into one closed diagnostic.
 
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
@@ -41,14 +41,6 @@ impl Frontend {
         match self {
             Self::Python => apxm_program::SourceLanguage::Python,
             Self::Typescript => apxm_program::SourceLanguage::Typescript,
-        }
-    }
-
-    /// The interpreter names tried, in order, for this selector.
-    const fn interpreters(self) -> &'static [&'static str] {
-        match self {
-            Self::Python => &["python3", "python"],
-            Self::Typescript => &["node"],
         }
     }
 
@@ -109,6 +101,7 @@ struct HarnessResponse {
 pub(crate) fn capture(
     frontend: Frontend,
     frontend_root: &Path,
+    driver: &Path,
     entrypoint: &str,
     source: &str,
 ) -> Result<serde_json::Value, SourceDiagnostic> {
@@ -124,7 +117,7 @@ pub(crate) fn capture(
         )
     })?;
 
-    let output = spawn(frontend, frontend_root, &request)?;
+    let output = spawn(frontend, frontend_root, driver, &request)?;
 
     if !output.status.success() {
         return Err(harness_rejection(frontend, &output.stderr));
@@ -155,74 +148,51 @@ fn decode_response(
     Ok(response.frontend_graph)
 }
 
-/// Try each interpreter for the selector in order. A missing interpreter is
-/// unavailability, never a panic and never a silent success.
+/// Run the exact declared interpreter driver. A missing or unstartable driver
+/// is unavailability, never a fallback search, panic, or silent success.
 fn spawn(
     frontend: Frontend,
     frontend_root: &Path,
+    driver: &Path,
     request: &[u8],
 ) -> Result<std::process::Output, SourceDiagnostic> {
-    let mut absent = Vec::new();
-    for interpreter in frontend.interpreters() {
-        let mut command = Command::new(interpreter);
-        command
-            .args(frontend.confinement_arguments(frontend_root))
-            .arg(frontend.harness())
-            .env_clear()
-            .env("PATH", inherited_path())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+    let mut command = Command::new(driver);
+    command
+        .args(frontend.confinement_arguments(frontend_root))
+        .arg(frontend.harness())
+        .env_clear()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
-        let mut child = match command.spawn() {
-            Ok(child) => child,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                absent.push(*interpreter);
-                continue;
-            }
-            Err(error) => {
-                return Err(SourceDiagnostic::new(
-                    SourceDiagnosticCode::FrontendUnavailable,
-                    format!(
-                        "the {} authoring frontend interpreter '{interpreter}' could not start: {error}",
-                        frontend.wire()
-                    ),
-                ));
-            }
-        };
+    let mut child = command.spawn().map_err(|error| {
+        SourceDiagnostic::new(
+            SourceDiagnosticCode::FrontendUnavailable,
+            format!(
+                "the declared {} authoring frontend driver '{}' could not start: {error}",
+                frontend.wire(),
+                driver.display()
+            ),
+        )
+    })?;
 
-        if let Some(stdin) = child.stdin.as_mut() {
-            // A harness that exits before reading closes the pipe; that is a
-            // rejection to read from its status, not a failure to report here.
-            let _ = stdin.write_all(request);
-        }
-        drop(child.stdin.take());
-
-        return child.wait_with_output().map_err(|error| {
-            SourceDiagnostic::new(
-                SourceDiagnosticCode::FrontendUnavailable,
-                format!(
-                    "the {} authoring frontend interpreter '{interpreter}' did not complete: {error}",
-                    frontend.wire()
-                ),
-            )
-        });
+    if let Some(stdin) = child.stdin.as_mut() {
+        // A harness that exits before reading closes the pipe; that is a
+        // rejection to read from its status, not a failure to report here.
+        let _ = stdin.write_all(request);
     }
+    drop(child.stdin.take());
 
-    Err(SourceDiagnostic::new(
-        SourceDiagnosticCode::FrontendUnavailable,
-        format!(
-            "the {} authoring frontend requires an interpreter on this host; none of [{}] is present",
-            frontend.wire(),
-            absent.join(", ")
-        ),
-    ))
-}
-
-/// The interpreter is located through `PATH` and receives nothing else from the
-/// caller's environment: no ambient module path, no credential, no configuration.
-fn inherited_path() -> PathBuf {
-    std::env::var_os("PATH").map_or_else(PathBuf::new, PathBuf::from)
+    child.wait_with_output().map_err(|error| {
+        SourceDiagnostic::new(
+            SourceDiagnosticCode::FrontendUnavailable,
+            format!(
+                "the declared {} authoring frontend driver '{}' did not complete: {error}",
+                frontend.wire(),
+                driver.display()
+            ),
+        )
+    })
 }
 
 /// Translate a harness exit into one closed diagnostic. The first stderr line is

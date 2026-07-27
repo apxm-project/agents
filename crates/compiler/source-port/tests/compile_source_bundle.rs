@@ -9,11 +9,11 @@ mod common;
 
 use apxm_program::frontend_graph::IntentKind;
 use apxm_source_port::{
-    CompiledSource, Frontend, FrontendRoots, SourceBundleRequest, SourceDiagnostic,
-    SourceDiagnosticCode, compile_source_bundle,
+    CompiledSource, Frontend, FrontendDrivers, FrontendRoots, SourceBundleRequest,
+    SourceDiagnostic, SourceDiagnosticCode, compile_source_bundle,
 };
 
-use crate::common::{ENTRYPOINT, FRONTENDS, frontend_present, roots};
+use crate::common::{ENTRYPOINT, FRONTENDS, drivers, frontend_present, roots};
 
 // ── The fixture programs ────────────────────────────────────────────────────
 //
@@ -99,7 +99,7 @@ fn body_with_return(frontend: Frontend, returned: &str) -> String {
 
 /// Compile an accepted request, requiring success.
 fn compile(request: &SourceBundleRequest) -> CompiledSource {
-    compile_source_bundle(request, &roots()).unwrap_or_else(|diagnostics| {
+    compile_source_bundle(request, &roots(), &drivers()).unwrap_or_else(|diagnostics| {
         panic!(
             "expected {} source to compile; rejected with {:?}",
             request.frontend.wire(),
@@ -110,7 +110,7 @@ fn compile(request: &SourceBundleRequest) -> CompiledSource {
 
 /// Compile a request that must be rejected, requiring diagnostics and no graph.
 fn reject(request: &SourceBundleRequest) -> Vec<SourceDiagnostic> {
-    match compile_source_bundle(request, &roots()) {
+    match compile_source_bundle(request, &roots(), &drivers()) {
         Ok(compiled) => panic!(
             "expected {} source to be rejected; it produced a graph with {} call intents \
              and AIR with {} semantic operations",
@@ -459,9 +459,10 @@ fn an_absent_frontend_package_rejects_with_a_typed_diagnostic() {
         "the unavailability fixture names a path that does not exist"
     );
     let roots = FrontendRoots::new(&absent, &absent);
+    let drivers = drivers();
 
     for frontend in FRONTENDS {
-        let diagnostics = compile_source_bundle(&accepted(frontend), &roots)
+        let diagnostics = compile_source_bundle(&accepted(frontend), &roots, &drivers)
             .expect_err("an absent frontend package cannot produce a graph");
         assert_eq!(
             diagnostics
@@ -473,6 +474,112 @@ fn an_absent_frontend_package_rejects_with_a_typed_diagnostic() {
             frontend.wire()
         );
         assert_reason_was_decoded(frontend, &diagnostics);
+    }
+}
+
+/// A declared driver is an exact composition binding. The port neither searches
+/// `PATH` nor substitutes another interpreter when that binding is absent.
+#[test]
+fn an_absent_declared_driver_never_falls_back_to_path() {
+    let absent = common::repository_root().join("crates/compiler/source-port/no-driver-here");
+    assert!(
+        !absent.exists(),
+        "the absent-driver fixture names a path that does not exist"
+    );
+    let drivers = FrontendDrivers::new(&absent, &absent);
+
+    for frontend in FRONTENDS {
+        let diagnostics = compile_source_bundle(&accepted(frontend), &roots(), &drivers)
+            .expect_err("an absent declared driver cannot produce a graph");
+        assert_eq!(
+            diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code)
+                .collect::<Vec<_>>(),
+            vec![SourceDiagnosticCode::FrontendUnavailable],
+            "an absent declared {} driver is reported as unavailability",
+            frontend.wire()
+        );
+        assert!(
+            diagnostics[0].message.contains("declared"),
+            "the diagnostic identifies the missing composition binding: {diagnostics:?}"
+        );
+    }
+}
+
+/// Composition cannot use a relative driver because that would defer its
+/// meaning to the current directory or `PATH` instead of the exact binding.
+#[test]
+fn a_relative_declared_driver_is_rejected_before_capture() {
+    let drivers = FrontendDrivers::new("python", "node");
+
+    for frontend in FRONTENDS {
+        let diagnostics = compile_source_bundle(&accepted(frontend), &roots(), &drivers)
+            .expect_err("a relative declared driver cannot produce a graph");
+        assert_eq!(
+            diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code)
+                .collect::<Vec<_>>(),
+            vec![SourceDiagnosticCode::FrontendUnavailable],
+            "a relative {} driver is rejected as unavailable",
+            frontend.wire()
+        );
+        assert!(
+            diagnostics[0].message.contains("absolute path"),
+            "the diagnostic identifies relative composition data: {diagnostics:?}"
+        );
+    }
+}
+
+/// A driver bound to the wrong frontend does not cause the port to select a
+/// substitute: the declared program fails closed before it can capture source.
+#[test]
+fn swapped_declared_drivers_fail_closed_without_substitution() {
+    let installed = drivers();
+    let swapped = FrontendDrivers::new(
+        installed.driver(Frontend::Typescript),
+        installed.driver(Frontend::Python),
+    );
+
+    for frontend in FRONTENDS {
+        let diagnostics = compile_source_bundle(&accepted(frontend), &roots(), &swapped)
+            .expect_err("a swapped declared driver cannot produce a graph");
+        assert_eq!(
+            diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code)
+                .collect::<Vec<_>>(),
+            vec![SourceDiagnosticCode::FrontendUnavailable],
+            "a swapped {} driver fails closed instead of selecting a substitute",
+            frontend.wire()
+        );
+    }
+}
+
+/// A relative frontend root is rejected before it can be resolved through the
+/// current directory.
+#[test]
+fn a_relative_frontend_root_is_rejected_before_capture() {
+    let roots = FrontendRoots::new("python-frontend", "typescript-frontend");
+    let drivers = drivers();
+
+    for frontend in FRONTENDS {
+        let diagnostics = compile_source_bundle(&accepted(frontend), &roots, &drivers)
+            .expect_err("a relative frontend root cannot produce a graph");
+        assert_eq!(
+            diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code)
+                .collect::<Vec<_>>(),
+            vec![SourceDiagnosticCode::FrontendUnavailable],
+            "a relative {} frontend root is rejected as unavailable",
+            frontend.wire()
+        );
+        assert!(
+            diagnostics[0].message.contains("absolute path"),
+            "the diagnostic identifies relative composition data: {diagnostics:?}"
+        );
     }
 }
 
@@ -517,9 +624,10 @@ fn an_empty_frontend_root_rejects_with_a_typed_diagnostic() {
     ));
     std::fs::create_dir_all(&empty).expect("create the empty frontend root");
     let roots = FrontendRoots::new(&empty, &empty);
+    let drivers = drivers();
 
     for frontend in FRONTENDS {
-        let diagnostics = compile_source_bundle(&accepted(frontend), &roots)
+        let diagnostics = compile_source_bundle(&accepted(frontend), &roots, &drivers)
             .expect_err("an empty frontend root cannot produce a graph");
         assert!(
             diagnostics
@@ -550,6 +658,7 @@ fn a_graph_attributed_to_the_wrong_language_rejects() {
         "the mislabeling stand-in frontend is checked in"
     );
     let roots = FrontendRoots::new(&fixture, &fixture);
+    let drivers = drivers();
 
     let request = SourceBundleRequest::new(
         Frontend::Python,
@@ -557,7 +666,7 @@ fn a_graph_attributed_to_the_wrong_language_rejects() {
         "from apxm_program import mislabeled_program\n\nReviewer = mislabeled_program()\n",
     );
 
-    let diagnostics = compile_source_bundle(&request, &roots)
+    let diagnostics = compile_source_bundle(&request, &roots, &drivers)
         .expect_err("a graph attributed to another language is not this compilation");
     assert_eq!(
         diagnostics
@@ -577,6 +686,7 @@ fn a_graph_attributed_to_the_wrong_language_rejects() {
 fn an_invalid_request_rejects_before_any_capture() {
     let absent = common::repository_root().join("crates/compiler/source-port/no-frontend-here");
     let roots = FrontendRoots::new(&absent, &absent);
+    let drivers = drivers();
 
     let cases = [
         (
@@ -598,7 +708,7 @@ fn an_invalid_request_rejects_before_any_capture() {
     ];
 
     for (class, request) in cases {
-        let diagnostics = compile_source_bundle(&request, &roots)
+        let diagnostics = compile_source_bundle(&request, &roots, &drivers)
             .expect_err("an invalid request cannot produce a graph");
         assert_eq!(
             diagnostics
