@@ -27,13 +27,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONTRACT_GENERATOR = REPO_ROOT.parent / "contracts/tools/codegen.py"
-OUTPUT_PATHS = (
-    Path("crates/tools/cli/generated/typescript/event-v1.ts"),
-    Path("crates/tools/cli/generated/python/event_v1.py"),
-    Path("crates/machine/contracts/src/events/generated_event_kind_registry.rs"),
-    Path("crates/machine/contracts/src/types/generated_host_execution_manifest.rs"),
-    Path("crates/machine/contracts/src/types/generated_context_contracts.rs"),
-)
 
 
 def parse_args() -> argparse.Namespace:
@@ -42,7 +35,25 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def render(output_root: Path) -> int:
+def discover_output_paths(output_root: Path) -> tuple[Path, ...]:
+    """Enumerate what the owning generator actually wrote, rather than a frozen copy.
+
+    The owning generator (contracts/tools/codegen.py) has no `--list-outputs`
+    reporting mode, so the only way to learn its exact output set without
+    duplicating owner knowledge is to run it and see what appeared. A hardcoded
+    tuple drifts silently the moment the owner adds or renames a file; walking
+    the rendered tree cannot.
+    """
+    return tuple(
+        sorted(
+            path.relative_to(output_root)
+            for path in output_root.rglob("*")
+            if path.is_file()
+        )
+    )
+
+
+def render(output_root: Path) -> tuple[int, tuple[Path, ...]]:
     generated = subprocess.run(
         [
             sys.executable,
@@ -56,13 +67,15 @@ def render(output_root: Path) -> int:
         check=False,
     )
     if generated.returncode != 0:
-        return generated.returncode
+        return generated.returncode, ()
 
-    for relative_path in OUTPUT_PATHS:
+    output_paths = discover_output_paths(output_root)
+    if not output_paths:
+        print("contract generator produced no agents output", file=sys.stderr)
+        return 1, ()
+
+    for relative_path in output_paths:
         path = output_root / relative_path
-        if not path.is_file():
-            print(f"contract generator did not produce {relative_path}", file=sys.stderr)
-            return 1
         if path.suffix == ".rs":
             formatted = subprocess.run(
                 ["rustfmt", "--edition", "2024", str(path)],
@@ -70,13 +83,13 @@ def render(output_root: Path) -> int:
                 check=False,
             )
             if formatted.returncode != 0:
-                return formatted.returncode
-    return 0
+                return formatted.returncode, ()
+    return 0, output_paths
 
 
-def check_outputs(output_root: Path) -> int:
+def check_outputs(output_root: Path, output_paths: tuple[Path, ...]) -> int:
     stale: list[Path] = []
-    for relative_path in OUTPUT_PATHS:
+    for relative_path in output_paths:
         expected_path = output_root / relative_path
         current_path = REPO_ROOT / relative_path
         if not current_path.is_file():
@@ -109,8 +122,8 @@ def check_outputs(output_root: Path) -> int:
     return 0
 
 
-def write_outputs(output_root: Path) -> None:
-    for relative_path in OUTPUT_PATHS:
+def write_outputs(output_root: Path, output_paths: tuple[Path, ...]) -> None:
+    for relative_path in output_paths:
         destination = REPO_ROOT / relative_path
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(output_root / relative_path, destination)
@@ -127,12 +140,12 @@ def main() -> int:
     artifact_root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="contract-codegen-", dir=artifact_root) as temporary:
         output_root = Path(temporary)
-        result = render(output_root)
-        if result != 0:
-            return result
+        returncode, output_paths = render(output_root)
+        if returncode != 0:
+            return returncode
         if args.check:
-            return check_outputs(output_root)
-        write_outputs(output_root)
+            return check_outputs(output_root, output_paths)
+        write_outputs(output_root, output_paths)
     return 0
 
 
