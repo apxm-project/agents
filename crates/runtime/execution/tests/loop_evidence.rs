@@ -95,15 +95,15 @@ fn example_artifact_air(artifact: &str) -> AirModule {
     decode_air(value["air"].clone())
 }
 
-fn conversational_example_air() -> AirModule {
+fn conversational_python_example_air() -> AirModule {
     example_artifact_air(include_str!(
-        "../../../machine/program/tests/fixtures/example-artifacts/conversational.v1.json"
+        "../../../machine/program/tests/fixtures/example-artifacts/conversational-python.v1.json"
     ))
 }
 
-fn gao_example_air() -> AirModule {
+fn conversational_typescript_example_air() -> AirModule {
     example_artifact_air(include_str!(
-        "../../../machine/program/tests/fixtures/example-artifacts/gao.v1.json"
+        "../../../machine/program/tests/fixtures/example-artifacts/conversational-typescript.v1.json"
     ))
 }
 
@@ -493,8 +493,14 @@ fn ports(
 #[tokio::test]
 async fn repository_example_artifacts_execute_only_generic_structural_semantics() {
     for (commit_id, air) in [
-        ("example.conversational", conversational_example_air()),
-        ("example.gao", gao_example_air()),
+        (
+            "example.conversational.python",
+            conversational_python_example_air(),
+        ),
+        (
+            "example.conversational.typescript",
+            conversational_typescript_example_air(),
+        ),
     ] {
         assert!(
             air.structural_ir

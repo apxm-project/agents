@@ -13,8 +13,8 @@ from typing import Any
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_ROOT = REPOSITORY_ROOT / "crates/machine/program/tests/fixtures/example-artifacts"
-CONVERSATIONAL_OUTPUT = FIXTURE_ROOT / "conversational.v1.json"
-GAO_OUTPUT = FIXTURE_ROOT / "gao.v1.json"
+CONVERSATIONAL_PYTHON_OUTPUT = FIXTURE_ROOT / "conversational-python.v1.json"
+CONVERSATIONAL_TYPESCRIPT_OUTPUT = FIXTURE_ROOT / "conversational-typescript.v1.json"
 
 
 def run_json(command: list[str], *, cwd: Path, env: dict[str, str]) -> dict[str, Any]:
@@ -57,15 +57,15 @@ def build_python_artifact(package_root: Path) -> dict[str, Any]:
 
 
 def build_typescript_artifact() -> dict[str, Any]:
-    """Compile the Gao example through its installed generic npm dependency."""
+    """Compile the TypeScript example through its installed generic dependency."""
 
-    example_root = REPOSITORY_ROOT / "examples/agents/gao"
+    example_root = REPOSITORY_ROOT / "examples/agents/conversational"
     installed_frontend = example_root / "node_modules/@apxm/frontend/package.json"
     if not installed_frontend.is_file():
         raise FileNotFoundError(f"missing installed TypeScript frontend: {installed_frontend}")
     program = (
-        "import { buildGao } from './dist/index.js';"
-        "console.log(JSON.stringify(buildGao().artifact()));"
+        "import { buildConversational } from './dist/index.js';"
+        "console.log(JSON.stringify(buildConversational().artifact()));"
     )
     return run_json(
         ["node", "--input-type=module", "-e", program],
@@ -104,11 +104,15 @@ def main() -> None:
         raise SystemExit(f"installed Python package root is missing: {package_root}")
 
     publish(
-        CONVERSATIONAL_OUTPUT,
+        CONVERSATIONAL_PYTHON_OUTPUT,
         build_python_artifact(package_root),
         check=args.check,
     )
-    publish(GAO_OUTPUT, build_typescript_artifact(), check=args.check)
+    publish(
+        CONVERSATIONAL_TYPESCRIPT_OUTPUT,
+        build_typescript_artifact(),
+        check=args.check,
+    )
 
 
 if __name__ == "__main__":

@@ -62,11 +62,6 @@ tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "io-u
 tempfile.workspace = true
 toml.workspace = true
 
-[[test]]
-name = "gao_e2e"
-path = "tests/fixtures/gao_e2e.rs"
-required-features = ["driver"]
-
 [build-dependencies]
 apxm-core.workspace = true
 # apxm-server client codegen (folded in from apxm-client, ).

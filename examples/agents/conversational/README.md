@@ -13,8 +13,7 @@ conversation-specific runtime or package API:
 4. replace explicit Context; and
 5. yield a reply that resumes with the next input.
 
-Coder and Gao are small extensions of this reference: Coder focuses on coding
-capabilities, while Gao focuses on APXM authoring capabilities.
+Coder is a small extension of this reference focused on coding capabilities.
 
 Run the focused build, compile, and parity checks from the repository root:
 
