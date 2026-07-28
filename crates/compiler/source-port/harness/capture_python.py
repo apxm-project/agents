@@ -40,6 +40,7 @@ import json
 import linecache
 import resource
 import sys
+import sysconfig
 
 #: Closed reason tokens. The Rust port maps each to one typed diagnostic code.
 REASON_REQUEST = "harness_request_invalid"
@@ -143,8 +144,16 @@ def _read_request() -> tuple[str, str, str]:
 
 def _load_frontend(frontend_root: str) -> None:
     """Resolve the declared authoring frontend before the lockdown closes."""
-    sys.path[:] = [entry for entry in sys.path if entry not in ("", ".")]
-    sys.path.insert(0, frontend_root)
+    interpreter_roots = (
+        sysconfig.get_path("stdlib"),
+        sysconfig.get_path("platstdlib"),
+        sysconfig.get_config_var("DESTSHARED"),
+    )
+    sys.path[:] = list(
+        dict.fromkeys(
+            [frontend_root, *(root for root in interpreter_roots if root is not None)]
+        )
+    )
     try:
         import apxm_program  # noqa: F401
     except BaseException as error:  # noqa: BLE001 - any resolution failure is unavailability
