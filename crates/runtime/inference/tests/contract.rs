@@ -6,22 +6,31 @@
 use std::cell::{Cell, RefCell};
 
 use apxm_inference::{
-    AttemptDisposition, BindingError, CancelToken, ErrorCategory, ExactPortBindingRef,
-    ModelBindingAdmission, ModelCallRequest, ModelDeploymentRef, ModelInferencePort, ModelOutcome,
-    ModelStreamPort, ModelTargetRef, ResolvedModelBinding, RetryPolicy, StreamChunk, TypedError,
-    Usage, execute, stream,
+    AttemptDisposition, BindingError, CancelToken, ErrorCategory, ExactModelTargetRef,
+    ExactPortBindingRef, IdempotencyKey, ModelBindingAdmission, ModelCallPreparation,
+    ModelCallRequest, ModelCallRequestMetadata, ModelContextEnvelopeRef, ModelDeploymentRef,
+    ModelInferencePort, ModelOutcome, ModelStreamMode, ModelStreamPort, ModelTargetRef,
+    ResolvedModelBinding, RetryPolicy, StreamChunk, TypedError, Usage, execute, stream,
 };
 
 const DIGEST_A: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const DIGEST_B: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const DIGEST_C: &str = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+const DIGEST_D: &str = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+const DIGEST_E: &str = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 
 fn binding(target: &str, deployment: &str, digest: &str) -> ResolvedModelBinding {
     ResolvedModelBinding {
-        model_target_ref: ModelTargetRef(target.to_string()),
+        model_target: ExactModelTargetRef {
+            reference: ModelTargetRef(target.to_string()),
+            target_digest: DIGEST_B.to_string(),
+        },
         model_deployment_ref: ModelDeploymentRef(deployment.to_string()),
         exact_port_binding: ExactPortBindingRef {
             binding_digest: digest.to_string(),
+            port_contract_digest: DIGEST_C.to_string(),
         },
+        composition_digest: DIGEST_D.to_string(),
     }
 }
 
@@ -34,6 +43,20 @@ fn error() -> TypedError {
         category: ErrorCategory::Unavailable,
         code: "backend_unavailable".to_string(),
         message: "backend unavailable".to_string(),
+    }
+}
+
+fn metadata() -> ModelCallRequestMetadata {
+    ModelCallRequestMetadata {
+        model_context_envelope_ref: ModelContextEnvelopeRef {
+            context_id: "context.1".to_string(),
+            sealed_digest: DIGEST_E.to_string(),
+        },
+        idempotency: IdempotencyKey {
+            key_id: "idempotency.1".to_string(),
+            scope_ref: "scope.1".to_string(),
+        },
+        stream_mode: ModelStreamMode::Buffered,
     }
 }
 
@@ -69,25 +92,107 @@ fn invalid_binding_digest_fails_closed() {
 #[test]
 fn request_binds_only_its_authored_target() {
     let admission = ModelBindingAdmission::new(binding("model.beta", "deploy.beta", DIGEST_B));
-    let request = ModelCallRequest::authorize(
-        "effect.1",
-        "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-        &ModelTargetRef("model.beta".to_string()),
-        &admission,
+    let request = ModelCallRequest::prepare(
+        ModelCallPreparation::authorize(
+            "effect.1",
+            "node-execution.1",
+            "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            &ModelTargetRef("model.beta".to_string()),
+            &admission,
+        )
+        .expect("authorize authored target"),
+        metadata(),
     )
-    .expect("authorize authored target");
+    .expect("prepare request");
     assert_eq!(request.target().0, "model.beta");
-    assert_eq!(request.resolved_binding.binding_digest(), DIGEST_B);
+    assert_eq!(request.resolved_binding().binding_digest(), DIGEST_B);
 
     assert!(
-        ModelCallRequest::authorize(
+        ModelCallPreparation::authorize(
             "effect.2",
+            "node-execution.2",
             "sha256:2222222222222222222222222222222222222222222222222222222222222222",
             &ModelTargetRef("model.substitute".to_string()),
             &admission,
         )
         .is_err()
     );
+}
+
+#[test]
+fn prepared_request_preserves_exact_admission_and_host_coordinates() {
+    let request = request();
+    assert_eq!(request.node_execution_id().as_str(), "node-execution.1");
+    assert_eq!(request.target().0, "model.alpha");
+    assert_eq!(
+        request.resolved_binding().model_target.target_digest,
+        DIGEST_B
+    );
+    assert_eq!(request.resolved_binding().composition_digest, DIGEST_D);
+    assert_eq!(request.resolved_binding().port_contract_digest(), DIGEST_C);
+    assert_eq!(request.model_context_envelope_ref().sealed_digest, DIGEST_E);
+    assert_eq!(request.idempotency().key_id, "idempotency.1");
+    assert_eq!(request.idempotency().scope_ref, "scope.1");
+    assert_eq!(request.stream_mode(), ModelStreamMode::Buffered);
+}
+
+#[test]
+fn missing_or_invalid_host_metadata_fails_before_dispatch() {
+    let preparation = ModelCallPreparation::authorize(
+        "effect.1",
+        "node-execution.1",
+        "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        &ModelTargetRef("model.alpha".to_string()),
+        &admission(),
+    )
+    .expect("authorize exact binding");
+    let mut missing_scope = metadata();
+    missing_scope.idempotency.scope_ref.clear();
+    assert!(matches!(
+        ModelCallRequest::prepare(preparation.clone(), missing_scope),
+        Err(apxm_inference::ModelCallRequestError::EmptyField(
+            "idempotency.scope_ref"
+        ))
+    ));
+
+    let mut invalid_context_digest = metadata();
+    invalid_context_digest
+        .model_context_envelope_ref
+        .sealed_digest = "not-a-digest".into();
+    assert!(matches!(
+        ModelCallRequest::prepare(preparation, invalid_context_digest),
+        Err(apxm_inference::ModelCallRequestError::InvalidDigest(
+            "model_context_envelope_ref.sealed_digest"
+        ))
+    ));
+}
+
+#[test]
+fn invalid_target_composition_or_port_contract_digest_fails_closed() {
+    let mut invalid_target = binding("model.alpha", "deploy.alpha", DIGEST_A);
+    invalid_target.model_target.target_digest = "not-a-digest".into();
+    assert!(matches!(
+        ModelBindingAdmission::new(invalid_target).validate(&ModelTargetRef("model.alpha".into())),
+        Err(BindingError::InvalidTargetDigest(_))
+    ));
+
+    let mut invalid_composition = binding("model.alpha", "deploy.alpha", DIGEST_A);
+    invalid_composition.composition_digest = "not-a-digest".into();
+    assert!(matches!(
+        ModelBindingAdmission::new(invalid_composition)
+            .validate(&ModelTargetRef("model.alpha".into())),
+        Err(BindingError::InvalidCompositionDigest(_))
+    ));
+
+    let mut invalid_port_contract = binding("model.alpha", "deploy.alpha", DIGEST_A);
+    invalid_port_contract
+        .exact_port_binding
+        .port_contract_digest = "not-a-digest".into();
+    assert!(matches!(
+        ModelBindingAdmission::new(invalid_port_contract)
+            .validate(&ModelTargetRef("model.alpha".into())),
+        Err(BindingError::InvalidPortContractDigest(_))
+    ));
 }
 
 #[test]
@@ -145,9 +250,10 @@ impl ScriptedBackend {
 
 impl ModelInferencePort for ScriptedBackend {
     fn attempt(&self, request: &ModelCallRequest, attempt: u32) -> AttemptDisposition {
-        self.seen_identity
-            .borrow_mut()
-            .push((request.effect_id.clone(), request.request_digest.clone()));
+        self.seen_identity.borrow_mut().push((
+            request.effect_id().to_string(),
+            request.request_digest().to_string(),
+        ));
         let disposition = self.dispositions[attempt as usize].clone();
         if matches!(
             disposition,
@@ -164,13 +270,18 @@ impl ModelInferencePort for ScriptedBackend {
 }
 
 fn request() -> ModelCallRequest {
-    ModelCallRequest::authorize(
-        "effect.1",
-        "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-        &ModelTargetRef("model.alpha".to_string()),
-        &admission(),
+    ModelCallRequest::prepare(
+        ModelCallPreparation::authorize(
+            "effect.1",
+            "node-execution.1",
+            "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            &ModelTargetRef("model.alpha".to_string()),
+            &admission(),
+        )
+        .expect("authorize"),
+        metadata(),
     )
-    .expect("authorize")
+    .expect("prepare")
 }
 
 // ── Retry, usage, outcome-unknown ──────────────────────────────────────────

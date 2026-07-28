@@ -13,9 +13,10 @@ use apxm_execution::{
     ExecutionRequest, NodeOutcome, NoopStaticHookHandler, execute,
 };
 use apxm_inference::{
-    AttemptDisposition, ExactPortBindingRef, ModelBindingAdmission, ModelCallRequest,
+    AttemptDisposition, ExactModelTargetRef, ExactPortBindingRef, ModelBindingAdmission,
+    ModelCallPreparation, ModelCallRequest, ModelCallRequestMetadata, ModelCallRequestMetadataPort,
     ModelDeploymentRef, ModelInferencePort, ModelOutcome, ModelTargetRef, ResolvedModelBinding,
-    Usage,
+    TypedError, Usage,
 };
 use apxm_kernel::{
     AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, ExactPortBinding, ExecutionCommitPort,
@@ -44,7 +45,7 @@ pub async fn execute_canonical_command(input: PathBuf, _json_output: bool) -> Re
         write_set: dev_write_set(),
     };
     let commit = Arc::new(DevCommit::default());
-    let ports = dev_ports(commit)?;
+    let ports = dev_ports(commit, Arc::new(UnavailableModelRequestMetadata))?;
     let report = execute(&ports, request, Value::Null)
         .await
         .map_err(|err| anyhow::anyhow!(err))?;
@@ -123,11 +124,16 @@ fn first_model_target(air: &AirModule) -> Option<String> {
 
 fn dev_model_admission(target: String) -> ModelBindingAdmission {
     ModelBindingAdmission::new(ResolvedModelBinding {
-        model_target_ref: ModelTargetRef(target),
+        model_target: ExactModelTargetRef {
+            reference: ModelTargetRef(target),
+            target_digest: digest('b'),
+        },
         model_deployment_ref: ModelDeploymentRef("dev-profile.model".into()),
         exact_port_binding: ExactPortBindingRef {
             binding_digest: DEV_BINDING_DIGEST.into(),
+            port_contract_digest: digest('c'),
         },
+        composition_digest: digest('d'),
     })
 }
 
@@ -152,6 +158,22 @@ impl ModelInferencePort for DevModel {
         AttemptDisposition::Success(Usage {
             input_tokens: 1,
             output_tokens: 1,
+        })
+    }
+}
+
+struct UnavailableModelRequestMetadata;
+
+impl ModelCallRequestMetadataPort for UnavailableModelRequestMetadata {
+    fn materialize(
+        &self,
+        _preparation: &ModelCallPreparation,
+    ) -> Result<ModelCallRequestMetadata, TypedError> {
+        Err(TypedError {
+            category: apxm_inference::ErrorCategory::Configuration,
+            code: "model_request_metadata_unavailable".into(),
+            message: "canonical local execution has no admitted model request metadata source"
+                .into(),
         })
     }
 }
@@ -254,7 +276,10 @@ impl ExecutionCommitPort for DevCommit {
     }
 }
 
-fn dev_ports(commit: Arc<DevCommit>) -> Result<ExecutionPorts> {
+fn dev_ports(
+    commit: Arc<DevCommit>,
+    model_call_request_metadata: Arc<dyn ModelCallRequestMetadataPort>,
+) -> Result<ExecutionPorts> {
     let contract = |schema_id: &str| SchemaDigestRef {
         schema_id: schema_id.into(),
         digest: DEV_BINDING_DIGEST.into(),
@@ -303,6 +328,7 @@ fn dev_ports(commit: Arc<DevCommit>) -> Result<ExecutionPorts> {
     )?;
     Ok(ExecutionPorts::from_admitted_bundle(
         &bundle,
+        model_call_request_metadata,
         Arc::new(DevEvents),
         Arc::new(DevComposition),
         Arc::new(NoopStaticHookHandler),
@@ -437,6 +463,30 @@ fn commit_result_json(result: &ExecutionCommitResult) -> Value {
 mod tests {
     use super::*;
 
+    struct TestModelRequestMetadata;
+
+    impl ModelCallRequestMetadataPort for TestModelRequestMetadata {
+        fn materialize(
+            &self,
+            preparation: &ModelCallPreparation,
+        ) -> Result<ModelCallRequestMetadata, TypedError> {
+            Ok(ModelCallRequestMetadata {
+                model_context_envelope_ref: apxm_inference::ModelContextEnvelopeRef {
+                    context_id: format!(
+                        "test.context.{}",
+                        preparation.node_execution_id().as_str()
+                    ),
+                    sealed_digest: digest('e'),
+                },
+                idempotency: apxm_inference::IdempotencyKey {
+                    key_id: format!("test.idempotency.{}", preparation.effect_id()),
+                    scope_ref: "test.idempotency.scope".into(),
+                },
+                stream_mode: apxm_inference::ModelStreamMode::Buffered,
+            })
+        }
+    }
+
     #[tokio::test]
     async fn executes_canonical_air_with_dev_ports() {
         let air: AirModule = serde_json::from_value(json!({
@@ -456,7 +506,8 @@ mod tests {
         assert!(air.verify().is_accepted());
 
         let commit = Arc::new(DevCommit::default());
-        let ports = dev_ports(commit).expect("development ports form an admitted bundle");
+        let ports = dev_ports(commit, Arc::new(TestModelRequestMetadata))
+            .expect("development ports form an admitted bundle");
         let report = execute(
             &ports,
             ExecutionRequest {

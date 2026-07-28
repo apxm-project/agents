@@ -12,8 +12,10 @@ use apxm_execution::{
     RunOutcome, execute_resumable, resume_event,
 };
 use apxm_inference::{
-    AttemptDisposition, ExactPortBindingRef, ModelBindingAdmission, ModelCallRequest,
-    ModelDeploymentRef, ModelInferencePort, ModelTargetRef, ResolvedModelBinding, Usage,
+    AttemptDisposition, ExactModelTargetRef, ExactPortBindingRef, IdempotencyKey,
+    ModelBindingAdmission, ModelCallPreparation, ModelCallRequest, ModelCallRequestMetadata,
+    ModelCallRequestMetadataPort, ModelContextEnvelopeRef, ModelDeploymentRef, ModelInferencePort,
+    ModelStreamMode, ModelTargetRef, ResolvedModelBinding, TypedError, Usage,
 };
 use apxm_kernel::{
     AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, ExactPortBinding, ExecutionCommitPort,
@@ -49,11 +51,16 @@ fn request(scope: &str) -> ExecutionRequest {
         air,
         hook_bindings: Vec::new(),
         model_admission: ModelBindingAdmission::new(ResolvedModelBinding {
-            model_target_ref: ModelTargetRef("model.target.v1".into()),
+            model_target: ExactModelTargetRef {
+                reference: ModelTargetRef("model.target.v1".into()),
+                target_digest: digest('9'),
+            },
             model_deployment_ref: ModelDeploymentRef("deployment.default".into()),
             exact_port_binding: ExactPortBindingRef {
                 binding_digest: digest('a'),
+                port_contract_digest: digest('b'),
             },
+            composition_digest: digest('c'),
         }),
         program_instance_ref: ProgramInstanceRef::new(scope),
         program_invocation_ref: ProgramInvocationRef::new(format!("invocation.{scope}")),
@@ -66,6 +73,27 @@ fn request(scope: &str) -> ExecutionRequest {
             usage_facts_digest: digest('5'),
             session_output_refs_digest: digest('6'),
         },
+    }
+}
+
+struct TestModelRequestMetadata;
+
+impl ModelCallRequestMetadataPort for TestModelRequestMetadata {
+    fn materialize(
+        &self,
+        _preparation: &ModelCallPreparation,
+    ) -> Result<ModelCallRequestMetadata, TypedError> {
+        Ok(ModelCallRequestMetadata {
+            model_context_envelope_ref: ModelContextEnvelopeRef {
+                context_id: "context.test".into(),
+                sealed_digest: digest('d'),
+            },
+            idempotency: IdempotencyKey {
+                key_id: "idempotency.test".into(),
+                scope_ref: "scope.test".into(),
+            },
+            stream_mode: ModelStreamMode::Buffered,
+        })
     }
 }
 
@@ -230,6 +258,7 @@ fn ports(commit: Arc<Commit>) -> ExecutionPorts {
     .expect("test ports satisfy the admitted bundle");
     ExecutionPorts::from_admitted_bundle(
         &bundle,
+        Arc::new(TestModelRequestMetadata),
         Arc::new(Events),
         Arc::new(Composition),
         Arc::new(NoopStaticHookHandler),

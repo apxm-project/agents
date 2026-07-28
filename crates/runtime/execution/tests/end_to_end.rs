@@ -9,9 +9,10 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use apxm_inference::{
-    AttemptDisposition, ExactPortBindingRef, ModelBindingAdmission, ModelCallRequest,
-    ModelDeploymentRef, ModelInferencePort, ModelOutcome, ModelTargetRef, ResolvedModelBinding,
-    Usage,
+    AttemptDisposition, ExactModelTargetRef, ExactPortBindingRef, IdempotencyKey,
+    ModelBindingAdmission, ModelCallPreparation, ModelCallRequest, ModelCallRequestMetadata,
+    ModelCallRequestMetadataPort, ModelContextEnvelopeRef, ModelDeploymentRef, ModelInferencePort,
+    ModelOutcome, ModelStreamMode, ModelTargetRef, ResolvedModelBinding, TypedError, Usage,
 };
 use apxm_kernel::{
     AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, ExactPortBinding, ExecutionCommitPort,
@@ -73,12 +74,38 @@ fn air() -> AirModule {
 
 fn admission() -> ModelBindingAdmission {
     ModelBindingAdmission::new(ResolvedModelBinding {
-        model_target_ref: ModelTargetRef("model.target.v1".into()),
+        model_target: ExactModelTargetRef {
+            reference: ModelTargetRef("model.target.v1".into()),
+            target_digest: digest('9'),
+        },
         model_deployment_ref: ModelDeploymentRef("deploy.default".into()),
         exact_port_binding: ExactPortBindingRef {
             binding_digest: digest('a'),
+            port_contract_digest: digest('b'),
         },
+        composition_digest: digest('c'),
     })
+}
+
+struct TestModelRequestMetadata;
+
+impl ModelCallRequestMetadataPort for TestModelRequestMetadata {
+    fn materialize(
+        &self,
+        _preparation: &ModelCallPreparation,
+    ) -> Result<ModelCallRequestMetadata, TypedError> {
+        Ok(ModelCallRequestMetadata {
+            model_context_envelope_ref: ModelContextEnvelopeRef {
+                context_id: "context.test".into(),
+                sealed_digest: digest('d'),
+            },
+            idempotency: IdempotencyKey {
+                key_id: "idempotency.test".into(),
+                scope_ref: "scope.test".into(),
+            },
+            stream_mode: ModelStreamMode::Buffered,
+        })
+    }
 }
 
 struct FakeModel;
@@ -104,10 +131,10 @@ impl RetryingModel {
 
 impl ModelInferencePort for RetryingModel {
     fn attempt(&self, request: &ModelCallRequest, attempt: u32) -> AttemptDisposition {
-        self.request_identities
-            .lock()
-            .unwrap()
-            .push((request.effect_id.clone(), request.request_digest.clone()));
+        self.request_identities.lock().unwrap().push((
+            request.effect_id().to_string(),
+            request.request_digest().to_string(),
+        ));
         if attempt == 0 {
             AttemptDisposition::FailedBeforeSend(apxm_inference::TypedError {
                 category: apxm_inference::ErrorCategory::Unavailable,
@@ -379,6 +406,7 @@ fn ports_with_model_and_composition(
     .expect("test ports satisfy the admitted bundle");
     ExecutionPorts::from_admitted_bundle(
         &bundle,
+        Arc::new(TestModelRequestMetadata),
         Arc::new(FakeEvents),
         composition,
         Arc::new(StaticHooks),
@@ -641,11 +669,16 @@ async fn each_native_model_call_is_published_as_a_distinct_measurement() {
             .validate(&ModelTargetRef("model.target.v1".into()))
             .expect("first model binding"),
         ResolvedModelBinding {
-            model_target_ref: ModelTargetRef("model.target.v2".into()),
+            model_target: ExactModelTargetRef {
+                reference: ModelTargetRef("model.target.v2".into()),
+                target_digest: digest('8'),
+            },
             model_deployment_ref: ModelDeploymentRef("deploy.second".into()),
             exact_port_binding: ExactPortBindingRef {
                 binding_digest: digest('f'),
+                port_contract_digest: digest('b'),
             },
+            composition_digest: digest('c'),
         },
     ]);
 

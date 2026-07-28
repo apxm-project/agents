@@ -16,6 +16,18 @@ use apxm_program::grammar::is_digest;
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ModelTargetRef(pub String);
 
+/// The content-addressed target that admission resolved for one authored
+/// [`ModelTargetRef`].
+///
+/// The authored reference remains separate from its digest because AIR names a
+/// portable target requirement, while the admission fact proves the immutable
+/// target instance that is permitted for this invocation.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ExactModelTargetRef {
+    pub reference: ModelTargetRef,
+    pub target_digest: String,
+}
+
 /// A materialized model deployment reference.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ModelDeploymentRef(pub String);
@@ -24,15 +36,17 @@ pub struct ModelDeploymentRef(pub String);
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ExactPortBindingRef {
     pub binding_digest: String,
+    pub port_contract_digest: String,
 }
 
 /// The single admitted resolution for one model target. It references the exact
 /// binding digest and carries no adapter/provider selection of its own.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolvedModelBinding {
-    pub model_target_ref: ModelTargetRef,
+    pub model_target: ExactModelTargetRef,
     pub model_deployment_ref: ModelDeploymentRef,
     pub exact_port_binding: ExactPortBindingRef,
+    pub composition_digest: String,
 }
 
 impl ResolvedModelBinding {
@@ -40,6 +54,18 @@ impl ResolvedModelBinding {
     #[must_use]
     pub fn binding_digest(&self) -> &str {
         &self.exact_port_binding.binding_digest
+    }
+
+    /// The exact Port Contract digest that the admitted binding implements.
+    #[must_use]
+    pub fn port_contract_digest(&self) -> &str {
+        &self.exact_port_binding.port_contract_digest
+    }
+
+    /// The exact target admitted for this one model effect.
+    #[must_use]
+    pub fn model_target(&self) -> &ExactModelTargetRef {
+        &self.model_target
     }
 }
 
@@ -57,6 +83,14 @@ pub enum BindingError {
     DuplicateTarget(ModelTargetRef),
     /// An admitted mapping carried a binding digest that is not a sha256 value.
     InvalidBindingDigest(ModelTargetRef),
+    /// An admitted mapping carried a target digest that is not a sha256 value.
+    InvalidTargetDigest(ModelTargetRef),
+    /// An admitted mapping carried a deployment-composition digest that is not
+    /// a sha256 value.
+    InvalidCompositionDigest(ModelTargetRef),
+    /// An admitted mapping carried a Port Contract digest that is not a sha256
+    /// value.
+    InvalidPortContractDigest(ModelTargetRef),
 }
 
 impl std::fmt::Display for BindingError {
@@ -77,6 +111,23 @@ impl std::fmt::Display for BindingError {
             }
             Self::InvalidBindingDigest(t) => {
                 write!(f, "admitted binding for {} has a non-sha256 digest", t.0)
+            }
+            Self::InvalidTargetDigest(t) => {
+                write!(f, "admitted target for {} has a non-sha256 digest", t.0)
+            }
+            Self::InvalidCompositionDigest(t) => {
+                write!(
+                    f,
+                    "admitted composition for {} has a non-sha256 digest",
+                    t.0
+                )
+            }
+            Self::InvalidPortContractDigest(t) => {
+                write!(
+                    f,
+                    "admitted Port Contract for {} has a non-sha256 digest",
+                    t.0
+                )
             }
         }
     }
@@ -114,12 +165,12 @@ impl ModelBindingAdmission {
         let mut matches = self
             .resolved_bindings
             .iter()
-            .filter(|binding| &binding.model_target_ref == target);
+            .filter(|binding| &binding.model_target.reference == target);
         let Some(resolved_binding) = matches.next() else {
             return if self.resolved_bindings.len() == 1 {
                 Err(BindingError::TargetMismatch {
                     authored: target.clone(),
-                    admitted: self.resolved_bindings[0].model_target_ref.clone(),
+                    admitted: self.resolved_bindings[0].model_target.reference.clone(),
                 })
             } else {
                 Err(BindingError::MissingTarget(target.clone()))
@@ -130,6 +181,15 @@ impl ModelBindingAdmission {
         }
         if !is_digest(&resolved_binding.exact_port_binding.binding_digest) {
             return Err(BindingError::InvalidBindingDigest(target.clone()));
+        }
+        if !is_digest(&resolved_binding.model_target.target_digest) {
+            return Err(BindingError::InvalidTargetDigest(target.clone()));
+        }
+        if !is_digest(&resolved_binding.composition_digest) {
+            return Err(BindingError::InvalidCompositionDigest(target.clone()));
+        }
+        if !is_digest(&resolved_binding.exact_port_binding.port_contract_digest) {
+            return Err(BindingError::InvalidPortContractDigest(target.clone()));
         }
 
         Ok(resolved_binding.clone())
