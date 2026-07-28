@@ -12,8 +12,10 @@ use apxm_execution::{
     NoopStaticHookHandler, RunOutcome, execute, execute_resumable,
 };
 use apxm_inference::{
-    AttemptDisposition, ExactPortBindingRef, ModelBindingAdmission, ModelCallRequest,
-    ModelDeploymentRef, ModelInferencePort, ModelTargetRef, ResolvedModelBinding, Usage,
+    AttemptDisposition, ExactModelTargetRef, ExactPortBindingRef, IdempotencyKey,
+    ModelBindingAdmission, ModelCallPreparation, ModelCallRequest, ModelCallRequestMetadata,
+    ModelCallRequestMetadataPort, ModelContextEnvelopeRef, ModelDeploymentRef, ModelInferencePort,
+    ModelStreamMode, ModelTargetRef, ResolvedModelBinding, TypedError, Usage,
 };
 use apxm_kernel::{
     AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, ExactPortBinding, ExecutionCommitPort,
@@ -44,12 +46,38 @@ fn write_set() -> AtomicWriteSet {
 
 fn admission() -> ModelBindingAdmission {
     ModelBindingAdmission::new(ResolvedModelBinding {
-        model_target_ref: ModelTargetRef("model.target.v1".into()),
+        model_target: ExactModelTargetRef {
+            reference: ModelTargetRef("model.target.v1".into()),
+            target_digest: digest('9'),
+        },
         model_deployment_ref: ModelDeploymentRef("deployment.default".into()),
         exact_port_binding: ExactPortBindingRef {
             binding_digest: digest('a'),
+            port_contract_digest: digest('b'),
         },
+        composition_digest: digest('c'),
     })
+}
+
+struct TestModelRequestMetadata;
+
+impl ModelCallRequestMetadataPort for TestModelRequestMetadata {
+    fn materialize(
+        &self,
+        _preparation: &ModelCallPreparation,
+    ) -> Result<ModelCallRequestMetadata, TypedError> {
+        Ok(ModelCallRequestMetadata {
+            model_context_envelope_ref: ModelContextEnvelopeRef {
+                context_id: "context.test".into(),
+                sealed_digest: digest('d'),
+            },
+            idempotency: IdempotencyKey {
+                key_id: "idempotency.test".into(),
+                scope_ref: "scope.test".into(),
+            },
+            stream_mode: ModelStreamMode::Buffered,
+        })
+    }
 }
 
 fn decode_air(value: Value) -> AirModule {
@@ -454,6 +482,7 @@ fn ports(
     .expect("test ports satisfy the admitted bundle");
     ExecutionPorts::from_admitted_bundle(
         &bundle,
+        Arc::new(TestModelRequestMetadata),
         Arc::new(Events { park: park_event }),
         Arc::new(Composition),
         Arc::new(NoopStaticHookHandler),

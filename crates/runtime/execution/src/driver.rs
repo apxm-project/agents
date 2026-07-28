@@ -29,8 +29,9 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use apxm_inference::{
-    BindingError, ModelBindingAdmission, ModelCallRequest, ModelInferencePort, ModelOutcome,
-    ModelTargetRef, RetryPolicy, Usage, execute_with_attempt as run_model,
+    BindingError, ModelBindingAdmission, ModelCallPreparation, ModelCallRequest,
+    ModelCallRequestError, ModelCallRequestMetadataPort, ModelInferencePort, ModelOutcome,
+    ModelTargetRef, RetryPolicy, TypedError, Usage, execute_with_attempt as run_model,
 };
 use apxm_kernel::{
     AcpPromptRequest, AtomicWriteSet, ExecutionCommitPort, ExecutionCommitRequest,
@@ -63,6 +64,7 @@ use crate::structural::{ScheduleStep, build_schedule};
 /// admitted implementation; the driver holds no registry and does no discovery.
 pub struct ExecutionPorts {
     model_inference: Arc<dyn ModelInferencePort + Send + Sync>,
+    model_call_request_metadata: Arc<dyn ModelCallRequestMetadataPort>,
     capability: Arc<dyn CapabilityPort>,
     external_agent: Arc<dyn ExternalAgentCapabilityPort>,
     events: Arc<dyn EventPort>,
@@ -94,6 +96,7 @@ impl ExecutionPorts {
     /// ports do not select an implementation for those effects.
     pub fn from_admitted_bundle(
         bundle: &PortBundle,
+        model_call_request_metadata: Arc<dyn ModelCallRequestMetadataPort>,
         events: Arc<dyn EventPort>,
         composition: Arc<dyn CompositionPort>,
         hook_handlers: Arc<dyn StaticHookHandlerPort>,
@@ -118,6 +121,7 @@ impl ExecutionPorts {
 
         Ok(Self {
             model_inference,
+            model_call_request_metadata,
             capability,
             external_agent,
             events,
@@ -251,6 +255,8 @@ pub enum ExecutionError {
         operand: &'static str,
     },
     Binding(BindingError),
+    ModelRequest(ModelCallRequestError),
+    ModelRequestMetadata(TypedError),
     Continuation(ContinuationError),
     InvalidEventRef {
         node_id: String,
@@ -273,6 +279,10 @@ impl std::fmt::Display for ExecutionError {
                 write!(f, "node {node_id} is missing operand {operand}")
             }
             Self::Binding(error) => write!(f, "model binding error: {error}"),
+            Self::ModelRequest(error) => write!(f, "model request error: {error}"),
+            Self::ModelRequestMetadata(error) => {
+                write!(f, "model request metadata error: {}", error.message)
+            }
             Self::Continuation(error) => write!(f, "continuation error: {error}"),
             Self::InvalidEventRef { node_id, source } => {
                 write!(f, "node {node_id} has an invalid event_ref: {source}")
@@ -813,13 +823,20 @@ async fn drive_from(
                             op,
                             &state.context,
                         );
-                        let call = ModelCallRequest::authorize(
+                        let preparation = ModelCallPreparation::authorize(
                             effect_id,
+                            node_execution_id.clone(),
                             request_digest,
                             &ModelTargetRef(target),
                             model_admission,
                         )
                         .map_err(ExecutionError::Binding)?;
+                        let metadata = ports
+                            .model_call_request_metadata
+                            .materialize(&preparation)
+                            .map_err(ExecutionError::ModelRequestMetadata)?;
+                        let call = ModelCallRequest::prepare(preparation, metadata)
+                            .map_err(ExecutionError::ModelRequest)?;
                         let execution =
                             run_model(&*ports.model_inference, &call, RetryPolicy::default());
                         let outcome = execution.outcome;
@@ -844,16 +861,21 @@ async fn drive_from(
                                     "model-attempt.{node_execution_id}.{attempt_index}"
                                 ),
                                 attempt_index,
-                                model_effect_id: call.effect_id.clone(),
-                                request_digest: call.request_digest.clone(),
-                                model_target_ref: call.resolved_binding.model_target_ref.0.clone(),
+                                model_effect_id: call.effect_id().to_string(),
+                                request_digest: call.request_digest().to_string(),
+                                model_target_ref: call
+                                    .resolved_binding()
+                                    .model_target
+                                    .reference
+                                    .0
+                                    .clone(),
                                 model_deployment_ref: call
-                                    .resolved_binding
+                                    .resolved_binding()
                                     .model_deployment_ref
                                     .0
                                     .clone(),
                                 exact_port_binding_digest: call
-                                    .resolved_binding
+                                    .resolved_binding()
                                     .exact_port_binding
                                     .binding_digest
                                     .clone(),

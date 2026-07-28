@@ -66,41 +66,264 @@ pub struct ModelExecution {
     pub committed_attempt: Option<u32>,
 }
 
-/// A stable model-effect request identity plus its resolved binding.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ModelCallRequest {
-    pub effect_id: String,
-    pub request_digest: String,
-    pub resolved_binding: ResolvedModelBinding,
+/// Runtime-generated identity and exact admission facts for one model effect.
+///
+/// The runtime builds this value before requesting host-owned metadata. The
+/// materializer may supply a sealed context reference, idempotency data, and a
+/// delivery mode, but it cannot replace the effect, NodeExecution, request
+/// digest, target, deployment, binding, or deployment composition.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModelCallPreparation {
+    effect_id: String,
+    node_execution_id: NodeExecutionId,
+    request_digest: String,
+    resolved_binding: ResolvedModelBinding,
 }
 
-impl ModelCallRequest {
-    /// Build a request for the authored target from the already-materialized
-    /// admitted binding. The binding must match the authored target, so a
-    /// request cannot substitute a different model.
+impl ModelCallPreparation {
+    /// Validate the admission for the authored target and prepare the immutable
+    /// runtime-owned coordinates for one inference request.
     ///
     /// # Errors
     ///
-    /// Returns a [`BindingError`] when the admitted binding does not match the
-    /// target or carries an invalid digest.
+    /// Returns [`BindingError`] when admission does not authorize exactly one
+    /// valid binding for the authored target.
     pub fn authorize(
         effect_id: impl Into<String>,
+        node_execution_id: impl Into<String>,
         request_digest: impl Into<String>,
         authored_target: &ModelTargetRef,
         admission: &ModelBindingAdmission,
     ) -> Result<Self, BindingError> {
-        let resolved_binding = admission.validate(authored_target)?;
         Ok(Self {
             effect_id: effect_id.into(),
+            node_execution_id: NodeExecutionId(node_execution_id.into()),
             request_digest: request_digest.into(),
-            resolved_binding,
+            resolved_binding: admission.validate(authored_target)?,
         })
+    }
+
+    /// The stable effect identity generated before an external send.
+    #[must_use]
+    pub fn effect_id(&self) -> &str {
+        &self.effect_id
+    }
+
+    /// The one compiled NodeExecution this request belongs to.
+    #[must_use]
+    pub fn node_execution_id(&self) -> &NodeExecutionId {
+        &self.node_execution_id
+    }
+
+    /// The stable digest over the exact request identity.
+    #[must_use]
+    pub fn request_digest(&self) -> &str {
+        &self.request_digest
+    }
+
+    /// The admission-validated model target, deployment, binding, and
+    /// composition coordinates.
+    #[must_use]
+    pub fn resolved_binding(&self) -> &ResolvedModelBinding {
+        &self.resolved_binding
+    }
+}
+
+/// One exact runtime NodeExecution identifier.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct NodeExecutionId(pub String);
+
+impl NodeExecutionId {
+    /// Borrow the wire value without losing its domain type at call sites.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A reference to an already-sealed `apxm.model-context-envelope.v1` instance.
+///
+/// The inference request carries only this identity and digest; it never copies
+/// or assembles model-visible context.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelContextEnvelopeRef {
+    pub context_id: String,
+    pub sealed_digest: String,
+}
+
+/// A stable idempotency identity for one externally visible model effect.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IdempotencyKey {
+    pub key_id: String,
+    pub scope_ref: String,
+}
+
+/// The closed delivery mode supported by the inference request contract.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelStreamMode {
+    Buffered,
+    Streamed,
+}
+
+/// Host-owned metadata that completes an already-admitted model request.
+///
+/// This does not include a target or binding, so an implementation cannot use
+/// it to select, substitute, or rebind a model.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelCallRequestMetadata {
+    pub model_context_envelope_ref: ModelContextEnvelopeRef,
+    pub idempotency: IdempotencyKey,
+    pub stream_mode: ModelStreamMode,
+}
+
+/// The injected upstream seam that supplies metadata for each exact model
+/// effect. It is not an HTTP client or a model resolver; the Composition Root
+/// provides an implementation that returns already-sealed, already-admitted
+/// values.
+pub trait ModelCallRequestMetadataPort: Send + Sync {
+    /// Materialize metadata for the runtime-owned preparation. An unavailable
+    /// or invalid value fails the effect before it reaches the inference
+    /// adapter.
+    fn materialize(
+        &self,
+        preparation: &ModelCallPreparation,
+    ) -> Result<ModelCallRequestMetadata, TypedError>;
+}
+
+/// A complete, validated inference request. Its fields are private so callers
+/// cannot bypass the exact-binding, sealed-context, and idempotency checks.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelCallRequest {
+    effect_id: String,
+    node_execution_id: NodeExecutionId,
+    request_digest: String,
+    resolved_binding: ResolvedModelBinding,
+    model_context_envelope_ref: ModelContextEnvelopeRef,
+    idempotency: IdempotencyKey,
+    stream_mode: ModelStreamMode,
+}
+
+/// Why a fully materialized model request cannot be admitted. Every variant
+/// rejects dispatch before the adapter is called.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ModelCallRequestError {
+    EmptyField(&'static str),
+    InvalidDigest(&'static str),
+}
+
+impl std::fmt::Display for ModelCallRequestError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EmptyField(field) => write!(f, "model request field {field} is empty"),
+            Self::InvalidDigest(field) => {
+                write!(f, "model request field {field} is not a sha256 digest")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ModelCallRequestError {}
+
+impl ModelCallRequest {
+    /// Complete one exact model-call request from runtime-owned preparation and
+    /// host-supplied metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelCallRequestError`] when any required identity is empty or
+    /// any supplied digest is not content addressed. It never fills missing
+    /// values from defaults, aliases, or ambient configuration.
+    pub fn prepare(
+        preparation: ModelCallPreparation,
+        metadata: ModelCallRequestMetadata,
+    ) -> Result<Self, ModelCallRequestError> {
+        for (field, value) in [
+            ("effect_id", preparation.effect_id.as_str()),
+            ("node_execution_id", preparation.node_execution_id.as_str()),
+            ("idempotency.key_id", metadata.idempotency.key_id.as_str()),
+            (
+                "idempotency.scope_ref",
+                metadata.idempotency.scope_ref.as_str(),
+            ),
+            (
+                "model_context_envelope_ref.context_id",
+                metadata.model_context_envelope_ref.context_id.as_str(),
+            ),
+        ] {
+            if value.trim().is_empty() {
+                return Err(ModelCallRequestError::EmptyField(field));
+            }
+        }
+        for (field, digest) in [
+            ("request_digest", preparation.request_digest.as_str()),
+            (
+                "model_context_envelope_ref.sealed_digest",
+                metadata.model_context_envelope_ref.sealed_digest.as_str(),
+            ),
+        ] {
+            if !apxm_program::grammar::is_digest(digest) {
+                return Err(ModelCallRequestError::InvalidDigest(field));
+            }
+        }
+
+        Ok(Self {
+            effect_id: preparation.effect_id,
+            node_execution_id: preparation.node_execution_id,
+            request_digest: preparation.request_digest,
+            resolved_binding: preparation.resolved_binding,
+            model_context_envelope_ref: metadata.model_context_envelope_ref,
+            idempotency: metadata.idempotency,
+            stream_mode: metadata.stream_mode,
+        })
+    }
+
+    /// The stable effect identity prepared before external transmission.
+    #[must_use]
+    pub fn effect_id(&self) -> &str {
+        &self.effect_id
+    }
+
+    /// The exact NodeExecution this request represents.
+    #[must_use]
+    pub fn node_execution_id(&self) -> &NodeExecutionId {
+        &self.node_execution_id
+    }
+
+    /// The request digest shared by the idempotency and runtime evidence paths.
+    #[must_use]
+    pub fn request_digest(&self) -> &str {
+        &self.request_digest
+    }
+
+    /// The exact target/deployment/Port Binding admitted for this effect.
+    #[must_use]
+    pub fn resolved_binding(&self) -> &ResolvedModelBinding {
+        &self.resolved_binding
+    }
+
+    /// The reference to the already-sealed model context for this NodeExecution.
+    #[must_use]
+    pub fn model_context_envelope_ref(&self) -> &ModelContextEnvelopeRef {
+        &self.model_context_envelope_ref
+    }
+
+    /// The stable idempotency scope and key supplied upstream.
+    #[must_use]
+    pub fn idempotency(&self) -> &IdempotencyKey {
+        &self.idempotency
+    }
+
+    /// The explicitly selected buffered or streamed delivery mode.
+    #[must_use]
+    pub fn stream_mode(&self) -> ModelStreamMode {
+        self.stream_mode
     }
 
     /// The one authored target this request binds.
     #[must_use]
     pub fn target(&self) -> &ModelTargetRef {
-        &self.resolved_binding.model_target_ref
+        &self.resolved_binding.model_target.reference
     }
 }
 
