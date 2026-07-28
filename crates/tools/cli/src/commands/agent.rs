@@ -281,11 +281,6 @@ pub(crate) fn example_agent_dir(name: &str) -> PathBuf {
     agent_examples_dir().join(name)
 }
 
-#[cfg(all(test, feature = "driver"))]
-pub(crate) fn gao_example_agent_dir() -> PathBuf {
-    example_agent_dir("gao")
-}
-
 fn resolve_agent_template_dir(template: &str) -> Result<PathBuf> {
     let requested = PathBuf::from(template);
     if requested.is_dir() {
@@ -1955,8 +1950,8 @@ mod tests {
 
     #[test]
     fn new_resolves_example_names_and_template_paths_generically() {
-        let gao = resolve_agent_template_dir("gao").expect("named example resolves");
-        assert_eq!(gao, example_agent_dir("gao"));
+        let coder = resolve_agent_template_dir("coder").expect("named example resolves");
+        assert_eq!(coder, example_agent_dir("coder"));
 
         let tmp = tempdir().unwrap();
         let template = tmp.path().join("custom-template");
@@ -2326,13 +2321,5 @@ mod tests {
                 .join("agents/conflicted/agent.toml")
                 .is_file()
         );
-    }
-
-    #[cfg(feature = "driver")]
-    mod gao_e2e {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../examples/agents/gao/tests/e2e_manifest.rs"
-        ));
     }
 }
