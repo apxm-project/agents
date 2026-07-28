@@ -28,8 +28,9 @@ equivalent semantic-tree nodes and FrontendGraph intents; individual guides do
 not define independent decorator names or behavior.
 
 Installable frontends expose generic Agent Program APIs only. Conversational
-Agent and Gao are repository examples; an example-local helper is not a package
-export or core contract.
+Agent remains a repository example. Gao is a Studio-owned ordinary Agent
+Program and an external conformance input; neither introduces a package export
+or core contract.
 
 Reading order:
 

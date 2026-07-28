@@ -90,10 +90,11 @@ features is conversation-specific, so the example needs no package-level
 `ConversationalAgent`, hidden host loop, runtime mode, `Turn` contract, or
 compiler branch.
 
-The conversational and Gao examples are therefore high-value conformance
-programs: if the generic frontend can express them clearly in both languages,
-lower them equivalently, optimize them safely, execute them through exact
-ports, and reconstruct them from evidence, the frontend is doing its job.
+The conversational repository examples and the Studio-owned Gao program are
+therefore high-value conformance programs: if the generic frontend can express
+them clearly in both languages, lower them equivalently, optimize them safely,
+execute them through exact ports, and reconstruct them from evidence, the
+frontend is doing its job. Agents does not own Gao product source or semantics.
 
 ### 1.3 One connected execution, including vLLM
 
@@ -891,8 +892,10 @@ runtime package, or private printer.
 
 ### P5 — Examples, Studio generation, and documentation
 
-- replace the conversational and Gao teaching sources with the reviewed short
-  API while retaining low-level cases only as private compiler fixtures;
+- replace the conversational teaching sources with the reviewed short API and
+  consume Studio-owned Gao as an immutable external generic-program
+  conformance input, while retaining low-level cases only as private compiler
+  fixtures;
 - establish one canonical Python/TypeScript golden source pair per public
   construct and validate or generate guide snippets from those files;
 - update all Agent Program guides with the same paired examples and status
@@ -934,7 +937,8 @@ Primary owner paths:
 - Rust AIS definitions, generated TableGen, canonical MLIR emission, and
   compiler bridge result contracts;
 - native PyO3 and Node-API compiler bridges;
-- `examples/agents/conversational/**` and `examples/agents/gao/**`; and
+- `examples/agents/conversational/**`, `examples/agents/coder/**`, and the
+  immutable Studio-owned Gao conformance input; and
 - packed-package and clean-consumer fixtures.
 
 Downstream consumers:
@@ -988,7 +992,7 @@ status.
 | P3 | `dekk agents test-python-frontend`, Python clean-wheel consumer, Python golden graph/AIR/AIS/artifact checks |
 | P4 | TypeScript typecheck/tests, browser-bundle ceiling check, Node-API and remote-client graph parity |
 | P3-P4 graph changes | `dekk agents check-frontend-codegen`, cross-language canonical graph comparison |
-| P5 | `dekk agents test-frontend-examples`, Gao checks, Studio generated-source tests |
+| P5 | `dekk agents test-frontend-examples`, Studio-owned Gao generic-program conformance, Studio generated-source tests |
 | P6 | package export/retired-surface scans, `dekk agents test-cli`, focused workspace tests, `dekk agents doctor`, release checks |
 
 P5 also requires owner-local inference/vLLM adapter conformance, the Agents
