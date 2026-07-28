@@ -3,7 +3,7 @@
 - Status: canonical APXM v1 owner plan
 - Approved: 2026-07-16
 - Owner: APXM `agents`
-- Decisions: [ADR-0008](../adr/0008-agent-programs-compose-through-new-and-invoke.md), [ADR-0009](../adr/0009-air-has-five-public-semantic-operations.md), [ADR-0010](../adr/0010-agent-program-source-owns-context-hooks-and-conversational-loops.md), [ADR-0011](../adr/0011-agent-program-execution-is-one-end-to-end-spine.md), [ADR-0014](../adr/0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md), [ADR-0003](../adr/0003-agent-program-contract-migrations-remove-old-semantics.md)
+- Decisions: [ADR-0008](../adr/0008-agent-programs-compose-through-new-and-invoke.md), [ADR-0009](../adr/0009-air-has-five-public-semantic-operations.md), [ADR-0010](../adr/0010-agent-program-source-owns-context-hooks-and-conversational-loops.md), [ADR-0011](../adr/0011-agent-program-execution-is-one-end-to-end-spine.md), [ADR-0014](../adr/0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md), [ADR-0017](../adr/0017-gao-is-a-studio-owned-agent-program-over-host-capabilities.md), [ADR-0003](../adr/0003-agent-program-contract-migrations-remove-old-semantics.md)
 - Normative contract: [Agent Program composition and AIR contract](agent-program-composition-and-air-contract.md)
 - Proposed frontend delivery subplan:
   [Source-first Agent frontend master plan](simple-agent-authoring-frontend-plan.md)
@@ -41,9 +41,9 @@ owner for every v1 contract, and zero pending or deferred v1 decisions.
   admission, and runtime handlers;
 - Program Instance state, invocation, cancellation, structured children,
   replay, state commit, and generic checkpointing;
-- three runnable repository examples using only packed generic frontend APIs:
-  Conversational as the primary reference plus focused Coder and Gao
-  extensions; and
+- two runnable repository examples using only packed generic frontend APIs:
+  Conversational as the primary reference plus the focused Coder extension;
+  Studio-owned Gao joins as an external generic-program conformance input; and
 - local embedding, CLI/application, Server, and OS consumer cutover; and
 - deletion and absence proof for every retired operation and old semantic path.
 
@@ -92,8 +92,8 @@ handler.
    handlers, source maps, and compatibility evidence.
 6. Runtime provides isolated Program Instances, atomic invocation state
    commits, structured children, generic durability, and typed evidence.
-7. Conversational Agent and Gao are repository examples; no named construct is
-   a package, compiler/runtime, Server, contract, or Studio concept.
+7. Conversational Agent is a repository example; Gao is Studio-owned. Neither
+   name is a frontend package, compiler/runtime, AIR, or evidence concept.
 8. Every atomically committed loop body/back-edge emits generic
    `LoopIterationCompleted`; failed or rolled-back bodies emit no completion.
 9. All first-party consumers move in one Compatibility Set.
@@ -287,12 +287,12 @@ Deliverables:
 - implement discovery-only Skills behavior and explicit context updates;
 - implement equivalent Python/TypeScript conversational examples using only
   packed generic APIs and ordinary structured loops;
-- implement Coder and Gao under repository examples as direct TypeScript
-  `Agent` definitions: Coder demonstrates read-only coding proposals, while
-  Gao demonstrates capability discovery, workflow planning, validation
-  preparation, explicit Context, a Model call, and source-owned yield/resume;
-  neither requires an example-local `ConversationalAgent` helper or
-  program-to-program composition; and
+- implement Coder under repository examples as a direct TypeScript `Agent`
+  definition demonstrating read-only coding proposals; compile the
+  Studio-owned Gao source bundle as an external direct `Agent` definition that
+  demonstrates typed Host Capabilities, explicit Context, a Model call, and
+  source-owned yield/resume; neither requires an example-local
+  `ConversationalAgent` helper; and
 - preserve provider-returned output/reasoning summaries without claiming
   hidden chain of thought.
 
@@ -387,8 +387,8 @@ Deliverables:
 
 - migrate every example, fixture, CLI flow, Server/OS consumer, Studio adapter,
   and release descriptor to generic canonical v1 contracts;
-- remove named Gao presets/routes/OpenAPI/client surfaces and core `Turn`
-  projections from Studio;
+- remove Gao-specific compiler/runtime/OpenAPI semantics while allowing the
+  Studio-owned Gao product and its generated Host/owner Capability clients;
 - delete retired frontend methods, generated APIs, validators, compiler
   expansions, runtime handlers, scheduler branches, constants, events, tests,
   docs, and artifact acceptance;
@@ -495,8 +495,8 @@ This plan completes only when:
   structured-concurrency, authority, crash, and replay vectors;
 - AIR reports exactly five effect/composition operations and a separate closed
   structural AIS family including `ais.loop`;
-- conversational and Gao repository examples use only packed generic frontend
-  composition;
+- the conversational repository example and Studio-owned Gao conformance input
+  use only packed generic frontend composition;
 - Studio builds generic loop-iteration/node inspection solely from
   `LoopIterationCompleted` and related authoritative evidence; and
 - every retired semantic path is absent from the target release.

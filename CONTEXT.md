@@ -94,12 +94,19 @@ Program over the installable generic frontend APIs. It is not an APXM package
 API, contract type, compiler/runtime mode, Server route, or Studio feature.
 _Avoid_: standard `ConversationalAgent` export, conversational runtime, chat service
 
-**Gao example**:
-The repository's TypeScript workflow-authoring example. It may specialize the
-example-local Conversational Agent construct and use generic Agent Program,
-Hook, Context, Skill discovery, Capability, and composition APIs. Its name has
-no compiler, runtime, admission, Server, or Studio meaning.
-_Avoid_: Gao product feature, Gao runtime, privileged installed agent id
+**Gao**:
+The Studio-owned APXM expert implemented as an ordinary source-first Agent
+Program. Gao uses generic Agent Program, Hook, Context, Skill discovery,
+Capability, and composition APIs and interacts with Studio authoring through
+admitted Host Capabilities. Its name has no compiler, runtime, AIR, admission,
+or evidence meaning.
+_Avoid_: Gao runtime, Agents package export, privileged compiler path
+
+**Studio Workflow**:
+Studio UX language for an Agent Program draft or published Agent Definition.
+Agents compiles its Python or TypeScript source through the ordinary frontend;
+layout and authoring interaction state remain outside FrontendGraph and AIR.
+_Avoid_: workflow runtime, executable canvas graph, sixth composition type
 
 **Loop iteration**:
 One committed visit through a static structural loop body and its back-edge.

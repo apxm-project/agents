@@ -2,7 +2,7 @@
 
 - Status: normative APXM v1 theory
 - Owner: APXM `agents`
-- Binding decisions: [ADR-0008](../adr/0008-agent-programs-compose-through-new-and-invoke.md), [ADR-0009](../adr/0009-air-has-five-public-semantic-operations.md), [ADR-0010](../adr/0010-agent-program-source-owns-context-hooks-and-conversational-loops.md), [ADR-0011](../adr/0011-agent-program-execution-is-one-end-to-end-spine.md), [ADR-0012](../adr/0012-acp-uses-explicit-capabilities-selection-is-not-runtime-semantics.md), and [ADR-0014](../adr/0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md)
+- Binding decisions: [ADR-0008](../adr/0008-agent-programs-compose-through-new-and-invoke.md), [ADR-0009](../adr/0009-air-has-five-public-semantic-operations.md), [ADR-0010](../adr/0010-agent-program-source-owns-context-hooks-and-conversational-loops.md), [ADR-0011](../adr/0011-agent-program-execution-is-one-end-to-end-spine.md), [ADR-0012](../adr/0012-acp-uses-explicit-capabilities-selection-is-not-runtime-semantics.md), [ADR-0014](../adr/0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md), and [ADR-0017](../adr/0017-gao-is-a-studio-owned-agent-program-over-host-capabilities.md)
 
 ## 1. Thesis
 
@@ -176,16 +176,17 @@ evidence without defining a core `Turn` model.
 
 The repository's Python and TypeScript conversational examples may define an
 example-local `ConversationalAgent` and describe a completed iteration as a
-“turn.” Gao is a TypeScript example that may specialize that local construct.
-Neither name is an installable frontend API, contract, compiler/runtime branch,
-Server route, admission identity, or Studio product feature.
+“turn.” Gao is a Studio-owned ordinary Agent Program that may use the same
+generic loop pattern and admitted Host Capabilities. Neither name is an
+installable frontend API, contract, compiler/runtime branch, Server route, or
+admission identity; Gao's Studio product ownership adds no execution semantic.
 
 The model's returned content may include a provider-supported reasoning or
 thinking field. Studio may display that attributed output when the provider
 made it available and policy permits. APXM never requests, reconstructs, or
 fabricates private chain-of-thought.
 
-Those examples use only the public generic Agent Program, Hook, Context,
+Those programs use only the public generic Agent Program, Hook, Context,
 composition, structured-control-flow, source-map, and compiler-bridge APIs.
 
 ## 6. Models and future routing

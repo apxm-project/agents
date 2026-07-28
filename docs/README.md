@@ -84,8 +84,10 @@ operation builders are not v1 APIs.
    — explicit Program Context, Agent Facade callbacks, discovery-only Skills,
    and frontend-authored loops.
 9. [ADR-0014](adr/0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md)
-   — examples-only conversational/Gao ownership, two closed AIS operation
-   families, and generic completed-loop evidence.
+   — generic conversational/Gao semantics, two closed AIS operation families,
+   and generic completed-loop evidence, as amended by
+   [ADR-0017](adr/0017-gao-is-a-studio-owned-agent-program-over-host-capabilities.md)
+   for Studio ownership of Gao.
 10. [ADR-0011](adr/0011-agent-program-execution-is-one-end-to-end-spine.md) —
    one frontend/compiler/runtime/inference/evidence execution spine.
 11. [Normative composition/AIR contract](agents/agent-program-composition-and-air-contract.md)
@@ -118,8 +120,9 @@ not implementation authority.
 - [Agent Program replacement portfolio](agents/agent-program-full-replacement-portfolio.md)
   — cross-plan dependency and cutover view.
 - [Gao plan tombstone](agents/gao-conversational-agent-implementation-plan.md) —
-  preserves the replaced named-specialization plan; Gao now lives only as a
-  repository example over generic APIs.
+  preserves the replaced named-specialization plan. Current
+  [ADR-0017](adr/0017-gao-is-a-studio-owned-agent-program-over-host-capabilities.md)
+  makes Gao a Studio-owned ordinary Agent Program and keeps Agents generic.
 - [Topology boundary](agent-topology-boundary.md) — Studio/control-plane policy
   becomes exact admission facts; runtime remains organization-agnostic.
 - [ACP and exact-selection replacement](agents/acp-and-routing-full-replacement-plan.md)
@@ -186,8 +189,9 @@ imported removed `apxm` package symbols (`GraphRecorder`, `GraphBuilder`,
 `compile`, `Agent`) and could not run; P9 removed that corpus. Canonical
 runnable examples now live under
 [`examples/agents/`](../examples/agents/): `conversational/` is the primary
-reference, with focused `coder/` and `gao/` extensions. They are authored
-against `apxm_program` / `@apxm/frontend`.
+reference, with a focused `coder/` extension. They are authored against
+`apxm_program` / `@apxm/frontend`. Gao is owned by Studio and enters Agents
+only as an immutable external generic-program conformance input.
 
 Backend/operator references remain useful for the current implementation and
 focused canonical adapters:

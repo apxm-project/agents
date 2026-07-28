@@ -10,7 +10,8 @@
 Coordinate the APXM-owned Agent Program work as parallel target-only plans,
 then cut over one Python/TypeScript/compiler/artifact/runtime Compatibility Set
 without legacy operations, composition, Hook, Context, named conversational,
-or Gao core/package/product semantics.
+or Gao core/package semantics. Studio-owned Gao remains a product Agent Program
+without introducing named Agents execution semantics.
 
 ## Owning plans
 
@@ -37,9 +38,9 @@ After P0 versioned schema vectors exist:
    the Rust-owned contract.
 4. Runtime Program Instance, invocation, generic durability, and evidence
    behavior is implemented against the same contract.
-5. Conversational and Gao repository examples are prepared against packed
-   generic frontend APIs while generic loop-iteration projection fixtures are
-   built.
+5. Conversational repository examples and the external Studio-owned Gao
+   conformance input are prepared against packed generic frontend APIs while
+   generic loop-iteration projection fixtures are built.
 
 Lanes exchange schemas, generated code, FrontendGraph DTOs, artifacts, and
 conformance vectors. They do not call or retain the old semantic engine.
@@ -75,7 +76,8 @@ The APXM candidate must prove:
 - AIR contains exactly five effect/composition operations and a separate
   closed structural family including `ais.loop`;
 - one Agent Facade callback and explicit Program Context implementation execute;
-- conversational and Gao examples use only packed generic frontend APIs;
+- conversational examples and the external Studio-owned Gao conformance input
+  use only packed generic frontend APIs;
 - named package exports/product surfaces, direct Gao core branches, unversioned
   Hook types, broad decision union, duplicate dispatch, alias fields/events,
   and old artifact acceptance are absent;

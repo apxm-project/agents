@@ -5,7 +5,9 @@
   compile the checked-in references to confirm the checkout you are using
 - Authority: [ADR-0014](../adr/0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md),
   [ADR-0015](../adr/0015-source-first-agent-frontend-vocabulary.md), and
-  [ADR-0016](../adr/0016-tool-authoring-and-handler-execution-are-separate.md)
+  [ADR-0016](../adr/0016-tool-authoring-and-handler-execution-are-separate.md),
+  as amended by
+  [ADR-0017](../adr/0017-gao-is-a-studio-owned-agent-program-over-host-capabilities.md)
 
 ## Start with one ordinary Agent
 
@@ -39,12 +41,13 @@ their behavior matches the program you are writing:
 | Need | Read | Take from it |
 | --- | --- | --- |
 | A coding-oriented review/proposal flow | [Coder](../../examples/agents/coder/README.md) | Typed read, edit-proposal, and test-command capabilities; the program proposes work and never mutates files or runs commands itself. |
-| An APXM-oriented planning flow | [Gao](../../examples/agents/gao/README.md) | Capability discovery, reviewable workflow planning, and validation preparation over explicit Context, Model calls, and yield/resume. |
+| APXM and Workflow authoring help | Studio-owned [Gao](../adr/0017-gao-is-a-studio-owned-agent-program-over-host-capabilities.md) | Explicit APXM knowledge discovery and typed Host Capabilities over ordinary Context, Model calls, and yield/resume. |
 
-Coder and Gao build on the same installed generic frontend as Conversational.
-They are not imports, base classes, runtime modes, or privileged identities.
-Copy the small behavior pattern you need into a new ordinary Agent; do not make
-your program depend on an example name ([ADR-0014](../adr/0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md)).
+Coder and Studio-owned Gao build on the same installed generic frontend as
+Conversational. They are not imports, base classes, runtime modes, or
+privileged identities. Copy the small generic behavior pattern you need into a
+new ordinary Agent; do not make your program depend on either product/example
+name.
 
 ## A professional authoring loop
 

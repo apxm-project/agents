@@ -31,8 +31,8 @@ Programs, or visualize their evidence. They may not redefine `.new`,
 `.invoke`, context, Hooks, loops, AIS/AIR, runtime, or model-backend semantics.
 
 Installable frontends expose generic Agent Program APIs only.
-`ConversationalAgent` and Gao are repository-example constructs, not package
-exports or core contract names.
+`ConversationalAgent` is a repository-example construct. Gao is a Studio-owned
+ordinary Agent Program. Neither is a frontend export or core contract name.
 
 This contract does not define user administration, Agent Definition lifecycle,
 company hierarchy, Skill catalogue policy, product billing, provider-specific

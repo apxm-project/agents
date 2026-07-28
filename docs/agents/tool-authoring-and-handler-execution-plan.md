@@ -4,6 +4,7 @@ Status: active implementation plan
 
 Authority: [ADR-0016](../adr/0016-tool-authoring-and-handler-execution-are-separate.md),
 [ADR-0015](../adr/0015-source-first-agent-frontend-vocabulary.md), the
+[Gao ownership ADR](../adr/0017-gao-is-a-studio-owned-agent-program-over-host-capabilities.md),
 [Agent Program composition and AIR contract](agent-program-composition-and-air-contract.md),
 and the [compiler bridge plan](compiler-bridge-delivery-plan.md).
 
@@ -45,8 +46,8 @@ or language-selected fallback.
 - Publish ADR-0016 and link it from the Agents ADR index.
 - Teach the distinction between an Agent Program Tool reference, a private
   package-handler definition, the generated manifest, and Rust execution.
-- Remove current guidance that presents Coder or Gao as a Studio feature or a
-  TypeScript runtime.
+- Remove guidance that presents Coder as a Studio feature, Gao as an
+  Agents-owned example, or either program as a TypeScript runtime.
 
 Completion: current examples and guides name one owner for each concern and
 contain no raw handler protocol instructions.
@@ -59,8 +60,9 @@ contain no raw handler protocol instructions.
 - Add positive and rejection tests: non-object input, raw/plain handler return,
   generated schema, and no envelope leakage.
 
-Completion: Coder and Gao package-handler sources contain no handwritten JSON
-Schema or protocol frame; regenerated sidecars validate through the Rust CLI.
+Completion: Coder and the Studio-owned Gao package-handler sources contain no
+handwritten JSON Schema or protocol frame; regenerated sidecars validate
+through the Rust CLI.
 
 ### T3 — Prove Rust runtime isolation
 
@@ -86,11 +88,12 @@ without pretending that package-handler execution exists in both languages.
 
 ### T5 — Finish the examples and artifact evidence
 
-- Keep only Conversational, Coder, and Gao under `examples/agents/`.
-- Regenerate Coder/Gao manifests and the source-derived runtime-proof fixtures
-  from source. Fixtures live with Rust conformance tests, never in an agent
-  package, so example folders contain author-owned inputs and generated package
-  sidecars only.
+- Keep only Conversational and Coder under `examples/agents/`; consume Gao from
+  Studio as an external immutable generic-program conformance input.
+- Regenerate the Coder manifest and source-derived runtime-proof fixtures from
+  owner source. Gao manifests remain Studio-owned. Fixtures live with Rust
+  conformance tests, never in an agent package, so example folders contain
+  author-owned inputs and generated package sidecars only.
 - Run the example, canonical-only, frontend-surface, handler, and owner check
   gates before release of the change.
 
@@ -100,9 +103,7 @@ Run the smallest applicable owner gates first, then the aggregate check:
 
 ```sh
 dekk agents agent sync examples/agents/coder
-dekk agents agent sync examples/agents/gao
 dekk agents agent build examples/agents/coder
-dekk agents agent build examples/agents/gao
 dekk agents test-frontend-examples
 dekk agents test-typescript-frontend
 dekk agents test-python-frontend
@@ -112,6 +113,9 @@ dekk agents check-example-artifacts
 dekk agents test-canonical-only
 dekk agents check
 ```
+
+The cross-repository integration lane separately compiles the immutable
+Studio-owned Gao input through the same generic Agents surface.
 
 The Node worker may run only as a package-build conformance test. It is never a
 runtime verification substitute.
