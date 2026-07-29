@@ -15,3 +15,9 @@ workspace = true
 apxm-program.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+# Conformance pins the external-program fixture to the bytes its author
+# committed. `apxm-program` digests artifacts but keeps its helper private, so
+# the pin hashes for itself rather than widening that crate's surface for a test.
+sha2.workspace = true
