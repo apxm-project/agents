@@ -222,10 +222,12 @@ compiler passes, runtime handlers, frontends, and inference backends are
 consumers. `ais.loop` is not a sixth effect/composition operation, and no
 frontend exposes a raw operation builder.
 
-`ConversationalAgent` and Gao are repository-example constructs only. They are
-not installable frontend exports or core compiler/runtime/Server/Studio
-concepts. Runtime evidence records committed loop iterations through generic
-`LoopIterationCompleted` facts; core has no `Turn` type.
+`ConversationalAgent` is a repository-example construct only. Gao is a
+Studio-owned ordinary Agent Program that enters through the same external
+source boundary as any other product package. Neither is an installable
+frontend export or core compiler/runtime concept. Runtime evidence records
+committed loop iterations through generic `LoopIterationCompleted` facts; core
+has no `Turn` type.
 
 After editing any `.td` file (TableGen op definition) or a TableGen-emitted C++
 shim:
@@ -330,8 +332,6 @@ push, an overwritten branch, or a tainted benchmark.
 
 <!-- BEGIN SKILLS INVENTORY -->
 ## Available Skills
-
-Before editing CARTS sources, scan the Skills inventory below and read the SKILL.md for any whose description matches your task.
 
 ### Other
 
