@@ -416,10 +416,7 @@ fn manifest_constants_are_read_from_the_published_schema() {
 #[test]
 fn produced_example_manifests_satisfy_the_published_schema() {
     let schema = manifest_schema();
-    for produced in [
-        "../examples/agents/coder/capabilities/handlers/tools.json",
-        "../examples/agents/gao/capabilities/handlers/tools.json",
-    ] {
+    for produced in ["../examples/agents/coder/capabilities/handlers/tools.json"] {
         let manifest = load_contract(produced);
         if let Err(error) = schema.validate(&manifest) {
             let reasons: Vec<String> = error.map(|e| format!("{}: {e}", e.instance_path)).collect();

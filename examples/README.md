@@ -8,12 +8,11 @@ frontend runtime, or a privileged named-agent API.
 | --- | --- | --- |
 | [Conversational](agents/conversational/README.md) | Primary reference: Context, Tool, Model, composition, loop, and yield/resume | Python and TypeScript |
 | [Coder](agents/coder/README.md) | Coding-capability extension: read, edit proposal, and test proposal | TypeScript |
-| [Gao](agents/gao/README.md) | APXM-capability extension: discovery, workflow planning, and validation preparation | TypeScript |
 
-Conversational is the teaching reference. Coder and Gao are its two focused
-extensions: one demonstrates a small coding workflow, the other demonstrates
-APXM authoring capabilities. They are ordinary Agent Programs, not product
-features, package exports, compiler modes, or runtime identities.
+Conversational is the teaching reference. Coder is its focused coding
+extension. Both are ordinary Agent Programs, not product features, package
+exports, compiler modes, or runtime identities. Product-owned Agent Programs
+enter through the same public frontend as external source packages.
 
 ## Run the examples
 
@@ -29,6 +28,13 @@ frontend, compiles it through the explicit compiler bridge, and checks the
 conversational Python/TypeScript parity. Compile-only validation uses
 deterministic test bindings; executing a real Model or Capability requires its
 separately admitted deployment and authority.
+
+An external TypeScript package can run the same frontend/compiler conformance
+without becoming an Agents-owned example:
+
+```sh
+dekk agents test-external-source-package path/to/package
+```
 
 For the authoring API itself, read the
 [source-first guide](../docs/guides/creating-an-agent-program.md).

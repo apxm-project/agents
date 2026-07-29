@@ -15,6 +15,7 @@ RETIRED_DIRECTORIES = (
     Path("crates/orchestration/acp"),
     Path("crates/runtime/aam"),
     Path("crates/compiler/pipeline/src/air_builder"),
+    Path("examples/agents/gao"),
 )
 RETIRED_PACKAGE_DIRECTORIES = (Path("crates/compiler/frontend/python/apxm"),)
 RETIRED_FILES = (
@@ -44,13 +45,14 @@ GENERIC_SEMANTIC_ROOTS = (
 )
 FORBIDDEN_NAMED_SEMANTICS = (
     "ConversationalAgent",
+    "Gao",
     "SpecialistComposition",
     "TurnSpec",
     "conversational_loop",
 )
 EXAMPLE_RUNTIME_PROOF_FIXTURES = (
-    Path("crates/machine/program/tests/fixtures/example-artifacts/conversational.v1.json"),
-    Path("crates/machine/program/tests/fixtures/example-artifacts/gao.v1.json"),
+    Path("crates/machine/program/tests/fixtures/example-artifacts/conversational-python.v1.json"),
+    Path("crates/machine/program/tests/fixtures/example-artifacts/conversational-typescript.v1.json"),
 )
 RETIRED_OPERATION_MARKERS = (
     "prototype_retired",
@@ -147,14 +149,14 @@ class CanonicalOnlyReachabilityTests(unittest.TestCase):
             self.assertIn('"kind":"ais.loop"', text)
             self.assertNotIn("conversational_loop", text)
 
-    def test_example_local_named_sources_remain_allowed(self) -> None:
+    def test_repository_example_named_sources_remain_outside_packages(self) -> None:
         conversational = (
             REPOSITORY_ROOT
             / "examples/agents/conversational/src/conversational-agent.ts"
         ).read_text()
-        gao = (REPOSITORY_ROOT / "examples/agents/gao/src/gao.ts").read_text()
+        coder = (REPOSITORY_ROOT / "examples/agents/coder/src/main.ts").read_text()
         self.assertIn("ConversationalExample", conversational)
-        self.assertIn("Gao", gao)
+        self.assertIn("Coder", coder)
 
     def test_workspace_has_no_retired_execution_members(self) -> None:
         cargo_toml = tomllib.loads((REPOSITORY_ROOT / "Cargo.toml").read_text())
@@ -183,15 +185,7 @@ class CanonicalOnlyReachabilityTests(unittest.TestCase):
         for marker in forbidden:
             self.assertNotIn(marker, text)
 
-    def test_gao_has_no_builder_or_special_semantic_path(self) -> None:
-        gao_sources = (
-            REPOSITORY_ROOT
-            / "examples/agents/gao/src/gao.ts",
-        )
-        for path in gao_sources:
-            text = path.read_text()
-            self.assertNotIn("GraphBuilder", text, f"Gao bypasses public authoring in {path}")
-
+    def test_no_named_product_semantic_path_exists(self) -> None:
         op_spec = (
             REPOSITORY_ROOT / "crates/machine/ais/generated/op-spec.v1.json"
         ).read_text()
