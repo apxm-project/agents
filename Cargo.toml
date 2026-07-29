@@ -167,4 +167,4 @@ strip = "symbols"
 
 [profile.dev]
 opt-level = 0
-debug = 2
+debug = "line-tables-only"
