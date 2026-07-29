@@ -12,6 +12,7 @@ use apxm_source_port::{
     CompiledSource, Frontend, FrontendDrivers, FrontendRoots, SourceBundleRequest,
     SourceDiagnostic, SourceDiagnosticCode, compile_source_bundle,
 };
+use sha2::{Digest, Sha256};
 
 use crate::common::{ENTRYPOINT, FRONTENDS, drivers, frontend_present, roots};
 
@@ -721,4 +722,85 @@ fn an_invalid_request_rejects_before_any_capture() {
             "{class} is rejected as an invalid request, before capture"
         );
     }
+}
+
+// ── External source ─────────────────────────────────────────────────────────
+
+/// A first-party Agent Program authored in another repository compiles through
+/// the ordinary submitted-source boundary, with no accommodation for it here.
+///
+/// Every other fixture in this file was written to exercise a property. This one
+/// was not written here at all: it is an unmodified copy of source another
+/// repository committed, so it is the only fixture that can show the boundary
+/// accepts real external source rather than source shaped to pass. See
+/// `fixtures/external-program/PROVENANCE.md` for its origin and digest.
+///
+/// The assertions are deliberately generic. `agents` ADR-0017 forbids branching
+/// on an external program's name or product semantics, so this checks the shape
+/// of the compilation — one program, capability and model requirements resolved,
+/// AIR lowered — and not what the program is for.
+#[test]
+fn an_externally_authored_program_compiles_as_ordinary_submitted_source() {
+    if !frontend_present(Frontend::Typescript) {
+        return;
+    }
+
+    let source = std::fs::read_to_string(
+        common::repository_root()
+            .join("crates/compiler/source-port/tests/fixtures/external-program/program.ts"),
+    )
+    .expect("the external program fixture is checked in");
+
+    let compiled = compile_source_bundle(
+        &SourceBundleRequest::new(Frontend::Typescript, "Gao", source),
+        &roots(),
+        &drivers(),
+    )
+    .expect("externally authored source compiles through the ordinary boundary");
+
+    let graph = &compiled.frontend_graph;
+    assert_eq!(
+        graph.program_definitions.len(),
+        1,
+        "one submitted source bundle records one program definition"
+    );
+    assert!(
+        !graph.capability_requirements.is_empty(),
+        "the external program's Tool references resolve into capability requirements"
+    );
+    assert!(
+        !graph.model_requirements.is_empty(),
+        "the external program's model reference resolves into a model requirement"
+    );
+    // Lowering is Rust's alone, so reaching AIR at all is the property: the
+    // frontend recorded intent and this repository lowered it.
+    assert!(
+        !compiled.air.semantic_operations.is_empty(),
+        "the captured graph lowers to canonical AIR"
+    );
+}
+
+/// The external fixture is submitted exactly as its author committed it.
+///
+/// A fixture quietly edited to keep a test green would make the test above
+/// prove the opposite of what it claims — that the boundary accepts source this
+/// repository adjusted for it. Pinning the digest makes such an edit fail here,
+/// where the reason is stated, rather than silently downgrade the evidence.
+#[test]
+fn the_external_fixture_is_the_bytes_its_author_committed() {
+    const ORIGIN_DIGEST: &str = "56bc2101daae748510c47f4d2f7b86fc33f9c3157c37cd134c5a1041b407d7a9";
+
+    let bytes = std::fs::read(
+        common::repository_root()
+            .join("crates/compiler/source-port/tests/fixtures/external-program/program.ts"),
+    )
+    .expect("the external program fixture is checked in");
+
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&bytes)),
+        ORIGIN_DIGEST,
+        "the external fixture no longer matches the origin bytes recorded in \
+         PROVENANCE.md; re-copy it from the origin revision and update both, \
+         rather than editing it in place"
+    );
 }
