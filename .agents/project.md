@@ -42,9 +42,7 @@ Command groups (see `dekk agents --help` for the live list):
   `test-python-frontend`, `codegen`, `clean`, `scrub-rustc-cache`
 - **Compilation**: `compile`, `execute`, `run`, `decompile`
 - **Authoring**: `validate`, `analyze`, `explain`, `gui`, `tokenize`
-- **Workflows**: `workflow`; MCP callers use `workflow_start`,
-  `workflow_status`, `workflow_events`, `workflow_cancel`, and
-  `prompt_as_workflow`
+- **Goals & Workflows**: `goal`
 - **Configuration**: `doctor`, `backend`, `vllm`, `agent`, `tool`, `cache`,
   `process`, `mcp`, `server`, `commit-lint`
 - **Discovery**: `ops`, `template`
@@ -56,9 +54,8 @@ Command groups (see `dekk agents --help` for the live list):
 If a needed action isn't yet wrapped, **add a Dekk command** in `.dekk.toml`
 rather than shelling out — that is the project-wide pattern.
 
-Checked-in `.apxmw` workflows use `dekk agents workflow` or `workflow_start`;
-natural-language workflow drafts use `prompt_as_workflow` and remain proposals
-until APXM validates and admits them.
+Managed MCP presents granted Host Capabilities, not an Agents-owned Agent
+Program lifecycle tool family.
 
 ## 3. Lifecycle workflow
 

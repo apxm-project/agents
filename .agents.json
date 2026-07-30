@@ -61,7 +61,7 @@
     },
     {
       "name": "mcp-server",
-      "description": "Use when working on APXM MCP surfaces: the Rust HTTP `/v1/mcp` endpoint, the Rust stdio `mcp-server` binary, or cross-agent MCP registration. Prefer server-owned HTTP MCP for workflow/orchestration control."
+      "description": "Use when working on APXM MCP contract constants, local stdio registration, the outbound MCP bridge, or the Server-owned managed HTTP boundary."
     },
     {
       "name": "mlir-pass-development",
