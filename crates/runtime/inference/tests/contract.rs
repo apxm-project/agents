@@ -8,9 +8,10 @@ use std::cell::{Cell, RefCell};
 use apxm_inference::{
     AttemptDisposition, BindingError, CancelToken, ErrorCategory, ExactModelTargetRef,
     ExactPortBindingRef, IdempotencyKey, ModelBindingAdmission, ModelCallPreparation,
-    ModelCallRequest, ModelCallRequestMetadata, ModelContextEnvelopeRef, ModelDeploymentRef,
-    ModelInferencePort, ModelOutcome, ModelStreamMode, ModelStreamPort, ModelTargetRef,
-    ResolvedModelBinding, RetryPolicy, StreamChunk, TypedError, Usage, execute, stream,
+    ModelCallRequest, ModelCallRequestMetadata, ModelContentRef, ModelContextEnvelopeRef,
+    ModelDeploymentRef, ModelInferencePort, ModelOutcome, ModelStreamEvent, ModelStreamMode,
+    ModelStreamPort, ModelStreamStep, ModelTargetRef, ResolvedModelBinding, RetryPolicy,
+    TypedError, Usage, execute, stream,
 };
 
 const DIGEST_A: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -257,7 +258,9 @@ impl ModelInferencePort for ScriptedBackend {
         let disposition = self.dispositions[attempt as usize].clone();
         if matches!(
             disposition,
-            AttemptDisposition::Success(_) | AttemptDisposition::FailedAfterSend(_)
+            AttemptDisposition::Success(_)
+                | AttemptDisposition::DeliveredTypedFailure(_)
+                | AttemptDisposition::FailedAfterSend(_)
         ) {
             self.sends.set(self.sends.get() + 1);
         }
@@ -347,6 +350,28 @@ fn post_send_non_idempotent_failure_is_outcome_unknown_without_duplicate() {
 }
 
 #[test]
+fn delivered_typed_failure_is_terminal_without_retry_or_outcome_unknown() {
+    let delivered = TypedError {
+        category: ErrorCategory::Validation,
+        code: "context_length_exceeded".to_string(),
+        message: "prompt exceeds the admitted context limit".to_string(),
+    };
+    let backend = ScriptedBackend::new(
+        vec![
+            AttemptDisposition::DeliveredTypedFailure(delivered.clone()),
+            AttemptDisposition::Success(Usage::default()),
+        ],
+        true,
+    );
+
+    let outcome = execute(&backend, &request(), RetryPolicy { max_attempts: 3 });
+
+    assert_eq!(outcome, ModelOutcome::TypedFailure { error: delivered });
+    assert_eq!(backend.sends.get(), 1);
+    assert_eq!(backend.seen_identity.borrow().len(), 1);
+}
+
+#[test]
 fn post_send_idempotent_failure_may_retry() {
     let usage = Usage {
         input_tokens: 5,
@@ -378,83 +403,184 @@ fn cancellation_commits_cancelled() {
 // ── Streaming with explicit cancellation ───────────────────────────────────
 
 struct ScriptedStream {
-    chunks: Vec<StreamChunk>,
-    terminal: ModelOutcome,
+    steps: Vec<ModelStreamStep>,
     cancel_at: Option<u64>,
-    token: CancelToken,
+    calls: Cell<usize>,
 }
 
 impl ModelStreamPort for ScriptedStream {
-    fn next_chunk(&self, _request: &ModelCallRequest, sequence: u64) -> Option<StreamChunk> {
-        if self.cancel_at == Some(sequence) {
-            self.token.cancel();
+    fn next_step(
+        &self,
+        _request: &ModelCallRequest,
+        expected_sequence: u64,
+        cancel: &CancelToken,
+    ) -> ModelStreamStep {
+        if self.cancel_at == Some(expected_sequence) {
+            cancel.cancel();
         }
-        self.chunks.get(sequence as usize).cloned()
-    }
-
-    fn terminal_outcome(&self, _request: &ModelCallRequest) -> ModelOutcome {
-        self.terminal.clone()
+        let call = self.calls.get();
+        self.calls.set(call + 1);
+        self.steps[call].clone()
     }
 }
 
-fn chunk(sequence: u64, text: &str) -> StreamChunk {
-    StreamChunk {
+fn content_delta(sequence: u64, content_ref: &str) -> ModelStreamEvent {
+    ModelStreamEvent::ContentDelta {
         sequence,
-        text: text.to_string(),
+        content_ref: ModelContentRef(content_ref.to_string()),
     }
+}
+
+fn tool_call_delta(sequence: u64, content_ref: &str) -> ModelStreamEvent {
+    ModelStreamEvent::ToolCallDelta {
+        sequence,
+        content_ref: ModelContentRef(content_ref.to_string()),
+    }
+}
+
+fn event(event: ModelStreamEvent) -> ModelStreamStep {
+    ModelStreamStep::Event { event }
+}
+
+fn terminal(outcome: ModelOutcome) -> ModelStreamStep {
+    ModelStreamStep::Terminal { outcome }
 }
 
 #[test]
-fn stream_yields_ordered_chunks_then_terminal() {
+fn stream_preserves_content_references_and_heartbeat_then_terminal() {
     let token = CancelToken::new();
+    let events = vec![
+        content_delta(0, "content://model-output/delta-0"),
+        ModelStreamEvent::Heartbeat { sequence: 1 },
+        tool_call_delta(2, "content://model-output/tool-call-0"),
+    ];
     let backend = ScriptedStream {
-        chunks: vec![chunk(0, "he"), chunk(1, "llo")],
-        terminal: ModelOutcome::CommittedSuccess {
-            usage: Usage {
-                input_tokens: 3,
-                output_tokens: 2,
-            },
-        },
+        steps: vec![
+            event(events[0].clone()),
+            event(events[1].clone()),
+            event(events[2].clone()),
+            terminal(ModelOutcome::CommittedSuccess {
+                usage: Usage {
+                    input_tokens: 3,
+                    output_tokens: 2,
+                },
+            }),
+        ],
         cancel_at: None,
-        token: token.clone(),
+        calls: Cell::new(0),
     };
     let result = stream(&backend, &request(), &token);
-    assert_eq!(result.chunks, vec![chunk(0, "he"), chunk(1, "llo")]);
+    assert_eq!(result.events, events);
     assert!(matches!(
         result.terminal,
         ModelOutcome::CommittedSuccess { .. }
     ));
+    assert_eq!(backend.calls.get(), 4, "one terminal step ends the stream");
 }
 
 #[test]
-fn pre_cancelled_stream_emits_no_chunks() {
+fn out_of_sequence_event_fails_closed_without_committing_the_event() {
+    let token = CancelToken::new();
+    let backend = ScriptedStream {
+        steps: vec![event(content_delta(
+            4,
+            "content://model-output/out-of-sequence",
+        ))],
+        cancel_at: None,
+        calls: Cell::new(0),
+    };
+
+    let result = stream(&backend, &request(), &token);
+
+    assert!(result.events.is_empty());
+    assert!(matches!(
+        result.terminal,
+        ModelOutcome::TypedFailure {
+            error: TypedError {
+                category: ErrorCategory::Internal,
+                ref code,
+                ..
+            }
+        } if code == "stream_sequence_mismatch"
+    ));
+    assert_eq!(backend.calls.get(), 1);
+}
+
+#[test]
+fn pre_cancelled_stream_emits_no_events_or_transport_calls() {
     let token = CancelToken::new();
     token.cancel();
     let backend = ScriptedStream {
-        chunks: vec![chunk(0, "x")],
-        terminal: ModelOutcome::CommittedSuccess {
-            usage: Usage::default(),
-        },
+        steps: vec![event(content_delta(0, "content://model-output/delta-0"))],
         cancel_at: None,
-        token: token.clone(),
+        calls: Cell::new(0),
     };
     let result = stream(&backend, &request(), &token);
-    assert!(result.chunks.is_empty());
+    assert!(result.events.is_empty());
     assert_eq!(result.terminal, ModelOutcome::Cancelled);
+    assert_eq!(backend.calls.get(), 0);
 }
 
 #[test]
-fn cancel_mid_stream_keeps_prior_chunks_and_never_fabricates_success() {
+fn in_flight_cancellation_keeps_prior_events_and_marks_the_outcome_unknown() {
     let token = CancelToken::new();
+    let first = content_delta(0, "content://model-output/delta-0");
     let backend = ScriptedStream {
-        chunks: vec![chunk(0, "he"), chunk(1, "llo")],
-        terminal: ModelOutcome::CommittedSuccess {
-            usage: Usage::default(),
-        },
-        cancel_at: Some(0),
-        token: token.clone(),
+        steps: vec![
+            event(first.clone()),
+            event(content_delta(1, "content://model-output/late-delta")),
+            terminal(ModelOutcome::CommittedSuccess {
+                usage: Usage::default(),
+            }),
+        ],
+        cancel_at: Some(1),
+        calls: Cell::new(0),
     };
     let result = stream(&backend, &request(), &token);
-    assert_eq!(result.chunks, vec![chunk(0, "he")]);
+    assert_eq!(result.events, vec![first]);
+    assert_eq!(
+        result.terminal,
+        ModelOutcome::ModelOutcomeUnknown {
+            uncertain_usage: None
+        }
+    );
+    assert_eq!(backend.calls.get(), 2);
+}
+
+#[test]
+fn transport_confirmed_cancellation_remains_cancelled() {
+    let token = CancelToken::new();
+    let backend = ScriptedStream {
+        steps: vec![terminal(ModelOutcome::Cancelled)],
+        cancel_at: Some(0),
+        calls: Cell::new(0),
+    };
+
+    let result = stream(&backend, &request(), &token);
+
+    assert!(result.events.is_empty());
     assert_eq!(result.terminal, ModelOutcome::Cancelled);
+    assert_eq!(backend.calls.get(), 1);
+}
+
+#[test]
+fn an_exact_terminal_outcome_wins_a_racing_cancellation() {
+    let token = CancelToken::new();
+    let outcome = ModelOutcome::CommittedSuccess {
+        usage: Usage {
+            input_tokens: 3,
+            output_tokens: 2,
+        },
+    };
+    let backend = ScriptedStream {
+        steps: vec![terminal(outcome.clone())],
+        cancel_at: Some(0),
+        calls: Cell::new(0),
+    };
+
+    let result = stream(&backend, &request(), &token);
+
+    assert!(result.events.is_empty());
+    assert_eq!(result.terminal, outcome);
+    assert_eq!(backend.calls.get(), 1);
 }

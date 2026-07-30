@@ -324,6 +324,7 @@ The adapter returns attempt facts, not a source-level result envelope:
 ModelAdapterAttemptOutcome =
   NotSent(reason)
   | Accepted(stream_or_receipt)
+  | DeliveredTypedFailure(error)
   | ProvenNotAccepted(reason)
   | TransportLost(after_possible_accept)
   | CancellationConfirmed
@@ -341,6 +342,31 @@ a terminal variant. The Agent Program receives only its declared
 `ModelOutput<T>` on committed success or its authored typed error/control-flow
 behavior; attempt, usage, reconciliation, and uncertainty metadata remain
 canonical evidence.
+
+`DeliveredTypedFailure(error)` is a reconciled terminal attempt fact: runtime
+preserves the typed failure, does not retry it, and does not degrade it to
+`ModelOutcomeUnknown`. Streaming uses one closed, ordered boundary:
+
+```text
+ModelStreamEvent =
+  ContentDelta(sequence, content_ref)
+  | ToolCallDelta(sequence, content_ref)
+  | Heartbeat(sequence)
+
+ModelStreamStep =
+  Event(ModelStreamEvent)
+  | Terminal(ModelOutcome)
+```
+
+Content references remain typed references; neither the adapter seam nor
+runtime projects them into inline text. Runtime requires contiguous event
+sequence, receives exactly one terminal step, and passes its cancellation token
+into every streaming transport step so dependency-supported in-flight
+cancellation is observable. Cancellation before dispatch commits `Cancelled`.
+After dispatch, a racing event is discarded as `ModelOutcomeUnknown`; an exact
+terminal result remains authoritative, including a transport-confirmed
+`Cancelled`. Runtime never fabricates confirmed cancellation for an uncertain
+external effect.
 
 Runtime rejects any mismatch among `ModelTargetRef`, `ModelDeploymentRef`,
 `ResolvedModelBinding` and the inference Exact Port Binding digest. Adapter

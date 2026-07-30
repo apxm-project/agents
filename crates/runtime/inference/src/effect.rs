@@ -332,6 +332,10 @@ impl ModelCallRequest {
 pub enum AttemptDisposition {
     /// The request committed successfully with typed usage.
     Success(Usage),
+    /// The backend delivered a reconciled terminal typed failure. The request
+    /// was sent, but its terminal outcome is known and must not be retried or
+    /// degraded to outcome-unknown.
+    DeliveredTypedFailure(TypedError),
     /// The attempt failed before the request left the client; it is safe to
     /// retry the same request identity.
     FailedBeforeSend(TypedError),
@@ -399,6 +403,12 @@ pub fn execute_with_attempt<P: ModelInferencePort + ?Sized>(
                 return ModelExecution {
                     outcome: ModelOutcome::CommittedSuccess { usage },
                     committed_attempt: Some(attempt),
+                };
+            }
+            AttemptDisposition::DeliveredTypedFailure(error) => {
+                return ModelExecution {
+                    outcome: ModelOutcome::TypedFailure { error },
+                    committed_attempt: None,
                 };
             }
             AttemptDisposition::Cancelled => {
