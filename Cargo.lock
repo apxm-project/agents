@@ -369,7 +369,7 @@ dependencies = [
 [[package]]
 name = "apxm-host-sdk"
 version = "0.1.0"
-source = "git+https://github.com/apxm-project/host-sdk.git?rev=61863cdf8cd57f4bc3c8e066b86ab229d5e9e860#61863cdf8cd57f4bc3c8e066b86ab229d5e9e860"
+source = "git+https://github.com/apxm-project/host-sdk.git?rev=ff48332f2ce6af8a45eb38a15f4510a134223f5f#ff48332f2ce6af8a45eb38a15f4510a134223f5f"
 dependencies = [
  "async-trait",
  "base64 0.22.1",

@@ -253,7 +253,10 @@ fn is_local_exec_op(kind: Option<OpKind>) -> bool {
 #[path = "generated_host_execution_manifest.rs"]
 mod generated_host_execution_manifest;
 
-pub use apxm_host_sdk::{HostEffectCommit, HostEffectOutcome, HostEffectRequest, HostTypedPayload};
+pub use apxm_host_sdk::{
+    HostEffectAdapterResult, HostEffectCommit, HostEffectOutcome, HostEffectRejection,
+    HostEffectRejectionCategory, HostEffectRequest, HostTypedPayload,
+};
 pub use generated_host_execution_manifest::HostExecutionManifest;
 
 // ── HostDispatchGateway ───────────────────────────────────────────────────────
@@ -269,7 +272,7 @@ pub trait HostDispatchGateway: Send + Sync {
         call: HostToolCall,
     ) -> Result<HostToolResult, HostDispatchError>;
 
-    /// Execute a negotiated AHI v2 host effect and return its host-signed commit.
+    /// Execute a negotiated AHI v2 host effect and preserve its typed terminal result.
     ///
     /// This is deliberately separate from `call_tool`: Link v1 tool responses
     /// never become replay authority.
@@ -277,7 +280,7 @@ pub trait HostDispatchGateway: Send + Sync {
         &self,
         _host_id: &str,
         _effect: HostEffectRequest,
-    ) -> Result<HostEffectCommit, HostDispatchError> {
+    ) -> Result<HostEffectAdapterResult, HostDispatchError> {
         Err(HostDispatchError::Transport(
             "durable host effects are not configured".into(),
         ))
@@ -539,6 +542,34 @@ mod tests {
         encoded["unexpected_contract_extension"] = serde_json::json!(true);
 
         assert!(serde_json::from_value::<HostToolCall>(encoded).is_err());
+    }
+
+    #[test]
+    fn host_effect_dispatch_preserves_a_typed_rejection() {
+        let terminal = HostEffectAdapterResult::Rejection(HostEffectRejection {
+            execution_id: "execution-1".into(),
+            graph_id: "graph-1".into(),
+            node_id: 7,
+            invocation_id: "invocation-1".into(),
+            call_id: "call-1".into(),
+            request_digest: format!("sha256:{}", "a".repeat(64)),
+            idempotency_key: "effect-1".into(),
+            category: HostEffectRejectionCategory::Conflict,
+            failure: HostTypedPayload {
+                schema_id: "apxm.example-effect-failure.v1".into(),
+                value: serde_json::json!({"code": "example.effect.conflict"}),
+                digest: format!("sha256:{}", "b".repeat(64)),
+            },
+        });
+
+        let HostEffectAdapterResult::Rejection(rejection) = terminal else {
+            panic!("typed Host rejection was collapsed into a commit");
+        };
+        assert_eq!(rejection.category, HostEffectRejectionCategory::Conflict);
+        assert_eq!(
+            rejection.failure.schema_id,
+            "apxm.example-effect-failure.v1"
+        );
     }
 
     #[test]
