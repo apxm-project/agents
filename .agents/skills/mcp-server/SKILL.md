@@ -1,7 +1,7 @@
 ---
 name: mcp-server
 group: Domain
-description: Use when working on APXM MCP surfaces: the Rust HTTP `/v1/mcp` endpoint, the Rust stdio `mcp-server` binary, or cross-agent MCP registration. Prefer server-owned HTTP MCP for workflow/orchestration control.
+description: Use when working on APXM MCP contract constants, local stdio registration, the outbound MCP bridge, or the Server-owned managed HTTP boundary.
 user-invocable: true
 ---
 
@@ -11,13 +11,15 @@ Load `_shared/apxm-development-rules.md` before broad work.
 
 ## What the MCP surfaces are
 
-APXM has two Rust MCP surfaces:
+APXM keeps its MCP roles separate:
 
-- `apxm-server` exposes HTTP MCP at `POST /v1/mcp`. This is the
-  server-owned control plane for long-running workflows, retained events,
-  cancellation, server-owned sessions, skill inventory, and orchestration.
-- `mcp-server` exposes stdio MCP for compile/query/debug tools. It does
-  not own background workflow sessions or orchestration state.
+- Managed HTTP terminates OAuth at Auth and reaches Server's private MCP
+  transport. Its principal-scoped tool surface is the fixed Server catalogue
+  plus granted Host Capabilities.
+- Local stdio registration is a separate transport for compile/query/debug
+  tools and does not authorize managed HTTP calls.
+- The outbound MCP client bridge is a separate trust boundary from inbound
+  managed MCP.
 
 MCP should stay a thin interface over APXM server/runtime capabilities.
 
@@ -28,16 +30,15 @@ MCP should stay a thin interface over APXM server/runtime capabilities.
   `evidence_lookup`, `capability_discovery`.
 - Skills: `skills_list`, `skill_get`, `skill_validate`,
   `skill_call`.
-- Workflow control: `workflow_start`, `workflow_status`,
-  `workflow_events`, `workflow_cancel`.
+- Granted Host Capabilities, filtered and authorized for the resolved acting
+  principal.
 
 ## Stdio MCP Tools
 
-The stdio binary exposes compile/query tools such as `validate`,
-`compile`, `get_contract`, `analyze`, `prompt_as_workflow`,
-`trace_fetch`, `aam_recall`, `evidence_lookup`, and
-`capability_discovery`. Use HTTP MCP when a caller needs workflow start/status,
-events, cancel, or orchestration.
+The registered stdio command exposes compile/query tools such as `validate`,
+`compile`, `get_contract`, `analyze`, `prompt_as_workflow`, `trace_fetch`,
+`aam_recall`, `evidence_lookup`, and `capability_discovery`. It does not define
+an Agent Program lifecycle tool family.
 
 ## Registration
 
@@ -61,7 +62,6 @@ Do not bypass it.
 
 ## Diagnostics
 
-- `dekk agents build-server` — compile the HTTP and stdio MCP binaries.
 - `dekk agents mcp install` — register; surfaces config errors.
 
 ## Cross-surface registration (REST + MCP + A2A)

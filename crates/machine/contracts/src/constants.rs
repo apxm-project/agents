@@ -368,13 +368,6 @@ pub mod mcp {
         pub const RESULT: &str = "result";
         pub const TEXT: &str = "text";
     }
-
-    pub mod tools {
-        pub const APXM_WORKFLOW_START: &str = "workflow_start";
-        pub const APXM_WORKFLOW_STATUS: &str = "workflow_status";
-        pub const APXM_WORKFLOW_EVENTS: &str = "workflow_events";
-        pub const APXM_WORKFLOW_CANCEL: &str = "workflow_cancel";
-    }
 }
 
 pub mod jsonrpc {

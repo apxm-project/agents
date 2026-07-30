@@ -42,9 +42,7 @@ Command groups (see `dekk agents --help` for the live list):
   `test-python-frontend`, `codegen`, `clean`, `scrub-rustc-cache`
 - **Compilation**: `compile`, `execute`, `run`, `decompile`
 - **Authoring**: `validate`, `analyze`, `explain`, `gui`, `tokenize`
-- **Workflows**: `workflow`; MCP callers use `workflow_start`,
-  `workflow_status`, `workflow_events`, `workflow_cancel`, and
-  `prompt_as_workflow`
+- **Goals & Workflows**: `goal`
 - **Configuration**: `doctor`, `backend`, `vllm`, `agent`, `tool`, `cache`,
   `process`, `mcp`, `server`, `commit-lint`
 - **Discovery**: `ops`, `template`
@@ -56,9 +54,8 @@ Command groups (see `dekk agents --help` for the live list):
 If a needed action isn't yet wrapped, **add a Dekk command** in `.dekk.toml`
 rather than shelling out — that is the project-wide pattern.
 
-Checked-in `.apxmw` workflows use `dekk agents workflow` or `workflow_start`;
-natural-language workflow drafts use `prompt_as_workflow` and remain proposals
-until APXM validates and admits them.
+Managed MCP presents granted Host Capabilities, not an Agents-owned Agent
+Program lifecycle tool family.
 
 ## 3. Lifecycle workflow
 
@@ -347,7 +344,7 @@ push, an overwritten branch, or a tainted benchmark.
 | `finish` | Pre-claim gate — runs focused dekk agents test, doctor, release checks when relevant, secrets scan, and artifact-placement check before any claim of completion. Refuses to claim done until all pass. | `.agents/skills/finish/SKILL.md` |
 | `fork-vllm-rebase` | Use when rebasing the external/vllm fork onto a new upstream tag, cherry-picking APXM commits, or resolving conflicts in the fork. Covers the G1 build/smoke gate. | `.agents/skills/fork-vllm-rebase/SKILL.md` |
 | `frontend-implementation` | Use when changing APXM compiler frontends: Rust FrontendGraph lowering, TypeScript @apxm/frontend, Python apxm_program, frontend codegen, or Studio/source lowering into AIR. | `.agents/skills/frontend-implementation/SKILL.md` |
-| `mcp-server` | Use when working on APXM MCP surfaces: the Rust HTTP `/v1/mcp` endpoint, the Rust stdio `mcp-server` binary, or cross-agent MCP registration. Prefer server-owned HTTP MCP for workflow/orchestration control. | `.agents/skills/mcp-server/SKILL.md` |
+| `mcp-server` | Use when working on APXM MCP contract constants, local stdio registration, the outbound MCP bridge, or the Server-owned managed HTTP boundary. | `.agents/skills/mcp-server/SKILL.md` |
 | `mlir-pass-development` | Use when adding, modifying, or reordering MLIR passes in the APXM compiler pipeline. Enforces the single pass-list source of truth, the AIS-core ownership rule, and the build-dialect + codegen cadence after .td edits. | `.agents/skills/mlir-pass-development/SKILL.md` |
 | `model-zoo-operate` | Use when adding, scaling, or probing models in the vLLM zoo (deploy/vllm/zoo*.toml). Enforces docker-load then cache-warm then zoo-apply then service-exec/status; use the zoo surface only. | `.agents/skills/model-zoo-operate/SKILL.md` |
 | `plan` | Produce a written plan before non-trivial APXM implementation. Required for changes touching >3 files, modifying a public API or AIS op, or needing Slurm GPU allocation. Enforces APXM-specific gates (AIS-op-vs-compose decision, dialect-codegen impact). | `.agents/skills/plan/SKILL.md` |
