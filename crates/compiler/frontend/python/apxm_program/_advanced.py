@@ -30,7 +30,9 @@ class HookDecl:
             handler_ref=handler.__name__,
             handler_digest=_digest(handler),
             input_type_ref=_first_parameter_type(handler),
-            output_type_ref=_return_type(handler),
+            output_type_ref=(
+                "Unit" if self.return_mode == "observe" else _return_type(handler)
+            ),
         )
 
 
