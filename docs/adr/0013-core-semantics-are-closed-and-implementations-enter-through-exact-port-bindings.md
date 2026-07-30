@@ -142,7 +142,7 @@ The runtime kernel never branches on Docker, OCI, namespaces, Firecracker,
 Wasm, or another confinement implementation and never calls those facilities
 directly. It requests one exact closed Confinement Port covering prepare,
 attach, execute, cancel, terminate, attestation, cleanup, roots, mounts,
-executables, egress, resources, and lifecycle. Kubernetes scheduling and remote
+executables, egress, resources, and lifecycle. Deployment scheduling and remote
 worker placement are separate boundaries when present; they are not treated as
 confinement implementations. If the required confinement cannot be satisfied
 exactly, admission fails.
