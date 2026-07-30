@@ -22,7 +22,7 @@ backing) behind it. Do NOT build on, or depend on, OpenShell.**
 Two direct answers:
 - *"Should we use OpenShell as the sandbox?"* — **No.** It is alpha, NVIDIA-toolkit-
   coupled, gateway-daemon-dependent, has **no Rust SDK**, is shared-kernel (not a
-  true microVM despite the name), and spins up in **seconds** (K3s) — fatal for
+  true microVM despite the name), and spins up in **seconds** — fatal for
   apxm's per-turn `EXC`/`INV` execution. Building on it inherits all of that.
 - *"Should we have our own interface that can connect to any sandbox?"* — **Yes,
   and it already exists.** apxm-runtime's `SandboxBackend` trait + `SandboxRegistry`
@@ -62,7 +62,7 @@ The contract is the product; sandboxes are swappable backings.
    ▼           ▼             ▼              ▼                   ▼
  Process    Bubblewrap   OpenShell      Firecracker          gVisor
  (exists)   (exists)     (P1, opt-in)   (future)             (future)
- <1ms       <50ms        seconds/K3s    microVM              user-kernel
+ <1ms       <50ms        seconds        microVM              user-kernel
  fallback   per-turn     cross-plat,    true isolation       syscall filter
             hot path     hot-reload,
                          fleet
@@ -91,8 +91,8 @@ NVIDIA Agent Toolkit, **Apache-2.0**, **alpha / single-player**) is a secure-by-
 runtime that confines each agent in its own sandbox.
 
 - **Control plane = a Gateway daemon** (required): gRPC services (`OpenShell` +
-  `Inference`), durable state (SQLite/Postgres), drives Docker/Podman/MicroVM/K8s
-  drivers. CLI, **Python SDK** (`SandboxClient`/`SandboxSession.exec`), and a TUI
+  `Inference`), durable state (SQLite/Postgres), and container/microVM drivers.
+  CLI, **Python SDK** (`SandboxClient`/`SandboxSession.exec`), and a TUI
   all route through it. No Rust SDK — integration is gRPC or CLI/SDK shell-out.
 - **Sandbox lifecycle:** `sandbox create … -- <agent>`, `sandbox exec -n <id> --no-tty
   --timeout N -- <cmd>` (captures stdout/stderr/exit — maps to apxm's
@@ -112,11 +112,11 @@ runtime that confines each agent in its own sandbox.
   the backend provider, rewrites `model`, forwards to a configured endpoint —
   **which can be apxm-server** (`provider create --type openai --config
   OPENAI_BASE_URL=http://host.openshell.internal:<port>/v1`).
-- **Requirements:** Docker 28+/Podman 5/MicroVM/K8s. **GPU is opt-in** (`--gpu`,
+- **Requirements:** Docker 28+/Podman 5/MicroVM. **GPU is opt-in** (`--gpu`,
   NVIDIA-only); not required for CPU sandboxes. Hosts macOS/Windows-WSL2/Linux.
 - **Reality check:** "MicroVM" is largely eBPF/seccomp/Landlock **shared-kernel**
   hardening (weaker than Firecracker/gVisor for kernel-escape); sandbox creation
-  is **seconds** (K3s), not ms.
+  is **seconds**, not ms.
 
 Sources: `github.com/NVIDIA/OpenShell`; `docs.nvidia.com/openshell/*` (how-it-works,
 policy-schema, providers, inference-routing); `developer.nvidia.com/blog/run-autonomous-self-evolving-agents-more-safely-with-nvidia-openshell`.
@@ -205,7 +205,7 @@ server's registry then selects the OpenShell backend. apxm-os keeps zero apxm-ca
 deps; the backend lives in apxm-runtime/driver.
 
 ## 4. Risks
-- **Alpha / single-player**; rapid breaking releases; K3s/gateway operational weight.
+- **Alpha / single-player**; rapid breaking releases; gateway operational weight.
 - **Shared-kernel** hardening, not a true microVM — weaker isolation than the name implies.
 - **Seconds-scale sandbox creation** — unsuitable for per-turn `EXC`/`INV`; needs
   session reuse, not create-per-call.

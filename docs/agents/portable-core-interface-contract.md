@@ -437,7 +437,7 @@ The owner contract includes:
 - cleanup, orphan detection, and reconciliation.
 
 Docker/OCI isolation, namespaces, microVM, Wasm, and local test confinement may
-implement this contract. Kubernetes scheduling and remote worker placement do
+implement this contract. Deployment scheduling and remote worker placement do
 not; they use a separate focused worker boundary when required. Runtime never
 selects among implementations. If the exact required feature set is
 unavailable, admission fails; there is no unconfined or weaker fallback.

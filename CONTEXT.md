@@ -402,7 +402,7 @@ cancelling, terminating, attesting, and cleaning up one exact isolation
 environment under declared roots, mounts, executable, egress, and resource
 ceilings. Remote worker placement or scheduling is a separate boundary when it
 exists.
-_Avoid_: Kubernetes scheduler, generic process service, Capability executor
+_Avoid_: deployment-orchestrator scheduler, generic process service, Capability executor
 
 **Compatibility Set**:
 The immutable manifest identifying the exact artifact, contract, feature,
