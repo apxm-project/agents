@@ -337,8 +337,11 @@ pub mod memory {
 }
 
 pub mod protocols {
-    /// MCP (Model Context Protocol) version string.
-    pub const MCP_VERSION: &str = "2025-11-25";
+    /// Managed inbound MCP version implemented by Auth's public resource edge
+    /// and Server's private transport. The outbound MCP client bridge is a
+    /// separate ADR-0018 trust boundary with its own independently pinned
+    /// protocol version.
+    pub const MCP_VERSION: &str = "2026-07-28";
     /// A2A (Agent-to-Agent) protocol version.
     pub const A2A_VERSION: &str = "0.3";
 }
