@@ -308,6 +308,14 @@ impl CapabilitySystem {
         let args = self
             .admit_invocation_ctx_raw(name, args, capability.metadata().requires_approval, pre_ctx)
             .await?;
+        if let Some(invocation) = invocation {
+            invocation
+                .validate_for(name, &args)
+                .map_err(|error| RuntimeError::Capability {
+                    capability: name.to_string(),
+                    message: format!("invalid canonical Capability invocation: {error}"),
+                })?;
+        }
         let interceptors = self.interceptors.read().clone();
 
         // Validate arguments against schema
@@ -383,8 +391,13 @@ impl CapabilitySystem {
                 return Ok(CapabilityExecutionResult::new(exec_result_to_value(exec_result)));
             }
 
-            // Capability doesn't need sandbox, execute directly
-            capability.execute_with_effect_receipt(args, invocation).await
+            // Capability doesn't need sandbox, execute directly.
+            match invocation {
+                Some(invocation) => {
+                    capability.execute_with_effect_receipt(args, invocation).await
+                }
+                None => capability.execute(args).await.map(CapabilityExecutionResult::new),
+            }
         })
             .await
             .map_err(|_| RuntimeError::Timeout { op_id: 0, timeout })?
@@ -405,9 +418,16 @@ impl CapabilitySystem {
                 message: "durable capability effect receipt is missing trusted invocation identity"
                     .to_string(),
             })?;
-            if receipt.execution_id != invocation.execution_id
-                || receipt.node_id != invocation.node_id
-                || receipt.invocation_id != invocation.invocation_id
+            if receipt.execution_id != invocation.execution_id()
+                || receipt.node_id != invocation.node_id()
+                || receipt.invocation_id
+                    != invocation
+                        .canonical_request()
+                        .correlation()
+                        .program_invocation_ref
+                        .target
+                || receipt.request_digest
+                    != invocation.canonical_request().request_digest_sha256_hex()
             {
                 return Err(RuntimeError::Capability {
                     capability: name.to_string(),
@@ -625,7 +645,7 @@ impl CapabilityFacade for CapabilitySystem {
         args: HashMap<String, Value>,
         timeout: Duration,
         approval: ApprovalContext<'_>,
-        invocation: Option<&CapabilityInvocation>,
+        invocation: &CapabilityInvocation,
     ) -> CapabilityResult<Value> {
         let pre_ctx = PreInvokeContext {
             registry: &self.registry,
@@ -638,7 +658,7 @@ impl CapabilityFacade for CapabilitySystem {
             grant_id: approval.grant_id,
             permission_timeout: approval.permission_timeout,
         };
-        self.invoke_with_timeout_ctx_raw(name, args, timeout, Some(&pre_ctx), invocation)
+        self.invoke_with_timeout_ctx_raw(name, args, timeout, Some(&pre_ctx), Some(invocation))
             .await
     }
 

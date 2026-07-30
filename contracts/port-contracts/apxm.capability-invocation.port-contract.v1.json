@@ -1,0 +1,24 @@
+{
+  "schema_version": "apxm.port-contract.v1",
+  "port_contract_id": "apxm.capability-invocation.v1",
+  "port_contract_digest": "sha256:2be490b4c44dfa79570a8fe9e09217f2db435a121e91b1ac7bd5715ed7f898f6",
+  "semantic_owner": "agents",
+  "primary_responsibility": "invoke one exact admitted non-model Capability with canonical typed application arguments, per-invocation identity and authority, and stable effect correlation without fallback or ambient authority",
+  "request_schema": {
+    "schema_id": "apxm.capability-invocation.v1",
+    "digest": "sha256:c29ba55c17bae5786f9ebfb0e831d3f150fdf5ba606adcc8d5515e001cf34997"
+  },
+  "result_schema": {
+    "schema_id": "apxm.capability-outcome.v1",
+    "digest": "sha256:dc4f06252d3e2a90a584acee5db34dfceb378ab79a44670084eac384a3f9da28"
+  },
+  "failure_schema": {
+    "schema_id": "apxm.capability-outcome.v1",
+    "digest": "sha256:dc4f06252d3e2a90a584acee5db34dfceb378ab79a44670084eac384a3f9da28"
+  },
+  "lifecycle_digest": "sha256:f2eca4e3529252de0567d7f258d5adc13e71729c77ed8f2768909e58777b9680",
+  "authority_data_classification_digest": "sha256:42b91f1eb0145a0579d4a9152c8fa6f9c15256e7ea5d0f7ecbc57e7c9e33ce78",
+  "feature_vocabulary_digest": "sha256:e4c003d387b3d649cc6e3fef3ff9c16d6333528f3c114bc2028e6065860ef050",
+  "configuration_contract_digest": "sha256:fcaa0877c79eac2e91758ce0eedc96f72d3bb9be1f841e1ad7ce7a3ab5e70ba5",
+  "conformance_vector_digest": "sha256:bfca9faa5afc3e1f373f731acfbcb4fb9df428fff6d3a610b2a6097d1571420d"
+}

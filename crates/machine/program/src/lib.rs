@@ -10,6 +10,7 @@
 
 pub mod air;
 pub mod artifact;
+pub mod capability;
 pub mod common;
 pub mod diagnostic;
 pub mod execution_commit;
@@ -24,6 +25,13 @@ pub use air::{AirModule, SemanticOpKind, StructuralOpKind, verify_air_json};
 pub use artifact::{
     ArtifactBuildError, ExecutableArtifact, PortRequirement, PortSourceScope, SourceBundle,
     compile_frontend_graph_artifact_json, validate_artifact_json,
+};
+pub use capability::{
+    CanonicalCapabilityArguments, CapabilityEffectFacts, CapabilityInvocationAuthority,
+    CapabilityInvocationCorrelation, CapabilityInvocationVersion, CapabilityOutcome,
+    CapabilityRequest, CapabilityRequestDigestInput, CapabilityRequestError,
+    MAX_CAPABILITY_ARGUMENT_BYTES, capability_effect_id, capability_request_digest,
+    capability_request_digest_sha256_hex,
 };
 pub use common::{IdempotencyKey, TypedErrorEnvelope, TypedRef};
 pub use diagnostic::{Diagnostic, DiagnosticCode, Verdict};

@@ -1,15 +1,16 @@
 //! Atomic structural continuation conformance for the canonical execution driver.
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
 use apxm_execution::{
-    CapabilityOutcome, CapabilityPort, CapabilityRequest, CommittedNativeModelUsageOutcome,
-    CompositionOutcome, CompositionPort, CompositionRequest, Continuation, EventAwait,
-    EventOutcome, EventPort, EventRef, ExecutionPorts, ExecutionRequest, NoopStaticHookHandler,
-    RunOutcome, execute_resumable, resume_event,
+    CapabilityInvocationAdmission, CapabilityOutcome, CapabilityPort, CapabilityRequest,
+    CommittedNativeModelUsageOutcome, CompositionOutcome, CompositionPort, CompositionRequest,
+    Continuation, EventAwait, EventOutcome, EventPort, EventRef, ExecutionPorts, ExecutionRequest,
+    NoopStaticHookHandler, RunOutcome, execute_resumable, resume_event,
 };
 use apxm_inference::{
     AttemptDisposition, ExactModelTargetRef, ExactPortBindingRef, IdempotencyKey,
@@ -25,6 +26,7 @@ use apxm_kernel::{
 };
 use apxm_program::air::AirModule;
 use apxm_program::artifact::SchemaDigestRef;
+use apxm_program::capability::CapabilityInvocationAuthority;
 
 fn digest(c: char) -> String {
     format!("sha256:{}", c.to_string().repeat(64))
@@ -47,6 +49,20 @@ fn request(scope: &str) -> ExecutionRequest {
     }))
     .expect("canonical AIR");
     assert!(air.verify().is_accepted());
+    let capability_invocations = BTreeMap::from([(
+        "node.capability".to_string(),
+        CapabilityInvocationAdmission {
+            capability_ref: "cap.finish".into(),
+            arguments: json!({"status": "completed"}),
+            authority: CapabilityInvocationAuthority::new(
+                "principal.test",
+                "agent.test",
+                "grant.finish",
+                Vec::new(),
+            )
+            .expect("valid test authority"),
+        },
+    )]);
     ExecutionRequest {
         air,
         hook_bindings: Vec::new(),
@@ -62,6 +78,7 @@ fn request(scope: &str) -> ExecutionRequest {
             },
             composition_digest: digest('c'),
         }),
+        capability_invocations,
         program_instance_ref: ProgramInstanceRef::new(scope),
         program_invocation_ref: ProgramInvocationRef::new(format!("invocation.{scope}")),
         commit_id: format!("commit.{scope}"),
@@ -228,7 +245,10 @@ fn ports(commit: Arc<Commit>) -> ExecutionPorts {
             PortSlot::ModelInference,
             contract("apxm.model-inference.v1"),
         ),
-        (PortSlot::Capability, contract("apxm.capability.v1")),
+        (
+            PortSlot::Capability,
+            contract("apxm.capability-invocation.v1"),
+        ),
         (
             PortSlot::ExternalAgentCapability,
             contract("apxm.external-agent.v1"),
@@ -246,7 +266,7 @@ fn ports(commit: Arc<Commit>) -> ExecutionPorts {
                 PortImplementation::ModelInference(Arc::new(Model)),
             ),
             (
-                binding(PortSlot::Capability, "apxm.capability.v1"),
+                binding(PortSlot::Capability, "apxm.capability-invocation.v1"),
                 PortImplementation::Capability(Arc::new(Capability)),
             ),
             (
@@ -468,6 +488,20 @@ async fn nested_loop_park_restores_exact_stack_without_duplicate_work() {
     }))
     .expect("nested AIR");
     assert!(nested.air.verify().is_accepted());
+    nested.capability_invocations = BTreeMap::from([(
+        "node.outer.after".to_string(),
+        CapabilityInvocationAdmission {
+            capability_ref: "cap.finish".into(),
+            arguments: json!({"status": "completed"}),
+            authority: CapabilityInvocationAuthority::new(
+                "principal.test",
+                "agent.test",
+                "grant.finish",
+                Vec::new(),
+            )
+            .expect("valid test authority"),
+        },
+    )]);
 
     execute_resumable(&ports(commit.clone()), nested, Value::Null)
         .await

@@ -22,7 +22,10 @@ use crate::source_map::SourceMap;
 const MODEL_TARGET_PORT_CONTRACT: &str = "apxm.model-target.v1";
 
 /// The canonical Capability Port contract an artifact's `capability.invoke` binds to.
-const CAPABILITY_PORT_CONTRACT: &str = "apxm.port-contract.v1";
+const CAPABILITY_PORT_CONTRACT: &str = "apxm.capability-invocation.v1";
+const CAPABILITY_PORT_CONTRACT_DESCRIPTOR: &[u8] = include_bytes!(
+    "../../../../contracts/port-contracts/apxm.capability-invocation.port-contract.v1.json"
+);
 
 /// Lowercase `sha256:<hex>` digest of `bytes`, matching the contract Digest
 /// grammar (`^sha256:[0-9a-f]{64}$`).
@@ -470,7 +473,7 @@ fn capability_requirement(capability_ref: &str) -> PortRequirement {
     port_requirement(
         capability_ref,
         CAPABILITY_PORT_CONTRACT,
-        sha256_digest(CAPABILITY_PORT_CONTRACT.as_bytes()),
+        sha256_digest(CAPABILITY_PORT_CONTRACT_DESCRIPTOR),
     )
 }
 
@@ -769,6 +772,26 @@ mod from_graph_tests {
         assert_eq!(
             artifact.source_bundle_digest,
             bundle.digest().expect("bundle digest")
+        );
+    }
+
+    #[test]
+    fn capability_requirement_binds_the_exact_owned_port_contract() {
+        let artifact = ExecutableArtifact::from_frontend_graph(&specialist_graph())
+            .expect("artifact from graph");
+        let requirement = artifact
+            .artifact_semantic_requirements
+            .iter()
+            .find(|requirement| requirement.typed_port_slot == "cap.search")
+            .expect("Capability requirement");
+
+        assert_eq!(
+            requirement.required_port_contract.schema_id,
+            CAPABILITY_PORT_CONTRACT
+        );
+        assert_eq!(
+            requirement.required_port_contract.digest,
+            sha256_digest(CAPABILITY_PORT_CONTRACT_DESCRIPTOR)
         );
     }
 

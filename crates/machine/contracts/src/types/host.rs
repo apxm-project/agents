@@ -253,6 +253,7 @@ fn is_local_exec_op(kind: Option<OpKind>) -> bool {
 #[path = "generated_host_execution_manifest.rs"]
 mod generated_host_execution_manifest;
 
+pub use apxm_host_sdk::{HostEffectCommit, HostEffectOutcome, HostEffectRequest, HostTypedPayload};
 pub use generated_host_execution_manifest::HostExecutionManifest;
 
 // ── HostDispatchGateway ───────────────────────────────────────────────────────
@@ -275,7 +276,7 @@ pub trait HostDispatchGateway: Send + Sync {
     async fn execute_effect(
         &self,
         _host_id: &str,
-        _effect: HostEffectPrepare,
+        _effect: HostEffectRequest,
     ) -> Result<HostEffectCommit, HostDispatchError> {
         Err(HostDispatchError::Transport(
             "durable host effects are not configured".into(),
@@ -326,6 +327,7 @@ pub trait HostDispatchGateway: Send + Sync {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HostToolCall {
     pub call_id: String,
     pub capability_id: String,
@@ -334,52 +336,9 @@ pub struct HostToolCall {
     pub args: serde_json::Value,
     pub args_digest: String,
     pub grant_ref: Option<String>,
+    pub acting_principal_attestation: serde_json::Value,
     pub timeout_ms: u64,
     pub idempotency_key: Option<String>,
-    pub subject: Option<String>,
-}
-
-/// Immutable capability-effect preparation sent only over negotiated AHI v2.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HostEffectPrepare {
-    pub execution_id: String,
-    pub graph_id: String,
-    pub node_id: u64,
-    pub invocation_id: String,
-    pub call_id: String,
-    pub capability_id: String,
-    pub host_op: String,
-    pub capability_binding: String,
-    pub implementation_ref: String,
-    pub request_digest: String,
-    pub idempotency_key: String,
-    pub grant_refs: Vec<String>,
-    pub approval_refs: Vec<String>,
-    pub args: serde_json::Value,
-    pub timeout_ms: u64,
-}
-
-/// Host-signed evidence that a negotiated AHI v2 effect committed.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HostEffectCommit {
-    pub execution_id: String,
-    pub graph_id: String,
-    pub node_id: u64,
-    pub invocation_id: String,
-    pub call_id: String,
-    pub request_digest: String,
-    pub idempotency_key: String,
-    pub effect_digest: String,
-    pub effect_outcome: HostEffectOutcome,
-    pub host_key_id: String,
-    pub signature: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HostEffectOutcome {
-    Committed,
-    Deduplicated,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -516,6 +475,70 @@ mod tests {
             }),
             labels: vec![],
         }
+    }
+
+    fn valid_host_tool_call_json() -> serde_json::Value {
+        serde_json::json!({
+            "call_id": "call-123",
+            "capability_id": "capability-456",
+            "host_op": "documents.read",
+            "capability_binding": "binding-789",
+            "args": {"document_id": "document-012"},
+            "args_digest": "sha256:args",
+            "grant_ref": "grant-345",
+            "timeout_ms": 5_000,
+            "idempotency_key": "idempotency-678",
+            "acting_principal_attestation": {
+                "proof": ["opaque", 7, true],
+                "nested": {"bytes": "AAE="}
+            }
+        })
+    }
+
+    #[test]
+    fn host_tool_call_accepts_an_opaque_acting_principal_attestation() {
+        let encoded = valid_host_tool_call_json();
+        let expected = encoded["acting_principal_attestation"].clone();
+
+        let call: HostToolCall = serde_json::from_value(encoded).unwrap();
+        let round_tripped = serde_json::to_value(call).unwrap();
+
+        assert_eq!(round_tripped["acting_principal_attestation"], expected);
+    }
+
+    #[test]
+    fn host_tool_call_rejects_a_missing_acting_principal_attestation() {
+        let mut encoded = valid_host_tool_call_json();
+        encoded
+            .as_object_mut()
+            .unwrap()
+            .remove("acting_principal_attestation");
+
+        assert!(serde_json::from_value::<HostToolCall>(encoded).is_err());
+    }
+
+    #[test]
+    fn host_tool_call_rejects_subject() {
+        let mut encoded = valid_host_tool_call_json();
+        encoded["subject"] = serde_json::json!("caller-supplied-subject");
+
+        assert!(serde_json::from_value::<HostToolCall>(encoded).is_err());
+    }
+
+    #[test]
+    fn host_tool_call_rejects_end_user_subject() {
+        let mut encoded = valid_host_tool_call_json();
+        encoded["end_user_subject"] = serde_json::json!("caller-supplied-subject");
+
+        assert!(serde_json::from_value::<HostToolCall>(encoded).is_err());
+    }
+
+    #[test]
+    fn host_tool_call_rejects_any_other_unknown_field() {
+        let mut encoded = valid_host_tool_call_json();
+        encoded["unexpected_contract_extension"] = serde_json::json!(true);
+
+        assert!(serde_json::from_value::<HostToolCall>(encoded).is_err());
     }
 
     #[test]

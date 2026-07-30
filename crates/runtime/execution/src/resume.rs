@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::driver::CapabilityInvocationAdmission;
 use crate::ports::EventRef;
 use apxm_inference::{ModelBindingAdmission, Usage};
 use apxm_kernel::{AtomicWriteSet, ProgramInstanceRef, ProgramInvocationRef};
@@ -14,6 +15,7 @@ use apxm_program::air::AirModule;
 use apxm_program::external_agent::ExternalAgentEvidence;
 use apxm_program::frontend_graph::HookBinding;
 use apxm_program::runtime_evidence::Fact;
+use std::collections::BTreeMap;
 
 /// One active structural loop frame persisted in exact nesting order.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,6 +42,9 @@ pub struct Continuation {
     /// The exact admitted model binding for this invocation, so a `model.call`
     /// after resume validates the same binding with no re-resolution.
     pub model_admission: ModelBindingAdmission,
+    /// Exact per-node Capability inputs and authority survive park/resume
+    /// without re-resolution or ambient reconstruction.
+    pub capability_invocations: BTreeMap<String, CapabilityInvocationAdmission>,
     pub next_schedule_position: usize,
     pub loop_frames: Vec<DurableLoopFrame>,
     pub parked_node_execution_id: Option<String>,
