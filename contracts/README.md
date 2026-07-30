@@ -9,7 +9,7 @@ envelopes live in the sibling `contracts` workspace and are referenced here by
 
 ```
 schemas/         closed Agent Program semantic schemas owned by agents
-port-contracts/  the atomic execution-commit Port Contract descriptor
+port-contracts/  the Capability invocation and atomic execution-commit Port Contract descriptors
 vectors/         positive and negative conformance vectors
 descriptors/     the content-addressed agents owner descriptor
 tools/           the validation and digest gate
@@ -25,6 +25,8 @@ tools/           the validation and digest gate
 | `apxm.runtime-evidence.v1` | Append-only monotonic Program Instance/Invocation/effect facts |
 | `apxm.source-map.v1` | Non-executable mapping from operations and regions back to source spans |
 | `apxm.handler-manifest.v1` | TypeScript-only artifact-local tool/hook handler sidecar; no Python package-local handler shape |
+| `apxm.capability-invocation.v1` | Exact non-model Capability request with canonical arguments and separate admitted identity, authority, correlation, and effect facts |
+| `apxm.capability-outcome.v1` | Closed completed, failed, and outcome-unknown result set for Capability invocation |
 
 ## Referenced constitution envelopes
 
@@ -32,9 +34,58 @@ tools/           the validation and digest gate
 `apxm.port-contract.v1`, `apxm.port-requirement.v1`, and
 `apxm.execution-commit.v1`.
 
-The atomic execution-commit Port Contract descriptor is built on top of the
-`apxm.execution-commit.v1` envelope: it names `agents` as the semantic owner and
-records one atomic compare-and-commit boundary with no split or partial path.
+The Capability invocation descriptor binds the owned request and outcome
+schemas. The atomic execution-commit descriptor is built on top of the
+`apxm.execution-commit.v1` envelope. Both name `agents` as semantic owner; the
+former keeps application arguments separate from invocation authority, while
+the latter records one atomic compare-and-commit boundary with no split or
+partial path.
+
+The Capability lifecycle publishes the exact SHA-256 effect-id preimage and
+the recursively key-sorted compact JSON request-identity preimage. Its Port
+Contract binds one deterministic digest bundle over both the invocation and
+outcome vector files, so neither half of the request/outcome boundary can drift
+without changing the contract digest.
+
+The owned request schema carries that digest as `sha256:<64 lowercase hex>`.
+Boundaries whose schema fixes SHA-256 separately, including the Host effect
+wire, carry the same digest bytes as bare `<64 lowercase hex>`; they do not
+rehash a second preimage. Rust consumers use
+`capability_request_digest_sha256_hex` for that exact representation rather
+than stripping the prefix or rebuilding the request identity.
+
+## Server and Host consumption
+
+The executor boundary carries one `apxm_program::CapabilityRequest` inside
+`apxm_capability_iface::CapabilityInvocation`. Server and Host-effect
+implementations consume that typed request directly:
+
+- `capability_id` comes from `capability_ref`;
+- canonical Host `args` come from `arguments`, whose `type_ref` is the AIR
+  `capability.invoke` arguments operand type;
+- the Program Invocation and NodeExecution occurrence come only from
+  `correlation`;
+- Acting Principal, Agent Identity, the single governing Grant, and approval
+  references come only from `authority` and are checked against verified Auth
+  admission;
+- the Host idempotency key is the canonical `effect_id`; and
+- the Host request digest is `request_digest_sha256_hex()`, the bare encoding
+  of the exact owner request digest.
+
+`execution_id`, `graph_id`, and numeric receipt `node_id` remain operational
+receipt coordinates. They never supply or replace a Program Invocation,
+NodeExecution, argument type, identity, authority, effect id, or request
+digest. A missing canonical request, a post-digest argument edit, or any
+coordinate/authority mismatch fails before implementation dispatch.
+
+This consumer is pinned to Host SDK source revision
+`61863cdf8cd57f4bc3c8e066b86ab229d5e9e860`. Its
+`apxm.host-sdk-owner-descriptor.v1` semantic digest is
+`sha256:5e2240c5cbb53c09f2ddc2a17b7c295a091318e7e6eb4943a1d2f41170cc1ce6`,
+and the SHA-256 checksum of the exact descriptor repository bytes is
+`sha256:804f7e3d07ccfdb162b4eed87ba2bc404f59302b042348e44c0202491bdb7540`.
+The semantic digest identifies the canonical descriptor content without its
+self-digest field; the exact checksum detects any byte-level descriptor drift.
 
 ## Gate
 
@@ -48,6 +99,6 @@ verifies every recorded content-addressed digest is current, and confirms the
 descriptor carries no delivery-process references. Regenerate digests after any
 change with `--write-digests`.
 
-The owner descriptor records `signing.status = signing_pending_no_key`: no
-descriptor signing key exists in this repository yet, so the exact unsigned
-`descriptor_digest` is published and the signature is intentionally absent.
+The owner descriptor is identified by its deterministic canonical digest.
+Optional distribution signatures remain detached metadata and are not part of
+the owner contract or its development gate.

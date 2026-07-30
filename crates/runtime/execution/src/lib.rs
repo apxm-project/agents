@@ -20,9 +20,9 @@ pub mod session_ledger;
 pub mod structural;
 
 pub use driver::{
-    ExecutionError, ExecutionPorts, ExecutionPortsError, ExecutionRequest, NodeOutcome,
-    NoopStaticHookHandler, RunReport, StaticHookHandlerPort, StaticHookResult, execute,
-    execute_resumable, resume, resume_event,
+    CapabilityInvocationAdmission, ExecutionError, ExecutionPorts, ExecutionPortsError,
+    ExecutionRequest, NodeOutcome, NoopStaticHookHandler, RunReport, StaticHookHandlerPort,
+    StaticHookResult, execute, execute_resumable, resume, resume_event,
 };
 pub use operational_usage::{
     CommittedNativeModelUsage, CommittedNativeModelUsageError, CommittedNativeModelUsageOutcome,

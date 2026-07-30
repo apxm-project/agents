@@ -2,6 +2,7 @@
 //! the injected kernel ports and commit atomically. Deterministic in-crate fakes
 //! stand in for the admitted ports (test doubles, non-admissible).
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -22,13 +23,14 @@ use apxm_kernel::{
 };
 use apxm_program::air::AirModule;
 use apxm_program::artifact::SchemaDigestRef;
+use apxm_program::capability::CapabilityInvocationAuthority;
 use apxm_program::external_agent::{AttributedEvent, AttributedEventKind, PeerUsage};
 use apxm_program::frontend_graph::{HookBinding, HookPhase, HookReturnMode, HookScope};
 use apxm_program::runtime_evidence::Fact;
 
 use apxm_execution::{
-    CapabilityOutcome, CapabilityPort, CapabilityRequest, CommittedNativeModelUsage,
-    CommittedNativeModelUsageError, CommittedNativeModelUsageOutcome,
+    CapabilityInvocationAdmission, CapabilityOutcome, CapabilityPort, CapabilityRequest,
+    CommittedNativeModelUsage, CommittedNativeModelUsageError, CommittedNativeModelUsageOutcome,
     CommittedNativeModelUsagePort, CompositionOutcome, CompositionPort, CompositionReceiver,
     CompositionRequest, EventAwait, EventOutcome, EventPort, ExecutionError, ExecutionPorts,
     ExecutionRequest, NodeOutcome, StaticHookHandlerPort, StaticHookResult, execute,
@@ -161,6 +163,27 @@ struct FakeCapability;
 #[async_trait]
 impl CapabilityPort for FakeCapability {
     async fn invoke(&self, _request: CapabilityRequest) -> CapabilityOutcome {
+        CapabilityOutcome::Completed {
+            result: "ok".into(),
+        }
+    }
+}
+
+#[derive(Default)]
+struct RecordingCapability {
+    requests: Mutex<Vec<CapabilityRequest>>,
+}
+
+impl RecordingCapability {
+    fn requests(&self) -> Vec<CapabilityRequest> {
+        self.requests.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl CapabilityPort for RecordingCapability {
+    async fn invoke(&self, request: CapabilityRequest) -> CapabilityOutcome {
+        self.requests.lock().unwrap().push(request);
         CapabilityOutcome::Completed {
             result: "ok".into(),
         }
@@ -335,27 +358,43 @@ impl CommittedNativeModelUsagePort for RecordingOperationalUsage {
 }
 
 fn ports(commit: Arc<FakeCommit>) -> ExecutionPorts {
-    ports_with_model_and_composition(commit, Arc::new(FakeModel), Arc::new(FakeComposition))
+    ports_with_model_composition_and_capability(
+        commit,
+        Arc::new(FakeModel),
+        Arc::new(FakeComposition),
+        Arc::new(FakeCapability),
+    )
 }
 
 fn ports_with_composition(
     commit: Arc<FakeCommit>,
     composition: Arc<dyn CompositionPort>,
 ) -> ExecutionPorts {
-    ports_with_model_and_composition(commit, Arc::new(FakeModel), composition)
+    ports_with_model_composition_and_capability(
+        commit,
+        Arc::new(FakeModel),
+        composition,
+        Arc::new(FakeCapability),
+    )
 }
 
 fn ports_with_model(
     commit: Arc<FakeCommit>,
     model: Arc<dyn ModelInferencePort + Send + Sync>,
 ) -> ExecutionPorts {
-    ports_with_model_and_composition(commit, model, Arc::new(FakeComposition))
+    ports_with_model_composition_and_capability(
+        commit,
+        model,
+        Arc::new(FakeComposition),
+        Arc::new(FakeCapability),
+    )
 }
 
-fn ports_with_model_and_composition(
+fn ports_with_model_composition_and_capability(
     commit: Arc<FakeCommit>,
     model: Arc<dyn ModelInferencePort + Send + Sync>,
     composition: Arc<dyn CompositionPort>,
+    capability: Arc<dyn CapabilityPort>,
 ) -> ExecutionPorts {
     let contract = |schema_id: &str| SchemaDigestRef {
         schema_id: schema_id.into(),
@@ -376,7 +415,10 @@ fn ports_with_model_and_composition(
             PortSlot::ModelInference,
             contract("apxm.model-inference.v1"),
         ),
-        (PortSlot::Capability, contract("apxm.capability.v1")),
+        (
+            PortSlot::Capability,
+            contract("apxm.capability-invocation.v1"),
+        ),
         (
             PortSlot::ExternalAgentCapability,
             contract("apxm.external-agent.v1"),
@@ -394,8 +436,8 @@ fn ports_with_model_and_composition(
                 PortImplementation::ModelInference(model),
             ),
             (
-                binding(PortSlot::Capability, "apxm.capability.v1"),
-                PortImplementation::Capability(Arc::new(FakeCapability)),
+                binding(PortSlot::Capability, "apxm.capability-invocation.v1"),
+                PortImplementation::Capability(capability),
             ),
             (
                 binding(PortSlot::ExternalAgentCapability, "apxm.external-agent.v1"),
@@ -414,6 +456,18 @@ fn ports_with_model_and_composition(
     .expect("bundle contains every runtime effect port")
 }
 
+fn ports_with_capability(
+    commit: Arc<FakeCommit>,
+    capability: Arc<dyn CapabilityPort>,
+) -> ExecutionPorts {
+    ports_with_model_composition_and_capability(
+        commit,
+        Arc::new(FakeModel),
+        Arc::new(FakeComposition),
+        capability,
+    )
+}
+
 fn request() -> ExecutionRequest {
     ExecutionRequest {
         air: air(),
@@ -430,6 +484,20 @@ fn request() -> ExecutionRequest {
             return_mode: HookReturnMode::ReplaceResult,
         }],
         model_admission: admission(),
+        capability_invocations: BTreeMap::from([(
+            "n.cap".to_string(),
+            CapabilityInvocationAdmission {
+                capability_ref: "cap.search".into(),
+                arguments: json!({"query": "release checklist"}),
+                authority: CapabilityInvocationAuthority::new(
+                    "principal.user.1",
+                    "agent.gao.1",
+                    "grant.search.1",
+                    ["approval.search.1".to_string()],
+                )
+                .expect("valid test authority"),
+            },
+        )]),
         program_instance_ref: ProgramInstanceRef::new("instance.1"),
         program_invocation_ref: ProgramInvocationRef::new("invocation.1"),
         commit_id: "c1".into(),
@@ -547,6 +615,96 @@ async fn executes_all_five_ops_and_commits_atomically() {
             .is_some()),
         "program.invoke ChildAttached carries parent lineage"
     );
+}
+
+#[tokio::test]
+async fn capability_port_receives_arguments_authority_identity_and_stable_effect_facts() {
+    let capability = Arc::new(RecordingCapability::default());
+    execute(
+        &ports_with_capability(Arc::new(FakeCommit::new()), capability.clone()),
+        request(),
+        Value::Null,
+    )
+    .await
+    .expect("canonical execution");
+
+    let requests = capability.requests();
+    assert_eq!(requests.len(), 1);
+    let request = &requests[0];
+    assert_eq!(request.capability_ref(), "cap.search");
+    assert_eq!(request.arguments().type_ref(), "CapabilityArguments");
+    assert_eq!(
+        request.arguments().value().expect("canonical arguments"),
+        json!({"query": "release checklist"})
+    );
+    assert_eq!(
+        request.correlation().program_invocation_ref.target,
+        "invocation.1"
+    );
+    assert!(
+        request
+            .correlation()
+            .node_execution_id
+            .starts_with("node-execution.invocation.1.n.cap.")
+    );
+    assert_eq!(
+        request.authority().acting_principal_ref().target,
+        "principal.user.1"
+    );
+    assert_eq!(
+        request.authority().agent_identity_ref().target,
+        "agent.gao.1"
+    );
+    assert_eq!(
+        request.authority().capability_grant_ref().target,
+        "grant.search.1"
+    );
+    assert_eq!(
+        request.authority().approval_refs()[0].target,
+        "approval.search.1"
+    );
+    assert_eq!(request.effect().idempotency_key.scope_ref, "invocation.1");
+    assert_eq!(
+        request.effect().idempotency_key.key_id,
+        request.effect().effect_id
+    );
+    assert_eq!(
+        request.effect().idempotency_key.request_digest,
+        request.effect().request_digest
+    );
+    assert!(request.effect().request_digest.starts_with("sha256:"));
+}
+
+#[tokio::test]
+async fn capability_dispatch_fails_closed_without_exact_invocation_admission() {
+    let mut missing = request();
+    missing.capability_invocations.clear();
+    let error = execute(&ports(Arc::new(FakeCommit::new())), missing, Value::Null)
+        .await
+        .expect_err("missing Capability admission");
+    assert!(matches!(
+        error,
+        ExecutionError::MissingCapabilityInvocationAdmission { node_id }
+            if node_id == "n.cap"
+    ));
+
+    let mut mismatched = request();
+    mismatched
+        .capability_invocations
+        .get_mut("n.cap")
+        .expect("test admission")
+        .capability_ref = "cap.other".into();
+    let error = execute(&ports(Arc::new(FakeCommit::new())), mismatched, Value::Null)
+        .await
+        .expect_err("mismatched Capability admission");
+    assert!(matches!(
+        error,
+        ExecutionError::CapabilityInvocationAdmissionMismatch {
+            node_id,
+            authored,
+            admitted,
+        } if node_id == "n.cap" && authored == "cap.search" && admitted == "cap.other"
+    ));
 }
 
 #[tokio::test]
@@ -1022,6 +1180,7 @@ async fn unbound_model_target_fails_closed() {
         air: bad_air,
         hook_bindings: Vec::new(),
         model_admission: admission(),
+        capability_invocations: BTreeMap::new(),
         program_instance_ref: ProgramInstanceRef::new("instance.1"),
         program_invocation_ref: ProgramInvocationRef::new("invocation.unbound"),
         commit_id: "c1".into(),

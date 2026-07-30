@@ -1,15 +1,16 @@
 //! Generic structural-loop execution and atomic evidence conformance.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
 use apxm_execution::{
-    CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
-    CompositionRequest, EventAwait, EventOutcome, EventPort, ExecutionPorts, ExecutionRequest,
-    NoopStaticHookHandler, RunOutcome, execute, execute_resumable,
+    CapabilityInvocationAdmission, CapabilityOutcome, CapabilityPort, CapabilityRequest,
+    CompositionOutcome, CompositionPort, CompositionRequest, EventAwait, EventOutcome, EventPort,
+    ExecutionPorts, ExecutionRequest, NoopStaticHookHandler, RunOutcome, execute,
+    execute_resumable,
 };
 use apxm_inference::{
     AttemptDisposition, ExactModelTargetRef, ExactPortBindingRef, IdempotencyKey,
@@ -25,6 +26,7 @@ use apxm_kernel::{
 };
 use apxm_program::air::AirModule;
 use apxm_program::artifact::SchemaDigestRef;
+use apxm_program::capability::CapabilityInvocationAuthority;
 use apxm_program::runtime_evidence::{
     Fact, LoopIterationCompletedFact, ProgramIdentity, RuntimeEvidence, RuntimeEvidenceVersion,
 };
@@ -108,10 +110,41 @@ fn conversational_typescript_example_air() -> AirModule {
 }
 
 fn request(air: AirModule, commit_id: &str) -> ExecutionRequest {
+    let capability_invocations = air
+        .semantic_operations
+        .iter()
+        .filter(|operation| operation.op == apxm_program::SemanticOpKind::CapabilityInvoke)
+        .filter_map(|operation| {
+            let capability_ref = operation
+                .operands
+                .iter()
+                .find(|operand| operand.slot == "capability_ref")?
+                .value_id
+                .clone();
+            if capability_ref.starts_with("external-agent:") {
+                return None;
+            }
+            Some((
+                operation.node_id.clone(),
+                CapabilityInvocationAdmission {
+                    capability_ref,
+                    arguments: Value::Null,
+                    authority: CapabilityInvocationAuthority::new(
+                        "principal.test",
+                        "agent.test",
+                        "grant.test",
+                        Vec::new(),
+                    )
+                    .expect("valid test authority"),
+                },
+            ))
+        })
+        .collect::<BTreeMap<_, _>>();
     ExecutionRequest {
         air,
         hook_bindings: Vec::new(),
         model_admission: admission(),
+        capability_invocations,
         program_instance_ref: ProgramInstanceRef::new("instance.1"),
         program_invocation_ref: ProgramInvocationRef::new(format!("invocation.{commit_id}")),
         commit_id: commit_id.into(),
@@ -452,7 +485,10 @@ fn ports(
             PortSlot::ModelInference,
             contract("apxm.model-inference.v1"),
         ),
-        (PortSlot::Capability, contract("apxm.capability.v1")),
+        (
+            PortSlot::Capability,
+            contract("apxm.capability-invocation.v1"),
+        ),
         (
             PortSlot::ExternalAgentCapability,
             contract("apxm.external-agent.v1"),
@@ -470,7 +506,7 @@ fn ports(
                 PortImplementation::ModelInference(model),
             ),
             (
-                binding(PortSlot::Capability, "apxm.capability.v1"),
+                binding(PortSlot::Capability, "apxm.capability-invocation.v1"),
                 PortImplementation::Capability(Arc::new(Capability)),
             ),
             (

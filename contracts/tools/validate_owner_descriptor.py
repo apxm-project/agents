@@ -12,7 +12,7 @@ Modes:
                    its schema, enforce abstraction/atomicity/evidence rules and
                    the plan-free authoring rule (default; used as the gate).
   --write-digests  recompute and write content-addressed digests into the
-                   descriptor and the execution-commit port contract instance.
+                   descriptor and owned port contract instances.
 """
 
 from __future__ import annotations
@@ -37,10 +37,19 @@ VECTORS_DIR = CONTRACTS_DIR / "vectors"
 PORT_CONTRACTS_DIR = CONTRACTS_DIR / "port-contracts"
 DESCRIPTOR_PATH = CONTRACTS_DIR / "descriptors" / "apxm.agents-owner-descriptor.v1.json"
 DESCRIPTOR_SIDECAR_PATH = DESCRIPTOR_PATH.with_suffix(".sha256")
-PORT_CONTRACT_PATH = PORT_CONTRACTS_DIR / "apxm.execution-commit.port-contract.v1.json"
+EXECUTION_COMMIT_PORT_CONTRACT_PATH = (
+    PORT_CONTRACTS_DIR / "apxm.execution-commit.port-contract.v1.json"
+)
+CAPABILITY_PORT_CONTRACT_PATH = (
+    PORT_CONTRACTS_DIR / "apxm.capability-invocation.port-contract.v1.json"
+)
 
 EXECUTION_COMMIT_ENVELOPE = CONSTITUTION_SCHEMAS_DIR / "execution-commit.v1.json"
 EXECUTION_COMMIT_VECTORS = VECTORS_DIR / "apxm.execution-commit.v1.json"
+CAPABILITY_INVOCATION_SCHEMA = SCHEMAS_DIR / "apxm.capability-invocation.v1.json"
+CAPABILITY_OUTCOME_SCHEMA = SCHEMAS_DIR / "apxm.capability-outcome.v1.json"
+CAPABILITY_INVOCATION_VECTORS = VECTORS_DIR / "apxm.capability-invocation.v1.json"
+CAPABILITY_OUTCOME_VECTORS = VECTORS_DIR / "apxm.capability-outcome.v1.json"
 
 # Vector file -> schema `$id` it is validated against. Constitution-owned
 # envelopes are resolved from the published constitution layer.
@@ -59,6 +68,8 @@ VECTOR_SCHEMA = {
     "apxm.model-target.v1.json": "apxm.model-target.v1",
     "apxm.model-binding.v1.json": "apxm.model-binding.v1",
     "apxm.handler-manifest.v1.json": "apxm.handler-manifest.v1",
+    "apxm.capability-invocation.v1.json": "apxm.capability-invocation.v1",
+    "apxm.capability-outcome.v1.json": "apxm.capability-outcome.v1",
 }
 
 # Authoring rule: no product surface may cite the delivery plan or its
@@ -255,6 +266,96 @@ def semantic_errors(schema_id: str, instance: object) -> list[str]:
                 return ["usage_measurement_id must match the exact committed attempt tuple"]
     if schema_id == "apxm.external-agent-evidence.v1":
         return external_agent_evidence_errors(instance)
+    if schema_id == "apxm.capability-invocation.v1":
+        return capability_invocation_errors(instance)
+    return []
+
+
+def capability_invocation_errors(instance: dict[str, Any]) -> list[str]:
+    arguments = instance.get("arguments")
+    if isinstance(arguments, dict):
+        encoded = arguments.get("canonical_json")
+        if isinstance(encoded, str):
+            if len(encoded.encode("utf-8")) > 1_048_576:
+                return ["arguments.canonical_json exceeds the canonical byte ceiling"]
+            try:
+                decoded = json.loads(encoded)
+            except json.JSONDecodeError:
+                return ["arguments.canonical_json must contain JSON"]
+            expected = canonical(decoded)
+            if encoded != expected:
+                return ["arguments.canonical_json must use canonical JSON bytes"]
+            digest = "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+            if arguments.get("digest") != digest:
+                return ["arguments.digest must cover the exact canonical JSON bytes"]
+
+    correlation = instance.get("correlation")
+    authority = instance.get("authority")
+    effect = instance.get("effect")
+    for container, field, expected_type in (
+        (correlation, "program_invocation_ref", "ProgramInvocationRef"),
+        (authority, "acting_principal_ref", "ActingPrincipalRef"),
+        (authority, "agent_identity_ref", "AgentIdentityRef"),
+        (authority, "capability_grant_ref", "CapabilityGrantRef"),
+    ):
+        if isinstance(container, dict):
+            reference = container.get(field)
+            if isinstance(reference, dict) and reference.get("ref_type") != expected_type:
+                return [f"{field} must carry {expected_type}"]
+    if isinstance(authority, dict):
+        approval_refs = authority.get("approval_refs", [])
+        for reference in approval_refs:
+            if isinstance(reference, dict) and reference.get("ref_type") != "ApprovalRef":
+                return ["approval_refs must carry ApprovalRef values"]
+        approval_targets = [
+            reference.get("ref") for reference in approval_refs if isinstance(reference, dict)
+        ]
+        if any(not isinstance(target, str) for target in approval_targets):
+            return ["approval_refs must carry nonempty references"]
+        if approval_targets != sorted(set(approval_targets)):
+            return ["approval_refs must be lexically sorted and unique"]
+    if isinstance(effect, dict):
+        invocation = (
+            correlation.get("program_invocation_ref")
+            if isinstance(correlation, dict)
+            else None
+        )
+        invocation_ref = invocation.get("ref") if isinstance(invocation, dict) else None
+        node_execution_id = (
+            correlation.get("node_execution_id") if isinstance(correlation, dict) else None
+        )
+        if isinstance(invocation_ref, str) and isinstance(node_execution_id, str):
+            effect_preimage = (
+                b"apxm.capability-effect.v1\0"
+                + invocation_ref.encode("utf-8")
+                + b"\0"
+                + node_execution_id.encode("utf-8")
+            )
+            expected_effect_id = "capability-effect." + hashlib.sha256(effect_preimage).hexdigest()
+            if effect.get("effect_id") != expected_effect_id:
+                return ["effect_id must match the canonical invocation-coordinate preimage"]
+
+        if all(isinstance(value, dict) for value in (arguments, correlation, authority)):
+            request_identity = {
+                "schema_version": "apxm.capability-request-identity.v1",
+                "capability_ref": instance.get("capability_ref"),
+                "arguments": arguments,
+                "correlation": correlation,
+                "authority": authority,
+                "effect_id": effect.get("effect_id"),
+            }
+            expected_request_digest = content_digest(request_identity)
+            if effect.get("request_digest") != expected_request_digest:
+                return ["request_digest must cover the canonical request identity"]
+
+        idempotency = effect.get("idempotency_key")
+        if isinstance(idempotency, dict):
+            if isinstance(invocation, dict) and idempotency.get("scope_ref") != invocation.get("ref"):
+                return ["effect idempotency scope must equal the Program Invocation"]
+            if idempotency.get("request_digest") != effect.get("request_digest"):
+                return ["effect and idempotency request digests must match"]
+            if idempotency.get("key_id") != effect.get("effect_id"):
+                return ["effect id and idempotency key id must match"]
     return []
 
 
@@ -555,20 +656,41 @@ def validate_vectors(schema_ids: dict[str, dict[str, Any]]) -> None:
             raise ValidationError(f"vectors/{vector_name}: must contain both valid and invalid cases")
 
 
-def compute_port_contract(descriptor: dict[str, Any], instance: dict[str, Any]) -> dict[str, Any]:
-    boundary = descriptor["port_boundary"]
-    envelope_digest = file_digest(EXECUTION_COMMIT_ENVELOPE)
+def compute_port_contract(
+    descriptor: dict[str, Any],
+    instance: dict[str, Any],
+    *,
+    boundary_key: str,
+    request_schema: Path,
+    result_schema: Path,
+    failure_schema: Path,
+    vectors: tuple[Path, ...],
+) -> dict[str, Any]:
+    boundary = descriptor[boundary_key]
     updated = copy.deepcopy(instance)
-    updated["request_schema"]["digest"] = envelope_digest
-    updated["result_schema"]["digest"] = envelope_digest
-    updated["failure_schema"]["digest"] = envelope_digest
+    updated["request_schema"]["digest"] = file_digest(request_schema)
+    updated["result_schema"]["digest"] = file_digest(result_schema)
+    updated["failure_schema"]["digest"] = file_digest(failure_schema)
     updated["lifecycle_digest"] = content_digest(boundary["lifecycle"])
     updated["authority_data_classification_digest"] = content_digest(
         boundary["authority_data_classification"]
     )
     updated["feature_vocabulary_digest"] = content_digest(boundary["feature_vocabulary"])
     updated["configuration_contract_digest"] = content_digest(boundary["configuration_contract"])
-    updated["conformance_vector_digest"] = file_digest(EXECUTION_COMMIT_VECTORS)
+    if len(vectors) == 1:
+        updated["conformance_vector_digest"] = file_digest(vectors[0])
+    else:
+        updated["conformance_vector_digest"] = content_digest(
+            {
+                "members": [
+                    {
+                        "path": f"vectors/{path.name}",
+                        "digest": file_digest(path),
+                    }
+                    for path in vectors
+                ]
+            }
+        )
     without_self = copy.deepcopy(updated)
     without_self.pop("port_contract_digest", None)
     updated["port_contract_digest"] = content_digest(without_self)
@@ -591,36 +713,81 @@ def compute_descriptor(descriptor: dict[str, Any]) -> dict[str, Any]:
         entry["digest"] = file_digest(CONTRACTS_DIR / entry["path"])
     content = copy.deepcopy(updated)
     content.pop("descriptor_digest", None)
-    content.pop("signing", None)
     updated["descriptor_digest"] = content_digest(content)
     return updated
 
 
 def write_digests() -> None:
     descriptor = load_json(DESCRIPTOR_PATH)
-    instance = load_json(PORT_CONTRACT_PATH)
-    new_instance = compute_port_contract(descriptor, instance)
-    PORT_CONTRACT_PATH.write_text(json.dumps(new_instance, indent=2) + "\n", encoding="utf-8")
+    execution_commit = compute_port_contract(
+        descriptor,
+        load_json(EXECUTION_COMMIT_PORT_CONTRACT_PATH),
+        boundary_key="port_boundary",
+        request_schema=EXECUTION_COMMIT_ENVELOPE,
+        result_schema=EXECUTION_COMMIT_ENVELOPE,
+        failure_schema=EXECUTION_COMMIT_ENVELOPE,
+        vectors=(EXECUTION_COMMIT_VECTORS,),
+    )
+    capability = compute_port_contract(
+        descriptor,
+        load_json(CAPABILITY_PORT_CONTRACT_PATH),
+        boundary_key="capability_port_boundary",
+        request_schema=CAPABILITY_INVOCATION_SCHEMA,
+        result_schema=CAPABILITY_OUTCOME_SCHEMA,
+        failure_schema=CAPABILITY_OUTCOME_SCHEMA,
+        vectors=(CAPABILITY_INVOCATION_VECTORS, CAPABILITY_OUTCOME_VECTORS),
+    )
+    EXECUTION_COMMIT_PORT_CONTRACT_PATH.write_text(
+        json.dumps(execution_commit, indent=2) + "\n", encoding="utf-8"
+    )
+    CAPABILITY_PORT_CONTRACT_PATH.write_text(
+        json.dumps(capability, indent=2) + "\n", encoding="utf-8"
+    )
     new_descriptor = compute_descriptor(descriptor)
     DESCRIPTOR_PATH.write_text(json.dumps(new_descriptor, indent=2) + "\n", encoding="utf-8")
     DESCRIPTOR_SIDECAR_PATH.write_text(
         f"{file_digest(DESCRIPTOR_PATH)}  contracts/descriptors/{DESCRIPTOR_PATH.name}\n"
-        "signature_status: signing pending (no key)\n"
         "digest_scope: exact repository bytes\n",
         encoding="utf-8",
     )
     print(f"descriptor_digest: {new_descriptor['descriptor_digest']}")
-    print(f"port_contract_digest: {new_instance['port_contract_digest']}")
+    print(f"execution_commit_port_contract_digest: {execution_commit['port_contract_digest']}")
+    print(f"capability_port_contract_digest: {capability['port_contract_digest']}")
 
 
 def check_digests() -> str:
     descriptor = load_json(DESCRIPTOR_PATH)
-    instance = load_json(PORT_CONTRACT_PATH)
-    expected_instance = compute_port_contract(descriptor, instance)
-    if expected_instance != instance:
-        raise ValidationError(
-            "execution-commit port contract digests are stale; run --write-digests"
+    specs = (
+        (
+            EXECUTION_COMMIT_PORT_CONTRACT_PATH,
+            "port_boundary",
+            EXECUTION_COMMIT_ENVELOPE,
+            EXECUTION_COMMIT_ENVELOPE,
+            EXECUTION_COMMIT_ENVELOPE,
+            (EXECUTION_COMMIT_VECTORS,),
+        ),
+        (
+            CAPABILITY_PORT_CONTRACT_PATH,
+            "capability_port_boundary",
+            CAPABILITY_INVOCATION_SCHEMA,
+            CAPABILITY_OUTCOME_SCHEMA,
+            CAPABILITY_OUTCOME_SCHEMA,
+            (CAPABILITY_INVOCATION_VECTORS, CAPABILITY_OUTCOME_VECTORS),
+        ),
+    )
+    for path, boundary_key, request, result, failure, vectors in specs:
+        instance = load_json(path)
+        expected = compute_port_contract(
+            descriptor,
+            instance,
+            boundary_key=boundary_key,
+            request_schema=request,
+            result_schema=result,
+            failure_schema=failure,
+            vectors=vectors,
         )
+        if expected != instance:
+            raise ValidationError(f"{path.name} digests are stale; run --write-digests")
     expected_descriptor = compute_descriptor(descriptor)
     if expected_descriptor != descriptor:
         raise ValidationError("owner descriptor digests are stale; run --write-digests")
@@ -628,13 +795,14 @@ def check_digests() -> str:
 
 
 def check_port_contract_envelope(schema_ids: dict[str, dict[str, Any]]) -> None:
-    instance = load_json(PORT_CONTRACT_PATH)
     schema = schema_ids["apxm.port-contract.v1"]
-    errors = schema_instance_errors(schema, instance, schema_ids, schema)
-    if errors:
-        raise ValidationError(f"execution-commit port contract is not a valid envelope: {errors}")
-    if instance.get("semantic_owner") != "agents":
-        raise ValidationError("execution-commit port contract must be owned by agents")
+    for path in (EXECUTION_COMMIT_PORT_CONTRACT_PATH, CAPABILITY_PORT_CONTRACT_PATH):
+        instance = load_json(path)
+        errors = schema_instance_errors(schema, instance, schema_ids, schema)
+        if errors:
+            raise ValidationError(f"{path.name} is not a valid port contract envelope: {errors}")
+        if instance.get("semantic_owner") != "agents":
+            raise ValidationError(f"{path.name} must be owned by agents")
 
 
 def check_descriptor_shape(schema_ids: dict[str, dict[str, Any]]) -> None:
@@ -655,12 +823,10 @@ def check_descriptor_shape(schema_ids: dict[str, dict[str, Any]]) -> None:
     for entry in descriptor["referenced_common_envelopes"] + [descriptor["constitution"]]:
         if entry["schema_id"] not in schema_ids:
             raise ValidationError(f"referenced envelope {entry['schema_id']} is not published")
-    signing = descriptor.get("signing", {})
-    if signing.get("status") == "signing_pending_no_key":
-        if "signature" in signing:
-            raise ValidationError("signing is pending but a signature is present")
-    elif "signature" not in signing:
-        raise ValidationError("descriptor claims signed status without a signature")
+    if "signing" in descriptor:
+        raise ValidationError(
+            "owner-descriptor signatures are detached distribution metadata"
+        )
 
 
 def scan_plan_references() -> None:

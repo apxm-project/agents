@@ -1,24 +1,10 @@
 //! The admitted runtime port for ordinary `capability.invoke` effects.
 //!
-//! The kernel owns this contract because a normal Capability implementation
-//! enters execution only through a validated [`crate::PortBundle`].
+//! The kernel owns the admitted port seam; the Agents-owned request and outcome
+//! types enter execution only through a validated [`crate::PortBundle`].
 
+pub use apxm_program::capability::{CapabilityOutcome, CapabilityRequest};
 use async_trait::async_trait;
-
-/// A request to invoke one non-model Capability.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CapabilityRequest {
-    pub node_id: String,
-    pub capability_ref: String,
-}
-
-/// The typed outcome of a Capability invocation.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum CapabilityOutcome {
-    Completed { result: String },
-    Failed { message: String },
-    OutcomeUnknown { message: String },
-}
 
 /// The admitted port for ordinary `capability.invoke` effects.
 #[async_trait]

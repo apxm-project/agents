@@ -1,0 +1,17 @@
+[
+  {
+    "name": "completed-capability-result",
+    "input": {"outcome": "completed", "result": "ok"},
+    "expected_valid": true
+  },
+  {
+    "name": "outcome-unknown-is-closed",
+    "input": {"outcome": "outcome_unknown", "message": "completion cannot be proven"},
+    "expected_valid": true
+  },
+  {
+    "name": "unknown-outcome-discriminant-rejected",
+    "input": {"outcome": "retried", "message": "implementation selected another path"},
+    "expected_valid": false
+  }
+]

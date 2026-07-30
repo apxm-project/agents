@@ -42,8 +42,8 @@ pub mod sandbox;
 
 pub use facade::{
     ApprovalContext, CapabilityEffectReplayEvidence, CapabilityEffectReplayEvidenceEnvelope,
-    CapabilityFacade, CapabilityInvocation, CapabilitySandboxPreflight, HostEffectPrepareEvidence,
-    capability_effect_idempotency_key_digest,
+    CapabilityFacade, CapabilityInvocation, CapabilityInvocationError, CapabilitySandboxPreflight,
+    HostEffectRequestEvidence, capability_effect_idempotency_key_digest,
 };
 pub use host::{CapabilityHost, CapabilityHostError};
 pub use metadata::{

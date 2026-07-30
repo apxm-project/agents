@@ -321,7 +321,7 @@ fn capability_slot_rejects_missing_unexpected_mismatched_and_wrong_contract_bind
     );
 
     let wrong_contract = SchemaDigestRef {
-        schema_id: "apxm.capability.v1".into(),
+        schema_id: "apxm.capability-invocation.v1".into(),
         digest: digest('f'),
     };
     let mismatch = PortBundle::construct(

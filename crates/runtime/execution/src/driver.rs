@@ -21,6 +21,7 @@
 //! behavior is the only difference — effect dispatch, hooks, and the one atomic
 //! commit are identical.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -39,6 +40,7 @@ use apxm_kernel::{
     ProgramInstanceRef, ProgramInvocationRef, assemble_evidence,
 };
 use apxm_program::air::{AirModule, SemanticOp, SemanticOpKind};
+use apxm_program::capability::{CapabilityInvocationAuthority, CapabilityRequestError};
 use apxm_program::common::TypedRef;
 use apxm_program::external_agent::ExternalAgentEvidence;
 use apxm_program::frontend_graph::HookBinding;
@@ -188,16 +190,32 @@ impl StaticHookHandlerPort for NoopStaticHookHandler {
 }
 
 /// One canonical execution request: the AIR to run, the materialized
-/// model-binding admission, immutable instance and invocation identities, and
-/// prepared write set.
+/// model-binding admission, per-node Capability invocation admissions,
+/// immutable instance and invocation identities, and prepared write set.
 pub struct ExecutionRequest {
     pub air: AirModule,
     pub hook_bindings: Vec<HookBinding>,
     pub model_admission: ModelBindingAdmission,
+    pub capability_invocations: BTreeMap<String, CapabilityInvocationAdmission>,
     pub program_instance_ref: ProgramInstanceRef,
     pub program_invocation_ref: ProgramInvocationRef,
     pub commit_id: String,
     pub write_set: AtomicWriteSet,
+}
+
+/// Application data and admitted Auth/Server references for one exact
+/// `capability.invoke` AIR node.
+///
+/// Arguments remain application data. The authority references are carried in
+/// a separate typed member and cannot be inferred from or replaced by argument
+/// fields. `capability_ref` is repeated so the driver can reject an admission
+/// prepared for a different authored Capability before dispatch.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CapabilityInvocationAdmission {
+    pub capability_ref: String,
+    pub arguments: Value,
+    pub authority: CapabilityInvocationAuthority,
 }
 
 /// The typed outcome of one executed node.
@@ -254,6 +272,15 @@ pub enum ExecutionError {
         node_id: String,
         operand: &'static str,
     },
+    MissingCapabilityInvocationAdmission {
+        node_id: String,
+    },
+    CapabilityInvocationAdmissionMismatch {
+        node_id: String,
+        authored: String,
+        admitted: String,
+    },
+    CapabilityRequest(CapabilityRequestError),
     Binding(BindingError),
     ModelRequest(ModelCallRequestError),
     ModelRequestMetadata(TypedError),
@@ -278,6 +305,18 @@ impl std::fmt::Display for ExecutionError {
             Self::MissingOperand { node_id, operand } => {
                 write!(f, "node {node_id} is missing operand {operand}")
             }
+            Self::MissingCapabilityInvocationAdmission { node_id } => {
+                write!(f, "node {node_id} has no admitted Capability invocation")
+            }
+            Self::CapabilityInvocationAdmissionMismatch {
+                node_id,
+                authored,
+                admitted,
+            } => write!(
+                f,
+                "node {node_id} authored Capability {authored} but admission carries {admitted}"
+            ),
+            Self::CapabilityRequest(error) => write!(f, "Capability request error: {error}"),
             Self::Binding(error) => write!(f, "model binding error: {error}"),
             Self::ModelRequest(error) => write!(f, "model request error: {error}"),
             Self::ModelRequestMetadata(error) => {
@@ -660,6 +699,7 @@ async fn drive_from(
     air: &AirModule,
     hook_bindings: &[HookBinding],
     model_admission: &ModelBindingAdmission,
+    capability_invocations: &BTreeMap<String, CapabilityInvocationAdmission>,
     start_schedule_position: usize,
     mut state: DriveState,
     options: DriveOptions,
@@ -930,12 +970,44 @@ async fn drive_from(
                                 evidence,
                             });
                         } else {
+                            let arguments_type_ref = op
+                                .operands
+                                .iter()
+                                .find(|operand| operand.slot == "arguments")
+                                .ok_or_else(|| ExecutionError::MissingOperand {
+                                    node_id: op.node_id.clone(),
+                                    operand: "arguments",
+                                })?
+                                .type_ref
+                                .clone();
+                            let admission =
+                                capability_invocations.get(&op.node_id).ok_or_else(|| {
+                                    ExecutionError::MissingCapabilityInvocationAdmission {
+                                        node_id: op.node_id.clone(),
+                                    }
+                                })?;
+                            if admission.capability_ref != capability_ref {
+                                return Err(
+                                    ExecutionError::CapabilityInvocationAdmissionMismatch {
+                                        node_id: op.node_id.clone(),
+                                        authored: capability_ref,
+                                        admitted: admission.capability_ref.clone(),
+                                    },
+                                );
+                            }
                             let outcome = ports
                                 .capability
-                                .invoke(CapabilityRequest {
-                                    node_id: op.node_id.clone(),
-                                    capability_ref,
-                                })
+                                .invoke(
+                                    CapabilityRequest::prepare(
+                                        capability_ref,
+                                        arguments_type_ref,
+                                        admission.arguments.clone(),
+                                        &state.program_invocation_id,
+                                        &node_execution_id,
+                                        admission.authority.clone(),
+                                    )
+                                    .map_err(ExecutionError::CapabilityRequest)?,
+                                )
                                 .await;
                             state.last_operation_succeeded =
                                 matches!(&outcome, CapabilityOutcome::Completed { .. });
@@ -1428,6 +1500,7 @@ pub async fn execute(
         &request.air,
         &request.hook_bindings,
         &request.model_admission,
+        &request.capability_invocations,
         0,
         state,
         DriveOptions {
@@ -1475,6 +1548,7 @@ pub async fn execute_resumable(
         &request.air,
         &request.hook_bindings,
         &request.model_admission,
+        &request.capability_invocations,
         0,
         state,
         DriveOptions {
@@ -1543,6 +1617,7 @@ async fn resume_from_continuation(
         air,
         hook_bindings,
         model_admission,
+        capability_invocations,
         next_schedule_position,
         loop_frames,
         parked_node_execution_id,
@@ -1653,6 +1728,7 @@ async fn resume_from_continuation(
         &air,
         &hook_bindings,
         &model_admission,
+        &capability_invocations,
         next_schedule_position,
         state,
         DriveOptions {
@@ -1665,6 +1741,7 @@ async fn resume_from_continuation(
         air,
         hook_bindings,
         model_admission,
+        capability_invocations,
         program_invocation_ref,
         program_instance_ref: committed_program_instance_ref,
         commit_id,
@@ -1679,6 +1756,7 @@ struct CommitParts {
     air: AirModule,
     hook_bindings: Vec<HookBinding>,
     model_admission: ModelBindingAdmission,
+    capability_invocations: BTreeMap<String, CapabilityInvocationAdmission>,
     program_invocation_ref: ProgramInvocationRef,
     program_instance_ref: ProgramInstanceRef,
     commit_id: String,
@@ -1690,6 +1768,7 @@ fn request_parts(request: ExecutionRequest) -> CommitParts {
         air: request.air,
         hook_bindings: request.hook_bindings,
         model_admission: request.model_admission,
+        capability_invocations: request.capability_invocations,
         program_invocation_ref: request.program_invocation_ref,
         program_instance_ref: request.program_instance_ref,
         commit_id: request.commit_id,
@@ -1729,6 +1808,7 @@ async fn finish(
                 air: parts.air,
                 hook_bindings: parts.hook_bindings,
                 model_admission: parts.model_admission,
+                capability_invocations: parts.capability_invocations,
                 next_schedule_position,
                 loop_frames: state.active_loops.clone(),
                 parked_node_execution_id,

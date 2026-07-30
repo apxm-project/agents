@@ -71,7 +71,7 @@ pub trait CapabilityExecutor: Send + Sync {
     async fn execute_with_invocation(
         &self,
         args: HashMap<String, Value>,
-        invocation: Option<&CapabilityInvocation>,
+        invocation: &CapabilityInvocation,
     ) -> CapabilityResult<Value> {
         let _ = invocation;
         self.execute(args).await
@@ -82,7 +82,7 @@ pub trait CapabilityExecutor: Send + Sync {
     async fn execute_with_effect_receipt(
         &self,
         args: HashMap<String, Value>,
-        invocation: Option<&CapabilityInvocation>,
+        invocation: &CapabilityInvocation,
     ) -> CapabilityResult<CapabilityExecutionResult> {
         self.execute_with_invocation(args, invocation)
             .await

@@ -1,5 +1,6 @@
 //! Execute canonical `apxm.air.v1` through the canonical runtime driver.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -33,10 +34,12 @@ const DEV_BINDING_DIGEST: &str =
 
 pub async fn execute_canonical_command(input: PathBuf, _json_output: bool) -> Result<()> {
     let air = load_canonical_air(&input)?;
+    ensure_local_capability_authority_available(&air)?;
     let request = ExecutionRequest {
         model_admission: dev_model_admission(&air),
         air,
         hook_bindings: Vec::new(),
+        capability_invocations: BTreeMap::new(),
         program_instance_ref: ProgramInstanceRef::new("dev.instance"),
         program_invocation_ref: ProgramInvocationRef::new("dev.invocation.1"),
         commit_id: "dev.commit.1".to_string(),
@@ -129,6 +132,27 @@ fn model_targets(air: &AirModule) -> Vec<String> {
     targets
 }
 
+fn ensure_local_capability_authority_available(air: &AirModule) -> Result<()> {
+    for operation in &air.semantic_operations {
+        if operation.op != SemanticOpKind::CapabilityInvoke {
+            continue;
+        }
+        let capability_ref = operation
+            .operands
+            .iter()
+            .find(|operand| operand.slot == "capability_ref")
+            .map(|operand| operand.value_id.as_str())
+            .unwrap_or("<missing capability_ref>");
+        if !capability_ref.starts_with("external-agent:") {
+            anyhow::bail!(
+                "canonical local execution cannot invoke Capability {capability_ref} at node {}; explicit Invocation Admission authority is required",
+                operation.node_id
+            );
+        }
+    }
+    Ok(())
+}
+
 fn dev_model_admission(air: &AirModule) -> ModelBindingAdmission {
     ModelBindingAdmission::for_invocation(
         model_targets(air)
@@ -193,9 +217,10 @@ impl ModelCallRequestMetadataPort for UnavailableModelRequestMetadata {
 struct DevCapability;
 #[async_trait]
 impl CapabilityPort for DevCapability {
-    async fn invoke(&self, request: CapabilityRequest) -> CapabilityOutcome {
-        CapabilityOutcome::Completed {
-            result: format!("capability:{}", request.capability_ref),
+    async fn invoke(&self, _request: CapabilityRequest) -> CapabilityOutcome {
+        CapabilityOutcome::Failed {
+            message: "canonical local execution has no Invocation Admission authority source"
+                .into(),
         }
     }
 }
@@ -311,7 +336,10 @@ fn dev_ports(
             PortSlot::ModelInference,
             contract("apxm.model-inference.v1"),
         ),
-        (PortSlot::Capability, contract("apxm.capability.v1")),
+        (
+            PortSlot::Capability,
+            contract("apxm.capability-invocation.v1"),
+        ),
         (
             PortSlot::ExternalAgentCapability,
             contract("apxm.external-agent.v1"),
@@ -329,7 +357,7 @@ fn dev_ports(
                 PortImplementation::ModelInference(Arc::new(DevModel)),
             ),
             (
-                binding(PortSlot::Capability, "apxm.capability.v1"),
+                binding(PortSlot::Capability, "apxm.capability-invocation.v1"),
                 PortImplementation::Capability(Arc::new(DevCapability)),
             ),
             (
@@ -505,10 +533,9 @@ mod tests {
             "schema_version": "apxm.air.v1",
             "semantic_operations": [
                 {"node_id": "n.model", "op": "model.call", "parent_region_id": "r.root", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.model.request", "type_ref": "ModelRequest"}], "result": {"value_id": "value.model.output", "type_ref": "ModelOutput"}},
-                {"node_id": "n.cap", "op": "capability.invoke", "parent_region_id": "r.root", "execution_order": 1, "operands": [{"slot": "capability_ref", "value_id": "cap.search", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "value.capability.arguments", "type_ref": "CapabilityArguments"}], "result": {"value_id": "value.capability.output", "type_ref": "CapabilityOutput"}},
-                {"node_id": "n.new", "op": "program.new", "parent_region_id": "r.root", "execution_order": 2, "operands": [{"slot": "program_ref", "value_id": "child", "type_ref": "ProgramRef"}], "result": {"value_id": "value.program.instance", "type_ref": "ProgramInstanceRef"}},
-                {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.root", "execution_order": 3, "operands": [{"slot": "receiver", "value_id": "value.program.instance", "type_ref": "ProgramInstanceRef"}, {"slot": "input", "value_id": "value.program.input", "type_ref": "ProgramInput"}], "result": {"value_id": "value.program.output", "type_ref": "ProgramOutput"}},
-                {"node_id": "n.await", "op": "await.event", "parent_region_id": "r.root", "execution_order": 4, "operands": [{"slot": "event_ref", "value_id": "ready", "type_ref": "EventRef"}], "result": {"value_id": "value.event.output", "type_ref": "EventOutput"}}
+                {"node_id": "n.new", "op": "program.new", "parent_region_id": "r.root", "execution_order": 1, "operands": [{"slot": "program_ref", "value_id": "child", "type_ref": "ProgramRef"}], "result": {"value_id": "value.program.instance", "type_ref": "ProgramInstanceRef"}},
+                {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.root", "execution_order": 2, "operands": [{"slot": "receiver", "value_id": "value.program.instance", "type_ref": "ProgramInstanceRef"}, {"slot": "input", "value_id": "value.program.input", "type_ref": "ProgramInput"}], "result": {"value_id": "value.program.output", "type_ref": "ProgramOutput"}},
+                {"node_id": "n.await", "op": "await.event", "parent_region_id": "r.root", "execution_order": 3, "operands": [{"slot": "event_ref", "value_id": "ready", "type_ref": "EventRef"}], "result": {"value_id": "value.event.output", "type_ref": "EventOutput"}}
             ],
             "structural_ir": [{"region_id": "r.root", "kind": "function", "execution_order": 0}],
             "context_flow": [],
@@ -527,6 +554,7 @@ mod tests {
                 air,
                 hook_bindings: Vec::new(),
                 model_admission,
+                capability_invocations: BTreeMap::new(),
                 program_instance_ref: ProgramInstanceRef::new("test.instance"),
                 program_invocation_ref: ProgramInvocationRef::new("test.invocation"),
                 commit_id: "test.commit".into(),
@@ -537,7 +565,7 @@ mod tests {
         .await
         .expect("canonical execution");
 
-        assert_eq!(report.node_outcomes.len(), 5);
+        assert_eq!(report.node_outcomes.len(), 4);
         assert!(matches!(
             report.commit,
             ExecutionCommitResult::Committed { .. }
@@ -549,10 +577,9 @@ mod tests {
         let air: AirModule = serde_json::from_value(json!({
             "schema_version": "apxm.air.v1",
             "semantic_operations": [
-                {"node_id": "n.cap", "op": "capability.invoke", "parent_region_id": "r.root", "execution_order": 0, "operands": [{"slot": "capability_ref", "value_id": "cap.search", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "value.capability.arguments", "type_ref": "CapabilityArguments"}], "result": {"value_id": "value.capability.output", "type_ref": "CapabilityOutput"}},
-                {"node_id": "n.new", "op": "program.new", "parent_region_id": "r.root", "execution_order": 1, "operands": [{"slot": "program_ref", "value_id": "child", "type_ref": "ProgramRef"}], "result": {"value_id": "value.program.instance", "type_ref": "ProgramInstanceRef"}},
-                {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.root", "execution_order": 2, "operands": [{"slot": "receiver", "value_id": "value.program.instance", "type_ref": "ProgramInstanceRef"}, {"slot": "input", "value_id": "value.program.input", "type_ref": "ProgramInput"}], "result": {"value_id": "value.program.output", "type_ref": "ProgramOutput"}},
-                {"node_id": "n.await", "op": "await.event", "parent_region_id": "r.root", "execution_order": 3, "operands": [{"slot": "event_ref", "value_id": "ready", "type_ref": "EventRef"}], "result": {"value_id": "value.event.output", "type_ref": "EventOutput"}}
+                {"node_id": "n.new", "op": "program.new", "parent_region_id": "r.root", "execution_order": 0, "operands": [{"slot": "program_ref", "value_id": "child", "type_ref": "ProgramRef"}], "result": {"value_id": "value.program.instance", "type_ref": "ProgramInstanceRef"}},
+                {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.root", "execution_order": 1, "operands": [{"slot": "receiver", "value_id": "value.program.instance", "type_ref": "ProgramInstanceRef"}, {"slot": "input", "value_id": "value.program.input", "type_ref": "ProgramInput"}], "result": {"value_id": "value.program.output", "type_ref": "ProgramOutput"}},
+                {"node_id": "n.await", "op": "await.event", "parent_region_id": "r.root", "execution_order": 2, "operands": [{"slot": "event_ref", "value_id": "ready", "type_ref": "EventRef"}], "result": {"value_id": "value.event.output", "type_ref": "EventOutput"}}
             ],
             "structural_ir": [{"region_id": "r.root", "kind": "function", "execution_order": 0}],
             "context_flow": [],
@@ -576,6 +603,7 @@ mod tests {
                 model_admission,
                 air,
                 hook_bindings: Vec::new(),
+                capability_invocations: BTreeMap::new(),
                 program_instance_ref: ProgramInstanceRef::new("test.instance.no-model"),
                 program_invocation_ref: ProgramInvocationRef::new("test.invocation.no-model"),
                 commit_id: "test.commit.no-model".into(),
@@ -586,11 +614,33 @@ mod tests {
         .await
         .expect("canonical execution without a model binding");
 
-        assert_eq!(report.node_outcomes.len(), 4);
+        assert_eq!(report.node_outcomes.len(), 3);
         assert!(matches!(
             report.commit,
             ExecutionCommitResult::Committed { .. }
         ));
+    }
+
+    #[test]
+    fn rejects_local_capability_without_invocation_admission_authority() {
+        let air: AirModule = serde_json::from_value(json!({
+            "schema_version": "apxm.air.v1",
+            "semantic_operations": [
+                {"node_id": "n.cap", "op": "capability.invoke", "parent_region_id": "r.root", "execution_order": 0, "operands": [{"slot": "capability_ref", "value_id": "cap.search", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "value.capability.arguments", "type_ref": "CapabilityArguments"}], "result": {"value_id": "value.capability.output", "type_ref": "CapabilityOutput"}}
+            ],
+            "structural_ir": [{"region_id": "r.root", "kind": "function", "execution_order": 0}],
+            "context_flow": [],
+            "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
+        }))
+        .expect("canonical Capability AIR");
+
+        let error = ensure_local_capability_authority_available(&air)
+            .expect_err("local execution has no authority source");
+        assert!(
+            error
+                .to_string()
+                .contains("explicit Invocation Admission authority is required")
+        );
     }
 
     #[test]

@@ -2,6 +2,15 @@
   "schema_version": "apxm.agents-owner-descriptor.v1",
   "semantic_owner": "agents",
   "primary_responsibility": "Agent Program authoring frontends, FrontendGraph, the closed five-operation effect/composition AIS family, the separate closed structural AIS family, digest-bound executable artifacts with artifact_semantic requirements only, generic loop-iteration runtime evidence, source maps, and the atomic execution-commit boundary.",
+  "referenced_owner_descriptors": [
+    {
+      "semantic_owner": "host-sdk",
+      "schema_version": "apxm.host-sdk-owner-descriptor.v1",
+      "source_revision": "61863cdf8cd57f4bc3c8e066b86ab229d5e9e860",
+      "descriptor_semantic_digest": "sha256:5e2240c5cbb53c09f2ddc2a17b7c295a091318e7e6eb4943a1d2f41170cc1ce6",
+      "descriptor_exact_checksum": "sha256:804f7e3d07ccfdb162b4eed87ba2bc404f59302b042348e44c0202491bdb7540"
+    }
+  ],
   "constitution": {
     "schema_id": "apxm.contract-constitution.v1",
     "digest": "sha256:40fbf36d809620dd0bfa4219eef7671227a8046d7a650bccc092444af0f5bbe2"
@@ -89,6 +98,16 @@
       "schema_id": "apxm.handler-manifest.v1",
       "path": "schemas/apxm.handler-manifest.v1.json",
       "digest": "sha256:47170d79a04371b9c1d82b74f3b8b5b5009f65de811742f262a422558b6809fd"
+    },
+    {
+      "schema_id": "apxm.capability-invocation.v1",
+      "path": "schemas/apxm.capability-invocation.v1.json",
+      "digest": "sha256:c29ba55c17bae5786f9ebfb0e831d3f150fdf5ba606adcc8d5515e001cf34997"
+    },
+    {
+      "schema_id": "apxm.capability-outcome.v1",
+      "path": "schemas/apxm.capability-outcome.v1.json",
+      "digest": "sha256:dc4f06252d3e2a90a584acee5db34dfceb378ab79a44670084eac384a3f9da28"
     }
   ],
   "owned_port_contracts": [
@@ -97,6 +116,11 @@
       "built_on": "apxm.execution-commit.v1",
       "path": "port-contracts/apxm.execution-commit.port-contract.v1.json",
       "digest": "sha256:b64becdf1c246b6a05bf02206dcf2306171501079257f188a7d76d88af9f26f7"
+    },
+    {
+      "port_contract_id": "apxm.capability-invocation.v1",
+      "path": "port-contracts/apxm.capability-invocation.port-contract.v1.json",
+      "digest": "sha256:9369bd4c3506ba145d9424425efcb0493b288d418c582701d0856e8216fc8383"
     }
   ],
   "source_scope_invariant": "artifact_semantic",
@@ -262,6 +286,79 @@
       }
     }
   },
+  "capability_port_boundary": {
+    "lifecycle": {
+      "states": [
+        "completed",
+        "failed",
+        "outcome_unknown"
+      ],
+      "retry_identity": "stable_effect_id_and_request_digest",
+      "fallback": "forbidden",
+      "effect_identity": {
+        "domain_separator": "apxm.capability-effect.v1",
+        "separator": "U+0000",
+        "field_order": [
+          "program_invocation_ref.ref",
+          "correlation.node_execution_id"
+        ],
+        "preimage_encoding": "UTF-8 domain_separator, separator, field 1, separator, field 2",
+        "digest_algorithm": "sha256",
+        "output_encoding": "capability-effect.<64 lowercase hexadecimal characters>"
+      },
+      "request_identity": {
+        "schema_version": "apxm.capability-request-identity.v1",
+        "fields": [
+          "schema_version",
+          "capability_ref",
+          "arguments",
+          "correlation",
+          "authority",
+          "effect_id"
+        ],
+        "preimage_encoding": "UTF-8 compact JSON with object keys recursively sorted in lexical Unicode order and arrays preserved in contract order",
+        "digest_algorithm": "sha256",
+        "owner_contract_encoding": "sha256:<64 lowercase hexadecimal characters>",
+        "fixed_algorithm_boundary_encoding": "<64 lowercase hexadecimal characters> from the same digest bytes, with no second preimage or hash"
+      },
+      "conformance_vector_bundle": {
+        "members_in_order": [
+          "vectors/apxm.capability-invocation.v1.json",
+          "vectors/apxm.capability-outcome.v1.json"
+        ],
+        "preimage_encoding": "UTF-8 compact canonical JSON object whose members array contains each path and its exact repository-byte sha256 digest",
+        "digest_algorithm": "sha256"
+      }
+    },
+    "authority_data_classification": {
+      "authority_source": "invocation_admission_only",
+      "authority_revalidation": "effect_boundary_only",
+      "identity_in_arguments": "forbidden",
+      "secret_custody": "reference_only",
+      "data_classes": [
+        "canonical_arguments",
+        "acting_principal_ref",
+        "agent_identity_ref",
+        "capability_grant_ref",
+        "approval_ref",
+        "effect_identity"
+      ]
+    },
+    "feature_vocabulary": [
+      "canonical_arguments",
+      "invocation_authority",
+      "idempotent_effect",
+      "outcome_unknown"
+    ],
+    "configuration_contract": {
+      "sensitive_fields": [
+        "arguments.canonical_json"
+      ],
+      "limits": {
+        "canonical_arguments_bytes": 1048576
+      }
+    }
+  },
   "conformance_vectors": [
     {
       "schema_id": "apxm.frontend-graph.v1",
@@ -404,11 +501,27 @@
         "abstraction",
         "unknown_discriminant"
       ]
+    },
+    {
+      "schema_id": "apxm.capability-invocation.v1",
+      "path": "vectors/apxm.capability-invocation.v1.json",
+      "digest": "sha256:73854f1e133e01bf25e908340cce8c58c11f193ebb55fd724508f8f4a0247879",
+      "coverage": [
+        "positive",
+        "authority_separation",
+        "canonical_arguments"
+      ]
+    },
+    {
+      "schema_id": "apxm.capability-outcome.v1",
+      "path": "vectors/apxm.capability-outcome.v1.json",
+      "digest": "sha256:13410849e7405dd80178f715ec404c12c17740b588d85b6e03d5aeb2e7623e6b",
+      "coverage": [
+        "positive",
+        "outcome_unknown",
+        "unknown_discriminant"
+      ]
     }
   ],
-  "signing": {
-    "algorithm": "ed25519",
-    "status": "signing_pending_no_key"
-  },
-  "descriptor_digest": "sha256:6b7b274023624bf685bae62cfc8283f8556bea02166e3124d302f577427682e0"
+  "descriptor_digest": "sha256:34de7b40b848d2d5709a12bc86b041f96f4619b4904db8a69ab706fee9407aea"
 }
