@@ -1,0 +1,82 @@
+name: Agents owner-local gates
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  deterministic:
+    name: G-AGENTS — portable policy and evaluation gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash -el {0}
+        working-directory: workspace/agents
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          path: workspace/agents
+          persist-credentials: false
+
+      # These gates need Python but do not enter the native build graph. Use a
+      # real Conda prefix at Dekk's configured path without claiming that this
+      # is the complete MLIR/LLVM environment declared by `.dekk.toml`.
+      - name: Create the portable-gate Conda prefix
+        uses: conda-incubator/setup-miniconda@fc2d68f6413eb2d87b895e92f8584b5b94a10167 # v3.3.0
+        with:
+          activate-environment: ${{ github.workspace }}/workspace/agents/.dekk/env
+          channels: conda-forge
+          conda-remove-defaults: "true"
+          miniforge-version: "25.3.1-0"
+          python-version: "3.11"
+
+      - name: Install the pinned public Dekk runner
+        run: python -m pip install --disable-pip-version-check "dekk==1.11.5"
+
+      - name: Audit private release surfaces
+        run: dekk agents test-release-privacy
+
+      - name: Test offline evaluation evidence
+        run: dekk agents test-offline-prompt-evaluation
+
+      - name: Test observed evaluation evidence
+        run: dekk agents test-observed-prompt-evaluation
+
+      - name: Check authoring surface alignment
+        run: dekk agents check-frontend-surface
+
+# `dekk agents test-canonical-only` is portable but currently red on the clean
+# baseline. Its source scanner reports the rejection-fixture comment containing
+# `PythonHandler` in
+# `crates/machine/contracts/src/types/capability/capability_binding.rs`; the
+# production enum already excludes that variant. Add the command as a required
+# step when the owning reachability test distinguishes test-only rejection
+# fixtures from production surfaces and passes unchanged on a clean checkout.
+# It is absent here rather than skipped or marked continue-on-error.
+#
+# `dekk agents owner-descriptor` and `dekk agents check-contract-codegen` require
+# an immutable checkout of the private Contracts owner repo. Without it, owner
+# validation reports unresolved `apxm.contract-common.v1` references, and
+# codegen has no canonical source input. No org-wide CI credential and
+# materialization contract is approved for that checkout. Add these commands
+# only when that contract can pin the private owner revision under approved
+# authority. Until then they remain absent rather than skipped or marked
+# continue-on-error.
+#
+# `dekk agents check` and `dekk agents test` are deliberately absent from this
+# GitHub-hosted job. Both enter the Rust/native frontend build graph and require
+# the checked-in `.dekk.toml` environment: MLIR/LLVM 22, libclang/clang 22, the
+# conda-forge Linux C++ toolchain, Node.js 22, CMake, Ninja, uv, and the linked
+# Rust artifacts under Dekk's configured library path. Installing part of that
+# stack here would produce a misleading partial gate.
+#
+# Add those commands as a real required job when an immutable APXM runner image
+# is published with the complete `dekk agents install --no-interactive` output
+# for this `.dekk.toml`, identified by image digest and carrying the exact
+# MLIR/LLVM 22 native libraries. Until that concrete input exists, the commands
+# remain absent rather than skipped or marked continue-on-error.
