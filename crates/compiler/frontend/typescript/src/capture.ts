@@ -457,23 +457,13 @@ class Capture {
     const resolved = this.resolveCallTarget(call);
     const nodeId = this.next(resolved.intent);
     let resultValue: string | undefined;
-    if (resolved.intent !== "event_wait") {
-      resultValue = this.next("value");
-      this.values.push({
-        value_id: resultValue,
-        type_ref: this.resultType(resolved.bindingRef),
-        origin: "call_result",
-        origin_id: nodeId,
-      });
-    } else {
-      resultValue = this.next("value");
-      this.values.push({
-        value_id: resultValue,
-        type_ref: "EventPayload",
-        origin: "resume_input",
-        origin_id: nodeId,
-      });
-    }
+    resultValue = this.next("value");
+    this.values.push({
+      value_id: resultValue,
+      type_ref: this.resultType(resolved.bindingRef),
+      origin: "call_result",
+      origin_id: nodeId,
+    });
 
     const operandValues = this.callOperands(call, nodeId, resolved.slot);
     const record: CallRecord = {
@@ -792,7 +782,7 @@ class Capture {
       body_region_ids: [childRegion],
     });
     this.recordNode(regionId, nodeId);
-    this.addRegion(childRegion, "task_child", regionId, this.orderIn(regionId));
+    this.addRegion(childRegion, "task_scope", regionId, this.orderIn(regionId));
     if (ts.isBlock(scope.body)) {
       this.visitBlock(scope.body.statements, childRegion, source);
     } else {

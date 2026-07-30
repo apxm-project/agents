@@ -53,7 +53,7 @@ async def Specialist(agent, request):
 
 
 @Hook.before(target="ReviewModel", scope="model")
-async def RecordModelStart(agent) -> object:
+async def RecordModelStart(agent) -> None:
     return None
 
 
@@ -265,6 +265,7 @@ def test_hook_decorator_resolves_a_static_call_target() -> None:
     assert hook["target_selector"] == model_call["node_id"]
     assert hook["handler_ref"] == "RecordModelStart"
     assert hook["handler_digest"].startswith("sha256:")
+    assert hook["output_type_ref"] == "Unit"
     assert Coordinator.diagnostics() is None
 
 
