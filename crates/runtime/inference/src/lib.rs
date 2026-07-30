@@ -22,4 +22,7 @@ pub use identity::{
     BindingError, ExactModelTargetRef, ExactPortBindingRef, ModelBindingAdmission,
     ModelDeploymentRef, ModelTargetRef, ResolvedModelBinding,
 };
-pub use stream::{CancelToken, ModelStreamPort, StreamChunk, StreamResult, stream};
+pub use stream::{
+    CancelToken, ModelContentRef, ModelStreamEvent, ModelStreamPort, ModelStreamStep, StreamResult,
+    stream,
+};
