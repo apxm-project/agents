@@ -165,6 +165,17 @@ class CanonicalOnlyReachabilityTests(unittest.TestCase):
         self.assertNotIn("crates/orchestration/acp", members)
         self.assertNotIn("crates/runtime/aam", members)
 
+    def test_dekk_publishes_the_canonical_execution_command(self) -> None:
+        dekk_toml = tomllib.loads((REPOSITORY_ROOT / ".dekk.toml").read_text())
+        command = dekk_toml["commands"]["execute-canonical"]
+        run = command["run"]
+
+        self.assertEqual(command["group"], "Compilation")
+        self.assertIn("build -p apxm-cli --bin apxm", run)
+        self.assertIn('debug/apxm\" execute-canonical', run)
+        self.assertNotIn("apxm_cli.py", run)
+        self.assertNotIn("--features driver", run)
+
     def test_machine_operation_contract_has_no_retired_catalogue(self) -> None:
         offenders: list[str] = []
         for root in ("crates/machine/ais", "crates/machine/contracts"):

@@ -33,12 +33,10 @@ const DEV_BINDING_DIGEST: &str =
 
 pub async fn execute_canonical_command(input: PathBuf, _json_output: bool) -> Result<()> {
     let air = load_canonical_air(&input)?;
-    let target = first_model_target(&air)
-        .context("canonical AIR must declare an exact model_ref for local execution")?;
     let request = ExecutionRequest {
+        model_admission: dev_model_admission(&air),
         air,
         hook_bindings: Vec::new(),
-        model_admission: dev_model_admission(target),
         program_instance_ref: ProgramInstanceRef::new("dev.instance"),
         program_invocation_ref: ProgramInvocationRef::new("dev.invocation.1"),
         commit_id: "dev.commit.1".to_string(),
@@ -110,31 +108,45 @@ fn load_canonical_air(input: &PathBuf) -> Result<AirModule> {
     Ok(air)
 }
 
-fn first_model_target(air: &AirModule) -> Option<String> {
-    air.semantic_operations.iter().find_map(|op| {
+fn model_targets(air: &AirModule) -> Vec<String> {
+    let mut targets = Vec::new();
+    for op in &air.semantic_operations {
         if op.op != SemanticOpKind::ModelCall {
-            return None;
+            continue;
         }
-        op.operands
+        let Some(target) = op
+            .operands
             .iter()
             .find(|operand| operand.slot == "model_ref")
             .map(|operand| operand.value_id.clone())
-    })
+        else {
+            continue;
+        };
+        if !targets.contains(&target) {
+            targets.push(target);
+        }
+    }
+    targets
 }
 
-fn dev_model_admission(target: String) -> ModelBindingAdmission {
-    ModelBindingAdmission::new(ResolvedModelBinding {
-        model_target: ExactModelTargetRef {
-            reference: ModelTargetRef(target),
-            target_digest: digest('b'),
-        },
-        model_deployment_ref: ModelDeploymentRef("dev-profile.model".into()),
-        exact_port_binding: ExactPortBindingRef {
-            binding_digest: DEV_BINDING_DIGEST.into(),
-            port_contract_digest: digest('c'),
-        },
-        composition_digest: digest('d'),
-    })
+fn dev_model_admission(air: &AirModule) -> ModelBindingAdmission {
+    ModelBindingAdmission::for_invocation(
+        model_targets(air)
+            .into_iter()
+            .map(|target| ResolvedModelBinding {
+                model_target: ExactModelTargetRef {
+                    reference: ModelTargetRef(target),
+                    target_digest: digest('b'),
+                },
+                model_deployment_ref: ModelDeploymentRef("dev-profile.model".into()),
+                exact_port_binding: ExactPortBindingRef {
+                    binding_digest: DEV_BINDING_DIGEST.into(),
+                    port_contract_digest: digest('c'),
+                },
+                composition_digest: digest('d'),
+            })
+            .collect(),
+    )
 }
 
 fn dev_write_set() -> AtomicWriteSet {
@@ -508,12 +520,13 @@ mod tests {
         let commit = Arc::new(DevCommit::default());
         let ports = dev_ports(commit, Arc::new(TestModelRequestMetadata))
             .expect("development ports form an admitted bundle");
+        let model_admission = dev_model_admission(&air);
         let report = execute(
             &ports,
             ExecutionRequest {
                 air,
                 hook_bindings: Vec::new(),
-                model_admission: dev_model_admission("model.target.v1".into()),
+                model_admission,
                 program_instance_ref: ProgramInstanceRef::new("test.instance"),
                 program_invocation_ref: ProgramInvocationRef::new("test.invocation"),
                 commit_id: "test.commit".into(),
@@ -529,5 +542,79 @@ mod tests {
             report.commit,
             ExecutionCommitResult::Committed { .. }
         ));
+    }
+
+    #[tokio::test]
+    async fn executes_canonical_air_without_a_model_binding() {
+        let air: AirModule = serde_json::from_value(json!({
+            "schema_version": "apxm.air.v1",
+            "semantic_operations": [
+                {"node_id": "n.cap", "op": "capability.invoke", "parent_region_id": "r.root", "execution_order": 0, "operands": [{"slot": "capability_ref", "value_id": "cap.search", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "value.capability.arguments", "type_ref": "CapabilityArguments"}], "result": {"value_id": "value.capability.output", "type_ref": "CapabilityOutput"}},
+                {"node_id": "n.new", "op": "program.new", "parent_region_id": "r.root", "execution_order": 1, "operands": [{"slot": "program_ref", "value_id": "child", "type_ref": "ProgramRef"}], "result": {"value_id": "value.program.instance", "type_ref": "ProgramInstanceRef"}},
+                {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.root", "execution_order": 2, "operands": [{"slot": "receiver", "value_id": "value.program.instance", "type_ref": "ProgramInstanceRef"}, {"slot": "input", "value_id": "value.program.input", "type_ref": "ProgramInput"}], "result": {"value_id": "value.program.output", "type_ref": "ProgramOutput"}},
+                {"node_id": "n.await", "op": "await.event", "parent_region_id": "r.root", "execution_order": 3, "operands": [{"slot": "event_ref", "value_id": "ready", "type_ref": "EventRef"}], "result": {"value_id": "value.event.output", "type_ref": "EventOutput"}}
+            ],
+            "structural_ir": [{"region_id": "r.root", "kind": "function", "execution_order": 0}],
+            "context_flow": [],
+            "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
+        }))
+        .expect("canonical air without a model call");
+        assert!(air.verify().is_accepted());
+
+        let model_admission = dev_model_admission(&air);
+        assert!(matches!(
+            model_admission.validate(&ModelTargetRef("model.absent".into())),
+            Err(apxm_inference::BindingError::MissingTarget(_))
+        ));
+
+        let commit = Arc::new(DevCommit::default());
+        let ports = dev_ports(commit, Arc::new(UnavailableModelRequestMetadata))
+            .expect("development ports form an admitted bundle");
+        let report = execute(
+            &ports,
+            ExecutionRequest {
+                model_admission,
+                air,
+                hook_bindings: Vec::new(),
+                program_instance_ref: ProgramInstanceRef::new("test.instance.no-model"),
+                program_invocation_ref: ProgramInvocationRef::new("test.invocation.no-model"),
+                commit_id: "test.commit.no-model".into(),
+                write_set: dev_write_set(),
+            },
+            Value::Null,
+        )
+        .await
+        .expect("canonical execution without a model binding");
+
+        assert_eq!(report.node_outcomes.len(), 4);
+        assert!(matches!(
+            report.commit,
+            ExecutionCommitResult::Committed { .. }
+        ));
+    }
+
+    #[test]
+    fn admits_each_distinct_authored_model_target_once() {
+        let air: AirModule = serde_json::from_value(json!({
+            "schema_version": "apxm.air.v1",
+            "semantic_operations": [
+                {"node_id": "n.model.first", "op": "model.call", "parent_region_id": "r.root", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target.first", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.request.first", "type_ref": "ModelRequest"}], "result": {"value_id": "value.output.first", "type_ref": "ModelOutput"}},
+                {"node_id": "n.model.second", "op": "model.call", "parent_region_id": "r.root", "execution_order": 1, "operands": [{"slot": "model_ref", "value_id": "model.target.second", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.request.second", "type_ref": "ModelRequest"}], "result": {"value_id": "value.output.second", "type_ref": "ModelOutput"}},
+                {"node_id": "n.model.first.again", "op": "model.call", "parent_region_id": "r.root", "execution_order": 2, "operands": [{"slot": "model_ref", "value_id": "model.target.first", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.request.third", "type_ref": "ModelRequest"}], "result": {"value_id": "value.output.third", "type_ref": "ModelOutput"}}
+            ],
+            "structural_ir": [{"region_id": "r.root", "kind": "function", "execution_order": 0}],
+            "context_flow": [],
+            "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
+        }))
+        .expect("canonical air with distinct model targets");
+        assert!(air.verify().is_accepted());
+
+        let admission = dev_model_admission(&air);
+        for target in ["model.target.first", "model.target.second"] {
+            let resolved = admission
+                .validate(&ModelTargetRef(target.into()))
+                .expect("authored target has exactly one local binding");
+            assert_eq!(resolved.model_target.reference.0, target);
+        }
     }
 }
