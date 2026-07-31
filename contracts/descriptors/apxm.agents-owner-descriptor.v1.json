@@ -175,7 +175,7 @@
     {
       "port_contract_id": "apxm.durable-event.v1",
       "path": "port-contracts/apxm.durable-event.port-contract.v1.json",
-      "digest": "sha256:a91ce766104c850db034d11934034669c63149a21c15a87e0d7ecf40a74d2082"
+      "digest": "sha256:75d3c93c0c34f3c3d4dfeb89cec81cdbc208ac9106bba6955a923b0c566342d9"
     },
     {
       "port_contract_id": "apxm.program-composition.v1",
@@ -513,7 +513,7 @@
     },
     "authority_data_classification": {
       "authority_source": "invocation_admission_only",
-      "delivery_owner": "os",
+      "delivery_owner": "server",
       "data_classes": [
         "event_ref",
         "authorized_payload"
@@ -816,5 +816,5 @@
       ]
     }
   ],
-  "descriptor_digest": "sha256:5406b9d45838034e54418323520c78657a23beec4fcbebb8b640b45d83b71d3e"
+  "descriptor_digest": "sha256:eb863e44009f03a099cca8d4223b26801083dc7e52db5080f15f0eeded699b8c"
 }
