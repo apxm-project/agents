@@ -131,6 +131,14 @@ mod tests {
         async fn current_version(&self, _program_instance_ref: &ProgramInstanceRef) -> u64 {
             0
         }
+
+        /// The bundle fixture proves admission, not resumption.
+        async fn load_continuation(
+            &self,
+            _program_instance_ref: &ProgramInstanceRef,
+        ) -> Option<serde_json::Value> {
+            None
+        }
     }
 
     struct Events;

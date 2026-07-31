@@ -5,14 +5,17 @@
 //! to the private `HookEffect<C, T>` ABI, a typed port bundle constructed from
 //! immutable Exact Port Bindings (validated at construction only — no registry,
 //! discovery, first-party bypass, or rebind), the atomic Execution Commit port as
-//! the only commit boundary, a Confinement port, non-authoritative post-commit
-//! telemetry, and lifecycle reconstruction from durable evidence. It selects no
-//! implementation and admits nothing; adapters implement the ports it defines.
+//! the only commit boundary, the prepared-effect reducer that decides what a
+//! durable effect outcome means, a Confinement port, non-authoritative
+//! post-commit telemetry, and lifecycle reconstruction from durable evidence. It
+//! selects no implementation and admits nothing; adapters implement the ports it
+//! defines.
 
 pub mod bundle;
 pub mod capability;
 pub mod commit;
 pub mod confinement;
+pub mod effect;
 pub mod events;
 pub mod external_agent;
 pub mod hook;
@@ -29,6 +32,9 @@ pub use commit::{
 };
 pub use confinement::{
     ConfinementAttestation, ConfinementError, ConfinementPort, ConfinementRequest, ConfinementType,
+};
+pub use effect::{
+    EffectError, EffectId, EffectRecord, EffectState, EffectTransition, PreparedEffect,
 };
 pub use events::{EventSink, NullEventSink, TelemetryNote};
 pub use external_agent::{
