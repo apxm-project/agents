@@ -312,6 +312,16 @@ impl ExecutionCommitPort for DevCommit {
     async fn current_version(&self, _program_instance_ref: &ProgramInstanceRef) -> u64 {
         *self.version.lock().expect("dev commit mutex poisoned")
     }
+
+    /// The in-process development commit holds no durable record, so it never
+    /// has a committed continuation to hand back. Resumption requires a real
+    /// admitted commit binding.
+    async fn load_continuation(
+        &self,
+        _program_instance_ref: &ProgramInstanceRef,
+    ) -> Option<serde_json::Value> {
+        None
+    }
 }
 
 fn dev_ports(

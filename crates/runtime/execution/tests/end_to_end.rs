@@ -323,6 +323,11 @@ impl ExecutionCommitPort for FakeCommit {
     async fn current_version(&self, _program_instance_ref: &ProgramInstanceRef) -> u64 {
         self.state.lock().unwrap().0
     }
+
+    /// The end-to-end fixture runs to completion, so it parks no continuation.
+    async fn load_continuation(&self, _program_instance_ref: &ProgramInstanceRef) -> Option<Value> {
+        None
+    }
 }
 
 #[derive(Default)]

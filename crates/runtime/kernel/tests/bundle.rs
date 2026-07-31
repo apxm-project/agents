@@ -39,6 +39,11 @@ impl ExecutionCommitPort for NoopCommit {
     async fn current_version(&self, _program_instance_ref: &ProgramInstanceRef) -> u64 {
         0
     }
+
+    /// This fixture never parks, so it holds no committed continuation.
+    async fn load_continuation(&self, _program_instance_ref: &ProgramInstanceRef) -> Option<serde_json::Value> {
+        None
+    }
 }
 
 struct NoopConfinement;

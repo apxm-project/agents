@@ -459,6 +459,11 @@ impl ExecutionCommitPort for RecordingCommit {
     async fn current_version(&self, _program_instance_ref: &ProgramInstanceRef) -> u64 {
         *self.version.lock().unwrap()
     }
+
+    /// The loop-evidence fixture runs to completion, so it parks no continuation.
+    async fn load_continuation(&self, _program_instance_ref: &ProgramInstanceRef) -> Option<Value> {
+        None
+    }
 }
 
 fn ports(

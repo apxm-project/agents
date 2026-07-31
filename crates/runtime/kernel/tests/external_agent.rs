@@ -86,6 +86,11 @@ impl ExecutionCommitPort for FixtureCommit {
     async fn current_version(&self, _program_instance_ref: &ProgramInstanceRef) -> u64 {
         self.state.lock().unwrap().0
     }
+
+    /// This fixture never parks, so it holds no committed continuation.
+    async fn load_continuation(&self, _program_instance_ref: &ProgramInstanceRef) -> Option<serde_json::Value> {
+        None
+    }
 }
 
 struct ScriptedAcpPeer {

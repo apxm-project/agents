@@ -251,9 +251,13 @@ pub trait ExecutionCommitPort: Send + Sync {
     async fn current_version(&self, program_instance_ref: &ProgramInstanceRef) -> u64;
 
     /// Read the current continuation payload from the same authoritative commit
-    /// record. Implementations that do not support resumption return `None`;
-    /// they never route execution through a secondary persistence authority.
-    async fn load_continuation(&self, _program_instance_ref: &ProgramInstanceRef) -> Option<Value> {
-        None
-    }
+    /// record, or `None` when this Program Instance has no committed
+    /// continuation.
+    ///
+    /// This is a required method rather than a defaulted one: an implementation
+    /// that silently answered `None` would make a resumable Program look
+    /// permanently uncommitted while its continuation sat durable behind a
+    /// second persistence authority. An implementation that genuinely holds no
+    /// continuation states that explicitly.
+    async fn load_continuation(&self, program_instance_ref: &ProgramInstanceRef) -> Option<Value>;
 }
