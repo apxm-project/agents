@@ -25,25 +25,26 @@ equivalent user-authored Conversational Agent.
 
 ## Context
 
-The current Gao package is already an APXM TypeScript Agent Program with a
-manifest, prompts, Skills, Capabilities, permission policies, and lifecycle
-callbacks
-([manifest](../../examples/agents/gao/agent.toml),
-[Hook handlers](../../examples/agents/gao/capabilities/handlers/hooks.ts)).
-Its entry currently creates `GraphBuilder` directly and builds a re-arming
-`autonomous` loop itself
-([current entry](../../examples/agents/gao/capabilities/handlers/main.ts)).
+At the inspected pre-migration baseline, the Gao package was already an APXM
+TypeScript Agent Program with a manifest, prompts, Skills, Capabilities,
+permission policies, and lifecycle callbacks under the historical
+`examples/agents/gao/` source root. Its entry created `GraphBuilder` directly
+and built a re-arming `autonomous` loop itself. Those deleted paths are
+historical evidence, not target source locations or live links.
 
 That implementation predates the accepted first-class Conversational Agent
 contract. Keeping it would make the most visible APXM agent a second authoring
 pattern and would allow its loop, context, and callbacks to drift from the
 Python and TypeScript abstraction intended for every agent author.
 
-Studio currently treats Gao as an installed agent id, validates its
-server-projected record, and delivers Turns through APXM OS ingress
-([Studio chat dispatch](../../../studio/apxm-studio/crates/studio/src/chat.rs)).
-That transport boundary is compatible with this decision: Studio supplies
-input and an allowlisted structured snapshot, while Gao owns agent behavior.
+Under the [current event/runtime ownership](0018-event-readiness-and-local-scheduling-are-agents-semantics.md),
+Studio consumes current-owner generated bindings, Server owns managed
+durability for occurrence, delivery, target application, activation,
+effect-work, schedules, and the Host gateway plus retry/DLQ/recovery and
+operational APIs, and Agents owns portable event, readiness, local execution,
+Execution Commit, and runtime evidence semantics. That boundary is compatible
+with this decision: Studio supplies input and an allowlisted structured
+snapshot, while Gao owns agent behavior.
 
 ## Composition contract
 

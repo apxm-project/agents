@@ -22,6 +22,7 @@ only and cannot be used as implementation authority.
 | [0015](0015-source-first-agent-frontend-vocabulary.md) | Accepted | Source-first five-concept authoring surface, frozen declaration matrix, BoundAgentTree representation stack, FrontendGraph typed intents vs Rust-owned AIS selection, surface manifest | Source-first Agent frontend master plan |
 | [0016](0016-tool-authoring-and-handler-execution-are-separate.md) | Accepted | Typed Tool references, private package-handler definitions, Rust-owned manifest, and Rust-admitted Capability execution are separate boundaries | Tool authoring and handler-execution plan |
 | [0017](0017-gao-is-a-studio-owned-agent-program-over-host-capabilities.md) | Accepted | Gao is a Studio-owned ordinary Agent Program; Workflow authoring arrives through typed Host Capabilities with no named Agents semantics | Studio Gao Host plan and cross-repository frontend/runtime conformance |
+| [0018](0018-event-readiness-and-local-scheduling-are-agents-semantics.md) | Accepted; requires accepted workspace ADR-0027 | Agents owns portable Program Event/reference/reducer/activation/readiness/local scheduling semantics while Server owns managed durable coordination | Event-driven runtime contract and full-replacement plan |
 
 Canonical owner contract and plan:
 
@@ -32,5 +33,7 @@ Canonical owner contract and plan:
 - [Future APXM-owned routing plan](../agents/future-apxm-routing-plan.md)
 - [Portable core interface contract](../agents/portable-core-interface-contract.md)
 - [Tool authoring and handler-execution plan](../agents/tool-authoring-and-handler-execution-plan.md)
+- [Event-driven runtime and scheduler contract](../agents/event-driven-runtime-and-scheduler-contract.md)
+- [Event-driven runtime full-replacement plan](../agents/event-driven-runtime-full-replacement-plan.md)
 - [APXM Port Contracts and composition plan](../../../../docs/plans/apxm-port-contracts-and-composition-full-replacement-plan.md)
 - [APXM master plan](../../../../docs/plans/apxm-master-plan.md)

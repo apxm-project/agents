@@ -95,14 +95,18 @@ internal crate is marked non-publishable intentionally rather than accidentally.
 
 The compiler may depend only on stable contracts, AIS, artifact encoding,
 deterministic compiler/toolchain components, and provider-neutral
-descriptor/evidence values needed to validate or lower a program. It must not
-depend on:
+descriptor/evidence values needed to validate or lower a program. Under the
+[current event/runtime ownership](0018-event-readiness-and-local-scheduling-are-agents-semantics.md),
+it must not depend on:
 
 - runtime or scheduling implementations;
 - concrete model/provider backends or provider SDKs;
 - HTTP, service discovery, network clients, TLS/proxy policy, or credentials;
 - database, object-store, checkpoint, or state implementations;
-- Server, OS, CLI, product UI, or application configuration; or
+- Server operational APIs or current-owner generated clients;
+- Server-owned managed occurrence, delivery, target-application, activation,
+  effect-work, schedule, Host-gateway, retry/DLQ, or recovery implementations;
+- CLI, product UI, or application configuration; or
 - a runtime adapter selected through a Cargo feature.
 
 Compilation accepts complete values/bytes and explicit options. It does not

@@ -22,8 +22,10 @@ only. They are not supported compatibility contracts for the target release.
 `AgentProgram` surfaces, the two closed AIS operation families, and generic
 `LoopIterationCompleted` evidence will replace every prior semantic path. All
 first-party Python and TypeScript examples, artifacts, handlers, runtime
-dispatch, Server/OS consumers, generated declarations, tests, and product
-adapters move to the target contract in one APXM Compatibility Set.
+dispatch, generated declarations, tests, and product adapters move to the
+target contract in one APXM Compatibility Set. Server, Studio, CLI, and other
+cross-plane consumers use current-owner generated bindings under the
+[current event/runtime ownership](0018-event-readiness-and-local-scheduling-are-agents-semantics.md).
 Conversational and Gao examples use only packed generic APIs. Admission rejects
 old or unknown semantic versions after cutover.
 
