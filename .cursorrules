@@ -22,12 +22,12 @@ GitHub Copilot reads `.github/copilot-instructions.md`.
 `agents` is the APXM abstract-machine repo: AIS dialect, compiler, runtime,
 capability contracts, context handling, permissions, orchestration, CLI, and
 the profile-backed agent execution path. It is not the whole APXM workspace;
-the `apxm` coordinator owns repo composition, while `server`, `os`, `auth`,
-and `studio` own their own planes.
+the `apxm` coordinator owns repo composition, while `server`, `auth`, `studio`,
+Host SDK, and Adapters own their exact planes.
 
-Do **not** describe `agents` as the APXM coordinator, the HTTP server, the OS
-host plane, or only "vLLM dispatch". The correct anchor is: *the abstract
-machine and runtime contracts for APXM agents*.
+Do **not** describe `agents` as the APXM coordinator, the HTTP/managed-durability
+server, the Host protocol owner, or only "vLLM dispatch". The correct anchor
+is: *the abstract machine and runtime contracts for APXM agents*.
 
 ## 2. Authority CLI
 

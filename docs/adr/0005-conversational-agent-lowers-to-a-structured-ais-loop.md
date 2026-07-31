@@ -62,9 +62,13 @@ Skills and Capabilities, and compatibility metadata. It does not provide a
 second behavior language through `[[hooks]]`, `[runtime.loop]`, string-valued
 `converse`/`recv` flags, or equivalent runtime configuration.
 
-The compiler extracts one typed representation into the artifact. APXM Server,
-OS, Studio, clients, and product manifests may select, admit, invoke, or observe
-that artifact but may not redefine its loop.
+The compiler extracts one typed representation into the artifact. Under the
+[current event/runtime ownership](0018-event-readiness-and-local-scheduling-are-agents-semantics.md),
+Server owns managed durability for occurrence, delivery, target application,
+activation, effect-work, schedules, and the Host gateway plus
+retry/DLQ/recovery and operational APIs. Studio, CLI, and other product
+consumers use current-owner generated bindings to select, admit, invoke, or
+observe that artifact; none may redefine its loop.
 
 ## Context, authority, and persistence
 

@@ -4,6 +4,7 @@
 - Date: 2026-07-16
 - Decision: [ADR-0013](../adr/0013-core-semantics-are-closed-and-implementations-enter-through-exact-port-bindings.md)
 - Workspace decision: [ADR-0009](../../../../docs/adr/0009-apxm-v1-core-depends-on-closed-semantics-and-explicit-port-contracts.md)
+- Event/runtime decision: [Workspace ADR-0027](../../../../docs/adr/0027-agents-owns-runtime-readiness-and-server-owns-managed-events.md)
 - Owner: APXM `agents`
 - Applies to: contracts/types, AIS, artifact, compiler, runtime, CLI/server
   composition, inference/Capability/ACP/handler/confinement/store/observer
@@ -430,10 +431,19 @@ recovery.
 
 ### 8.5 Durable event port
 
-The port registers/waits/cancels an exact typed EventRef and consumes one
-authorized fulfillment/expiry/cancellation. OS owns durable external delivery;
-runtime does not poll arbitrary URLs or brokers. Redelivery cannot create a
-second semantic fulfillment.
+Agents owns portable `Event<T>`, generation-scoped `EventRef<T>`,
+`EventOccurrence<T>`, and `EventProvenance` meaning; the EventRef lifecycle and
+transition reducers; and portable target-application, activation, effect, and
+runtime transition semantics. The port registers/waits/cancels an exact typed
+EventRef and consumes one authorized fulfillment/expiry/cancellation.
+
+Server owns managed sources, accepted occurrences, delivery attempts and stable
+target application, durable activations and effect work, schedules,
+retry/DLQ/redrive, recovery, operational queries, and Host-gateway durability
+(`S-HG`). Auth owns authority, verification, connections, and secret custody.
+Adapters own provider/source protocol interpretation and execution; Host SDK
+owns Host protocol meaning and conformance. Runtime does not poll arbitrary
+URLs or brokers, and redelivery cannot create a second semantic fulfillment.
 
 ### 8.6 Handler execution port
 

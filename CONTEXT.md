@@ -77,6 +77,30 @@ Program Invocation until one authorized durable fulfillment, expiry, or
 cancellation.
 _Avoid_: polling URL, resume opcode, program yield
 
+**Event Occurrence**:
+One immutable typed fact that may start a root Program Invocation or fulfill an
+exact Event Reference after durable target application. It carries portable
+Event Provenance but no transport, queue, authority, or delivery semantics.
+_Avoid_: callback, message, local wake, effect result
+
+**Activation**:
+One bounded Agent Program execution segment caused by exact root admission or
+an exact awaited fulfillment. It ends at a fenced commit, checkpoint/park,
+prepared effect, yield, return, cancellation, or terminal failure.
+_Avoid_: Invocation, process, worker task, lease attempt
+
+**Dependency Readiness**:
+The PXM fact that one dynamic Node occurrence has all exact typed semantic
+prerequisites and can be published for local execution.
+_Avoid_: durable lease eligibility, Host availability, queue notification
+
+**Local Work Stealing**:
+The Agents placement mechanism by which a worker takes already-ready immutable
+local computation from another worker's deque. It never moves durable
+activation authority, Event Reference state, Program Instance ownership,
+grants, secrets, effects, or commit rights between processes.
+_Avoid_: distributed activation leasing, recovery, event delivery
+
 **Agent Identity Binding**:
 The authenticated admission result binding one Agent Identity to an exact
 Agent Program artifact and scope. Artifact metadata and parent identity are
