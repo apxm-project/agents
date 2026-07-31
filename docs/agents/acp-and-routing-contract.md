@@ -16,7 +16,7 @@ four unrelated selection concerns from collapsing into one ambiguous router.
 | APXM Program selection | source chooses a statically imported `ProgramRef` | unchanged | source/compiler |
 | model selection | source names one exact `ModelTargetRef`; the verified Deployment Composition predeclares one exact deployment/adapter mapping and Invocation Admission materializes it | future plan may propose an immutable route policy | managed Server admission before dispatch |
 | External Agent selection | source names one exact `ExternalAgentProfileRef`; session Invocation Admission uses that profile and the verified ACP Client Port Binding | source may invoke `external_agent.route` | managed Server admission through Capability |
-| event routing | OS delivers exact accepted events | unchanged | OS |
+| event routing | Server durably accepts, delivers, and applies exact occurrences under Agents-owned Event/EventRef semantics | unchanged | Server durability over Agents semantics |
 
 No runtime router, backend registry, adapter, Studio view, or provider alias may
 choose among these on behalf of source or Server.
@@ -340,12 +340,12 @@ Future routing cannot:
 
 | Owner | Responsibility |
 | --- | --- |
-| `agents` | frontend types, exact refs, ACP Capability/session ports, `ModelTargetRef`/`ResolvedModelBinding` validation and evidence contracts, lifecycle and evidence semantics |
+| `agents` | frontend types, exact refs, portable Event/EventRef/occurrence/provenance and target-application/activation/effect semantics, ACP Capability/session ports, `ModelTargetRef`/`ResolvedModelBinding` validation, and lifecycle/evidence contracts |
 | compiler/runtime | compiler records exact semantic requirements; runtime validates Verified Deployment Composition plus Invocation Admission and executes one immutable admitted binding |
-| Server | managed root/invocation admission, model-deployment and External Agent Profile catalogues, durable external-agent session records/leases/control handles, budget/spend, future route resolution and final pre-dispatch decision |
-| Auth | identity, grants, approvals, credentials, roots and egress ceilings |
-| `adapters` | official-schema ACP Client implementation, exact inference adapters, optional future pure scorer |
-| OS | durable commands/events only; no model or agent selection |
+| Server | managed source/occurrence/delivery/application/activation/effect-work/schedule/Host-gateway durability, leases, retry/DLQ/redrive/recovery, operational queries, root/invocation admission, model-deployment and External Agent Profile catalogues, durable external-agent session records/control handles, budget/spend, future route resolution, and final pre-dispatch decision |
+| Auth | identity and authority, verification, grants/approvals, connection and secret custody, credential leases, roots, and egress ceilings |
+| `adapters` | provider/source protocol interpretation and execution, official-schema ACP Client and exact inference implementations, optional future pure scorer; no Program-target selection |
+| Host SDK | Host protocol meaning, generated bindings, enrollment/session/resume, credit/effect frames, Host source contributions, and protocol conformance |
 | `eval` | ACP matrices and future router quality/calibration/drift claims |
 | Studio | configuration, simulation, session/evidence/spend projections through generated clients |
 

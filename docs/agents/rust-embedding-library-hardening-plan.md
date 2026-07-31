@@ -343,8 +343,11 @@ Dependencies: RLIB-0-RLIB-8 and the complete promoted APXM Compatibility Set.
 
 Deliverables:
 
-- move every first-party compiler, bridge, CLI, Server, OS, and runtime
-  application consumer to the target roles and explicit adapters;
+- move every first-party compiler, bridge, CLI, Server, and runtime application
+  consumer to the target roles and explicit adapters;
+- delete the retiring OS application consumer rather than migrate or recreate
+  it; Server's managed Composition Root is the sole managed target, while
+  standalone embedding Composition Roots remain explicit library consumers;
 - promote the five roles, selected production adapters, named Runtime Profiles,
   applications, and release evidence atomically; deployment-specific manifests
   remain installation admission records rather than Compatibility Set content;
