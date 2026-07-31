@@ -302,8 +302,10 @@ Surfaces, each with a named replacement before deletion:
 
 Local gates: `dekk agents test-canonical-only`
 (`tools/tests/test_canonical_only_reachability.py`, whose retired-directory and
-retired-file lists this lane extends), `dekk agents test`, `dekk agents check`,
-`dekk agents clippy`, and a `git grep` absence scan for the removed
+retired-file lists this lane extends), `dekk agents test-owner-gates`
+(`tools/tests/test_owner_gate_commands.py`, which refuses a lane gate cited
+here that `dekk agents` does not declare), `dekk agents test`, `dekk agents
+check`, `dekk agents clippy`, and a `git grep` absence scan for the removed
 constructors and module paths.
 
 Joins: `A-AR`, `A-LX`, Server `S-RI` for landing; consumed by `X-DL`, `V-LA`,
