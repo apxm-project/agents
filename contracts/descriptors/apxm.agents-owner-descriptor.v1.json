@@ -108,6 +108,46 @@
       "schema_id": "apxm.capability-outcome.v1",
       "path": "schemas/apxm.capability-outcome.v1.json",
       "digest": "sha256:dc4f06252d3e2a90a584acee5db34dfceb378ab79a44670084eac384a3f9da28"
+    },
+    {
+      "schema_id": "apxm.model-inference-request.v1",
+      "path": "schemas/apxm.model-inference-request.v1.json",
+      "digest": "sha256:cbed1657fb4d98acab46ba13130088b35d66b1f4e2dd2c6d44f661a83b94e778"
+    },
+    {
+      "schema_id": "apxm.model-inference-outcome.v1",
+      "path": "schemas/apxm.model-inference-outcome.v1.json",
+      "digest": "sha256:ab99c4676d39e14d9c1a763f02828a48b488bb96af2caaf75973d867d5487cc5"
+    },
+    {
+      "schema_id": "apxm.external-agent-request.v1",
+      "path": "schemas/apxm.external-agent-request.v1.json",
+      "digest": "sha256:d0befa14ec1162e4cd02bf28b5d89e8299b828a9595eeeeab197021e223f0409"
+    },
+    {
+      "schema_id": "apxm.external-agent-outcome.v1",
+      "path": "schemas/apxm.external-agent-outcome.v1.json",
+      "digest": "sha256:c07dce3479c145cc8e32556577bbfa97011624323e2382eda59804f5f75ddd99"
+    },
+    {
+      "schema_id": "apxm.durable-event-request.v1",
+      "path": "schemas/apxm.durable-event-request.v1.json",
+      "digest": "sha256:84a5aafde3e30bd22943c80e7b2cad1b80ecbd92a8aaae30b98c6aed2ab334b2"
+    },
+    {
+      "schema_id": "apxm.durable-event-outcome.v1",
+      "path": "schemas/apxm.durable-event-outcome.v1.json",
+      "digest": "sha256:ae2657520828af0409a24de8c2361b9ce940f281b71be1702d94e0812d777e4a"
+    },
+    {
+      "schema_id": "apxm.program-composition-request.v1",
+      "path": "schemas/apxm.program-composition-request.v1.json",
+      "digest": "sha256:96b83faefb9831177ee5ff023e9050ef4c19ba8d651c9d0bdc573362e5216a32"
+    },
+    {
+      "schema_id": "apxm.program-composition-outcome.v1",
+      "path": "schemas/apxm.program-composition-outcome.v1.json",
+      "digest": "sha256:5a78fbe48fa8a374268a558ffcdd066b49c0ca4dacc80be58e03c80eeb0d5ade"
     }
   ],
   "owned_port_contracts": [
@@ -121,6 +161,26 @@
       "port_contract_id": "apxm.capability-invocation.v1",
       "path": "port-contracts/apxm.capability-invocation.port-contract.v1.json",
       "digest": "sha256:9369bd4c3506ba145d9424425efcb0493b288d418c582701d0856e8216fc8383"
+    },
+    {
+      "port_contract_id": "apxm.model-inference.v1",
+      "path": "port-contracts/apxm.model-inference.port-contract.v1.json",
+      "digest": "sha256:fdf6aea657550b87f8b66f63f8e50cf793cec427b320c5bce940ba24fbc97362"
+    },
+    {
+      "port_contract_id": "apxm.external-agent.v1",
+      "path": "port-contracts/apxm.external-agent.port-contract.v1.json",
+      "digest": "sha256:d7f7a1319eeac3c69af8355dd58b60a8f86d4861e5d32e3b8cac85105bd5eb5d"
+    },
+    {
+      "port_contract_id": "apxm.durable-event.v1",
+      "path": "port-contracts/apxm.durable-event.port-contract.v1.json",
+      "digest": "sha256:a91ce766104c850db034d11934034669c63149a21c15a87e0d7ecf40a74d2082"
+    },
+    {
+      "port_contract_id": "apxm.program-composition.v1",
+      "path": "port-contracts/apxm.program-composition.port-contract.v1.json",
+      "digest": "sha256:7cacd4d1d1a0f17f30e167907997fbaa86e3e84026c69eee11d0673ceb67351a"
     }
   ],
   "source_scope_invariant": "artifact_semantic",
@@ -359,6 +419,159 @@
       }
     }
   },
+  "model_inference_port_boundary": {
+    "lifecycle": {
+      "states": [
+        "committed_success",
+        "typed_failure",
+        "cancelled",
+        "model_outcome_unknown"
+      ],
+      "send_identity": "stable_effect_id_and_request_digest",
+      "retry_after_possible_send": "forbidden_without_exact_reconciliation",
+      "fallback": "forbidden"
+    },
+    "authority_data_classification": {
+      "authority_source": "invocation_admission_only",
+      "secret_custody": "opaque_credential_reference_only",
+      "data_classes": [
+        "sealed_model_context_ref",
+        "model_binding",
+        "native_usage",
+        "content_ref"
+      ],
+      "inline_model_content": "forbidden"
+    },
+    "feature_vocabulary": [
+      "buffered",
+      "streamed",
+      "cancellation",
+      "outcome_unknown"
+    ],
+    "configuration_contract": {
+      "sensitive_fields": [
+        "credential_ref"
+      ],
+      "required_fields": [
+        "exact_origin",
+        "response_size_limit"
+      ],
+      "candidate_or_fallback_fields": "forbidden"
+    }
+  },
+  "external_agent_port_boundary": {
+    "lifecycle": {
+      "states": [
+        "completed",
+        "cancelled",
+        "failed",
+        "outcome_unknown"
+      ],
+      "protocol": "ACP",
+      "outer_effect_count": 1,
+      "retry_after_possible_send": "forbidden_without_exact_reconciliation",
+      "fallback": "forbidden"
+    },
+    "authority_data_classification": {
+      "authority_source": "invocation_admission_and_external_agent_ceiling",
+      "reverse_request_authority": "revalidated_per_request",
+      "secret_custody": "opaque_auth_method_reference_only",
+      "peer_usage_classification": "third_party_attributed_evidence"
+    },
+    "feature_vocabulary": [
+      "initialize",
+      "authenticate",
+      "session",
+      "prompt",
+      "reverse_request",
+      "cancel",
+      "close"
+    ],
+    "configuration_contract": {
+      "sensitive_fields": [
+        "credential_ref"
+      ],
+      "required_fields": [
+        "profile_ref",
+        "transport",
+        "process_or_endpoint_ceiling"
+      ],
+      "ambient_executable_discovery": "forbidden"
+    }
+  },
+  "durable_event_port_boundary": {
+    "lifecycle": {
+      "states": [
+        "parked",
+        "fulfilled",
+        "expired",
+        "cancelled",
+        "mismatched"
+      ],
+      "semantic_fulfillment_count": 1,
+      "redelivery_duplicate_fulfillment": "forbidden"
+    },
+    "authority_data_classification": {
+      "authority_source": "invocation_admission_only",
+      "delivery_owner": "os",
+      "data_classes": [
+        "event_ref",
+        "authorized_payload"
+      ],
+      "broker_or_provider_selector": "forbidden"
+    },
+    "feature_vocabulary": [
+      "register",
+      "wait",
+      "fulfill",
+      "expire",
+      "cancel"
+    ],
+    "configuration_contract": {
+      "sensitive_fields": [],
+      "required_fields": [
+        "durable_continuation_resource_ref"
+      ],
+      "polling_endpoint": "forbidden"
+    }
+  },
+  "program_composition_port_boundary": {
+    "lifecycle": {
+      "states": [
+        "created",
+        "invoked",
+        "failed"
+      ],
+      "receivers": [
+        "program",
+        "instance"
+      ],
+      "root_admission": "required",
+      "alternate_runtime": "forbidden"
+    },
+    "authority_data_classification": {
+      "authority_source": "invocation_admission_only",
+      "lifecycle_owner": "server",
+      "data_classes": [
+        "program_ref",
+        "program_instance_ref",
+        "child_instance_ref"
+      ],
+      "process_spawn": "forbidden"
+    },
+    "feature_vocabulary": [
+      "program_new",
+      "program_invoke",
+      "instance_invoke"
+    ],
+    "configuration_contract": {
+      "sensitive_fields": [],
+      "required_fields": [
+        "server_program_lifecycle_binding"
+      ],
+      "target_search": "forbidden"
+    }
+  },
   "conformance_vectors": [
     {
       "schema_id": "apxm.frontend-graph.v1",
@@ -521,7 +734,87 @@
         "outcome_unknown",
         "unknown_discriminant"
       ]
+    },
+    {
+      "schema_id": "apxm.model-inference-request.v1",
+      "path": "vectors/apxm.model-inference-request.v1.json",
+      "digest": "sha256:3f78f3c04f380081b63d20ea7303e5d4c2cbbb6feeda0d9b2d71ca9947ff4d5e",
+      "coverage": [
+        "positive",
+        "binding",
+        "unknown_discriminant"
+      ]
+    },
+    {
+      "schema_id": "apxm.model-inference-outcome.v1",
+      "path": "vectors/apxm.model-inference-outcome.v1.json",
+      "digest": "sha256:2d3a4b10a4d0b8ab75b78d07ffe3cf13dd9f4ae6bed4bd0affc28e9686d9c93a",
+      "coverage": [
+        "positive",
+        "outcome_unknown",
+        "unknown_discriminant"
+      ]
+    },
+    {
+      "schema_id": "apxm.external-agent-request.v1",
+      "path": "vectors/apxm.external-agent-request.v1.json",
+      "digest": "sha256:c0d6bd4075d466ab86a292d3497da042a2c2b03a44f3d3c9d401fb4b74556871",
+      "coverage": [
+        "positive",
+        "exact_profile",
+        "mutation"
+      ]
+    },
+    {
+      "schema_id": "apxm.external-agent-outcome.v1",
+      "path": "vectors/apxm.external-agent-outcome.v1.json",
+      "digest": "sha256:a28434c03233dbba63cc666d1f678e1705f9d73ebb149ad4dffdebda0b837a54",
+      "coverage": [
+        "positive",
+        "outcome_unknown",
+        "usage_separation"
+      ]
+    },
+    {
+      "schema_id": "apxm.durable-event-request.v1",
+      "path": "vectors/apxm.durable-event-request.v1.json",
+      "digest": "sha256:e9a6368d35c08a5b5921684c5a667588d417fbdd706f7f36b8a8cd725e6206f7",
+      "coverage": [
+        "positive",
+        "exact_event_ref",
+        "unknown_field"
+      ]
+    },
+    {
+      "schema_id": "apxm.durable-event-outcome.v1",
+      "path": "vectors/apxm.durable-event-outcome.v1.json",
+      "digest": "sha256:513905765d62d3d45d5c5a06faa8f595e334ff7f0d9a0b4ac94084eaf4a56fe7",
+      "coverage": [
+        "positive",
+        "park",
+        "unknown_discriminant"
+      ]
+    },
+    {
+      "schema_id": "apxm.program-composition-request.v1",
+      "path": "vectors/apxm.program-composition-request.v1.json",
+      "digest": "sha256:25d4cbfecbda9f5f7f662459c5ffdf0010949105a8978287f03cd836044f0337",
+      "coverage": [
+        "positive",
+        "typed_receiver",
+        "mutation"
+      ]
+    },
+    {
+      "schema_id": "apxm.program-composition-outcome.v1",
+      "path": "vectors/apxm.program-composition-outcome.v1.json",
+      "digest": "sha256:56f47cb4779afe0d415d52eb87af237a96f94196e656f69c8b499d454c803cc1",
+      "coverage": [
+        "positive",
+        "failure",
+        "unknown_discriminant"
+      ]
     }
   ],
-  "descriptor_digest": "sha256:34de7b40b848d2d5709a12bc86b041f96f4619b4904db8a69ab706fee9407aea"
+  "descriptor_digest": "sha256:7bf39027f77f9d2b158ee79259fddc00875721151856d9945ce3c19ebb96c57c"
 }

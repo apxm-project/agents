@@ -1,0 +1,17 @@
+[
+  {
+    "name": "valid-parked-event-wait",
+    "expected_valid": true,
+    "input": "parked"
+  },
+  {
+    "name": "valid-cancelled-event-wait",
+    "expected_valid": true,
+    "input": "cancelled"
+  },
+  {
+    "name": "reject-untyped-delivery",
+    "expected_valid": false,
+    "input": { "delivered": { "payload": "missing event identity" } }
+  }
+]

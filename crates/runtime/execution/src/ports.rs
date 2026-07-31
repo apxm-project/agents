@@ -56,14 +56,16 @@ impl std::fmt::Display for EventRefError {
 impl std::error::Error for EventRefError {}
 
 /// A request to await one external event.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EventAwait {
     pub node_id: String,
     pub event_ref: EventRef,
 }
 
 /// The typed outcome of an `await.event` effect.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EventOutcome {
     Fulfilled {
         event_ref: EventRef,
@@ -71,6 +73,7 @@ pub enum EventOutcome {
     },
     Parked,
     Expired,
+    Cancelled,
     Mismatched {
         delivered_event_ref: EventRef,
     },
@@ -87,7 +90,8 @@ pub trait EventPort: Send + Sync {
 /// distinguishes a one-shot `ProgramRef` invocation from a stateful invocation
 /// of an already-created `ProgramInstanceRef`. `program.new` always carries a
 /// `Program` receiver.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CompositionReceiver {
     Program { program_ref: String },
     Instance { program_instance_ref: String },
@@ -111,14 +115,16 @@ impl CompositionReceiver {
 }
 
 /// A request to compose a child Program (`program.new`/`program.invoke`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CompositionRequest {
     pub node_id: String,
     pub receiver: CompositionReceiver,
 }
 
 /// The typed outcome of composing or invoking a child Program.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CompositionOutcome {
     Created { child_instance_ref: String },
     Invoked { child_instance_ref: String },

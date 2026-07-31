@@ -1,0 +1,24 @@
+{
+  "schema_version": "apxm.port-contract.v1",
+  "port_contract_id": "apxm.program-composition.v1",
+  "port_contract_digest": "sha256:e54a0b51152830bdcc1262955dc7fe8c390d13de5cae090f17e523c8a41d53dc",
+  "semantic_owner": "agents",
+  "primary_responsibility": "create or invoke one exact child Program or Program Instance through the admitted root lifecycle without process spawning, target search, or an alternate execution model",
+  "request_schema": {
+    "schema_id": "apxm.program-composition-request.v1",
+    "digest": "sha256:96b83faefb9831177ee5ff023e9050ef4c19ba8d651c9d0bdc573362e5216a32"
+  },
+  "result_schema": {
+    "schema_id": "apxm.program-composition-outcome.v1",
+    "digest": "sha256:5a78fbe48fa8a374268a558ffcdd066b49c0ca4dacc80be58e03c80eeb0d5ade"
+  },
+  "failure_schema": {
+    "schema_id": "apxm.program-composition-outcome.v1",
+    "digest": "sha256:5a78fbe48fa8a374268a558ffcdd066b49c0ca4dacc80be58e03c80eeb0d5ade"
+  },
+  "lifecycle_digest": "sha256:c4f894b44e25fa2a183d079e8fadde076d5fc446bcaf13d77b133e5df83b4eab",
+  "authority_data_classification_digest": "sha256:6e252a5c3f76b19f9d7f106e14f042e2fcafae46990fc1938e88cd934eb1e2c1",
+  "feature_vocabulary_digest": "sha256:095cb0219e3cc72f0c4ec3741778f064d9138f226e4abc417d3a3d75d460c878",
+  "configuration_contract_digest": "sha256:590159adae7f29effd5e14f686af4c562906c22187d47df1e396a3bca807bc61",
+  "conformance_vector_digest": "sha256:5a1a993543ac0dfc41e5bec8bb409b0e226cba34b540e1c3e803a7f9b6aaf1ad"
+}

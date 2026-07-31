@@ -32,8 +32,9 @@ use apxm_execution::{
     CapabilityInvocationAdmission, CapabilityOutcome, CapabilityPort, CapabilityRequest,
     CommittedNativeModelUsage, CommittedNativeModelUsageError, CommittedNativeModelUsageOutcome,
     CommittedNativeModelUsagePort, CompositionOutcome, CompositionPort, CompositionReceiver,
-    CompositionRequest, EventAwait, EventOutcome, EventPort, ExecutionError, ExecutionPorts,
-    ExecutionRequest, NodeOutcome, StaticHookHandlerPort, StaticHookResult, execute,
+    CompositionRequest, EventAwait, EventOutcome, EventPort, ExecutionError, ExecutionPortBundle,
+    ExecutionPorts, ExecutionRequest, NodeOutcome, StaticHookHandlerPort, StaticHookResult,
+    execute,
 };
 
 fn digest(c: char) -> String {
@@ -424,7 +425,7 @@ fn ports_with_model_composition_and_capability(
             contract("apxm.external-agent.v1"),
         ),
     ]);
-    let bundle = PortBundle::construct(
+    let kernel_bundle = PortBundle::construct(
         &spec,
         vec![
             (
@@ -446,11 +447,19 @@ fn ports_with_model_composition_and_capability(
         ],
     )
     .expect("test ports satisfy the admitted bundle");
+    let bundle = ExecutionPortBundle::construct(
+        Arc::new(kernel_bundle),
+        contract("apxm.durable-event.v1"),
+        binding(PortSlot::DurableEvent, "apxm.durable-event.v1"),
+        Arc::new(FakeEvents),
+        contract("apxm.program-composition.v1"),
+        binding(PortSlot::ProgramComposition, "apxm.program-composition.v1"),
+        composition,
+    )
+    .expect("driver ports satisfy their exact admitted bindings");
     ExecutionPorts::from_admitted_bundle(
         &bundle,
         Arc::new(TestModelRequestMetadata),
-        Arc::new(FakeEvents),
-        composition,
         Arc::new(StaticHooks),
     )
     .expect("bundle contains every runtime effect port")

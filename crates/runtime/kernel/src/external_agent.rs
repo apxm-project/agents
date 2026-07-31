@@ -8,13 +8,15 @@
 //! module offers no path from peer usage into native model accounting.
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 
 use apxm_program::external_agent::{
     AttributedEvent, ExternalAgentEvidence, ExternalAgentEvidenceVersion, PeerUsage,
 };
 
 /// The terminal state of the one outer effect an External Agent prompt produces.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PromptEffectState {
     Completed {
         stop_reason: Option<String>,
@@ -30,7 +32,8 @@ pub enum PromptEffectState {
 }
 
 /// A request to run one prompt against an admitted External Agent.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AcpPromptRequest {
     pub effect_ref: String,
     pub session_ref: String,
@@ -39,7 +42,8 @@ pub struct AcpPromptRequest {
 }
 
 /// The single outer Capability effect for one External Agent prompt.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AcpPromptOutcome {
     pub session_ref: String,
     pub state: PromptEffectState,

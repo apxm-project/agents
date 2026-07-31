@@ -36,7 +36,7 @@ use apxm_inference::{
 };
 use apxm_kernel::{
     AcpPromptRequest, AtomicWriteSet, ExecutionCommitPort, ExecutionCommitRequest,
-    ExecutionCommitResult, ExecutionCommitTuple, ExternalAgentCapabilityPort, PortBundle, PortSlot,
+    ExecutionCommitResult, ExecutionCommitTuple, ExternalAgentCapabilityPort, PortSlot,
     ProgramInstanceRef, ProgramInvocationRef, assemble_evidence,
 };
 use apxm_program::air::{AirModule, SemanticOp, SemanticOpKind};
@@ -50,6 +50,7 @@ use apxm_program::runtime_evidence::{
     NodeExecutionRecordedFact, NodeExecutionScope, RuntimeFact,
 };
 
+use crate::ExecutionPortBundle;
 use crate::operational_usage::{
     CommittedNativeModelUsage, CommittedNativeModelUsageOutcome, CommittedNativeModelUsagePort,
     CommittedNativeModelUsageVersion, EvidencePositionRef, EvidencePositionRefType,
@@ -91,33 +92,33 @@ impl std::fmt::Display for ExecutionPortsError {
 impl std::error::Error for ExecutionPortsError {}
 
 impl ExecutionPorts {
-    /// Construct the driver ports from one validated kernel bundle.
+    /// Construct the driver ports from one complete admitted execution bundle.
     ///
     /// Ordinary capability, model, external-agent, and commit effects are
-    /// copied only from their exact admitted slots. The remaining driver-local
-    /// ports do not select an implementation for those effects.
+    /// copied only from their exact admitted slots. Durable event and Program
+    /// composition ports have already been joined to their exact bindings by
+    /// [`ExecutionPortBundle::construct`].
     pub fn from_admitted_bundle(
-        bundle: &PortBundle,
+        bundle: &ExecutionPortBundle,
         model_call_request_metadata: Arc<dyn ModelCallRequestMetadataPort>,
-        events: Arc<dyn EventPort>,
-        composition: Arc<dyn CompositionPort>,
         hook_handlers: Arc<dyn StaticHookHandlerPort>,
     ) -> Result<Self, ExecutionPortsError> {
+        let kernel = bundle.kernel();
         let model_inference =
-            bundle
+            kernel
                 .model_inference()
                 .cloned()
                 .ok_or(ExecutionPortsError::MissingAdmittedPort(
                     PortSlot::ModelInference,
                 ))?;
         let capability =
-            bundle
+            kernel
                 .capability()
                 .cloned()
                 .ok_or(ExecutionPortsError::MissingAdmittedPort(
                     PortSlot::Capability,
                 ))?;
-        let external_agent = bundle.external_agent_capability().cloned().ok_or(
+        let external_agent = kernel.external_agent_capability().cloned().ok_or(
             ExecutionPortsError::MissingAdmittedPort(PortSlot::ExternalAgentCapability),
         )?;
 
@@ -126,9 +127,9 @@ impl ExecutionPorts {
             model_call_request_metadata,
             capability,
             external_agent,
-            events,
-            composition,
-            execution_commit: bundle.execution_commit().clone(),
+            events: bundle.events().clone(),
+            composition: bundle.composition().clone(),
+            execution_commit: kernel.execution_commit().clone(),
             hook_handlers,
             operational_usage: None,
         })

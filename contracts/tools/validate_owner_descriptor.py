@@ -50,6 +50,85 @@ CAPABILITY_INVOCATION_SCHEMA = SCHEMAS_DIR / "apxm.capability-invocation.v1.json
 CAPABILITY_OUTCOME_SCHEMA = SCHEMAS_DIR / "apxm.capability-outcome.v1.json"
 CAPABILITY_INVOCATION_VECTORS = VECTORS_DIR / "apxm.capability-invocation.v1.json"
 CAPABILITY_OUTCOME_VECTORS = VECTORS_DIR / "apxm.capability-outcome.v1.json"
+MODEL_INFERENCE_PORT_CONTRACT_PATH = (
+    PORT_CONTRACTS_DIR / "apxm.model-inference.port-contract.v1.json"
+)
+MODEL_INFERENCE_REQUEST_SCHEMA = SCHEMAS_DIR / "apxm.model-inference-request.v1.json"
+MODEL_INFERENCE_OUTCOME_SCHEMA = SCHEMAS_DIR / "apxm.model-inference-outcome.v1.json"
+MODEL_INFERENCE_REQUEST_VECTORS = VECTORS_DIR / "apxm.model-inference-request.v1.json"
+MODEL_INFERENCE_OUTCOME_VECTORS = VECTORS_DIR / "apxm.model-inference-outcome.v1.json"
+EXTERNAL_AGENT_PORT_CONTRACT_PATH = (
+    PORT_CONTRACTS_DIR / "apxm.external-agent.port-contract.v1.json"
+)
+EXTERNAL_AGENT_REQUEST_SCHEMA = SCHEMAS_DIR / "apxm.external-agent-request.v1.json"
+EXTERNAL_AGENT_OUTCOME_SCHEMA = SCHEMAS_DIR / "apxm.external-agent-outcome.v1.json"
+EXTERNAL_AGENT_REQUEST_VECTORS = VECTORS_DIR / "apxm.external-agent-request.v1.json"
+EXTERNAL_AGENT_OUTCOME_VECTORS = VECTORS_DIR / "apxm.external-agent-outcome.v1.json"
+DURABLE_EVENT_PORT_CONTRACT_PATH = (
+    PORT_CONTRACTS_DIR / "apxm.durable-event.port-contract.v1.json"
+)
+DURABLE_EVENT_REQUEST_SCHEMA = SCHEMAS_DIR / "apxm.durable-event-request.v1.json"
+DURABLE_EVENT_OUTCOME_SCHEMA = SCHEMAS_DIR / "apxm.durable-event-outcome.v1.json"
+DURABLE_EVENT_REQUEST_VECTORS = VECTORS_DIR / "apxm.durable-event-request.v1.json"
+DURABLE_EVENT_OUTCOME_VECTORS = VECTORS_DIR / "apxm.durable-event-outcome.v1.json"
+PROGRAM_COMPOSITION_PORT_CONTRACT_PATH = (
+    PORT_CONTRACTS_DIR / "apxm.program-composition.port-contract.v1.json"
+)
+PROGRAM_COMPOSITION_REQUEST_SCHEMA = SCHEMAS_DIR / "apxm.program-composition-request.v1.json"
+PROGRAM_COMPOSITION_OUTCOME_SCHEMA = SCHEMAS_DIR / "apxm.program-composition-outcome.v1.json"
+PROGRAM_COMPOSITION_REQUEST_VECTORS = VECTORS_DIR / "apxm.program-composition-request.v1.json"
+PROGRAM_COMPOSITION_OUTCOME_VECTORS = VECTORS_DIR / "apxm.program-composition-outcome.v1.json"
+
+PORT_CONTRACT_SPECS = (
+    (
+        EXECUTION_COMMIT_PORT_CONTRACT_PATH,
+        "port_boundary",
+        EXECUTION_COMMIT_ENVELOPE,
+        EXECUTION_COMMIT_ENVELOPE,
+        EXECUTION_COMMIT_ENVELOPE,
+        (EXECUTION_COMMIT_VECTORS,),
+    ),
+    (
+        CAPABILITY_PORT_CONTRACT_PATH,
+        "capability_port_boundary",
+        CAPABILITY_INVOCATION_SCHEMA,
+        CAPABILITY_OUTCOME_SCHEMA,
+        CAPABILITY_OUTCOME_SCHEMA,
+        (CAPABILITY_INVOCATION_VECTORS, CAPABILITY_OUTCOME_VECTORS),
+    ),
+    (
+        MODEL_INFERENCE_PORT_CONTRACT_PATH,
+        "model_inference_port_boundary",
+        MODEL_INFERENCE_REQUEST_SCHEMA,
+        MODEL_INFERENCE_OUTCOME_SCHEMA,
+        MODEL_INFERENCE_OUTCOME_SCHEMA,
+        (MODEL_INFERENCE_REQUEST_VECTORS, MODEL_INFERENCE_OUTCOME_VECTORS),
+    ),
+    (
+        EXTERNAL_AGENT_PORT_CONTRACT_PATH,
+        "external_agent_port_boundary",
+        EXTERNAL_AGENT_REQUEST_SCHEMA,
+        EXTERNAL_AGENT_OUTCOME_SCHEMA,
+        EXTERNAL_AGENT_OUTCOME_SCHEMA,
+        (EXTERNAL_AGENT_REQUEST_VECTORS, EXTERNAL_AGENT_OUTCOME_VECTORS),
+    ),
+    (
+        DURABLE_EVENT_PORT_CONTRACT_PATH,
+        "durable_event_port_boundary",
+        DURABLE_EVENT_REQUEST_SCHEMA,
+        DURABLE_EVENT_OUTCOME_SCHEMA,
+        DURABLE_EVENT_OUTCOME_SCHEMA,
+        (DURABLE_EVENT_REQUEST_VECTORS, DURABLE_EVENT_OUTCOME_VECTORS),
+    ),
+    (
+        PROGRAM_COMPOSITION_PORT_CONTRACT_PATH,
+        "program_composition_port_boundary",
+        PROGRAM_COMPOSITION_REQUEST_SCHEMA,
+        PROGRAM_COMPOSITION_OUTCOME_SCHEMA,
+        PROGRAM_COMPOSITION_OUTCOME_SCHEMA,
+        (PROGRAM_COMPOSITION_REQUEST_VECTORS, PROGRAM_COMPOSITION_OUTCOME_VECTORS),
+    ),
+)
 
 # Vector file -> schema `$id` it is validated against. Constitution-owned
 # envelopes are resolved from the published constitution layer.
@@ -70,6 +149,14 @@ VECTOR_SCHEMA = {
     "apxm.handler-manifest.v1.json": "apxm.handler-manifest.v1",
     "apxm.capability-invocation.v1.json": "apxm.capability-invocation.v1",
     "apxm.capability-outcome.v1.json": "apxm.capability-outcome.v1",
+    "apxm.model-inference-request.v1.json": "apxm.model-inference-request.v1",
+    "apxm.model-inference-outcome.v1.json": "apxm.model-inference-outcome.v1",
+    "apxm.external-agent-request.v1.json": "apxm.external-agent-request.v1",
+    "apxm.external-agent-outcome.v1.json": "apxm.external-agent-outcome.v1",
+    "apxm.durable-event-request.v1.json": "apxm.durable-event-request.v1",
+    "apxm.durable-event-outcome.v1.json": "apxm.durable-event-outcome.v1",
+    "apxm.program-composition-request.v1.json": "apxm.program-composition-request.v1",
+    "apxm.program-composition-outcome.v1.json": "apxm.program-composition-outcome.v1",
 }
 
 # Authoring rule: no product surface may cite the delivery plan or its
@@ -719,30 +806,19 @@ def compute_descriptor(descriptor: dict[str, Any]) -> dict[str, Any]:
 
 def write_digests() -> None:
     descriptor = load_json(DESCRIPTOR_PATH)
-    execution_commit = compute_port_contract(
-        descriptor,
-        load_json(EXECUTION_COMMIT_PORT_CONTRACT_PATH),
-        boundary_key="port_boundary",
-        request_schema=EXECUTION_COMMIT_ENVELOPE,
-        result_schema=EXECUTION_COMMIT_ENVELOPE,
-        failure_schema=EXECUTION_COMMIT_ENVELOPE,
-        vectors=(EXECUTION_COMMIT_VECTORS,),
-    )
-    capability = compute_port_contract(
-        descriptor,
-        load_json(CAPABILITY_PORT_CONTRACT_PATH),
-        boundary_key="capability_port_boundary",
-        request_schema=CAPABILITY_INVOCATION_SCHEMA,
-        result_schema=CAPABILITY_OUTCOME_SCHEMA,
-        failure_schema=CAPABILITY_OUTCOME_SCHEMA,
-        vectors=(CAPABILITY_INVOCATION_VECTORS, CAPABILITY_OUTCOME_VECTORS),
-    )
-    EXECUTION_COMMIT_PORT_CONTRACT_PATH.write_text(
-        json.dumps(execution_commit, indent=2) + "\n", encoding="utf-8"
-    )
-    CAPABILITY_PORT_CONTRACT_PATH.write_text(
-        json.dumps(capability, indent=2) + "\n", encoding="utf-8"
-    )
+    port_contracts: list[tuple[Path, dict[str, Any]]] = []
+    for path, boundary_key, request, result, failure, vectors in PORT_CONTRACT_SPECS:
+        updated = compute_port_contract(
+            descriptor,
+            load_json(path),
+            boundary_key=boundary_key,
+            request_schema=request,
+            result_schema=result,
+            failure_schema=failure,
+            vectors=vectors,
+        )
+        path.write_text(json.dumps(updated, indent=2) + "\n", encoding="utf-8")
+        port_contracts.append((path, updated))
     new_descriptor = compute_descriptor(descriptor)
     DESCRIPTOR_PATH.write_text(json.dumps(new_descriptor, indent=2) + "\n", encoding="utf-8")
     DESCRIPTOR_SIDECAR_PATH.write_text(
@@ -751,31 +827,13 @@ def write_digests() -> None:
         encoding="utf-8",
     )
     print(f"descriptor_digest: {new_descriptor['descriptor_digest']}")
-    print(f"execution_commit_port_contract_digest: {execution_commit['port_contract_digest']}")
-    print(f"capability_port_contract_digest: {capability['port_contract_digest']}")
+    for path, contract in port_contracts:
+        print(f"{path.stem}: {contract['port_contract_digest']}")
 
 
 def check_digests() -> str:
     descriptor = load_json(DESCRIPTOR_PATH)
-    specs = (
-        (
-            EXECUTION_COMMIT_PORT_CONTRACT_PATH,
-            "port_boundary",
-            EXECUTION_COMMIT_ENVELOPE,
-            EXECUTION_COMMIT_ENVELOPE,
-            EXECUTION_COMMIT_ENVELOPE,
-            (EXECUTION_COMMIT_VECTORS,),
-        ),
-        (
-            CAPABILITY_PORT_CONTRACT_PATH,
-            "capability_port_boundary",
-            CAPABILITY_INVOCATION_SCHEMA,
-            CAPABILITY_OUTCOME_SCHEMA,
-            CAPABILITY_OUTCOME_SCHEMA,
-            (CAPABILITY_INVOCATION_VECTORS, CAPABILITY_OUTCOME_VECTORS),
-        ),
-    )
-    for path, boundary_key, request, result, failure, vectors in specs:
+    for path, boundary_key, request, result, failure, vectors in PORT_CONTRACT_SPECS:
         instance = load_json(path)
         expected = compute_port_contract(
             descriptor,
@@ -796,7 +854,7 @@ def check_digests() -> str:
 
 def check_port_contract_envelope(schema_ids: dict[str, dict[str, Any]]) -> None:
     schema = schema_ids["apxm.port-contract.v1"]
-    for path in (EXECUTION_COMMIT_PORT_CONTRACT_PATH, CAPABILITY_PORT_CONTRACT_PATH):
+    for path, *_ in PORT_CONTRACT_SPECS:
         instance = load_json(path)
         errors = schema_instance_errors(schema, instance, schema_ids, schema)
         if errors:

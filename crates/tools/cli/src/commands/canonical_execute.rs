@@ -10,8 +10,9 @@ use serde_json::{Value, json};
 
 use apxm_execution::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
-    CompositionReceiver, CompositionRequest, EventAwait, EventOutcome, EventPort, ExecutionPorts,
-    ExecutionRequest, NodeOutcome, NoopStaticHookHandler, execute,
+    CompositionReceiver, CompositionRequest, EventAwait, EventOutcome, EventPort,
+    ExecutionPortBundle, ExecutionPorts, ExecutionRequest, NodeOutcome, NoopStaticHookHandler,
+    execute,
 };
 use apxm_inference::{
     AttemptDisposition, ExactModelTargetRef, ExactPortBindingRef, ModelBindingAdmission,
@@ -345,7 +346,7 @@ fn dev_ports(
             contract("apxm.external-agent.v1"),
         ),
     ]);
-    let bundle = PortBundle::construct(
+    let kernel_bundle = PortBundle::construct(
         &spec,
         vec![
             (
@@ -366,11 +367,18 @@ fn dev_ports(
             ),
         ],
     )?;
+    let bundle = ExecutionPortBundle::construct(
+        Arc::new(kernel_bundle),
+        contract("apxm.durable-event.v1"),
+        binding(PortSlot::DurableEvent, "apxm.durable-event.v1"),
+        Arc::new(DevEvents),
+        contract("apxm.program-composition.v1"),
+        binding(PortSlot::ProgramComposition, "apxm.program-composition.v1"),
+        Arc::new(DevComposition),
+    )?;
     Ok(ExecutionPorts::from_admitted_bundle(
         &bundle,
         model_call_request_metadata,
-        Arc::new(DevEvents),
-        Arc::new(DevComposition),
         Arc::new(NoopStaticHookHandler),
     )?)
 }
@@ -467,6 +475,7 @@ fn event_outcome_json(outcome: &EventOutcome) -> Value {
         }
         EventOutcome::Parked => json!({"status": "parked"}),
         EventOutcome::Expired => json!({"status": "expired"}),
+        EventOutcome::Cancelled => json!({"status": "cancelled"}),
         EventOutcome::Mismatched {
             delivered_event_ref,
         } => json!({

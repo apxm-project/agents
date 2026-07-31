@@ -27,6 +27,8 @@ pub enum PortSlot {
     ModelInference,
     Capability,
     ExternalAgentCapability,
+    DurableEvent,
+    ProgramComposition,
 }
 
 impl PortSlot {
@@ -38,6 +40,8 @@ impl PortSlot {
             Self::ModelInference => "model_inference",
             Self::Capability => "capability",
             Self::ExternalAgentCapability => "external_agent_capability",
+            Self::DurableEvent => "durable_event",
+            Self::ProgramComposition => "program_composition",
         }
     }
 }
@@ -50,6 +54,43 @@ pub struct ExactPortBinding {
     pub port_contract: SchemaDigestRef,
     pub binding_digest: String,
     pub proof_digest: String,
+}
+
+impl ExactPortBinding {
+    /// Validate this immutable binding against one exact expected slot and Port
+    /// Contract. Construction roots perform admission; runtime construction
+    /// only rechecks the admitted identity, proof, and slot equality.
+    ///
+    /// # Errors
+    ///
+    /// Returns a closed [`BundleError`] when the slot or Port Contract differs
+    /// or either admitted digest is malformed.
+    pub fn validate_for(
+        &self,
+        expected_slot: PortSlot,
+        expected_contract: &SchemaDigestRef,
+    ) -> Result<(), BundleError> {
+        if self.slot != expected_slot {
+            return Err(BundleError::BindingSlotMismatch {
+                expected: expected_slot,
+                actual: self.slot,
+            });
+        }
+        if self.port_contract != *expected_contract {
+            return Err(BundleError::ContractMismatch {
+                slot: self.slot,
+                expected: expected_contract.clone(),
+                actual: self.port_contract.clone(),
+            });
+        }
+        if !is_digest(&self.binding_digest) {
+            return Err(BundleError::InvalidBindingDigest(self.slot));
+        }
+        if !is_digest(&self.proof_digest) {
+            return Err(BundleError::InvalidProof(self.slot));
+        }
+        Ok(())
+    }
 }
 
 /// One provided implementation, tagged by the slot it fills.
@@ -114,6 +155,11 @@ pub enum BundleError {
     },
     /// The binding descriptor and the implementation named different slots.
     SlotImplementationMismatch(PortSlot),
+    /// A separately bound driver port named a different slot than expected.
+    BindingSlotMismatch {
+        expected: PortSlot,
+        actual: PortSlot,
+    },
     /// The binding digest was not a well-formed sha256 value.
     InvalidBindingDigest(PortSlot),
     /// The admission proof digest was not a well-formed sha256 value.
@@ -188,19 +234,7 @@ impl PortBundle {
             if !seen.insert(binding.slot) {
                 return Err(BundleError::DuplicateSlot(binding.slot));
             }
-            if binding.port_contract != *expected {
-                return Err(BundleError::ContractMismatch {
-                    slot: binding.slot,
-                    expected: expected.clone(),
-                    actual: binding.port_contract,
-                });
-            }
-            if !is_digest(&binding.binding_digest) {
-                return Err(BundleError::InvalidBindingDigest(binding.slot));
-            }
-            if !is_digest(&binding.proof_digest) {
-                return Err(BundleError::InvalidProof(binding.slot));
-            }
+            binding.validate_for(binding.slot, expected)?;
 
             match implementation {
                 PortImplementation::ExecutionCommit(port) => execution_commit = Some(port),

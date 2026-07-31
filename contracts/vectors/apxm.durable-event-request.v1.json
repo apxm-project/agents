@@ -1,0 +1,12 @@
+[
+  {
+    "name": "valid-exact-event-wait",
+    "expected_valid": true,
+    "input": { "node_id": "node.await.1", "event_ref": "event.1" }
+  },
+  {
+    "name": "reject-provider-selector",
+    "expected_valid": false,
+    "input": { "node_id": "node.await.1", "event_ref": "event.1", "provider": "first_available" }
+  }
+]

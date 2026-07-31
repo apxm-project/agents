@@ -26,6 +26,7 @@ pub enum ErrorCategory {
 
 /// A typed model-effect error.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TypedError {
     pub category: ErrorCategory,
     pub code: String,
@@ -34,6 +35,7 @@ pub struct TypedError {
 
 /// Typed usage evidence for one model effect.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Usage {
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -146,6 +148,7 @@ impl NodeExecutionId {
 /// The inference request carries only this identity and digest; it never copies
 /// or assembles model-visible context.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ModelContextEnvelopeRef {
     pub context_id: String,
     pub sealed_digest: String,
@@ -153,6 +156,7 @@ pub struct ModelContextEnvelopeRef {
 
 /// A stable idempotency identity for one externally visible model effect.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct IdempotencyKey {
     pub key_id: String,
     pub scope_ref: String,
@@ -171,6 +175,7 @@ pub enum ModelStreamMode {
 /// This does not include a target or binding, so an implementation cannot use
 /// it to select, substitute, or rebind a model.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ModelCallRequestMetadata {
     pub model_context_envelope_ref: ModelContextEnvelopeRef,
     pub idempotency: IdempotencyKey,
@@ -194,6 +199,7 @@ pub trait ModelCallRequestMetadataPort: Send + Sync {
 /// A complete, validated inference request. Its fields are private so callers
 /// cannot bypass the exact-binding, sealed-context, and idempotency checks.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ModelCallRequest {
     effect_id: String,
     node_execution_id: NodeExecutionId,

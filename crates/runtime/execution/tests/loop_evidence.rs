@@ -9,8 +9,8 @@ use serde_json::{Value, json};
 use apxm_execution::{
     CapabilityInvocationAdmission, CapabilityOutcome, CapabilityPort, CapabilityRequest,
     CompositionOutcome, CompositionPort, CompositionRequest, EventAwait, EventOutcome, EventPort,
-    ExecutionPorts, ExecutionRequest, NoopStaticHookHandler, RunOutcome, execute,
-    execute_resumable,
+    ExecutionPortBundle, ExecutionPorts, ExecutionRequest, NoopStaticHookHandler, RunOutcome,
+    execute, execute_resumable,
 };
 use apxm_inference::{
     AttemptDisposition, ExactModelTargetRef, ExactPortBindingRef, IdempotencyKey,
@@ -494,7 +494,7 @@ fn ports(
             contract("apxm.external-agent.v1"),
         ),
     ]);
-    let bundle = PortBundle::construct(
+    let kernel_bundle = PortBundle::construct(
         &spec,
         vec![
             (
@@ -516,11 +516,19 @@ fn ports(
         ],
     )
     .expect("test ports satisfy the admitted bundle");
+    let bundle = ExecutionPortBundle::construct(
+        Arc::new(kernel_bundle),
+        contract("apxm.durable-event.v1"),
+        binding(PortSlot::DurableEvent, "apxm.durable-event.v1"),
+        Arc::new(Events { park: park_event }),
+        contract("apxm.program-composition.v1"),
+        binding(PortSlot::ProgramComposition, "apxm.program-composition.v1"),
+        Arc::new(Composition),
+    )
+    .expect("driver ports satisfy their exact admitted bindings");
     ExecutionPorts::from_admitted_bundle(
         &bundle,
         Arc::new(TestModelRequestMetadata),
-        Arc::new(Events { park: park_event }),
-        Arc::new(Composition),
         Arc::new(NoopStaticHookHandler),
     )
     .expect("bundle contains every runtime effect port")

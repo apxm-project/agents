@@ -160,6 +160,18 @@ fn invocation(profile: &str) -> CapabilityInvocation {
     }
 }
 
+#[test]
+fn external_agent_request_rejects_unknown_wire_fields() {
+    let mut value =
+        serde_json::to_value(invocation("acp:codex").request).expect("serialize exact request");
+    value
+        .as_object_mut()
+        .expect("request is an object")
+        .insert("executable".into(), serde_json::json!("codex"));
+
+    assert!(serde_json::from_value::<AcpPromptRequest>(value).is_err());
+}
+
 async fn run_profile(profile: &str, reported_value: &str) -> apxm_kernel::CapabilityReport {
     let commit = Arc::new(FixtureCommit::new());
     let peer = Arc::new(ScriptedAcpPeer {

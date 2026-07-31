@@ -1,0 +1,16 @@
+[
+  {
+    "name": "valid-model-outcome-unknown-with-usage",
+    "expected_valid": true,
+    "input": {
+      "model_outcome_unknown": {
+        "uncertain_usage": { "input_tokens": 7, "output_tokens": 3 }
+      }
+    }
+  },
+  {
+    "name": "reject-generic-unknown-outcome",
+    "expected_valid": false,
+    "input": { "unknown": { "raw": "transport lost" } }
+  }
+]
