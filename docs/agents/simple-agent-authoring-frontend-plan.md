@@ -1,8 +1,9 @@
 # Source-first Agent frontend master plan
 
-- Status: P1–P6 implemented in `agents@09dbdf63` under
+- Status: frontend P1–P6 implemented in `agents@09dbdf63` under
   [ADR-0015](../adr/0015-source-first-agent-frontend-vocabulary.md); this plan
-  preserves the accepted delivery shape and current authoring syntax
+  preserves the accepted delivery shape and current authoring syntax while
+  the ADR-0027 managed-plane/full-removal joins remain target work
 - Owner: APXM `agents`
 - Scope: Python, TypeScript, FrontendGraph, Rust lowering, examples, generated
   Studio source, documentation, and frontend-to-evidence conformance
@@ -13,11 +14,26 @@
   [Agent Program composition and AIR full replacement](agent-program-composition-and-air-full-replacement-plan.md)
 - Frontend boundary:
   [ADR-0006](../adr/0006-authoring-frontends-use-explicit-compiler-bridges.md)
+- Event/runtime boundary:
+  [ADR-0018](../adr/0018-event-readiness-and-local-scheduling-are-agents-semantics.md)
+  under accepted workspace ADR-0027
 
 Accepted ADRs and the parent contract remain architectural authority. This
 master plan records the delivered syntax-alignment shape for the source-first
 frontend. Guides and READMEs may teach it, but they do not independently invent
 public names, decorator behavior, lowering rules, or examples.
+
+This plan owns authoring, FrontendGraph, Rust lowering, and source-to-evidence
+conformance only. Agents owns portable Event/EventRef/occurrence/provenance,
+dependency readiness, activation-runner, and Execution Commit semantics.
+Server owns managed Source Contracts, accepted occurrences, delivery/target
+application, activation/effect durability and leases, schedules, Host gateway,
+retry/DLQ/recovery, and operational projections. Auth, Host SDK, and Adapters
+retain their authority and protocol ownership. Contracts indexes and generates
+the exact owner publications without owning their meaning. Target consumers
+use those generated publications and Server-managed durability; the retiring
+OS is only current-state removal evidence, publishes no target descriptor, and
+has no target frontend or execution consumer.
 
 ## 1. Goal
 
@@ -64,8 +80,8 @@ internal machinery:
   NodeExecutions, attempts, loop occurrences, Hooks, effects, context
   transitions, usage, outputs, and failures remain joinable; and
 - **one semantic path** — Python, TypeScript, generated Studio source, local
-  compilation, remote compilation, generic runtime execution, and Studio
-  inspection agree on the same program.
+  compilation, remote compilation, Agents generic runtime execution,
+  Server-managed durability, and Studio inspection agree on the same program.
 
 “Powerful” does not mean a large API. It means a small orthogonal vocabulary
 can express rich behavior while the compiler and runtime retain enough typed
@@ -693,6 +709,14 @@ The registered MLIR operation names are `ais.model_call`,
 `capability.invoke`, `program.new`, `program.invoke`, and `await.event`. That
 distinction is compiler-owned and never leaks into normal author source.
 
+An Event declaration or wait carries only the Agents-owned portable Event,
+EventRef, provenance, and PXM transition meaning through source, FrontendGraph,
+AIR, artifact, continuation, and evidence. The frontend does not define a
+Source Contract, accept an occurrence, apply a fulfillment, lease an
+activation, schedule a retry, or persist delivery/effect work. Managed
+end-to-end conformance supplies those facts through Server's generated target
+contracts and adapts one exact Server claim to the Agents `ActivationRunner`.
+
 ## 9. Baseline findings and required corrections
 
 At `agents@8ccf4040bd341d074954489bdd61112f3bee294b`, the repository proves
@@ -700,10 +724,10 @@ closure and byte determinism for a much thinner path than the target contract:
 
 | Baseline finding | Evidence | Required correction |
 | --- | --- | --- |
-| Current frontends record directly into mutable graph structures; there is no explicit bound/typed source-tree phase with pass invariants. | [Python recorder](../../crates/compiler/frontend/python/apxm_program/agent_program.py), [TypeScript recorder](../../crates/compiler/frontend/typescript/src/agent-program.ts) | Introduce a frontend-internal immutable `BoundAgentTree`, closed visitors/passes, and coverage tests before emitting FrontendGraph. |
+| Current frontends record directly into mutable graph structures; there is no explicit bound/typed source-tree phase with pass invariants. | Historical baseline paths `crates/compiler/frontend/python/apxm_program/agent_program.py` and `crates/compiler/frontend/typescript/src/agent-program.ts`; both were subsequently replaced | Introduce a frontend-internal immutable `BoundAgentTree`, closed visitors/passes, and coverage tests before emitting FrontendGraph. |
 | FrontendGraph reuses AIR-owned `SemanticOpKind` and `StructuralOpKind`. | [`frontend_graph.rs`](../../crates/machine/program/src/frontend_graph.rs) | Give FrontendGraph its own typed source-semantic declarations, values, calls, CFG, and region records. |
 | The schema lets frontends write the five AIR strings and literal `ais.loop`; `operands` is an untyped object. | [`apxm.frontend-graph.v1.json`](../../contracts/schemas/apxm.frontend-graph.v1.json) | Replace raw spellings with closed discriminated intent records and typed value references; Rust selects AIS. |
-| Python and TypeScript publicly import/export generated operation constants and record raw operation/kind strings. | [Python frontend](../../crates/compiler/frontend/python/apxm_program/__init__.py), [TypeScript recorder](../../crates/compiler/frontend/typescript/src/frontend-graph.ts), [generated TypeScript constants](../../crates/compiler/frontend/typescript/src/generated/frontend-contract.ts) | Generated frontend metadata describes declarations and intent DTOs; raw AIS/AIR names are absent from public authoring packages. |
+| Python and TypeScript publicly import/export generated operation constants and record raw operation/kind strings. | [Python frontend](../../crates/compiler/frontend/python/apxm_program/__init__.py) plus historical baseline TypeScript paths `crates/compiler/frontend/typescript/src/frontend-graph.ts` and `src/generated/frontend-contract.ts`, subsequently replaced | Generated frontend metadata describes declarations and intent DTOs; raw AIS/AIR names are absent from public authoring packages. |
 | FrontendGraph → AIR copies operations, structural records, operands, and context edges almost field-for-field. | [`lower.rs`](../../crates/machine/program/src/lower.rs) | Implement verification, CFG construction, SSA/block arguments, loop-carried context, yield/resume, Hook expansion, and deterministic AIS selection. |
 | FrontendGraph and AIR schemas omit the typed values/data edges/nested control flow required by the owner contract. | [FrontendGraph schema](../../contracts/schemas/apxm.frontend-graph.v1.json), [AIR schema](../../contracts/schemas/apxm.air.v1.json), [owner contract §7](agent-program-composition-and-air-contract.md#7-frontendgraph-v1) | Complete both schemas and their Rust types/vectors before either source frontend lands. |
 | The AIR emitter writes unregistered `apxm.*` semantic operations as `() -> ()`, drops semantic operands/results, and writes flat structural token records. | [`canonical.rs`](../../crates/compiler/pipeline/src/canonical.rs) | Emit registered `ais.*` operations with complete typed SSA operands/results, attributes, nested regions, and block arguments. |
@@ -808,7 +832,8 @@ Affected authority:
   mapping to AIS operations, including Tool/Capability convergence;
 - freeze the source-to-evidence correlation identity, optimization legality
   rules, and backend-neutral compiler-metadata boundary;
-- update the parent P2/P6/P9 plan gates; and
+- update the parent P2/P6/P9 plan gates and the event-driven runtime
+  full-replacement joins; and
 - freeze the Python/TypeScript examples in sections 4 and 5 as reviewed golden
   source.
 
@@ -834,7 +859,10 @@ or runtime behavior.
   normalize equivalent source constructs before graph emission;
 - define public-surface vectors for every declaration/decorator, accepted
   argument, inferred type, diagnostic, and forbidden composition in sections
-  2.4-2.5; and
+  2.4-2.5;
+- publish Agents-owned schema sources and owner-local generator inputs so the
+  Contracts index/generation cohort produces every direct consumer from the
+  same exact owner digests without copying semantics; and
 - include one conversational conformance vector that combines a loop, Context,
   Model, typed Tool request, Capability result, Event wait, Hook, specialist
   invocation, yield/resume, and return without a special runtime construct.
@@ -904,14 +932,19 @@ runtime package, or private printer.
   use the same frontend capture path;
 - prove the conversational example through the provider-neutral inference
   contract and an exact APXM-vLLM binding without changing source semantics;
+- prove Event wait and root activation examples through Server-managed
+  occurrence/application, activation claims, prepared-effect work, and the
+  Agents `ActivationRunner`/Execution Commit seam using only generated
+  target-owner contracts;
 - project the example only from canonical source maps and runtime evidence,
   including Model/Capability nodes, Hooks, Events, Context transitions, loop
   iterations, attempts, usage, outputs, and failures; and
 - update generated reference/API docs from the packed packages.
 
 Gate: an author can move between guide source, generated source, FrontendGraph,
-AIR, and runtime evidence without encountering a second vocabulary or behavior
-source.
+AIR, Server-managed execution, and runtime evidence without encountering a
+second vocabulary or behavior source. No target example, generated client, or
+projection consumes a retiring OS contract or route.
 
 ### P6 — Full replacement and absence proof
 
@@ -920,11 +953,15 @@ source.
 - remove the old imperative examples and docs;
 - retain compiler bridges in their focused packages and graph inspection only
   as compile results/developer tooling; and
-- publish Python, TypeScript, compiler, examples, Studio generator, and
-  generated docs in one Compatibility Set.
+- regenerate and verify every affected target consumer from the exact
+  owner-publication cohort, delete every retiring OS frontend/compile/evidence
+  consumer and generated client, and publish Python, TypeScript, compiler,
+  examples, Studio generator, generated docs, and current-owner consumers in
+  one Compatibility Set with no OS target descriptor.
 
 Gate: package export scans and clean-consumer negatives prove the old builder
-and compatibility aliases are absent.
+and compatibility aliases are absent, while target-consumer and descriptor
+scans prove every retiring OS surface is absent.
 
 ## 13. Affected files and consumers
 
@@ -943,10 +980,18 @@ Primary owner paths:
 
 Downstream consumers:
 
-- Studio generated-source authoring;
-- CLI/application source compilation;
+- Studio generated-source authoring and its explicit generated remote compile
+  client;
+- CLI/application source compilation and generated lifecycle/evidence clients;
+- Server artifact admission, managed activation/runtime composition, and
+  operational evidence projection;
 - artifact source maps and handler bundles; and
 - documentation/reference generation.
+
+There is no target OS downstream consumer. Any OS-named source, client,
+configuration, fixture, or release input found during implementation is a
+full-removal item and must be deleted from the target candidate rather than
+translated, aliased, or retained.
 
 Public API impact: breaking full replacement. There is no dual constructor,
 alias period, old graph reader, or compatibility translator.
@@ -987,13 +1032,13 @@ status.
 
 | Phase | Required evidence |
 | --- | --- |
-| D0-P1 | owner-doc link/status audit, surface-manifest/decorator-matrix review, schema/vector validation, cross-language source and diagnostic review |
+| D0-P1 | owner-doc link/status audit, surface-manifest/decorator-matrix review, schema/vector validation, cross-language source and diagnostic review, exact owner-descriptor/generation-cohort drift checks |
 | P2 | `dekk agents build-dialect`, `dekk agents codegen`, `dekk agents test -p apxm-program`, canonical compiler tests, registered-only MLIR negative tests |
 | P3 | `dekk agents test-python-frontend`, Python clean-wheel consumer, Python golden graph/AIR/AIS/artifact checks |
 | P4 | TypeScript typecheck/tests, browser-bundle ceiling check, Node-API and remote-client graph parity |
 | P3-P4 graph changes | `dekk agents check-frontend-codegen`, cross-language canonical graph comparison |
-| P5 | `dekk agents test-frontend-examples`, Studio-owned Gao generic-program conformance, Studio generated-source tests |
-| P6 | package export/retired-surface scans, `dekk agents test-cli`, focused workspace tests, `dekk agents doctor`, release checks |
+| P5 | `dekk agents test-frontend-examples`, Studio-owned Gao generic-program conformance, Studio generated-source tests, Server-managed source-to-commit/activation/effect/schedule/Host/retry/DLQ/recovery/evidence conformance through generated target-owner clients |
+| P6 | package export/retired-surface scans, retiring OS consumer/descriptor absence scan, `dekk agents test-cli`, focused workspace tests, `dekk agents doctor`, release checks |
 
 P5 also requires owner-local inference/vLLM adapter conformance, the Agents
 composition-spine test, evidence replay/projection checks, and coordinator
@@ -1014,8 +1059,9 @@ This plan does not:
 - make Python or TypeScript execute Agent Programs;
 - let a Tool decorator mint authority or select an implementation;
 - expose AIR or a raw graph builder as beginner API;
-- change Server root admission, Auth grants, OS delivery, runtime profiles, or
-  provider selection;
+- reassign Server root admission, managed occurrence/delivery,
+  activation/effect durability, schedules, Host gateway, retry/DLQ/recovery,
+  Auth grants, runtime profiles, or provider selection;
 - add runtime tracing as a compiler frontend; or
 - preserve the current imperative API as a supported compatibility surface.
 
@@ -1025,8 +1071,13 @@ Planning/document edits are reversible before D0 acceptance. Implementation
 lands on an isolated feature branch and does not mutate the current release.
 Before the compatibility-set point of no return, a failed candidate is
 discarded as a whole. Promotion publishes Python, TypeScript, compiler bridges,
-examples, generated Studio source, and documentation together. After promotion,
-corrections are forward-only; the old builder is not re-enabled.
+examples, generated Studio source, documentation, and exact target-owner
+consumers together. The target candidate already excludes every retiring OS
+consumer, descriptor, configuration, and topology member before the shared
+authority barrier. Before the first irreversible target write, rollback
+restores the complete prior release and snapshot; afterward corrections are
+forward-only and neither the old builder nor a retired product path is
+re-enabled.
 
 ## 17. Completion definition
 
@@ -1058,8 +1109,16 @@ The frontend replacement is complete only when:
 - canonical evidence joins source, artifact, Program Invocation, loop
   occurrence, NodeExecution, attempt, effect/request identity, admitted model
   binding, usage, Context transition, output, and failure;
-- Studio emits the same readable source rather than private graph/AIR; and
+- Event/activation examples join Agents-owned portable semantics and
+  `ActivationRunner`/Execution Commit behavior to Server-managed acceptance,
+  application, leases, schedules, Host gateway, durable effects,
+  retry/DLQ/recovery, and operational projections through generated contracts,
+  with no frontend semantic copy;
+- Studio emits the same readable source rather than private graph/AIR;
 - guides, package READMEs, generated reference docs, examples, and Studio
   source pass the documentation-alignment check against canonical compilable
-  goldens; and
-- old public recorder/build/lower APIs and compatibility aliases are absent.
+  goldens;
+- old public recorder/build/lower APIs and compatibility aliases are absent;
+  and
+- target package, generated-client, conformance, configuration, topology, and
+  release scans contain no retiring OS consumer or OS target descriptor.

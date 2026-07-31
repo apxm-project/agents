@@ -14,9 +14,12 @@ That decision requires one Compatibility Set with distinct Rust libraries,
 language authoring frontends, generated remote clients, and applications.
 
 This repository owns the compiler, runtime, Python/TypeScript frontend, and CLI
-parts of that family. It does not own Server routes, OS delivery, customer
-product SDKs, APXM Studio, registry-wide release governance, or the
-Compatibility Set schema.
+parts of that family. Under the
+[current event/runtime ownership](0018-event-readiness-and-local-scheduling-are-agents-semantics.md),
+Server owns its routes and managed occurrence, delivery, target-application,
+activation, effect-work, schedule, Host-gateway, retry/DLQ, recovery, and
+operational APIs. This repository does not own customer product SDKs, APXM
+Studio, registry-wide release governance, or the Compatibility Set schema.
 
 ## Adoption decision
 
@@ -53,8 +56,9 @@ Set. No artifact is published independently as a supported release.
 
 ## Boundary consequences
 
-- Compiler-only consumers acquire no runtime, Server, OS, provider backend, or
-  network dependency by default.
+- Compiler-only consumers acquire no runtime, current-owner generated Server
+  operational client, Server-managed durability implementation, provider
+  backend, or network dependency by default.
 - Runtime consumers select explicit backend profiles without changing contract
   or enforcement semantics.
 - Frontend packages acquire neither runtime behavior nor another AIR printer.

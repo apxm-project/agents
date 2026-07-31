@@ -33,15 +33,19 @@ Python or TypeScript Agent Program source
   -> Rust compiler and verifier
   -> apxm.air.v1 and MLIR lowering
   -> apxm.executable-artifact.v1
-  -> Server admission and OS durable delivery
-  -> generic Rust runtime
+  -> Server root admission and managed occurrence/delivery/application/activation durability
+  -> Agents ActivationRunner, dependency readiness, and local execution
   -> exact admitted model or Capability adapter
   -> inference backend or external resource
-  -> apxm.runtime-evidence.v1 and Session Output
+  -> Agents fenced Execution Commit, apxm.runtime-evidence.v1, and Session Output
 ```
 
 Every arrow is a typed, versioned boundary. No layer may reinterpret a
-previous layer's semantics.
+previous layer's semantics. Under the
+[current event/runtime ownership](0018-event-readiness-and-local-scheduling-are-agents-semantics.md),
+Server owns managed effect-work, schedule, Host-gateway, retry/DLQ, recovery,
+and operational APIs, while product consumers use current-owner generated
+bindings.
 
 ### Authoring and compiler boundary
 
@@ -176,8 +180,9 @@ One release candidate must prove:
 
 1. equivalent Python and TypeScript source produces equivalent graphs,
    canonical AIR, artifacts, and source maps;
-2. in-process and Server/OS execution produces equivalent Program lifecycle
-   and NodeExecution evidence;
+2. in-process composition and Server-managed execution through the same Agents
+   ActivationRunner, Execution Commit, and runtime evidence contracts produce
+   equivalent Program lifecycle and NodeExecution evidence;
 3. every admitted model backend observes the same context, Tool, budget,
    cancellation, safe-retry/reconciliation, outcome-unknown, streaming, and
    output contract;
