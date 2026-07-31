@@ -12,6 +12,7 @@
 //! [`session_ledger::SessionLedger`], and the [`ports::ScopedMemoryPort`]) whose
 //! durable implementations are owned by the lifecycle/persistence plane.
 
+mod bundle;
 pub mod driver;
 pub mod operational_usage;
 pub mod ports;
@@ -19,6 +20,7 @@ pub mod resume;
 pub mod session_ledger;
 pub mod structural;
 
+pub use bundle::ExecutionPortBundle;
 pub use driver::{
     CapabilityInvocationAdmission, ExecutionError, ExecutionPorts, ExecutionPortsError,
     ExecutionRequest, NodeOutcome, NoopStaticHookHandler, RunReport, StaticHookHandlerPort,

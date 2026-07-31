@@ -138,6 +138,17 @@ fn prepared_request_preserves_exact_admission_and_host_coordinates() {
 }
 
 #[test]
+fn prepared_request_rejects_unknown_wire_fields() {
+    let mut value = serde_json::to_value(request()).expect("serialize exact request");
+    value
+        .as_object_mut()
+        .expect("request is an object")
+        .insert("provider".into(), serde_json::json!("first_available"));
+
+    assert!(serde_json::from_value::<ModelCallRequest>(value).is_err());
+}
+
+#[test]
 fn missing_or_invalid_host_metadata_fails_before_dispatch() {
     let preparation = ModelCallPreparation::authorize(
         "effect.1",

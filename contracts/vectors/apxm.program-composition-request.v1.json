@@ -1,0 +1,21 @@
+[
+  {
+    "name": "valid-program-receiver",
+    "expected_valid": true,
+    "input": {
+      "node_id": "node.program.1",
+      "receiver": { "program": { "program_ref": "program.1" } }
+    }
+  },
+  {
+    "name": "reject-ambiguous-receiver",
+    "expected_valid": false,
+    "input": {
+      "node_id": "node.program.1",
+      "receiver": {
+        "program": { "program_ref": "program.1" },
+        "instance": { "program_instance_ref": "program-instance.1" }
+      }
+    }
+  }
+]

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.external-agent-request.v1",
+  "title": "ExternalAgentRequest",
+  "description": "One exact outer Capability effect submitted to an admitted External Agent Profile through the ACP client port.",
+  "type": "object",
+  "required": ["effect_ref", "session_ref", "profile_ref", "prompt"],
+  "properties": {
+    "effect_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+    "session_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+    "profile_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+    "prompt": { "type": "string", "minLength": 1, "maxLength": 1048576 }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,22 @@
+[
+  {
+    "name": "valid-exact-external-agent-request",
+    "expected_valid": true,
+    "input": {
+      "effect_ref": "effect.external-agent.1",
+      "session_ref": "external-agent-session.1",
+      "profile_ref": "external-agent-profile.1",
+      "prompt": "Inspect the exact admitted change."
+    }
+  },
+  {
+    "name": "reject-empty-prompt",
+    "expected_valid": false,
+    "input": {
+      "effect_ref": "effect.external-agent.1",
+      "session_ref": "external-agent-session.1",
+      "profile_ref": "external-agent-profile.1",
+      "prompt": ""
+    }
+  }
+]

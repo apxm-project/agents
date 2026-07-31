@@ -1,0 +1,12 @@
+[
+  {
+    "name": "valid-created-child",
+    "expected_valid": true,
+    "input": { "created": { "child_instance_ref": "program-instance.child.1" } }
+  },
+  {
+    "name": "reject-process-spawn-outcome",
+    "expected_valid": false,
+    "input": { "spawned": { "pid": 42 } }
+  }
+]

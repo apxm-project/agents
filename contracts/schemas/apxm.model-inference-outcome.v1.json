@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.model-inference-outcome.v1",
+  "title": "ModelInferenceOutcome",
+  "description": "The closed terminal outcome set returned by one exact model inference implementation.",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["committed_success"],
+      "properties": { "committed_success": { "$ref": "#/$defs/CommittedSuccess" } },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["typed_failure"],
+      "properties": { "typed_failure": { "$ref": "#/$defs/TypedFailure" } },
+      "additionalProperties": false
+    },
+    { "const": "cancelled" },
+    {
+      "type": "object",
+      "required": ["model_outcome_unknown"],
+      "properties": { "model_outcome_unknown": { "$ref": "#/$defs/OutcomeUnknown" } },
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "Usage": {
+      "type": "object",
+      "required": ["input_tokens", "output_tokens"],
+      "properties": {
+        "input_tokens": { "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "CommittedSuccess": {
+      "type": "object",
+      "required": ["usage"],
+      "properties": { "usage": { "$ref": "#/$defs/Usage" } },
+      "additionalProperties": false
+    },
+    "TypedFailure": {
+      "type": "object",
+      "required": ["error"],
+      "properties": { "error": { "$ref": "#/$defs/TypedError" } },
+      "additionalProperties": false
+    },
+    "TypedError": {
+      "type": "object",
+      "required": ["category", "code", "message"],
+      "properties": {
+        "category": { "enum": ["validation", "admission", "authority", "configuration", "unavailable", "conflict", "outcome_unknown", "internal"] },
+        "code": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "message": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      },
+      "additionalProperties": false
+    },
+    "OutcomeUnknown": {
+      "type": "object",
+      "required": ["uncertain_usage"],
+      "properties": { "uncertain_usage": { "oneOf": [{ "$ref": "#/$defs/Usage" }, { "type": "null" }] } },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,23 @@
+[
+  {
+    "name": "valid-external-agent-outcome-unknown",
+    "expected_valid": true,
+    "input": {
+      "session_ref": "external-agent-session.1",
+      "state": { "outcome_unknown": { "message": "peer completion was not observed" } },
+      "nested_events": [],
+      "peer_usage": []
+    }
+  },
+  {
+    "name": "reject-native-model-usage-field",
+    "expected_valid": false,
+    "input": {
+      "session_ref": "external-agent-session.1",
+      "state": "cancelled",
+      "nested_events": [],
+      "peer_usage": [],
+      "native_input_tokens": 10
+    }
+  }
+]

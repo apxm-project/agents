@@ -23,6 +23,7 @@ pub struct ModelTargetRef(pub String);
 /// portable target requirement, while the admission fact proves the immutable
 /// target instance that is permitted for this invocation.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExactModelTargetRef {
     pub reference: ModelTargetRef,
     pub target_digest: String,
@@ -34,6 +35,7 @@ pub struct ModelDeploymentRef(pub String);
 
 /// A reference to one immutable Exact Port Binding, identified by its digest.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExactPortBindingRef {
     pub binding_digest: String,
     pub port_contract_digest: String,
@@ -42,6 +44,7 @@ pub struct ExactPortBindingRef {
 /// The single admitted resolution for one model target. It references the exact
 /// binding digest and carries no adapter/provider selection of its own.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ResolvedModelBinding {
     pub model_target: ExactModelTargetRef,
     pub model_deployment_ref: ModelDeploymentRef,
