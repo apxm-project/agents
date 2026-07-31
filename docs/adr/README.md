@@ -23,6 +23,7 @@ only and cannot be used as implementation authority.
 | [0016](0016-tool-authoring-and-handler-execution-are-separate.md) | Accepted | Typed Tool references, private package-handler definitions, Rust-owned manifest, and Rust-admitted Capability execution are separate boundaries | Tool authoring and handler-execution plan |
 | [0017](0017-gao-is-a-studio-owned-agent-program-over-host-capabilities.md) | Accepted | Gao is a Studio-owned ordinary Agent Program; Workflow authoring arrives through typed Host Capabilities with no named Agents semantics | Studio Gao Host plan and cross-repository frontend/runtime conformance |
 | [0018](0018-event-readiness-and-local-scheduling-are-agents-semantics.md) | Accepted; requires accepted workspace ADR-0027 | Agents owns portable Program Event/reference/reducer/activation/readiness/local scheduling semantics while Server owns managed durable coordination | Event-driven runtime contract and full-replacement plan |
+| [0019](0019-builtin-capabilities-own-no-durable-scheduling-or-wake-bridge.md) | Accepted; amends 0016; requires accepted workspace ADR-0027 | No builtin Capability holds a durable timer, a durable store, a background task, or a process-global wake bridge; wall-clock schedules are Server-owned managed occurrences | Agents event-runtime owner lane plan |
 
 Canonical owner contract and plan:
 
@@ -35,5 +36,6 @@ Canonical owner contract and plan:
 - [Tool authoring and handler-execution plan](../agents/tool-authoring-and-handler-execution-plan.md)
 - [Event-driven runtime and scheduler contract](../agents/event-driven-runtime-and-scheduler-contract.md)
 - [Event-driven runtime full-replacement plan](../agents/event-driven-runtime-full-replacement-plan.md)
+- [Agents event-runtime owner lane plan](../plans/agents-event-runtime-owner-lane-plan.md)
 - [APXM Port Contracts and composition plan](../../../../docs/plans/apxm-port-contracts-and-composition-full-replacement-plan.md)
 - [APXM master plan](../../../../docs/plans/apxm-master-plan.md)
