@@ -1,0 +1,26 @@
+[package]
+name = "apxm-commit-local"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+publish = false
+description = "Owner-local in-memory and filesystem ExecutionCommitPort conformance adapters (not a hosted durable service)"
+
+[lints]
+workspace = true
+
+[dependencies]
+apxm-kernel.workspace = true
+apxm-program.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "macros"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "sync"] }
