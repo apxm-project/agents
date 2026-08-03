@@ -8,8 +8,11 @@ local runs:
 1. Test the packed Python frontend in a clean consumer.
 2. Test the packed TypeScript frontend in a clean consumer.
 3. Build, compile, and run the repository examples from installed packages.
-4. Compare Python and TypeScript FrontendGraph and AIR.
-5. Run the hand-authored-AIR regression guard.
+   Cross-language comparison lives in
+   ``examples/agents/conversational/tests/test_parity.py`` and requires
+   closed-semantics AIR equality after removing language-local source maps
+   plus projected FrontendGraph intent parity.
+4. Run the hand-authored-AIR regression guard.
 
 Exit 0 = clean. Exit 1 = any step failed.
 """

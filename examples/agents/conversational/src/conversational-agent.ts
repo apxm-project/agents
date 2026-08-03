@@ -27,6 +27,8 @@ const source = staticSource(import.meta.url);
 
 const ResearchSpecialist = Agent<ConversationInput, string, ResearchContext>({
   name: "ResearchSpecialist",
+  input: "ConversationInput",
+  output: "ResearchOutput",
   source,
   context: ResearchContext,
   use: { SearchWeb },
@@ -45,6 +47,8 @@ export const ConversationalExample: ConversationalProgram = Agent<
   ConversationState
 >({
   name: "ConversationalExample",
+  input: "ConversationInput",
+  output: "ConversationOutput",
   source,
   context: ConversationContext,
   use: { ResearchSpecialist, ResearchContext, SupportModel },

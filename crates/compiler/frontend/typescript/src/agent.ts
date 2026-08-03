@@ -22,6 +22,10 @@ type AgentCallback<C, I, O> = {
 
 type AgentConfig<I, O, C> = {
   readonly name?: string;
+  /** Closed input type-ref identity; defaults to `Input` when omitted. */
+  readonly input?: string;
+  /** Closed output type-ref identity; defaults to `Output` when omitted. */
+  readonly output?: string;
   readonly context?: ContextSchema;
   readonly use?: Readonly<Record<string, Binding>>;
   readonly source?: StaticSource;
@@ -97,14 +101,15 @@ export function Agent<I, O, C = undefined>(
     contextTypeRef = config.context.typeRef;
     hasDefaultContext = config.context.defaultPresent;
     bindings.set("__context__", config.context);
-    bindingDeclIds.set("__context__", `decl.context.__context__`);
+    bindingDeclIds.set("__context__", `decl.context.${contextTypeRef}`);
   }
 
   const graph = captureProgram({
     programId,
-    entrypoint: "run",
-    inputTypeRef: "Input",
-    outputTypeRef: "Output",
+    // Program identity is the entrypoint name in the source contract.
+    entrypoint: programId,
+    inputTypeRef: config.input ?? "Input",
+    outputTypeRef: config.output ?? "Output",
     contextTypeRef,
     hasDefaultContext,
     bindings,

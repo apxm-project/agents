@@ -100,6 +100,8 @@ class Capture {
   private readonly hooks: Json[] = [];
   private readonly importedProgramRefs = new Map<string, Json>();
   private readonly instances = new Map<ts.Symbol, string>();
+  /** Named source values resolve to the value ids they produce. */
+  private readonly valuesBySymbol = new Map<ts.Symbol, string>();
   private readonly bindingSymbols = new Map<ts.Symbol, string>();
   private readonly lastNodeByRegion = new Map<string, string>();
   private readonly pendingContextByRegion = new Map<string, string>();
@@ -204,18 +206,25 @@ class Capture {
       this.inputName = params[1].name.text;
     }
 
-    this.values.push({
-      value_id: `${this.input.programId}.param.input`,
-      type_ref: this.input.inputTypeRef,
-      origin: "parameter",
-      origin_id: this.input.entrypoint,
-    });
+    const inputValueId = `${this.input.programId}.param.input`;
     this.values.push({
       value_id: `${this.input.programId}.param.agent`,
       type_ref: "AgentFacade",
       origin: "parameter",
       origin_id: this.input.entrypoint,
     });
+    this.values.push({
+      value_id: inputValueId,
+      type_ref: this.input.inputTypeRef,
+      origin: "parameter",
+      origin_id: this.input.entrypoint,
+    });
+    if (params.length >= 2 && ts.isIdentifier(params[1].name)) {
+      const inputSymbol = this.symbolAt(params[1].name);
+      if (inputSymbol !== undefined) {
+        this.valuesBySymbol.set(inputSymbol, inputValueId);
+      }
+    }
     this.addRegion(this.bodyRegionId, "function_body", undefined, 0);
 
     if (fn.body !== undefined && ts.isBlock(fn.body)) {
@@ -375,15 +384,18 @@ class Capture {
       for (const decl of stmt.declarationList.declarations) {
         if (decl.initializer !== undefined) {
           const creation = this.visitExpression(decl.initializer, regionId, source);
-          if (
-            creation !== undefined &&
-            ts.isIdentifier(decl.name) &&
-            creation.programRef !== undefined
-          ) {
-            const instanceSymbol = this.symbolAt(decl.name);
-            if (instanceSymbol !== undefined) {
-              this.instances.set(instanceSymbol, creation.programRef);
-            }
+          if (creation === undefined || !ts.isIdentifier(decl.name)) {
+            continue;
+          }
+          const nameSymbol = this.symbolAt(decl.name);
+          if (nameSymbol === undefined) {
+            continue;
+          }
+          if (creation.programRef !== undefined) {
+            this.instances.set(nameSymbol, creation.programRef);
+          }
+          if (creation.valueId !== undefined) {
+            this.valuesBySymbol.set(nameSymbol, creation.valueId);
           }
         }
       }
@@ -404,9 +416,10 @@ class Capture {
     expr: ts.Expression,
     regionId: string,
     source: ts.SourceFile,
-  ): { programRef?: string } | undefined {
+  ): { programRef?: string; valueId?: string } | undefined {
     if (ts.isAwaitExpression(expr)) {
-      this.visitAwait(expr, regionId, source);
+      const valueId = this.visitAwait(expr, regionId, source);
+      return valueId === undefined ? undefined : { valueId };
     } else if (
       ts.isBinaryExpression(expr) &&
       expr.operatorToken.kind === ts.SyntaxKind.EqualsToken
@@ -429,10 +442,17 @@ class Capture {
           this.pendingContextByRegion.set(regionId, lastNode);
         }
       } else if (ts.isAwaitExpression(expr.right)) {
-        this.visitAwait(expr.right, regionId, source);
+        const valueId = this.visitAwait(expr.right, regionId, source);
+        if (valueId !== undefined && ts.isIdentifier(expr.left)) {
+          const nameSymbol = this.symbolAt(expr.left);
+          if (nameSymbol !== undefined) {
+            this.valuesBySymbol.set(nameSymbol, valueId);
+          }
+        }
+        return valueId === undefined ? undefined : { valueId };
       }
     } else if (ts.isCallExpression(expr) && this.isAgentCreation(expr)) {
-      return { programRef: this.recordAgentCreation(expr, regionId, source) };
+      return this.recordAgentCreation(expr, regionId, source);
     }
     return undefined;
   }
@@ -441,23 +461,25 @@ class Capture {
     expr: ts.AwaitExpression,
     regionId: string,
     source: ts.SourceFile,
-  ): void {
+  ): string | undefined {
     const call = expr.expression;
     if (!ts.isCallExpression(call)) {
       throw new CaptureError("await targets a typed effect call");
     }
     if (this.isYield(call)) {
-      this.recordYield(call, regionId, source);
-      return;
+      return this.recordYield(call, regionId, source);
     }
     if (this.isTaskGroup(call)) {
       this.recordTaskGroup(call, regionId, source);
-      return;
+      return undefined;
     }
     const resolved = this.resolveCallTarget(call);
     const nodeId = this.next(resolved.intent);
-    let resultValue: string | undefined;
-    resultValue = this.next("value");
+    // Event waits produce a continuation value; ordinary effects produce a
+    // result value.
+    const resultValue = resolved.intent === "event_wait"
+      ? this.next("resume")
+      : this.next("value");
     this.values.push({
       value_id: resultValue,
       type_ref: this.resultType(resolved.bindingRef),
@@ -481,13 +503,12 @@ class Capture {
     if (operandValues.length > 0) {
       record.operand_values = operandValues;
     }
-    if (resultValue !== undefined) {
-      record.result_value = resultValue;
-    }
+    record.result_value = resultValue;
     this.calls.push(record);
 
     this.recordNode(regionId, nodeId);
     this.recordSpan(nodeId, resolved.intent, call, source);
+    return resultValue;
   }
 
   private resolveCallTarget(call: ts.CallExpression): {
@@ -650,6 +671,27 @@ class Capture {
     );
   }
 
+  private valueForExpression(expression: ts.Expression): string {
+    // Reuse a prior named value when the operand is that identifier.
+    if (ts.isIdentifier(expression)) {
+      const symbol = this.symbolAt(expression);
+      if (symbol !== undefined) {
+        const existing = this.valuesBySymbol.get(symbol);
+        if (existing !== undefined) {
+          return existing;
+        }
+      }
+    }
+    this.rejectUnboundCalls(expression);
+    const valueId = this.next("value");
+    this.values.push({
+      value_id: valueId,
+      type_ref: "ArgumentValue",
+      origin: "literal",
+    });
+    return valueId;
+  }
+
   private callOperands(
     call: ts.CallExpression,
     nodeId: string,
@@ -659,14 +701,13 @@ class Capture {
       return [];
     }
     for (const argument of call.arguments) {
-      this.rejectUnboundCalls(argument);
+      // Every non-identifier argument still fails closed on unbound or
+      // effectful calls before it is recorded as a literal value.
+      if (!ts.isIdentifier(argument)) {
+        this.rejectUnboundCalls(argument);
+      }
     }
-    const valueId = this.next("value");
-    this.values.push({
-      value_id: valueId,
-      type_ref: "ArgumentValue",
-      origin: "literal",
-    });
+    const valueId = this.valueForExpression(call.arguments[0]);
     this.dataEdges.push({
       from_value: valueId,
       to_consumer: nodeId,
@@ -708,10 +749,11 @@ class Capture {
     call: ts.CallExpression,
     regionId: string,
     source: ts.SourceFile,
-  ): string {
+  ): { programRef: string; valueId: string } {
     const resolved = this.resolveCallTarget(call);
     const nodeId = this.next("agent_creation");
-    const resultValue = this.next("value");
+    // Program-instance results use a distinct identity prefix.
+    const resultValue = this.next("instance");
     this.values.push({
       value_id: resultValue,
       type_ref: "ProgramInstanceRef",
@@ -730,14 +772,17 @@ class Capture {
     });
     this.recordNode(regionId, nodeId);
     this.recordSpan(nodeId, "agent_creation", call, source);
-    return resolved.bindingRef ?? "unknown_program";
+    return {
+      programRef: resolved.bindingRef ?? "unknown_program",
+      valueId: resultValue,
+    };
   }
 
   private recordYield(
     call: ts.CallExpression,
     regionId: string,
     source: ts.SourceFile,
-  ): void {
+  ): string {
     const nodeId = this.next("yield");
     const resultValue = this.next("resume");
     this.values.push({
@@ -758,6 +803,7 @@ class Capture {
     });
     this.recordNode(regionId, nodeId);
     this.recordSpan(nodeId, "yield", call, source);
+    return resultValue;
   }
 
   private recordTaskGroup(
@@ -1015,7 +1061,7 @@ class Capture {
         phase: hook.phase,
         target_selector: targetSelector,
         declaration_order: order,
-        handler_ref: `handler.${hookName}`,
+        handler_ref: hookName,
         handler_digest: stableDigest(run.getText(source)),
         input_type_ref: "AgentFacade",
         output_type_ref: replace ? this.input.outputTypeRef : "Unit",
