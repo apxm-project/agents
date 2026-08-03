@@ -8,15 +8,19 @@
 > [canonical v1 contract](../agents/agent-program-composition-and-air-contract.md).
 > External processes remain adapters/Capabilities, never a second program API.
 
-> This document covers both conceptual semantics and implementation-level behavior. For additional runtime details, see [apxm-runtime](../../crates/runtime/engine/README.md).
+> This document covers both conceptual semantics and the replaced
+> implementation-level behavior. It is not an implementation guide for the
+> current runtime.
 
 The A-PXM process model introduces formal OS-like abstractions for agent lifecycle management. Agents are **processes**; node executions within an agent are **threads**.
 
 Agent processes are runtime execution identities, not organization-chart nodes.
-Reporting lines, directory visibility, delegation rights, and approval chains are
-host policy owned by `apxm-os`/Studio and must be enforced before a request is
+Reporting lines, directory visibility, delegation rights, and approval chains
+are outer admission/composition policy and must be enforced before a request is
 lowered into `SPAWN_AGENT`, `COMMUNICATE`, `HANDOFF`, or `DELEGATE`. The runtime
-must not infer those relationships from the ProcessTable or scheduler state. See
+must not infer those relationships from the ProcessTable or scheduler state.
+Those replaced operations are historical; canonical v1 uses exact Capability
+and program composition. See
 [Agent Topology Boundary](../agent-topology-boundary.md).
 
 ---
