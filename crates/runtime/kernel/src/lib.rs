@@ -24,20 +24,23 @@ pub mod instance;
 pub mod reconcile;
 
 pub use admission::{
-    AdmittedConfinement, AdmittedModelTarget, AdmittedPortBinding, AdmissionError,
-    CheckpointAdvancer, EXECUTION_ADMISSION_SCHEMA, ExecutionAdmission, IssuerKey,
-    IssuerKeyring, IssuerSigningKey, NonceLedger, ResourceCeilings, SignatureEnvelope,
-    SignatureRejection, VerifiedExecutionAdmission, digest_char, minimal_port_bindings,
-    parse_execution_admission, resolve_exact_bindings, unsigned_admission_skeleton,
-    verify_execution_admission,
+    AdmissionError, AdmittedConfinement, AdmittedModelTarget, AdmittedPortBinding,
+    CAPABILITY_PORT_SCHEMA, CONFINEMENT_PORT_SCHEMA, CheckpointAdvancer, DURABLE_EVENT_PORT_SCHEMA,
+    EXECUTION_ADMISSION_SCHEMA, EXECUTION_COMMIT_PORT_SCHEMA, EXTERNAL_AGENT_PORT_SCHEMA,
+    ExecutionAdmission, IssuerKey, IssuerKeyring, IssuerSigningKey, MODEL_INFERENCE_PORT_SCHEMA,
+    NonceLedger, PROGRAM_COMPOSITION_PORT_SCHEMA, ResourceCeilings, RuntimeAdmission,
+    RuntimeAdmissionError, SignatureEnvelope, SignatureRejection, VerifiedExecutionAdmission,
+    digest_char, minimal_port_bindings, parse_execution_admission, resolve_exact_bindings,
+    unsigned_admission_skeleton, verify_execution_admission,
 };
 pub use bundle::{
     BundleError, ExactPortBinding, PortBundle, PortBundleSpec, PortImplementation, PortSlot,
 };
 pub use capability::{CapabilityOutcome, CapabilityPort, CapabilityRequest};
 pub use commit::{
-    ATOMIC_WRITE_SET, AtomicWriteSet, ExecutionCommitPort, ExecutionCommitRequest,
-    ExecutionCommitResult, ExecutionCommitTuple, ProgramInstanceRef, ProgramInvocationRef,
+    ATOMIC_WRITE_SET, AtomicWriteSet, CommitRequestError, ExecutionCommitPort,
+    ExecutionCommitRequest, ExecutionCommitResult, ExecutionCommitTuple, ProgramInstanceRef,
+    ProgramInvocationRef,
 };
 pub use confinement::{
     ConfinementAttestation, ConfinementError, ConfinementPort, ConfinementRequest, ConfinementType,

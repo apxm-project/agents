@@ -18,15 +18,15 @@ use apxm_program::artifact::SchemaDigestRef;
 use apxm_program::runtime_evidence::{ProgramIdentity, RuntimeEvidenceVersion};
 
 use apxm_kernel::{
-    AdmissionError, AtomicWriteSet, CapabilityOutcome, CapabilityPort, CapabilityRequest,
-    CheckpointAdvancer, ConfinementAttestation, ConfinementError, ConfinementPort,
-    ConfinementRequest, EffectRecord, EffectState, EffectTransition, ExactPortBinding,
-    ExecutionAdmission, ExecutionCommitPort, ExecutionCommitRequest, ExecutionCommitResult,
-    ExecutionCommitTuple, InstanceError, Invocation, IssuerKeyring, IssuerSigningKey,
-    NonceLedger, PortBundle, PortImplementation, PortSlot, PreparedEffect, ProgramInstance,
-    ProgramInstanceRef, ProgramInvocationRef, SignatureRejection, digest_char,
-    minimal_port_bindings, parse_execution_admission, unsigned_admission_skeleton,
-    verify_execution_admission,
+    AdmissionError, AdmittedModelTarget, AdmittedPortBinding, AtomicWriteSet, CapabilityOutcome,
+    CapabilityPort, CapabilityRequest, CheckpointAdvancer, ConfinementAttestation,
+    ConfinementError, ConfinementPort, ConfinementRequest, EffectRecord, EffectState,
+    EffectTransition, ExactPortBinding, ExecutionAdmission, ExecutionCommitPort,
+    ExecutionCommitRequest, ExecutionCommitResult, ExecutionCommitTuple, InstanceError, Invocation,
+    IssuerKeyring, IssuerSigningKey, NonceLedger, PortBundle, PortImplementation, PortSlot,
+    PreparedEffect, ProgramInstance, ProgramInstanceRef, ProgramInvocationRef, RuntimeAdmission,
+    RuntimeAdmissionError, SignatureRejection, digest_char, minimal_port_bindings,
+    parse_execution_admission, unsigned_admission_skeleton, verify_execution_admission,
 };
 
 fn write_set(tag: char) -> AtomicWriteSet {
@@ -150,6 +150,7 @@ impl ExecutionCommitPort for FixtureCommit {
 
 struct ExactConfinement {
     sandbox_digest: String,
+    policy_digest: String,
 }
 
 #[async_trait]
@@ -164,12 +165,18 @@ impl ConfinementPort for ExactConfinement {
                 sandbox_digest: request.sandbox_digest,
             });
         }
+        if request.policy_digest != self.policy_digest {
+            return Err(ConfinementError::UnadmittedPolicy {
+                policy_digest: request.policy_digest,
+            });
+        }
         Ok(ConfinementAttestation {
             attestation_id: "attest.1".into(),
             host_id: request.host_id,
             execution_id: request.execution_id,
             confinement_type: request.confinement_type,
             sandbox_digest: request.sandbox_digest,
+            policy_digest: request.policy_digest,
             attested_at: "2026-08-03T00:00:00Z".into(),
             signature: "fixture".into(),
         })
@@ -211,14 +218,32 @@ fn construct_from_admission(
         let implementation = match binding.slot {
             PortSlot::ExecutionCommit => PortImplementation::ExecutionCommit(commit.clone()),
             PortSlot::Confinement => PortImplementation::Confinement(confinement.clone()),
-            PortSlot::Capability => {
-                PortImplementation::Capability(Arc::new(RefuseCapability))
-            }
+            PortSlot::Capability => PortImplementation::Capability(Arc::new(RefuseCapability)),
             other => panic!("unexpected slot in minimal fixture: {other:?}"),
         };
         entries.push((binding.clone(), implementation));
     }
     PortBundle::construct(&verified.bundle_spec, entries).expect("admitted bundle")
+}
+
+async fn runtime_from_admission(
+    verified: &apxm_kernel::VerifiedExecutionAdmission,
+    commit: Arc<dyn ExecutionCommitPort>,
+    confinement: Arc<dyn ConfinementPort>,
+) -> RuntimeAdmission {
+    let mut entries = Vec::new();
+    for binding in &verified.port_bindings {
+        let implementation = match binding.slot {
+            PortSlot::ExecutionCommit => PortImplementation::ExecutionCommit(commit.clone()),
+            PortSlot::Confinement => PortImplementation::Confinement(confinement.clone()),
+            PortSlot::Capability => PortImplementation::Capability(Arc::new(RefuseCapability)),
+            other => panic!("unexpected slot in minimal fixture: {other:?}"),
+        };
+        entries.push((binding.clone(), implementation));
+    }
+    RuntimeAdmission::admit(verified.clone(), entries, "host.1", "exec.1")
+        .await
+        .expect("runtime admission")
 }
 
 #[test]
@@ -435,6 +460,136 @@ fn product_plane_and_ambient_authority_fail_closed() {
     assert_eq!(err, AdmissionError::UnconfinedForbidden);
 }
 
+#[test]
+fn invalid_binding_does_not_consume_nonce_and_contract_slot_is_closed() {
+    let signer = IssuerSigningKey::generate("issuer.binding");
+    let keyring = IssuerKeyring::from_keys([signer.enrollment(u64::MAX, false)]).expect("keyring");
+    let ledger = NonceLedger::new();
+    let mut bindings = minimal_port_bindings();
+    bindings[0].port_contract_schema_id = "apxm.capability-invocation.v1".into();
+    let invalid = signer.seal_admission(unsigned_admission_skeleton(
+        "invocation.binding.invalid",
+        "nonce.binding.1",
+        "runtime.audience.1",
+        10_000,
+        bindings,
+    ));
+    assert!(matches!(
+        verify_execution_admission(
+            &invalid,
+            &keyring,
+            &ledger,
+            "runtime.audience.1",
+            1_000,
+            false,
+        ),
+        Err(AdmissionError::PortContractSchemaMismatch { .. })
+    ));
+
+    let valid = signer.seal_admission(unsigned_admission_skeleton(
+        "invocation.binding.valid",
+        "nonce.binding.1",
+        "runtime.audience.1",
+        10_000,
+        minimal_port_bindings(),
+    ));
+    verify_execution_admission(
+        &valid,
+        &keyring,
+        &ledger,
+        "runtime.audience.1",
+        1_000,
+        false,
+    )
+    .expect("invalid records do not burn the nonce");
+}
+
+#[test]
+fn optional_model_target_is_still_exact_and_closed() {
+    let signer = IssuerSigningKey::generate("issuer.model");
+    let keyring = IssuerKeyring::from_keys([signer.enrollment(u64::MAX, false)]).expect("keyring");
+    let mut bindings = minimal_port_bindings();
+    bindings.push(AdmittedPortBinding {
+        slot: "model_inference".into(),
+        port_contract_schema_id: "apxm.model-inference.v1".into(),
+        port_contract_digest: digest_char('7'),
+        binding_digest: digest_char('8'),
+        proof_digest: digest_char('9'),
+    });
+    let mut admission = unsigned_admission_skeleton(
+        "invocation.model",
+        "nonce.model.1",
+        "runtime.audience.1",
+        10_000,
+        bindings,
+    );
+    admission.model_target = Some(AdmittedModelTarget {
+        model_target_ref: "target.1".into(),
+        model_deployment_ref: "deployment.1".into(),
+        exact_port_binding_digest: digest_char('f'),
+    });
+    let sealed = signer.seal_admission(admission);
+    assert_eq!(
+        verify_execution_admission(
+            &sealed,
+            &keyring,
+            &NonceLedger::new(),
+            "runtime.audience.1",
+            1_000,
+            false,
+        )
+        .expect_err("present model target must match exactly"),
+        AdmissionError::ModelBindingMismatch
+    );
+}
+
+#[tokio::test]
+async fn runtime_admission_rejects_rebinding_after_verification() {
+    let (admission, keyring, _) = seal_valid("nonce.rebind.1");
+    let verified = verify_execution_admission(
+        &admission,
+        &keyring,
+        &NonceLedger::new(),
+        "runtime.audience.1",
+        1_000,
+        false,
+    )
+    .expect("admit");
+    let mut entries = verified
+        .port_bindings
+        .iter()
+        .cloned()
+        .map(|mut binding| {
+            if binding.slot == PortSlot::ExecutionCommit {
+                binding.binding_digest = digest_char('f');
+                (
+                    binding,
+                    PortImplementation::ExecutionCommit(Arc::new(FixtureCommit::new())),
+                )
+            } else {
+                (
+                    binding,
+                    PortImplementation::Confinement(Arc::new(ExactConfinement {
+                        sandbox_digest: verified.sandbox_digest.clone(),
+                        policy_digest: verified.policy_digest.clone(),
+                    })),
+                )
+            }
+        })
+        .collect::<Vec<_>>();
+    let commit = Arc::new(FixtureCommit::new());
+    if let Some((_, implementation)) = entries.first_mut() {
+        *implementation = PortImplementation::ExecutionCommit(commit);
+    }
+    let result = RuntimeAdmission::admit(verified, entries, "host.1", "exec.1").await;
+    assert!(matches!(
+        result,
+        Err(RuntimeAdmissionError::BindingMismatch(
+            PortSlot::ExecutionCommit
+        ))
+    ));
+}
+
 #[tokio::test]
 async fn confinement_escape_fails_closed_before_effects() {
     let (admission, keyring, _) = seal_valid("nonce.conf.1");
@@ -450,15 +605,18 @@ async fn confinement_escape_fails_closed_before_effects() {
     let commit = Arc::new(FixtureCommit::new());
     let confinement = Arc::new(ExactConfinement {
         sandbox_digest: verified.sandbox_digest.clone(),
+        policy_digest: verified.policy_digest.clone(),
     });
-    let bundle = construct_from_admission(&verified, commit, confinement.clone());
-    let port = bundle.confinement().expect("confinement required");
+    let runtime = runtime_from_admission(&verified, commit, confinement.clone()).await;
+    let bundle = runtime.into_bundle();
+    let port = bundle.confinement().expect("confinement required").clone();
     let escape = port
         .attest(ConfinementRequest {
             host_id: "host.1".into(),
             execution_id: "exec.1".into(),
             confinement_type: verified.confinement_type,
             sandbox_digest: digest_char('f'), // wrong sandbox
+            policy_digest: verified.policy_digest.clone(),
         })
         .await;
     assert!(matches!(
@@ -483,8 +641,11 @@ async fn crash_replay_lost_reply_one_advancer_no_duplicate_effect() {
     let commit = Arc::new(FixtureCommit::new());
     let confinement = Arc::new(ExactConfinement {
         sandbox_digest: verified.sandbox_digest.clone(),
+        policy_digest: verified.policy_digest.clone(),
     });
-    let bundle = construct_from_admission(&verified, commit.clone(), confinement);
+    let bundle = runtime_from_admission(&verified, commit.clone(), confinement)
+        .await
+        .into_bundle();
     let instance_id = "instance.crash.1";
     let instance = ProgramInstance::new(
         identity(instance_id),
@@ -525,7 +686,16 @@ async fn crash_replay_lost_reply_one_advancer_no_duplicate_effect() {
         report,
         apxm_kernel::InvocationReport::Committed { .. }
     ));
-    assert_eq!(advancer.advance_on_commit(instance_id).expect("advance"), 1);
+    assert_eq!(
+        advancer.advance_on_commit(instance_id, 1).expect("advance"),
+        1
+    );
+    assert_eq!(
+        advancer
+            .advance_on_commit(instance_id, 1)
+            .expect("idempotent replay"),
+        1
+    );
     assert_eq!(commit.external_effects(), 1);
 
     // Replay of the same commit id publishes nothing new.
@@ -609,9 +779,7 @@ async fn cancellation_and_revocation_before_send_are_terminal() {
     assert_eq!(unknown.state(), &EffectState::OutcomeUnknown);
     assert!(!unknown.state().authorizes_next_activation());
     assert!(
-        unknown
-            .apply(EffectTransition::ExplicitNewAttempt)
-            .is_err(),
+        unknown.apply(EffectTransition::ExplicitNewAttempt).is_err(),
         "no blind replay from outcome_unknown"
     );
 }
@@ -631,6 +799,7 @@ async fn boundary_busy_instance_and_missing_port_fail_closed() {
     let commit = Arc::new(FixtureCommit::new());
     let confinement = Arc::new(ExactConfinement {
         sandbox_digest: verified.sandbox_digest.clone(),
+        policy_digest: verified.policy_digest.clone(),
     });
     let bundle = construct_from_admission(&verified, commit, confinement);
     let instance = ProgramInstance::new(
@@ -649,6 +818,7 @@ async fn boundary_busy_instance_and_missing_port_fail_closed() {
             Arc::new(FixtureCommit::new()),
             Arc::new(ExactConfinement {
                 sandbox_digest: verified.sandbox_digest.clone(),
+                policy_digest: verified.policy_digest.clone(),
             }),
         ),
     );
@@ -673,4 +843,28 @@ async fn boundary_busy_instance_and_missing_port_fail_closed() {
         proof_digest: digest_char('f'),
     };
     let _ = instance;
+}
+
+#[test]
+fn checkpoint_advancer_is_monotonic_and_replay_idempotent() {
+    let advancer = CheckpointAdvancer::new("instance.checkpoint");
+    assert!(matches!(
+        advancer.advance_on_commit("instance.checkpoint", 2),
+        Err(AdmissionError::CheckpointVersionMismatch {
+            expected: 1,
+            actual: 2
+        })
+    ));
+    assert_eq!(
+        advancer
+            .advance_on_commit("instance.checkpoint", 1)
+            .expect("first commit"),
+        1
+    );
+    assert_eq!(
+        advancer
+            .advance_on_commit("instance.checkpoint", 1)
+            .expect("replayed commit"),
+        1
+    );
 }

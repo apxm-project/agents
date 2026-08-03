@@ -23,13 +23,26 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use apxm_program::artifact::SchemaDigestRef;
-use apxm_program::grammar::is_digest;
+use apxm_program::grammar::{is_digest, is_identifier};
 
-use crate::bundle::{ExactPortBinding, PortBundleSpec, PortSlot};
-use crate::confinement::ConfinementType;
+use crate::bundle::{
+    BundleError, ExactPortBinding, PortBundle, PortBundleSpec, PortImplementation, PortSlot,
+};
+use crate::confinement::{
+    ConfinementAttestation, ConfinementError, ConfinementRequest, ConfinementType,
+};
 
 /// Frozen schema id for the product-neutral Execution Admission envelope.
 pub const EXECUTION_ADMISSION_SCHEMA: &str = "apxm.execution-admission.v1";
+
+/// Closed Port Contract schema IDs accepted by the runtime admission boundary.
+pub const EXECUTION_COMMIT_PORT_SCHEMA: &str = "apxm.execution-commit.v1";
+pub const CONFINEMENT_PORT_SCHEMA: &str = "apxm.confinement.v1";
+pub const MODEL_INFERENCE_PORT_SCHEMA: &str = "apxm.model-inference.v1";
+pub const CAPABILITY_PORT_SCHEMA: &str = "apxm.capability-invocation.v1";
+pub const EXTERNAL_AGENT_PORT_SCHEMA: &str = "apxm.external-agent.v1";
+pub const DURABLE_EVENT_PORT_SCHEMA: &str = "apxm.durable-event.v1";
+pub const PROGRAM_COMPOSITION_PORT_SCHEMA: &str = "apxm.program-composition.v1";
 
 /// The only signature algorithm the closed envelope admits.
 const ED25519: &str = "ed25519";
@@ -157,12 +170,15 @@ impl IssuerKeyring {
         }
     }
 
-    pub fn from_keys(
-        keys: impl IntoIterator<Item = IssuerKey>,
-    ) -> Result<Self, AdmissionError> {
+    pub fn from_keys(keys: impl IntoIterator<Item = IssuerKey>) -> Result<Self, AdmissionError> {
         let mut enrolled = BTreeMap::new();
         for key in keys {
             let key_ref = key.key_ref.clone();
+            if key_ref.trim().is_empty() || !is_identifier(&key_ref) {
+                return Err(AdmissionError::MalformedKeyring(format!(
+                    "issuer key reference {key_ref:?} is invalid"
+                )));
+            }
             if enrolled.insert(key_ref.clone(), key).is_some() {
                 return Err(AdmissionError::MalformedKeyring(format!(
                     "issuer key {key_ref} enrolled more than once"
@@ -286,9 +302,15 @@ impl std::fmt::Display for SignatureRejection {
 pub enum AdmissionError {
     SchemaMismatch(String),
     Signature(SignatureRejection),
-    Expired { expires_at_ms: u64, now_ms: u64 },
+    Expired {
+        expires_at_ms: u64,
+        now_ms: u64,
+    },
     NonceReuse(String),
-    AudienceMismatch { expected: String, actual: String },
+    AudienceMismatch {
+        expected: String,
+        actual: String,
+    },
     IssuerEmpty,
     MalformedDigest(&'static str),
     MalformedKeyring(String),
@@ -304,6 +326,17 @@ pub enum AdmissionError {
     ModelBindingMismatch,
     EmptyNonce,
     EmptyAudience,
+    EmptyReference(&'static str),
+    InvalidReference(&'static str),
+    PortContractSchemaMismatch {
+        slot: PortSlot,
+        expected: &'static str,
+        actual: String,
+    },
+    CheckpointVersionMismatch {
+        expected: u64,
+        actual: u64,
+    },
 }
 
 impl std::fmt::Display for AdmissionError {
@@ -342,6 +375,21 @@ impl std::fmt::Display for AdmissionError {
             }
             Self::EmptyNonce => write!(f, "nonce must be non-empty"),
             Self::EmptyAudience => write!(f, "audience must be non-empty"),
+            Self::EmptyReference(field) => write!(f, "{field} must be non-empty"),
+            Self::InvalidReference(field) => write!(f, "{field} is not a valid opaque reference"),
+            Self::PortContractSchemaMismatch {
+                slot,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "port slot {} requires contract {expected}, got {actual}",
+                slot.as_str()
+            ),
+            Self::CheckpointVersionMismatch { expected, actual } => write!(
+                f,
+                "checkpoint commit version must be {expected}, got {actual}"
+            ),
         }
     }
 }
@@ -380,6 +428,166 @@ pub struct VerifiedExecutionAdmission {
     pub policy_digest: String,
 }
 
+/// The only runtime construction result produced from a verified admission.
+///
+/// The composition root supplies implementations, but this boundary verifies
+/// that every supplied descriptor is byte-for-byte the descriptor named by the
+/// admission and attests the exact confinement sandbox and policy before the
+/// bundle can be used by an instance.
+pub struct RuntimeAdmission {
+    verified: VerifiedExecutionAdmission,
+    bundle: PortBundle,
+    confinement_attestation: ConfinementAttestation,
+}
+
+/// Why an exact runtime admission could not be constructed. Every variant fails
+/// before an implementation can receive an execution request.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RuntimeAdmissionError {
+    Admission(AdmissionError),
+    Bundle(BundleError),
+    Confinement(ConfinementError),
+    BindingMismatch(PortSlot),
+    AttestationMismatch(&'static str),
+    EmptyRuntimeIdentity(&'static str),
+}
+
+impl std::fmt::Display for RuntimeAdmissionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Admission(error) => error.fmt(f),
+            Self::Bundle(error) => error.fmt(f),
+            Self::Confinement(error) => error.fmt(f),
+            Self::BindingMismatch(slot) => {
+                write!(
+                    f,
+                    "supplied binding differs from admitted {} binding",
+                    slot.as_str()
+                )
+            }
+            Self::AttestationMismatch(field) => {
+                write!(f, "confinement attestation does not match admitted {field}")
+            }
+            Self::EmptyRuntimeIdentity(field) => {
+                write!(f, "{field} must be non-empty for confinement attestation")
+            }
+        }
+    }
+}
+
+impl std::error::Error for RuntimeAdmissionError {}
+
+impl From<AdmissionError> for RuntimeAdmissionError {
+    fn from(error: AdmissionError) -> Self {
+        Self::Admission(error)
+    }
+}
+
+impl From<BundleError> for RuntimeAdmissionError {
+    fn from(error: BundleError) -> Self {
+        Self::Bundle(error)
+    }
+}
+
+impl From<ConfinementError> for RuntimeAdmissionError {
+    fn from(error: ConfinementError) -> Self {
+        Self::Confinement(error)
+    }
+}
+
+impl RuntimeAdmission {
+    /// Construct the immutable runtime closure from one already-verified
+    /// admission and exact implementations. The confinement port is called
+    /// before this method returns; no un-attested bundle is executable.
+    pub async fn admit(
+        verified: VerifiedExecutionAdmission,
+        entries: Vec<(ExactPortBinding, PortImplementation)>,
+        host_id: impl Into<String>,
+        execution_id: impl Into<String>,
+    ) -> Result<Self, RuntimeAdmissionError> {
+        let host_id = host_id.into();
+        let execution_id = execution_id.into();
+        if host_id.trim().is_empty() {
+            return Err(RuntimeAdmissionError::EmptyRuntimeIdentity("host_id"));
+        }
+        if execution_id.trim().is_empty() {
+            return Err(RuntimeAdmissionError::EmptyRuntimeIdentity("execution_id"));
+        }
+
+        for (supplied, _) in &entries {
+            let expected = verified
+                .port_bindings
+                .iter()
+                .find(|admitted| admitted.slot == supplied.slot)
+                .ok_or(RuntimeAdmissionError::BindingMismatch(supplied.slot))?;
+            if expected != supplied {
+                return Err(RuntimeAdmissionError::BindingMismatch(supplied.slot));
+            }
+        }
+
+        let bundle = PortBundle::construct(&verified.bundle_spec, entries)?;
+        let confinement = bundle
+            .confinement()
+            .ok_or(AdmissionError::ConfinementUnavailable)?
+            .clone();
+        let attestation = confinement
+            .attest(ConfinementRequest {
+                host_id: host_id.clone(),
+                execution_id: execution_id.clone(),
+                confinement_type: verified.confinement_type,
+                sandbox_digest: verified.sandbox_digest.clone(),
+                policy_digest: verified.policy_digest.clone(),
+            })
+            .await?;
+
+        if attestation.host_id != host_id {
+            return Err(RuntimeAdmissionError::AttestationMismatch("host_id"));
+        }
+        if attestation.execution_id != execution_id {
+            return Err(RuntimeAdmissionError::AttestationMismatch("execution_id"));
+        }
+        if attestation.confinement_type != verified.confinement_type {
+            return Err(RuntimeAdmissionError::AttestationMismatch(
+                "confinement_type",
+            ));
+        }
+        if attestation.sandbox_digest != verified.sandbox_digest {
+            return Err(RuntimeAdmissionError::AttestationMismatch("sandbox_digest"));
+        }
+        if attestation.policy_digest != verified.policy_digest {
+            return Err(RuntimeAdmissionError::AttestationMismatch("policy_digest"));
+        }
+        if attestation.attestation_id.trim().is_empty() {
+            return Err(RuntimeAdmissionError::AttestationMismatch("attestation_id"));
+        }
+        if attestation.signature.trim().is_empty() {
+            return Err(RuntimeAdmissionError::AttestationMismatch("signature"));
+        }
+
+        Ok(Self {
+            verified,
+            bundle,
+            confinement_attestation: attestation,
+        })
+    }
+
+    #[must_use]
+    pub fn verified(&self) -> &VerifiedExecutionAdmission {
+        &self.verified
+    }
+
+    #[must_use]
+    pub fn confinement_attestation(&self) -> &ConfinementAttestation {
+        &self.confinement_attestation
+    }
+
+    /// Transfer the frozen port bundle to the runtime instance constructor.
+    #[must_use]
+    pub fn into_bundle(self) -> PortBundle {
+        self.bundle
+    }
+}
+
 /// Sole checkpoint advancer for one program instance.
 ///
 /// Exactly one advancer token exists per instance. Only a winning atomic commit
@@ -389,7 +597,6 @@ pub struct VerifiedExecutionAdmission {
 pub struct CheckpointAdvancer {
     program_instance_ref: String,
     sequence: Mutex<u64>,
-    holders: Mutex<u32>,
 }
 
 impl CheckpointAdvancer {
@@ -398,7 +605,6 @@ impl CheckpointAdvancer {
         Self {
             program_instance_ref: program_instance_ref.into(),
             sequence: Mutex::new(0),
-            holders: Mutex::new(1),
         }
     }
 
@@ -414,26 +620,38 @@ impl CheckpointAdvancer {
 
     /// Attempt to mint a second advancer. Always refused — one advancer only.
     pub fn fork(&self) -> Result<(), AdmissionError> {
-        let holders = self.holders.lock().expect("advancer holders");
-        if *holders != 1 {
-            return Err(AdmissionError::AmbientAuthorityRefused(
-                "multiple_checkpoint_advancers".into(),
-            ));
-        }
         Err(AdmissionError::AmbientAuthorityRefused(
             "checkpoint_advancer_fork_forbidden".into(),
         ))
     }
 
     /// Advance only after a winning atomic commit for this instance.
-    pub fn advance_on_commit(&self, committed_instance_ref: &str) -> Result<u64, AdmissionError> {
+    ///
+    /// Repeating the same committed version is idempotent, while skipping a
+    /// version is rejected. This makes a lost reply safe for a caller that
+    /// reconciles and re-presents the same commit result.
+    pub fn advance_on_commit(
+        &self,
+        committed_instance_ref: &str,
+        committed_state_version: u64,
+    ) -> Result<u64, AdmissionError> {
         if committed_instance_ref != self.program_instance_ref {
             return Err(AdmissionError::AmbientAuthorityRefused(
                 "checkpoint_advancer_instance_mismatch".into(),
             ));
         }
         let mut sequence = self.sequence.lock().expect("checkpoint sequence");
-        *sequence = sequence.saturating_add(1);
+        if committed_state_version == *sequence {
+            return Ok(*sequence);
+        }
+        let expected = sequence.saturating_add(1);
+        if committed_state_version != expected {
+            return Err(AdmissionError::CheckpointVersionMismatch {
+                expected,
+                actual: committed_state_version,
+            });
+        }
+        *sequence = committed_state_version;
         Ok(*sequence)
     }
 }
@@ -469,6 +687,19 @@ pub fn verify_execution_admission(
     if admission.issuer.trim().is_empty() {
         return Err(AdmissionError::IssuerEmpty);
     }
+    for (field, value) in [
+        ("admission_ref", admission.admission_ref.as_str()),
+        ("artifact_ref", admission.artifact_ref.as_str()),
+        ("invocation_ref", admission.invocation_ref.as_str()),
+        ("issuer", admission.issuer.as_str()),
+    ] {
+        if value.trim().is_empty() {
+            return Err(AdmissionError::EmptyReference(field));
+        }
+        if !is_identifier(value) {
+            return Err(AdmissionError::InvalidReference(field));
+        }
+    }
     if admission.audience.trim().is_empty() {
         return Err(AdmissionError::EmptyAudience);
     }
@@ -488,7 +719,10 @@ pub fn verify_execution_admission(
         });
     }
     refuse_ambient(&admission.caller_correlations)?;
-    if admission.confinement.confinement_type.eq_ignore_ascii_case("unconfined")
+    if admission
+        .confinement
+        .confinement_type
+        .eq_ignore_ascii_case("unconfined")
         || admission.confinement.sandbox_digest == "unconfined"
     {
         return Err(AdmissionError::UnconfinedForbidden);
@@ -507,15 +741,21 @@ pub fn verify_execution_admission(
     }
 
     verify_signature(keyring, admission, now_ms)?;
-    nonce_ledger.observe(&admission.nonce)?;
-
     let confinement_type = parse_confinement_type(&admission.confinement.confinement_type)?;
     let (port_bindings, bundle_spec) = resolve_exact_bindings(&admission.port_bindings)?;
 
-    if require_model_target {
-        let Some(target) = &admission.model_target else {
-            return Err(AdmissionError::MissingModelTarget);
-        };
+    if let Some(target) = &admission.model_target {
+        for (field, value) in [
+            ("model_target_ref", target.model_target_ref.as_str()),
+            ("model_deployment_ref", target.model_deployment_ref.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(AdmissionError::EmptyReference(field));
+            }
+            if !is_identifier(value) {
+                return Err(AdmissionError::InvalidReference(field));
+            }
+        }
         if !is_digest(&target.exact_port_binding_digest) {
             return Err(AdmissionError::MalformedDigest("exact_port_binding_digest"));
         }
@@ -526,6 +766,8 @@ pub fn verify_execution_admission(
         if !model_bound {
             return Err(AdmissionError::ModelBindingMismatch);
         }
+    } else if require_model_target {
+        return Err(AdmissionError::MissingModelTarget);
     }
 
     // Confinement slot must be admitted exactly; absence fails closed.
@@ -535,6 +777,10 @@ pub fn verify_execution_admission(
     {
         return Err(AdmissionError::ConfinementUnavailable);
     }
+
+    // A nonce is consumed only after every admission invariant has passed. A
+    // malformed or unbound record must not mutate the replay ledger.
+    nonce_ledger.observe(&admission.nonce)?;
 
     Ok(VerifiedExecutionAdmission {
         admission: admission.clone(),
@@ -560,6 +806,14 @@ pub fn resolve_exact_bindings(
         if !seen.insert(slot) {
             return Err(AdmissionError::AmbiguousBinding(slot));
         }
+        let expected_schema = expected_port_contract_schema(slot);
+        if entry.port_contract_schema_id != expected_schema {
+            return Err(AdmissionError::PortContractSchemaMismatch {
+                slot,
+                expected: expected_schema,
+                actual: entry.port_contract_schema_id.clone(),
+            });
+        }
         if !is_digest(&entry.port_contract_digest) {
             return Err(AdmissionError::MalformedDigest("port_contract_digest"));
         }
@@ -583,13 +837,27 @@ pub fn resolve_exact_bindings(
     }
 
     if !seen.contains(&PortSlot::ExecutionCommit) {
-        return Err(AdmissionError::MissingRequiredSlot(PortSlot::ExecutionCommit));
+        return Err(AdmissionError::MissingRequiredSlot(
+            PortSlot::ExecutionCommit,
+        ));
     }
     if !seen.contains(&PortSlot::Confinement) {
         return Err(AdmissionError::MissingRequiredSlot(PortSlot::Confinement));
     }
 
     Ok((bindings, PortBundleSpec::new(required)))
+}
+
+fn expected_port_contract_schema(slot: PortSlot) -> &'static str {
+    match slot {
+        PortSlot::ExecutionCommit => EXECUTION_COMMIT_PORT_SCHEMA,
+        PortSlot::Confinement => CONFINEMENT_PORT_SCHEMA,
+        PortSlot::ModelInference => MODEL_INFERENCE_PORT_SCHEMA,
+        PortSlot::Capability => CAPABILITY_PORT_SCHEMA,
+        PortSlot::ExternalAgentCapability => EXTERNAL_AGENT_PORT_SCHEMA,
+        PortSlot::DurableEvent => DURABLE_EVENT_PORT_SCHEMA,
+        PortSlot::ProgramComposition => PROGRAM_COMPOSITION_PORT_SCHEMA,
+    }
 }
 
 fn refuse_ambient(correlations: &BTreeMap<String, String>) -> Result<(), AdmissionError> {
@@ -646,15 +914,23 @@ fn verify_signature(
 ) -> Result<(), AdmissionError> {
     let envelope = &admission.signature;
     if envelope.key_ref.is_empty() || envelope.signature.is_empty() {
-        return Err(AdmissionError::Signature(SignatureRejection::EnvelopeAbsent));
+        return Err(AdmissionError::Signature(
+            SignatureRejection::EnvelopeAbsent,
+        ));
+    }
+    if !is_identifier(&envelope.key_ref) {
+        return Err(AdmissionError::Signature(
+            SignatureRejection::SignatureMalformed,
+        ));
     }
     if envelope.algorithm != ED25519 {
         return Err(AdmissionError::Signature(
             SignatureRejection::AlgorithmUnsupported,
         ));
     }
-    let payload = signing_payload(admission)
-        .ok_or(AdmissionError::Signature(SignatureRejection::RecordNotSignable))?;
+    let payload = signing_payload(admission).ok_or(AdmissionError::Signature(
+        SignatureRejection::RecordNotSignable,
+    ))?;
     let verifying_key = keyring.resolve(&envelope.key_ref, now_ms)?;
     let signature = BASE64
         .decode(&envelope.signature)
@@ -668,7 +944,9 @@ fn verify_signature(
         .map_err(|_| AdmissionError::Signature(SignatureRejection::SignatureMismatch))?;
     let recomputed = content_digest(&payload);
     if recomputed != admission.admission_digest {
-        return Err(AdmissionError::Signature(SignatureRejection::DigestMismatch));
+        return Err(AdmissionError::Signature(
+            SignatureRejection::DigestMismatch,
+        ));
     }
     Ok(())
 }
@@ -768,14 +1046,14 @@ pub fn minimal_port_bindings() -> Vec<AdmittedPortBinding> {
     vec![
         AdmittedPortBinding {
             slot: "execution_commit".into(),
-            port_contract_schema_id: "apxm.execution-commit.v1".into(),
+            port_contract_schema_id: EXECUTION_COMMIT_PORT_SCHEMA.into(),
             port_contract_digest: digest_char('1'),
             binding_digest: digest_char('2'),
             proof_digest: digest_char('3'),
         },
         AdmittedPortBinding {
             slot: "confinement".into(),
-            port_contract_schema_id: "apxm.confinement.v1".into(),
+            port_contract_schema_id: CONFINEMENT_PORT_SCHEMA.into(),
             port_contract_digest: digest_char('4'),
             binding_digest: digest_char('5'),
             proof_digest: digest_char('6'),
