@@ -33,6 +33,37 @@ impl std::fmt::Debug for ExecutionPortBundle {
 }
 
 impl ExecutionPortBundle {
+    /// Build the execution bundle from a kernel bundle that already admitted
+    /// durable events and Program composition. This is the service/embedded
+    /// parity path: the driver ports and their exact descriptors cross the
+    /// same kernel admission boundary as every other runtime port.
+    pub fn from_admitted_kernel(kernel: Arc<PortBundle>) -> Result<Self, BundleError> {
+        let event_binding = kernel
+            .binding(PortSlot::DurableEvent)
+            .cloned()
+            .ok_or(BundleError::MissingSlot(PortSlot::DurableEvent))?;
+        let events = kernel
+            .durable_event()
+            .cloned()
+            .ok_or(BundleError::MissingSlot(PortSlot::DurableEvent))?;
+        let composition_binding = kernel
+            .binding(PortSlot::ProgramComposition)
+            .cloned()
+            .ok_or(BundleError::MissingSlot(PortSlot::ProgramComposition))?;
+        let composition = kernel
+            .program_composition()
+            .cloned()
+            .ok_or(BundleError::MissingSlot(PortSlot::ProgramComposition))?;
+
+        Ok(Self {
+            kernel,
+            event_binding,
+            events,
+            composition_binding,
+            composition,
+        })
+    }
+
     /// Join exact driver bindings to one validated kernel bundle.
     ///
     /// # Errors
@@ -187,6 +218,36 @@ mod tests {
         )
     }
 
+    fn fully_admitted_kernel_bundle() -> Arc<PortBundle> {
+        let execution_contract = contract("apxm.execution-commit.v1", 0x10);
+        let event_contract = contract("apxm.durable-event.v1", 0x20);
+        let composition_contract = contract("apxm.program-composition.v1", 0x30);
+        Arc::new(
+            PortBundle::construct(
+                &PortBundleSpec::new(vec![
+                    (PortSlot::ExecutionCommit, execution_contract.clone()),
+                    (PortSlot::DurableEvent, event_contract.clone()),
+                    (PortSlot::ProgramComposition, composition_contract.clone()),
+                ]),
+                vec![
+                    (
+                        binding(PortSlot::ExecutionCommit, execution_contract, 0x11),
+                        PortImplementation::ExecutionCommit(Arc::new(Commit)),
+                    ),
+                    (
+                        binding(PortSlot::DurableEvent, event_contract, 0x21),
+                        PortImplementation::DurableEvent(Arc::new(Events)),
+                    ),
+                    (
+                        binding(PortSlot::ProgramComposition, composition_contract, 0x31),
+                        PortImplementation::ProgramComposition(Arc::new(Composition)),
+                    ),
+                ],
+            )
+            .expect("the full kernel bundle is exact"),
+        )
+    }
+
     #[test]
     fn driver_ports_join_only_through_exact_bindings() {
         let event_contract = contract("apxm.durable-event.v1", 0x20);
@@ -258,6 +319,24 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn admitted_driver_ports_retain_their_exact_bindings() {
+        let bundle = ExecutionPortBundle::from_admitted_kernel(fully_admitted_kernel_bundle())
+            .expect("event and composition ports were admitted");
+        assert_eq!(bundle.event_binding().slot, PortSlot::DurableEvent);
+        assert_eq!(
+            bundle.composition_binding().slot,
+            PortSlot::ProgramComposition
+        );
+        assert!(bundle.kernel().binding(PortSlot::DurableEvent).is_some());
+        assert!(
+            bundle
+                .kernel()
+                .binding(PortSlot::ProgramComposition)
+                .is_some()
+        );
     }
 
     #[test]
