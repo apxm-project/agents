@@ -91,7 +91,8 @@ mod tests {
     fn python_package_handler_is_not_in_the_closed_handler_set() {
         // The array below is written out by hand, so a variant added to the
         // enum is not automatically added here. That makes this test blind to
-        // the mutation it looks like it covers: reintroducing a `PythonHandler`
+        // the mutation it looks like it covers: reintroducing the Python
+        // package-handler variant
         // variant leaves this loop unchanged and passing, and only
         // `python_package_handler_binding_is_rejected` goes red. Verified by
         // performing exactly that mutation.
