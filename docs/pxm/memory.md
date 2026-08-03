@@ -14,8 +14,6 @@ status: "historical-v1-analysis"
 
 Memory is the silent axis of every program execution model (PXM). How a model organizes, isolates, and exposes memory determines what optimizations are possible, what concurrency is safe, and what abstractions the programmer can rely on. This document surveys memory formalization across six established PXMs, then shows how A-PXM introduces a purpose-built memory architecture for agentic AI.
 
-> For implementation details, see [apxm-runtime](../../crates/runtime/engine/README.md).
-
 ---
 
 ## 1. Von Neumann: Flat Address Space
