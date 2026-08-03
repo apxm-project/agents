@@ -52,12 +52,19 @@ Optional:
 4. Audience must equal the runtime's expected audience.
 5. Every required Port is present exactly once; duplicates are ambiguous and fail.
 6. `execution_commit` and `confinement` are always required.
-7. Confinement type `unconfined` (and equivalent digests) fail closed.
-8. Product-plane fields (`company_ref`, budgets, principals, grants, leases) are
+7. Each closed Port slot carries its exact contract schema id; a slot cannot be
+   relabeled as another Port family.
+8. Confinement type `unconfined` (and equivalent digests) fail closed.
+9. Product-plane fields (`company_ref`, budgets, principals, grants, leases) are
    refused at parse time.
-9. Ambient credential/filesystem/network/plugin markers in correlations fail.
-10. When a model target is required, it must match the admitted model-inference
-    binding digest exactly — no alias, ranking, or fallback.
+10. Ambient credential/filesystem/network/plugin markers in correlations fail.
+11. When a model target is present, it must match the admitted model-inference
+    binding; when the artifact requires inference, its presence is mandatory.
+12. The nonce is consumed only after all admission invariants pass. Invalid
+    records do not mutate the replay ledger.
+13. Runtime construction must compare every supplied binding with the verified
+    binding and obtain an attestation for the exact confinement type, sandbox,
+    policy, host and execution identity before returning a usable bundle.
 
 ## 4. Non-goals
 
