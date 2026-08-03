@@ -157,6 +157,11 @@ VECTOR_SCHEMA = {
     "apxm.durable-event-outcome.v1.json": "apxm.durable-event-outcome.v1",
     "apxm.program-composition-request.v1.json": "apxm.program-composition-request.v1",
     "apxm.program-composition-outcome.v1.json": "apxm.program-composition-outcome.v1",
+    "apxm.inference-driver-binding.v1.json": "apxm.inference-driver-binding.v1",
+    "apxm.inference-credential-lease.v1.json": "apxm.inference-credential-lease.v1",
+    "apxm.inference-usage-lineage.v1.json": "apxm.inference-usage-lineage.v1",
+    "apxm.diagnostic-correlation.v1.json": "apxm.diagnostic-correlation.v1",
+    "apxm.vllm-conformance-join.v1.json": "apxm.vllm-conformance-join.v1",
 }
 
 # Authoring rule: no product surface may cite the delivery plan or its

@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.inference-usage-lineage.v1",
+  "title": "InferenceUsageLineage",
+  "description": "Immutable owner-recorded inference usage lineage for one effect attempt. Downstream callers may verify membership but must not recompute, replace, or synthesize native usage. Timing is technical evidence, not evaluation policy.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "lineage_id",
+    "effect_id",
+    "attempt_index",
+    "model_target_ref",
+    "exact_port_binding_digest",
+    "native_input_tokens",
+    "native_output_tokens",
+    "duration_ms",
+    "sealed"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "apxm.inference-usage-lineage.v1"
+    },
+    "lineage_id": {
+      "$ref": "apxm.contract-common.v1#/$defs/Digest"
+    },
+    "effect_id": {
+      "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+    },
+    "attempt_index": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "model_target_ref": {
+      "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+    },
+    "exact_port_binding_digest": {
+      "$ref": "apxm.contract-common.v1#/$defs/Digest"
+    },
+    "native_input_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "native_output_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "evidence_fact_id": {
+      "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+    },
+    "commit_id": {
+      "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+    },
+    "typed_error": {
+      "type": "object",
+      "required": [
+        "category",
+        "code",
+        "message"
+      ],
+      "properties": {
+        "category": {
+          "type": "string",
+          "enum": [
+            "validation",
+            "admission",
+            "authority",
+            "configuration",
+            "unavailable",
+            "conflict",
+            "outcome_unknown",
+            "internal"
+          ]
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "sealed": {
+      "const": true
+    }
+  },
+  "additionalProperties": false
+}
