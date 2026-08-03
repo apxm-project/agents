@@ -6,6 +6,8 @@
 - Workspace authority: [ADR-0028](../../../../docs/adr/0028-apxm-is-the-product-neutral-agent-program-and-inference-core.md),
   [ADR-0029](../../../../docs/adr/0029-agent-program-source-and-closed-semantics-are-behavior-truth.md),
   [ADR-0030](../../../../docs/adr/0030-execution-inference-evidence-and-deployment-are-exact-and-product-neutral.md)
+  (paths and titles as published in apxm#148; `Invocation Admission` is the
+  agents synonym for product-neutral Execution Admission)
 
 ## 1. Purpose
 
