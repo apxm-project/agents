@@ -148,6 +148,11 @@
       "schema_id": "apxm.program-composition-outcome.v1",
       "path": "schemas/apxm.program-composition-outcome.v1.json",
       "digest": "sha256:5a78fbe48fa8a374268a558ffcdd066b49c0ca4dacc80be58e03c80eeb0d5ade"
+    },
+    {
+      "schema_id": "apxm.execution-admission.v1",
+      "path": "schemas/apxm.execution-admission.v1.json",
+      "digest": "sha256:7ae02d8c769816a85b0c2d0056676c26af79334e9c1460c35bdc778cf7c615de"
     }
   ],
   "owned_port_contracts": [
@@ -814,7 +819,17 @@
         "failure",
         "unknown_discriminant"
       ]
+    },
+    {
+      "schema_id": "apxm.execution-admission.v1",
+      "path": "vectors/apxm.execution-admission.v1.json",
+      "digest": "sha256:7083d2ae70f5054dff3d90babfacb5952cb22fdfb751663cbc369fe71e1fe558",
+      "coverage": [
+        "positive",
+        "unknown_field",
+        "unconfined_rejection"
+      ]
     }
   ],
-  "descriptor_digest": "sha256:eb863e44009f03a099cca8d4223b26801083dc7e52db5080f15f0eeded699b8c"
+  "descriptor_digest": "sha256:7ec81a30d540b5591c30853c1992806ebe8c7178945db89914506a46c53777a9"
 }
