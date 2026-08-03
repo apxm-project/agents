@@ -220,6 +220,11 @@
       "digest": "sha256:5a78fbe48fa8a374268a558ffcdd066b49c0ca4dacc80be58e03c80eeb0d5ade"
     },
     {
+      "schema_id": "apxm.execution-admission.v1",
+      "path": "schemas/apxm.execution-admission.v1.json",
+      "digest": "sha256:7ae02d8c769816a85b0c2d0056676c26af79334e9c1460c35bdc778cf7c615de"
+    },
+    {
       "schema_id": "apxm.skill-package.v1",
       "path": "schemas/apxm.skill-package.v1.json",
       "digest": "sha256:9e41a8a9e14fa67e8f0dcb3645751e3d670ab7d3a066e8c140382cdd2e1ea75e"
@@ -961,6 +966,16 @@
       ]
     },
     {
+      "schema_id": "apxm.execution-admission.v1",
+      "path": "vectors/apxm.execution-admission.v1.json",
+      "digest": "sha256:7083d2ae70f5054dff3d90babfacb5952cb22fdfb751663cbc369fe71e1fe558",
+      "coverage": [
+        "positive",
+        "unknown_field",
+        "unconfined_rejection"
+      ]
+    },
+    {
       "schema_id": "apxm.skill-package.v1",
       "path": "vectors/apxm.skill-package.v1.json",
       "digest": "sha256:8451c4e9c7c7da1c73a86fe262fb3a3bad21f76d947e320cf495c57797483191",
@@ -983,5 +998,5 @@
       ]
     }
   ],
-  "descriptor_digest": "sha256:df7ed2a7fea8681e8b22fc114d63303c69191d918a56074fbca8c2b0f019a7ec"
+  "descriptor_digest": "sha256:0f969b363b926d44b77b5ae854f0976fb51a99ae310e0a2abecd1391fa6c8a09"
 }
