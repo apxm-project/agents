@@ -120,6 +120,31 @@
       "digest": "sha256:ab99c4676d39e14d9c1a763f02828a48b488bb96af2caaf75973d867d5487cc5"
     },
     {
+      "schema_id": "apxm.inference-driver-binding.v1",
+      "path": "schemas/apxm.inference-driver-binding.v1.json",
+      "digest": "sha256:0f72354ac1e371edab9c205ef8d0ec0447ae327ff6afd524d2e173c0e030450f"
+    },
+    {
+      "schema_id": "apxm.inference-credential-lease.v1",
+      "path": "schemas/apxm.inference-credential-lease.v1.json",
+      "digest": "sha256:08b84e6ffbb6c0e66ee1fe059e84d31d26b5f3ef0b3b73b606697ff776545ba2"
+    },
+    {
+      "schema_id": "apxm.inference-usage-lineage.v1",
+      "path": "schemas/apxm.inference-usage-lineage.v1.json",
+      "digest": "sha256:eebc8f289c1c01f9d75bdd0dc8307e3e4c95453bc95ce36cbc60be28e07cfd96"
+    },
+    {
+      "schema_id": "apxm.diagnostic-correlation.v1",
+      "path": "schemas/apxm.diagnostic-correlation.v1.json",
+      "digest": "sha256:a384d0cf7081889e7ea0cc21354a9c5932d3bd65e6bf179960222d95bfafa911"
+    },
+    {
+      "schema_id": "apxm.vllm-conformance-join.v1",
+      "path": "schemas/apxm.vllm-conformance-join.v1.json",
+      "digest": "sha256:711bdfaed2d24cc94bdb7fdebd73b8a49d980f175b727ea74985756ba07fafe0"
+    },
+    {
       "schema_id": "apxm.external-agent-request.v1",
       "path": "schemas/apxm.external-agent-request.v1.json",
       "digest": "sha256:d0befa14ec1162e4cd02bf28b5d89e8299b828a9595eeeeab197021e223f0409"
@@ -756,6 +781,51 @@
       ]
     },
     {
+      "schema_id": "apxm.inference-driver-binding.v1",
+      "path": "vectors/apxm.inference-driver-binding.v1.json",
+      "digest": "sha256:63a35b6eb6e211aa28cfc2db9af4f9fa08d2d88308591c646009d1639e5891c5",
+      "coverage": [
+        "positive",
+        "unknown_discriminant"
+      ]
+    },
+    {
+      "schema_id": "apxm.inference-credential-lease.v1",
+      "path": "vectors/apxm.inference-credential-lease.v1.json",
+      "digest": "sha256:981951847c76940869a69d5b2b51ace1ff6b638ef1165d3d0a12bd9da1d2b826",
+      "coverage": [
+        "positive",
+        "unknown_discriminant"
+      ]
+    },
+    {
+      "schema_id": "apxm.inference-usage-lineage.v1",
+      "path": "vectors/apxm.inference-usage-lineage.v1.json",
+      "digest": "sha256:86e909cd717c040e73250c49d59d7a4ddcbf81d627e195adf8cf8e285eee6619",
+      "coverage": [
+        "positive",
+        "mutation"
+      ]
+    },
+    {
+      "schema_id": "apxm.diagnostic-correlation.v1",
+      "path": "vectors/apxm.diagnostic-correlation.v1.json",
+      "digest": "sha256:072004efe95ef57089b8b2815d3d4ca142b471cfd4e7974b221cabb2df78cd0f",
+      "coverage": [
+        "positive",
+        "mutation"
+      ]
+    },
+    {
+      "schema_id": "apxm.vllm-conformance-join.v1",
+      "path": "vectors/apxm.vllm-conformance-join.v1.json",
+      "digest": "sha256:ef1ccfe293af1927d5e8334129cc14bef6e427143f5120264238e9c8afc7d191",
+      "coverage": [
+        "positive",
+        "mutation"
+      ]
+    },
+    {
       "schema_id": "apxm.external-agent-request.v1",
       "path": "vectors/apxm.external-agent-request.v1.json",
       "digest": "sha256:c0d6bd4075d466ab86a292d3497da042a2c2b03a44f3d3c9d401fb4b74556871",
@@ -816,5 +886,5 @@
       ]
     }
   ],
-  "descriptor_digest": "sha256:eb863e44009f03a099cca8d4223b26801083dc7e52db5080f15f0eeded699b8c"
+  "descriptor_digest": "sha256:513b79aacae75a1c27c1ca6eade11291e9c98625ad6a45c2b3ab6cc112256df1"
 }

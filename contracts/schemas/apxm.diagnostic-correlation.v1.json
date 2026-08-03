@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.diagnostic-correlation.v1",
+  "title": "DiagnosticCorrelation",
+  "description": "Correlated diagnostic log/metric/trace references for one committed execution. Diagnostics never grant authority and never replace canonical owner evidence. When a diagnostic signal disagrees with owner evidence, the evidence remains authoritative and the diagnostic is marked disagreeing.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "correlation_id",
+    "commit_id",
+    "evidence_fact_ids",
+    "authority",
+    "agreement"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "apxm.diagnostic-correlation.v1"
+    },
+    "correlation_id": {
+      "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+    },
+    "commit_id": {
+      "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+    },
+    "evidence_fact_ids": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+      },
+      "uniqueItems": true
+    },
+    "log_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+      },
+      "uniqueItems": true
+    },
+    "metric_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+      },
+      "uniqueItems": true
+    },
+    "trace_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+      },
+      "uniqueItems": true
+    },
+    "authority": {
+      "const": "diagnostic_only"
+    },
+    "agreement": {
+      "type": "string",
+      "enum": [
+        "agrees_with_evidence",
+        "disagrees_evidence_authoritative"
+      ]
+    },
+    "claimed_input_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "claimed_output_tokens": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false
+}
