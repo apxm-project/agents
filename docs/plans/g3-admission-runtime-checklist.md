@@ -11,7 +11,10 @@ Frozen contract: [execution-admission-contract.md](../agents/execution-admission
       (`apxm_kernel::admission`, schema `apxm.execution-admission.v1`).
 - [x] Resolve every required Port and exact target before execution; reject
       missing or ambiguous bindings (`resolve_exact_bindings` /
-      `verify_execution_admission`).
+      `verify_execution_admission`), including closed slot contract IDs.
+- [x] Construct runtime admission only from byte-for-byte admitted bindings and
+      attest the exact confinement sandbox and policy before use
+      (`RuntimeAdmission::admit`).
 - [x] Invocation lifecycle, checkpoints, resume surface, cancellation and
       safe-boundary revocation (kernel instance + effect reducer +
       `CheckpointAdvancer`).
@@ -19,6 +22,8 @@ Frozen contract: [execution-admission-contract.md](../agents/execution-admission
       blind replay (`EffectState` / G3 suite).
 - [x] Atomic execution commit and crash recovery around checkpoint/effect
       boundaries (`ExecutionCommitPort` + G3 crash/replay/lost-reply suite).
+- [x] Reject split evidence and malformed atomic write members before an adapter
+      receives a commit request (`ExecutionCommitRequest::validate`).
 - [x] Pin confinement backend/policy and fail closed when unavailable
       (required confinement binding + escape negative).
 - [x] Prove no ambient credentials, filesystem, network, plugin or unconfined
