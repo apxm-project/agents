@@ -7,7 +7,7 @@
 //! after construction. Each first-party implementation enters through the same
 //! exact binding — there is no generic registry or first-party bypass.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use apxm_inference::ModelInferencePort;
@@ -18,6 +18,7 @@ use crate::capability::CapabilityPort;
 use crate::commit::ExecutionCommitPort;
 use crate::confinement::ConfinementPort;
 use crate::external_agent::ExternalAgentCapabilityPort;
+use crate::runtime_ports::{CompositionPort, EventPort};
 
 /// The closed set of typed port slots a bundle can carry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -102,6 +103,8 @@ pub enum PortImplementation {
     ModelInference(Arc<dyn ModelInferencePort + Send + Sync>),
     Capability(Arc<dyn CapabilityPort>),
     ExternalAgentCapability(Arc<dyn ExternalAgentCapabilityPort>),
+    DurableEvent(Arc<dyn EventPort>),
+    ProgramComposition(Arc<dyn CompositionPort>),
 }
 
 impl PortImplementation {
@@ -113,6 +116,8 @@ impl PortImplementation {
             Self::ModelInference(_) => PortSlot::ModelInference,
             Self::Capability(_) => PortSlot::Capability,
             Self::ExternalAgentCapability(_) => PortSlot::ExternalAgentCapability,
+            Self::DurableEvent(_) => PortSlot::DurableEvent,
+            Self::ProgramComposition(_) => PortSlot::ProgramComposition,
         }
     }
 }
@@ -184,6 +189,9 @@ pub struct PortBundle {
     model_inference: Option<Arc<dyn ModelInferencePort + Send + Sync>>,
     capability: Option<Arc<dyn CapabilityPort>>,
     external_agent_capability: Option<Arc<dyn ExternalAgentCapabilityPort>>,
+    durable_event: Option<Arc<dyn EventPort>>,
+    program_composition: Option<Arc<dyn CompositionPort>>,
+    bindings: HashMap<PortSlot, ExactPortBinding>,
 }
 
 impl std::fmt::Debug for PortBundle {
@@ -197,6 +205,8 @@ impl std::fmt::Debug for PortBundle {
                 "external_agent_capability",
                 &self.external_agent_capability.is_some(),
             )
+            .field("durable_event", &self.durable_event.is_some())
+            .field("program_composition", &self.program_composition.is_some())
             .finish()
     }
 }
@@ -222,6 +232,9 @@ impl PortBundle {
         let mut model_inference: Option<Arc<dyn ModelInferencePort + Send + Sync>> = None;
         let mut capability: Option<Arc<dyn CapabilityPort>> = None;
         let mut external_agent_capability: Option<Arc<dyn ExternalAgentCapabilityPort>> = None;
+        let mut durable_event: Option<Arc<dyn EventPort>> = None;
+        let mut program_composition: Option<Arc<dyn CompositionPort>> = None;
+        let mut bindings: HashMap<PortSlot, ExactPortBinding> = HashMap::new();
         let mut seen: HashSet<PortSlot> = HashSet::new();
 
         for (binding, implementation) in entries {
@@ -235,6 +248,7 @@ impl PortBundle {
                 return Err(BundleError::DuplicateSlot(binding.slot));
             }
             binding.validate_for(binding.slot, expected)?;
+            bindings.insert(binding.slot, binding.clone());
 
             match implementation {
                 PortImplementation::ExecutionCommit(port) => execution_commit = Some(port),
@@ -244,6 +258,8 @@ impl PortBundle {
                 PortImplementation::ExternalAgentCapability(port) => {
                     external_agent_capability = Some(port);
                 }
+                PortImplementation::DurableEvent(port) => durable_event = Some(port),
+                PortImplementation::ProgramComposition(port) => program_composition = Some(port),
             }
         }
 
@@ -262,6 +278,9 @@ impl PortBundle {
             model_inference,
             capability,
             external_agent_capability,
+            durable_event,
+            program_composition,
+            bindings,
         })
     }
 
@@ -288,5 +307,21 @@ impl PortBundle {
     #[must_use]
     pub fn external_agent_capability(&self) -> Option<&Arc<dyn ExternalAgentCapabilityPort>> {
         self.external_agent_capability.as_ref()
+    }
+
+    #[must_use]
+    pub fn durable_event(&self) -> Option<&Arc<dyn EventPort>> {
+        self.durable_event.as_ref()
+    }
+
+    #[must_use]
+    pub fn program_composition(&self) -> Option<&Arc<dyn CompositionPort>> {
+        self.program_composition.as_ref()
+    }
+
+    /// Return the exact descriptor used to admit one slot.
+    #[must_use]
+    pub fn binding(&self, slot: PortSlot) -> Option<&ExactPortBinding> {
+        self.bindings.get(&slot)
     }
 }
