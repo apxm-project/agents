@@ -9,16 +9,18 @@ below run through both hosts.
 Both an embedded composition root and the APXM reference runtime host must:
 
 1. verify one signed, expiring, nonce-bound `ExecutionAdmission`;
-2. construct one `RuntimeAdmission` with the exact admitted implementations and
-   confinement attestation;
-3. join the exact durable-event and program-composition bindings through
-   `apxm_execution::RuntimeProfile`; and
+2. construct one `RuntimeAdmission` with every exact admitted implementation,
+   including durable-event and Program-composition ports, plus confinement
+   attestation;
+3. transfer that immutable full bundle through
+   `apxm_execution::RuntimeProfile::from_fully_admitted`; and
 4. submit the same `ExecutionRequest` to the same canonical execution driver.
 
 `RuntimeProfile` retains the immutable `ExecutionPortBundle` for its lifetime,
-rejects construction when a required driver port is absent, and keeps shutdown
-state on the profile instance. It does not discover implementations, select a
-provider, create a product service, or provide a fallback path.
+rejects construction when a required driver port is absent or when a driver
+binding was not admitted, and keeps shutdown state on the profile instance. It
+does not discover implementations, select a provider, create a product service,
+or provide a fallback path.
 
 ## Required G5 evidence still outstanding
 
