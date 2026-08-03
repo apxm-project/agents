@@ -17,6 +17,10 @@ apxm-inference.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
+ed25519-dalek.workspace = true
+sha2.workspace = true
+uuid.workspace = true
+base64 = "0.22"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
