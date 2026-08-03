@@ -22,6 +22,7 @@ pub mod external_agent;
 pub mod hook;
 pub mod instance;
 pub mod reconcile;
+pub mod runtime_ports;
 
 pub use admission::{
     AdmissionError, AdmittedConfinement, AdmittedModelTarget, AdmittedPortBinding,
@@ -59,3 +60,7 @@ pub use instance::{
     ProgramInstance,
 };
 pub use reconcile::{LifecycleView, reconstruct};
+pub use runtime_ports::{
+    CompositionOutcome, CompositionPort, CompositionReceiver, CompositionRequest, EventAwait,
+    EventOutcome, EventPort, EventRef, EventRefError,
+};
