@@ -1,7 +1,24 @@
 # APXM agents architecture decisions
 
-Accepted ADRs are binding for the target. Superseded ADRs preserve rationale
-only and cannot be used as implementation authority.
+Accepted owner ADRs are binding for target semantics inside `agents`. They
+implement, and cannot override, the workspace authority set published by
+[apxm#148](https://github.com/apxm-project/apxm/pull/148) (ADR-0028–0030
+filenames below; relative links resolve once that authority lands on the
+coordinator default branch / nested workspace checkout):
+
+- [ADR-0028](../../../../docs/adr/0028-apxm-is-the-product-neutral-agent-program-and-inference-core.md)
+  — product-neutral Agent Program and inference core; APXM never depends on a
+  downstream product.
+- [ADR-0029](../../../../docs/adr/0029-agent-program-source-and-closed-semantics-are-behavior-truth.md)
+  — Agent Program source and closed semantics are behavior truth.
+- [ADR-0030](../../../../docs/adr/0030-execution-inference-evidence-and-deployment-are-exact-and-product-neutral.md)
+  — exact admission, runtime/checkpoint/confinement, atomic commit, inference
+  and evidence.
+
+Superseded owner ADRs preserve rationale only and cannot be used as
+implementation authority. Product-plane names (Studio, Auth, Server, Host SDK,
+company MCP, billing) are not APXM owners; outer Composition Roots may supply
+opaque correlations and exact admitted bindings only.
 
 | ADR | Status | Decision | Plan |
 | --- | --- | --- | --- |
@@ -18,12 +35,12 @@ only and cannot be used as implementation authority.
 | [0011](0011-agent-program-execution-is-one-end-to-end-spine.md) | Accepted; amended by 0013 | One frontend/compiler/runtime/inference/evidence execution spine | APXM master and composition/AIR plans |
 | [0012](0012-acp-uses-explicit-capabilities-selection-is-not-runtime-semantics.md) | Accepted; amended by 0013 | ACP is an external Capability; v1 selection is exact; APXM-owned routing is future work | ACP/exact-selection plan and future-routing plan |
 | [0013](0013-core-semantics-are-closed-and-implementations-enter-through-exact-port-bindings.md) | Accepted | Closed semantic types, narrow Port Contracts, exact implementation bindings, and no first-party bypass | Portable core contract, Rust embedding plan, and APXM portability plan |
-| [0014](0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md) | Accepted; amended by 0015 and 0017 | Conversational Agent remains an example; Gao's examples-only ownership is replaced by Studio ownership; AIS owns separate closed effect/composition and structural operation families; completed-loop evidence is generic | Composition/AIR contract and plan |
+| [0014](0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md) | Accepted; amended by 0015 and 0017 | Conversational Agent remains a repository example; Gao is an ordinary Agent Program package outside `agents` ownership; AIS owns separate closed effect/composition and structural operation families; completed-loop evidence is generic | Composition/AIR contract and plan |
 | [0015](0015-source-first-agent-frontend-vocabulary.md) | Accepted | Source-first five-concept authoring surface, frozen declaration matrix, BoundAgentTree representation stack, FrontendGraph typed intents vs Rust-owned AIS selection, surface manifest | Source-first Agent frontend master plan |
 | [0016](0016-tool-authoring-and-handler-execution-are-separate.md) | Accepted | Typed Tool references, private package-handler definitions, Rust-owned manifest, and Rust-admitted Capability execution are separate boundaries | Tool authoring and handler-execution plan |
-| [0017](0017-gao-is-a-studio-owned-agent-program-over-host-capabilities.md) | Accepted | Gao is a Studio-owned ordinary Agent Program; Workflow authoring arrives through typed Host Capabilities with no named Agents semantics | Studio Gao Host plan and cross-repository frontend/runtime conformance |
-| [0018](0018-event-readiness-and-local-scheduling-are-agents-semantics.md) | Accepted; requires accepted workspace ADR-0027 | Agents owns portable Program Event/reference/reducer/activation/readiness/local scheduling semantics while Server owns managed durable coordination | Event-driven runtime contract and full-replacement plan |
-| [0019](0019-builtin-capabilities-own-no-durable-scheduling-or-wake-bridge.md) | Accepted; amends 0016; requires accepted workspace ADR-0027 | No builtin Capability holds a durable timer, a durable store, a background task, or a process-global wake bridge; wall-clock schedules are Server-owned managed occurrences | Agents event-runtime owner lane plan |
+| [0017](0017-gao-is-a-studio-owned-agent-program-over-host-capabilities.md) | Accepted as package-ownership history; product-plane brand ownership superseded by ADR-0028 | Gao remains an ordinary Agent Program package; `agents` exposes only generic program/instance invocation and typed Capability ports—no named Gao or Host product semantics | Composition/AIR contract and cross-repository frontend/runtime conformance |
+| [0018](0018-event-readiness-and-local-scheduling-are-agents-semantics.md) | Accepted; workspace authority ADR-0030 | Agents owns portable Program Event/reference/reducer/activation/readiness/local scheduling semantics; durable coordination outside the portable kernel is supplied by exact Port bindings from a Composition Root | Event-driven runtime contract and full-replacement plan |
+| [0019](0019-builtin-capabilities-own-no-durable-scheduling-or-wake-bridge.md) | Accepted; amends 0016; workspace authority ADR-0030 | No builtin Capability holds a durable timer, a durable store, a background task, or a process-global wake bridge; wall-clock schedules enter only through exact admitted Port bindings | Agents event-runtime owner lane plan |
 
 Canonical owner contract and plan:
 
@@ -37,5 +54,4 @@ Canonical owner contract and plan:
 - [Event-driven runtime and scheduler contract](../agents/event-driven-runtime-and-scheduler-contract.md)
 - [Event-driven runtime full-replacement plan](../agents/event-driven-runtime-full-replacement-plan.md)
 - [Agents event-runtime owner lane plan](../plans/agents-event-runtime-owner-lane-plan.md)
-- [APXM Port Contracts and composition plan](../../../../docs/plans/apxm-port-contracts-and-composition-full-replacement-plan.md)
-- [APXM master plan](../../../../docs/plans/apxm-master-plan.md)
+- [APXM core architecture and delivery plan](../../../../docs/plans/apxm-master-plan.md)

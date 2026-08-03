@@ -1,9 +1,13 @@
 # ACP interoperability and selection contract
 
 - Status: normative APXM v1 contract; future routing sections are planned, not executable v1 semantics
-- Owner: APXM `agents` semantic types with owner-plane contracts identified below
+- Owner: APXM `agents` (product-neutral semantic types and ports)
 - Binding ADR: [ADR-0012](../adr/0012-acp-uses-explicit-capabilities-selection-is-not-runtime-semantics.md)
-- Workspace decision: [Workspace ADR-0007](../../../../docs/adr/0007-apxm-v1-uses-acp-as-an-external-agent-capability-and-keeps-routing-explicit.md)
+- Workspace authority: [ADR-0028](../../../../docs/adr/0028-apxm-is-the-product-neutral-agent-program-and-inference-core.md),
+  [ADR-0029](../../../../docs/adr/0029-agent-program-source-and-closed-semantics-are-behavior-truth.md),
+  [ADR-0030](../../../../docs/adr/0030-execution-inference-evidence-and-deployment-are-exact-and-product-neutral.md)
+  (paths and titles as published in apxm#148; `Invocation Admission` is the
+  agents synonym for product-neutral Execution Admission)
 
 ## 1. Purpose
 
@@ -14,12 +18,12 @@ four unrelated selection concerns from collapsing into one ambiguous router.
 | Concern | V1 contract | Future contract | Final decision owner |
 | --- | --- | --- | --- |
 | APXM Program selection | source chooses a statically imported `ProgramRef` | unchanged | source/compiler |
-| model selection | source names one exact `ModelTargetRef`; the verified Deployment Composition predeclares one exact deployment/adapter mapping and Invocation Admission materializes it | future plan may propose an immutable route policy | managed Server admission before dispatch |
-| External Agent selection | source names one exact `ExternalAgentProfileRef`; session Invocation Admission uses that profile and the verified ACP Client Port Binding | source may invoke `external_agent.route` | managed Server admission through Capability |
-| event routing | Server durably accepts, delivers, and applies exact occurrences under Agents-owned Event/EventRef semantics | unchanged | Server durability over Agents semantics |
+| model selection | source names one exact `ModelTargetRef`; the verified Deployment Composition predeclares one exact deployment/adapter mapping and Invocation Admission materializes it | future plan may propose an immutable route policy | product-neutral Invocation Admission before dispatch |
+| External Agent selection | source names one exact `ExternalAgentProfileRef`; session Invocation Admission uses that profile and the verified ACP Client Port Binding | source may invoke `external_agent.route` | product-neutral Invocation Admission through Capability |
+| event routing | exact Port bindings durably accept, deliver, and apply occurrences under Agents-owned Event/EventRef semantics | unchanged | exact event Port bindings over Agents semantics |
 
-No runtime router, backend registry, adapter, Studio view, or provider alias may
-choose among these on behalf of source or Server.
+No runtime router, backend registry, adapter, product UI, or provider alias may
+choose among these on behalf of source or Invocation Admission.
 
 ## 2. Defensible interoperability promise
 
@@ -48,12 +52,13 @@ The first conformance targets are:
 An adapter may use the vendor SDK/App Server behind its boundary, but APXM core
 depends only on the exact ACP Client Port, generated protocol types, and
 admitted Implementation Descriptor/Profile. Vendor SDKs never become core
-semantic, runtime, Auth, or evidence dependencies.
+semantic, runtime, admission, or evidence dependencies.
 
-APXM v1 does not expose Agent Programs as ACP Agents. ACP is not an Integration
-or webhook transport. The canonical v1 transport profile is JSON-RPC over an
-admitted stdio subprocess. A future network transport requires a separate
-accepted protocol contract and cannot be inferred from ACP compatibility.
+APXM v1 does not expose Agent Programs as ACP Agents. ACP is not a product
+integration or webhook transport. The canonical v1 transport profile is
+JSON-RPC over an admitted stdio subprocess. A future network transport
+requires a separate accepted protocol contract and cannot be inferred from ACP
+compatibility.
 
 ## 3. Program surface
 
@@ -82,13 +87,14 @@ protocol messages, attempts, reconciliation, usage, cost, timings, and process
 facts are evidence/query data and never result metadata.
 
 `ExternalAgentSessionRef` is opaque, scoped and non-forgeable. Its durable
-Server record is bound to one owning `ProgramInstanceRef` and its root instance
-lineage or, for one-shot use, one `ProgramInvocationRef`; Acting Principal;
-invoking APXM Agent Identity; exact profile; and grant lease. A stateful
-Program may retain it only in that same Program Instance's typed Program
-Context for later invocations. It cannot escape in output, be forged, move to
-an unrelated instance/invocation/principal, or become a `ProgramInstanceRef`.
-It contains no credential, authority, process snapshot or mutable profile.
+session record is bound to one owning `ProgramInstanceRef` and its root
+instance lineage or, for one-shot use, one `ProgramInvocationRef`; Acting
+Principal; invoking APXM Agent Identity; exact profile; and grant lease. A
+stateful Program may retain it only in that same Program Instance's typed
+Program Context for later invocations. It cannot escape in output, be forged,
+move to an unrelated instance/invocation/principal, or become a
+`ProgramInstanceRef`. It contains no credential, authority, process snapshot or
+mutable profile.
 
 Opening, prompting, cancelling, and closing are distinct effects with distinct
 stable effect ids. The compiler rejects implicit global sessions, arbitrary
@@ -148,11 +154,12 @@ profile, process/transport correlation, ACP session id and negotiated features.
 close after `lost`/`outcome_unknown` records a separate cleanup result and never
 rewrites the terminal fact to `closed`. Unknown states fail closed.
 
-Server owns the durable session record, ownership binding, lease, control
-state, opaque handle and evidence correlation. The runtime/adapter owns only
-the currently admitted live transport/process. V1 permits one connection or
-process per `ExternalAgentSessionRef` and never pools it across principals,
-Program Instances, profiles, or grant leases.
+Durable session record, ownership binding, lease, control state, opaque handle
+and evidence correlation enter through exact admitted Port bindings supplied by
+the Composition Root. The runtime/adapter owns only the currently admitted live
+transport/process. V1 permits one connection or process per
+`ExternalAgentSessionRef` and never pools it across principals, Program
+Instances, profiles, or grant leases.
 
 ### 5.2 Initialization and negotiation
 
@@ -163,15 +170,15 @@ extension is ignored only when the pinned schema declares it safely optional;
 otherwise admission fails.
 
 Authentication uses only the pinned ACP method and an Invocation-Admission
-credential lease issued by Auth for that exact profile and adapter binding. The
-Composition Root or effect boundary injects the short-lived material without
-retaining it; the adapter cannot invent non-standard wire fields, read
-host-local credentials, or become secret custodian. Session new/load and
-optional `session/delete` behavior are used
-only when the exact ACP version and negotiated profile support them. APXM
-`external_agent.session.close` never assumes ACP has a baseline close method: it may invoke
-admitted `session/delete`, then releases/terminates the transport according to
-the exact profile. A session is never silently recreated after loss.
+credential lease for that exact profile and adapter binding. The Composition
+Root or effect boundary injects the short-lived material without retaining it;
+the adapter cannot invent non-standard wire fields, read host-local
+credentials, or become secret custodian. Session new/load and optional
+`session/delete` behavior are used only when the exact ACP version and
+negotiated profile support them. APXM `external_agent.session.close` never
+assumes ACP has a baseline close method: it may invoke admitted
+`session/delete`, then releases/terminates the transport according to the exact
+profile. A session is never silently recreated after loss.
 
 ### 5.3 Prompt turns
 
@@ -221,21 +228,22 @@ as nested APXM Capability occurrences under:
 - approval, budget and time constraints; and
 - stable nested effect id.
 
-The adapter presents only the choices permitted by the Auth decision. A local
-`ApproveAll` mode, editor trust assumption or agent request is never authority.
-Missing Auth, confinement or path evidence denies the request.
+The adapter presents only the choices permitted by the admission decision. A
+local `ApproveAll` mode, editor trust assumption or agent request is never
+authority. Missing admission, confinement or path evidence denies the request.
 
-MCP is not an ACP reverse method. A configured `mcpServers` entry may point only
-to the APXM MCP/Capability gateway with attenuated Auth; each gateway operation
-is independently admitted and evidenced. Skill Discovery is exposed on demand
-through that admitted Capability/MCP gateway and never injects Skill bodies.
-The exact profile references one admitted gateway descriptor: local stdio or
-managed Streamable HTTP. The managed form uses its own audience-bound Auth and
-never passes an upstream provider token through to APXM or a downstream host.
-Agent-native tools that the peer does not delegate to the ACP client remain
-inside the outer external-agent Capability. They are still constrained by the
-profile's mandatory roots, executable, egress, process and confinement ceilings
-and appear only as attributed external evidence, not APXM child nodes.
+An attenuated Capability gateway is not an ACP reverse method. A configured
+gateway entry may point only to an admitted Capability gateway; each gateway
+operation is independently admitted and evidenced. Skill Discovery is exposed
+on demand through that admitted Capability gateway and never injects Skill
+bodies. The exact profile references one admitted gateway descriptor (for
+example local stdio or Streamable HTTP). The gateway uses its own
+audience-bound admission and never passes an upstream provider token through to
+APXM or a downstream host. Agent-native tools that the peer does not delegate
+to the ACP client remain inside the outer external-agent Capability. They are
+still constrained by the profile's mandatory roots, executable, egress, process
+and confinement ceilings and appear only as attributed external evidence, not
+APXM child nodes.
 
 ## 7. Evidence and usage
 
@@ -255,9 +263,9 @@ The outer NodeExecution preserves:
 - exact terminal result, including lost and outcome-unknown.
 
 ACP-reported context usage, token estimates, cost, model identity and tool data
-are attributed third-party evidence. They never overwrite the Server usage
-ledger, an APXM model NodeExecution, or an APXM spend fact. Studio labels the
-provenance explicitly.
+are attributed third-party evidence. They never overwrite canonical APXM usage
+evidence, an APXM model NodeExecution, or an admitted operational-usage fact.
+Evidence projections must label the provenance explicitly.
 
 `apxm.external-agent-evidence.v1` is a closed union of
 `session_transition`, `wire_message`, `peer_content`, `peer_plan`,
@@ -274,23 +282,23 @@ the fields are numeric. Context-window capacity is not consumption. An ACP
 prompt does not enter the native model `TokenAccountant`, acquire a fabricated
 `GenerationIdentity`, or become a model NodeExecution.
 
-Before opening or prompting, Invocation Admission includes the Server-owned
-budget reservation for the outer Capability using the profile's configured
-maximum duration/resource charge or another trusted bounded price rule. A
-deployment may explicitly allow unknown-cost work only under a separate policy
-ceiling; a hard budget fails closed when no trusted maximum can be established.
-Cumulative peer usage is stored as
-provenance-labelled snapshots. A monotonic delta is derived only when the exact
-profile declares reset/scope semantics and the ordered sequence is continuous.
-Duplicate, reset, gap, cancellation, and failure do not produce a guessed
-delta. Peer evidence never affects operational spend unless a separate
-Server-owned contract admits an `apxm.operational-usage-fact.v1`.
+Before opening or prompting, Invocation Admission includes the resource-ceiling
+reservation for the outer Capability using the profile's configured maximum
+duration/resource charge or another trusted bounded price rule. A deployment
+may explicitly allow unknown-cost work only under a separate policy ceiling; a
+hard ceiling fails closed when no trusted maximum can be established.
+Cumulative peer usage is stored as provenance-labelled snapshots. A monotonic
+delta is derived only when the exact profile declares reset/scope semantics and
+the ordered sequence is continuous. Duplicate, reset, gap, cancellation, and
+failure do not produce a guessed delta. Peer evidence never affects operational
+usage unless a separate admitted contract produces an
+`apxm.operational-usage-fact.v1`.
 
-Metered company-owned provider/API-key execution may have a versioned derived
-estimate and optional provider-reconciled value. Seat/subscription execution
-may legitimately expose no per-run billed cost. An inbound external MCP client
-does not reveal its upstream model usage or licence cost. All three cases are
-first-class provenance/availability states, never zero-filled facts.
+Metered provider/API-key execution may have a versioned derived estimate and
+optional provider-reconciled value. Seat/subscription execution may
+legitimately expose no per-run billed cost. An inbound external Capability
+client does not reveal its upstream model usage or licence cost. All three
+cases are first-class provenance/availability states, never zero-filled facts.
 
 ## 8. Exact model selection in v1
 
@@ -319,9 +327,9 @@ examples only; APXM will not adopt either as its semantic router.
 A future model route policy must contain a finite exact candidate-set digest,
 hard feature/authority/locality/risk/budget constraints, objective, price
 snapshot rules, deterministic tie-breaker, evaluation claim, scorer digest when
-learned, and typed no-eligible behavior. Server owns final pre-dispatch
-resolution and produces an immutable decision before runtime receives the
-binding.
+learned, and typed no-eligible behavior. Final pre-dispatch resolution, when
+separately accepted by ADR, produces an immutable decision before runtime
+receives the binding.
 
 A future External Agent route policy follows the same selection-before-effect
 rule over exact admitted profiles. Its Capability returns a decision only;
@@ -340,14 +348,11 @@ Future routing cannot:
 
 | Owner | Responsibility |
 | --- | --- |
-| `agents` | frontend types, exact refs, portable Event/EventRef/occurrence/provenance and target-application/activation/effect semantics, ACP Capability/session ports, `ModelTargetRef`/`ResolvedModelBinding` validation, and lifecycle/evidence contracts |
+| `agents` | frontend types, exact refs, portable Event/EventRef/occurrence/provenance and target-application/activation/effect semantics, ACP Capability/session ports, product-neutral Invocation Admission and exact Port binding verification, `ModelTargetRef`/`ResolvedModelBinding` validation, checkpoint/confinement/evidence contracts, and owner-local conformance |
 | compiler/runtime | compiler records exact semantic requirements; runtime validates Verified Deployment Composition plus Invocation Admission and executes one immutable admitted binding |
-| Server | managed source/occurrence/delivery/application/activation/effect-work/schedule/Host-gateway durability, leases, retry/DLQ/redrive/recovery, operational queries, root/invocation admission, model-deployment and External Agent Profile catalogues, durable external-agent session records/control handles, budget/spend, future route resolution, and final pre-dispatch decision |
-| Auth | identity and authority, verification, grants/approvals, connection and secret custody, credential leases, roots, and egress ceilings |
-| `adapters` | provider/source protocol interpretation and execution, official-schema ACP Client and exact inference implementations, optional future pure scorer; no Program-target selection |
-| Host SDK | Host protocol meaning, generated bindings, enrollment/session/resume, credit/effect frames, Host source contributions, and protocol conformance |
-| `eval` | ACP matrices and future router quality/calibration/drift claims |
-| Studio | configuration, simulation, session/evidence/spend projections through generated clients |
+| Composition Root | selects one Runtime Profile and Deployment Composition Manifest, supplies opaque external correlations and exact admitted bindings, injects short-lived credential material without retaining it, and owns process/placement lifecycle outside the semantic kernel |
+| Exact Port bindings / adapters | provider/source protocol interpretation and execution, official-schema ACP Client and exact inference implementations, optional future pure scorer; durable session/event/store seams when admitted; no Program-target selection |
+| Downstream products | may authorize work, evaluate quality and project evidence outside APXM; they never define APXM execution semantics or become APXM release dependencies |
 
 ## 11. Conformance gates
 
@@ -359,19 +364,21 @@ V1 release evidence must prove:
 - exact Claude, Codex and other admitted ACP profile negotiation;
 - required-feature omission and version skew fail closed;
 - no arbitrary command, runtime download, mutable tag or unconfined profile;
-- path escape, terminal and permission requests are attenuated; MCP uses only
-  the separately admitted APXM gateway; agent-native tools remain confined;
+- path escape, terminal and permission requests are attenuated; Capability
+  gateway use is only through a separately admitted gateway; agent-native tools
+  remain confined;
 - prompt/cancel/close/crash/race/session-loss/outcome-unknown behavior;
 - session ownership/non-transfer, no cross-principal pooling, terminal-state
   immutability and result-versus-evidence schema separation;
 - closed nested ACP evidence, third-party usage provenance, and rejection of
   peer measurements by the native model accountant;
-- local stdio and managed Streamable HTTP MCP gateway attenuation, including
+- local stdio and Streamable HTTP Capability gateway attenuation, including
   audience validation and token-passthrough rejection;
-- hard-budget bounded/unknown-cost denial plus cumulative-delta/reconciliation
+- hard-ceiling bounded/unknown-cost denial plus cumulative-delta/reconciliation
   vectors;
-- exact model binding with no registry fallback or Server executor bypass;
-- managed and standalone Runtime Instances use the same
+- exact model binding with no registry fallback or Composition Root bypass of
+  admission;
+- embedded and reference Runtime Instances use the same
   `verify_deployment_composition` path for the exact ACP Client adapter binding;
   neither path searches or resolves an implementation; and
 - absence of prototype `SPAWN_AGENT`, `COMMUNICATE`, `AgentRouter`, AAM preamble,
