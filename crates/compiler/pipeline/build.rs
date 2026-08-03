@@ -654,17 +654,62 @@ fn generate_bindings(
         );
     }
 
+    // libclang does not necessarily inherit the active driver's Apple SDK
+    // search path. Supply it explicitly so standard fixed-width integer
+    // headers resolve when bindgen parses the C API on macOS.
+    #[cfg(target_os = "macos")]
+    if let Some(sdk) = env::var_os("SDKROOT")
+        .map(PathBuf::from)
+        .filter(|path| path.is_dir() && path != Path::new("/"))
+        .or_else(|| {
+            Command::new("xcrun")
+                .args(["--sdk", "macosx", "--show-sdk-path"])
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .map(|output| PathBuf::from(String::from_utf8_lossy(&output.stdout).trim()))
+                .filter(|path| path.is_dir())
+        })
+    {
+        log_info!(
+            "apxm-compiler-build",
+            "Using Apple SDK sysroot for bindgen: {}",
+            sdk.display()
+        );
+        extra_clang_args.push("-isysroot".into());
+        extra_clang_args.push(sdk.display().to_string());
+        extra_clang_args.push(format!("-I{}/usr/include", sdk.display()));
+        for header in ["stdint.h", "stddef.h"] {
+            let header_path = sdk.join("usr/include").join(header);
+            if header_path.is_file() {
+                extra_clang_args.push("-include".into());
+                extra_clang_args.push(header_path.display().to_string());
+            }
+        }
+        if let Ok(target) = env::var("TARGET") {
+            extra_clang_args.push("-target".into());
+            extra_clang_args.push(target);
+        }
+    }
+
     // Also add the conda sysroot include path so clang's stdint.h can
-    // `#include_next <stdint.h>` to find the next system header.
-    for root in &clang_roots {
-        if let Some(sysroot_include) = conda_sysroot_include_dir(root) {
-            log_info!(
-                "apxm-compiler-build",
-                "Found conda sysroot includes at {}",
-                sysroot_include.display()
-            );
-            extra_clang_args.push(format!("-I{}", sysroot_include.display()));
-            break;
+    // `#include_next <stdint.h>` to find the next system header. On macOS,
+    // however, the Dekk environment may also contain the Linux cross-toolchain
+    // (`x86_64-conda-linux-gnu`); feeding those headers to Apple clang produces
+    // invalid `gnu/stubs-32.h` diagnostics. The active Apple SDK already
+    // provides the correct system headers, so only use a conda sysroot on
+    // non-Darwin hosts.
+    if !cfg!(target_os = "macos") {
+        for root in &clang_roots {
+            if let Some(sysroot_include) = conda_sysroot_include_dir(root) {
+                log_info!(
+                    "apxm-compiler-build",
+                    "Found conda sysroot includes at {}",
+                    sysroot_include.display()
+                );
+                extra_clang_args.push(format!("-I{}", sysroot_include.display()));
+                break;
+            }
         }
     }
 
