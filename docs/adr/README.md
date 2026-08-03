@@ -1,7 +1,10 @@
 # APXM agents architecture decisions
 
 Accepted owner ADRs are binding for target semantics inside `agents`. They
-implement, and cannot override, the workspace authority set:
+implement, and cannot override, the workspace authority set published by
+[apxm#148](https://github.com/apxm-project/apxm/pull/148) (ADR-0028–0030
+filenames below; relative links resolve once that authority lands on the
+coordinator default branch / nested workspace checkout):
 
 - [ADR-0028](../../../../docs/adr/0028-apxm-is-the-product-neutral-agent-program-and-inference-core.md)
   — product-neutral Agent Program and inference core; APXM never depends on a

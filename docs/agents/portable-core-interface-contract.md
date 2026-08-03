@@ -4,8 +4,11 @@
 - Date: 2026-07-16
 - Decision: [ADR-0013](../adr/0013-core-semantics-are-closed-and-implementations-enter-through-exact-port-bindings.md)
 - Product-neutral scope: [ADR-0028](../../../../docs/adr/0028-apxm-is-the-product-neutral-agent-program-and-inference-core.md)
+  (apxm#148)
 - Semantic authority: [ADR-0029](../../../../docs/adr/0029-agent-program-source-and-closed-semantics-are-behavior-truth.md)
+  (apxm#148)
 - Execution and exact-binding authority: [ADR-0030](../../../../docs/adr/0030-execution-inference-evidence-and-deployment-are-exact-and-product-neutral.md)
+  (apxm#148)
 - Owner: APXM `agents`
 - Applies to: contracts/types, AIS, artifact, compiler, runtime, CLI and
   Composition Root wiring, inference/Capability/ACP/handler/confinement/store/
@@ -47,11 +50,15 @@ The canonical terms are in [`CONTEXT.md`](../../CONTEXT.md).
   the Composition Root; it is not an admission actor or resolver.
 - **Deployment Composition Manifest**: deployment-specific materialization of
   one selected Runtime Profile.
-- **Invocation Admission**: separate per-invocation authority, identity,
-  budget, lease, model-binding, limit, cancellation, and lineage facts.
-- **Composition Root**: outer application/host that selects one Runtime
-  Profile, supplies deployment resources, invokes the shared verifier, and owns
-  constructed implementations.
+- **Execution Admission** (agents synonym: **Invocation Admission**): the
+  product-neutral signed admission envelope from workspace ADR-0030 and the
+  master-plan admission contract—exact artifact and invocation identities,
+  context digest, resource ceilings, exact Port bindings, exact model target
+  when present, expiry/nonce, issuer/audience, and opaque caller correlations.
+  It carries no downstream product schema.
+- **Composition Root**: outer composition root (ADR-0029) that selects one
+  Runtime Profile, supplies exact admitted bindings and deployment resources,
+  invokes the shared verifier, and owns constructed implementations.
 - **Execution Commit Port**: one atomic authoritative commit of Program state,
   continuation/checkpoint, effect facts, canonical evidence, and output refs.
 - **Runtime Instance**: one isolated semantic kernel constructed from a
@@ -175,10 +182,10 @@ Public compilation accepts complete in-memory values/bytes/readers plus
 explicit compiler options, target/toolchain identity, cancellation, limits,
 and source maps. It returns an admitted artifact or closed diagnostics.
 
-It never reads cwd, `PATH`, credentials, service registries, endpoints, a
-running Server, or provider configuration. CLI, PyO3, Node-API, and remote
-compile service are explicit bridges to the same compiler contract; none is a
-fallback for another.
+It never reads cwd, `PATH`, credentials, ambient service registries, endpoints,
+a running external service, or provider configuration. CLI, PyO3, Node-API, and
+remote compile bridges are explicit transports to the same compiler contract;
+none is a fallback for another.
 
 ### 6.2 Semantic requirements in artifacts
 
@@ -221,9 +228,9 @@ The three scopes are disjoint:
 
 | Scope | Contains | Excludes |
 | --- | --- | --- |
-| Compatibility Set | exact contracts, libraries, implementation artifacts and descriptors, Runtime Profiles, platform matrices, signatures, SBOM/provenance, and conformance | deployment resource refs, customer secret refs, credential leases, grants, budgets, invocation ids |
-| Deployment Composition Manifest | one explicitly selected Runtime Profile, generated per-port binding payloads, exact configuration digests, stable opaque resource refs, and binding-admission evidence for one installation | Capability Grants, credential leases, budget reservations, resolved model effects, execution evidence |
-| Invocation Admission | authenticated Company/Acting Principal/Agent Identity, grants/approvals, credential leases, budget reservation, resolved model binding, deadlines, limits, cancellation, and lineage | implementation search, replacement profile, deployment configuration mutation |
+| Compatibility Set | exact contracts, libraries, implementation artifacts and descriptors, Runtime Profiles, platform matrices, signatures, SBOM/provenance, and conformance | deployment resource refs, secret refs, credential leases, grants, resource ceilings, invocation ids |
+| Deployment Composition Manifest | one explicitly selected Runtime Profile, generated per-port binding payloads, exact configuration digests, stable opaque resource refs, and binding-admission evidence for one installation | Capability Grants, credential leases, resource-ceiling reservations, resolved model effects, execution evidence |
+| Execution Admission (Invocation Admission) | exact artifact and invocation identities, context digest, resource ceilings, exact Port bindings, exact model target when present, expiry/nonce, issuer/audience, opaque caller correlations, leases/limits/cancellation/lineage | implementation search, replacement profile, deployment configuration mutation, downstream product schema |
 
 The Runtime Profile is immutable Compatibility Set data. It predeclares exactly
 one Implementation Descriptor digest and one generated binding-payload contract
@@ -265,7 +272,7 @@ ExactPortBinding<BindingPayload> {
 
 `BindingPayload` is generated from that Port Contract and uses exact typed
 configuration and stable opaque resource refs; there is no universal resource
-bag. It contains no Capability Grant, credential lease, budget reservation,
+bag. It contains no Capability Grant, credential lease, resource-ceiling reservation,
 Invocation/NodeExecution/effect id, resolved model effect, or execution
 evidence. The resulting `PortBindingSet` is immutable for that deployment
 composition. Revocation or expiry fails the affected operation according to the
@@ -290,13 +297,15 @@ its behavior; absence cannot silently disable a semantic obligation.
 - Release intake verifies the Compatibility Set and its exact Runtime Profiles.
 - The selected Composition Root invokes `verify_deployment_composition` to
   verify the profile/manifest/descriptor/binding closure and construct exact
-  implementations. Managed and standalone embedding use this same path.
+  implementations. Embedded and reference-runtime Composition Roots use this
+  same path.
 - Runtime construction verifies the resulting proof/digests, typed slot-to-
   contract equality, and complete port bundle only. It performs no catalogue
   access, admission, resolution, or search.
-- Invocation admission verifies the artifact requirements, authenticated
-  identities, budgets, deadlines, resolved model binding, and current authority
-  facts without changing the deployment composition.
+- Execution Admission (Invocation Admission) verifies the artifact
+  requirements, product-neutral admission facts, resource ceilings, deadlines,
+  resolved model binding, and current authority facts without changing the
+  deployment composition.
 - The effect boundary verifies the current Capability Grant,
   credential/resource lease, revocation, and resource ceilings required by the
   owner contract. It never resolves or rebinds an implementation.
@@ -557,9 +566,9 @@ Compatibility Set entry. A fake that appears in a production composition is a
 verification failure, never a fallback.
 
 Model Deployments and External Agent Profiles compose exact model/peer facts
-with an admitted inference or ACP Client implementation; Integration revisions
-and Host connections compose their owner planes. None is itself an
-Implementation Descriptor.
+with an admitted inference or ACP Client implementation. Downstream product
+integrations compose outside APXM and never become Implementation Descriptors
+or APXM release dependencies.
 
 ## 11. Hardcoding disposition
 
@@ -648,7 +657,8 @@ a new complete Compatibility Set.
 - [ ] forbidden dependencies/literals/globals/direct calls are absent;
 - [ ] Compatibility Sets pin contracts, implementations, Runtime Profiles,
   platforms and conformance; Deployment Composition Manifests pin exact
-  deployment bindings/config/resources; Invocation Admission carries current
-  authority, leases, budgets and model effects; and
+  deployment bindings/config/resources; Execution Admission carries exact
+  identities, opaque correlations, leases, resource ceilings and model
+  effects with no downstream product schema; and
 - [ ] no legacy, alias, fallback, dual constructor, or mixed binding system
   remains.
