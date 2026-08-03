@@ -3,12 +3,13 @@
 - Status: canonical APXM v1 owner contract
 - Date: 2026-07-16
 - Decision: [ADR-0013](../adr/0013-core-semantics-are-closed-and-implementations-enter-through-exact-port-bindings.md)
-- Workspace decision: [ADR-0009](../../../../docs/adr/0009-apxm-v1-core-depends-on-closed-semantics-and-explicit-port-contracts.md)
-- Event/runtime decision: [Workspace ADR-0027](../../../../docs/adr/0027-agents-owns-runtime-readiness-and-server-owns-managed-events.md)
+- Product-neutral scope: [ADR-0028](../../../../docs/adr/0028-apxm-is-the-product-neutral-agent-program-and-inference-core.md)
+- Semantic authority: [ADR-0029](../../../../docs/adr/0029-agent-program-source-and-closed-semantics-are-behavior-truth.md)
+- Execution and exact-binding authority: [ADR-0030](../../../../docs/adr/0030-execution-inference-evidence-and-deployment-are-exact-and-product-neutral.md)
 - Owner: APXM `agents`
-- Applies to: contracts/types, AIS, artifact, compiler, runtime, CLI/server
-  composition, inference/Capability/ACP/handler/confinement/store/observer
-  adapters
+- Applies to: contracts/types, AIS, artifact, compiler, runtime, CLI and
+  Composition Root wiring, inference/Capability/ACP/handler/confinement/store/
+  observer adapters
 - Migration: full replacement; no old registry, default, fallback, alias, or
   mixed binding system
 
@@ -16,13 +17,13 @@
 
 This contract defines how `agents` keeps Agent Program meaning fixed while
 allowing infrastructure implementations to be replaced. Frontends, compiler,
-artifact admission, runtime, Server admission, adapters, inference backends,
-and evidence must implement one Program Execution Model. A new implementation
-may change performance, placement, protocol mechanics, or attributable
-evidence; it may not change the meaning or schema of output, lifecycle,
-authority, or canonical evidence. A real model or external system may return a
-different valid domain value. Exact output equality is required only for a
-scripted deterministic fixture with the same injected inputs.
+artifact admission, runtime, product-neutral Invocation Admission, adapters,
+inference backends, and evidence must implement one Program Execution Model. A
+new implementation may change performance, placement, protocol mechanics, or
+attributable evidence; it may not change the meaning or schema of output,
+lifecycle, authority, or canonical evidence. A real model or external system
+may return a different valid domain value. Exact output equality is required
+only for a scripted deterministic fixture with the same injected inputs.
 
 ## 2. Normative vocabulary
 
@@ -81,7 +82,7 @@ Rules:
 1. one owner schema defines discriminants and wire spellings;
 2. Rust matches exhaustively; Python/TypeScript generated unions use a
    `never`/equivalent exhaustiveness test;
-3. storage, event, HTTP, evidence, and Studio projections use generated values;
+3. storage, event, HTTP, evidence, and evidence projections use generated values;
 4. semantic/security unions have no generic `Other(String)`, `Unknown(raw)`,
    `Custom`, string fallback, or catch-all behavior; owner-defined epistemic
    variants such as `OutcomeUnknown`, `UsageUnknown`, and
@@ -239,12 +240,12 @@ one Deployment Composition Manifest. The library-owned
 - the profile's one-to-one slot mapping; and
 - each generated per-Port-Contract binding payload.
 
-The managed Server Composition Root and a standalone embedding Composition Root
-call this exact same verifier. The verifier consumes the selected profile and
-manifest only; it never searches a catalogue, ranks candidates, chooses a
-default, or tries another implementation. Zero, duplicate, missing, or
-mismatched slot mappings fail verification. Display names and package
-coordinates are presentation only.
+An embedded Composition Root and a reference runtime Composition Root call this
+exact same verifier. The verifier consumes the selected profile and manifest
+only; it never searches a catalogue, ranks candidates, chooses a default, or
+tries another implementation. Zero, duplicate, missing, or mismatched slot
+mappings fail verification. Display names and package coordinates are
+presentation only.
 
 ### 7.2 Deployment binding
 
@@ -315,9 +316,9 @@ without a separate accepted ADR and conformance contract.
 Input includes exact `ResolvedModelBinding`, its referenced verified inference
 Port Binding, request/effect id, typed Model Context envelope, response
 contract, stream contract, limits, cancellation, and evidence correlation.
-APXM Auth and budget denial occur during Invocation Admission before this port
-is called. A provider refusal is declared `ModelOutput` data, not an authority
-decision.
+Authority and resource-ceiling denial occur during Invocation Admission before
+this port is called. A provider refusal is declared `ModelOutput` data, not an
+authority decision.
 
 The adapter returns attempt facts, not a source-level result envelope:
 
@@ -437,13 +438,15 @@ transition reducers; and portable target-application, activation, effect, and
 runtime transition semantics. The port registers/waits/cancels an exact typed
 EventRef and consumes one authorized fulfillment/expiry/cancellation.
 
-Server owns managed sources, accepted occurrences, delivery attempts and stable
-target application, durable activations and effect work, schedules,
-retry/DLQ/redrive, recovery, operational queries, and Host-gateway durability
-(`S-HG`). Auth owns authority, verification, connections, and secret custody.
-Adapters own provider/source protocol interpretation and execution; Host SDK
-owns Host protocol meaning and conformance. Runtime does not poll arbitrary
-URLs or brokers, and redelivery cannot create a second semantic fulfillment.
+Durable sources, accepted occurrences, delivery attempts and stable target
+application, durable activations and effect work, schedules, retry/DLQ/redrive,
+recovery, and operational queries enter only through exact admitted event Port
+bindings supplied by the Composition Root. Authority, verification,
+connections, and secret custody remain outside the semantic kernel and are
+presented to APXM only as product-neutral admission facts and short-lived
+leases. Adapters own provider/source protocol interpretation and execution.
+Runtime does not poll arbitrary URLs or brokers, and redelivery cannot create a
+second semantic fulfillment.
 
 ### 8.6 Handler execution port
 
@@ -464,7 +467,7 @@ The owner contract includes:
   `terminate`, and cleanup outcomes;
 - roots/mounts, filesystem policy/enforcement, symlink and race behavior;
 - executable/image/artifact allowlist and digest proof;
-- environment and short-lived Auth credential-lease injection rules;
+- environment and short-lived credential-lease injection rules;
 - network/egress/DNS policy;
 - CPU/memory/time/process/file/output limits;
 - stdout/stderr/file/output classification and evidence;
@@ -515,20 +518,21 @@ Only application composition may:
   Composition Manifest;
 - invoke `verify_deployment_composition` and construct only the verified
   implementations/descriptors;
-- request an authorized short-lived Auth credential lease for one exact bound
+- request an authorized short-lived credential lease for one exact bound
   adapter, inject it without retaining or logging it, and discard it when its
   scope ends;
 - install telemetry exporters/subscribers;
 - own executor/thread/process lifecycle; and
 - report startup/readiness/drain/shutdown state.
 
-APXM Auth remains the sole secret custodian; Composition Root access to a lease
-does not transfer custody. The verifier validates all configuration against
-exact generated binding schemas and records active profile, descriptor,
-binding-payload, configuration, resource-reference, and platform digests. A
-configuration default is valid only when it is an explicit versioned value in
-the selected signed profile. A literal hidden in an application is not a
-profile default.
+Secret custody remains outside APXM; Composition Root access to a lease does
+not transfer custody into the semantic kernel. The verifier validates all
+configuration against exact generated binding schemas and records active
+profile, descriptor, binding-payload, configuration, resource-reference, and
+platform digests. A configuration default is valid only when it is an explicit
+versioned value in the selected signed profile. A literal hidden in an
+application is not a profile default. Downstream products may know APXM; APXM
+must build, test, release and run without naming or depending on them.
 
 ## 10. First-party implementation rule
 

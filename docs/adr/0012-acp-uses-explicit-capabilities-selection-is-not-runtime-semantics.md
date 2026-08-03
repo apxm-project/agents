@@ -23,7 +23,8 @@ preserve authority and evidence without adding another operation family.
 
 ## Decision
 
-This owner ADR implements [workspace ADR-0007](../../../../docs/adr/0007-apxm-v1-uses-acp-as-an-external-agent-capability-and-keeps-routing-explicit.md).
+This owner ADR implements the exact-binding and no-routing rules in
+[workspace ADR-0030](../../../../docs/adr/0030-execution-inference-evidence-and-deployment-are-exact-and-product-neutral.md).
 
 ### No AIR expansion
 
@@ -77,7 +78,7 @@ try {
 
 These are target contract examples, not claims about the prototype frontend.
 Each wrapper call lowers to `capability.invoke`. The `ExternalAgentSessionRef`
-is a scoped opaque Capability handle whose durable Server record is bound to
+is a scoped opaque Capability handle whose durable session record is bound to
 one Program Instance/root lineage (or one one-shot Program Invocation), Acting
 Principal, invoking Agent Identity, exact profile, and grant lease. The same
 Program Instance may retain it in typed Program Context across invocations. It
@@ -94,17 +95,18 @@ Capability invocations carrying the
 original External Agent Profile, session, Acting Principal, Agent Identity,
 root Program Invocation, resource, operation and effect lineage. The adapter
 cannot implement `ApproveAll` as authority. An ACP permission response only
-communicates the result of APXM Auth evaluation/approval for that exact reverse
-request. MCP is a separate attenuated APXM MCP/Capability gateway, never an ACP
-reverse method. Agent-native tools that remain inside the peer stay inside the
-outer effect under mandatory profile confinement and attributed evidence.
+communicates the result of the outer admission/approval decision for that
+exact reverse request. An attenuated Capability gateway may be admitted
+separately; it is never an ACP reverse method. Agent-native tools that remain
+inside the peer stay inside the outer effect under mandatory profile
+confinement and attributed evidence.
 
 The ACP peer's prompt loop, model calls, internal subagents and private state
 remain one external Capability effect from APXM's perspective. APXM records
 protocol updates, reported Tool/plan/message data, reverse requests, usage and
 terminal outcome as attributed external evidence; it never fabricates APXM
-NodeExecutions for the peer's internals or treats reported usage as the APXM
-Server ledger without source/provenance classification.
+NodeExecutions for the peer's internals or treats reported usage as
+authoritative APXM usage evidence without source/provenance classification.
 
 ### Internal Program selection
 
@@ -141,18 +143,19 @@ const answer = await model.call(request, {
 The compiler preserves the exact portable model-target requirement. The
 selected signed Runtime Profile and Deployment Composition Manifest predeclare
 exactly one `ModelTargetRef -> ModelDeploymentRef -> ExactPortBindingRef`
-mapping. Managed Server, or a standalone Composition Root through the same
-library-owned `verify_deployment_composition(...)` contract, validates and
-materializes one immutable `ResolvedModelBinding` before runtime dispatch. It
-never searches, ranks, or substitutes candidates. Runtime validates and invokes
-only that binding. Zero, duplicate, missing, unavailable, or ineligible is a
-typed failure and does not activate a default target.
+mapping. The Composition Root, through the library-owned
+`verify_deployment_composition(...)` contract, validates and materializes one
+immutable `ResolvedModelBinding` before runtime dispatch. It never searches,
+ranks, or substitutes candidates. Runtime validates and invokes only that
+binding. Zero, duplicate, missing, unavailable, or ineligible is a typed
+failure and does not activate a default target.
 
 APXM will implement its own model router as future work. A future frontend may
 also accept an exact `ModelRoutePolicyRef`; the compiler will bind the policy
-and candidate-set digests, and Server will own the pre-dispatch decision. The
-runtime will receive only the resulting immutable `ResolvedModelBinding`. No
-third-party router is an APXM dependency or architectural owner.
+and candidate-set digests, and a separately accepted ADR will define the
+pre-dispatch decision owner. The runtime will receive only the resulting
+immutable `ResolvedModelBinding`. No third-party router is an APXM dependency
+or architectural owner.
 
 If dispatch may have occurred, the router cannot select another model for the
 same effect id. Safe retry requires proof from the selected adapter's exact
@@ -168,30 +171,31 @@ response and usage facts reference it but do not overwrite it.
 ### Adapter and profile admission
 
 `agents` owns the stable ACP Client and inference ports, exact model/profile
-reference types, lifecycle invariants, source bindings and evidence semantics.
-For v1 it owns the `ModelTargetRef` and `ResolvedModelBinding`
-validation/evidence contracts. Server owns the admission contract, shared
-verifier, managed deployment catalogue, budget, and durable external-agent
-session records, leases, and control handles; a standalone Composition Root
-invokes the same verifier over a pre-signed deployment composition. Server is
-not an implementation resolver: the selected composition already names the
-exact mapping. Only after future routing is separately promoted may Server own
-the final pre-dispatch policy decision. Runtime/adapter own only the live
-transport/process and runtime only validates and executes the immutable model
-binding. Concrete Claude, Codex, other exact admitted ACP,
-and inference implementations are separately admitted adapters outside the
-runtime kernel. A future pure learned scorer may be an admitted adapter, but it
-cannot dispatch or override Server admission.
+reference types, lifecycle invariants, source bindings, product-neutral
+admission verification, and evidence semantics. For v1 it owns the
+`ModelTargetRef` and `ResolvedModelBinding` validation/evidence contracts.
+An outer Composition Root supplies one pre-signed deployment composition,
+opaque external correlations, and exact admitted bindings; it invokes the
+shared verifier owned by `agents`. The Composition Root is not an
+implementation resolver: the selected composition already names the exact
+mapping. Only after future routing is separately promoted by a new ADR may a
+pre-dispatch policy decision produce the immutable binding before runtime
+dispatch. Runtime/adapter own only the live transport/process and runtime only
+validates and executes the immutable model binding. Concrete Claude, Codex,
+other exact admitted ACP, and inference implementations are separately
+admitted adapters outside the runtime kernel. A future pure learned scorer may
+be an admitted adapter, but it cannot dispatch or override admission.
 
 An adapter is usable only when the Compatibility Set pins its exact production
 Implementation Descriptor, artifact, dependencies, platform, Port Contract,
 protocol/capability matrix, confinement/network ceiling, limits,
 SBOM/provenance, and conformance evidence. An `ExternalAgentProfile` is a
 separate deployment composition that fixes the exact peer artifact/command or
-endpoint, ACP adapter binding, Auth method reference, workspace/confinement,
-and limits. Runtime Profile data predeclares the required typed slots; the
-Deployment Composition Manifest fixes the actual profile and resources. A
-source-level display name cannot resolve an executable.
+endpoint, ACP adapter binding, credential-method reference,
+workspace/confinement, and limits. Runtime Profile data predeclares the
+required typed slots; the Deployment Composition Manifest fixes the actual
+profile and resources. A source-level display name cannot resolve an
+executable.
 
 APXM's Claude claim is for the exact `claude-agent-acp` adapter, which may use
 the Claude Agent SDK internally. Its Codex claim is for an exact admitted Codex
