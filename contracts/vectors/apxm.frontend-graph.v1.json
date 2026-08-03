@@ -429,5 +429,78 @@
       }
     },
     "expected_valid": false
+  },
+  {
+    "name": "incompatible-frontend-graph-schema-version-rejected",
+    "input": {
+      "schema_version": "apxm.frontend-graph.v0",
+      "source_language": "python",
+      "program_definitions": [
+        {
+          "program_id": "Specialist",
+          "entrypoint": "run",
+          "input_type_ref": "SpecialistInput",
+          "output_type_ref": "SpecialistOutput",
+          "has_default_context": false
+        }
+      ],
+      "imported_program_refs": [],
+      "declarations": [],
+      "functions": [],
+      "values": [],
+      "blocks": [],
+      "regions": [],
+      "data_edges": [],
+      "call_intents": [],
+      "control_intents": [],
+      "context_flow": [],
+      "hook_bindings": [],
+      "capability_requirements": [],
+      "model_requirements": [],
+      "source_map": {
+        "schema_version": "apxm.source-map.v1",
+        "source_language": "python",
+        "node_spans": [],
+        "region_annotations": []
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "unknown-frontend-graph-field-rejected",
+    "input": {
+      "schema_version": "apxm.frontend-graph.v1",
+      "source_language": "typescript",
+      "program_definitions": [
+        {
+          "program_id": "Specialist",
+          "entrypoint": "run",
+          "input_type_ref": "SpecialistInput",
+          "output_type_ref": "SpecialistOutput",
+          "has_default_context": false
+        }
+      ],
+      "imported_program_refs": [],
+      "declarations": [],
+      "functions": [],
+      "values": [],
+      "blocks": [],
+      "regions": [],
+      "data_edges": [],
+      "call_intents": [],
+      "control_intents": [],
+      "context_flow": [],
+      "hook_bindings": [],
+      "capability_requirements": [],
+      "model_requirements": [],
+      "legacy_alias": "must-not-be-accepted",
+      "source_map": {
+        "schema_version": "apxm.source-map.v1",
+        "source_language": "typescript",
+        "node_spans": [],
+        "region_annotations": []
+      }
+    },
+    "expected_valid": false
   }
 ]

@@ -576,7 +576,7 @@
     {
       "schema_id": "apxm.frontend-graph.v1",
       "path": "vectors/apxm.frontend-graph.v1.json",
-      "digest": "sha256:2247d6640c314b8a712f5cc1b17b68e5edd4c456084465433c450b9a960e1ed4",
+      "digest": "sha256:1ea07e680d2e49df5c948427e2ef51940769fbbe2ff9a3325c2e227a66a27c77",
       "coverage": [
         "positive",
         "unknown_discriminant",
@@ -816,5 +816,5 @@
       ]
     }
   ],
-  "descriptor_digest": "sha256:eb863e44009f03a099cca8d4223b26801083dc7e52db5080f15f0eeded699b8c"
+  "descriptor_digest": "sha256:32a2df8026e9318a3d09f59e0120e593942d774b5faf6da799590e4ca764a143"
 }
