@@ -1,0 +1,15 @@
+schema_version = "apxm.agent.v1"
+id = "external-typescript-fixture"
+kind = "agent"
+display_name = "External TypeScript Fixture"
+description = "A public-package conformance fixture for the canonical TypeScript frontend."
+version = "0.1.0"
+domain = "testing"
+license = "MIT"
+capabilities = ["lookup"]
+allowed_agent_skills = []
+
+[compile]
+entry = "src/main.ts"
+frontend = "typescript"
+

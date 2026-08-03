@@ -1,0 +1,17 @@
+{
+  "name": "external-typescript-fixture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "compile": "node --input-type=module -e \"import { ExternalFixture } from './dist/src/main.js'; console.log(ExternalFixture.canonicalAir())\"",
+    "run": "node --input-type=module -e \"import { ExternalFixture } from './dist/src/main.js'; console.log(JSON.stringify(ExternalFixture.frontendGraph()))\""
+  },
+  "dependencies": {
+    "@apxm/frontend": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "typescript": "^5.6.3"
+  }
+}
