@@ -30,6 +30,8 @@ use crate::ports::{CompositionPort, EventPort};
 pub enum RuntimeProfileError {
     /// The event/composition binding set was not an exact match.
     Binding(apxm_kernel::BundleError),
+    /// A driver implementation was supplied outside the immutable admission.
+    BindingNotAdmitted(apxm_kernel::PortSlot),
     /// The kernel admission did not contain every driver port required by the
     /// canonical execution driver.
     MissingDriverPort(apxm_kernel::PortSlot),
@@ -43,6 +45,13 @@ impl std::fmt::Display for RuntimeProfileError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Binding(error) => error.fmt(formatter),
+            Self::BindingNotAdmitted(slot) => {
+                write!(
+                    formatter,
+                    "runtime profile binding was not admitted: {}",
+                    slot.as_str()
+                )
+            }
             Self::MissingDriverPort(slot) => {
                 write!(
                     formatter,
@@ -84,6 +93,23 @@ impl RuntimeProfile {
         model_call_request_metadata: Arc<dyn ModelCallRequestMetadataPort>,
         hook_handlers: Arc<dyn StaticHookHandlerPort>,
     ) -> Result<Self, RuntimeProfileError> {
+        for (slot, supplied) in [
+            (apxm_kernel::PortSlot::DurableEvent, &event_binding),
+            (
+                apxm_kernel::PortSlot::ProgramComposition,
+                &composition_binding,
+            ),
+        ] {
+            let admitted = admission
+                .verified()
+                .port_bindings
+                .iter()
+                .find(|binding| binding.slot == slot)
+                .ok_or(RuntimeProfileError::BindingNotAdmitted(slot))?;
+            if admitted != supplied {
+                return Err(RuntimeProfileError::BindingNotAdmitted(slot));
+            }
+        }
         let kernel = Arc::new(admission.into_bundle());
         let bundle = ExecutionPortBundle::construct(
             kernel,
@@ -110,6 +136,45 @@ impl RuntimeProfile {
             ports,
             accepting: AtomicBool::new(true),
         })
+    }
+
+    /// Construct the shared profile from a bundle whose event and composition
+    /// implementations were admitted by the kernel itself. This is the only
+    /// composition path a reference host should use.
+    pub fn from_fully_admitted(
+        admission: RuntimeAdmission,
+        model_call_request_metadata: Arc<dyn ModelCallRequestMetadataPort>,
+        hook_handlers: Arc<dyn StaticHookHandlerPort>,
+    ) -> Result<Self, RuntimeProfileError> {
+        let bundle = ExecutionPortBundle::from_admitted_kernel(Arc::new(admission.into_bundle()))
+            .map_err(RuntimeProfileError::Binding)?;
+        let ports = ExecutionPorts::from_admitted_bundle(
+            &bundle,
+            model_call_request_metadata,
+            hook_handlers,
+        )
+        .map_err(|error| match error {
+            crate::driver::ExecutionPortsError::MissingAdmittedPort(slot) => {
+                RuntimeProfileError::MissingDriverPort(slot)
+            }
+        })?;
+        Ok(Self {
+            _bundle: bundle,
+            ports,
+            accepting: AtomicBool::new(true),
+        })
+    }
+
+    /// Construct a fully admitted profile without static Hook handlers.
+    pub fn from_fully_admitted_without_hooks(
+        admission: RuntimeAdmission,
+        model_call_request_metadata: Arc<dyn ModelCallRequestMetadataPort>,
+    ) -> Result<Self, RuntimeProfileError> {
+        Self::from_fully_admitted(
+            admission,
+            model_call_request_metadata,
+            Arc::new(NoopStaticHookHandler),
+        )
     }
 
     /// Construct a profile for an AIR with no static Hook handlers.
