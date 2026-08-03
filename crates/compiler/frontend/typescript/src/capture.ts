@@ -819,7 +819,9 @@ class Capture {
       throw new CaptureError("TaskGroup.run requires one static callback");
     }
     const nodeId = this.next("task_group");
-    const childRegion = `${nodeId}.child.1`;
+    // Keep the region identity language-independent: the Python frontend
+    // represents the lexical TaskGroup body as `<node>.scope`.
+    const childRegion = `${nodeId}.scope`;
     this.controls.push({
       node_id: nodeId,
       control_kind: "task_group",
