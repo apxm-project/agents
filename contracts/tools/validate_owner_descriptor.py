@@ -977,6 +977,14 @@ def compute_port_contract(
 
 def compute_descriptor(descriptor: dict[str, Any]) -> dict[str, Any]:
     updated = copy.deepcopy(descriptor)
+    if "published_host_lifecycle_profiles" in updated:
+        updated["published_host_lifecycle_profiles"] = [
+            reference_host_published_lifecycle_profile(
+                load_json(REFERENCE_HOST_RELEASE_MANIFEST_PATH),
+                load_json(REFERENCE_HOST_EXECUTION_MANIFEST_PATH),
+                load_json(REFERENCE_HOST_LIFECYCLE_PARITY_VECTOR_PATH),
+            )
+        ]
     updated["constitution"]["digest"] = file_digest(
         _published_schema_path(CONSTITUTION_SCHEMAS_DIR / "contract-constitution.v1.json")
     )
