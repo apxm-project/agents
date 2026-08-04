@@ -139,17 +139,13 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
         release_manifest = load_json(REFERENCE_HOST_RELEASE_MANIFEST)
         execution_manifest = load_json(REFERENCE_HOST_EXECUTION_MANIFEST)
         lifecycle_vector = load_json(REFERENCE_HOST_LIFECYCLE_VECTOR)
-        expected_execution_manifest_ref = {
-            "schema_version": execution_manifest["schema_version"],
-            "path": "reference-host/manifests/apxm.reference-host-execution-manifest.v1.json",
-            "digest": self.validator.file_digest(REFERENCE_HOST_EXECUTION_MANIFEST),
-        }
-        expected_lifecycle_vector_ref = {
-            "vector_id": lifecycle_vector["schema_version"],
-            "path": "reference-host/vectors/apxm.reference-host.lifecycle-parity.v1.json",
-            "digest": self.validator.file_digest(REFERENCE_HOST_LIFECYCLE_VECTOR),
-            "profiles": list(lifecycle_vector["profiles"]),
-        }
+        expected_execution_manifest_ref = self.validator.reference_host_execution_manifest_ref()
+        expected_publication_cohort = self.validator.reference_host_publication_cohort(
+            execution_manifest
+        )
+        expected_lifecycle_vector_ref = self.validator.reference_host_lifecycle_vector_ref(
+            lifecycle_vector
+        )
         expected_attestation = {
             "profile_cohort": list(self.validator.REFERENCE_HOST_PROFILE_COHORT),
             "execution_manifest": expected_execution_manifest_ref,
@@ -161,6 +157,14 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
         self.assertEqual(
             release_manifest["profile_cohort"],
             list(self.validator.REFERENCE_HOST_PROFILE_COHORT),
+        )
+        self.assertEqual(execution_manifest["semantic_owner"], "agents")
+        for field in ("owner_executable", "owner_executable_path", "transport_protocol"):
+            self.assertEqual(execution_manifest[field], release_manifest[field])
+        self.assertEqual(
+            release_manifest["publication_cohort"],
+            expected_publication_cohort,
+            "the release manifest must publish the exact schema/vector cohort from the execution manifest",
         )
         self.assertEqual(
             release_manifest["lifecycle_cohort_attestation"],
