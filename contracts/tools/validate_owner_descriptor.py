@@ -259,6 +259,14 @@ def reference_host_execution_manifest_ref() -> dict[str, str]:
     }
 
 
+def reference_host_release_manifest_ref() -> dict[str, str]:
+    return {
+        "schema_version": "apxm.reference-host-release-manifest.v1",
+        "path": "reference-host/manifests/apxm.reference-host-release-manifest.v1.json",
+        "digest": file_digest(REFERENCE_HOST_RELEASE_MANIFEST_PATH),
+    }
+
+
 def reference_host_publication_cohort(
     execution_manifest: dict[str, Any],
 ) -> dict[str, list[dict[str, str]]]:
@@ -300,6 +308,25 @@ def reference_host_lifecycle_vector_ref(lifecycle_vector: dict[str, Any]) -> dic
         "path": "reference-host/vectors/apxm.reference-host.lifecycle-parity.v1.json",
         "digest": file_digest(REFERENCE_HOST_LIFECYCLE_PARITY_VECTOR_PATH),
         "profiles": REFERENCE_HOST_PROFILE_COHORT,
+    }
+
+
+def reference_host_published_lifecycle_profile(
+    release_manifest: dict[str, Any],
+    execution_manifest: dict[str, Any],
+    lifecycle_vector: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "profile_id": "reference-host",
+        "owner_executable": release_manifest["owner_executable"],
+        "transport_protocol": release_manifest["transport_protocol"],
+        "profile_cohort": list(REFERENCE_HOST_PROFILE_COHORT),
+        "startup_input_schema": "apxm.reference-host-startup-input.v1",
+        "release_manifest": reference_host_release_manifest_ref(),
+        "execution_manifest": reference_host_execution_manifest_ref(),
+        "lifecycle_vector": reference_host_lifecycle_vector_ref(lifecycle_vector),
+        "shared_contracts": lifecycle_vector["shared_contracts"],
+        "required_cases": [case["name"] for case in lifecycle_vector["cases"]],
     }
 
 
@@ -995,7 +1022,7 @@ def check_descriptor_shape(schema_ids: dict[str, dict[str, Any]]) -> None:
             "owner-descriptor signatures are detached distribution metadata"
         )
     check_reference_host_boundary(descriptor)
-    check_reference_host_release_evidence()
+    check_reference_host_release_evidence(descriptor)
 
 
 def check_reference_host_boundary(descriptor: dict[str, Any]) -> None:
@@ -1052,7 +1079,7 @@ def check_reference_host_boundary(descriptor: dict[str, Any]) -> None:
         )
 
 
-def check_reference_host_release_evidence() -> None:
+def check_reference_host_release_evidence(descriptor: dict[str, Any]) -> None:
     release_manifest = load_json(REFERENCE_HOST_RELEASE_MANIFEST_PATH)
     if release_manifest.get("schema_version") != "apxm.reference-host-release-manifest.v1":
         raise ValidationError("reference-host release manifest schema_version drifted")
@@ -1113,6 +1140,17 @@ def check_reference_host_release_evidence() -> None:
     if attestation != expected_attestation:
         raise ValidationError(
             "reference-host release manifest lifecycle_cohort_attestation drifted"
+        )
+
+    expected_profile = reference_host_published_lifecycle_profile(
+        release_manifest,
+        execution_manifest,
+        lifecycle_vector,
+    )
+    published_profiles = descriptor.get("published_host_lifecycle_profiles")
+    if published_profiles != [expected_profile]:
+        raise ValidationError(
+            "owner descriptor published_host_lifecycle_profiles drifted from the exact reference-host publication"
         )
 
 
