@@ -39,6 +39,9 @@ REFERENCE_HOST_LIFECYCLE_VECTOR = (
     / "vectors"
     / "apxm.reference-host.lifecycle-parity.v1.json"
 )
+REFERENCE_HOST_SOURCE = (
+    REPOSITORY_ROOT / "crates" / "tools" / "cli" / "src" / "bin" / "reference_host.rs"
+)
 
 README_REFERENCE_HOST = re.compile(
     r"This consumer is pinned to Host SDK source revision\s+"
@@ -136,20 +139,23 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
         self.assertEqual(offenders, [], "\n".join(offenders))
 
     def test_reference_host_release_manifest_attests_exact_lifecycle_cohort(self) -> None:
+        descriptor = load_json(DESCRIPTOR_PATH)
         release_manifest = load_json(REFERENCE_HOST_RELEASE_MANIFEST)
         execution_manifest = load_json(REFERENCE_HOST_EXECUTION_MANIFEST)
         lifecycle_vector = load_json(REFERENCE_HOST_LIFECYCLE_VECTOR)
-        expected_execution_manifest_ref = {
-            "schema_version": execution_manifest["schema_version"],
-            "path": "reference-host/manifests/apxm.reference-host-execution-manifest.v1.json",
-            "digest": self.validator.file_digest(REFERENCE_HOST_EXECUTION_MANIFEST),
-        }
-        expected_lifecycle_vector_ref = {
-            "vector_id": lifecycle_vector["schema_version"],
-            "path": "reference-host/vectors/apxm.reference-host.lifecycle-parity.v1.json",
-            "digest": self.validator.file_digest(REFERENCE_HOST_LIFECYCLE_VECTOR),
-            "profiles": list(lifecycle_vector["profiles"]),
-        }
+        expected_release_manifest_ref = self.validator.reference_host_release_manifest_ref()
+        expected_execution_manifest_ref = self.validator.reference_host_execution_manifest_ref()
+        expected_publication_cohort = self.validator.reference_host_publication_cohort(
+            execution_manifest
+        )
+        expected_lifecycle_vector_ref = self.validator.reference_host_lifecycle_vector_ref(
+            lifecycle_vector
+        )
+        expected_profile = self.validator.reference_host_published_lifecycle_profile(
+            release_manifest,
+            execution_manifest,
+            lifecycle_vector,
+        )
         expected_attestation = {
             "profile_cohort": list(self.validator.REFERENCE_HOST_PROFILE_COHORT),
             "execution_manifest": expected_execution_manifest_ref,
@@ -162,10 +168,27 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
             release_manifest["profile_cohort"],
             list(self.validator.REFERENCE_HOST_PROFILE_COHORT),
         )
+        self.assertEqual(execution_manifest["semantic_owner"], "agents")
+        for field in ("owner_executable", "owner_executable_path", "transport_protocol"):
+            self.assertEqual(execution_manifest[field], release_manifest[field])
+        self.assertEqual(
+            release_manifest["publication_cohort"],
+            expected_publication_cohort,
+            "the release manifest must publish the exact schema/vector cohort from the execution manifest",
+        )
         self.assertEqual(
             release_manifest["lifecycle_cohort_attestation"],
             expected_attestation,
             "the reference-host release manifest must attest the exact lifecycle cohort",
+        )
+        self.assertEqual(
+            descriptor["published_host_lifecycle_profiles"],
+            [expected_profile],
+            "the owner descriptor must publish the exact reference-host lifecycle profile",
+        )
+        self.assertEqual(
+            descriptor["published_host_lifecycle_profiles"][0]["release_manifest"],
+            expected_release_manifest_ref,
         )
 
     def test_reference_host_release_manifest_rejects_retired_admission_alias(self) -> None:
@@ -174,6 +197,16 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
             self.validator.RETIRED_REFERENCE_HOST_ADMISSION_ALIAS,
             release_manifest_text,
         )
+
+    def test_reference_host_source_requires_explicit_startup_input_and_no_placeholders(self) -> None:
+        source = REFERENCE_HOST_SOURCE.read_text(encoding="utf-8")
+        self.assertIn("--startup-input", source)
+        for placeholder in (
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        ):
+            self.assertNotIn(placeholder, source)
 
 
 if __name__ == "__main__":
