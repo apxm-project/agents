@@ -68,6 +68,19 @@ class ReferenceHostBuildReceiptTests(unittest.TestCase):
             receipt["build"]["command"],
             self.module.BUILD_COMMAND,
         )
+        self.assertEqual(
+            receipt["runtime_startup"],
+            {
+                "required_argv": [self.module.STARTUP_INPUT_FLAG, "<path>"],
+                "startup_input_schema": self.module.STARTUP_INPUT_SCHEMA,
+                "reference_host_release_manifest": {
+                    "path": str(
+                        self.module.RELEASE_MANIFEST_PATH.relative_to(self.module.REPOSITORY_ROOT)
+                    ),
+                    "digest": self.module.file_digest(self.module.RELEASE_MANIFEST_PATH),
+                },
+            },
+        )
 
     def test_built_receipt_uses_exact_release_output_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir_name:

@@ -32,3 +32,14 @@ Build the canonical executable and record its exact receipt with:
 ```bash
 dekk agents reference-host-receipt
 ```
+
+Run the executable only with an explicit startup-input document:
+
+```bash
+apxm-reference-host --startup-input /absolute/path/to/startup-input.json
+```
+
+That startup input must bind to the exact reference-host release manifest and
+carry non-placeholder admitted digests for the release, port bindings, and
+resource ceiling. Missing, mismatched, or placeholder digests are rejected at
+startup.

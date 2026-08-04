@@ -39,6 +39,9 @@ REFERENCE_HOST_LIFECYCLE_VECTOR = (
     / "vectors"
     / "apxm.reference-host.lifecycle-parity.v1.json"
 )
+REFERENCE_HOST_SOURCE = (
+    REPOSITORY_ROOT / "crates" / "tools" / "cli" / "src" / "bin" / "reference_host.rs"
+)
 
 README_REFERENCE_HOST = re.compile(
     r"This consumer is pinned to Host SDK source revision\s+"
@@ -178,6 +181,16 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
             self.validator.RETIRED_REFERENCE_HOST_ADMISSION_ALIAS,
             release_manifest_text,
         )
+
+    def test_reference_host_source_requires_explicit_startup_input_and_no_placeholders(self) -> None:
+        source = REFERENCE_HOST_SOURCE.read_text(encoding="utf-8")
+        self.assertIn("--startup-input", source)
+        for placeholder in (
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        ):
+            self.assertNotIn(placeholder, source)
 
 
 if __name__ == "__main__":
