@@ -37,6 +37,7 @@ pub struct ConfinementRequest {
     pub execution_id: String,
     pub confinement_type: ConfinementType,
     pub sandbox_digest: String,
+    pub policy_digest: String,
 }
 
 /// The attestation that an execution runs within an admitted sandbox.
@@ -47,6 +48,7 @@ pub struct ConfinementAttestation {
     pub execution_id: String,
     pub confinement_type: ConfinementType,
     pub sandbox_digest: String,
+    pub policy_digest: String,
     pub attested_at: String,
     pub signature: String,
 }
@@ -57,6 +59,9 @@ pub enum ConfinementError {
     UnadmittedSandbox {
         confinement_type: &'static str,
         sandbox_digest: String,
+    },
+    UnadmittedPolicy {
+        policy_digest: String,
     },
     MalformedSandboxDigest,
 }
@@ -71,6 +76,9 @@ impl std::fmt::Display for ConfinementError {
                 f,
                 "no admitted {confinement_type} sandbox matches {sandbox_digest}"
             ),
+            Self::UnadmittedPolicy { policy_digest } => {
+                write!(f, "no admitted confinement policy matches {policy_digest}")
+            }
             Self::MalformedSandboxDigest => write!(f, "malformed sandbox digest"),
         }
     }
