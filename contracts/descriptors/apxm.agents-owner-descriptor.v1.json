@@ -11,6 +11,51 @@
       "descriptor_exact_checksum": "sha256:d771d3f2c4a50fdeee0c57475c4c00fc6b4121b1e4bf5147a57a76bf11ad7a88"
     }
   ],
+  "published_host_lifecycle_profiles": [
+    {
+      "profile_id": "reference-host",
+      "owner_executable": "apxm-reference-host",
+      "transport_protocol": "jsonl-stdin-stdout",
+      "profile_cohort": [
+        "embedded",
+        "reference-host"
+      ],
+      "startup_input_schema": "apxm.reference-host-startup-input.v1",
+      "release_manifest": {
+        "schema_version": "apxm.reference-host-release-manifest.v1",
+        "path": "reference-host/manifests/apxm.reference-host-release-manifest.v1.json",
+        "digest": "sha256:86906e79b60623abeef2d119c640866cd640ec3198d3e1aa499f1becf0d6a150"
+      },
+      "execution_manifest": {
+        "schema_version": "apxm.reference-host-execution-manifest.v1",
+        "path": "reference-host/manifests/apxm.reference-host-execution-manifest.v1.json",
+        "digest": "sha256:c31eee8e152d897d5857d99772ab41bb605fa5eb7a1a31174d0c19ff7cf9d2f8"
+      },
+      "lifecycle_vector": {
+        "vector_id": "apxm.reference-host.lifecycle-parity.v1",
+        "path": "reference-host/vectors/apxm.reference-host.lifecycle-parity.v1.json",
+        "digest": "sha256:423a8dbd90839e94cdabd278e445706bd645974e776a510afd795704b1afd15e",
+        "profiles": [
+          "embedded",
+          "reference-host"
+        ]
+      },
+      "shared_contracts": {
+        "admission": "apxm.invocation-admission.v1",
+        "drain_quiescence": "apxm.runtime-drain-quiescence.v1",
+        "readiness": "apxm.runtime-readiness.v1",
+        "evidence": "apxm.runtime-evidence.v1"
+      },
+      "required_cases": [
+        "cancellation_before_admission",
+        "drain_shutdown_after_in_flight_completion",
+        "explicit_shutdown_terminal_state",
+        "restart_recovery_from_runtime_evidence",
+        "revocation_before_dispatch",
+        "boundary_fail_closed"
+      ]
+    }
+  ],
   "constitution": {
     "schema_id": "apxm.contract-constitution.v1",
     "digest": "sha256:40fbf36d809620dd0bfa4219eef7671227a8046d7a650bccc092444af0f5bbe2"
@@ -938,5 +983,5 @@
       ]
     }
   ],
-  "descriptor_digest": "sha256:32eaf5b2defe1a5066d2281d3200b8fece5e40c9ceebfd780b0e3b1bc1de861a"
+  "descriptor_digest": "sha256:58db1dccc39f619da0746b697b5772ea0b54702486895070a24ad9ea0a1b8dcb"
 }
