@@ -26,3 +26,9 @@ also validates this subtree directly. It fails closed on stale cohort digests,
 publication drift from canonical APXM sources, and forbidden standalone
 reverse-dependency names such as `clic` or `coordinator` in machine-readable
 publication data.
+
+Build the canonical executable and record its exact receipt with:
+
+```bash
+dekk agents reference-host-receipt
+```
