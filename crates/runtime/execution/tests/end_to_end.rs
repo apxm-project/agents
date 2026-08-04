@@ -11,9 +11,10 @@ use sha2::{Digest, Sha256};
 
 use apxm_inference::{
     AttemptDisposition, ExactModelTargetRef, ExactPortBindingRef, IdempotencyKey,
-    ModelBindingAdmission, ModelCallPreparation, ModelCallRequest, ModelCallRequestMetadata,
-    ModelCallRequestMetadataPort, ModelContextEnvelopeRef, ModelDeploymentRef, ModelInferencePort,
-    ModelOutcome, ModelStreamMode, ModelTargetRef, ResolvedModelBinding, TypedError, Usage,
+    InferenceUsageLineage, ModelBindingAdmission, ModelCallPreparation, ModelCallRequest,
+    ModelCallRequestMetadata, ModelCallRequestMetadataPort, ModelContextEnvelopeRef,
+    ModelDeploymentRef, ModelInferencePort, ModelOutcome, ModelStreamMode, ModelTargetRef,
+    ResolvedModelBinding, TypedError, Usage,
 };
 use apxm_kernel::{
     AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, ExactPortBinding, ExecutionCommitPort,
@@ -26,13 +27,14 @@ use apxm_program::artifact::SchemaDigestRef;
 use apxm_program::capability::CapabilityInvocationAuthority;
 use apxm_program::external_agent::{AttributedEvent, AttributedEventKind, PeerUsage};
 use apxm_program::frontend_graph::{HookBinding, HookPhase, HookReturnMode, HookScope};
-use apxm_program::runtime_evidence::Fact;
+use apxm_program::runtime_evidence::{Fact, ModelAttemptRecordedFact};
 
 use apxm_execution::{
     CapabilityInvocationAdmission, CapabilityOutcome, CapabilityPort, CapabilityRequest,
-    CommittedNativeModelUsage, CommittedNativeModelUsageError, CommittedNativeModelUsageOutcome,
-    CommittedNativeModelUsagePort, CompositionOutcome, CompositionPort, CompositionReceiver,
-    CompositionRequest, EventAwait, EventOutcome, EventPort, ExecutionError, ExecutionPortBundle,
+    CommittedNativeModelUsage, CommittedNativeModelUsageError, CommittedNativeModelUsageGateError,
+    CommittedNativeModelUsageOutcome, CommittedNativeModelUsagePort, CompositionOutcome,
+    CompositionPort, CompositionReceiver, CompositionRequest, EventAwait, EventOutcome, EventPort,
+    EvidencePositionRef, EvidencePositionRefType, ExecutionError, ExecutionPortBundle,
     ExecutionPorts, ExecutionRequest, NodeOutcome, StaticHookHandlerPort, StaticHookResult,
     execute,
 };
@@ -88,6 +90,60 @@ fn admission() -> ModelBindingAdmission {
         },
         composition_digest: digest('c'),
     })
+}
+
+fn committed_attempt(
+    fact_id: &str,
+    attempt_index: u32,
+    input_tokens: u64,
+    output_tokens: u64,
+) -> ModelAttemptRecordedFact {
+    ModelAttemptRecordedFact {
+        fact_id: fact_id.into(),
+        event_sequence: 3,
+        program_invocation_id: "invocation.1".into(),
+        node_execution_id: "node-execution.invocation.1.n.model.3".into(),
+        air_node_id: "n.model".into(),
+        attempt_id: format!("model-attempt.node-execution.invocation.1.n.model.3.{attempt_index}"),
+        attempt_index,
+        model_effect_id: "model-effect.test".into(),
+        request_digest: digest('e'),
+        model_target_ref: "model.target.v1".into(),
+        model_deployment_ref: "deploy.default".into(),
+        exact_port_binding_digest: digest('a'),
+        native_input_tokens: input_tokens,
+        native_output_tokens: output_tokens,
+    }
+}
+
+fn lineage_backed_usage() -> CommittedNativeModelUsage {
+    let attempt = committed_attempt("fact.invocation.1.3", 0, 10, 20);
+    let mut lineage = InferenceUsageLineage::seal(
+        attempt.model_effect_id.clone(),
+        attempt.attempt_index,
+        attempt.model_target_ref.clone(),
+        attempt.exact_port_binding_digest.clone(),
+        Usage {
+            input_tokens: attempt.native_input_tokens,
+            output_tokens: attempt.native_output_tokens,
+        },
+        77,
+        None,
+    )
+    .expect("seal lineage");
+    lineage
+        .bind_evidence(attempt.fact_id.clone(), "c1")
+        .expect("bind lineage");
+    CommittedNativeModelUsage::from_lineage(
+        "c1",
+        EvidencePositionRef {
+            ref_type: EvidencePositionRefType::EvidencePositionRef,
+            r#ref: "evidence:1".into(),
+        },
+        attempt,
+        &lineage,
+    )
+    .expect("lineage-backed usage")
 }
 
 struct TestModelRequestMetadata;
@@ -722,7 +778,7 @@ async fn capability_dispatch_fails_closed_without_exact_invocation_admission() {
 }
 
 #[tokio::test]
-async fn committed_native_model_usage_carries_runtime_coordinates_and_excludes_acp_usage() {
+async fn committed_native_model_usage_is_fail_closed_without_lineage_evidence() {
     let commit = Arc::new(FakeCommit::new());
     let usage = Arc::new(RecordingOperationalUsage::default());
     let ports = ports(commit.clone()).with_committed_native_model_usage_port(usage.clone());
@@ -731,72 +787,49 @@ async fn committed_native_model_usage_carries_runtime_coordinates_and_excludes_a
 
     assert_eq!(
         report.operational_usage,
-        CommittedNativeModelUsageOutcome::Published
+        CommittedNativeModelUsageOutcome::Failed(CommittedNativeModelUsageError::Rejected)
     );
-    let calls = usage.calls();
-    assert_eq!(calls.len(), 1);
-    let usage_fact = &calls[0];
-    let fact = &usage_fact.attempt;
-    assert_eq!(usage_fact.commit_id, "c1");
-    assert_eq!(usage_fact.evidence_position_ref.r#ref, "evidence:1");
-    assert_eq!(fact.program_invocation_id, "invocation.1");
-    assert_eq!(
-        fact.node_execution_id,
-        "node-execution.invocation.1.n.model.3"
-    );
-    assert_eq!(fact.air_node_id, "n.model");
-    assert_eq!(
-        fact.attempt_id,
-        "model-attempt.node-execution.invocation.1.n.model.3.0"
-    );
-    assert_eq!(fact.attempt_index, 0);
-    assert!(fact.model_effect_id.starts_with("model-effect."));
-    assert!(fact.request_digest.starts_with("sha256:"));
-    assert_eq!(fact.model_target_ref, "model.target.v1");
-    assert_eq!(fact.model_deployment_ref, "deploy.default");
-    assert_eq!(fact.exact_port_binding_digest, digest('a'));
-    assert_eq!(fact.native_input_tokens, 10);
-    assert_eq!(fact.native_output_tokens, 20);
-    let schema_bytes = std::fs::read(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../contracts/schemas/apxm.committed-native-model-usage.v1.json"),
-    )
-    .expect("owning schema bytes");
-    assert_eq!(
-        usage_fact.source_contract_digest,
-        format!("sha256:{:x}", Sha256::digest(schema_bytes))
-    );
-    assert_eq!(
-        usage_fact.usage_measurement_id,
-        CommittedNativeModelUsage::measurement_id(&usage_fact.commit_id, &fact.fact_id)
-    );
+    assert!(usage.calls().is_empty());
     let committed_facts = commit.facts();
     let committed_attempt = committed_facts
         .iter()
         .find_map(Fact::model_attempt_recorded)
         .expect("attempt is committed atomically");
-    assert_eq!(committed_attempt, fact);
+    assert_eq!(committed_attempt.program_invocation_id, "invocation.1");
+    assert_eq!(
+        committed_attempt.node_execution_id,
+        "node-execution.invocation.1.n.model.3"
+    );
+    assert_eq!(committed_attempt.air_node_id, "n.model");
+    assert_eq!(
+        committed_attempt.attempt_id,
+        "model-attempt.node-execution.invocation.1.n.model.3.0"
+    );
+    assert_eq!(committed_attempt.attempt_index, 0);
+    assert!(
+        committed_attempt
+            .model_effect_id
+            .starts_with("model-effect.")
+    );
+    assert!(committed_attempt.request_digest.starts_with("sha256:"));
+    assert_eq!(committed_attempt.model_target_ref, "model.target.v1");
+    assert_eq!(committed_attempt.model_deployment_ref, "deploy.default");
+    assert_eq!(committed_attempt.exact_port_binding_digest, digest('a'));
+    assert_eq!(committed_attempt.native_input_tokens, 10);
+    assert_eq!(committed_attempt.native_output_tokens, 20);
     assert_eq!(
         report.external_agent_evidence[0].peer_usage[0].reported_value,
         "555"
     );
     assert_ne!(
-        usage.calls()[0].attempt.native_input_tokens,
-        555,
+        committed_attempt.native_input_tokens, 555,
         "ACP peer usage never becomes native operational usage"
     );
 }
 
 #[tokio::test]
 async fn committed_native_model_usage_decode_rejects_missing_and_unknown_fields() {
-    let commit = Arc::new(FakeCommit::new());
-    let usage = Arc::new(RecordingOperationalUsage::default());
-    let ports = ports(commit).with_committed_native_model_usage_port(usage.clone());
-    execute(&ports, request(), json!({}))
-        .await
-        .expect("usage-producing execution commits");
-
-    let canonical = serde_json::to_value(&usage.calls()[0]).expect("closed usage serializes");
+    let canonical = serde_json::to_value(lineage_backed_usage()).expect("closed usage serializes");
     let mut missing = canonical.clone();
     missing
         .as_object_mut()
@@ -816,8 +849,66 @@ async fn committed_native_model_usage_decode_rejects_missing_and_unknown_fields(
     assert!(serde_json::from_value::<CommittedNativeModelUsage>(nested_unknown).is_err());
 }
 
+#[test]
+fn committed_native_model_usage_allows_commit_bound_sealed_lineage() {
+    let usage = lineage_backed_usage();
+    let schema_bytes = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../contracts/schemas/apxm.committed-native-model-usage.v1.json"),
+    )
+    .expect("owning schema bytes");
+    assert_eq!(usage.commit_id, "c1");
+    assert_eq!(usage.evidence_position_ref.r#ref, "evidence:1");
+    assert_eq!(usage.attempt.fact_id, "fact.invocation.1.3");
+    assert_eq!(usage.attempt.attempt_index, 0);
+    assert_eq!(
+        usage.source_contract_digest,
+        format!("sha256:{:x}", Sha256::digest(schema_bytes))
+    );
+    assert_eq!(
+        usage.usage_measurement_id,
+        CommittedNativeModelUsage::measurement_id(&usage.commit_id, &usage.attempt.fact_id)
+    );
+}
+
+#[test]
+fn committed_native_model_usage_rejects_mismatched_lineage() {
+    let attempt = committed_attempt("fact.invocation.1.4", 1, 7, 11);
+    let mut lineage = InferenceUsageLineage::seal(
+        attempt.model_effect_id.clone(),
+        attempt.attempt_index,
+        attempt.model_target_ref.clone(),
+        attempt.exact_port_binding_digest.clone(),
+        Usage {
+            input_tokens: attempt.native_input_tokens,
+            output_tokens: attempt.native_output_tokens,
+        },
+        12,
+        None,
+    )
+    .expect("seal lineage");
+    lineage
+        .bind_evidence("fact.other", "c1")
+        .expect("bind lineage");
+
+    let error = CommittedNativeModelUsage::from_lineage(
+        "c1",
+        EvidencePositionRef {
+            ref_type: EvidencePositionRefType::EvidencePositionRef,
+            r#ref: "evidence:1".into(),
+        },
+        attempt,
+        &lineage,
+    )
+    .expect_err("mismatched evidence fact must be rejected");
+    assert!(matches!(
+        error,
+        CommittedNativeModelUsageGateError::EvidenceMismatch("fact_id")
+    ));
+}
+
 #[tokio::test]
-async fn each_native_model_call_is_published_as_a_distinct_measurement() {
+async fn each_native_model_call_is_blocked_without_lineage_evidence() {
     let commit = Arc::new(FakeCommit::new());
     let usage = Arc::new(RecordingOperationalUsage::default());
     let ports = ports(commit).with_committed_native_model_usage_port(usage.clone());
@@ -858,29 +949,9 @@ async fn each_native_model_call_is_published_as_a_distinct_measurement() {
 
     assert_eq!(
         report.operational_usage,
-        CommittedNativeModelUsageOutcome::Published
+        CommittedNativeModelUsageOutcome::Failed(CommittedNativeModelUsageError::Rejected)
     );
-    let calls = usage.calls();
-    assert_eq!(calls.len(), 2);
-    assert_eq!(calls[0].attempt.air_node_id, "n.model.first");
-    assert_eq!(calls[1].attempt.air_node_id, "n.model.second");
-    assert_ne!(
-        calls[0].attempt.node_execution_id,
-        calls[1].attempt.node_execution_id
-    );
-    assert_ne!(calls[0].attempt.attempt_id, calls[1].attempt.attempt_id);
-    assert_eq!(calls[0].attempt.attempt_index, 0);
-    assert_eq!(calls[1].attempt.attempt_index, 0);
-    assert_eq!(calls[0].attempt.model_target_ref, "model.target.v1");
-    assert_eq!(calls[1].attempt.model_target_ref, "model.target.v2");
-    assert_ne!(
-        calls[0].attempt.model_effect_id,
-        calls[1].attempt.model_effect_id
-    );
-    assert_ne!(
-        calls[0].attempt.request_digest,
-        calls[1].attempt.request_digest
-    );
+    assert!(usage.calls().is_empty());
     assert_eq!(
         report.native_usage,
         Usage {
@@ -902,21 +973,16 @@ async fn retrying_model_usage_keeps_the_successful_attempt_coordinate() {
 
     assert_eq!(
         report.operational_usage,
-        CommittedNativeModelUsageOutcome::Published
+        CommittedNativeModelUsageOutcome::Failed(CommittedNativeModelUsageError::Rejected)
     );
-    let calls = usage.calls();
-    assert_eq!(calls.len(), 1);
-    assert_eq!(calls[0].attempt.attempt_index, 1);
-    assert!(calls[0].attempt.attempt_id.ends_with(".1"));
-    assert_eq!(calls[0].attempt.native_input_tokens, 7);
-    assert_eq!(calls[0].attempt.native_output_tokens, 11);
+    assert!(usage.calls().is_empty());
     let request_identities = retrying_model.request_identities();
     assert_eq!(request_identities.len(), 2);
     assert_eq!(request_identities[0], request_identities[1]);
 }
 
 #[tokio::test]
-async fn usage_presentation_failure_is_reported_after_commit_not_as_success_or_rollback() {
+async fn raw_attempt_usage_publication_is_rejected_before_exporter_delivery() {
     let commit = Arc::new(FakeCommit::new());
     let usage = Arc::new(RecordingOperationalUsage::failing(
         CommittedNativeModelUsageError::Unavailable,
@@ -933,10 +999,9 @@ async fn usage_presentation_failure_is_reported_after_commit_not_as_success_or_r
     ));
     assert_eq!(
         report.operational_usage,
-        CommittedNativeModelUsageOutcome::Failed(CommittedNativeModelUsageError::Unavailable)
+        CommittedNativeModelUsageOutcome::Failed(CommittedNativeModelUsageError::Rejected)
     );
-    assert_eq!(usage.calls().len(), 1);
-    // Exporter loss never erases or rewrites the committed owner evidence batch.
+    assert!(usage.calls().is_empty());
     let facts = commit.facts();
     assert!(
         facts
@@ -991,11 +1056,9 @@ async fn zero_native_usage_and_uncommitted_execution_emit_nothing() {
         .expect("zero model usage commits");
     assert_eq!(
         zero_model_report.operational_usage,
-        CommittedNativeModelUsageOutcome::Published
+        CommittedNativeModelUsageOutcome::Failed(CommittedNativeModelUsageError::Rejected)
     );
-    assert_eq!(usage.calls().len(), 1);
-    assert_eq!(usage.calls()[0].attempt.native_input_tokens, 0);
-    assert_eq!(usage.calls()[0].attempt.native_output_tokens, 0);
+    assert!(usage.calls().is_empty());
 
     let uncommitted_ports = ports(Arc::new(FakeCommit::failing()))
         .with_committed_native_model_usage_port(usage.clone());
@@ -1010,7 +1073,7 @@ async fn zero_native_usage_and_uncommitted_execution_emit_nothing() {
         uncommitted_report.operational_usage,
         CommittedNativeModelUsageOutcome::NotApplicable
     );
-    assert_eq!(usage.calls().len(), 1);
+    assert!(usage.calls().is_empty());
 }
 
 #[tokio::test]
@@ -1058,23 +1121,7 @@ async fn distinct_invocations_do_not_reuse_published_invocation_coordinates() {
         .await
         .expect("second invocation commits");
 
-    let calls = usage.calls();
-    assert_eq!(calls.len(), 2);
-    assert_eq!(calls[0].attempt.program_invocation_id, "invocation.1");
-    assert_eq!(calls[1].attempt.program_invocation_id, "invocation.2");
-    assert_ne!(
-        calls[0].attempt.node_execution_id,
-        calls[1].attempt.node_execution_id
-    );
-    assert_ne!(
-        calls[0].attempt.model_effect_id,
-        calls[1].attempt.model_effect_id
-    );
-    assert_ne!(
-        calls[0].attempt.request_digest,
-        calls[1].attempt.request_digest
-    );
-    assert_ne!(calls[0].usage_measurement_id, calls[1].usage_measurement_id);
+    assert!(usage.calls().is_empty());
 }
 
 /// A composition port that records every receiver it is handed, so a test can
