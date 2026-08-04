@@ -9,7 +9,10 @@
     "lineage_id",
     "effect_id",
     "attempt_index",
+    "request_digest",
     "model_target_ref",
+    "model_target_digest",
+    "model_deployment_ref",
     "exact_port_binding_digest",
     "native_input_tokens",
     "native_output_tokens",
@@ -30,7 +33,16 @@
       "type": "integer",
       "minimum": 0
     },
+    "request_digest": {
+      "$ref": "apxm.contract-common.v1#/$defs/Digest"
+    },
     "model_target_ref": {
+      "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+    },
+    "model_target_digest": {
+      "$ref": "apxm.contract-common.v1#/$defs/Digest"
+    },
+    "model_deployment_ref": {
       "$ref": "apxm.contract-common.v1#/$defs/Identifier"
     },
     "exact_port_binding_digest": {

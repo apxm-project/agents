@@ -28,6 +28,11 @@ pub struct DiagnosticCorrelation {
     pub correlation_id: String,
     pub commit_id: String,
     pub evidence_fact_ids: Vec<String>,
+    pub request_digest: String,
+    pub model_target_ref: String,
+    pub model_target_digest: String,
+    pub model_deployment_ref: String,
+    pub exact_port_binding_digest: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub log_refs: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -181,6 +186,11 @@ pub fn correlate_diagnostics(
         correlation_id: request.correlation_id,
         commit_id: request.commit_id,
         evidence_fact_ids: request.evidence_fact_ids,
+        request_digest: request.lineage.request_digest.clone(),
+        model_target_ref: request.lineage.model_target_ref.clone(),
+        model_target_digest: request.lineage.model_target_digest.clone(),
+        model_deployment_ref: request.lineage.model_deployment_ref.clone(),
+        exact_port_binding_digest: request.lineage.exact_port_binding_digest.clone(),
         log_refs: request.log_refs,
         metric_refs: request.metric_refs,
         trace_refs: request.trace_refs,

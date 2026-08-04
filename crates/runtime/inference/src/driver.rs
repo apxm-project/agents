@@ -28,6 +28,7 @@ pub struct InferenceDriverBinding {
     pub driver_id: String,
     pub inference_profile_ref: String,
     pub model_target_ref: String,
+    pub model_target_digest: String,
     pub model_deployment_ref: String,
     pub exact_port_binding_digest: String,
     pub port_contract_digest: String,
@@ -97,6 +98,7 @@ impl InferenceDriverBinding {
             driver_id: driver_id.into(),
             inference_profile_ref: inference_profile_ref.into(),
             model_target_ref: resolved.model_target.reference.0.clone(),
+            model_target_digest: resolved.model_target.target_digest.clone(),
             model_deployment_ref: resolved.model_deployment_ref.0.clone(),
             exact_port_binding_digest: resolved.binding_digest().to_string(),
             port_contract_digest: resolved.port_contract_digest().to_string(),
@@ -130,6 +132,7 @@ impl InferenceDriverBinding {
             }
         }
         for (field, digest) in [
+            ("model_target_digest", self.model_target_digest.as_str()),
             (
                 "exact_port_binding_digest",
                 self.exact_port_binding_digest.as_str(),
@@ -167,6 +170,11 @@ impl InferenceDriverBinding {
             return Err(DriverBindingError::TargetMismatch {
                 authored: authored_target.0.clone(),
                 admitted: self.model_target_ref.clone(),
+            });
+        }
+        if self.model_target_digest != resolved.model_target.target_digest {
+            return Err(DriverBindingError::DigestMismatch {
+                field: "model_target_digest",
             });
         }
         if self.model_deployment_ref != resolved.model_deployment_ref.0 {

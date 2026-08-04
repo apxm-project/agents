@@ -21,7 +21,10 @@ pub struct InferenceUsageLineage {
     pub lineage_id: String,
     pub effect_id: String,
     pub attempt_index: u32,
+    pub request_digest: String,
     pub model_target_ref: String,
+    pub model_target_digest: String,
+    pub model_deployment_ref: String,
     pub exact_port_binding_digest: String,
     pub native_input_tokens: u64,
     pub native_output_tokens: u64,
@@ -74,20 +77,35 @@ impl InferenceUsageLineage {
     pub fn seal(
         effect_id: impl Into<String>,
         attempt_index: u32,
+        request_digest: impl Into<String>,
         model_target_ref: impl Into<String>,
+        model_target_digest: impl Into<String>,
+        model_deployment_ref: impl Into<String>,
         exact_port_binding_digest: impl Into<String>,
         usage: Usage,
         duration_ms: u64,
         typed_error: Option<TypedError>,
     ) -> Result<Self, LineageError> {
         let effect_id = effect_id.into();
+        let request_digest = request_digest.into();
         let model_target_ref = model_target_ref.into();
+        let model_target_digest = model_target_digest.into();
+        let model_deployment_ref = model_deployment_ref.into();
         let exact_port_binding_digest = exact_port_binding_digest.into();
         if effect_id.trim().is_empty() {
             return Err(LineageError::EmptyField("effect_id"));
         }
+        if !is_digest(&request_digest) {
+            return Err(LineageError::InvalidDigest("request_digest"));
+        }
         if model_target_ref.trim().is_empty() {
             return Err(LineageError::EmptyField("model_target_ref"));
+        }
+        if !is_digest(&model_target_digest) {
+            return Err(LineageError::InvalidDigest("model_target_digest"));
+        }
+        if model_deployment_ref.trim().is_empty() {
+            return Err(LineageError::EmptyField("model_deployment_ref"));
         }
         if !is_digest(&exact_port_binding_digest) {
             return Err(LineageError::InvalidDigest("exact_port_binding_digest"));
@@ -95,7 +113,10 @@ impl InferenceUsageLineage {
         let lineage_id = lineage_digest(
             &effect_id,
             attempt_index,
+            &request_digest,
             &model_target_ref,
+            &model_target_digest,
+            &model_deployment_ref,
             &exact_port_binding_digest,
             usage.input_tokens,
             usage.output_tokens,
@@ -107,7 +128,10 @@ impl InferenceUsageLineage {
             lineage_id,
             effect_id,
             attempt_index,
+            request_digest,
             model_target_ref,
+            model_target_digest,
+            model_deployment_ref,
             exact_port_binding_digest,
             native_input_tokens: usage.input_tokens,
             native_output_tokens: usage.output_tokens,
@@ -132,8 +156,17 @@ impl InferenceUsageLineage {
         if self.effect_id.trim().is_empty() {
             return Err(LineageError::EmptyField("effect_id"));
         }
+        if !is_digest(&self.request_digest) {
+            return Err(LineageError::InvalidDigest("request_digest"));
+        }
         if self.model_target_ref.trim().is_empty() {
             return Err(LineageError::EmptyField("model_target_ref"));
+        }
+        if !is_digest(&self.model_target_digest) {
+            return Err(LineageError::InvalidDigest("model_target_digest"));
+        }
+        if self.model_deployment_ref.trim().is_empty() {
+            return Err(LineageError::EmptyField("model_deployment_ref"));
         }
         if !is_digest(&self.exact_port_binding_digest) {
             return Err(LineageError::InvalidDigest("exact_port_binding_digest"));
@@ -152,7 +185,10 @@ impl InferenceUsageLineage {
         let expected = lineage_digest(
             &self.effect_id,
             self.attempt_index,
+            &self.request_digest,
             &self.model_target_ref,
+            &self.model_target_digest,
+            &self.model_deployment_ref,
             &self.exact_port_binding_digest,
             self.native_input_tokens,
             self.native_output_tokens,
@@ -232,7 +268,10 @@ pub fn lineage_error_category(category: ErrorCategory) -> &'static str {
 fn lineage_digest(
     effect_id: &str,
     attempt_index: u32,
+    request_digest: &str,
     model_target_ref: &str,
+    model_target_digest: &str,
+    model_deployment_ref: &str,
     exact_port_binding_digest: &str,
     input_tokens: u64,
     output_tokens: u64,
@@ -246,7 +285,13 @@ fn lineage_digest(
     hasher.update(b"\0");
     hasher.update(attempt_index.to_string().as_bytes());
     hasher.update(b"\0");
+    hasher.update(request_digest.as_bytes());
+    hasher.update(b"\0");
     hasher.update(model_target_ref.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(model_target_digest.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(model_deployment_ref.as_bytes());
     hasher.update(b"\0");
     hasher.update(exact_port_binding_digest.as_bytes());
     hasher.update(b"\0");

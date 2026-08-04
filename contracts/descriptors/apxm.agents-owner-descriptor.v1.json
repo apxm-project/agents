@@ -122,7 +122,7 @@
     {
       "schema_id": "apxm.inference-driver-binding.v1",
       "path": "schemas/apxm.inference-driver-binding.v1.json",
-      "digest": "sha256:0f72354ac1e371edab9c205ef8d0ec0447ae327ff6afd524d2e173c0e030450f"
+      "digest": "sha256:12f1a93147b311542c23be4be80fdb3c9dd47dc5920a10cc562a980f2a16ee98"
     },
     {
       "schema_id": "apxm.inference-credential-lease.v1",
@@ -132,12 +132,12 @@
     {
       "schema_id": "apxm.inference-usage-lineage.v1",
       "path": "schemas/apxm.inference-usage-lineage.v1.json",
-      "digest": "sha256:eebc8f289c1c01f9d75bdd0dc8307e3e4c95453bc95ce36cbc60be28e07cfd96"
+      "digest": "sha256:7393621a5d00966acce1c524fab7f9fd2bb697821de280966651730fe19ac398"
     },
     {
       "schema_id": "apxm.diagnostic-correlation.v1",
       "path": "schemas/apxm.diagnostic-correlation.v1.json",
-      "digest": "sha256:a384d0cf7081889e7ea0cc21354a9c5932d3bd65e6bf179960222d95bfafa911"
+      "digest": "sha256:31f5d15c55696d7840e179c785b9fc2608b16e213f4877db1182883e656935c3"
     },
     {
       "schema_id": "apxm.vllm-conformance-join.v1",
@@ -813,7 +813,7 @@
     {
       "schema_id": "apxm.inference-driver-binding.v1",
       "path": "vectors/apxm.inference-driver-binding.v1.json",
-      "digest": "sha256:63a35b6eb6e211aa28cfc2db9af4f9fa08d2d88308591c646009d1639e5891c5",
+      "digest": "sha256:aacf4986b9ec8a4925c17c687e834900bc56326ec2f0270bfdf73f5d201eb53c",
       "coverage": [
         "positive",
         "unknown_discriminant"
@@ -831,7 +831,7 @@
     {
       "schema_id": "apxm.inference-usage-lineage.v1",
       "path": "vectors/apxm.inference-usage-lineage.v1.json",
-      "digest": "sha256:86e909cd717c040e73250c49d59d7a4ddcbf81d627e195adf8cf8e285eee6619",
+      "digest": "sha256:95388ab7d2b8db8a9e1cdf59158a1892da9722f163ffb2b718c5cade5540dd20",
       "coverage": [
         "positive",
         "mutation"
@@ -840,7 +840,7 @@
     {
       "schema_id": "apxm.diagnostic-correlation.v1",
       "path": "vectors/apxm.diagnostic-correlation.v1.json",
-      "digest": "sha256:072004efe95ef57089b8b2815d3d4ca142b471cfd4e7974b221cabb2df78cd0f",
+      "digest": "sha256:31af92a35d398e3ef9f3e4b0b6bb971c70e884d2393376d19a842d5f036346bc",
       "coverage": [
         "positive",
         "mutation"
@@ -938,5 +938,5 @@
       ]
     }
   ],
-  "descriptor_digest": "sha256:425a23bdc4900e808f347c61ebc62f85f14544b3e660ca1fa0a0fd36ad38522e"
+  "descriptor_digest": "sha256:32eaf5b2defe1a5066d2281d3200b8fece5e40c9ceebfd780b0e3b1bc1de861a"
 }

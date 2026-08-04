@@ -52,8 +52,7 @@ use apxm_program::runtime_evidence::{
 
 use crate::ExecutionPortBundle;
 use crate::operational_usage::{
-    CommittedNativeModelUsageError, CommittedNativeModelUsageOutcome,
-    CommittedNativeModelUsagePort,
+    CommittedNativeModelUsageError, CommittedNativeModelUsageOutcome, CommittedNativeModelUsagePort,
 };
 use crate::ports::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,

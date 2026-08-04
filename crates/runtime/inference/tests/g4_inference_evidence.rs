@@ -18,10 +18,10 @@ use apxm_inference::{
     InferenceCredentialLeaseIdentity, InferenceDriverBinding, InferenceUsageLineage,
     LeasedInferenceBackend, ModelBindingAdmission, ModelCallPreparation, ModelCallRequest,
     ModelCallRequestMetadata, ModelContextEnvelopeRef, ModelDeploymentRef, ModelOutcome,
-    ModelStreamMode, ModelTargetRef,
-    PINNED_VLLM_PORT_CONTRACT_DIGEST, PINNED_VLLM_VECTOR_DIGESTS, ResolvedModelBinding,
-    RetryPolicy, TypedError, Usage, VllmConformanceJoin, VllmJoinStatus, authoritative_usage,
-    correlate_diagnostics, digest_bytes, dispatch_exact_inference, redact_diagnostic_value,
+    ModelStreamMode, ModelTargetRef, PINNED_VLLM_PORT_CONTRACT_DIGEST, PINNED_VLLM_VECTOR_DIGESTS,
+    ResolvedModelBinding, RetryPolicy, TypedError, Usage, VllmConformanceJoin, VllmJoinStatus,
+    authoritative_usage, correlate_diagnostics, digest_bytes, dispatch_exact_inference,
+    redact_diagnostic_value,
 };
 use std::cell::Cell;
 
@@ -195,6 +195,25 @@ fn exact_dispatch_rejects_routing_to_a_different_binding_digest() {
     ));
 }
 
+#[test]
+fn exact_driver_binding_rejects_target_digest_revision_drift() {
+    let resolved = resolved("model.alpha");
+    let mut binding =
+        InferenceDriverBinding::from_resolved("driver.vllm", "profile.exact", &resolved)
+            .expect("binding");
+    binding.model_target_digest = DIGEST_C.to_string();
+
+    let err = binding
+        .authorize(&ModelTargetRef("model.alpha".into()), &resolved)
+        .expect_err("target digest drift must fail closed");
+    assert!(matches!(
+        err,
+        apxm_inference::DriverBindingError::DigestMismatch {
+            field: "model_target_digest"
+        }
+    ));
+}
+
 // ── Lease ───────────────────────────────────────────────────────────────────
 
 #[test]
@@ -275,7 +294,10 @@ fn usage_lineage_is_immutable_and_rejects_downstream_recompute() {
     let mut lineage = InferenceUsageLineage::seal(
         "effect.1",
         0,
+        DIGEST_B,
         "model.alpha",
+        DIGEST_C,
+        "model-deployment.1",
         DIGEST_A,
         Usage {
             input_tokens: 9,
@@ -507,7 +529,10 @@ fn exporter_loss_keeps_canonical_owner_lineage_authoritative() {
     let mut lineage = InferenceUsageLineage::seal(
         "effect.1",
         0,
+        DIGEST_B,
         "model.alpha",
+        DIGEST_C,
+        "model-deployment.1",
         DIGEST_A,
         Usage {
             input_tokens: 2,
@@ -562,7 +587,10 @@ fn telemetry_disagreement_leaves_owner_evidence_authoritative() {
     let mut lineage = InferenceUsageLineage::seal(
         "effect.1",
         0,
+        DIGEST_B,
         "model.alpha",
+        DIGEST_C,
+        "model-deployment.1",
         DIGEST_A,
         Usage {
             input_tokens: 8,
@@ -600,6 +628,11 @@ fn telemetry_disagreement_leaves_owner_evidence_authoritative() {
         diagnostic.agreement,
         DiagnosticAgreement::DisagreesEvidenceAuthoritative
     );
+    assert_eq!(diagnostic.request_digest, DIGEST_B);
+    assert_eq!(diagnostic.model_target_ref, "model.alpha");
+    assert_eq!(diagnostic.model_target_digest, DIGEST_C);
+    assert_eq!(diagnostic.model_deployment_ref, "model-deployment.1");
+    assert_eq!(diagnostic.exact_port_binding_digest, DIGEST_A);
     let authoritative = authoritative_usage(&lineage, &diagnostic);
     assert_eq!(authoritative.input_tokens, 8);
     assert_eq!(authoritative.output_tokens, 6);
@@ -614,7 +647,10 @@ fn agreeing_diagnostics_remain_non_authoritative() {
     let mut lineage = InferenceUsageLineage::seal(
         "effect.1",
         0,
+        DIGEST_B,
         "model.alpha",
+        DIGEST_C,
+        "model-deployment.2",
         DIGEST_A,
         Usage {
             input_tokens: 1,
@@ -646,6 +682,7 @@ fn agreeing_diagnostics_remain_non_authoritative() {
         DiagnosticAgreement::AgreesWithEvidence
     );
     assert_eq!(diagnostic.authority, "diagnostic_only");
+    assert_eq!(diagnostic.model_deployment_ref, "model-deployment.2");
 }
 
 #[test]
@@ -653,7 +690,10 @@ fn diagnostics_reject_foreign_commit_or_unbounded_reference() {
     let mut lineage = InferenceUsageLineage::seal(
         "effect.1",
         0,
+        DIGEST_B,
         "model.alpha",
+        DIGEST_C,
+        "model-deployment.3",
         DIGEST_A,
         Usage::default(),
         1,

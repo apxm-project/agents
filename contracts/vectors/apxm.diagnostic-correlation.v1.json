@@ -7,6 +7,11 @@
       "correlation_id": "correlation.1",
       "commit_id": "commit.1",
       "evidence_fact_ids": ["fact.attempt.1"],
+      "request_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "model_target_ref": "model-target.1",
+      "model_target_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "model_deployment_ref": "model-deployment.1",
+      "exact_port_binding_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "log_refs": ["log.1"],
       "metric_refs": ["metric.1"],
       "trace_refs": ["trace.1"],
@@ -22,6 +27,11 @@
       "correlation_id": "correlation.1",
       "commit_id": "commit.1",
       "evidence_fact_ids": ["fact.attempt.1"],
+      "request_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "model_target_ref": "model-target.1",
+      "model_target_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "model_deployment_ref": "model-deployment.1",
+      "exact_port_binding_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "authority": "canonical_evidence",
       "agreement": "agrees_with_evidence"
     }
