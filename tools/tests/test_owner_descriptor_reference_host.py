@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import importlib.util
 import json
 import re
@@ -41,6 +42,13 @@ REFERENCE_HOST_LIFECYCLE_VECTOR = (
 )
 REFERENCE_HOST_SOURCE = (
     REPOSITORY_ROOT / "crates" / "tools" / "cli" / "src" / "bin" / "reference_host.rs"
+)
+REFERENCE_HOST_STARTUP_INPUT_FIXTURE = (
+    REPOSITORY_ROOT
+    / "contracts"
+    / "reference-host"
+    / "fixtures"
+    / "apxm.reference-host.startup-input.test.json"
 )
 
 README_REFERENCE_HOST = re.compile(
@@ -207,6 +215,49 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
             "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         ):
             self.assertNotIn(placeholder, source)
+
+    def test_reference_host_execution_manifest_pins_test_only_startup_input_fixture(self) -> None:
+        execution_manifest = load_json(REFERENCE_HOST_EXECUTION_MANIFEST)
+        expected = {
+            "scope": "test-only",
+            "artifact_path": "reference-host/fixtures/apxm.reference-host.startup-input.test.json",
+            "artifact_digest": self.validator.file_digest(REFERENCE_HOST_STARTUP_INPUT_FIXTURE),
+            "owner_revision": self.expected_reference["source_revision"],
+            "fail_closed_on": ["missing", "stale", "dirty", "mismatched"],
+        }
+
+        self.assertEqual(
+            execution_manifest["startup_input_preflight_test_fixture"],
+            expected,
+            "the reference-host execution manifest must pin one exact test-scoped startup input fixture",
+        )
+        self.validator.check_reference_host_startup_input_preflight(execution_manifest)
+
+    def test_reference_host_startup_input_preflight_rejects_missing_fixture(self) -> None:
+        execution_manifest = load_json(REFERENCE_HOST_EXECUTION_MANIFEST)
+        missing = copy.deepcopy(execution_manifest)
+        missing["startup_input_preflight_test_fixture"]["artifact_path"] = (
+            "reference-host/fixtures/does-not-exist.json"
+        )
+
+        with self.assertRaisesRegex(
+            self.validator.ValidationError,
+            "startup-input preflight fixture is missing",
+        ):
+            self.validator.check_reference_host_startup_input_preflight(missing)
+
+    def test_reference_host_startup_input_preflight_rejects_digest_mismatch(self) -> None:
+        execution_manifest = load_json(REFERENCE_HOST_EXECUTION_MANIFEST)
+        mismatched = copy.deepcopy(execution_manifest)
+        mismatched["startup_input_preflight_test_fixture"]["artifact_digest"] = (
+            "sha256:" + ("0" * 64)
+        )
+
+        with self.assertRaisesRegex(
+            self.validator.ValidationError,
+            "startup-input preflight fixture digest mismatched",
+        ):
+            self.validator.check_reference_host_startup_input_preflight(mismatched)
 
 
 if __name__ == "__main__":
