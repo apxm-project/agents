@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import subprocess
 import tomllib
 import unittest
 from pathlib import Path
@@ -180,6 +181,60 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
         self.assertNotIn(
             self.validator.RETIRED_REFERENCE_HOST_ADMISSION_ALIAS,
             release_manifest_text,
+        )
+
+    def test_reference_host_release_attestation_matches_committed_owner_artifacts(self) -> None:
+        revision = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=REPOSITORY_ROOT,
+            text=True,
+        ).strip()
+        descriptor_digest = self.validator.descriptor_exact_checksum()
+        attestation = self.validator.reference_host_release_attestation(
+            owner_revision=revision,
+            owner_descriptor_digest=descriptor_digest,
+        )
+
+        self.assertEqual(
+            attestation["cohort"],
+            {
+                "revision": revision,
+                "descriptor_digest": descriptor_digest,
+                "manifest_digest": self.validator.file_digest(REFERENCE_HOST_RELEASE_MANIFEST),
+            },
+        )
+        self.assertEqual(
+            attestation["release_manifest"],
+            {
+                "path": "contracts/reference-host/manifests/apxm.reference-host-release-manifest.v1.json",
+                "exact_bytes_digest": self.validator.file_digest(REFERENCE_HOST_RELEASE_MANIFEST),
+            },
+        )
+        self.assertEqual(
+            [entry["path"] for entry in attestation["golden_vectors"]],
+            [
+                "contracts/reference-host/vectors/apxm.reference-host.invoke-parity.v1.json",
+                "contracts/reference-host/vectors/apxm.reference-host.lifecycle-parity.v1.json",
+            ],
+        )
+        self.assertIn(
+            {
+                "kind": "owned-schema",
+                "contract_id": "apxm.host-execution-manifest.v1",
+                "path": "contracts/schemas/apxm.host-execution-manifest.v1.json",
+                "exact_bytes_digest": self.validator.file_digest(
+                    REPOSITORY_ROOT / "contracts" / "schemas" / "apxm.host-execution-manifest.v1.json"
+                ),
+            },
+            attestation["owner_source_contracts"],
+        )
+        self.assertIn(
+            {
+                "schema_version": "apxm.reference-host-execution-manifest.v1",
+                "path": "contracts/reference-host/manifests/apxm.reference-host-execution-manifest.v1.json",
+                "exact_bytes_digest": self.validator.file_digest(REFERENCE_HOST_EXECUTION_MANIFEST),
+            },
+            attestation["publication_cohort"]["manifests"],
         )
 
     def test_reference_host_source_requires_explicit_startup_input_and_no_placeholders(self) -> None:

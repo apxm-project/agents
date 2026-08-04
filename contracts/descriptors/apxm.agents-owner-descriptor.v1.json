@@ -148,6 +148,26 @@
       "schema_id": "apxm.program-composition-outcome.v1",
       "path": "schemas/apxm.program-composition-outcome.v1.json",
       "digest": "sha256:5a78fbe48fa8a374268a558ffcdd066b49c0ca4dacc80be58e03c80eeb0d5ade"
+    },
+    {
+      "schema_id": "apxm.host-execution-manifest.v1",
+      "path": "schemas/apxm.host-execution-manifest.v1.json",
+      "digest": "sha256:54f1a76367a34f105fd019aef2d34ca18416a6843e50bd84203139bfccabd428"
+    },
+    {
+      "schema_id": "apxm.runtime-readiness.v1",
+      "path": "schemas/apxm.runtime-readiness.v1.json",
+      "digest": "sha256:698f5ba1ad079a23afc61773064e1822d1ee8c54caa53ea5eeb106e81d55737e"
+    },
+    {
+      "schema_id": "apxm.runtime-drain-quiescence.v1",
+      "path": "schemas/apxm.runtime-drain-quiescence.v1.json",
+      "digest": "sha256:f654417caabece0b9366424bf24ab0417e103a34e28536c79e991e6917555820"
+    },
+    {
+      "schema_id": "apxm.invocation-admission.v1",
+      "path": "schemas/apxm.invocation-admission.v1.json",
+      "digest": "sha256:08aece04a3ddf6d076b7af43a451a0159363e2c369d1ea16aad00ec4a8d288c6"
     }
   ],
   "owned_port_contracts": [
@@ -816,5 +836,5 @@
       ]
     }
   ],
-  "descriptor_digest": "sha256:eb863e44009f03a099cca8d4223b26801083dc7e52db5080f15f0eeded699b8c"
+  "descriptor_digest": "sha256:4276c576fa7807483446e37f8cf9fb4467fd9d9275c93f829485fd904273c3c8"
 }
