@@ -195,6 +195,18 @@ REFERENCE_HOST_PROFILE_COHORT = ["embedded", "reference-host"]
 REFERENCE_HOST_EXECUTION_MANIFEST_SCHEMA_VERSION = (
     "apxm.reference-host-execution-manifest.v1"
 )
+REFERENCE_HOST_STARTUP_INPUT_FIXTURE_SCHEMA_VERSION = (
+    "apxm.reference-host.startup-input.test.v1"
+)
+REFERENCE_HOST_STARTUP_INPUT_FIXTURE_RELATIVE_PATH = (
+    "reference-host/fixtures/apxm.reference-host.startup-input.test.json"
+)
+REFERENCE_HOST_STARTUP_INPUT_FAIL_CLOSED_REASONS = [
+    "missing",
+    "stale",
+    "dirty",
+    "mismatched",
+]
 REFERENCE_HOST_LIFECYCLE_VECTOR_ID = "apxm.reference-host.lifecycle-parity.v1"
 RETIRED_REFERENCE_HOST_ADMISSION_ALIAS = "apxm.execution-admission.v1"
 REFERENCE_HOST_DESCRIPTOR = {
@@ -1005,6 +1017,7 @@ def check_reference_host_release_evidence() -> None:
     execution_manifest = load_json(REFERENCE_HOST_EXECUTION_MANIFEST_PATH)
     if execution_manifest.get("schema_version") != REFERENCE_HOST_EXECUTION_MANIFEST_SCHEMA_VERSION:
         raise ValidationError("reference-host execution manifest schema_version drifted")
+    check_reference_host_startup_input_preflight(execution_manifest)
     expected_execution_manifest_ref = {
         "schema_version": REFERENCE_HOST_EXECUTION_MANIFEST_SCHEMA_VERSION,
         "path": "reference-host/manifests/apxm.reference-host-execution-manifest.v1.json",
@@ -1054,6 +1067,86 @@ def check_reference_host_release_evidence() -> None:
         raise ValidationError(
             "reference-host release manifest lifecycle_cohort_attestation drifted"
         )
+
+
+def check_reference_host_startup_input_preflight(
+    execution_manifest: dict[str, Any],
+) -> None:
+    fixture = execution_manifest.get("startup_input_preflight_test_fixture")
+    if not isinstance(fixture, dict):
+        raise ValidationError(
+            "reference-host execution manifest must declare startup_input_preflight_test_fixture"
+        )
+    if fixture.get("scope") != "test-only":
+        raise ValidationError(
+            "reference-host startup-input preflight fixture must be scoped to test-only"
+        )
+    artifact_path = fixture.get("artifact_path")
+    if not isinstance(artifact_path, str) or not artifact_path:
+        raise ValidationError(
+            "reference-host startup-input preflight fixture path drifted"
+        )
+    artifact_file = CONTRACTS_DIR / artifact_path
+    if not artifact_file.is_file():
+        raise ValidationError("reference-host startup-input preflight fixture is missing")
+    if artifact_path != REFERENCE_HOST_STARTUP_INPUT_FIXTURE_RELATIVE_PATH:
+        raise ValidationError(
+            "reference-host startup-input preflight fixture path drifted"
+        )
+    if fixture.get("owner_revision") != REFERENCE_HOST_DESCRIPTOR["source_revision"]:
+        raise ValidationError(
+            "reference-host startup-input preflight fixture owner revision is stale"
+        )
+    if fixture.get("fail_closed_on") != REFERENCE_HOST_STARTUP_INPUT_FAIL_CLOSED_REASONS:
+        raise ValidationError(
+            "reference-host startup-input preflight fail-closed reasons drifted"
+        )
+    if fixture.get("artifact_digest") != file_digest(artifact_file):
+        raise ValidationError("reference-host startup-input preflight fixture digest mismatched")
+
+    startup_input = load_json(artifact_file)
+    if startup_input.get("schema_version") != REFERENCE_HOST_STARTUP_INPUT_FIXTURE_SCHEMA_VERSION:
+        raise ValidationError("reference-host startup-input fixture schema_version drifted")
+    if startup_input.get("semantic_owner") != "agents":
+        raise ValidationError("reference-host startup-input fixture semantic_owner must be agents")
+    if startup_input.get("scope") != "test-only":
+        raise ValidationError("reference-host startup-input fixture must remain test-only")
+    if startup_input.get("owner_executable") != execution_manifest.get("owner_executable"):
+        raise ValidationError(
+            "reference-host startup-input fixture owner executable mismatched"
+        )
+    if startup_input.get("owner_executable_path") != execution_manifest.get("owner_executable_path"):
+        raise ValidationError(
+            "reference-host startup-input fixture owner executable path mismatched"
+        )
+    if startup_input.get("transport_protocol") != execution_manifest.get("transport_protocol"):
+        raise ValidationError(
+            "reference-host startup-input fixture transport protocol mismatched"
+        )
+    if startup_input.get("fail_closed_on") != REFERENCE_HOST_STARTUP_INPUT_FAIL_CLOSED_REASONS:
+        raise ValidationError(
+            "reference-host startup-input fixture fail-closed reasons drifted"
+        )
+
+    provenance = startup_input.get("provenance")
+    if not isinstance(provenance, dict):
+        raise ValidationError("reference-host startup-input fixture provenance must be an object")
+    if provenance.get("owner_revision") != REFERENCE_HOST_DESCRIPTOR["source_revision"]:
+        raise ValidationError("reference-host startup-input fixture owner revision is stale")
+    if provenance.get("descriptor_semantic_digest") != REFERENCE_HOST_DESCRIPTOR[
+        "descriptor_semantic_digest"
+    ]:
+        raise ValidationError(
+            "reference-host startup-input fixture descriptor semantic digest mismatched"
+        )
+    if provenance.get("descriptor_exact_checksum") != REFERENCE_HOST_DESCRIPTOR[
+        "descriptor_exact_checksum"
+    ]:
+        raise ValidationError(
+            "reference-host startup-input fixture descriptor exact checksum mismatched"
+        )
+    if provenance.get("dirty") is not False:
+        raise ValidationError("reference-host startup-input fixture must be clean")
 
 
 def scan_plan_references() -> None:
