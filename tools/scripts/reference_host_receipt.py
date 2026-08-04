@@ -22,6 +22,13 @@ EXECUTION_MANIFEST_PATH = (
     / "manifests"
     / "apxm.reference-host-execution-manifest.v1.json"
 )
+RELEASE_MANIFEST_PATH = (
+    REPOSITORY_ROOT
+    / "contracts"
+    / "reference-host"
+    / "manifests"
+    / "apxm.reference-host-release-manifest.v1.json"
+)
 CARGO_WRAPPER_PATH = REPOSITORY_ROOT / "tools" / "scripts" / "cargo.py"
 DEFAULT_RECEIPT_PATH = (
     REPOSITORY_ROOT
@@ -42,6 +49,8 @@ BUILD_COMMAND = [
     "--release",
 ]
 TARGET_DIR_COMMAND = ["python", "tools/scripts/cargo.py", "target-dir"]
+STARTUP_INPUT_SCHEMA = "apxm.reference-host-startup-input.v1"
+STARTUP_INPUT_FLAG = "--startup-input"
 
 
 def load_validator_module():
@@ -128,6 +137,14 @@ def base_receipt(
             "target_dir": str(target_dir),
             "output_path": str(output_path),
             "receipt_path": str(receipt_path),
+        },
+        "runtime_startup": {
+            "required_argv": [STARTUP_INPUT_FLAG, "<path>"],
+            "startup_input_schema": STARTUP_INPUT_SCHEMA,
+            "reference_host_release_manifest": {
+                "path": str(RELEASE_MANIFEST_PATH.relative_to(REPOSITORY_ROOT)),
+                "digest": file_digest(RELEASE_MANIFEST_PATH),
+            },
         },
     }
 
