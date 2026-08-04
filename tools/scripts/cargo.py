@@ -38,10 +38,13 @@ RELEASE_FLAG = "--release"
 CONFIG_FLAG = "--config"
 PROFILE_FLAG = "--profile"
 PACKAGE_FLAG = "-p"
+LONG_PACKAGE_FLAG = "--package"
 FEATURES_FLAG = "--features"
 DRIVER_METRICS_FEATURES = "driver,metrics"
 APXM_CLI_PACKAGE = "apxm-cli"
+APXM_CLI_BINARY = "apxm"
 APXM_COMPILER_PACKAGE = "apxm-compiler"
+REFERENCE_HOST_BINARY = "apxm-reference-host"
 TARGET_ROOT_NAME = "apxm-cargo-targets"
 PROJECT_TARGET_DIR_NAME = "target"
 DEBUG_PROFILE_DIR_NAME = "debug"
@@ -61,6 +64,7 @@ FINGERPRINT_OUTPUT_GLOB = "output-*"
 RUSTC_SIGBUS_MARKER = "rustc interrupted by SIGBUS"
 TEMP_ARCHIVE_GLOB = ".tmp*.temp-archive"
 LIBRARY_SUFFIXES = frozenset({".a", ".dylib", ".dll", ".so"})
+RUN_TARGET_FLAGS = frozenset({"--bin", "--example", "--test", "--bench"})
 SKIP_RELEASE_ENTRIES = frozenset({
     BUILD_DIR_NAME,
     DEPS_DIR_NAME,
@@ -131,6 +135,30 @@ def _cargo_env(project_root: Path, target_dir: Path, command: list[str]) -> dict
     _prepend_env_path(env, "LD_LIBRARY_PATH", profile_paths)
     _prepend_env_path(env, "DYLD_LIBRARY_PATH", profile_paths)
     return env
+
+
+def _selected_package(command: list[str]) -> str | None:
+    for idx, value in enumerate(command):
+        if value in {PACKAGE_FLAG, LONG_PACKAGE_FLAG} and idx + 1 < len(command):
+            return command[idx + 1]
+    return None
+
+
+def _has_explicit_run_target(command: list[str]) -> bool:
+    return any(flag in command for flag in RUN_TARGET_FLAGS)
+
+
+def _ambiguous_run_target_error(command: list[str]) -> str | None:
+    if not command or command[0] != "run":
+        return None
+    if _selected_package(command) != APXM_CLI_PACKAGE or _has_explicit_run_target(command):
+        return None
+    return (
+        "error: tools/scripts/cargo.py requires an exact `cargo run` target for package "
+        f"{APXM_CLI_PACKAGE}. Add `--bin {APXM_CLI_BINARY}` for the canonical CLI or "
+        f"`--bin {REFERENCE_HOST_BINARY}` for reference-host workflows. The readiness gate "
+        "stays closed until the target is explicit."
+    )
 
 
 def _run(command: list[str], *, project_root: Path, target_dir: Path) -> int:
@@ -330,6 +358,10 @@ def main(argv: list[str]) -> int:
         return _clean(project_root, target_dir, argv[1:])
     if argv[0] == CargoCommand.SCRUB_SIGBUS_CACHE.value:
         return _scrub_sigbus_cache(project_root, target_dir)
+    run_target_error = _ambiguous_run_target_error(argv)
+    if run_target_error is not None:
+        print(run_target_error, file=sys.stderr)
+        return 2
 
     result = _run([CARGO, *argv], project_root=project_root, target_dir=target_dir)
     if result == 0 and argv[0] == CargoCommand.BUILD.value and RELEASE_FLAG in argv:
