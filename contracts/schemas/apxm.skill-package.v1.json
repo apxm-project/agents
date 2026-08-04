@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.skill-package.v1",
+  "title": "SkillPackage",
+  "description": "Canonical instruction-only Agent Skill package metadata. It binds one SKILL.md entry plus ordinary non-executable resources, discovery metadata, and deterministic file digests without introducing executable artifacts, package-local handlers, runtime selectors, or product-specific configuration.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "skill_id",
+    "library_id",
+    "package_version",
+    "metadata",
+    "instruction_entry",
+    "resources",
+    "constraints"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "apxm.skill-package.v1"
+    },
+    "skill_id": {
+      "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+    },
+    "library_id": {
+      "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+    },
+    "package_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$"
+    },
+    "metadata": {
+      "$ref": "#/$defs/SkillMetadata"
+    },
+    "instruction_entry": {
+      "$ref": "#/$defs/InstructionEntry"
+    },
+    "resources": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/ResourceEntry"
+      }
+    },
+    "constraints": {
+      "type": "object",
+      "required": [
+        "instruction_only",
+        "executable_package",
+        "executable_artifacts",
+        "ambient_context_mutation"
+      ],
+      "properties": {
+        "instruction_only": {
+          "const": true
+        },
+        "executable_package": {
+          "const": false
+        },
+        "executable_artifacts": {
+          "const": false
+        },
+        "ambient_context_mutation": {
+          "const": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "RelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "SkillMetadata": {
+      "type": "object",
+      "required": [
+        "name",
+        "description",
+        "when_to_use",
+        "tags",
+        "imports",
+        "shared"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "when_to_use": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+          },
+          "uniqueItems": true
+        },
+        "imports": {
+          "type": "array",
+          "items": {
+            "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+          },
+          "uniqueItems": true
+        },
+        "shared": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "InstructionEntry": {
+      "type": "object",
+      "required": [
+        "path",
+        "digest",
+        "media_type",
+        "bytes"
+      ],
+      "properties": {
+        "path": {
+          "const": "SKILL.md"
+        },
+        "digest": {
+          "$ref": "apxm.contract-common.v1#/$defs/Digest"
+        },
+        "media_type": {
+          "const": "text/markdown"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "ResourceEntry": {
+      "type": "object",
+      "required": [
+        "path",
+        "digest",
+        "media_type",
+        "bytes"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/RelativePath"
+        },
+        "digest": {
+          "$ref": "apxm.contract-common.v1#/$defs/Digest"
+        },
+        "media_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

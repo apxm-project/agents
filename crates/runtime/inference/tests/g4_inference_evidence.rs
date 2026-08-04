@@ -13,11 +13,12 @@
 
 use apxm_inference::effect::{ErrorCategory, IdempotencyKey};
 use apxm_inference::{
-    AttemptDisposition, BoundedMetricLabels, DiagnosticAgreement, ExactModelTargetRef,
-    ExactPortBindingRef, InferenceCredentialLease, InferenceCredentialLeaseIdentity,
-    InferenceDriverBinding, InferenceUsageLineage, LeasedInferenceBackend, ModelBindingAdmission,
-    ModelCallPreparation, ModelCallRequest, ModelCallRequestMetadata, ModelContextEnvelopeRef,
-    ModelDeploymentRef, ModelOutcome, ModelStreamMode, ModelTargetRef,
+    AttemptDisposition, BoundedMetricLabels, CorrelateDiagnosticsRequest, DiagnosticAgreement,
+    ExactInferenceDispatch, ExactModelTargetRef, ExactPortBindingRef, InferenceCredentialLease,
+    InferenceCredentialLeaseIdentity, InferenceDriverBinding, InferenceUsageLineage,
+    LeasedInferenceBackend, ModelBindingAdmission, ModelCallPreparation, ModelCallRequest,
+    ModelCallRequestMetadata, ModelContextEnvelopeRef, ModelDeploymentRef, ModelOutcome,
+    ModelStreamMode, ModelTargetRef,
     PINNED_VLLM_PORT_CONTRACT_DIGEST, PINNED_VLLM_VECTOR_DIGESTS, ResolvedModelBinding,
     RetryPolicy, TypedError, Usage, VllmConformanceJoin, VllmJoinStatus, authoritative_usage,
     correlate_diagnostics, digest_bytes, dispatch_exact_inference, redact_diagnostic_value,

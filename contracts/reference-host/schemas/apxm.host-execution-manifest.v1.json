@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.host-execution-manifest.v1",
+  "title": "APXM Reference Host Execution Manifest",
+  "type": "object",
+  "required": ["schema_version", "semantic_owner", "executable", "protocol", "readiness_contract", "drain_quiescence_contract", "admission_contract", "evidence_contract", "lifecycle"],
+  "properties": {
+    "schema_version": {"const": "apxm.host-execution-manifest.v1"},
+    "semantic_owner": {"const": "agents"},
+    "executable": {
+      "type": "object",
+      "required": ["name", "command"],
+      "properties": {
+        "name": {"const": "apxm-reference-host"},
+        "command": {"const": "apxm-reference-host"}
+      },
+      "additionalProperties": false
+    },
+    "protocol": {"const": "jsonl-stdin-stdout"},
+    "readiness_contract": {"const": "apxm.runtime-readiness.v1"},
+    "drain_quiescence_contract": {"const": "apxm.runtime-drain-quiescence.v1"},
+    "admission_contract": {"const": "apxm.invocation-admission.v1"},
+    "evidence_contract": {"const": "apxm.runtime-evidence.v1"},
+    "lifecycle": {
+      "type": "object",
+      "required": ["startup", "drain", "cancellation", "shutdown", "revocation", "restart", "recovery"],
+      "properties": {
+        "startup": {"const": "starting_then_ready_before_admission"},
+        "drain": {"const": "stop_admission_then_finish_in_flight"},
+        "cancellation": {"const": "terminal_cancel_or_cancellation_unconfirmed"},
+        "shutdown": {"const": "terminal_shutdown_or_shutdown_unconfirmed"},
+        "revocation": {"const": "terminal_revoke_closes_admission_until_restart"},
+        "restart": {"const": "explicit_restart_reconciles_from_runtime_evidence"},
+        "recovery": {"const": "reconcile_from_runtime_evidence"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
