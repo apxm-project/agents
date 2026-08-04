@@ -29,7 +29,12 @@ fn value(value_id: &str, type_ref: &str) -> OperandValue {
 }
 
 /// Publish `slot` on `target` through the claim protocol.
-fn publish(kernel: &mut ReadinessKernel, target: &NodeOccurrenceId, slot_name: &str, type_ref: &str) {
+fn publish(
+    kernel: &mut ReadinessKernel,
+    target: &NodeOccurrenceId,
+    slot_name: &str,
+    type_ref: &str,
+) {
     let claim = kernel.claim_slot(target, slot_name).expect("slot claim");
     kernel
         .publish_operand(&claim, value("value.1", type_ref))
@@ -89,7 +94,10 @@ fn a_duplicate_node_occurrence_is_refused_at_build() {
         .node(node("a"), Vec::new(), Vec::new())
         .build()
         .expect_err("duplicate occurrence");
-    assert_eq!(error, ReadinessError::DuplicateNodeOccurrence { node: node("a") });
+    assert_eq!(
+        error,
+        ReadinessError::DuplicateNodeOccurrence { node: node("a") }
+    );
 }
 
 #[test]
@@ -169,7 +177,10 @@ fn a_decrement_with_no_remaining_predecessor_underflows_closed() {
     let error = kernel
         .release_predecessor(&node("a"))
         .expect_err("underflow");
-    assert_eq!(error, ReadinessError::PredecessorUnderflow { node: node("a") });
+    assert_eq!(
+        error,
+        ReadinessError::PredecessorUnderflow { node: node("a") }
+    );
     assert_eq!(kernel.remaining_predecessors(&node("a")), Ok(0));
     assert!(kernel.is_locally_quiescent());
 }
@@ -288,7 +299,9 @@ fn a_last_release_with_an_unpublished_slot_fails_closed_without_manufacturing_an
 
     kernel.admit(&node("a")).expect("admit a");
     kernel.start(&node("a")).expect("start a");
-    let error = kernel.complete(&node("a")).expect_err("operands incomplete");
+    let error = kernel
+        .complete(&node("a"))
+        .expect_err("operands incomplete");
     assert_eq!(
         error,
         ReadinessError::OperandsIncomplete {
@@ -472,7 +485,9 @@ fn completing_a_node_that_never_started_is_refused() {
 fn an_unknown_node_occurrence_is_refused_on_every_entry_point() {
     let mut kernel = diamond_join();
     let ghost = node("ghost");
-    let expected = ReadinessError::UnknownNodeOccurrence { node: ghost.clone() };
+    let expected = ReadinessError::UnknownNodeOccurrence {
+        node: ghost.clone(),
+    };
     assert_eq!(kernel.lifecycle(&ghost), Err(expected.clone()));
     assert_eq!(kernel.remaining_predecessors(&ghost), Err(expected.clone()));
     assert_eq!(kernel.claim_slot(&ghost, "left"), Err(expected.clone()));

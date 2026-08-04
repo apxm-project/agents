@@ -921,7 +921,7 @@ async fn usage_presentation_failure_is_reported_after_commit_not_as_success_or_r
     let usage = Arc::new(RecordingOperationalUsage::failing(
         CommittedNativeModelUsageError::Unavailable,
     ));
-    let ports = ports(commit).with_committed_native_model_usage_port(usage.clone());
+    let ports = ports(commit.clone()).with_committed_native_model_usage_port(usage.clone());
 
     let report = execute(&ports, request(), json!({}))
         .await
@@ -936,6 +936,18 @@ async fn usage_presentation_failure_is_reported_after_commit_not_as_success_or_r
         CommittedNativeModelUsageOutcome::Failed(CommittedNativeModelUsageError::Unavailable)
     );
     assert_eq!(usage.calls().len(), 1);
+    // Exporter loss never erases or rewrites the committed owner evidence batch.
+    let facts = commit.facts();
+    assert!(
+        facts
+            .iter()
+            .any(|fact| fact.model_attempt_recorded().is_some()),
+        "canonical attempt evidence remains after exporter loss"
+    );
+    assert!(
+        !apxm_kernel::diagnostic_may_override_evidence(),
+        "diagnostics/exporter paths cannot override owner evidence"
+    );
 }
 
 #[tokio::test]

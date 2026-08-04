@@ -19,7 +19,7 @@ for typo fixes or single-line edits.
    starts.
 2. **Surface live AIS op list** if AIS dialect work is anticipated —
    `dekk agents ops list`. Confirms what's actually defined in
-   `apxm-core` rather than what you remember.
+   `crates/machine/ais/` rather than what you remember.
 3. **Read project memory**:
    - `.agents/project.md` — the SSOT.
    - The closest relevant `_shared/` rule(s):
@@ -33,6 +33,9 @@ for typo fixes or single-line edits.
    - Compiler/passes → `docs/compiler/pipeline.md`
    - Backends/zoo → `docs/backends/model-zoo.md`,
      `docs/backends/storage-layout.md`
+   - Capability admission, Port bindings, checkpoints, confinement, or
+     evidence → `docs/agents/portable-core-interface-contract.md`,
+     `docs/agents/agent-program-composition-and-air-contract.md`
 5. **Recall memory** — APXM has 20+ memories in
    `~/.claude/.../memory/`. Always check for matches on:
    `apxm_*`, `feedback_*`. Especially:
@@ -43,7 +46,7 @@ for typo fixes or single-line edits.
 6. **Confirm subsystem ownership**:
    - Compiler edits → `crates/compiler/`
    - Runtime edits → `crates/runtime/`
-   - AIS op edits → `crates/core/` only (everything else consumes)
+   - AIS op edits → `crates/machine/ais/` only (everything else consumes)
    - vLLM glue → `crates/runtime/backends/`, `tools/scripts/vllm.py`,
      `external/vllm/`
 
@@ -62,7 +65,7 @@ Then proceed to `plan` (if non-trivial) or to the edit itself
 ## Anti-patterns
 
 - Skipping doctor because "I just ran it last session".
-- Starting compiler work without checking `apxm-core` is the op-defining
-  crate.
+- Starting compiler work without checking `crates/machine/ais/` is the
+  op-defining owner.
 - Quoting old AIS op names from memory instead of `dekk agents ops list`.
 - Skipping memory recall — most past incidents are documented.

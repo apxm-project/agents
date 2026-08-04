@@ -1,7 +1,7 @@
 {
   "schema_version": "apxm.agents-owner-descriptor.v1",
   "semantic_owner": "agents",
-  "primary_responsibility": "Agent Program authoring frontends, FrontendGraph, the closed five-operation effect/composition AIS family, the separate closed structural AIS family, digest-bound executable artifacts with artifact_semantic requirements only, generic loop-iteration runtime evidence, source maps, and the atomic execution-commit boundary.",
+  "primary_responsibility": "Agent Program authoring frontends, FrontendGraph, instruction-only skill packages, metadata-only skill discovery roots, the closed five-operation effect/composition AIS family, the separate closed structural AIS family, digest-bound executable artifacts with artifact_semantic requirements only, generic loop-iteration runtime evidence, source maps, and the atomic execution-commit boundary.",
   "referenced_owner_descriptors": [
     {
       "semantic_owner": "host-sdk",
@@ -173,6 +173,36 @@
       "schema_id": "apxm.program-composition-outcome.v1",
       "path": "schemas/apxm.program-composition-outcome.v1.json",
       "digest": "sha256:5a78fbe48fa8a374268a558ffcdd066b49c0ca4dacc80be58e03c80eeb0d5ade"
+    },
+    {
+      "schema_id": "apxm.skill-package.v1",
+      "path": "schemas/apxm.skill-package.v1.json",
+      "digest": "sha256:9e41a8a9e14fa67e8f0dcb3645751e3d670ab7d3a066e8c140382cdd2e1ea75e"
+    },
+    {
+      "schema_id": "apxm.skill-discovery-root.v1",
+      "path": "schemas/apxm.skill-discovery-root.v1.json",
+      "digest": "sha256:a15b20246708a7747f52629e8ea63fe91295b9b88d1bd33418b407a052b68450"
+    },
+    {
+      "schema_id": "apxm.host-execution-manifest.v1",
+      "path": "schemas/apxm.host-execution-manifest.v1.json",
+      "digest": "sha256:54f1a76367a34f105fd019aef2d34ca18416a6843e50bd84203139bfccabd428"
+    },
+    {
+      "schema_id": "apxm.runtime-readiness.v1",
+      "path": "schemas/apxm.runtime-readiness.v1.json",
+      "digest": "sha256:698f5ba1ad079a23afc61773064e1822d1ee8c54caa53ea5eeb106e81d55737e"
+    },
+    {
+      "schema_id": "apxm.runtime-drain-quiescence.v1",
+      "path": "schemas/apxm.runtime-drain-quiescence.v1.json",
+      "digest": "sha256:f654417caabece0b9366424bf24ab0417e103a34e28536c79e991e6917555820"
+    },
+    {
+      "schema_id": "apxm.invocation-admission.v1",
+      "path": "schemas/apxm.invocation-admission.v1.json",
+      "digest": "sha256:08aece04a3ddf6d076b7af43a451a0159363e2c369d1ea16aad00ec4a8d288c6"
     }
   ],
   "owned_port_contracts": [
@@ -884,7 +914,29 @@
         "failure",
         "unknown_discriminant"
       ]
+    },
+    {
+      "schema_id": "apxm.skill-package.v1",
+      "path": "vectors/apxm.skill-package.v1.json",
+      "digest": "sha256:8451c4e9c7c7da1c73a86fe262fb3a3bad21f76d947e320cf495c57797483191",
+      "coverage": [
+        "positive",
+        "instruction_only",
+        "integrity",
+        "mutation"
+      ]
+    },
+    {
+      "schema_id": "apxm.skill-discovery-root.v1",
+      "path": "vectors/apxm.skill-discovery-root.v1.json",
+      "digest": "sha256:1545789af802b338d6f15e0eb93f5e99b8984fdc1c58ee210180f769c758e44b",
+      "coverage": [
+        "positive",
+        "metadata_only",
+        "scope",
+        "mutation"
+      ]
     }
   ],
-  "descriptor_digest": "sha256:513b79aacae75a1c27c1ca6eade11291e9c98625ad6a45c2b3ab6cc112256df1"
+  "descriptor_digest": "sha256:425a23bdc4900e808f347c61ebc62f85f14544b3e660ca1fa0a0fd36ad38522e"
 }
