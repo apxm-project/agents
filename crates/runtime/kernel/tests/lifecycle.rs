@@ -80,6 +80,7 @@ fn instance_on(port: Arc<dyn ExecutionCommitPort>, id: &str) -> ProgramInstance 
 struct FixtureState {
     versions: HashMap<String, u64>,
     evidence: HashMap<String, Vec<Fact>>,
+    continuations: HashMap<String, Option<serde_json::Value>>,
     by_id: HashMap<String, ExecutionCommitResult>,
     force_unknown: HashSet<String>,
 }
@@ -152,6 +153,10 @@ impl ExecutionCommitPort for FixtureCommit {
             request.program_instance_ref.as_str().to_string(),
             new_version,
         );
+        state.continuations.insert(
+            request.program_instance_ref.as_str().to_string(),
+            request.tuple.continuation.clone(),
+        );
         state
             .evidence
             .entry(request.program_instance_ref.as_str().to_string())
@@ -175,8 +180,17 @@ impl ExecutionCommitPort for FixtureCommit {
     }
 
     /// The lifecycle fixture commits without parking, so no continuation is held.
-    async fn load_continuation(&self, _program_instance_ref: &ProgramInstanceRef) -> Option<serde_json::Value> {
-        None
+    async fn load_continuation(
+        &self,
+        _program_instance_ref: &ProgramInstanceRef,
+    ) -> Option<serde_json::Value> {
+        self.state
+            .lock()
+            .unwrap()
+            .continuations
+            .get(_program_instance_ref.as_str())
+            .cloned()
+            .flatten()
     }
 }
 
@@ -387,6 +401,78 @@ async fn crash_before_commit_reconciles_to_uncommitted() {
 }
 
 #[tokio::test]
+async fn committed_continuation_recovers_but_failure_paths_publish_nothing() {
+    let port = Arc::new(FixtureCommit::new());
+    let continuation = serde_json::json!({
+        "resume_pc": "loop.1",
+        "live_values": { "i": 3 }
+    });
+    let request = |commit_id: &str, expected_program_state_version: u64| ExecutionCommitRequest {
+        commit_id: commit_id.into(),
+        program_instance_ref: ProgramInstanceRef::new("instance.1"),
+        program_invocation_ref: ProgramInvocationRef::new("invocation.1"),
+        idempotency_key: format!("idem.{commit_id}"),
+        expected_program_state_version,
+        write_set: write_set(),
+        tuple: ExecutionCommitTuple {
+            context: serde_json::Value::Null,
+            continuation: Some(continuation.clone()),
+            event_wait: Some(serde_json::json!({
+                "event_ref": "event.1",
+                "deadline_ms": 10_000
+            })),
+            effect_outcomes: Vec::new(),
+            evidence: Vec::new(),
+            usage: serde_json::Value::Null,
+            output_refs: Vec::new(),
+        },
+        evidence_batch: Vec::new(),
+    };
+
+    let committed = port.commit(request("commit.ok", 0)).await;
+    assert!(matches!(
+        committed,
+        ExecutionCommitResult::Committed {
+            new_program_state_version: 1,
+            ..
+        }
+    ));
+    assert_eq!(
+        port.load_continuation(&ProgramInstanceRef::new("instance.1"))
+            .await,
+        Some(continuation.clone()),
+        "the atomic commit is the recovery authority for the parked continuation"
+    );
+
+    port.inject_outcome_unknown("commit.unknown");
+    let unknown = port.commit(request("commit.unknown", 1)).await;
+    assert!(matches!(
+        unknown,
+        ExecutionCommitResult::OutcomeUnknown { .. }
+    ));
+    assert_eq!(
+        port.load_continuation(&ProgramInstanceRef::new("instance.1"))
+            .await,
+        Some(continuation.clone()),
+        "an ambiguous outcome publishes nothing new and preserves the last durable continuation"
+    );
+
+    let conflict = port.commit(request("commit.conflict", 0)).await;
+    assert!(matches!(
+        conflict,
+        ExecutionCommitResult::CompareConflict {
+            current_program_state_version: 1
+        }
+    ));
+    assert_eq!(
+        port.load_continuation(&ProgramInstanceRef::new("instance.1"))
+            .await,
+        Some(continuation),
+        "a stale compare-and-commit cannot replace the recovery checkpoint"
+    );
+}
+
+#[tokio::test]
 async fn idempotent_recommit_applies_once() {
     let port = Arc::new(FixtureCommit::new());
     let instance = instance_on(port.clone(), "instance.1");
@@ -460,6 +546,35 @@ async fn replay_from_durable_evidence_is_monotonic() {
 #[tokio::test]
 async fn cancel_commits_cancellation() {
     let port = Arc::new(FixtureCommit::new());
+    port.commit(ExecutionCommitRequest {
+        commit_id: "checkpoint.1".into(),
+        program_instance_ref: ProgramInstanceRef::new("instance.1"),
+        program_invocation_ref: ProgramInvocationRef::new("invocation.1"),
+        idempotency_key: "idem.checkpoint.1".into(),
+        expected_program_state_version: 0,
+        write_set: write_set(),
+        tuple: ExecutionCommitTuple {
+            context: serde_json::Value::Null,
+            continuation: Some(serde_json::json!({
+                "resume_pc": "yield.1",
+                "locals": { "token": 7 }
+            })),
+            event_wait: None,
+            effect_outcomes: Vec::new(),
+            evidence: Vec::new(),
+            usage: serde_json::Value::Null,
+            output_refs: Vec::new(),
+        },
+        evidence_batch: Vec::new(),
+    })
+    .await;
+    assert!(
+        port.load_continuation(&ProgramInstanceRef::new("instance.1"))
+            .await
+            .is_some(),
+        "the pre-cancel checkpoint exists"
+    );
+
     let instance = instance_on(port.clone(), "instance.1");
     let report = instance
         .cancel(
@@ -472,6 +587,12 @@ async fn cancel_commits_cancellation() {
     assert_eq!(report, InvocationReport::Cancelled);
     let view = reconstruct(&port.evidence_for("instance.1"));
     assert_eq!(view.invocation_state, Some(InvocationState::Cancelled));
+    assert_eq!(
+        port.load_continuation(&ProgramInstanceRef::new("instance.1"))
+            .await,
+        None,
+        "cancellation drains the committed continuation instead of reviving stale work on recovery"
+    );
 }
 
 #[tokio::test]
@@ -524,7 +645,10 @@ impl ExecutionCommitPort for GatedCommit {
         self.inner.current_version(program_instance_ref).await
     }
 
-    async fn load_continuation(&self, program_instance_ref: &ProgramInstanceRef) -> Option<serde_json::Value> {
+    async fn load_continuation(
+        &self,
+        program_instance_ref: &ProgramInstanceRef,
+    ) -> Option<serde_json::Value> {
         self.inner.load_continuation(program_instance_ref).await
     }
 }
