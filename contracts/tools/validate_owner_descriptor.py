@@ -77,6 +77,9 @@ REFERENCE_HOST_INVOKE_PARITY_VECTOR_PATH = (
 REFERENCE_HOST_LIFECYCLE_PARITY_VECTOR_PATH = (
     CONTRACTS_DIR / "reference-host" / "vectors" / "apxm.reference-host.lifecycle-parity.v1.json"
 )
+REFERENCE_HOST_EXECUTABLE_HARNESS_PATH = (
+    CHECKOUT_ROOT / "crates" / "tools" / "cli" / "tests" / "reference_host_jsonl.rs"
+)
 WORKSPACE_MANIFEST = AGENTS_ROOT / "Cargo.toml"
 EXECUTION_COMMIT_PORT_CONTRACT_PATH = (
     PORT_CONTRACTS_DIR / "apxm.execution-commit.port-contract.v1.json"
@@ -237,6 +240,12 @@ REFERENCE_HOST_EXECUTION_VECTOR_KEYS = (
     "runtime_drain_quiescence_vector",
     "invocation_admission_vector",
 )
+REFERENCE_HOST_UNAVAILABLE_LIVE_CASES = {
+    "drain_shutdown_after_in_flight_completion": (
+        "reference-host JSONL processes one request at a time in this branch, so "
+        "no exact admitted in-flight drain artifact exists yet"
+    )
+}
 REFERENCE_HOST_DESCRIPTOR = {
     "semantic_owner": "host-sdk",
     "schema_version": "apxm.host-sdk-owner-descriptor.v1",
@@ -375,6 +384,50 @@ def reference_host_invoke_vector_ref(invoke_vector: dict[str, Any]) -> dict[str,
     }
 
 
+def reference_host_executable_harness_ref() -> dict[str, str]:
+    return {
+        "kind": "rust-integration-test",
+        "path": "crates/tools/cli/tests/reference_host_jsonl.rs",
+        "digest": file_digest(REFERENCE_HOST_EXECUTABLE_HARNESS_PATH),
+    }
+
+
+def reference_host_executable_parity_evidence(
+    invoke_vector: dict[str, Any], lifecycle_vector: dict[str, Any]
+) -> dict[str, Any]:
+    all_case_names = [
+        *(case["name"] for case in invoke_vector["cases"]),
+        *(case["name"] for case in lifecycle_vector["cases"]),
+    ]
+    unavailable_names = set(REFERENCE_HOST_UNAVAILABLE_LIVE_CASES)
+    unknown_names = unavailable_names.difference(all_case_names)
+    if unknown_names:
+        raise ValidationError(
+            "reference-host unavailable live cases drifted from the published vectors: "
+            + ", ".join(sorted(unknown_names))
+        )
+    live_required_cases = [name for name in all_case_names if name not in unavailable_names]
+    unavailable_required_cases = [
+        {"name": name, "reason": REFERENCE_HOST_UNAVAILABLE_LIVE_CASES[name]}
+        for name in all_case_names
+        if name in unavailable_names
+    ]
+    return {
+        "owner_executable": {
+            "name": "apxm-reference-host",
+            "path": "crates/tools/cli/src/bin/reference_host.rs",
+            "transport_protocol": "jsonl-stdin-stdout",
+        },
+        "harness": reference_host_executable_harness_ref(),
+        "vectors": [
+            reference_host_invoke_vector_ref(invoke_vector),
+            reference_host_lifecycle_vector_ref(lifecycle_vector),
+        ],
+        "live_required_cases": live_required_cases,
+        "unavailable_required_cases": unavailable_required_cases,
+    }
+
+
 def attested_release_entry(
     raw_entry: dict[str, Any], *, identifier_field: str, label: str
 ) -> dict[str, str]:
@@ -440,6 +493,8 @@ def reference_host_release_attestation(
     check_reference_host_boundary(descriptor)
     check_reference_host_release_evidence()
     release_manifest = load_json(REFERENCE_HOST_RELEASE_MANIFEST_PATH)
+    invoke_vector = load_json(REFERENCE_HOST_INVOKE_PARITY_VECTOR_PATH)
+    lifecycle_vector = load_json(REFERENCE_HOST_LIFECYCLE_PARITY_VECTOR_PATH)
     attestation = {
         "cohort": {
             "revision": owner_revision,
@@ -457,6 +512,9 @@ def reference_host_release_attestation(
             "vectors": [],
         },
         "owner_source_contracts": owner_source_contract_attestations(descriptor),
+        "executable_parity_evidence": reference_host_executable_parity_evidence(
+            invoke_vector, lifecycle_vector
+        ),
     }
     golden_vectors = release_manifest.get("golden_vectors")
     if not isinstance(golden_vectors, list):
@@ -1258,8 +1316,12 @@ def check_reference_host_boundary(descriptor: dict[str, Any]) -> None:
         )
 
 
-def check_reference_host_release_evidence() -> None:
-    release_manifest = load_json(REFERENCE_HOST_RELEASE_MANIFEST_PATH)
+def validate_reference_host_release_manifest(
+    release_manifest: dict[str, Any],
+    execution_manifest: dict[str, Any],
+    invoke_vector: dict[str, Any],
+    lifecycle_vector: dict[str, Any],
+) -> None:
     if release_manifest.get("schema_version") != "apxm.reference-host-release-manifest.v1":
         raise ValidationError("reference-host release manifest schema_version drifted")
     if release_manifest.get("semantic_owner") != "agents":
@@ -1270,8 +1332,6 @@ def check_reference_host_release_evidence() -> None:
         raise ValidationError(
             "reference-host release manifest must not cite retired alias apxm.execution-admission.v1"
         )
-
-    execution_manifest = load_json(REFERENCE_HOST_EXECUTION_MANIFEST_PATH)
     if execution_manifest.get("schema_version") != REFERENCE_HOST_EXECUTION_MANIFEST_SCHEMA_VERSION:
         raise ValidationError("reference-host execution manifest schema_version drifted")
     if execution_manifest.get("semantic_owner") != "agents":
@@ -1287,13 +1347,10 @@ def check_reference_host_release_evidence() -> None:
         raise ValidationError(
             "reference-host release manifest publication_cohort drifted from the execution manifest"
         )
-
-    invoke_vector = load_json(REFERENCE_HOST_INVOKE_PARITY_VECTOR_PATH)
     if invoke_vector.get("schema_version") != REFERENCE_HOST_INVOKE_VECTOR_ID:
         raise ValidationError("reference-host invoke parity vector schema_version drifted")
     if invoke_vector.get("profiles") != REFERENCE_HOST_PROFILE_COHORT:
         raise ValidationError("reference-host invoke parity vector profiles drifted")
-    lifecycle_vector = load_json(REFERENCE_HOST_LIFECYCLE_PARITY_VECTOR_PATH)
     if lifecycle_vector.get("schema_version") != REFERENCE_HOST_LIFECYCLE_VECTOR_ID:
         raise ValidationError("reference-host lifecycle parity vector schema_version drifted")
     if lifecycle_vector.get("profiles") != REFERENCE_HOST_PROFILE_COHORT:
@@ -1320,6 +1377,23 @@ def check_reference_host_release_evidence() -> None:
         raise ValidationError(
             "reference-host release manifest lifecycle_cohort_attestation drifted"
         )
+    executable_parity_evidence = release_manifest.get("executable_parity_evidence")
+    expected_executable_parity_evidence = reference_host_executable_parity_evidence(
+        invoke_vector, lifecycle_vector
+    )
+    if executable_parity_evidence != expected_executable_parity_evidence:
+        raise ValidationError(
+            "reference-host release manifest executable_parity_evidence drifted"
+        )
+
+
+def check_reference_host_release_evidence() -> None:
+    validate_reference_host_release_manifest(
+        load_json(REFERENCE_HOST_RELEASE_MANIFEST_PATH),
+        load_json(REFERENCE_HOST_EXECUTION_MANIFEST_PATH),
+        load_json(REFERENCE_HOST_INVOKE_PARITY_VECTOR_PATH),
+        load_json(REFERENCE_HOST_LIFECYCLE_PARITY_VECTOR_PATH),
+    )
 
 
 def scan_plan_references() -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import importlib.util
 import json
 import re
@@ -39,6 +40,13 @@ REFERENCE_HOST_LIFECYCLE_VECTOR = (
     / "reference-host"
     / "vectors"
     / "apxm.reference-host.lifecycle-parity.v1.json"
+)
+REFERENCE_HOST_INVOKE_VECTOR = (
+    REPOSITORY_ROOT
+    / "contracts"
+    / "reference-host"
+    / "vectors"
+    / "apxm.reference-host.invoke-parity.v1.json"
 )
 REFERENCE_HOST_SOURCE = (
     REPOSITORY_ROOT / "crates" / "tools" / "cli" / "src" / "bin" / "reference_host.rs"
@@ -139,14 +147,16 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
                 )
         self.assertEqual(offenders, [], "\n".join(offenders))
 
-    def test_reference_host_release_manifest_attests_exact_lifecycle_cohort(self) -> None:
+    def test_reference_host_release_manifest_attests_exact_parity_cohort(self) -> None:
         release_manifest = load_json(REFERENCE_HOST_RELEASE_MANIFEST)
         execution_manifest = load_json(REFERENCE_HOST_EXECUTION_MANIFEST)
+        invoke_vector = load_json(REFERENCE_HOST_INVOKE_VECTOR)
         lifecycle_vector = load_json(REFERENCE_HOST_LIFECYCLE_VECTOR)
         expected_execution_manifest_ref = self.validator.reference_host_execution_manifest_ref()
         expected_publication_cohort = self.validator.reference_host_publication_cohort(
             execution_manifest
         )
+        expected_invoke_vector_ref = self.validator.reference_host_invoke_vector_ref(invoke_vector)
         expected_lifecycle_vector_ref = self.validator.reference_host_lifecycle_vector_ref(
             lifecycle_vector
         )
@@ -175,6 +185,50 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
             expected_attestation,
             "the reference-host release manifest must attest the exact lifecycle cohort",
         )
+        self.assertEqual(
+            release_manifest["golden_vectors"],
+            [expected_invoke_vector_ref, expected_lifecycle_vector_ref],
+        )
+        self.assertEqual(
+            release_manifest["executable_parity_evidence"],
+            self.validator.reference_host_executable_parity_evidence(
+                invoke_vector, lifecycle_vector
+            ),
+            "the release manifest must attest the exact executable live parity cohort",
+        )
+
+    def test_reference_host_release_manifest_fails_closed_on_parity_artifact_drift(self) -> None:
+        release_manifest = load_json(REFERENCE_HOST_RELEASE_MANIFEST)
+        execution_manifest = load_json(REFERENCE_HOST_EXECUTION_MANIFEST)
+        invoke_vector = load_json(REFERENCE_HOST_INVOKE_VECTOR)
+        lifecycle_vector = load_json(REFERENCE_HOST_LIFECYCLE_VECTOR)
+
+        mutated_cases = {
+            "missing_executable_parity_evidence": lambda payload: payload.pop(
+                "executable_parity_evidence"
+            ),
+            "mismatched_harness_digest": lambda payload: payload[
+                "executable_parity_evidence"
+            ]["harness"].__setitem__("digest", "sha256:" + "0" * 64),
+            "missing_live_case": lambda payload: payload["executable_parity_evidence"][
+                "live_required_cases"
+            ].pop(),
+        }
+
+        for name, mutate in mutated_cases.items():
+            with self.subTest(name=name):
+                mutated = copy.deepcopy(release_manifest)
+                mutate(mutated)
+                with self.assertRaisesRegex(
+                    self.validator.ValidationError,
+                    "executable_parity_evidence",
+                ):
+                    self.validator.validate_reference_host_release_manifest(
+                        mutated,
+                        execution_manifest,
+                        invoke_vector,
+                        lifecycle_vector,
+                    )
 
     def test_reference_host_release_manifest_rejects_retired_admission_alias(self) -> None:
         release_manifest_text = REFERENCE_HOST_RELEASE_MANIFEST.read_text(encoding="utf-8")
@@ -216,6 +270,13 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
                 "contracts/reference-host/vectors/apxm.reference-host.invoke-parity.v1.json",
                 "contracts/reference-host/vectors/apxm.reference-host.lifecycle-parity.v1.json",
             ],
+        )
+        self.assertEqual(
+            attestation["executable_parity_evidence"],
+            self.validator.reference_host_executable_parity_evidence(
+                load_json(REFERENCE_HOST_INVOKE_VECTOR),
+                load_json(REFERENCE_HOST_LIFECYCLE_VECTOR),
+            ),
         )
         self.assertIn(
             {
