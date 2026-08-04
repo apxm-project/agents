@@ -173,6 +173,42 @@ FORBIDDEN_LANE_IDS = re.compile(r"\b(?:A|C|S|O|H|T|P|K|D|V|E|M|R)\d[a-z]?\b")
 
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
+REFERENCE_HOST_DEPENDENCY_NAME = "apxm-host-sdk"
+REFERENCE_HOST_DEPENDENCY_GIT = "https://github.com/apxm-project/host-sdk.git"
+REFERENCE_HOST_PROFILE_COHORT = ["embedded", "reference-host"]
+REFERENCE_HOST_EXECUTION_MANIFEST_SCHEMA_VERSION = (
+    "apxm.reference-host-execution-manifest.v1"
+)
+REFERENCE_HOST_LIFECYCLE_VECTOR_ID = "apxm.reference-host.lifecycle-parity.v1"
+RETIRED_REFERENCE_HOST_ADMISSION_ALIAS = "apxm.execution-admission.v1"
+REFERENCE_HOST_EXECUTION_SCHEMA_KEYS = (
+    "host_execution_manifest_schema",
+    "runtime_readiness_schema",
+    "runtime_drain_quiescence_schema",
+    "invocation_admission_schema",
+)
+REFERENCE_HOST_EXECUTION_VECTOR_KEYS = (
+    "runtime_readiness_vector",
+    "runtime_drain_quiescence_vector",
+    "invocation_admission_vector",
+)
+REFERENCE_HOST_DESCRIPTOR = {
+    "semantic_owner": "host-sdk",
+    "schema_version": "apxm.host-sdk-owner-descriptor.v1",
+    "source_revision": "ff48332f2ce6af8a45eb38a15f4510a134223f5f",
+    "descriptor_semantic_digest": "sha256:a007bb8daee44cfc5156a358bd4c0f4665adefc0d731738ead9c50a31734e14b",
+    "descriptor_exact_checksum": "sha256:d771d3f2c4a50fdeee0c57475c4c00fc6b4121b1e4bf5147a57a76bf11ad7a88",
+}
+RETIRED_REFERENCE_HOST_OWNERS = frozenset({"coordinator", "clic", "host", "hostsdk"})
+RETIRED_REFERENCE_HOST_SCHEMAS = frozenset(
+    {
+        "apxm.coordinator-owner-descriptor.v1",
+        "apxm.clic-owner-descriptor.v1",
+        "apxm.host-owner-descriptor.v1",
+        "apxm.hostsdk-owner-descriptor.v1",
+        "apxm.host_sdk-owner-descriptor.v1",
+    }
+)
 
 class ValidationError(Exception):
     pass
@@ -192,6 +228,58 @@ def content_digest(value: Any) -> str:
 
 def file_digest(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def reference_host_execution_manifest_ref() -> dict[str, str]:
+    return {
+        "schema_version": REFERENCE_HOST_EXECUTION_MANIFEST_SCHEMA_VERSION,
+        "path": "reference-host/manifests/apxm.reference-host-execution-manifest.v1.json",
+        "digest": file_digest(REFERENCE_HOST_EXECUTION_MANIFEST_PATH),
+    }
+
+
+def reference_host_publication_cohort(
+    execution_manifest: dict[str, Any],
+) -> dict[str, list[dict[str, str]]]:
+    def publication_entry(field: str, *, key: str) -> dict[str, str]:
+        entry = execution_manifest.get(field)
+        if not isinstance(entry, dict):
+            raise ValidationError(
+                f"reference-host execution manifest field {field} must be an object"
+            )
+        value = entry.get(key)
+        path = entry.get("path")
+        digest = entry.get("digest")
+        if not all(isinstance(item, str) for item in (value, path, digest)):
+            raise ValidationError(
+                f"reference-host execution manifest field {field} must publish exact string coordinates"
+            )
+        return {
+            key: value,
+            "path": path,
+            "digest": digest,
+        }
+
+    return {
+        "manifests": [reference_host_execution_manifest_ref()],
+        "schemas": [
+            publication_entry(field, key="schema_id")
+            for field in REFERENCE_HOST_EXECUTION_SCHEMA_KEYS
+        ],
+        "vectors": [
+            publication_entry(field, key="schema_id")
+            for field in REFERENCE_HOST_EXECUTION_VECTOR_KEYS
+        ],
+    }
+
+
+def reference_host_lifecycle_vector_ref(lifecycle_vector: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "vector_id": REFERENCE_HOST_LIFECYCLE_VECTOR_ID,
+        "path": "reference-host/vectors/apxm.reference-host.lifecycle-parity.v1.json",
+        "digest": file_digest(REFERENCE_HOST_LIFECYCLE_PARITY_VECTOR_PATH),
+        "profiles": REFERENCE_HOST_PROFILE_COHORT,
+    }
 
 
 def _matches_json_type(instance: Any, name: str) -> bool:
@@ -884,6 +972,126 @@ def check_descriptor_shape(schema_ids: dict[str, dict[str, Any]]) -> None:
     if "signing" in descriptor:
         raise ValidationError(
             "owner-descriptor signatures are detached distribution metadata"
+        )
+    check_reference_host_boundary(descriptor)
+    check_reference_host_release_evidence()
+
+
+def check_reference_host_boundary(descriptor: dict[str, Any]) -> None:
+    references = descriptor.get("referenced_owner_descriptors")
+    if not isinstance(references, list):
+        raise ValidationError("referenced_owner_descriptors must be an array")
+    if len(references) != 1:
+        raise ValidationError(
+            "referenced_owner_descriptors must contain exactly the canonical Host SDK cohort"
+        )
+    reference = references[0]
+    if not isinstance(reference, dict):
+        raise ValidationError("referenced_owner_descriptors[0] must be an object")
+    semantic_owner = reference.get("semantic_owner")
+    if semantic_owner in RETIRED_REFERENCE_HOST_OWNERS:
+        raise ValidationError(
+            f"referenced_owner_descriptors[0].semantic_owner uses retired alias {semantic_owner!r}"
+        )
+    schema_version = reference.get("schema_version")
+    if schema_version in RETIRED_REFERENCE_HOST_SCHEMAS:
+        raise ValidationError(
+            f"referenced_owner_descriptors[0].schema_version uses retired alias {schema_version!r}"
+        )
+    if reference != REFERENCE_HOST_DESCRIPTOR:
+        drifted = sorted(
+            key
+            for key in set(reference).union(REFERENCE_HOST_DESCRIPTOR)
+            if reference.get(key) != REFERENCE_HOST_DESCRIPTOR.get(key)
+        )
+        raise ValidationError(
+            "referenced_owner_descriptors[0] drifted from the canonical Host SDK cohort: "
+            + ", ".join(drifted)
+        )
+
+    manifest = load_toml(WORKSPACE_MANIFEST)
+    workspace = manifest.get("workspace")
+    if not isinstance(workspace, dict):
+        raise ValidationError("Cargo.toml must define a workspace table")
+    dependencies = workspace.get("dependencies")
+    if not isinstance(dependencies, dict):
+        raise ValidationError("Cargo.toml must define workspace.dependencies")
+    host_dependency = dependencies.get(REFERENCE_HOST_DEPENDENCY_NAME)
+    if not isinstance(host_dependency, dict):
+        raise ValidationError(
+            f"Cargo.toml must declare workspace dependency {REFERENCE_HOST_DEPENDENCY_NAME}"
+        )
+    if host_dependency.get("git") != REFERENCE_HOST_DEPENDENCY_GIT:
+        raise ValidationError(
+            f"{REFERENCE_HOST_DEPENDENCY_NAME} must pin git {REFERENCE_HOST_DEPENDENCY_GIT}"
+        )
+    if host_dependency.get("rev") != REFERENCE_HOST_DESCRIPTOR["source_revision"]:
+        raise ValidationError(
+            f"{REFERENCE_HOST_DEPENDENCY_NAME} rev must match referenced owner descriptor source_revision"
+        )
+
+
+def check_reference_host_release_evidence() -> None:
+    release_manifest = load_json(REFERENCE_HOST_RELEASE_MANIFEST_PATH)
+    if release_manifest.get("schema_version") != "apxm.reference-host-release-manifest.v1":
+        raise ValidationError("reference-host release manifest schema_version drifted")
+    if release_manifest.get("semantic_owner") != "agents":
+        raise ValidationError("reference-host release manifest semantic_owner must be agents")
+    if release_manifest.get("profile_cohort") != REFERENCE_HOST_PROFILE_COHORT:
+        raise ValidationError("reference-host release manifest profile_cohort drifted")
+    if RETIRED_REFERENCE_HOST_ADMISSION_ALIAS in canonical(release_manifest):
+        raise ValidationError(
+            "reference-host release manifest must not cite retired alias apxm.execution-admission.v1"
+        )
+
+    execution_manifest = load_json(REFERENCE_HOST_EXECUTION_MANIFEST_PATH)
+    if execution_manifest.get("schema_version") != REFERENCE_HOST_EXECUTION_MANIFEST_SCHEMA_VERSION:
+        raise ValidationError("reference-host execution manifest schema_version drifted")
+    if execution_manifest.get("semantic_owner") != "agents":
+        raise ValidationError("reference-host execution manifest semantic_owner must be agents")
+    for key in ("owner_executable", "owner_executable_path", "transport_protocol"):
+        if execution_manifest.get(key) != release_manifest.get(key):
+            raise ValidationError(
+                f"reference-host execution manifest {key} must match the release manifest"
+            )
+    expected_publication_cohort = reference_host_publication_cohort(execution_manifest)
+    publication_cohort = release_manifest.get("publication_cohort")
+    if publication_cohort != expected_publication_cohort:
+        raise ValidationError(
+            "reference-host release manifest publication_cohort drifted from the execution manifest"
+        )
+
+    lifecycle_vector = load_json(REFERENCE_HOST_LIFECYCLE_PARITY_VECTOR_PATH)
+    if lifecycle_vector.get("schema_version") != REFERENCE_HOST_LIFECYCLE_VECTOR_ID:
+        raise ValidationError("reference-host lifecycle parity vector schema_version drifted")
+    if lifecycle_vector.get("profiles") != REFERENCE_HOST_PROFILE_COHORT:
+        raise ValidationError("reference-host lifecycle parity vector profiles drifted")
+    expected_execution_manifest_ref = reference_host_execution_manifest_ref()
+    expected_lifecycle_vector_ref = reference_host_lifecycle_vector_ref(lifecycle_vector)
+    golden_vectors = release_manifest.get("golden_vectors")
+    if not isinstance(golden_vectors, list):
+        raise ValidationError("reference-host release manifest golden_vectors must be an array")
+    lifecycle_entries = [
+        entry
+        for entry in golden_vectors
+        if isinstance(entry, dict) and entry.get("vector_id") == REFERENCE_HOST_LIFECYCLE_VECTOR_ID
+    ]
+    if lifecycle_entries != [expected_lifecycle_vector_ref]:
+        raise ValidationError(
+            "reference-host release manifest lifecycle parity golden vector drifted"
+        )
+
+    expected_attestation = {
+        "profile_cohort": REFERENCE_HOST_PROFILE_COHORT,
+        "execution_manifest": expected_execution_manifest_ref,
+        "lifecycle_vector": expected_lifecycle_vector_ref,
+        "shared_contracts": lifecycle_vector["shared_contracts"],
+        "required_cases": [case["name"] for case in lifecycle_vector["cases"]],
+    }
+    attestation = release_manifest.get("lifecycle_cohort_attestation")
+    if attestation != expected_attestation:
+        raise ValidationError(
+            "reference-host release manifest lifecycle_cohort_attestation drifted"
         )
 
 
