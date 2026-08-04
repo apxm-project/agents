@@ -22,6 +22,7 @@ import copy
 import hashlib
 import json
 import re
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -229,6 +230,48 @@ RETIRED_REFERENCE_HOST_SCHEMAS = frozenset(
 
 class ValidationError(Exception):
     pass
+
+
+def _git_common_dir() -> Path | None:
+    try:
+        common_dir = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            check=True,
+            capture_output=True,
+            cwd=AGENTS_ROOT,
+            text=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return Path(common_dir) if common_dir else None
+
+
+def _constitution_schema_dirs() -> tuple[Path, ...]:
+    candidates = [CONSTITUTION_SCHEMAS_DIR]
+    common_dir = _git_common_dir()
+    if common_dir is not None and common_dir.name == ".git":
+        candidates.append(common_dir.parent.parent / "contracts" / "schemas")
+
+    ordered: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen or not candidate.is_dir():
+            continue
+        seen.add(key)
+        ordered.append(candidate)
+    return tuple(ordered)
+
+
+def _published_schema_path(path: Path) -> Path:
+    if path.is_file():
+        return path
+    if path.parent == CONSTITUTION_SCHEMAS_DIR:
+        for schemas_dir in _constitution_schema_dirs():
+            candidate = schemas_dir / path.name
+            if candidate.is_file():
+                return candidate
+    return path
 
 
 def load_json(path: Path) -> Any:
@@ -837,7 +880,7 @@ def runtime_evidence_errors(instance: dict[str, Any]) -> list[str]:
 
 def load_schema_ids() -> dict[str, dict[str, Any]]:
     schema_ids: dict[str, dict[str, Any]] = {}
-    for schemas_dir in (SCHEMAS_DIR, CONSTITUTION_SCHEMAS_DIR):
+    for schemas_dir in (SCHEMAS_DIR, *_constitution_schema_dirs()):
         for path in sorted(schemas_dir.glob("*.json")):
             data = load_json(path)
             if isinstance(data, dict) and isinstance(data.get("$id"), str):
@@ -891,9 +934,9 @@ def compute_port_contract(
 ) -> dict[str, Any]:
     boundary = descriptor[boundary_key]
     updated = copy.deepcopy(instance)
-    updated["request_schema"]["digest"] = file_digest(request_schema)
-    updated["result_schema"]["digest"] = file_digest(result_schema)
-    updated["failure_schema"]["digest"] = file_digest(failure_schema)
+    updated["request_schema"]["digest"] = file_digest(_published_schema_path(request_schema))
+    updated["result_schema"]["digest"] = file_digest(_published_schema_path(result_schema))
+    updated["failure_schema"]["digest"] = file_digest(_published_schema_path(failure_schema))
     updated["lifecycle_digest"] = content_digest(boundary["lifecycle"])
     updated["authority_data_classification_digest"] = content_digest(
         boundary["authority_data_classification"]
@@ -923,11 +966,11 @@ def compute_port_contract(
 def compute_descriptor(descriptor: dict[str, Any]) -> dict[str, Any]:
     updated = copy.deepcopy(descriptor)
     updated["constitution"]["digest"] = file_digest(
-        CONSTITUTION_SCHEMAS_DIR / "contract-constitution.v1.json"
+        _published_schema_path(CONSTITUTION_SCHEMAS_DIR / "contract-constitution.v1.json")
     )
     for entry in updated["referenced_common_envelopes"]:
         name = entry["schema_id"].removeprefix("apxm.").rsplit(".v", 1)[0] + ".v1.json"
-        entry["digest"] = file_digest(CONSTITUTION_SCHEMAS_DIR / name)
+        entry["digest"] = file_digest(_published_schema_path(CONSTITUTION_SCHEMAS_DIR / name))
     for entry in updated["owned_schemas"]:
         entry["digest"] = file_digest(CONTRACTS_DIR / entry["path"])
     for entry in updated["owned_port_contracts"]:
