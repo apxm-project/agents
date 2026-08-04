@@ -197,6 +197,17 @@ REFERENCE_HOST_EXECUTION_MANIFEST_SCHEMA_VERSION = (
 )
 REFERENCE_HOST_LIFECYCLE_VECTOR_ID = "apxm.reference-host.lifecycle-parity.v1"
 RETIRED_REFERENCE_HOST_ADMISSION_ALIAS = "apxm.execution-admission.v1"
+REFERENCE_HOST_EXECUTION_SCHEMA_KEYS = (
+    "host_execution_manifest_schema",
+    "runtime_readiness_schema",
+    "runtime_drain_quiescence_schema",
+    "invocation_admission_schema",
+)
+REFERENCE_HOST_EXECUTION_VECTOR_KEYS = (
+    "runtime_readiness_vector",
+    "runtime_drain_quiescence_vector",
+    "invocation_admission_vector",
+)
 REFERENCE_HOST_DESCRIPTOR = {
     "semantic_owner": "host-sdk",
     "schema_version": "apxm.host-sdk-owner-descriptor.v1",
@@ -238,6 +249,85 @@ def content_digest(value: Any) -> str:
 
 def file_digest(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def reference_host_execution_manifest_ref() -> dict[str, str]:
+    return {
+        "schema_version": REFERENCE_HOST_EXECUTION_MANIFEST_SCHEMA_VERSION,
+        "path": "reference-host/manifests/apxm.reference-host-execution-manifest.v1.json",
+        "digest": file_digest(REFERENCE_HOST_EXECUTION_MANIFEST_PATH),
+    }
+
+
+def reference_host_release_manifest_ref() -> dict[str, str]:
+    return {
+        "schema_version": "apxm.reference-host-release-manifest.v1",
+        "path": "reference-host/manifests/apxm.reference-host-release-manifest.v1.json",
+        "digest": file_digest(REFERENCE_HOST_RELEASE_MANIFEST_PATH),
+    }
+
+
+def reference_host_publication_cohort(
+    execution_manifest: dict[str, Any],
+) -> dict[str, list[dict[str, str]]]:
+    def publication_entry(field: str, *, key: str) -> dict[str, str]:
+        entry = execution_manifest.get(field)
+        if not isinstance(entry, dict):
+            raise ValidationError(
+                f"reference-host execution manifest field {field} must be an object"
+            )
+        value = entry.get(key)
+        path = entry.get("path")
+        digest = entry.get("digest")
+        if not all(isinstance(item, str) for item in (value, path, digest)):
+            raise ValidationError(
+                f"reference-host execution manifest field {field} must publish exact string coordinates"
+            )
+        return {
+            key: value,
+            "path": path,
+            "digest": digest,
+        }
+
+    return {
+        "manifests": [reference_host_execution_manifest_ref()],
+        "schemas": [
+            publication_entry(field, key="schema_id")
+            for field in REFERENCE_HOST_EXECUTION_SCHEMA_KEYS
+        ],
+        "vectors": [
+            publication_entry(field, key="schema_id")
+            for field in REFERENCE_HOST_EXECUTION_VECTOR_KEYS
+        ],
+    }
+
+
+def reference_host_lifecycle_vector_ref(lifecycle_vector: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "vector_id": REFERENCE_HOST_LIFECYCLE_VECTOR_ID,
+        "path": "reference-host/vectors/apxm.reference-host.lifecycle-parity.v1.json",
+        "digest": file_digest(REFERENCE_HOST_LIFECYCLE_PARITY_VECTOR_PATH),
+        "profiles": REFERENCE_HOST_PROFILE_COHORT,
+    }
+
+
+def reference_host_published_lifecycle_profile(
+    release_manifest: dict[str, Any],
+    execution_manifest: dict[str, Any],
+    lifecycle_vector: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "profile_id": "reference-host",
+        "owner_executable": release_manifest["owner_executable"],
+        "transport_protocol": release_manifest["transport_protocol"],
+        "profile_cohort": list(REFERENCE_HOST_PROFILE_COHORT),
+        "startup_input_schema": "apxm.reference-host-startup-input.v1",
+        "release_manifest": reference_host_release_manifest_ref(),
+        "execution_manifest": reference_host_execution_manifest_ref(),
+        "lifecycle_vector": reference_host_lifecycle_vector_ref(lifecycle_vector),
+        "shared_contracts": lifecycle_vector["shared_contracts"],
+        "required_cases": [case["name"] for case in lifecycle_vector["cases"]],
+    }
 
 
 def _matches_json_type(instance: Any, name: str) -> bool:
@@ -932,7 +1022,7 @@ def check_descriptor_shape(schema_ids: dict[str, dict[str, Any]]) -> None:
             "owner-descriptor signatures are detached distribution metadata"
         )
     check_reference_host_boundary(descriptor)
-    check_reference_host_release_evidence()
+    check_reference_host_release_evidence(descriptor)
 
 
 def check_reference_host_boundary(descriptor: dict[str, Any]) -> None:
@@ -989,7 +1079,7 @@ def check_reference_host_boundary(descriptor: dict[str, Any]) -> None:
         )
 
 
-def check_reference_host_release_evidence() -> None:
+def check_reference_host_release_evidence(descriptor: dict[str, Any]) -> None:
     release_manifest = load_json(REFERENCE_HOST_RELEASE_MANIFEST_PATH)
     if release_manifest.get("schema_version") != "apxm.reference-host-release-manifest.v1":
         raise ValidationError("reference-host release manifest schema_version drifted")
@@ -1005,17 +1095,18 @@ def check_reference_host_release_evidence() -> None:
     execution_manifest = load_json(REFERENCE_HOST_EXECUTION_MANIFEST_PATH)
     if execution_manifest.get("schema_version") != REFERENCE_HOST_EXECUTION_MANIFEST_SCHEMA_VERSION:
         raise ValidationError("reference-host execution manifest schema_version drifted")
-    expected_execution_manifest_ref = {
-        "schema_version": REFERENCE_HOST_EXECUTION_MANIFEST_SCHEMA_VERSION,
-        "path": "reference-host/manifests/apxm.reference-host-execution-manifest.v1.json",
-        "digest": file_digest(REFERENCE_HOST_EXECUTION_MANIFEST_PATH),
-    }
+    if execution_manifest.get("semantic_owner") != "agents":
+        raise ValidationError("reference-host execution manifest semantic_owner must be agents")
+    for key in ("owner_executable", "owner_executable_path", "transport_protocol"):
+        if execution_manifest.get(key) != release_manifest.get(key):
+            raise ValidationError(
+                f"reference-host execution manifest {key} must match the release manifest"
+            )
+    expected_publication_cohort = reference_host_publication_cohort(execution_manifest)
     publication_cohort = release_manifest.get("publication_cohort")
-    if not isinstance(publication_cohort, dict):
-        raise ValidationError("reference-host release manifest publication_cohort must be an object")
-    if publication_cohort.get("manifests") != [expected_execution_manifest_ref]:
+    if publication_cohort != expected_publication_cohort:
         raise ValidationError(
-            "reference-host release manifest must publish exactly one execution manifest cohort entry"
+            "reference-host release manifest publication_cohort drifted from the execution manifest"
         )
 
     lifecycle_vector = load_json(REFERENCE_HOST_LIFECYCLE_PARITY_VECTOR_PATH)
@@ -1023,12 +1114,8 @@ def check_reference_host_release_evidence() -> None:
         raise ValidationError("reference-host lifecycle parity vector schema_version drifted")
     if lifecycle_vector.get("profiles") != REFERENCE_HOST_PROFILE_COHORT:
         raise ValidationError("reference-host lifecycle parity vector profiles drifted")
-    expected_lifecycle_vector_ref = {
-        "vector_id": REFERENCE_HOST_LIFECYCLE_VECTOR_ID,
-        "path": "reference-host/vectors/apxm.reference-host.lifecycle-parity.v1.json",
-        "digest": file_digest(REFERENCE_HOST_LIFECYCLE_PARITY_VECTOR_PATH),
-        "profiles": REFERENCE_HOST_PROFILE_COHORT,
-    }
+    expected_execution_manifest_ref = reference_host_execution_manifest_ref()
+    expected_lifecycle_vector_ref = reference_host_lifecycle_vector_ref(lifecycle_vector)
     golden_vectors = release_manifest.get("golden_vectors")
     if not isinstance(golden_vectors, list):
         raise ValidationError("reference-host release manifest golden_vectors must be an array")
@@ -1053,6 +1140,17 @@ def check_reference_host_release_evidence() -> None:
     if attestation != expected_attestation:
         raise ValidationError(
             "reference-host release manifest lifecycle_cohort_attestation drifted"
+        )
+
+    expected_profile = reference_host_published_lifecycle_profile(
+        release_manifest,
+        execution_manifest,
+        lifecycle_vector,
+    )
+    published_profiles = descriptor.get("published_host_lifecycle_profiles")
+    if published_profiles != [expected_profile]:
+        raise ValidationError(
+            "owner descriptor published_host_lifecycle_profiles drifted from the exact reference-host publication"
         )
 
 

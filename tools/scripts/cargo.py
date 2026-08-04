@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import platform
 import shutil
 import stat
 import subprocess
@@ -38,10 +39,13 @@ RELEASE_FLAG = "--release"
 CONFIG_FLAG = "--config"
 PROFILE_FLAG = "--profile"
 PACKAGE_FLAG = "-p"
+LONG_PACKAGE_FLAG = "--package"
 FEATURES_FLAG = "--features"
 DRIVER_METRICS_FEATURES = "driver,metrics"
 APXM_CLI_PACKAGE = "apxm-cli"
+APXM_CLI_BINARY = "apxm"
 APXM_COMPILER_PACKAGE = "apxm-compiler"
+REFERENCE_HOST_BINARY = "apxm-reference-host"
 TARGET_ROOT_NAME = "apxm-cargo-targets"
 PROJECT_TARGET_DIR_NAME = "target"
 DEBUG_PROFILE_DIR_NAME = "debug"
@@ -61,6 +65,17 @@ FINGERPRINT_OUTPUT_GLOB = "output-*"
 RUSTC_SIGBUS_MARKER = "rustc interrupted by SIGBUS"
 TEMP_ARCHIVE_GLOB = ".tmp*.temp-archive"
 LIBRARY_SUFFIXES = frozenset({".a", ".dylib", ".dll", ".so"})
+RUN_TARGET_FLAGS = frozenset({"--bin", "--example", "--test", "--bench"})
+NATIVE_TOOLCHAIN_GATED_SUBCOMMANDS = frozenset({
+    CargoCommand.BUILD.value,
+    CargoCommand.TEST.value,
+    "check",
+    "clippy",
+    "run",
+})
+LINUX_GNU_COMPILER_MARKERS = ("-conda-linux-gnu-", "-linux-gnu-")
+NATIVE_TOOLCHAIN_ENV_KEYS = ("CC", "CXX")
+READINESS_FAILURE_EXIT_CODE = 2
 SKIP_RELEASE_ENTRIES = frozenset({
     BUILD_DIR_NAME,
     DEPS_DIR_NAME,
@@ -133,11 +148,86 @@ def _cargo_env(project_root: Path, target_dir: Path, command: list[str]) -> dict
     return env
 
 
+def _selected_package(command: list[str]) -> str | None:
+    for idx, value in enumerate(command):
+        if value in {PACKAGE_FLAG, LONG_PACKAGE_FLAG} and idx + 1 < len(command):
+            return command[idx + 1]
+    return None
+
+
+def _has_explicit_run_target(command: list[str]) -> bool:
+    return any(flag in command for flag in RUN_TARGET_FLAGS)
+
+
+def _ambiguous_run_target_error(command: list[str]) -> str | None:
+    if not command or command[0] != "run":
+        return None
+    if _selected_package(command) != APXM_CLI_PACKAGE or _has_explicit_run_target(command):
+        return None
+    return (
+        "error: tools/scripts/cargo.py requires an exact `cargo run` target for package "
+        f"{APXM_CLI_PACKAGE}. Add `--bin {APXM_CLI_BINARY}` for the canonical CLI or "
+        f"`--bin {REFERENCE_HOST_BINARY}` for reference-host workflows. The readiness gate "
+        "stays closed until the target is explicit."
+    )
+
+
+def _looks_like_linux_gnu_compiler(value: str) -> bool:
+    compiler_name = Path(value).name.lower()
+    return any(marker in compiler_name for marker in LINUX_GNU_COMPILER_MARKERS)
+
+
+def _native_toolchain_readiness_error(
+    cargo_args: list[str],
+    env: dict[str, str],
+    *,
+    system: str | None = None,
+    machine: str | None = None,
+) -> str | None:
+    if not cargo_args or cargo_args[0] not in NATIVE_TOOLCHAIN_GATED_SUBCOMMANDS:
+        return None
+
+    host_system = system or platform.system()
+    host_machine = machine or platform.machine()
+    if host_system.lower() != "darwin":
+        return None
+
+    mismatches = [
+        (key, value)
+        for key in NATIVE_TOOLCHAIN_ENV_KEYS
+        if (value := env.get(key)) and _looks_like_linux_gnu_compiler(value)
+    ]
+    if not mismatches:
+        return None
+
+    configured = "\n".join(f"  {key}={value}" for key, value in mismatches)
+    return (
+        "error: APXM native toolchain readiness failed.\n"
+        f"  Host: {host_system} {host_machine}\n"
+        f"  Blocked cargo subcommand: {cargo_args[0]}\n"
+        "  macOS host builds cannot use Linux conda cross-compilers.\n"
+        f"{configured}\n"
+        "  These compiler selections target Linux and reject native macOS flags such as "
+        "`-arch arm64` and `-mmacosx-version-min`.\n"
+        "  Fix one of:\n"
+        "  - On macOS, unset `CC` and `CXX` or point them at `/usr/bin/clang` and "
+        "`/usr/bin/clang++` before invoking `dekk agents ...`.\n"
+        "  - Keep the Linux conda compiler pins only for explicit Linux-target builds.\n"
+        "  The readiness gate stays closed until the native compiler selection matches the host."
+    )
+
+
 def _run(command: list[str], *, project_root: Path, target_dir: Path) -> int:
+    env = _cargo_env(project_root, target_dir, command)
+    if Path(command[0]).name == CARGO:
+        readiness_error = _native_toolchain_readiness_error(command[1:], env)
+        if readiness_error is not None:
+            print(readiness_error, file=sys.stderr)
+            return READINESS_FAILURE_EXIT_CODE
     result = subprocess.run(
         command,
         cwd=project_root,
-        env=_cargo_env(project_root, target_dir, command),
+        env=env,
         check=False,
     )
     return int(result.returncode)
@@ -330,6 +420,10 @@ def main(argv: list[str]) -> int:
         return _clean(project_root, target_dir, argv[1:])
     if argv[0] == CargoCommand.SCRUB_SIGBUS_CACHE.value:
         return _scrub_sigbus_cache(project_root, target_dir)
+    run_target_error = _ambiguous_run_target_error(argv)
+    if run_target_error is not None:
+        print(run_target_error, file=sys.stderr)
+        return READINESS_FAILURE_EXIT_CODE
 
     result = _run([CARGO, *argv], project_root=project_root, target_dir=target_dir)
     if result == 0 and argv[0] == CargoCommand.BUILD.value and RELEASE_FLAG in argv:
