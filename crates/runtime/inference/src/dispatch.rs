@@ -152,7 +152,10 @@ pub fn dispatch_exact_inference<B: LeasedInferenceBackend + ?Sized>(
     let lineage = InferenceUsageLineage::seal(
         request.effect_id(),
         attempt_index,
+        request.request_digest(),
         &binding.model_target_ref,
+        &binding.model_target_digest,
+        &binding.model_deployment_ref,
         &binding.exact_port_binding_digest,
         usage,
         duration_ms,

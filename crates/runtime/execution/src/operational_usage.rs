@@ -106,9 +106,19 @@ impl CommittedNativeModelUsage {
                 "attempt_index",
             ));
         }
+        if lineage.request_digest != attempt.request_digest {
+            return Err(CommittedNativeModelUsageGateError::EvidenceMismatch(
+                "request_digest",
+            ));
+        }
         if lineage.model_target_ref != attempt.model_target_ref {
             return Err(CommittedNativeModelUsageGateError::EvidenceMismatch(
                 "model_target_ref",
+            ));
+        }
+        if lineage.model_deployment_ref != attempt.model_deployment_ref {
+            return Err(CommittedNativeModelUsageGateError::EvidenceMismatch(
+                "model_deployment_ref",
             ));
         }
         if lineage.exact_port_binding_digest != attempt.exact_port_binding_digest {

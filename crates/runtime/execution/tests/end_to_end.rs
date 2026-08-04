@@ -121,7 +121,10 @@ fn lineage_backed_usage() -> CommittedNativeModelUsage {
     let mut lineage = InferenceUsageLineage::seal(
         attempt.model_effect_id.clone(),
         attempt.attempt_index,
+        attempt.request_digest.clone(),
         attempt.model_target_ref.clone(),
+        digest('9'),
+        attempt.model_deployment_ref.clone(),
         attempt.exact_port_binding_digest.clone(),
         Usage {
             input_tokens: attempt.native_input_tokens,
@@ -877,7 +880,10 @@ fn committed_native_model_usage_rejects_mismatched_lineage() {
     let mut lineage = InferenceUsageLineage::seal(
         attempt.model_effect_id.clone(),
         attempt.attempt_index,
+        attempt.request_digest.clone(),
         attempt.model_target_ref.clone(),
+        digest('9'),
+        attempt.model_deployment_ref.clone(),
         attempt.exact_port_binding_digest.clone(),
         Usage {
             input_tokens: attempt.native_input_tokens,
@@ -904,6 +910,80 @@ fn committed_native_model_usage_rejects_mismatched_lineage() {
     assert!(matches!(
         error,
         CommittedNativeModelUsageGateError::EvidenceMismatch("fact_id")
+    ));
+}
+
+#[test]
+fn committed_native_model_usage_rejects_request_or_deployment_drift() {
+    let attempt = committed_attempt("fact.invocation.1.5", 0, 5, 8);
+    let mut lineage = InferenceUsageLineage::seal(
+        attempt.model_effect_id.clone(),
+        attempt.attempt_index,
+        digest('f'),
+        attempt.model_target_ref.clone(),
+        digest('9'),
+        "deploy.other",
+        attempt.exact_port_binding_digest.clone(),
+        Usage {
+            input_tokens: attempt.native_input_tokens,
+            output_tokens: attempt.native_output_tokens,
+        },
+        12,
+        None,
+    )
+    .expect("seal lineage");
+    lineage
+        .bind_evidence(attempt.fact_id.clone(), "c1")
+        .expect("bind lineage");
+
+    let error = CommittedNativeModelUsage::from_lineage(
+        "c1",
+        EvidencePositionRef {
+            ref_type: EvidencePositionRefType::EvidencePositionRef,
+            r#ref: "evidence:1".into(),
+        },
+        attempt.clone(),
+        &lineage,
+    )
+    .expect_err("request digest drift must be rejected before publication");
+    assert!(matches!(
+        error,
+        CommittedNativeModelUsageGateError::EvidenceMismatch("request_digest")
+    ));
+
+    let mut deployment_lineage = InferenceUsageLineage::seal(
+        attempt.model_effect_id.clone(),
+        attempt.attempt_index,
+        attempt.request_digest.clone(),
+        attempt.model_target_ref.clone(),
+        digest('9'),
+        "deploy.other",
+        attempt.exact_port_binding_digest.clone(),
+        Usage {
+            input_tokens: attempt.native_input_tokens,
+            output_tokens: attempt.native_output_tokens,
+        },
+        12,
+        None,
+    )
+    .expect("seal lineage");
+    deployment_lineage
+        .bind_evidence(attempt.fact_id.clone(), "c1")
+        .expect("bind lineage");
+
+    let error = CommittedNativeModelUsage::from_lineage(
+        "c1",
+        EvidencePositionRef {
+            ref_type: EvidencePositionRefType::EvidencePositionRef,
+            r#ref: "evidence:1".into(),
+        },
+        attempt,
+        &deployment_lineage,
+    )
+    .expect_err("deployment drift must be rejected before publication");
+    assert!(matches!(
+        error,
+        CommittedNativeModelUsageGateError::EvidenceMismatch("model_deployment_ref")
     ));
 }
 
