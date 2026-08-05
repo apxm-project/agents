@@ -1,0 +1,164 @@
+warning: constant `TO` is never used
+  --> /var/folders/7z/7_hrgq652jdg25_rczwmffk40000gn/T/apxm-cargo-targets/agents-issue-35-source-compiler-20260805-c7ee8208c236ed62/debug/build/apxm-core-d89ed6bf7c19f9a8/out/apxm_operation_mlir_keywords.rs:11:11
+   |
+11 | pub const TO: &str = "to";
+   |           ^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `apxm-core` (lib) generated 1 warning
+warning: `apxm-core` (lib) generated 1 warning (1 duplicate)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.38s
+   Compiling apxm-frontend-python v0.1.0 (/Users/randreshg/Projects/worktrees/agents-issue-35-source-compiler-20260805/crates/compiler/frontend/native/python)
+error: linking with `cc` failed: exit status: 1
+  |
+  = note:  "cc" "-Wl,-exported_symbols_list" "-Wl,/var/folders/7z/7_hrgq652jdg25_rczwmffk40000gn/T/rustc6wAbou/list" "/var/folders/7z/7_hrgq652jdg25_rczwmffk40000gn/T/rustc6wAbou/symbols.o" "<2 object files omitted>" "/private/var/folders/7z/7_hrgq652jdg25_rczwmffk40000gn/T/apxm-cargo-targets/agents-issue-35-source-compiler-20260805-c7ee8208c236ed62/release/deps/libapxm_program-22d0c18e22a009ce.rlib" "/var/folders/7z/7_hrgq652jdg25_rczwmffk40000gn/T/apxm-cargo-targets/agents-issue-35-source-compiler-20260805-c7ee8208c236ed62/release/deps/{libsha2-b22ffc2f4db78427,libdigest-897ff6a1595bd5b1,libblock_buffer-1a0a883ce3d76c56,libcrypto_common-f229e96c07ff29e6,libgeneric_array-a177ed2bd65b3edb,libtypenum-a0002d27bf256721,libapxm_ais-22b112f507417029,libserde_json-1c41cc98252f91ac,libmemchr-716b3f3bac87bccd,libitoa-f846382cffa5f7f3,libzmij-75a74d3959c213ef,libthiserror-fa8227f57b8efa25,libuuid-cac7a8995fca1ded,libgetrandom-4ec3657c57ce8032,libcfg_if-ae311e2750da8574,libserde-d63813787153c5dd,libserde_core-f433ef5761f612d1}.rlib" "/private/var/folders/7z/7_hrgq652jdg25_rczwmffk40000gn/T/apxm-cargo-targets/agents-issue-35-source-compiler-20260805-c7ee8208c236ed62/release/deps/libpyo3-6869ebd379f5c39b.rlib" "/var/folders/7z/7_hrgq652jdg25_rczwmffk40000gn/T/apxm-cargo-targets/agents-issue-35-source-compiler-20260805-c7ee8208c236ed62/release/deps/{libonce_cell-81e449c694e5258c,libpyo3_ffi-468df33c48af07e4,liblibc-6e619c7782f8e018}.rlib" "<sysroot>/lib/rustlib/aarch64-apple-darwin/lib/{libstd-*,libpanic_unwind-*,libobject-*,libmemchr-*,libaddr2line-*,libgimli-*,libcfg_if-*,librustc_demangle-*,libstd_detect-*,libhashbrown-*,librustc_std_workspace_alloc-*,libminiz_oxide-*,libadler2-*,libunwind-*,liblibc-*,librustc_std_workspace_core-*,liballoc-*,libcore-*,libcompiler_builtins-*}.rlib" "-liconv" "-lSystem" "-lc" "-lm" "-arch" "arm64" "-mmacosx-version-min=11.0.0" "-o" "/var/folders/7z/7_hrgq652jdg25_rczwmffk40000gn/T/apxm-cargo-targets/agents-issue-35-source-compiler-20260805-c7ee8208c236ed62/release/deps/lib_native.dylib" "-Wl,-dead_strip" "-dynamiclib" "-nodefaultlibs"
+  = note: some arguments are omitted. use `--verbose` to show all linker arguments
+  = note: Undefined symbols for architecture arm64:
+            "_PyBytes_AsString", referenced from:
+                __RNvMs1_NtNtCsgCpH1EsHyzg_4pyo35types6stringINtNtB9_8instance8BorrowedNtB5_8PyStringE15to_string_lossy in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyBytes_Size", referenced from:
+                __RNvMs1_NtNtCsgCpH1EsHyzg_4pyo35types6stringINtNtB9_8instance8BorrowedNtB5_8PyStringE15to_string_lossy in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyCMethod_New", referenced from:
+                __RNvNtNtCsgCpH1EsHyzg_4pyo35impl_10pyfunction20create_py_c_function in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyErr_Fetch", referenced from:
+                __RNvMs_NtCsgCpH1EsHyzg_4pyo33errNtB4_5PyErr4take in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNvNtNtCsgCpH1EsHyzg_4pyo33err9err_state30lazy_into_normalized_ffi_tuple in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyErr_GivenExceptionMatches", referenced from:
+                __RNvXs_NtNtCsgCpH1EsHyzg_4pyo35types6moduleINtNtB8_8instance5BoundNtB4_8PyModuleENtB4_15PyModuleMethods5index in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyErr_NewExceptionWithDoc", referenced from:
+                __RNCINvMs2_NtCs9q35XrfavXY_9once_cell3impINtB8_8OnceCellINtNtCsgCpH1EsHyzg_4pyo38instance2PyNtNtNtBW_5types10typeobject6PyTypeEE10initializeNCINvMs4_NtBa_4syncINtB2m_8OnceCellBR_E11get_or_initNCINvNtNtBW_4sync9once_lock26init_once_cell_py_attachedNCNvXs1_NtBW_5panicNtB44_14PanicExceptionNtNtBW_11type_object10PyTypeInfo15type_object_raw0BR_E0E0NtNvMs4_B2m_IB2x_pE11get_or_init4VoidE0BW_ in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyErr_NormalizeException", referenced from:
+                __RNvMs_NtCsgCpH1EsHyzg_4pyo33errNtB4_5PyErr4take in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNvNtNtCsgCpH1EsHyzg_4pyo33err9err_state30lazy_into_normalized_ffi_tuple in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyErr_PrintEx", referenced from:
+                __RNvMs_NtCsgCpH1EsHyzg_4pyo33errNtB4_5PyErr22print_panic_and_unwind in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyErr_Restore", referenced from:
+                __RNvMs0_NtNtCsgCpH1EsHyzg_4pyo33err9err_stateNtB5_10PyErrState7restore in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyErr_SetObject", referenced from:
+                __RNvNtNtCsgCpH1EsHyzg_4pyo33err9err_state30lazy_into_normalized_ffi_tuple in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyErr_SetString", referenced from:
+                __RNvNtNtCsgCpH1EsHyzg_4pyo33err9err_state30lazy_into_normalized_ffi_tuple in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyErr_WriteUnraisable", referenced from:
+                __RNvNtCsgCpH1EsHyzg_4pyo38instance13panic_on_null in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNvNtCsgCpH1EsHyzg_4pyo38instance13python_format in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNvXs0_NtCsgCpH1EsHyzg_4pyo33errNtB5_5PyErrNtNtCseMOKdhFR7bW_4core3fmt5Debug3fmt in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyEval_RestoreThread", referenced from:
+                __RNvNtCs7ETGfLhCDEg_8pyo3_ffi5ceval20PyEval_RestoreThread in libpyo3_ffi-468df33c48af07e4.rlib(pyo3_ffi-468df33c48af07e4.pyo3_ffi.593775d098caa51e-cgu.0.rcgu.o)
+            "_PyEval_SaveThread", referenced from:
+                __RINvNtNtCsgCpH1EsHyzg_4pyo34sync9once_lock26init_once_cell_py_attachedNCNvMs3_B4_NtB4_8Interned3get0INtNtB6_8instance2PyNtNtNtB6_5types6string8PyStringEEB6_ in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RINvNtNtCsgCpH1EsHyzg_4pyo34sync9once_lock26init_once_cell_py_attachedNCNvXs1_NtB6_5panicNtB1e_14PanicExceptionNtNtB6_11type_object10PyTypeInfo15type_object_raw0INtNtB6_8instance2PyNtNtNtB6_5types10typeobject6PyTypeEEB6_ in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNvMs0_NtNtCsgCpH1EsHyzg_4pyo33err9err_stateNtB5_10PyErrState15make_normalized in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNvXs6_NtCsgCpH1EsHyzg_4pyo34syncINtNtNtNtCsfNoRN0iYLK9_3std4sync6poison5mutex5MutexINtNtCseMOKdhFR7bW_4core6option6OptionINtNtB7_8instance2PyNtNtNtB7_5types9traceback11PyTracebackEEEINtB5_8MutexExtB1k_E16lock_py_attachedB7_ in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyExc_AttributeError", referenced from:
+                __RNvXs_NtNtCsgCpH1EsHyzg_4pyo35types6moduleINtNtB8_8instance5BoundNtB4_8PyModuleENtB4_15PyModuleMethods5index in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyExc_BaseException", referenced from:
+                __RNCINvMs2_NtCs9q35XrfavXY_9once_cell3impINtB8_8OnceCellINtNtCsgCpH1EsHyzg_4pyo38instance2PyNtNtNtBW_5types10typeobject6PyTypeEE10initializeNCINvMs4_NtBa_4syncINtB2m_8OnceCellBR_E11get_or_initNCINvNtNtBW_4sync9once_lock26init_once_cell_py_attachedNCNvXs1_NtBW_5panicNtB44_14PanicExceptionNtNtBW_11type_object10PyTypeInfo15type_object_raw0BR_E0E0NtNvMs4_B2m_IB2x_pE11get_or_init4VoidE0BW_ in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyExc_SystemError", referenced from:
+                __RNSNvYNCINvMs_NtCsgCpH1EsHyzg_4pyo33errNtBc_5PyErr3newNtNtBe_10exceptions13PySystemErrorReE0INtNtNtCseMOKdhFR7bW_4core3ops8function6FnOnceTNtNtBe_6marker6PythonEE9call_once6vtableBe_ in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyExc_TypeError", referenced from:
+                __RNSNvYNCINvMs_NtCsgCpH1EsHyzg_4pyo33errNtBc_5PyErr3newNtNtBe_10exceptions11PyTypeErrorNtNtBc_10cast_error18CastErrorArgumentsE0INtNtNtCseMOKdhFR7bW_4core3ops8function6FnOnceTNtNtBe_6marker6PythonEE9call_once6vtableBe_ in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNSNvYNCINvMs_NtCsgCpH1EsHyzg_4pyo33errNtBc_5PyErr3newNtNtBe_10exceptions11PyTypeErrorNtNtCsgi5T0TMHBwy_5alloc6string6StringE0INtNtNtCseMOKdhFR7bW_4core3ops8function6FnOnceTNtNtBe_6marker6PythonEE9call_once6vtableBe_ in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNvNtNtCsgCpH1EsHyzg_4pyo33err9err_state30lazy_into_normalized_ffi_tuple in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyExc_ValueError", referenced from:
+                __RNSNvYNCINvMs_NtCsgCpH1EsHyzg_4pyo33errNtBc_5PyErr3newNtNtBe_10exceptions12PyValueErrorNtNtCsgi5T0TMHBwy_5alloc6string6StringE0INtNtNtCseMOKdhFR7bW_4core3ops8function6FnOnceTNtNtBe_6marker6PythonEE9call_once6vtableCs37m34PuR6sg_7__native in _native._native.245320f0522b894a-cgu.0.rcgu.o
+            "_PyGILState_Ensure", referenced from:
+                __RNvNtCs7ETGfLhCDEg_8pyo3_ffi7pystate17PyGILState_Ensure in libpyo3_ffi-468df33c48af07e4.rlib(pyo3_ffi-468df33c48af07e4.pyo3_ffi.593775d098caa51e-cgu.0.rcgu.o)
+            "_PyGILState_Release", referenced from:
+                __RNCINvMs0_NtNtCsfNoRN0iYLK9_3std4sync4onceNtB8_4Once9call_onceNCNCNvMs0_NtNtCsgCpH1EsHyzg_4pyo33err9err_stateNtB18_10PyErrState15make_normalized00E0B1c_ in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNvXs0_NtCsgCpH1EsHyzg_4pyo33errNtB5_5PyErrNtNtCseMOKdhFR7bW_4core3fmt5Debug3fmt in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNvXs_NtNtCsgCpH1EsHyzg_4pyo38internal5stateNtB4_11AttachGuardNtNtNtCseMOKdhFR7bW_4core3ops4drop4Drop4drop in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyImport_Import", referenced from:
+                __RNvXs_NtNtCsgCpH1EsHyzg_4pyo35types9tracebackINtNtB8_8instance5BoundNtB4_11PyTracebackENtB4_18PyTracebackMethods6format in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyList_Append", referenced from:
+                __RNvNvXs_NtNtCsgCpH1EsHyzg_4pyo35types6moduleINtNtBa_8instance5BoundNtB6_8PyModuleENtB6_15PyModuleMethods3add5inner in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyList_New", referenced from:
+                __RNvXs_NtNtCsgCpH1EsHyzg_4pyo35types6moduleINtNtB8_8instance5BoundNtB4_8PyModuleENtB4_15PyModuleMethods5index in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyList_Type", referenced from:
+                __RNvXs_NtNtCsgCpH1EsHyzg_4pyo35types6moduleINtNtB8_8instance5BoundNtB4_8PyModuleENtB4_15PyModuleMethods5index in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyModuleDef_Init", referenced from:
+                __RNvMs_NtNtCsgCpH1EsHyzg_4pyo35impl_8pymoduleNtB4_9ModuleDef16init_multi_phase in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyModule_GetNameObject", referenced from:
+                __RNvNtNtCsgCpH1EsHyzg_4pyo35impl_10pyfunction20create_py_c_function in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyModule_Type", referenced from:
+                __RNvNvNtCs37m34PuR6sg_7__native7__native9__PYO3_DEF18___pyo3_module_exec in _native._native.245320f0522b894a-cgu.0.rcgu.o
+            "_PyObject_CallNoArgs", referenced from:
+                __RNvXs_NtNtCsgCpH1EsHyzg_4pyo35types9tracebackINtNtB8_8instance5BoundNtB4_11PyTracebackENtB4_18PyTracebackMethods6format in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyObject_GetAttr", referenced from:
+                __RNvXs_NtNtCsgCpH1EsHyzg_4pyo35types6moduleINtNtB8_8instance5BoundNtB4_8PyModuleENtB4_15PyModuleMethods12add_function in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNvXs_NtNtCsgCpH1EsHyzg_4pyo35types6moduleINtNtB8_8instance5BoundNtB4_8PyModuleENtB4_15PyModuleMethods5index in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNvXs_NtNtCsgCpH1EsHyzg_4pyo35types9tracebackINtNtB8_8instance5BoundNtB4_11PyTracebackENtB4_18PyTracebackMethods6format in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyObject_Repr", referenced from:
+                __RNvXs2_NtCsgCpH1EsHyzg_4pyo38instanceINtB5_5BoundNtNtB7_10exceptions15PyBaseExceptionENtNtCseMOKdhFR7bW_4core3fmt5Debug3fmtB7_ in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyObject_SetAttr", referenced from:
+                __RNvNvXs_NtNtCsgCpH1EsHyzg_4pyo35types6moduleINtNtBa_8instance5BoundNtB6_8PyModuleENtB6_15PyModuleMethods3add5inner in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNvXs_NtNtCsgCpH1EsHyzg_4pyo35types6moduleINtNtB8_8instance5BoundNtB4_8PyModuleENtB4_15PyModuleMethods5index in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyObject_Str", referenced from:
+                __RNvMs_NtCsgCpH1EsHyzg_4pyo33errNtB4_5PyErr22print_panic_and_unwind in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNvXs1i_NtCseMOKdhFR7bW_4core3fmtRINtNtCsgCpH1EsHyzg_4pyo38instance5BoundNtNtNtBB_5types3any5PyAnyENtB6_7Display3fmtBB_ in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNvXs3_NtCsgCpH1EsHyzg_4pyo38instanceINtB5_5BoundNtNtNtB7_5types10typeobject6PyTypeENtNtCseMOKdhFR7bW_4core3fmt7Display3fmtB7_ in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNvXs8_NtNtCsgCpH1EsHyzg_4pyo33err10cast_errorNtB5_16DisplayClassInfoNtNtCseMOKdhFR7bW_4core3fmt7Display3fmt in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyObject_VectorcallMethod", referenced from:
+                __RNvNtNtCsgCpH1EsHyzg_4pyo35impl_16extract_argument25argument_extraction_error in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyTraceBack_Print", referenced from:
+                __RNvXs_NtNtCsgCpH1EsHyzg_4pyo35types9tracebackINtNtB8_8instance5BoundNtB4_11PyTracebackENtB4_18PyTracebackMethods6format in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyTuple_New", referenced from:
+                __RNSNvYNCINvMs_NtCsgCpH1EsHyzg_4pyo33errNtBc_5PyErr3newNtNtBe_5panic14PanicExceptionTNtNtCsgi5T0TMHBwy_5alloc6string6StringEE0INtNtNtCseMOKdhFR7bW_4core3ops8function6FnOnceTNtNtBe_6marker6PythonEE9call_once6vtableBe_ in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNSNvYNCINvMs_NtCsgCpH1EsHyzg_4pyo33errNtBc_5PyErr3newNtNtBe_5panic14PanicExceptionTReEE0INtNtNtCseMOKdhFR7bW_4core3ops8function6FnOnceTNtNtBe_6marker6PythonEE9call_once6vtableBe_ in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyTuple_Type", referenced from:
+                __RNvXs8_NtNtCsgCpH1EsHyzg_4pyo33err10cast_errorNtB5_16DisplayClassInfoNtNtCseMOKdhFR7bW_4core3fmt7Display3fmt in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyType_GetName", referenced from:
+                __RNvNtCsgCpH1EsHyzg_4pyo38instance13python_format in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyType_GetQualName", referenced from:
+                __RNvXs7_NtNtCsgCpH1EsHyzg_4pyo33err10cast_errorNtB5_16DisplayCastErrorNtNtCseMOKdhFR7bW_4core3fmt7Display3fmt in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNvXs8_NtNtCsgCpH1EsHyzg_4pyo33err10cast_errorNtB5_16DisplayClassInfoNtNtCseMOKdhFR7bW_4core3fmt7Display3fmt in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyType_IsSubtype", referenced from:
+                __RNvNvNtCs37m34PuR6sg_7__native7__native9__PYO3_DEF18___pyo3_module_exec in _native._native.245320f0522b894a-cgu.0.rcgu.o
+            "_PyType_Type", referenced from:
+                __RNvXs8_NtNtCsgCpH1EsHyzg_4pyo33err10cast_errorNtB5_16DisplayClassInfoNtNtCseMOKdhFR7bW_4core3fmt7Display3fmt in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyUnicode_AsEncodedString", referenced from:
+                __RNvMs1_NtNtCsgCpH1EsHyzg_4pyo35types6stringINtNtB9_8instance8BorrowedNtB5_8PyStringE15to_string_lossy in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyUnicode_AsUTF8AndSize", referenced from:
+                __RNvMs1_NtNtCsgCpH1EsHyzg_4pyo35types6stringINtNtB9_8instance8BorrowedNtB5_8PyStringE15to_string_lossy in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNvMs1_NtNtCsgCpH1EsHyzg_4pyo35types6stringINtNtB9_8instance8BorrowedNtB5_8PyStringE6to_str in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNvMs2_NtNtCsgCpH1EsHyzg_4pyo35types6stringINtNtB9_8instance2PyNtB5_8PyStringE6to_cow in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNvXs6_NtNtNtCsgCpH1EsHyzg_4pyo311conversions3std6stringReNtNtBb_10conversion12FromPyObject7extract in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyUnicode_FromStringAndSize", referenced from:
+                __RNCINvMs2_NtCs9q35XrfavXY_9once_cell3impINtB8_8OnceCellINtNtCsgCpH1EsHyzg_4pyo38instance2PyNtNtNtBW_5types6string8PyStringEE10initializeNCINvMs4_NtBa_4syncINtB2j_8OnceCellBR_E11get_or_initNCINvNtNtBW_4sync9once_lock26init_once_cell_py_attachedNCNvMs3_B37_NtB37_8Interned3get0BR_E0E0NtNvMs4_B2j_IB2u_pE11get_or_init4VoidE0BW_ in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNSNvYNCINvMs_NtCsgCpH1EsHyzg_4pyo33errNtBc_5PyErr3newNtNtBe_10exceptions11PyTypeErrorNtNtCsgi5T0TMHBwy_5alloc6string6StringE0INtNtNtCseMOKdhFR7bW_4core3ops8function6FnOnceTNtNtBe_6marker6PythonEE9call_once6vtableBe_ in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNSNvYNCINvMs_NtCsgCpH1EsHyzg_4pyo33errNtBc_5PyErr3newNtNtBe_10exceptions13PySystemErrorReE0INtNtNtCseMOKdhFR7bW_4core3ops8function6FnOnceTNtNtBe_6marker6PythonEE9call_once6vtableBe_ in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNSNvYNCINvMs_NtCsgCpH1EsHyzg_4pyo33errNtBc_5PyErr3newNtNtBe_5panic14PanicExceptionTNtNtCsgi5T0TMHBwy_5alloc6string6StringEE0INtNtNtCseMOKdhFR7bW_4core3ops8function6FnOnceTNtNtBe_6marker6PythonEE9call_once6vtableBe_ in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNSNvYNCINvMs_NtCsgCpH1EsHyzg_4pyo33errNtBc_5PyErr3newNtNtBe_5panic14PanicExceptionTReEE0INtNtNtCseMOKdhFR7bW_4core3ops8function6FnOnceTNtNtBe_6marker6PythonEE9call_once6vtableBe_ in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNvNtNtCsgCpH1EsHyzg_4pyo35impl_16extract_argument25argument_extraction_error in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNvXs0_NtNtCsgCpH1EsHyzg_4pyo33err10cast_errorNtB5_18CastErrorArgumentsNtB7_14PyErrArguments9arguments in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                ...
+            "_PyUnicode_InternInPlace", referenced from:
+                __RNCINvMs2_NtCs9q35XrfavXY_9once_cell3impINtB8_8OnceCellINtNtCsgCpH1EsHyzg_4pyo38instance2PyNtNtNtBW_5types6string8PyStringEE10initializeNCINvMs4_NtBa_4syncINtB2j_8OnceCellBR_E11get_or_initNCINvNtNtBW_4sync9once_lock26init_once_cell_py_attachedNCNvMs3_B37_NtB37_8Interned3get0BR_E0E0NtNvMs4_B2j_IB2u_pE11get_or_init4VoidE0BW_ in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_PyUnicode_Type", referenced from:
+                __RNvXs6_NtNtNtCsgCpH1EsHyzg_4pyo311conversions3std6stringReNtNtBb_10conversion12FromPyObject7extract in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNvXs_NtNtCsgCpH1EsHyzg_4pyo35types6moduleINtNtB8_8instance5BoundNtB4_8PyModuleENtB4_15PyModuleMethods12add_function in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNvXs_NtNtCsgCpH1EsHyzg_4pyo35types9tracebackINtNtB8_8instance5BoundNtB4_11PyTracebackENtB4_18PyTracebackMethods6format in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "_Py_IsInitialized", referenced from:
+                __RNCINvMs0_NtNtCsfNoRN0iYLK9_3std4sync4onceNtB8_4Once15call_once_forceNCNvNtCsgCpH1EsHyzg_4pyo321interpreter_lifecycle18ensure_initialized0E0B1b_ in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNCINvMs0_NtNtCsfNoRN0iYLK9_3std4sync4onceNtB8_4Once9call_onceNCNvNtCsgCpH1EsHyzg_4pyo321interpreter_lifecycle23wait_for_initialization0E0B14_ in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNSNvYNCINvMs0_NtNtCsfNoRN0iYLK9_3std4sync4onceNtBd_4Once15call_once_forceNCNvNtCsgCpH1EsHyzg_4pyo321interpreter_lifecycle18ensure_initialized0E0INtNtNtCseMOKdhFR7bW_4core3ops8function6FnOnceTRNtBd_9OnceStateEE9call_once6vtableB1g_ in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNSNvYNCINvMs0_NtNtCsfNoRN0iYLK9_3std4sync4onceNtBd_4Once9call_onceNCNvNtCsgCpH1EsHyzg_4pyo321interpreter_lifecycle23wait_for_initialization0E0INtNtNtCseMOKdhFR7bW_4core3ops8function6FnOnceTRNtBd_9OnceStateEE9call_once6vtableB19_ in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNvMNtNtCsgCpH1EsHyzg_4pyo38internal5stateNtB2_11AttachGuard6attach in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+            "__Py_Dealloc", referenced from:
+                __RINvNtCseMOKdhFR7bW_4core3ptr13drop_in_placeINtNtB4_4cell10UnsafeCellINtNtB4_6option6OptionINtNtCsgCpH1EsHyzg_4pyo38instance2PyNtNtNtB1w_5types9traceback11PyTracebackEEEECs37m34PuR6sg_7__native in _native._native.245320f0522b894a-cgu.0.rcgu.o
+                __RINvNtCseMOKdhFR7bW_4core3ptr13drop_in_placeINtNtB4_4cell10UnsafeCellINtNtB4_6option6OptionNtNtNtCsgCpH1EsHyzg_4pyo33err9err_state15PyErrStateInnerEEECs37m34PuR6sg_7__native in _native._native.245320f0522b894a-cgu.0.rcgu.o
+                __RINvNtCseMOKdhFR7bW_4core3ptr13drop_in_placeINtNtCsgCpH1EsHyzg_4pyo38instance2PyNtNtBL_10exceptions15PyBaseExceptionEECs37m34PuR6sg_7__native in _native._native.245320f0522b894a-cgu.0.rcgu.o
+                __RINvNtCseMOKdhFR7bW_4core3ptr13drop_in_placeINtNtNtNtCsfNoRN0iYLK9_3std4sync6poison5mutex5MutexINtNtB4_6option6OptionINtNtCsgCpH1EsHyzg_4pyo38instance2PyNtNtNtB1W_5types9traceback11PyTracebackEEEECs37m34PuR6sg_7__native in _native._native.245320f0522b894a-cgu.0.rcgu.o
+                __RINvNtCseMOKdhFR7bW_4core3ptr13drop_in_placeINtNtB4_4cell10UnsafeCellINtNtB4_6option6OptionINtNtCsgCpH1EsHyzg_4pyo38instance2PyNtNtNtB1w_5types9traceback11PyTracebackEEEEB1w_ in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RINvNtCseMOKdhFR7bW_4core3ptr13drop_in_placeINtNtB4_6result6ResultINtNtCsgCpH1EsHyzg_4pyo38instance5BoundNtNtNtB17_5types6string8PyStringENtNtB17_3err5PyErrEEB17_ in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RINvNtCseMOKdhFR7bW_4core3ptr13drop_in_placeINtNtCsgCpH1EsHyzg_4pyo38instance2PyNtNtBL_10exceptions15PyBaseExceptionEEBL_ in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                ...
+            "__Py_NoneStruct", referenced from:
+                __RNvCs37m34PuR6sg_7__native34___pyfunction_verify_frontend_graph in _native._native.245320f0522b894a-cgu.0.rcgu.o
+                __RNvXs7_NtNtCsgCpH1EsHyzg_4pyo33err10cast_errorNtB5_16DisplayCastErrorNtNtCseMOKdhFR7bW_4core3fmt7Display3fmt in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+                __RNvXs8_NtNtCsgCpH1EsHyzg_4pyo33err10cast_errorNtB5_16DisplayClassInfoNtNtCseMOKdhFR7bW_4core3fmt7Display3fmt in libpyo3-6869ebd379f5c39b.rlib(pyo3-6869ebd379f5c39b.pyo3.c1942008ed72bb3c-cgu.0.rcgu.o)
+          ld: symbol(s) not found for architecture arm64
+          cc: error: linker command failed with exit code 1 (use -v to see invocation)
+
+
+error: could not compile `apxm-frontend-python` (lib) due to 1 previous error
