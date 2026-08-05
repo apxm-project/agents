@@ -38,8 +38,9 @@ pub use diagnostics::{
     correlate_diagnostics,
 };
 pub use dispatch::{
-    ExactInferenceDispatch, InferenceDispatchError, InferenceDispatchResult,
-    LeasedInferenceBackend, dispatch_exact_inference,
+    CommittedInferenceDispatch, CommittedInferenceDispatchResult, ExactInferenceDispatch,
+    InferenceDispatchError, InferenceDispatchResult, LeasedInferenceBackend,
+    dispatch_committed_inference, dispatch_exact_inference,
 };
 pub use driver::{
     DriverAvailability, DriverBindingError, INFERENCE_DRIVER_BINDING_SCHEMA, InferenceDriverBinding,

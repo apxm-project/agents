@@ -14,15 +14,14 @@
 use apxm_inference::effect::{ErrorCategory, IdempotencyKey};
 use apxm_inference::{
     AttemptDisposition, BoundedMetricLabels, CorrelateDiagnosticsRequest, DiagnosticAgreement,
-    ExactInferenceDispatch, ExactModelTargetRef, ExactPortBindingRef, InferenceCredentialLease,
-    InferenceCredentialLeaseIdentity, InferenceDriverBinding, InferenceUsageLineage,
-    LeasedInferenceBackend, ModelBindingAdmission, ModelCallPreparation, ModelCallRequest,
-    ModelCallRequestMetadata, ModelContextEnvelopeRef, ModelDeploymentRef, ModelOutcome,
-    ModelStreamMode, ModelTargetRef, PINNED_VLLM_OWNER_REVISION, PINNED_VLLM_PORT_CONTRACT_DIGEST,
-    PINNED_VLLM_RELEASE_ID, PINNED_VLLM_RELEASE_MANIFEST_DIGEST, PINNED_VLLM_VECTOR_DIGESTS,
-    ResolvedModelBinding, RetryPolicy, TypedError, Usage, VllmConformanceJoin, VllmJoinStatus,
-    VllmReleaseAttestation, authoritative_usage, correlate_diagnostics, digest_bytes,
-    dispatch_exact_inference, redact_diagnostic_value,
+    ExactInferenceDispatch, InferenceCredentialLease, InferenceCredentialLeaseIdentity,
+    InferenceDriverBinding, InferenceUsageLineage, LeasedInferenceBackend, ModelBindingAdmission,
+    ModelCallPreparation, ModelCallRequest, ModelCallRequestMetadata, ModelContextEnvelopeRef,
+    ModelOutcome, ModelStreamMode, ModelTargetRef, PINNED_VLLM_OWNER_REVISION,
+    PINNED_VLLM_PORT_CONTRACT_DIGEST, PINNED_VLLM_RELEASE_ID, PINNED_VLLM_RELEASE_MANIFEST_DIGEST,
+    PINNED_VLLM_VECTOR_DIGESTS, ResolvedModelBinding, RetryPolicy, TypedError, Usage,
+    VllmConformanceJoin, VllmJoinStatus, VllmReleaseAttestation, authoritative_usage,
+    correlate_diagnostics, digest_bytes, dispatch_exact_inference, redact_diagnostic_value,
 };
 use apxm_inference::{InferenceTargetCommitment, TargetCommitState};
 use std::cell::Cell;
@@ -34,18 +33,18 @@ const DIGEST_D: &str = "sha256:ddddddddddddddddddddddddddddddddddddddddddddddddd
 const DIGEST_E: &str = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 
 fn resolved(target: &str) -> ResolvedModelBinding {
-    ResolvedModelBinding {
-        model_target: ExactModelTargetRef {
-            reference: ModelTargetRef(target.to_string()),
-            target_digest: DIGEST_B.to_string(),
-        },
-        model_deployment_ref: ModelDeploymentRef("deploy.alpha".to_string()),
-        exact_port_binding: ExactPortBindingRef {
-            binding_digest: DIGEST_A.to_string(),
-            port_contract_digest: DIGEST_C.to_string(),
-        },
-        composition_digest: DIGEST_D.to_string(),
-    }
+    ResolvedModelBinding::from_target_commitment(
+        InferenceTargetCommitment::commit(
+            target,
+            DIGEST_B,
+            "deploy.alpha",
+            DIGEST_A,
+            DIGEST_C,
+            DIGEST_D,
+            0,
+        )
+        .expect("resolved target commitment"),
+    )
 }
 
 fn request_for(target: &str) -> ModelCallRequest {

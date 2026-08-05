@@ -157,7 +157,7 @@
     {
       "schema_id": "apxm.model-inference-request.v1",
       "path": "schemas/apxm.model-inference-request.v1.json",
-      "digest": "sha256:cbed1657fb4d98acab46ba13130088b35d66b1f4e2dd2c6d44f661a83b94e778"
+      "digest": "sha256:b5a667f038913eb079417549a325f54c3703992c26f435a974cfb5150b34e42d"
     },
     {
       "schema_id": "apxm.model-inference-outcome.v1",
@@ -848,7 +848,7 @@
     {
       "schema_id": "apxm.model-inference-request.v1",
       "path": "vectors/apxm.model-inference-request.v1.json",
-      "digest": "sha256:3f78f3c04f380081b63d20ea7303e5d4c2cbbb6feeda0d9b2d71ca9947ff4d5e",
+      "digest": "sha256:ff082326bc3a2f0a00337cbc9281f326498c3da72d9a69cb94021c2ae5fa9c1a",
       "coverage": [
         "positive",
         "binding",
@@ -1023,5 +1023,5 @@
       ]
     }
   ],
-  "descriptor_digest": "sha256:9b59588a2bd87cdcc3e777d7b15bab523b47d372eef025b13ea2b0989a9147c1"
+  "descriptor_digest": "sha256:e3196e1e023509430671e720ed669fca4b1fbbc95c095c6cfa1a00a7313946b0"
 }

@@ -156,23 +156,11 @@ impl InferenceTargetCommitment {
         Ok(commitment)
     }
 
-    /// Materialize a commitment from an already admitted resolution. This is
-    /// the compatibility constructor for existing exact bindings; it still
-    /// produces a digest-verified committed snapshot and never discovers a
-    /// replacement target.
-    pub fn from_resolved(
-        resolved: &ResolvedModelBinding,
-        generation: u64,
-    ) -> Result<Self, TargetCommitmentError> {
-        Self::commit(
-            &resolved.model_target.reference.0,
-            &resolved.model_target.target_digest,
-            &resolved.model_deployment_ref.0,
-            resolved.binding_digest(),
-            resolved.port_contract_digest(),
-            &resolved.composition_digest,
-            generation,
-        )
+    /// Read the already committed snapshot carried by an admitted resolution.
+    /// Generation is never invented at this boundary.
+    pub fn from_resolved(resolved: &ResolvedModelBinding) -> Result<Self, TargetCommitmentError> {
+        resolved.target_commitment.validate()?;
+        Ok(resolved.target_commitment.clone())
     }
 
     /// Validate a wire candidate before any target or credential is used.
@@ -222,11 +210,15 @@ impl InferenceTargetCommitment {
             }
             TargetCommitState::Ambiguous => return Err(TargetCommitmentError::Ambiguous),
         }
-        if self.expected_cohort_digest() != self.generation_cohort_digest {
-            return Err(TargetCommitmentError::CohortDigestMismatch);
-        }
-        if self.expected_commit_digest() != self.commit_digest {
+        let expected_cohort_digest = self.expected_cohort_digest();
+        // The commit digest is the outer seal over the canonical cohort. Check
+        // it against the tuple-derived cohort first so a changed identity is
+        // reported as a commitment tamper, preserving the public taxonomy.
+        if self.expected_commit_digest_for(&expected_cohort_digest) != self.commit_digest {
             return Err(TargetCommitmentError::CommitDigestMismatch);
+        }
+        if expected_cohort_digest != self.generation_cohort_digest {
+            return Err(TargetCommitmentError::CohortDigestMismatch);
         }
         Ok(())
     }
@@ -293,10 +285,11 @@ impl InferenceTargetCommitment {
     }
 
     fn expected_commit_digest(&self) -> String {
-        digest_parts(
-            b"commit",
-            &[self.generation_cohort_digest.as_str(), self.state.as_str()],
-        )
+        self.expected_commit_digest_for(&self.generation_cohort_digest)
+    }
+
+    fn expected_commit_digest_for(&self, generation_cohort_digest: &str) -> String {
+        digest_parts(b"commit", &[generation_cohort_digest, self.state.as_str()])
     }
 }
 
