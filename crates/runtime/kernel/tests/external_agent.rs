@@ -121,6 +121,13 @@ fn event(seq: u64, kind: AttributedEventKind) -> AttributedEvent {
 }
 
 fn instance(commit: Arc<FixtureCommit>, peer: Arc<ScriptedAcpPeer>) -> ProgramInstance {
+    instance_with_peer(commit, peer)
+}
+
+fn instance_with_peer(
+    commit: Arc<FixtureCommit>,
+    peer: Arc<dyn ExternalAgentCapabilityPort>,
+) -> ProgramInstance {
     let spec = PortBundleSpec::new(vec![
         (PortSlot::ExecutionCommit, contract()),
         (PortSlot::ExternalAgentCapability, acp_contract()),
@@ -151,6 +158,15 @@ fn instance(commit: Arc<FixtureCommit>, peer: Arc<ScriptedAcpPeer>) -> ProgramIn
     .expect("valid bundle");
     ProgramInstance::new(identity(), ProgramInstanceRef::new("instance.1"), bundle)
         .expect("Program Instance identity matches its commit key")
+}
+
+struct NeverCalledPeer;
+
+#[async_trait]
+impl ExternalAgentCapabilityPort for NeverCalledPeer {
+    async fn prompt(&self, _request: AcpPromptRequest) -> AcpPromptOutcome {
+        panic!("invalid atomic commit input must not dispatch an external effect")
+    }
 }
 
 fn invocation(profile: &str) -> CapabilityInvocation {
@@ -345,4 +361,19 @@ async fn missing_external_agent_port_fails_closed() {
         err,
         InstanceError::MissingPort(PortSlot::ExternalAgentCapability)
     );
+}
+
+#[tokio::test]
+async fn invalid_atomic_commit_input_is_rejected_before_external_effect() {
+    let commit = Arc::new(FixtureCommit::new());
+    let inst = instance_with_peer(commit.clone(), Arc::new(NeverCalledPeer));
+    let mut request = invocation("acp:codex");
+    request.write_set.session_output_refs_digest = "not-a-digest".into();
+
+    let error = inst
+        .invoke_capability(request)
+        .await
+        .expect_err("malformed commit input");
+    assert!(matches!(error, InstanceError::InvalidCommitRequest { .. }));
+    assert!(commit.evidence().is_empty());
 }
