@@ -296,6 +296,9 @@ pub enum ExecutionError {
     EventDeliveryRequiresRef {
         program_instance_ref: ProgramInstanceRef,
     },
+    InvalidCommitRequest {
+        message: String,
+    },
     Commit(ExecutionCommitResult),
 }
 
@@ -343,6 +346,9 @@ impl std::fmt::Display for ExecutionError {
                     "continuation for Program Instance {} requires an EventRef delivery",
                     program_instance_ref.as_str()
                 )
+            }
+            Self::InvalidCommitRequest { message } => {
+                write!(f, "invalid atomic commit request: {message}")
             }
             Self::Commit(result) => write!(f, "atomic execution commit failed: {}", result.label()),
         }
@@ -944,6 +950,21 @@ async fn drive_from(
                                 }
                             })?;
                         if let Some(profile) = capability_ref.strip_prefix("external-agent:") {
+                            let admission =
+                                capability_invocations.get(&op.node_id).ok_or_else(|| {
+                                    ExecutionError::MissingCapabilityInvocationAdmission {
+                                        node_id: op.node_id.clone(),
+                                    }
+                                })?;
+                            if admission.capability_ref != capability_ref {
+                                return Err(
+                                    ExecutionError::CapabilityInvocationAdmissionMismatch {
+                                        node_id: op.node_id.clone(),
+                                        authored: capability_ref,
+                                        admitted: admission.capability_ref.clone(),
+                                    },
+                                );
+                            }
                             let session_ref = operand_str(op, "arguments").ok_or_else(|| {
                                 ExecutionError::MissingOperand {
                                     node_id: op.node_id.clone(),
@@ -1297,7 +1318,7 @@ async fn commit_and_report(
     commit_id: &str,
     write_set: AtomicWriteSet,
     mut state: DriveState,
-) -> RunReport {
+) -> Result<RunReport, ExecutionError> {
     let expected = ports
         .execution_commit
         .current_version(program_instance_ref)
@@ -1313,19 +1334,22 @@ async fn commit_and_report(
         Some(expected + 1),
     ));
 
-    let commit = ports
-        .execution_commit
-        .commit(ExecutionCommitRequest {
-            commit_id: commit_id.to_string(),
-            program_instance_ref: program_instance_ref.clone(),
-            program_invocation_ref: program_invocation_ref.clone(),
-            idempotency_key: format!("idem.{commit_id}"),
-            expected_program_state_version: expected,
-            write_set,
-            tuple: commit_tuple(&state, None, None),
-            evidence_batch: state.batch.clone(),
-        })
-        .await;
+    let request = ExecutionCommitRequest {
+        commit_id: commit_id.to_string(),
+        program_instance_ref: program_instance_ref.clone(),
+        program_invocation_ref: program_invocation_ref.clone(),
+        idempotency_key: format!("idem.{commit_id}"),
+        expected_program_state_version: expected,
+        write_set,
+        tuple: commit_tuple(&state, None, None),
+        evidence_batch: state.batch.clone(),
+    };
+    request
+        .validate()
+        .map_err(|error| ExecutionError::InvalidCommitRequest {
+            message: error.to_string(),
+        })?;
+    let commit = ports.execution_commit.commit(request).await;
 
     let operational_usage = publish_committed_native_model_usage(
         ports,
@@ -1335,14 +1359,14 @@ async fn commit_and_report(
     )
     .await;
 
-    RunReport {
+    Ok(RunReport {
         node_outcomes: state.node_outcomes,
         native_usage: state.native_usage,
         external_agent_evidence: state.external_agent_evidence,
         final_context: state.context,
         commit,
         operational_usage,
-    }
+    })
 }
 
 async fn publish_committed_native_model_usage(
@@ -1366,6 +1390,29 @@ async fn publish_committed_native_model_usage(
     };
     let _ = (commit_id, evidence_position_ref, attempts);
     CommittedNativeModelUsageOutcome::Failed(CommittedNativeModelUsageError::Rejected)
+}
+
+fn validate_commit_inputs(
+    program_instance_ref: &ProgramInstanceRef,
+    program_invocation_ref: &ProgramInvocationRef,
+    commit_id: &str,
+    write_set: &AtomicWriteSet,
+) -> Result<(), ExecutionError> {
+    let request = ExecutionCommitRequest {
+        commit_id: commit_id.to_string(),
+        program_instance_ref: program_instance_ref.clone(),
+        program_invocation_ref: program_invocation_ref.clone(),
+        idempotency_key: format!("idem.{commit_id}"),
+        expected_program_state_version: 0,
+        write_set: write_set.clone(),
+        tuple: ExecutionCommitTuple::empty(Vec::new()),
+        evidence_batch: Vec::new(),
+    };
+    request
+        .validate()
+        .map_err(|error| ExecutionError::InvalidCommitRequest {
+            message: error.to_string(),
+        })
 }
 
 /// Assemble the one authoritative execution tuple for a completion or yield.
@@ -1404,7 +1451,7 @@ async fn commit_suspension(
     ports: &ExecutionPorts,
     continuation: &Continuation,
     mut state: DriveState,
-) -> (ExecutionCommitResult, CommittedNativeModelUsageOutcome) {
+) -> Result<(ExecutionCommitResult, CommittedNativeModelUsageOutcome), ExecutionError> {
     let expected = ports
         .execution_commit
         .current_version(&continuation.program_instance_ref)
@@ -1431,19 +1478,22 @@ async fn commit_suspension(
         })
     });
     let attempts = state.committed_model_attempts.clone();
-    let commit = ports
-        .execution_commit
-        .commit(ExecutionCommitRequest {
-            commit_id: format!("{}.yield", continuation.commit_id),
-            program_instance_ref: continuation.program_instance_ref.clone(),
-            program_invocation_ref: continuation.program_invocation_ref.clone(),
-            idempotency_key: format!("idem.{}.yield", continuation.commit_id),
-            expected_program_state_version: expected,
-            write_set: continuation.write_set.clone(),
-            tuple: commit_tuple(&state, Some(payload), event_wait),
-            evidence_batch: state.batch,
-        })
-        .await;
+    let request = ExecutionCommitRequest {
+        commit_id: format!("{}.yield", continuation.commit_id),
+        program_instance_ref: continuation.program_instance_ref.clone(),
+        program_invocation_ref: continuation.program_invocation_ref.clone(),
+        idempotency_key: format!("idem.{}.yield", continuation.commit_id),
+        expected_program_state_version: expected,
+        write_set: continuation.write_set.clone(),
+        tuple: commit_tuple(&state, Some(payload), event_wait),
+        evidence_batch: state.batch,
+    };
+    request
+        .validate()
+        .map_err(|error| ExecutionError::InvalidCommitRequest {
+            message: error.to_string(),
+        })?;
+    let commit = ports.execution_commit.commit(request).await;
     let operational_usage = publish_committed_native_model_usage(
         ports,
         &format!("{}.yield", continuation.commit_id),
@@ -1451,7 +1501,7 @@ async fn commit_suspension(
         &attempts,
     )
     .await;
-    (commit, operational_usage)
+    Ok((commit, operational_usage))
 }
 
 /// Execute a canonical AIR program single-shot and commit its effects
@@ -1467,6 +1517,12 @@ pub async fn execute(
     request: ExecutionRequest,
     initial_context: Value,
 ) -> Result<RunReport, ExecutionError> {
+    validate_commit_inputs(
+        &request.program_instance_ref,
+        &request.program_invocation_ref,
+        &request.commit_id,
+        &request.write_set,
+    )?;
     let state = DriveState::new(
         initial_context,
         &request.air,
@@ -1489,7 +1545,7 @@ pub async fn execute(
     let DriveEnd::RanToEnd(state) = end else {
         unreachable!("single-shot execute never suspends (suspend_on_park = false)");
     };
-    Ok(commit_and_report(
+    commit_and_report(
         ports,
         &request.program_instance_ref,
         &request.program_invocation_ref,
@@ -1497,7 +1553,7 @@ pub async fn execute(
         request.write_set,
         state,
     )
-    .await)
+    .await
 }
 
 /// Execute a canonical AIR program with durable park/resume. It behaves exactly
@@ -1515,6 +1571,12 @@ pub async fn execute_resumable(
     request: ExecutionRequest,
     initial_context: Value,
 ) -> Result<RunOutcome, ExecutionError> {
+    validate_commit_inputs(
+        &request.program_instance_ref,
+        &request.program_invocation_ref,
+        &request.commit_id,
+        &request.write_set,
+    )?;
     let state = DriveState::new(
         initial_context,
         &request.air,
@@ -1611,6 +1673,13 @@ async fn resume_from_continuation(
         continuation_id,
         event_ref,
     } = parked;
+
+    validate_commit_inputs(
+        &committed_program_instance_ref,
+        &program_invocation_ref,
+        &commit_id,
+        &write_set,
+    )?;
 
     if committed_program_instance_ref != *program_instance_ref {
         return Err(ExecutionError::Continuation(
@@ -1771,7 +1840,7 @@ async fn finish(
                 state,
             )
             .await;
-            Ok(RunOutcome::Completed(report))
+            Ok(RunOutcome::Completed(report?))
         }
         DriveEnd::Parked {
             state,
@@ -1802,7 +1871,7 @@ async fn finish(
                 continuation_id: continuation_id.clone(),
                 event_ref,
             };
-            let (commit, operational_usage) = commit_suspension(ports, &cont, state).await;
+            let (commit, operational_usage) = commit_suspension(ports, &cont, state).await?;
             match commit {
                 ExecutionCommitResult::Committed { .. } => Ok(RunOutcome::Suspended {
                     continuation_id,
