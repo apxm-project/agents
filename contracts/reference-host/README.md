@@ -8,13 +8,13 @@ publication copies are pinned to those bytes by the manifest.
 - `manifests/` contains the executable publication manifest plus the
   product-neutral release manifest that wraps the full APXM-owned cohort.
 - `schemas/` contains byte-for-byte copies of the canonical host execution,
-  invocation admission, runtime readiness, and runtime drain/quiescence
-  schemas.
-- `vectors/` contains the canonical admission/readiness/drain-quiescence
-  conformance vectors and deterministic embedded/reference-host parity goldens
-  for positive commit, negative admission/provenance rejection, invalid AIR
-  failure, cancellation, drain/shutdown, restart recovery, revocation, and
-  boundary behavior.
+  startup-input, invocation admission, runtime readiness, and runtime
+  drain/quiescence schemas.
+- `vectors/` contains the canonical startup-input, admission, readiness, and
+  drain/quiescence conformance vectors plus deterministic
+  embedded/reference-host parity goldens for positive commit, negative
+  admission/provenance rejection, invalid AIR failure, cancellation,
+  drain/shutdown, restart recovery, revocation, and boundary behavior.
 
 The dedicated contract test verifies exact source/copy equality, current
 SHA-256 file digests, schema and vector identity, closed publication paths,

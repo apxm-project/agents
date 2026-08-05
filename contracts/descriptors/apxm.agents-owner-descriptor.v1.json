@@ -24,12 +24,12 @@
       "release_manifest": {
         "schema_version": "apxm.reference-host-release-manifest.v1",
         "path": "reference-host/manifests/apxm.reference-host-release-manifest.v1.json",
-        "digest": "sha256:7b99d1e5f92f12bbd24770754730052e466e48245677bf84dac92aeb58ccd438"
+        "digest": "sha256:5090a2a00585c70f850e5dd409b2a9f9afbad8e567cfe08b363ee5df32bca23a"
       },
       "execution_manifest": {
         "schema_version": "apxm.reference-host-execution-manifest.v1",
         "path": "reference-host/manifests/apxm.reference-host-execution-manifest.v1.json",
-        "digest": "sha256:8e708711c3cbc42fa4af38409512a2463e9dfc5768a21bdc032203f5f03b8eaa"
+        "digest": "sha256:cb9704ceffb1709d8e807c9fcb52bf34015560e7cb1551e9b79cca575e676bc6"
       },
       "lifecycle_vector": {
         "vector_id": "apxm.reference-host.lifecycle-parity.v1",
@@ -182,7 +182,7 @@
     {
       "schema_id": "apxm.diagnostic-correlation.v1",
       "path": "schemas/apxm.diagnostic-correlation.v1.json",
-      "digest": "sha256:31f5d15c55696d7840e179c785b9fc2608b16e213f4877db1182883e656935c3"
+      "digest": "sha256:a1da8d0f61c45e5b74b14aeba01986c9564c84e4e6cf4e0858f742b3d8b36243"
     },
     {
       "schema_id": "apxm.vllm-conformance-join.v1",
@@ -248,6 +248,11 @@
       "schema_id": "apxm.invocation-admission.v1",
       "path": "schemas/apxm.invocation-admission.v1.json",
       "digest": "sha256:08aece04a3ddf6d076b7af43a451a0159363e2c369d1ea16aad00ec4a8d288c6"
+    },
+    {
+      "schema_id": "apxm.reference-host-startup-input.v1",
+      "path": "schemas/apxm.reference-host-startup-input.v1.json",
+      "digest": "sha256:c302ef92982cf60866caff3767fa0ef9e4e1e5d4729391b3ad80abbb15ad3e9e"
     },
     {
       "schema_id": "apxm.execution-admission.v1",
@@ -1005,7 +1010,17 @@
         "unknown_field",
         "unconfined_rejection"
       ]
+    },
+    {
+      "schema_id": "apxm.reference-host-startup-input.v1",
+      "path": "vectors/apxm.reference-host-startup-input.v1.json",
+      "digest": "sha256:73ad787ce769e58b808ce134ed6cda3012b59e2c35f38f8fac442431c8189a37",
+      "coverage": [
+        "positive",
+        "placeholder_rejection",
+        "dirty_rejection"
+      ]
     }
   ],
-  "descriptor_digest": "sha256:45808d70c58e92ea632ba9ff485ca2840a56ee8ce2bba78422eb341d81dbc2b6"
+  "descriptor_digest": "sha256:fdef0358050fea1ab56f6103cf124ba77f1cdb040468ae3f1bc156855110650a"
 }

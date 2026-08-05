@@ -27,6 +27,7 @@ tools/           the validation and digest gate
 | `apxm.handler-manifest.v1` | TypeScript-only artifact-local tool/hook handler sidecar; no Python package-local handler shape |
 | `apxm.capability-invocation.v1` | Exact non-model Capability request with canonical arguments and separate admitted identity, authority, correlation, and effect facts |
 | `apxm.capability-outcome.v1` | Closed completed, failed, and outcome-unknown result set for Capability invocation |
+| `apxm.reference-host-startup-input.v1` | Exact startup artifact for the canonical reference host over one committed release manifest and explicit admitted digests |
 | `apxm.execution-admission.v1` | Signed, expiring, nonce-bound authority envelope with exact Port bindings, target and confinement claims |
 
 ## Referenced constitution envelopes
