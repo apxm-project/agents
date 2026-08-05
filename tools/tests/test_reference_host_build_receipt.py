@@ -92,6 +92,19 @@ class ReferenceHostBuildReceiptTests(unittest.TestCase):
             self.module.BUILD_COMMAND,
         )
         self.assertEqual(
+            receipt["build_identity"],
+            {
+                "owner_revision": expected_release["cohort"]["revision"],
+                "release_manifest_path": expected_release["release_manifest"]["path"],
+                "execution_manifest_path": str(
+                    self.module.EXECUTION_MANIFEST_PATH.relative_to(self.module.REPOSITORY_ROOT)
+                ),
+                "binary_platform": self.module.binary_platform_evidence(
+                    self.module.BUILD_COMMAND
+                ),
+            },
+        )
+        self.assertEqual(
             receipt["runtime_startup"],
             {
                 "required_argv": [self.module.STARTUP_INPUT_FLAG, "<path>"],

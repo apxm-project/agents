@@ -118,6 +118,24 @@ class ReferenceHostLifecycleReceiptTests(unittest.TestCase):
                 "schema_version": "apxm.reference-host-build-receipt.v1",
                 "semantic_owner": "agents",
                 "status": status,
+                "build_identity": {
+                    "owner_revision": "a" * 40,
+                    "release_manifest_path": str(
+                        self.module.RELEASE_MANIFEST_PATH.relative_to(self.module.REPOSITORY_ROOT)
+                    ),
+                    "execution_manifest_path": str(
+                        self.module.EXECUTION_MANIFEST_PATH.relative_to(
+                            self.module.REPOSITORY_ROOT
+                        )
+                    ),
+                    "binary_platform": {
+                        "selection": "native-host-default",
+                        "target": None,
+                        "system": "darwin",
+                        "machine": "arm64",
+                        "platform_tag": "macosx-15.0-arm64",
+                    },
+                },
                 "output": {"path": str(executable_path), "digest": self.module.file_digest(executable_path)},
                 "reference_host_release": {"cohort": {"revision": "a" * 40}},
             }
@@ -271,8 +289,23 @@ class ReferenceHostLifecycleReceiptTests(unittest.TestCase):
         self.assertEqual(receipt["status"], "complete")
         self.assertEqual(receipt, persisted)
         self.assertEqual(factory.call_count, 10)
+        self.assertEqual(receipt["build_identity"]["owner_revision"], "a" * 40)
         self.assertEqual(receipt["coverage"]["remaining_release_cases"], [])
         self.assertEqual(receipt["coverage"]["remaining_release_case_blockers"], [])
+        self.assertEqual(
+            receipt["lifecycle_outcomes"]["readiness"]["ready_after_restart_recovery"]["state"],
+            "ready",
+        )
+        self.assertEqual(
+            receipt["lifecycle_outcomes"]["admission"]["negative_provenance_rejection"][
+                "error_code"
+            ],
+            "provenance_mismatch",
+        )
+        self.assertEqual(
+            receipt["lifecycle_outcomes"]["admission"]["boundary_fail_closed"]["error_codes"],
+            ["invalid_request_schema", "unknown_operation", "missing_admission"],
+        )
         self.assertEqual(
             receipt["coverage"]["covered_release_cases"],
             [
@@ -380,6 +413,45 @@ class ReferenceHostLifecycleReceiptTests(unittest.TestCase):
         self.assertEqual(receipt["status"], "case_failed")
         self.assertEqual(receipt["error"]["code"], "case_failed")
         self.assertEqual(receipt["error"]["failed_cases"], ["readiness"])
+
+    def test_missing_build_identity_fails_closed_before_transport(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir_name:
+            temp_dir = Path(temp_dir_name)
+            startup_input_path, _startup_input = self.make_startup_input(temp_dir)
+            receipt_path = temp_dir / "lifecycle-receipt.json"
+            executable_path = temp_dir / "target" / "release" / "apxm-reference-host"
+            executable_path.parent.mkdir(parents=True, exist_ok=True)
+            executable_path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+
+            def build_runner(receipt_file: Path):
+                receipt = {
+                    "schema_version": "apxm.reference-host-build-receipt.v1",
+                    "semantic_owner": "agents",
+                    "status": "built",
+                    "output": {
+                        "path": str(executable_path),
+                        "digest": self.module.file_digest(executable_path),
+                    },
+                    "reference_host_release": {"cohort": {"revision": "a" * 40}},
+                }
+                receipt_file.parent.mkdir(parents=True, exist_ok=True)
+                receipt_file.write_text(
+                    json.dumps(receipt, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                return 0, receipt
+
+            exit_code, receipt = self.module.write_reference_host_lifecycle_receipt(
+                receipt_path=receipt_path,
+                build_receipt_path=temp_dir / "build-receipt.json",
+                startup_input_path=startup_input_path,
+                build_receipt_runner=build_runner,
+                transport_factory=ScriptedTransportFactory([]),
+            )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(receipt["status"], "invalid_build_receipt")
+        self.assertEqual(receipt["error"]["code"], "invalid_build_receipt")
 
 
 if __name__ == "__main__":

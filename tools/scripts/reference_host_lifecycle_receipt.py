@@ -19,6 +19,13 @@ REFERENCE_HOST_RECEIPT_SCRIPT = REPOSITORY_ROOT / "tools" / "scripts" / "referen
 OWNER_DESCRIPTOR_PATH = (
     REPOSITORY_ROOT / "contracts" / "descriptors" / "apxm.agents-owner-descriptor.v1.json"
 )
+EXECUTION_MANIFEST_PATH = (
+    REPOSITORY_ROOT
+    / "contracts"
+    / "reference-host"
+    / "manifests"
+    / "apxm.reference-host-execution-manifest.v1.json"
+)
 INVOKE_VECTOR_PATH = (
     REPOSITORY_ROOT
     / "contracts"
@@ -391,6 +398,78 @@ def make_transport_factory(
 
 def close_transport(transport: ReferenceHostTransport) -> None:
     transport.close()
+
+
+def validate_build_identity(
+    build_receipt: dict[str, Any], startup_input: dict[str, Any]
+) -> dict[str, Any]:
+    identity = build_receipt.get("build_identity")
+    expect(
+        isinstance(identity, dict),
+        "invalid_build_receipt",
+        "build receipt must publish build_identity",
+    )
+    expected_owner_revision = startup_input["provenance"]["owner_revision"]
+    expect(
+        identity.get("owner_revision") == expected_owner_revision,
+        "invalid_build_receipt",
+        "build receipt owner revision must match startup input provenance",
+        expected_owner_revision=expected_owner_revision,
+        observed_owner_revision=identity.get("owner_revision"),
+    )
+    expected_release_manifest_path = str(RELEASE_MANIFEST_PATH.relative_to(REPOSITORY_ROOT))
+    expect(
+        identity.get("release_manifest_path") == expected_release_manifest_path,
+        "invalid_build_receipt",
+        "build receipt release manifest path drifted from the canonical cohort path",
+        expected_release_manifest_path=expected_release_manifest_path,
+        observed_release_manifest_path=identity.get("release_manifest_path"),
+    )
+    expected_execution_manifest_path = str(EXECUTION_MANIFEST_PATH.relative_to(REPOSITORY_ROOT))
+    expect(
+        identity.get("execution_manifest_path") == expected_execution_manifest_path,
+        "invalid_build_receipt",
+        "build receipt execution manifest path drifted from the canonical cohort path",
+        expected_execution_manifest_path=expected_execution_manifest_path,
+        observed_execution_manifest_path=identity.get("execution_manifest_path"),
+    )
+
+    binary_platform = identity.get("binary_platform")
+    expect(
+        isinstance(binary_platform, dict),
+        "invalid_build_receipt",
+        "build receipt binary_platform must be an object",
+    )
+    expect(
+        binary_platform.get("selection") in {"explicit-target", "native-host-default"},
+        "invalid_build_receipt",
+        "build receipt binary_platform.selection must remain exact",
+        observed_selection=binary_platform.get("selection"),
+    )
+    for field in ("system", "machine", "platform_tag"):
+        value = binary_platform.get(field)
+        expect(
+            isinstance(value, str) and value,
+            "invalid_build_receipt",
+            f"build receipt binary_platform.{field} must be explicit",
+            field=field,
+        )
+    if binary_platform.get("selection") == "explicit-target":
+        expect(
+            isinstance(binary_platform.get("target"), str) and binary_platform["target"],
+            "invalid_build_receipt",
+            "build receipt binary_platform.target must be explicit for explicit-target builds",
+        )
+
+    release_attestation = build_receipt.get("reference_host_release")
+    cohort = release_attestation.get("cohort") if isinstance(release_attestation, dict) else None
+    expect(
+        isinstance(cohort, dict) and cohort.get("revision") == expected_owner_revision,
+        "invalid_build_receipt",
+        "build receipt release attestation must bind the same owner revision",
+        observed_release_attestation=release_attestation,
+    )
+    return identity
 
 
 def assert_runtime_evidence(response: dict[str, Any], terminal_kind: str) -> dict[str, Any]:
@@ -922,6 +1001,128 @@ def executed_case_runners() -> list[tuple[str, Callable[..., dict[str, Any]]]]:
         ("boundary_fail_closed", run_case_boundary_fail_closed),
     ]
 
+
+def lifecycle_outcomes_summary(cases: list[dict[str, Any]]) -> dict[str, Any]:
+    cases_by_name = {case["name"]: case for case in cases if case.get("status") == "passed"}
+
+    def case_named(name: str) -> dict[str, Any]:
+        case = cases_by_name.get(name)
+        expect(
+            isinstance(case, dict),
+            "case_failed",
+            f"lifecycle summary requires the passed case {name}",
+        )
+        return case
+
+    def response(name: str, index: int = 0) -> dict[str, Any]:
+        case = case_named(name)
+        responses = case.get("responses")
+        expect(
+            isinstance(responses, list)
+            and len(responses) > index
+            and isinstance(responses[index], dict),
+            "case_failed",
+            f"lifecycle summary requires response[{index}] for case {name}",
+        )
+        return responses[index]
+
+    def readiness(name: str, index: int = 0) -> dict[str, Any]:
+        snapshot = response(name, index).get("readiness")
+        expect(
+            isinstance(snapshot, dict),
+            "case_failed",
+            f"lifecycle summary requires readiness for case {name}",
+        )
+        return snapshot
+
+    boundary_case = case_named("boundary_fail_closed")
+    boundary_responses = boundary_case.get("responses")
+    expect(
+        isinstance(boundary_responses, list) and all(isinstance(entry, dict) for entry in boundary_responses),
+        "case_failed",
+        "lifecycle summary requires boundary_fail_closed responses",
+    )
+    drain_probe = case_named(IN_FLIGHT_DRAIN_PROBE).get("probe")
+    expect(
+        isinstance(drain_probe, dict),
+        "case_failed",
+        "lifecycle summary requires the in-flight drain probe payload",
+    )
+    restart_response = response("restart_recovery_from_runtime_evidence", 2)
+    restart_recovery = restart_response.get("recovery")
+    expect(
+        isinstance(restart_recovery, dict),
+        "case_failed",
+        "lifecycle summary requires restart recovery details",
+    )
+
+    return {
+        "readiness": {
+            "initial_ready": response("readiness"),
+            "draining_before_dispatch": response("drain_rejection_before_dispatch"),
+            "draining_with_in_flight": drain_probe["drain_response"],
+            "terminal_after_in_flight_drain": drain_probe["terminal_readiness"],
+            "terminal_after_cancellation_before_admission": readiness(
+                "cancellation_before_admission"
+            ),
+            "terminal_after_shutdown": readiness("explicit_shutdown_terminal_state"),
+            "ready_after_restart_recovery": readiness(
+                "restart_recovery_from_runtime_evidence", 2
+            ),
+            "terminal_after_revocation": readiness("revocation_before_dispatch", 1),
+        },
+        "admission": {
+            "positive_commit": {
+                "status": response("positive_commit_minimal_air").get("status"),
+                "runtime_evidence_terminal_kind": case_named("positive_commit_minimal_air").get(
+                    "runtime_evidence_terminal_kind"
+                ),
+            },
+            "negative_provenance_rejection": {
+                "status": response("negative_admission_provenance_rejection").get("status"),
+                "error_code": response_error_code(
+                    response("negative_admission_provenance_rejection")
+                ),
+            },
+            "invalid_air_rejection": {
+                "status": response("invalid_air_failure").get("status"),
+                "error_code": response_error_code(response("invalid_air_failure")),
+            },
+            "rejection_while_draining": {
+                "status": response("drain_rejection_before_dispatch", 1).get("status"),
+                "error_code": response_error_code(response("drain_rejection_before_dispatch", 1)),
+            },
+            "revocation_before_dispatch": {
+                "status": response("revocation_before_dispatch").get("status"),
+                "reason": response("revocation_before_dispatch").get("reason"),
+            },
+            "rejection_after_revocation": {
+                "status": response("revocation_before_dispatch", 1).get("status"),
+                "error_code": response_error_code(response("revocation_before_dispatch", 1)),
+            },
+            "boundary_fail_closed": {
+                "error_codes": [
+                    response_error_code(entry) for entry in boundary_responses  # type: ignore[arg-type]
+                ],
+            },
+        },
+        "terminal": {
+            "cancellation_before_admission": {
+                "status": response("cancellation_before_admission").get("status"),
+                "reason": response("cancellation_before_admission").get("reason"),
+            },
+            "explicit_shutdown": {
+                "status": response("explicit_shutdown_terminal_state").get("status"),
+                "reason": response("explicit_shutdown_terminal_state").get("reason"),
+            },
+            "restart_recovery": {
+                "status": restart_response.get("status"),
+                "contract": restart_recovery.get("contract"),
+                "status_detail": restart_recovery.get("status"),
+            },
+        },
+    }
+
 def write_reference_host_lifecycle_receipt(
     *,
     receipt_path: Path = DEFAULT_LIFECYCLE_RECEIPT_PATH,
@@ -978,6 +1179,8 @@ def write_reference_host_lifecycle_receipt(
             write_json(receipt_path, receipt)
             return 1, receipt
 
+        build_identity = validate_build_identity(build_receipt, startup_input)
+        receipt["build_identity"] = build_identity
         output = build_receipt.get("output")
         expect(
             isinstance(output, dict) and isinstance(output.get("path"), str) and output["path"],
@@ -1050,6 +1253,7 @@ def write_reference_host_lifecycle_receipt(
             write_json(receipt_path, receipt)
             return 1, receipt
 
+        receipt["lifecycle_outcomes"] = lifecycle_outcomes_summary(cases)
         receipt["status"] = "complete" if not remaining_release_cases else "partial"
         write_json(receipt_path, receipt)
         return 0, receipt
