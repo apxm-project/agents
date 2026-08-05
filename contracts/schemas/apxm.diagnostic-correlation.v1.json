@@ -7,6 +7,7 @@
   "required": [
     "schema_version",
     "correlation_id",
+    "correlation_digest",
     "commit_id",
     "evidence_fact_ids",
     "request_digest",
@@ -23,6 +24,9 @@
     },
     "correlation_id": {
       "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+    },
+    "correlation_digest": {
+      "$ref": "apxm.contract-common.v1#/$defs/Digest"
     },
     "commit_id": {
       "$ref": "apxm.contract-common.v1#/$defs/Identifier"
@@ -49,6 +53,22 @@
       "$ref": "apxm.contract-common.v1#/$defs/Identifier"
     },
     "exact_port_binding_digest": {
+      "$ref": "apxm.contract-common.v1#/$defs/Digest"
+    },
+    "target_commitment_digest": {
+      "$ref": "apxm.contract-common.v1#/$defs/Digest"
+    },
+    "generation_cohort_digest": {
+      "$ref": "apxm.contract-common.v1#/$defs/Digest"
+    },
+    "target_generation": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "target_port_contract_digest": {
+      "$ref": "apxm.contract-common.v1#/$defs/Digest"
+    },
+    "target_composition_digest": {
       "$ref": "apxm.contract-common.v1#/$defs/Digest"
     },
     "log_refs": {

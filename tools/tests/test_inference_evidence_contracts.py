@@ -116,6 +116,25 @@ class InferenceEvidenceContractTests(unittest.TestCase):
         self.assertIn("maxItems", " ".join(errors))
         self.assertEqual(base["authority"], "diagnostic_only")
 
+    def test_diagnostic_digest_binds_references_and_committed_target(self) -> None:
+        cases = self._cases("apxm.diagnostic-correlation.v1.json")
+        valid = next(
+            case["input"]
+            for case in cases
+            if case["name"] == "valid-committed-target-diagnostic"
+        )
+        self.assertEqual(self._errors("apxm.diagnostic-correlation.v1.json", {"input": valid}), [])
+        mutated = copy.deepcopy(valid)
+        mutated["trace_refs"] = ["trace.swapped"]
+        self.assertTrue(
+            self.validator.inference_diagnostic_correlation_errors(mutated)
+        )
+        mixed = copy.deepcopy(valid)
+        mixed["target_generation"] = 1
+        self.assertTrue(
+            self.validator.inference_diagnostic_correlation_errors(mixed)
+        )
+
     def test_revocation_and_private_material_cannot_enter_lease_identity(self) -> None:
         schema = self.schema_ids["apxm.inference-credential-lease.v1"]
         for case_name in ("reject-lease-secret-material", "reject-revocation-state-in-public-identity"):
