@@ -700,6 +700,9 @@ def schema_instance_errors(
         min_items = schema.get("minItems")
         if isinstance(min_items, int) and len(instance) < min_items:
             errors.append("array has fewer than minItems")
+        max_items = schema.get("maxItems")
+        if isinstance(max_items, int) and len(instance) > max_items:
+            errors.append("array exceeds maxItems")
         if schema.get("uniqueItems") is True:
             canonical_items = [canonical(value) for value in instance]
             if len(set(canonical_items)) != len(canonical_items):
@@ -734,6 +737,115 @@ def schema_instance_errors(
     return errors
 
 
+def _inference_digest(schema_id: str, *parts: object) -> str:
+    hasher = hashlib.sha256()
+    hasher.update(schema_id.encode("utf-8"))
+    for part in parts:
+        hasher.update(b"\0")
+        hasher.update(str(part).encode("utf-8"))
+    return "sha256:" + hasher.hexdigest()
+
+
+def inference_credential_lease_errors(instance: dict[str, Any]) -> list[str]:
+    expected = _inference_digest(
+        "apxm.inference-credential-lease.v1",
+        instance.get("lease_id", ""),
+        "model_inference",
+        instance.get("model_target_ref", ""),
+        instance.get("exact_port_binding_digest", ""),
+        instance.get("expires_at_unix_ms", ""),
+    )
+    if instance.get("lease_digest") != expected:
+        return ["lease_digest must cover the exact target- and purpose-bound lease identity"]
+    return []
+
+
+def inference_usage_lineage_errors(instance: dict[str, Any]) -> list[str]:
+    if instance.get("sealed") is not True:
+        return ["usage lineage must be sealed before publication"]
+
+    evidence_fact_id = instance.get("evidence_fact_id")
+    commit_id = instance.get("commit_id")
+    if (evidence_fact_id is None) != (commit_id is None):
+        return ["evidence_fact_id and commit_id must be bound together"]
+
+    typed_error = instance.get("typed_error")
+    parts: list[object] = [
+        instance.get("effect_id", ""),
+        instance.get("attempt_index", ""),
+        instance.get("request_digest", ""),
+        instance.get("model_target_ref", ""),
+        instance.get("model_target_digest", ""),
+        instance.get("model_deployment_ref", ""),
+        instance.get("exact_port_binding_digest", ""),
+        instance.get("native_input_tokens", ""),
+        instance.get("native_output_tokens", ""),
+        instance.get("duration_ms", ""),
+    ]
+    if isinstance(typed_error, dict):
+        parts.extend(
+            (
+                typed_error.get("category", ""),
+                typed_error.get("code", ""),
+                typed_error.get("message", ""),
+            )
+        )
+    expected = _inference_digest("apxm.inference-usage-lineage.v1", *parts)
+    if instance.get("lineage_id") != expected:
+        return ["lineage_id must cover the immutable owner usage facts"]
+    return []
+
+
+def inference_diagnostic_correlation_errors(instance: dict[str, Any]) -> list[str]:
+    for field in ("evidence_fact_ids", "log_refs", "metric_refs", "trace_refs"):
+        references = instance.get(field, [])
+        if not isinstance(references, list):
+            continue
+        if len(references) > 64:
+            return [f"{field} exceeds the bounded diagnostic reference cardinality"]
+        if any(
+            not isinstance(reference, str)
+            or not reference
+            or len(reference) > 128
+            or re.fullmatch(r"[A-Za-z0-9._:/-]+", reference) is None
+            for reference in references
+        ):
+            return [f"{field} contains an unbounded or invalid diagnostic reference"]
+    if (
+        instance.get("agreement") == "disagrees_evidence_authoritative"
+        and not all(
+            isinstance(instance.get(field), int)
+            and not isinstance(instance.get(field), bool)
+            for field in ("claimed_input_tokens", "claimed_output_tokens")
+        )
+    ):
+        return ["a disagreeing diagnostic must preserve both claimed usage values"]
+    return []
+
+
+def vllm_conformance_join_errors(instance: dict[str, Any]) -> list[str]:
+    # Mirror of crates/runtime/inference/src/backend_join.rs.
+    if instance.get("vllm_port_contract_digest") != (
+        "sha256:2106082c92a9dae2cd9e0c623315198f9ed8d736e8f5860ed043c58690428c01"
+    ):
+        return ["vllm_port_contract_digest must match the pinned backend contract"]
+    pinned_vectors = {
+        "sha256:7add76f8f7df341785ef45ff51b38e979a309299509b32e76b311268cc93ea32",
+        "sha256:a60b2364bbbe1304e96defcf55a8600d501933e0fbae97c140f2bc4377d5e822",
+        "sha256:96914ff1d56cc2d1e74fda3a063287615392cb0197bcc1c853cb1a18a5e7e8c3",
+        "sha256:5e7abcccf5c7f7276b9398ccd2c255671f23a6914eb23287b44518b30b8c7723",
+        "sha256:1e9a389b24f08411738594ca3646bbcbeb18a77c398c6b07933d04903bd9be39",
+    }
+    vectors = instance.get("joined_vector_digests", [])
+    if not isinstance(vectors, list):
+        return []
+    if any(vector not in pinned_vectors for vector in vectors):
+        return ["joined_vector_digests contains an unpinned backend evidence digest"]
+    if len(vectors) != len(set(vectors)):
+        return ["joined_vector_digests must be unique"]
+    return []
+
+
 def semantic_errors(schema_id: str, instance: object) -> list[str]:
     if not isinstance(instance, dict):
         return []
@@ -758,6 +870,14 @@ def semantic_errors(schema_id: str, instance: object) -> list[str]:
             measurement_id = "sha256:" + hashlib.sha256(payload).hexdigest()
             if instance.get("usage_measurement_id") != measurement_id:
                 return ["usage_measurement_id must match the exact committed attempt tuple"]
+    if schema_id == "apxm.inference-credential-lease.v1":
+        return inference_credential_lease_errors(instance)
+    if schema_id == "apxm.inference-usage-lineage.v1":
+        return inference_usage_lineage_errors(instance)
+    if schema_id == "apxm.diagnostic-correlation.v1":
+        return inference_diagnostic_correlation_errors(instance)
+    if schema_id == "apxm.vllm-conformance-join.v1":
+        return vllm_conformance_join_errors(instance)
     if schema_id == "apxm.external-agent-evidence.v1":
         return external_agent_evidence_errors(instance)
     if schema_id == "apxm.capability-invocation.v1":
