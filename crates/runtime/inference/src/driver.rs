@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::identity::{ModelTargetRef, ResolvedModelBinding};
+use crate::target::{InferenceTargetCommitment, TargetCommitmentError};
 use apxm_program::grammar::is_digest;
 
 /// Schema identity for the frozen driver-binding contract.
@@ -34,6 +35,7 @@ pub struct InferenceDriverBinding {
     pub port_contract_digest: String,
     pub composition_digest: String,
     pub availability: DriverAvailability,
+    pub target_commitment: InferenceTargetCommitment,
 }
 
 /// Why an exact driver binding cannot be used. Every variant fails closed.
@@ -48,6 +50,7 @@ pub enum DriverBindingError {
     },
     InvalidDigest(&'static str),
     EmptyField(&'static str),
+    TargetCommitment(TargetCommitmentError),
     Unavailable {
         driver_id: String,
         inference_profile_ref: String,
@@ -72,6 +75,9 @@ impl std::fmt::Display for DriverBindingError {
                 write!(f, "driver binding field {field} is not a sha256 digest")
             }
             Self::EmptyField(field) => write!(f, "driver binding field {field} is empty"),
+            Self::TargetCommitment(error) => {
+                write!(f, "driver target commitment rejected: {error}")
+            }
             Self::Unavailable {
                 driver_id,
                 inference_profile_ref,
@@ -86,6 +92,12 @@ impl std::fmt::Display for DriverBindingError {
 
 impl std::error::Error for DriverBindingError {}
 
+impl From<TargetCommitmentError> for DriverBindingError {
+    fn from(value: TargetCommitmentError) -> Self {
+        Self::TargetCommitment(value)
+    }
+}
+
 impl InferenceDriverBinding {
     /// Construct one exact available driver binding from an admitted resolution.
     pub fn from_resolved(
@@ -93,6 +105,8 @@ impl InferenceDriverBinding {
         inference_profile_ref: impl Into<String>,
         resolved: &ResolvedModelBinding,
     ) -> Result<Self, DriverBindingError> {
+        let target_commitment = InferenceTargetCommitment::from_resolved(resolved, 0)
+            .map_err(DriverBindingError::from)?;
         let binding = Self {
             schema_version: INFERENCE_DRIVER_BINDING_SCHEMA.to_string(),
             driver_id: driver_id.into(),
@@ -104,6 +118,33 @@ impl InferenceDriverBinding {
             port_contract_digest: resolved.port_contract_digest().to_string(),
             composition_digest: resolved.composition_digest.clone(),
             availability: DriverAvailability::Available,
+            target_commitment,
+        };
+        binding.validate_shape()?;
+        Ok(binding)
+    }
+
+    /// Construct a driver binding from an already committed target snapshot.
+    /// This is the preferred composition-root path when the deployment has a
+    /// non-zero release generation.
+    pub fn from_target_commitment(
+        driver_id: impl Into<String>,
+        inference_profile_ref: impl Into<String>,
+        target_commitment: InferenceTargetCommitment,
+    ) -> Result<Self, DriverBindingError> {
+        target_commitment.validate()?;
+        let binding = Self {
+            schema_version: INFERENCE_DRIVER_BINDING_SCHEMA.to_string(),
+            driver_id: driver_id.into(),
+            inference_profile_ref: inference_profile_ref.into(),
+            model_target_ref: target_commitment.target_ref.clone(),
+            model_target_digest: target_commitment.target_digest.clone(),
+            model_deployment_ref: target_commitment.model_deployment_ref.clone(),
+            exact_port_binding_digest: target_commitment.exact_port_binding_digest.clone(),
+            port_contract_digest: target_commitment.port_contract_digest.clone(),
+            composition_digest: target_commitment.composition_digest.clone(),
+            availability: DriverAvailability::Available,
+            target_commitment,
         };
         binding.validate_shape()?;
         Ok(binding)
@@ -144,6 +185,43 @@ impl InferenceDriverBinding {
                 return Err(DriverBindingError::InvalidDigest(field));
             }
         }
+        self.target_commitment.validate()?;
+        for (field, commitment_value, binding_value) in [
+            (
+                "model_target_ref",
+                self.target_commitment.target_ref.as_str(),
+                self.model_target_ref.as_str(),
+            ),
+            (
+                "model_target_digest",
+                self.target_commitment.target_digest.as_str(),
+                self.model_target_digest.as_str(),
+            ),
+            (
+                "model_deployment_ref",
+                self.target_commitment.model_deployment_ref.as_str(),
+                self.model_deployment_ref.as_str(),
+            ),
+            (
+                "exact_port_binding_digest",
+                self.target_commitment.exact_port_binding_digest.as_str(),
+                self.exact_port_binding_digest.as_str(),
+            ),
+            (
+                "port_contract_digest",
+                self.target_commitment.port_contract_digest.as_str(),
+                self.port_contract_digest.as_str(),
+            ),
+            (
+                "composition_digest",
+                self.target_commitment.composition_digest.as_str(),
+                self.composition_digest.as_str(),
+            ),
+        ] {
+            if commitment_value != binding_value {
+                return Err(DriverBindingError::DigestMismatch { field });
+            }
+        }
         Ok(())
     }
 
@@ -160,6 +238,8 @@ impl InferenceDriverBinding {
         resolved: &ResolvedModelBinding,
     ) -> Result<(), DriverBindingError> {
         self.validate_shape()?;
+        self.target_commitment
+            .matches_resolved(authored_target, resolved)?;
         if self.model_target_ref != authored_target.0 {
             return Err(DriverBindingError::TargetMismatch {
                 authored: authored_target.0.clone(),

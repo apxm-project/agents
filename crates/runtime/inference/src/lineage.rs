@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::effect::{ErrorCategory, TypedError, Usage};
+use crate::target::InferenceTargetCommitment;
 use apxm_program::grammar::is_digest;
 
 /// Schema identity for the frozen usage-lineage contract.
@@ -26,6 +27,16 @@ pub struct InferenceUsageLineage {
     pub model_target_digest: String,
     pub model_deployment_ref: String,
     pub exact_port_binding_digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_commitment_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation_cohort_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_generation: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_port_contract_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_composition_digest: Option<String>,
     pub native_input_tokens: u64,
     pub native_output_tokens: u64,
     pub duration_ms: u64,
@@ -118,6 +129,11 @@ impl InferenceUsageLineage {
             &model_target_digest,
             &model_deployment_ref,
             &exact_port_binding_digest,
+            None,
+            None,
+            None,
+            None,
+            None,
             usage.input_tokens,
             usage.output_tokens,
             duration_ms,
@@ -133,6 +149,78 @@ impl InferenceUsageLineage {
             model_target_digest,
             model_deployment_ref,
             exact_port_binding_digest,
+            target_commitment_digest: None,
+            generation_cohort_digest: None,
+            target_generation: None,
+            target_port_contract_digest: None,
+            target_composition_digest: None,
+            native_input_tokens: usage.input_tokens,
+            native_output_tokens: usage.output_tokens,
+            duration_ms,
+            evidence_fact_id: None,
+            commit_id: None,
+            typed_error,
+            sealed: true,
+        };
+        lineage.validate()?;
+        Ok(lineage)
+    }
+
+    /// Mint lineage from the exact committed target used by the driver. The
+    /// commitment identity is evidence, not a provider or routing hint.
+    pub fn seal_with_target_commitment(
+        effect_id: impl Into<String>,
+        attempt_index: u32,
+        request_digest: impl Into<String>,
+        commitment: &InferenceTargetCommitment,
+        usage: Usage,
+        duration_ms: u64,
+        typed_error: Option<TypedError>,
+    ) -> Result<Self, LineageError> {
+        commitment
+            .validate()
+            .map_err(|_| LineageError::CommitMismatch)?;
+        let effect_id = effect_id.into();
+        let request_digest = request_digest.into();
+        if effect_id.trim().is_empty() {
+            return Err(LineageError::EmptyField("effect_id"));
+        }
+        if !is_digest(&request_digest) {
+            return Err(LineageError::InvalidDigest("request_digest"));
+        }
+        let lineage_id = lineage_digest(
+            &effect_id,
+            attempt_index,
+            &request_digest,
+            &commitment.target_ref,
+            &commitment.target_digest,
+            &commitment.model_deployment_ref,
+            &commitment.exact_port_binding_digest,
+            Some(&commitment.commit_digest),
+            Some(&commitment.generation_cohort_digest),
+            Some(commitment.target_generation),
+            Some(&commitment.port_contract_digest),
+            Some(&commitment.composition_digest),
+            usage.input_tokens,
+            usage.output_tokens,
+            duration_ms,
+            typed_error.as_ref(),
+        );
+        let lineage = Self {
+            schema_version: INFERENCE_USAGE_LINEAGE_SCHEMA.to_string(),
+            lineage_id,
+            effect_id,
+            attempt_index,
+            request_digest,
+            model_target_ref: commitment.target_ref.clone(),
+            model_target_digest: commitment.target_digest.clone(),
+            model_deployment_ref: commitment.model_deployment_ref.clone(),
+            exact_port_binding_digest: commitment.exact_port_binding_digest.clone(),
+            target_commitment_digest: Some(commitment.commit_digest.clone()),
+            generation_cohort_digest: Some(commitment.generation_cohort_digest.clone()),
+            target_generation: Some(commitment.target_generation),
+            target_port_contract_digest: Some(commitment.port_contract_digest.clone()),
+            target_composition_digest: Some(commitment.composition_digest.clone()),
             native_input_tokens: usage.input_tokens,
             native_output_tokens: usage.output_tokens,
             duration_ms,
@@ -171,6 +259,45 @@ impl InferenceUsageLineage {
         if !is_digest(&self.exact_port_binding_digest) {
             return Err(LineageError::InvalidDigest("exact_port_binding_digest"));
         }
+        match (
+            &self.target_commitment_digest,
+            &self.generation_cohort_digest,
+            self.target_generation,
+            &self.target_port_contract_digest,
+            &self.target_composition_digest,
+        ) {
+            (Some(commit), Some(cohort), Some(generation), Some(port), Some(composition)) => {
+                if !is_digest(commit) {
+                    return Err(LineageError::InvalidDigest("target_commitment_digest"));
+                }
+                if !is_digest(cohort) {
+                    return Err(LineageError::InvalidDigest("generation_cohort_digest"));
+                }
+                if !is_digest(port) {
+                    return Err(LineageError::InvalidDigest("target_port_contract_digest"));
+                }
+                if !is_digest(composition) {
+                    return Err(LineageError::InvalidDigest("target_composition_digest"));
+                }
+                let commitment = InferenceTargetCommitment::commit(
+                    &self.model_target_ref,
+                    &self.model_target_digest,
+                    &self.model_deployment_ref,
+                    &self.exact_port_binding_digest,
+                    port,
+                    composition,
+                    generation,
+                )
+                .map_err(|_| LineageError::CommitMismatch)?;
+                if commitment.commit_digest != *commit
+                    || commitment.generation_cohort_digest != *cohort
+                {
+                    return Err(LineageError::CommitMismatch);
+                }
+            }
+            (None, None, None, None, None) => {}
+            _ => return Err(LineageError::CommitMismatch),
+        }
         if !is_digest(&self.lineage_id) {
             return Err(LineageError::InvalidDigest("lineage_id"));
         }
@@ -190,6 +317,11 @@ impl InferenceUsageLineage {
             &self.model_target_digest,
             &self.model_deployment_ref,
             &self.exact_port_binding_digest,
+            self.target_commitment_digest.as_deref(),
+            self.generation_cohort_digest.as_deref(),
+            self.target_generation,
+            self.target_port_contract_digest.as_deref(),
+            self.target_composition_digest.as_deref(),
             self.native_input_tokens,
             self.native_output_tokens,
             self.duration_ms,
@@ -273,6 +405,11 @@ fn lineage_digest(
     model_target_digest: &str,
     model_deployment_ref: &str,
     exact_port_binding_digest: &str,
+    target_commitment_digest: Option<&str>,
+    generation_cohort_digest: Option<&str>,
+    target_generation: Option<u64>,
+    target_port_contract_digest: Option<&str>,
+    target_composition_digest: Option<&str>,
     input_tokens: u64,
     output_tokens: u64,
     duration_ms: u64,
@@ -294,6 +431,18 @@ fn lineage_digest(
     hasher.update(model_deployment_ref.as_bytes());
     hasher.update(b"\0");
     hasher.update(exact_port_binding_digest.as_bytes());
+    if let Some(commitment) = target_commitment_digest {
+        hasher.update(b"\0");
+        hasher.update(commitment.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(generation_cohort_digest.unwrap_or_default().as_bytes());
+        hasher.update(b"\0");
+        hasher.update(target_generation.unwrap_or_default().to_string().as_bytes());
+        hasher.update(b"\0");
+        hasher.update(target_port_contract_digest.unwrap_or_default().as_bytes());
+        hasher.update(b"\0");
+        hasher.update(target_composition_digest.unwrap_or_default().as_bytes());
+    }
     hasher.update(b"\0");
     hasher.update(input_tokens.to_string().as_bytes());
     hasher.update(b"\0");

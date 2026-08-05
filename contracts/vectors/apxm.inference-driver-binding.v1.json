@@ -12,7 +12,23 @@
       "exact_port_binding_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
       "port_contract_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
       "composition_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
-      "availability": "available"
+      "availability": "available",
+      "target_commitment": {
+        "schema_version": "apxm.inference-target-commitment.v1",
+        "target_ref": "model-target.1",
+        "target_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "model_deployment_ref": "model-deployment.1",
+        "exact_port_binding_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "port_contract_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "composition_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "target_generation": 0,
+        "deployment_generation": 0,
+        "binding_generation": 0,
+        "composition_generation": 0,
+        "generation_cohort_digest": "sha256:b033158eab05aa8d6b5df08dfcef53ac1c6eba2c897cf394ed68702f9e24c60d",
+        "commit_digest": "sha256:3655b55ccb111247b13580174d2983f85e1ff6d2b99ed823a7ea1ad0a8eea54d",
+        "state": "committed"
+      }
     }
   },
   {
@@ -28,7 +44,23 @@
       "exact_port_binding_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
       "port_contract_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
       "composition_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
-      "availability": "fallback"
+      "availability": "fallback",
+      "target_commitment": {
+        "schema_version": "apxm.inference-target-commitment.v1",
+        "target_ref": "model-target.1",
+        "target_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "model_deployment_ref": "model-deployment.1",
+        "exact_port_binding_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "port_contract_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "composition_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "target_generation": 0,
+        "deployment_generation": 0,
+        "binding_generation": 0,
+        "composition_generation": 0,
+        "generation_cohort_digest": "sha256:b033158eab05aa8d6b5df08dfcef53ac1c6eba2c897cf394ed68702f9e24c60d",
+        "commit_digest": "sha256:3655b55ccb111247b13580174d2983f85e1ff6d2b99ed823a7ea1ad0a8eea54d",
+        "state": "committed"
+      }
     }
   },
   {
@@ -44,7 +76,23 @@
       "exact_port_binding_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
       "port_contract_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
       "composition_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
-      "availability": "unavailable"
+      "availability": "unavailable",
+      "target_commitment": {
+        "schema_version": "apxm.inference-target-commitment.v1",
+        "target_ref": "model-target.1",
+        "target_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "model_deployment_ref": "model-deployment.1",
+        "exact_port_binding_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "port_contract_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "composition_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "target_generation": 0,
+        "deployment_generation": 0,
+        "binding_generation": 0,
+        "composition_generation": 0,
+        "generation_cohort_digest": "sha256:b033158eab05aa8d6b5df08dfcef53ac1c6eba2c897cf394ed68702f9e24c60d",
+        "commit_digest": "sha256:3655b55ccb111247b13580174d2983f85e1ff6d2b99ed823a7ea1ad0a8eea54d",
+        "state": "committed"
+      }
     }
   },
   {

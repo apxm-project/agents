@@ -24,6 +24,7 @@ use apxm_inference::{
     VllmReleaseAttestation, authoritative_usage, correlate_diagnostics, digest_bytes,
     dispatch_exact_inference, redact_diagnostic_value,
 };
+use apxm_inference::{InferenceTargetCommitment, TargetCommitState};
 use std::cell::Cell;
 
 const DIGEST_A: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -78,6 +79,101 @@ fn lease_for(target: &str, expires_at_unix_ms: u64) -> InferenceCredentialLease 
         InferenceCredentialLeaseIdentity::mint("lease.1", target, DIGEST_A, expires_at_unix_ms)
             .expect("mint lease identity");
     InferenceCredentialLease::issue(identity, "super-secret-material").expect("issue lease")
+}
+
+fn target_commitment() -> InferenceTargetCommitment {
+    InferenceTargetCommitment::commit(
+        "model.alpha",
+        DIGEST_B,
+        "deploy.alpha",
+        DIGEST_A,
+        DIGEST_C,
+        DIGEST_D,
+        7,
+    )
+    .expect("committed target")
+}
+
+// ── Committed target generation ────────────────────────────────────────────
+
+#[test]
+fn committed_target_freezes_one_generation_cohort_and_digest() {
+    let commitment = target_commitment();
+    commitment.validate().expect("committed target validates");
+    assert_eq!(commitment.target_generation, 7);
+    assert_eq!(commitment.deployment_generation, 7);
+    assert_eq!(commitment.binding_generation, 7);
+    assert_eq!(commitment.composition_generation, 7);
+    assert!(commitment.commit_digest.starts_with("sha256:"));
+    assert!(commitment.generation_cohort_digest.starts_with("sha256:"));
+
+    let binding = InferenceDriverBinding::from_target_commitment(
+        "driver.exact",
+        "profile.exact",
+        commitment.clone(),
+    )
+    .expect("driver accepts committed target");
+    binding
+        .authorize(
+            &ModelTargetRef("model.alpha".into()),
+            &resolved("model.alpha"),
+        )
+        .expect("committed target authorizes exact resolution");
+}
+
+#[test]
+fn moving_stale_dirty_and_ambiguous_targets_fail_before_dispatch() {
+    for (state, expected) in [
+        (
+            TargetCommitState::Moving,
+            apxm_inference::TargetCommitmentError::Moving,
+        ),
+        (
+            TargetCommitState::Stale,
+            apxm_inference::TargetCommitmentError::Stale,
+        ),
+        (
+            TargetCommitState::Dirty,
+            apxm_inference::TargetCommitmentError::Dirty,
+        ),
+        (
+            TargetCommitState::Ambiguous,
+            apxm_inference::TargetCommitmentError::Ambiguous,
+        ),
+    ] {
+        let mut commitment = target_commitment();
+        commitment.state = state;
+        assert_eq!(commitment.validate(), Err(expected.clone()));
+        assert!(matches!(
+            InferenceDriverBinding::from_target_commitment(
+                "driver.exact",
+                "profile.exact",
+                commitment,
+            ),
+            Err(apxm_inference::DriverBindingError::TargetCommitment(error))
+                if error == expected
+        ));
+    }
+}
+
+#[test]
+fn mixed_generation_target_fails_closed_even_when_each_digest_is_valid() {
+    let mut commitment = target_commitment();
+    commitment.deployment_generation += 1;
+    assert_eq!(
+        commitment.validate(),
+        Err(apxm_inference::TargetCommitmentError::MixedGeneration)
+    );
+
+    let err =
+        InferenceDriverBinding::from_target_commitment("driver.exact", "profile.exact", commitment)
+            .expect_err("mixed generation cannot become a driver binding");
+    assert!(matches!(
+        err,
+        apxm_inference::DriverBindingError::TargetCommitment(
+            apxm_inference::TargetCommitmentError::MixedGeneration
+        )
+    ));
 }
 
 struct ExactBackend {
@@ -403,6 +499,34 @@ fn exact_dispatch_seals_usage_lineage_with_timing_and_target() {
     assert_eq!(result.lineage.duration_ms, 77);
     assert_eq!(result.lineage.model_target_ref, "model.alpha");
     assert_eq!(result.driver_id, "driver.vllm");
+    assert_eq!(
+        result.lineage.target_commitment_digest.as_deref(),
+        Some(result.target_commitment.commit_digest.as_str())
+    );
+    assert_eq!(result.lineage.target_generation, Some(0));
+}
+
+#[test]
+fn usage_lineage_rejects_target_commitment_tamper() {
+    let commitment = target_commitment();
+    let mut lineage = InferenceUsageLineage::seal_with_target_commitment(
+        "effect.1",
+        0,
+        DIGEST_A,
+        &commitment,
+        Usage {
+            input_tokens: 2,
+            output_tokens: 3,
+        },
+        4,
+        None,
+    )
+    .expect("seal committed target lineage");
+    lineage.target_commitment_digest = Some(DIGEST_E.to_string());
+    assert_eq!(
+        lineage.validate(),
+        Err(apxm_inference::LineageError::CommitMismatch)
+    );
 }
 
 #[test]
