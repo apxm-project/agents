@@ -33,13 +33,15 @@ Run in order for any non-trivial session:
 - `vllm-service` — APXM-vLLM service operation (existing).
 - `compile-and-execute` — compile graphs and run `.apxmobj`.
 - `frontend-implementation` — compiler frontend work across Rust
-  `AirModule`, TypeScript `@apxm/frontend`, Python `apxm`, and AIR lowering.
+  FrontendGraph/AIR lowering, TypeScript `@apxm/frontend`, and Python
+  `apxm_program`.
 - `mlir-pass-development` — add/modify MLIR passes.
 - `fork-vllm-rebase` — rebase the `external/vllm` fork.
 - `model-zoo-operate` — operate the vLLM zoo manifests.
 - `backend-add` — register new APXM backends.
 - `ais-op-design` — design-before-code for new AIS ops.
-- `mcp-server` — work on the APXM MCP server.
+- `mcp-server` — work on APXM MCP surfaces, local registration, and bridges
+  without inventing a product control plane.
 - `design-docs` — gate overclaim/citation-drift in conceptual `docs/`.
 
 Owner-local prompt evaluation uses the checked-in bundles under

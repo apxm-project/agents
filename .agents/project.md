@@ -22,12 +22,14 @@ GitHub Copilot reads `.github/copilot-instructions.md`.
 `agents` is the APXM abstract-machine repo: AIS dialect, compiler, runtime,
 capability contracts, context handling, permissions, orchestration, CLI, and
 the profile-backed agent execution path. It is not the whole APXM workspace;
-the `apxm` coordinator owns repo composition, while `server`, `auth`, `studio`,
-Host SDK, and Adapters own their exact planes.
+the top-level workspace coordinates docs and release entry points but owns no
+product control plane or alternate execution semantics. Downstream products may
+pin APXM, but `agents` stays product-neutral and cannot depend on their
+identifiers, schemas, routes, or services.
 
-Do **not** describe `agents` as the APXM coordinator, the HTTP/managed-durability
-server, the Host protocol owner, or only "vLLM dispatch". The correct anchor
-is: *the abstract machine and runtime contracts for APXM agents*.
+Do **not** describe `agents` as the APXM coordinator, a managed product control
+plane, a downstream Host/SDK owner, or only "vLLM dispatch". The correct
+anchor is: *the abstract machine and runtime contracts for APXM agents*.
 
 ## 2. Authority CLI
 
@@ -54,8 +56,9 @@ Command groups (see `dekk agents --help` for the live list):
 If a needed action isn't yet wrapped, **add a Dekk command** in `.dekk.toml`
 rather than shelling out — that is the project-wide pattern.
 
-Managed MCP presents granted Host Capabilities, not an Agents-owned Agent
-Program lifecycle tool family.
+Any downstream-managed MCP surface may project exact granted Capabilities
+through its own transport, but it is not an Agents-owned Agent Program
+lifecycle tool family.
 
 ## 3. Lifecycle workflow
 
@@ -253,16 +256,19 @@ Each capability composes a **capability_binding** (callable implementation) plus
 **permission policy** (authority). Runtime authority flows through typed
 **capability grants** (`grant_*` ids), not bare handler strings.
 
-Canonical terms, reserved aliases, route naming, and schema versions live in
-the coordinator glossary:
+Canonical capability, Port-binding, and execution terms live in the local owner
+contracts:
 
-- `../../docs/context/capability-vocabulary.md` — SSOT for APXM-owned capability
-  vocabulary (`CapabilityDefinition`, `CapabilityBinding`, `PermissionPolicy`,
-  `CapabilityGrant`, `PermissionOperation`, `PromptPolicy`, …).
+- `docs/agents/portable-core-interface-contract.md` — Port Contracts,
+  Implementation Descriptors, Runtime Profiles, exact Port Bindings, and
+  product-neutral Execution/Invocation Admission.
+- `docs/agents/agent-program-composition-and-air-contract.md` — Capability,
+  Tool, Skill, `ModelTargetRef`, Program Invocation, checkpoint, confinement,
+  and evidence semantics.
 
-When touching capability registry, admission, pack schemas, AIS
-`REGISTER_CAPABILITY` / `INV_CAP.capability`, or server `/v1/capability-templates`
-routes, read that doc first and keep code, schemas, and UI copy aligned.
+When touching Capability definitions, admission, pack schemas,
+`capability.invoke` lowering, or MCP tool projection, read those docs first and
+keep code, schemas, and evidence aligned.
 
 ## 11. Storage layout
 

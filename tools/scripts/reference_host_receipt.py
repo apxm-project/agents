@@ -7,6 +7,8 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import os
+import platform
 import subprocess
 import sys
 from pathlib import Path
@@ -104,6 +106,11 @@ def build_runner(command: list[str]) -> int:
 
 
 def git_stdout(*args: str) -> str:
+    env = os.environ.copy()
+    if platform.system() == "Darwin":
+        env.pop("DYLD_LIBRARY_PATH", None)
+        env.pop("DYLD_FALLBACK_LIBRARY_PATH", None)
+        env.pop("LD_LIBRARY_PATH", None)
     result = subprocess.run(
         ["git", *args],
         cwd=REPOSITORY_ROOT,
@@ -111,6 +118,7 @@ def git_stdout(*args: str) -> str:
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env=env,
     )
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip() or str(result.returncode)

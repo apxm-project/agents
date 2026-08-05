@@ -4,6 +4,13 @@
   "owner_executable": "apxm-reference-host",
   "owner_executable_path": "crates/tools/cli/src/bin/reference_host.rs",
   "transport_protocol": "jsonl-stdin-stdout",
+  "startup_input_preflight_test_fixture": {
+    "scope": "test-only",
+    "artifact_path": "reference-host/fixtures/apxm.reference-host.startup-input.test.json",
+    "artifact_digest": "sha256:3be733c6f69f6469f706bc50f0359515de0a38ed0b9aa1ae1ba14191d9383f85",
+    "owner_revision": "ff48332f2ce6af8a45eb38a15f4510a134223f5f",
+    "fail_closed_on": ["missing", "stale", "dirty", "mismatched"]
+  },
   "host_execution_manifest_schema": {
     "schema_id": "apxm.host-execution-manifest.v1",
     "path": "reference-host/schemas/apxm.host-execution-manifest.v1.json",

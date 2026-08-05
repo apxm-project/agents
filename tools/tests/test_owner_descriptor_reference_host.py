@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import copy
 import importlib.util
 import json
+import os
+import platform
 import re
 import subprocess
 import tomllib
@@ -43,6 +46,13 @@ REFERENCE_HOST_LIFECYCLE_VECTOR = (
 REFERENCE_HOST_SOURCE = (
     REPOSITORY_ROOT / "crates" / "tools" / "cli" / "src" / "bin" / "reference_host.rs"
 )
+REFERENCE_HOST_STARTUP_INPUT_FIXTURE = (
+    REPOSITORY_ROOT
+    / "contracts"
+    / "reference-host"
+    / "fixtures"
+    / "apxm.reference-host.startup-input.test.json"
+)
 
 README_REFERENCE_HOST = re.compile(
     r"This consumer is pinned to Host SDK source revision\s+"
@@ -74,6 +84,20 @@ def load_validator_module():
 
 def load_json(path: Path) -> dict[str, object]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def git_head_revision() -> str:
+    env = os.environ.copy()
+    if platform.system() == "Darwin":
+        env.pop("DYLD_LIBRARY_PATH", None)
+        env.pop("DYLD_FALLBACK_LIBRARY_PATH", None)
+        env.pop("LD_LIBRARY_PATH", None)
+    return subprocess.check_output(
+        ["git", "rev-parse", "HEAD"],
+        cwd=REPOSITORY_ROOT,
+        text=True,
+        env=env,
+    ).strip()
 
 
 class OwnerDescriptorReferenceHostTests(unittest.TestCase):
@@ -140,15 +164,22 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
         self.assertEqual(offenders, [], "\n".join(offenders))
 
     def test_reference_host_release_manifest_attests_exact_lifecycle_cohort(self) -> None:
+        descriptor = load_json(DESCRIPTOR_PATH)
         release_manifest = load_json(REFERENCE_HOST_RELEASE_MANIFEST)
         execution_manifest = load_json(REFERENCE_HOST_EXECUTION_MANIFEST)
         lifecycle_vector = load_json(REFERENCE_HOST_LIFECYCLE_VECTOR)
+        expected_release_manifest_ref = self.validator.reference_host_release_manifest_ref()
         expected_execution_manifest_ref = self.validator.reference_host_execution_manifest_ref()
         expected_publication_cohort = self.validator.reference_host_publication_cohort(
             execution_manifest
         )
         expected_lifecycle_vector_ref = self.validator.reference_host_lifecycle_vector_ref(
             lifecycle_vector
+        )
+        expected_profile = self.validator.reference_host_published_lifecycle_profile(
+            release_manifest,
+            execution_manifest,
+            lifecycle_vector,
         )
         expected_attestation = {
             "profile_cohort": list(self.validator.REFERENCE_HOST_PROFILE_COHORT),
@@ -175,6 +206,15 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
             expected_attestation,
             "the reference-host release manifest must attest the exact lifecycle cohort",
         )
+        self.assertEqual(
+            descriptor["published_host_lifecycle_profiles"],
+            [expected_profile],
+            "the owner descriptor must publish the exact reference-host lifecycle profile",
+        )
+        self.assertEqual(
+            descriptor["published_host_lifecycle_profiles"][0]["release_manifest"],
+            expected_release_manifest_ref,
+        )
 
     def test_reference_host_release_manifest_rejects_retired_admission_alias(self) -> None:
         release_manifest_text = REFERENCE_HOST_RELEASE_MANIFEST.read_text(encoding="utf-8")
@@ -184,11 +224,7 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
         )
 
     def test_reference_host_release_attestation_matches_committed_owner_artifacts(self) -> None:
-        revision = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"],
-            cwd=REPOSITORY_ROOT,
-            text=True,
-        ).strip()
+        revision = git_head_revision()
         descriptor_digest = self.validator.descriptor_exact_checksum()
         attestation = self.validator.reference_host_release_attestation(
             owner_revision=revision,
@@ -223,7 +259,10 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
                 "contract_id": "apxm.host-execution-manifest.v1",
                 "path": "contracts/schemas/apxm.host-execution-manifest.v1.json",
                 "exact_bytes_digest": self.validator.file_digest(
-                    REPOSITORY_ROOT / "contracts" / "schemas" / "apxm.host-execution-manifest.v1.json"
+                    REPOSITORY_ROOT
+                    / "contracts"
+                    / "schemas"
+                    / "apxm.host-execution-manifest.v1.json"
                 ),
             },
             attestation["owner_source_contracts"],
@@ -246,6 +285,49 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
             "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         ):
             self.assertNotIn(placeholder, source)
+
+    def test_reference_host_execution_manifest_pins_test_only_startup_input_fixture(self) -> None:
+        execution_manifest = load_json(REFERENCE_HOST_EXECUTION_MANIFEST)
+        expected = {
+            "scope": "test-only",
+            "artifact_path": "reference-host/fixtures/apxm.reference-host.startup-input.test.json",
+            "artifact_digest": self.validator.file_digest(REFERENCE_HOST_STARTUP_INPUT_FIXTURE),
+            "owner_revision": self.expected_reference["source_revision"],
+            "fail_closed_on": ["missing", "stale", "dirty", "mismatched"],
+        }
+
+        self.assertEqual(
+            execution_manifest["startup_input_preflight_test_fixture"],
+            expected,
+            "the reference-host execution manifest must pin one exact test-scoped startup input fixture",
+        )
+        self.validator.check_reference_host_startup_input_preflight(execution_manifest)
+
+    def test_reference_host_startup_input_preflight_rejects_missing_fixture(self) -> None:
+        execution_manifest = load_json(REFERENCE_HOST_EXECUTION_MANIFEST)
+        missing = copy.deepcopy(execution_manifest)
+        missing["startup_input_preflight_test_fixture"]["artifact_path"] = (
+            "reference-host/fixtures/does-not-exist.json"
+        )
+
+        with self.assertRaisesRegex(
+            self.validator.ValidationError,
+            "startup-input preflight fixture is missing",
+        ):
+            self.validator.check_reference_host_startup_input_preflight(missing)
+
+    def test_reference_host_startup_input_preflight_rejects_digest_mismatch(self) -> None:
+        execution_manifest = load_json(REFERENCE_HOST_EXECUTION_MANIFEST)
+        mismatched = copy.deepcopy(execution_manifest)
+        mismatched["startup_input_preflight_test_fixture"]["artifact_digest"] = (
+            "sha256:" + ("0" * 64)
+        )
+
+        with self.assertRaisesRegex(
+            self.validator.ValidationError,
+            "startup-input preflight fixture digest mismatched",
+        ):
+            self.validator.check_reference_host_startup_input_preflight(mismatched)
 
 
 if __name__ == "__main__":
