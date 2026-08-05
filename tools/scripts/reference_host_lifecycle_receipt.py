@@ -69,6 +69,8 @@ TRANSPORT_PROTOCOL = "jsonl-stdin-stdout"
 OWNER_EXECUTABLE = "apxm-reference-host"
 OWNER_EXECUTABLE_PATH = "crates/tools/cli/src/bin/reference_host.rs"
 RECEIPT_SCHEMA_VERSION = "apxm.reference-host-lifecycle-receipt.v1"
+LIFECYCLE_PROBE_SCHEMA = "apxm.reference-host.lifecycle-probe.v1"
+IN_FLIGHT_DRAIN_PROBE = "drain_shutdown_after_in_flight_completion"
 FAIL_CLOSED_ON = ["missing", "placeholder", "dirty", "mismatched", "implicit-default"]
 HEX40 = set("0123456789abcdef")
 
@@ -228,7 +230,9 @@ def invalid_provenance_admission(startup_input: dict[str, Any]) -> dict[str, Any
     return admission
 
 
-def host_readiness(startup_input: dict[str, Any], state: str) -> dict[str, Any]:
+def host_readiness(
+    startup_input: dict[str, Any], state: str, in_flight: int = 0
+) -> dict[str, Any]:
     return {
         "schema_version": HOST_SCHEMA,
         "contract_id": HOST_SCHEMA,
@@ -236,7 +240,7 @@ def host_readiness(startup_input: dict[str, Any], state: str) -> dict[str, Any]:
         "release_digest": startup_input["release_digest"],
         "port_bindings_digest": startup_input["port_bindings_digest"],
         "resource_ceiling_digest": startup_input["resource_ceiling_digest"],
-        "in_flight": 0,
+        "in_flight": in_flight,
     }
 
 
@@ -575,6 +579,122 @@ def run_case_drain_rejection(
         close_transport(transport)
 
 
+def run_in_flight_drain_probe(
+    executable_path: Path, startup_input_path: Path
+) -> dict[str, Any]:
+    try:
+        result = subprocess.run(
+            [
+                str(executable_path),
+                "--startup-input",
+                str(startup_input_path),
+                "--lifecycle-probe",
+                IN_FLIGHT_DRAIN_PROBE,
+            ],
+            cwd=REPOSITORY_ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as error:
+        raise LifecycleReceiptError(
+            "in_flight_drain_probe_failed",
+            "reference-host in-flight drain probe could not start",
+            details={"error": str(error), "executable_path": str(executable_path)},
+        ) from error
+    expect(
+        result.returncode == 0,
+        "in_flight_drain_probe_failed",
+        "reference-host in-flight drain probe exited nonzero",
+        returncode=result.returncode,
+        stderr=result.stderr.strip(),
+    )
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    expect(
+        len(lines) == 1,
+        "in_flight_drain_probe_failed",
+        "reference-host in-flight drain probe must emit exactly one JSON object",
+        stdout=result.stdout,
+    )
+    try:
+        probe = json.loads(lines[0])
+    except json.JSONDecodeError as error:
+        raise LifecycleReceiptError(
+            "in_flight_drain_probe_failed",
+            f"reference-host in-flight drain probe returned invalid JSON: {error}",
+            details={"stdout": result.stdout},
+        ) from error
+    expect(
+        isinstance(probe, dict),
+        "in_flight_drain_probe_failed",
+        "reference-host in-flight drain probe must return an object",
+    )
+    return probe
+
+
+def run_case_in_flight_drain(
+    executable_path: Path,
+    startup_input_path: Path,
+    startup_input: dict[str, Any],
+    lifecycle_probe_runner: Callable[[Path, Path], dict[str, Any]],
+    **_: Any,
+) -> dict[str, Any]:
+    probe = lifecycle_probe_runner(executable_path, startup_input_path)
+    expect(
+        probe.get("schema_version") == LIFECYCLE_PROBE_SCHEMA,
+        "case_failed",
+        "in-flight drain probe schema drifted",
+    )
+    expect(
+        probe.get("semantic_owner") == "agents",
+        "case_failed",
+        "in-flight drain probe semantic owner drifted",
+    )
+    expect(
+        probe.get("case") == IN_FLIGHT_DRAIN_PROBE,
+        "case_failed",
+        "in-flight drain probe case drifted",
+    )
+    expect(
+        probe.get("transition") == "stop_admission_then_finish_in_flight",
+        "case_failed",
+        "in-flight drain probe transition drifted",
+    )
+    expect(
+        probe.get("in_flight_before_drain") == host_readiness(startup_input, "ready", 1),
+        "case_failed",
+        "in-flight drain probe must observe one admitted invocation before drain",
+    )
+    expect(
+        probe.get("drain_response") == host_readiness(startup_input, "draining", 1),
+        "case_failed",
+        "in-flight drain probe must stop admission while work remains in flight",
+    )
+    completion = probe.get("completion_response")
+    expect(
+        isinstance(completion, dict) and completion.get("status") == "committed",
+        "case_failed",
+        "in-flight drain probe must finish the admitted invocation",
+    )
+    runtime_evidence = assert_runtime_evidence(completion, "invocation.committed")
+    terminal_readiness = probe.get("terminal_readiness")
+    expect(
+        terminal_readiness == host_readiness(startup_input, "stopped"),
+        "case_failed",
+        "in-flight drain probe must reach terminal quiescence",
+    )
+    return {
+        "name": IN_FLIGHT_DRAIN_PROBE,
+        "status": "passed",
+        "probe": probe,
+        "runtime_evidence_terminal_kind": "invocation.committed",
+        "runtime_evidence": runtime_evidence,
+        "in_flight_before_drain": 1,
+        "terminal_state_after_in_flight": "stopped",
+        "covered_release_cases": [IN_FLIGHT_DRAIN_PROBE],
+    }
+
+
 def run_case_cancellation(
     executable_path: Path,
     startup_input_path: Path,
@@ -794,29 +914,13 @@ def executed_case_runners() -> list[tuple[str, Callable[..., dict[str, Any]]]]:
         ("negative_admission_provenance_rejection", run_case_negative_admission),
         ("invalid_air_failure", run_case_invalid_air),
         ("drain_rejection_before_dispatch", run_case_drain_rejection),
+        (IN_FLIGHT_DRAIN_PROBE, run_case_in_flight_drain),
         ("cancellation_before_admission", run_case_cancellation),
         ("explicit_shutdown_terminal_state", run_case_shutdown),
         ("restart_recovery_from_runtime_evidence", run_case_restart_recovery),
         ("revocation_before_dispatch", run_case_revocation),
         ("boundary_fail_closed", run_case_boundary_fail_closed),
     ]
-
-
-def remaining_release_case_blockers(required_cases: list[str], covered_cases: list[str]) -> list[dict[str, str]]:
-    blockers: dict[str, dict[str, str]] = {
-        "drain_shutdown_after_in_flight_completion": {
-            "case": "drain_shutdown_after_in_flight_completion",
-            "code": "missing_in_flight_drain_probe",
-            "message": (
-                "the current operator receipt exercises pre-dispatch drain rejection, "
-                "but not an in-flight drain followed by terminal quiescence under one durable "
-                "JSONL transport receipt"
-            ),
-        }
-    }
-    covered = set(covered_cases)
-    return [copy.deepcopy(blockers[case]) for case in required_cases if case not in covered and case in blockers]
-
 
 def write_reference_host_lifecycle_receipt(
     *,
@@ -825,6 +929,7 @@ def write_reference_host_lifecycle_receipt(
     startup_input_path: Path = DEFAULT_STARTUP_INPUT_PATH,
     build_receipt_runner: Callable[[Path], tuple[int, dict[str, Any]]] = run_build_receipt,
     transport_factory: Callable[[Path, Path], ReferenceHostTransport] | None = None,
+    lifecycle_probe_runner: Callable[[Path, Path], dict[str, Any]] = run_in_flight_drain_probe,
 ) -> tuple[int, dict[str, Any]]:
     receipt: dict[str, Any] = {
         "schema_version": RECEIPT_SCHEMA_VERSION,
@@ -903,6 +1008,7 @@ def write_reference_host_lifecycle_receipt(
                     minimal_air=minimal_air,
                     invalid_air=invalid_air,
                     transport_factory=transport,
+                    lifecycle_probe_runner=lifecycle_probe_runner,
                 )
                 cases.append(case)
                 covered_release_cases.update(case.get("covered_release_cases", []))
@@ -924,7 +1030,7 @@ def write_reference_host_lifecycle_receipt(
         required_cases = [case["name"] for case in lifecycle_vector["cases"]]
         covered_release_case_list = [case for case in required_cases if case in covered_release_cases]
         remaining_release_cases = [case for case in required_cases if case not in covered_release_cases]
-        blockers = remaining_release_case_blockers(required_cases, covered_release_case_list)
+        blockers: list[dict[str, str]] = []
 
         receipt["cases"] = cases
         receipt["coverage"] = {

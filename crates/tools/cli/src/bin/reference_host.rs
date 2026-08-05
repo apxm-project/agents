@@ -20,6 +20,8 @@ const HOST_SCHEMA: &str = "apxm.runtime.host.v1";
 const REQUEST_SCHEMA: &str = "apxm.runtime.host-request.v1";
 const ADMISSION_SCHEMA: &str = "apxm.invocation-admission.v1";
 const STARTUP_INPUT_SCHEMA: &str = "apxm.reference-host-startup-input.v1";
+const IN_FLIGHT_DRAIN_PROBE: &str = "drain_shutdown_after_in_flight_completion";
+const IN_FLIGHT_DRAIN_PROBE_SCHEMA: &str = "apxm.reference-host.lifecycle-probe.v1";
 const DIGEST_PREFIX: &str = "sha256:";
 const OWNER_EXECUTABLE: &str = "apxm-reference-host";
 const OWNER_EXECUTABLE_PATH: &str = "crates/tools/cli/src/bin/reference_host.rs";
@@ -119,6 +121,11 @@ struct Host {
     admission_revoked: bool,
     last_runtime_evidence: Option<Value>,
     admitted_digests: AdmittedDigests,
+}
+
+struct PreparedInvocation {
+    invocation_id: String,
+    air: AirModule,
 }
 
 impl Host {
@@ -271,34 +278,48 @@ impl Host {
         Ok(())
     }
 
-    async fn invoke(&mut self, request: Request) -> Value {
+    fn prepare_invocation(
+        &mut self,
+        request: Request,
+    ) -> std::result::Result<PreparedInvocation, Value> {
         let Request { admission, air, .. } = request;
         let Some(admission) = admission else {
-            return self.reject("missing_admission", "invocation admission is required");
+            return Err(self.reject("missing_admission", "invocation admission is required"));
         };
         if let Err(rejection) = self.validate_admission(&admission) {
-            return rejection;
+            return Err(rejection);
         }
         let Some(air_value) = air else {
-            return self.reject("missing_air", "canonical apxm.air.v1 is required");
+            return Err(self.reject("missing_air", "canonical apxm.air.v1 is required"));
         };
         let air: AirModule = match serde_json::from_value(air_value) {
             Ok(air) => air,
-            Err(error) => return self.reject("invalid_air", error.to_string()),
+            Err(error) => return Err(self.reject("invalid_air", error.to_string())),
         };
         if !air.verify().is_accepted() {
-            return self.reject("invalid_air", "canonical AIR verification failed");
+            return Err(self.reject("invalid_air", "canonical AIR verification failed"));
         }
         self.in_flight = 1;
-        let result = match execute_canonical_air(air).await {
+        Ok(PreparedInvocation {
+            invocation_id: admission.invocation_id,
+            air,
+        })
+    }
+
+    fn complete_invocation(
+        &mut self,
+        invocation_id: String,
+        execution: std::result::Result<Value, String>,
+    ) -> Value {
+        let result = match execution {
             Ok(output) => {
                 let runtime_evidence =
-                    self.runtime_evidence(&admission.invocation_id, "invocation.committed");
+                    self.runtime_evidence(&invocation_id, "invocation.committed");
                 self.last_runtime_evidence = Some(runtime_evidence.clone());
                 json!({
                     "schema_version": HOST_SCHEMA,
                     "status": "committed",
-                    "invocation_id": admission.invocation_id,
+                    "invocation_id": invocation_id,
                     "result": output,
                     "runtime_evidence": runtime_evidence,
                 })
@@ -306,8 +327,8 @@ impl Host {
             Err(error) => json!({
                 "schema_version": HOST_SCHEMA,
                 "status": "failed",
-                "invocation_id": admission.invocation_id,
-                "error": {"code": "canonical_execution_failed", "message": error.to_string()},
+                "invocation_id": invocation_id,
+                "error": {"code": "canonical_execution_failed", "message": error},
             }),
         };
         self.in_flight = 0;
@@ -317,13 +338,71 @@ impl Host {
         result
     }
 
-    async fn handle(&mut self, request: Request) -> Value {
-        if request.schema_version != REQUEST_SCHEMA {
-            return self.reject(
-                "invalid_request_schema",
-                "exact host request schema is required",
-            );
-        }
+    async fn invoke(&mut self, request: Request) -> Value {
+        let prepared = match self.prepare_invocation(request) {
+            Ok(prepared) => prepared,
+            Err(rejection) => return rejection,
+        };
+        let execution = execute_canonical_air(prepared.air)
+            .await
+            .map_err(|error| error.to_string());
+        self.complete_invocation(prepared.invocation_id, execution)
+    }
+
+    async fn probe_in_flight_drain(&mut self) -> Result<Value> {
+        let probe_invocation_id = "probe.invocation.1";
+        let prepared = self
+            .prepare_invocation(Request {
+                schema_version: REQUEST_SCHEMA.into(),
+                operation: "invoke".into(),
+                admission: Some(Admission {
+                    schema_version: ADMISSION_SCHEMA.into(),
+                    invocation_id: probe_invocation_id.into(),
+                    artifact_digest: self.admitted_digests.release_digest.clone(),
+                    release_digest: self.admitted_digests.release_digest.clone(),
+                    port_bindings_digest: self.admitted_digests.port_bindings_digest.clone(),
+                    resource_ceiling_digest: self.admitted_digests.resource_ceiling_digest.clone(),
+                    provenance_digest: self.admitted_digests.release_digest.clone(),
+                }),
+                air: Some(json!({
+                    "schema_version": "apxm.air.v1",
+                    "semantic_operations": [],
+                    "structural_ir": [],
+                    "context_flow": [],
+                    "source_map": {
+                        "schema_version": "apxm.source-map.v1",
+                        "source_language": "python",
+                        "node_spans": [],
+                        "region_annotations": []
+                    }
+                })),
+            })
+            .map_err(|rejection| anyhow!("{rejection}"))?;
+        let in_flight_before_drain = self.readiness();
+        let drain_response = self.handle_non_invoke(Request {
+            schema_version: REQUEST_SCHEMA.into(),
+            operation: "drain".into(),
+            admission: None,
+            air: None,
+        });
+        let execution = execute_canonical_air(prepared.air)
+            .await
+            .map_err(|error| error.to_string());
+        let completion_response = self.complete_invocation(prepared.invocation_id, execution);
+        let terminal_readiness = self.readiness();
+        Ok(json!({
+            "schema_version": IN_FLIGHT_DRAIN_PROBE_SCHEMA,
+            "semantic_owner": "agents",
+            "case": IN_FLIGHT_DRAIN_PROBE,
+            "transition": "stop_admission_then_finish_in_flight",
+            "in_flight_before_drain": in_flight_before_drain,
+            "drain_response": drain_response,
+            "completion_response": completion_response,
+            "terminal_readiness": terminal_readiness,
+        }))
+    }
+
+    fn handle_non_invoke(&mut self, request: Request) -> Value {
         match request.operation.as_str() {
             "readiness" => self.readiness(),
             "drain" if self.state == State::Ready => {
@@ -367,11 +446,24 @@ impl Host {
                 "invalid_transition",
                 "host restart requires a stopped terminal state",
             ),
-            "invoke" => self.invoke(request).await,
             _ => self.reject(
                 "unknown_operation",
                 "operation must be readiness, invoke, drain, cancel, shutdown, revoke, or restart",
             ),
+        }
+    }
+
+    async fn handle(&mut self, request: Request) -> Value {
+        if request.schema_version != REQUEST_SCHEMA {
+            return self.reject(
+                "invalid_request_schema",
+                "exact host request schema is required",
+            );
+        }
+        if request.operation == "invoke" {
+            self.invoke(request).await
+        } else {
+            self.handle_non_invoke(request)
         }
     }
 }
@@ -511,26 +603,49 @@ fn load_startup_input(path: &Path) -> Result<AdmittedDigests> {
     })
 }
 
-fn startup_input_path() -> Result<PathBuf> {
+fn startup_input_path() -> Result<(PathBuf, Option<String>)> {
     let mut args = std::env::args().skip(1);
-    match (args.next().as_deref(), args.next(), args.next()) {
-        (Some("--startup-input"), Some(path), None) => Ok(PathBuf::from(path)),
-        (Some(other), _, _) => Err(anyhow!(
-            "unexpected argument {other:?}; usage: apxm-reference-host --startup-input <path>"
-        )),
-        (None, _, _) => Err(anyhow!(
+    let Some(flag) = args.next() else {
+        return Err(anyhow!(
             "missing required startup input; usage: apxm-reference-host --startup-input <path>"
-        )),
+        ));
+    };
+    if flag != "--startup-input" {
+        return Err(anyhow!(
+            "unexpected argument {flag:?}; usage: apxm-reference-host --startup-input <path>"
+        ));
     }
+    let Some(path) = args.next() else {
+        return Err(anyhow!(
+            "missing startup input path; usage: apxm-reference-host --startup-input <path>"
+        ));
+    };
+    let probe = match (args.next(), args.next()) {
+        (None, None) => None,
+        (Some(flag), Some(case)) if flag == "--lifecycle-probe" => Some(case),
+        (Some(other), _) => return Err(anyhow!("unexpected argument {other:?}")),
+        (None, Some(_)) => return Err(anyhow!("unexpected trailing argument")),
+    };
+    Ok((PathBuf::from(path), probe))
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let startup_input = startup_input_path()?;
+    let (startup_input, probe) = startup_input_path()?;
     let admitted_digests = load_startup_input(&startup_input)?;
     let stdin = std::io::stdin();
     let mut host = Host::new(admitted_digests);
     host.mark_ready();
+    if let Some(probe) = probe {
+        if probe != IN_FLIGHT_DRAIN_PROBE {
+            bail!("unsupported lifecycle probe {probe:?}");
+        }
+        println!(
+            "{}",
+            serde_json::to_string(&host.probe_in_flight_drain().await?)?
+        );
+        return Ok(());
+    }
     for line in stdin.lock().lines() {
         let line = line?;
         if line.trim().is_empty() {
@@ -743,6 +858,31 @@ mod tests {
                 },
             })
         );
+    }
+
+    #[tokio::test]
+    async fn in_flight_drain_probe_finishes_to_terminal_quiescence() {
+        let mut host = Host::new(startup_digests());
+        host.mark_ready();
+
+        let probe = host
+            .probe_in_flight_drain()
+            .await
+            .expect("in-flight drain probe");
+
+        assert_eq!(probe["schema_version"], IN_FLIGHT_DRAIN_PROBE_SCHEMA);
+        assert_eq!(probe["case"], IN_FLIGHT_DRAIN_PROBE);
+        assert_eq!(probe["in_flight_before_drain"]["state"], "ready");
+        assert_eq!(probe["in_flight_before_drain"]["in_flight"], 1);
+        assert_eq!(probe["drain_response"]["state"], "draining");
+        assert_eq!(probe["drain_response"]["in_flight"], 1);
+        assert_eq!(probe["completion_response"]["status"], "committed");
+        assert_eq!(
+            probe["completion_response"]["runtime_evidence"]["facts"][2]["fact_kind"],
+            "invocation.committed"
+        );
+        assert_eq!(probe["terminal_readiness"]["state"], "stopped");
+        assert_eq!(probe["terminal_readiness"]["in_flight"], 0);
     }
 
     #[tokio::test]
