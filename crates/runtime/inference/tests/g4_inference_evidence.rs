@@ -18,10 +18,11 @@ use apxm_inference::{
     InferenceCredentialLeaseIdentity, InferenceDriverBinding, InferenceUsageLineage,
     LeasedInferenceBackend, ModelBindingAdmission, ModelCallPreparation, ModelCallRequest,
     ModelCallRequestMetadata, ModelContextEnvelopeRef, ModelDeploymentRef, ModelOutcome,
-    ModelStreamMode, ModelTargetRef, PINNED_VLLM_PORT_CONTRACT_DIGEST, PINNED_VLLM_VECTOR_DIGESTS,
+    ModelStreamMode, ModelTargetRef, PINNED_VLLM_OWNER_REVISION, PINNED_VLLM_PORT_CONTRACT_DIGEST,
+    PINNED_VLLM_RELEASE_ID, PINNED_VLLM_RELEASE_MANIFEST_DIGEST, PINNED_VLLM_VECTOR_DIGESTS,
     ResolvedModelBinding, RetryPolicy, TypedError, Usage, VllmConformanceJoin, VllmJoinStatus,
-    authoritative_usage, correlate_diagnostics, digest_bytes, dispatch_exact_inference,
-    redact_diagnostic_value,
+    VllmReleaseAttestation, authoritative_usage, correlate_diagnostics, digest_bytes,
+    dispatch_exact_inference, redact_diagnostic_value,
 };
 use std::cell::Cell;
 
@@ -812,6 +813,42 @@ fn vllm_conformance_join_cannot_claim_release_without_external_evidence() {
     assert!(matches!(
         err,
         apxm_inference::JoinError::ReleaseEvidenceRequired
+    ));
+}
+
+#[test]
+fn vllm_conformance_join_requires_verified_release_coordinates_and_membership() {
+    let attestation = VllmReleaseAttestation {
+        release_id: PINNED_VLLM_RELEASE_ID.to_string(),
+        owner_revision: PINNED_VLLM_OWNER_REVISION.to_string(),
+        manifest_digest: PINNED_VLLM_RELEASE_MANIFEST_DIGEST.to_string(),
+        port_contract_digest: PINNED_VLLM_PORT_CONTRACT_DIGEST.to_string(),
+        vector_digests: PINNED_VLLM_VECTOR_DIGESTS
+            .iter()
+            .map(|digest| (*digest).to_string())
+            .collect(),
+    };
+    let joined = VllmConformanceJoin::join_with_release_attestation(
+        PINNED_VLLM_PORT_CONTRACT_DIGEST,
+        attestation.vector_digests.clone(),
+        attestation.clone(),
+    )
+    .expect("verified external release evidence joins");
+    assert_eq!(joined.join_status, VllmJoinStatus::Joined);
+    assert_eq!(joined.release_attestation, Some(attestation));
+    joined.validate().expect("verified joined record validates");
+
+    let mut tampered = joined.clone();
+    tampered
+        .release_attestation
+        .as_mut()
+        .expect("attestation")
+        .owner_revision = "f".repeat(40);
+    assert!(matches!(
+        tampered.validate(),
+        Err(apxm_inference::JoinError::InvalidReleaseAttestation(
+            "owner_revision"
+        ))
     ));
 }
 
