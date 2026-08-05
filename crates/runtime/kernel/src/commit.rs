@@ -13,6 +13,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use apxm_program::grammar::is_digest;
 use apxm_program::runtime_evidence::Fact;
 
 /// The durable Program Instance identity that scopes compare-and-commit state
@@ -148,6 +149,83 @@ pub struct ExecutionCommitRequest {
     /// The runtime-evidence facts published atomically with this commit; their
     /// content is summarized by `write_set.runtime_evidence_batch_digest`.
     pub evidence_batch: Vec<Fact>,
+}
+
+/// Why a commit request cannot cross the single atomic boundary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CommitRequestError {
+    EmptyField(&'static str),
+    InvalidDigest(&'static str),
+    EvidenceBatchMismatch,
+}
+
+impl std::fmt::Display for CommitRequestError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EmptyField(field) => write!(f, "commit field {field} must be non-empty"),
+            Self::InvalidDigest(field) => write!(f, "commit field {field} is not a sha256 digest"),
+            Self::EvidenceBatchMismatch => {
+                f.write_str("tuple evidence and evidence_batch must be identical")
+            }
+        }
+    }
+}
+
+impl std::error::Error for CommitRequestError {}
+
+impl ExecutionCommitRequest {
+    /// Validate the complete request before an adapter is called. The tuple and
+    /// evidence batch are one atomic member; accepting divergent copies would
+    /// create a second, split evidence path.
+    pub fn validate(&self) -> Result<(), CommitRequestError> {
+        for (field, value) in [
+            ("commit_id", self.commit_id.as_str()),
+            ("program_instance_ref", self.program_instance_ref.as_str()),
+            (
+                "program_invocation_ref",
+                self.program_invocation_ref.as_str(),
+            ),
+            ("idempotency_key", self.idempotency_key.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(CommitRequestError::EmptyField(field));
+            }
+        }
+        for (field, value) in [
+            (
+                "next_program_state_digest",
+                self.write_set.next_program_state_digest.as_str(),
+            ),
+            (
+                "continuation_digest",
+                self.write_set.continuation_digest.as_str(),
+            ),
+            (
+                "checkpoint_effect_outcomes_digest",
+                self.write_set.checkpoint_effect_outcomes_digest.as_str(),
+            ),
+            (
+                "runtime_evidence_batch_digest",
+                self.write_set.runtime_evidence_batch_digest.as_str(),
+            ),
+            (
+                "usage_facts_digest",
+                self.write_set.usage_facts_digest.as_str(),
+            ),
+            (
+                "session_output_refs_digest",
+                self.write_set.session_output_refs_digest.as_str(),
+            ),
+        ] {
+            if !is_digest(value) {
+                return Err(CommitRequestError::InvalidDigest(field));
+            }
+        }
+        if self.tuple.evidence != self.evidence_batch {
+            return Err(CommitRequestError::EvidenceBatchMismatch);
+        }
+        Ok(())
+    }
 }
 
 /// The typed result of an atomic commit. Mirrors the closed

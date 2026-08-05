@@ -51,6 +51,8 @@ pub enum InstanceError {
     },
     /// The instance is single-flight and already has an invocation in flight.
     Busy,
+    /// The request did not satisfy the complete atomic commit boundary.
+    InvalidCommitRequest { message: String },
     /// The invocation needs a port the bundle does not carry.
     MissingPort(crate::bundle::PortSlot),
 }
@@ -67,6 +69,9 @@ impl std::fmt::Display for InstanceError {
                 expected.as_str()
             ),
             Self::Busy => write!(f, "instance is single-flight and busy"),
+            Self::InvalidCommitRequest { message } => {
+                write!(f, "invalid atomic commit request: {message}")
+            }
             Self::MissingPort(slot) => write!(f, "bundle has no {} port", slot.as_str()),
         }
     }
@@ -238,6 +243,11 @@ impl ProgramInstance {
             tuple: ExecutionCommitTuple::empty(batch.clone()),
             evidence_batch: batch.clone(),
         };
+        request
+            .validate()
+            .map_err(|error| InstanceError::InvalidCommitRequest {
+                message: error.to_string(),
+            })?;
 
         let result = self.bundle.execution_commit().commit(request).await;
 
@@ -311,6 +321,11 @@ impl ProgramInstance {
             tuple: ExecutionCommitTuple::empty(batch.clone()),
             evidence_batch: batch.clone(),
         };
+        request
+            .validate()
+            .map_err(|error| InstanceError::InvalidCommitRequest {
+                message: error.to_string(),
+            })?;
 
         match self.bundle.execution_commit().commit(request).await {
             ExecutionCommitResult::Committed { .. } => {
