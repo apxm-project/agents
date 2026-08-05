@@ -31,9 +31,10 @@ pub use admission::{
     ExecutionAdmission, INVOCATION_ADMISSION_SCHEMA, InvocationAdmission, InvocationAdmissionError,
     IssuerKey, IssuerKeyring, IssuerSigningKey, MODEL_INFERENCE_PORT_SCHEMA, NonceLedger,
     PROGRAM_COMPOSITION_PORT_SCHEMA, ResourceCeilings, RuntimeAdmission, RuntimeAdmissionError,
-    SignatureEnvelope, SignatureRejection, VerifiedExecutionAdmission, digest_char,
-    minimal_port_bindings, parse_execution_admission, resolve_exact_bindings,
-    unsigned_admission_skeleton, verify_execution_admission,
+    SignatureEnvelope, SignatureRejection, VerifiedExecutionAdmission, VerifiedInvocationAdmission,
+    digest_char, digest_serializable, minimal_port_bindings, parse_execution_admission,
+    resolve_exact_bindings, unsigned_admission_skeleton, verify_execution_admission,
+    verify_invocation_admission,
 };
 pub use bundle::{
     BundleError, ExactPortBinding, PortBundle, PortBundleSpec, PortImplementation, PortSlot,

@@ -15,7 +15,7 @@ use std::sync::{
 use serde_json::Value;
 
 use apxm_inference::ModelCallRequestMetadataPort;
-use apxm_kernel::{ExactPortBinding, RuntimeAdmission};
+use apxm_kernel::{ExactPortBinding, ResourceCeilings, RuntimeAdmission};
 use apxm_program::artifact::SchemaDigestRef;
 
 use crate::bundle::ExecutionPortBundle;
@@ -75,6 +75,7 @@ pub struct RuntimeProfile {
     _bundle: ExecutionPortBundle,
     ports: ExecutionPorts,
     accepting: AtomicBool,
+    resource_ceilings: ResourceCeilings,
 }
 
 impl RuntimeProfile {
@@ -110,6 +111,7 @@ impl RuntimeProfile {
                 return Err(RuntimeProfileError::BindingNotAdmitted(slot));
             }
         }
+        let resource_ceilings = admission.resource_ceilings().clone();
         let kernel = Arc::new(admission.into_bundle());
         let bundle = ExecutionPortBundle::construct(
             kernel,
@@ -135,6 +137,7 @@ impl RuntimeProfile {
             _bundle: bundle,
             ports,
             accepting: AtomicBool::new(true),
+            resource_ceilings,
         })
     }
 
@@ -146,6 +149,7 @@ impl RuntimeProfile {
         model_call_request_metadata: Arc<dyn ModelCallRequestMetadataPort>,
         hook_handlers: Arc<dyn StaticHookHandlerPort>,
     ) -> Result<Self, RuntimeProfileError> {
+        let resource_ceilings = admission.resource_ceilings().clone();
         let bundle = ExecutionPortBundle::from_admitted_kernel(Arc::new(admission.into_bundle()))
             .map_err(RuntimeProfileError::Binding)?;
         let ports = ExecutionPorts::from_admitted_bundle(
@@ -162,6 +166,7 @@ impl RuntimeProfile {
             _bundle: bundle,
             ports,
             accepting: AtomicBool::new(true),
+            resource_ceilings,
         })
     }
 
@@ -234,5 +239,11 @@ impl RuntimeProfile {
     #[must_use]
     pub fn is_accepting(&self) -> bool {
         self.accepting.load(Ordering::Acquire)
+    }
+
+    /// Return the exact ceilings carried by the immutable runtime authority.
+    #[must_use]
+    pub fn resource_ceilings(&self) -> &ResourceCeilings {
+        &self.resource_ceilings
     }
 }
