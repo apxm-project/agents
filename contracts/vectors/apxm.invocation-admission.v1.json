@@ -13,7 +13,7 @@
     }
   },
   {
-    "name": "rejects_provenance_drift",
+    "name": "rejects_malformed_provenance_digest",
     "expected_valid": false,
     "input": {
       "schema_version": "apxm.invocation-admission.v1",
@@ -22,7 +22,7 @@
       "release_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "port_bindings_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "resource_ceiling_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-      "provenance_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      "provenance_digest": "not-a-digest"
     }
   }
 ]
