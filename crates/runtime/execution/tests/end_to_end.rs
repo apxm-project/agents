@@ -10,11 +10,10 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use apxm_inference::{
-    AttemptDisposition, ExactModelTargetRef, ExactPortBindingRef, IdempotencyKey,
-    InferenceUsageLineage, ModelBindingAdmission, ModelCallPreparation, ModelCallRequest,
-    ModelCallRequestMetadata, ModelCallRequestMetadataPort, ModelContextEnvelopeRef,
-    ModelDeploymentRef, ModelInferencePort, ModelOutcome, ModelStreamMode, ModelTargetRef,
-    ResolvedModelBinding, TypedError, Usage,
+    AttemptDisposition, IdempotencyKey, InferenceTargetCommitment, InferenceUsageLineage,
+    ModelBindingAdmission, ModelCallPreparation, ModelCallRequest, ModelCallRequestMetadata,
+    ModelCallRequestMetadataPort, ModelContextEnvelopeRef, ModelInferencePort, ModelOutcome,
+    ModelStreamMode, ModelTargetRef, ResolvedModelBinding, TypedError, Usage,
 };
 use apxm_kernel::{
     AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, ExactPortBinding, ExecutionCommitPort,
@@ -78,18 +77,22 @@ fn air() -> AirModule {
 }
 
 fn admission() -> ModelBindingAdmission {
-    ModelBindingAdmission::new(ResolvedModelBinding {
-        model_target: ExactModelTargetRef {
-            reference: ModelTargetRef("model.target.v1".into()),
-            target_digest: digest('9'),
-        },
-        model_deployment_ref: ModelDeploymentRef("deploy.default".into()),
-        exact_port_binding: ExactPortBindingRef {
-            binding_digest: digest('a'),
-            port_contract_digest: digest('b'),
-        },
-        composition_digest: digest('c'),
-    })
+    admission_at_generation(0)
+}
+
+fn admission_at_generation(generation: u64) -> ModelBindingAdmission {
+    ModelBindingAdmission::new(ResolvedModelBinding::from_target_commitment(
+        InferenceTargetCommitment::commit(
+            "model.target.v1",
+            digest('9'),
+            "deploy.default",
+            digest('a'),
+            digest('b'),
+            digest('c'),
+            generation,
+        )
+        .expect("target commitment"),
+    ))
 }
 
 fn committed_attempt(
@@ -98,6 +101,16 @@ fn committed_attempt(
     input_tokens: u64,
     output_tokens: u64,
 ) -> ModelAttemptRecordedFact {
+    let target_commitment = InferenceTargetCommitment::commit(
+        "model.target.v1",
+        digest('9'),
+        "deploy.default",
+        digest('a'),
+        digest('b'),
+        digest('c'),
+        0,
+    )
+    .expect("target commitment");
     ModelAttemptRecordedFact {
         fact_id: fact_id.into(),
         event_sequence: 3,
@@ -109,8 +122,14 @@ fn committed_attempt(
         model_effect_id: "model-effect.test".into(),
         request_digest: digest('e'),
         model_target_ref: "model.target.v1".into(),
+        model_target_digest: digest('9'),
         model_deployment_ref: "deploy.default".into(),
         exact_port_binding_digest: digest('a'),
+        target_commitment_digest: target_commitment.commit_digest,
+        generation_cohort_digest: target_commitment.generation_cohort_digest,
+        target_generation: target_commitment.target_generation,
+        target_port_contract_digest: target_commitment.port_contract_digest,
+        target_composition_digest: target_commitment.composition_digest,
         native_input_tokens: input_tokens,
         native_output_tokens: output_tokens,
     }
@@ -118,14 +137,21 @@ fn committed_attempt(
 
 fn lineage_backed_usage() -> CommittedNativeModelUsage {
     let attempt = committed_attempt("fact.invocation.1.3", 0, 10, 20);
-    let mut lineage = InferenceUsageLineage::seal(
-        attempt.model_effect_id.clone(),
-        attempt.attempt_index,
-        attempt.request_digest.clone(),
+    let target_commitment = InferenceTargetCommitment::commit(
         attempt.model_target_ref.clone(),
         digest('9'),
         attempt.model_deployment_ref.clone(),
         attempt.exact_port_binding_digest.clone(),
+        digest('b'),
+        digest('c'),
+        0,
+    )
+    .expect("target commitment");
+    let mut lineage = InferenceUsageLineage::seal_with_target_commitment(
+        attempt.model_effect_id.clone(),
+        attempt.attempt_index,
+        attempt.request_digest.clone(),
+        &target_commitment,
         Usage {
             input_tokens: attempt.native_input_tokens,
             output_tokens: attempt.native_output_tokens,
@@ -147,6 +173,36 @@ fn lineage_backed_usage() -> CommittedNativeModelUsage {
         &lineage,
     )
     .expect("lineage-backed usage")
+}
+
+fn lineage_for_attempt(
+    attempt: &ModelAttemptRecordedFact,
+    request_digest: String,
+    deployment_ref: String,
+) -> InferenceUsageLineage {
+    let target_commitment = InferenceTargetCommitment::commit(
+        attempt.model_target_ref.clone(),
+        digest('9'),
+        deployment_ref,
+        attempt.exact_port_binding_digest.clone(),
+        digest('b'),
+        digest('c'),
+        0,
+    )
+    .expect("target commitment");
+    InferenceUsageLineage::seal_with_target_commitment(
+        attempt.model_effect_id.clone(),
+        attempt.attempt_index,
+        request_digest,
+        &target_commitment,
+        Usage {
+            input_tokens: attempt.native_input_tokens,
+            output_tokens: attempt.native_output_tokens,
+        },
+        12,
+        None,
+    )
+    .expect("seal lineage")
 }
 
 struct TestModelRequestMetadata;
@@ -902,7 +958,7 @@ async fn invalid_atomic_commit_request_rejects_before_any_effect_path() {
 }
 
 #[tokio::test]
-async fn committed_native_model_usage_is_fail_closed_without_lineage_evidence() {
+async fn committed_native_model_usage_publishes_commit_bound_lineage_evidence() {
     let commit = Arc::new(FakeCommit::new());
     let usage = Arc::new(RecordingOperationalUsage::default());
     let ports = ports(commit.clone()).with_committed_native_model_usage_port(usage.clone());
@@ -911,9 +967,9 @@ async fn committed_native_model_usage_is_fail_closed_without_lineage_evidence() 
 
     assert_eq!(
         report.operational_usage,
-        CommittedNativeModelUsageOutcome::Failed(CommittedNativeModelUsageError::Rejected)
+        CommittedNativeModelUsageOutcome::Published
     );
-    assert!(usage.calls().is_empty());
+    assert_eq!(usage.calls().len(), 1);
     let committed_facts = commit.facts();
     let committed_attempt = committed_facts
         .iter()
@@ -939,6 +995,8 @@ async fn committed_native_model_usage_is_fail_closed_without_lineage_evidence() 
     assert_eq!(committed_attempt.model_target_ref, "model.target.v1");
     assert_eq!(committed_attempt.model_deployment_ref, "deploy.default");
     assert_eq!(committed_attempt.exact_port_binding_digest, digest('a'));
+    assert_eq!(committed_attempt.target_generation, 0);
+    assert_eq!(usage.calls()[0].attempt.target_generation, 0);
     assert_eq!(committed_attempt.native_input_tokens, 10);
     assert_eq!(committed_attempt.native_output_tokens, 20);
     assert_eq!(
@@ -949,6 +1007,56 @@ async fn committed_native_model_usage_is_fail_closed_without_lineage_evidence() 
         committed_attempt.native_input_tokens, 555,
         "ACP peer usage never becomes native operational usage"
     );
+}
+
+#[tokio::test]
+async fn production_dispatch_preserves_nonzero_generation_in_usage_evidence() {
+    let commit = Arc::new(FakeCommit::new());
+    let usage = Arc::new(RecordingOperationalUsage::default());
+    let mut request = request();
+    request.model_admission = admission_at_generation(9);
+    let ports = ports(commit).with_committed_native_model_usage_port(usage.clone());
+
+    let report = execute(&ports, request, json!({})).await.expect("run");
+
+    assert_eq!(
+        report.operational_usage,
+        CommittedNativeModelUsageOutcome::Published
+    );
+    assert_eq!(usage.calls().len(), 1);
+    assert_eq!(usage.calls()[0].attempt.target_generation, 9);
+    assert_ne!(
+        usage.calls()[0].attempt.generation_cohort_digest,
+        usage.calls()[0].attempt.target_commitment_digest
+    );
+}
+
+#[tokio::test]
+async fn production_dispatch_rejects_moving_commitment_before_model_port() {
+    let commit = Arc::new(FakeCommit::new());
+    let mut request = request();
+    let moving = InferenceTargetCommitment::commit(
+        "model.target.v1",
+        digest('9'),
+        "deploy.default",
+        digest('a'),
+        digest('b'),
+        digest('c'),
+        9,
+    )
+    .expect("target commitment");
+    let mut moving = moving;
+    moving.state = apxm_inference::TargetCommitState::Moving;
+    request.model_admission =
+        ModelBindingAdmission::new(ResolvedModelBinding::from_target_commitment(moving));
+
+    let error = execute(&ports(commit), request, json!({}))
+        .await
+        .expect_err("moving commitment must fail before dispatch");
+    assert!(matches!(
+        error,
+        ExecutionError::TargetCommitment(apxm_inference::TargetCommitmentError::Moving)
+    ));
 }
 
 #[tokio::test]
@@ -996,24 +1104,43 @@ fn committed_native_model_usage_allows_commit_bound_sealed_lineage() {
 }
 
 #[test]
+fn committed_native_model_usage_rejects_target_commitment_drift() {
+    let attempt = committed_attempt("fact.invocation.1.6", 0, 7, 11);
+    let mut lineage = lineage_for_attempt(
+        &attempt,
+        attempt.request_digest.clone(),
+        attempt.model_deployment_ref.clone(),
+    );
+    lineage
+        .bind_evidence(attempt.fact_id.clone(), "c1")
+        .expect("bind lineage");
+    let mut tampered_attempt = attempt;
+    tampered_attempt.target_commitment_digest = digest('f');
+
+    let error = CommittedNativeModelUsage::from_lineage(
+        "c1",
+        EvidencePositionRef {
+            ref_type: EvidencePositionRefType::EvidencePositionRef,
+            r#ref: "evidence:1".into(),
+        },
+        tampered_attempt,
+        &lineage,
+    )
+    .expect_err("target commitment drift must be rejected before publication");
+    assert!(matches!(
+        error,
+        CommittedNativeModelUsageGateError::EvidenceMismatch("target_commitment_digest")
+    ));
+}
+
+#[test]
 fn committed_native_model_usage_rejects_mismatched_lineage() {
     let attempt = committed_attempt("fact.invocation.1.4", 1, 7, 11);
-    let mut lineage = InferenceUsageLineage::seal(
-        attempt.model_effect_id.clone(),
-        attempt.attempt_index,
+    let mut lineage = lineage_for_attempt(
+        &attempt,
         attempt.request_digest.clone(),
-        attempt.model_target_ref.clone(),
-        digest('9'),
         attempt.model_deployment_ref.clone(),
-        attempt.exact_port_binding_digest.clone(),
-        Usage {
-            input_tokens: attempt.native_input_tokens,
-            output_tokens: attempt.native_output_tokens,
-        },
-        12,
-        None,
-    )
-    .expect("seal lineage");
+    );
     lineage
         .bind_evidence("fact.other", "c1")
         .expect("bind lineage");
@@ -1037,22 +1164,7 @@ fn committed_native_model_usage_rejects_mismatched_lineage() {
 #[test]
 fn committed_native_model_usage_rejects_request_or_deployment_drift() {
     let attempt = committed_attempt("fact.invocation.1.5", 0, 5, 8);
-    let mut lineage = InferenceUsageLineage::seal(
-        attempt.model_effect_id.clone(),
-        attempt.attempt_index,
-        digest('f'),
-        attempt.model_target_ref.clone(),
-        digest('9'),
-        "deploy.other",
-        attempt.exact_port_binding_digest.clone(),
-        Usage {
-            input_tokens: attempt.native_input_tokens,
-            output_tokens: attempt.native_output_tokens,
-        },
-        12,
-        None,
-    )
-    .expect("seal lineage");
+    let mut lineage = lineage_for_attempt(&attempt, digest('f'), "deploy.other".into());
     lineage
         .bind_evidence(attempt.fact_id.clone(), "c1")
         .expect("bind lineage");
@@ -1072,22 +1184,11 @@ fn committed_native_model_usage_rejects_request_or_deployment_drift() {
         CommittedNativeModelUsageGateError::EvidenceMismatch("request_digest")
     ));
 
-    let mut deployment_lineage = InferenceUsageLineage::seal(
-        attempt.model_effect_id.clone(),
-        attempt.attempt_index,
+    let mut deployment_lineage = lineage_for_attempt(
+        &attempt,
         attempt.request_digest.clone(),
-        attempt.model_target_ref.clone(),
-        digest('9'),
-        "deploy.other",
-        attempt.exact_port_binding_digest.clone(),
-        Usage {
-            input_tokens: attempt.native_input_tokens,
-            output_tokens: attempt.native_output_tokens,
-        },
-        12,
-        None,
-    )
-    .expect("seal lineage");
+        "deploy.other".into(),
+    );
     deployment_lineage
         .bind_evidence(attempt.fact_id.clone(), "c1")
         .expect("bind lineage");
@@ -1109,7 +1210,7 @@ fn committed_native_model_usage_rejects_request_or_deployment_drift() {
 }
 
 #[tokio::test]
-async fn each_native_model_call_is_blocked_without_lineage_evidence() {
+async fn each_native_model_call_publishes_its_commit_bound_lineage() {
     let commit = Arc::new(FakeCommit::new());
     let usage = Arc::new(RecordingOperationalUsage::default());
     let ports = ports(commit).with_committed_native_model_usage_port(usage.clone());
@@ -1132,27 +1233,27 @@ async fn each_native_model_call_is_blocked_without_lineage_evidence() {
         admission()
             .validate(&ModelTargetRef("model.target.v1".into()))
             .expect("first model binding"),
-        ResolvedModelBinding {
-            model_target: ExactModelTargetRef {
-                reference: ModelTargetRef("model.target.v2".into()),
-                target_digest: digest('8'),
-            },
-            model_deployment_ref: ModelDeploymentRef("deploy.second".into()),
-            exact_port_binding: ExactPortBindingRef {
-                binding_digest: digest('f'),
-                port_contract_digest: digest('b'),
-            },
-            composition_digest: digest('c'),
-        },
+        ResolvedModelBinding::from_target_commitment(
+            InferenceTargetCommitment::commit(
+                "model.target.v2",
+                digest('8'),
+                "deploy.second",
+                digest('f'),
+                digest('b'),
+                digest('c'),
+                0,
+            )
+            .expect("target commitment"),
+        ),
     ]);
 
     let report = execute(&ports, req, json!({})).await.expect("run");
 
     assert_eq!(
         report.operational_usage,
-        CommittedNativeModelUsageOutcome::Failed(CommittedNativeModelUsageError::Rejected)
+        CommittedNativeModelUsageOutcome::Published
     );
-    assert!(usage.calls().is_empty());
+    assert_eq!(usage.calls().len(), 2);
     assert_eq!(
         report.native_usage,
         Usage {
@@ -1174,9 +1275,9 @@ async fn retrying_model_usage_keeps_the_successful_attempt_coordinate() {
 
     assert_eq!(
         report.operational_usage,
-        CommittedNativeModelUsageOutcome::Failed(CommittedNativeModelUsageError::Rejected)
+        CommittedNativeModelUsageOutcome::Published
     );
-    assert!(usage.calls().is_empty());
+    assert_eq!(usage.calls().len(), 1);
     let request_identities = retrying_model.request_identities();
     assert_eq!(request_identities.len(), 2);
     assert_eq!(request_identities[0], request_identities[1]);
@@ -1200,9 +1301,9 @@ async fn raw_attempt_usage_publication_is_rejected_before_exporter_delivery() {
     ));
     assert_eq!(
         report.operational_usage,
-        CommittedNativeModelUsageOutcome::Failed(CommittedNativeModelUsageError::Rejected)
+        CommittedNativeModelUsageOutcome::Failed(CommittedNativeModelUsageError::Unavailable)
     );
-    assert!(usage.calls().is_empty());
+    assert_eq!(usage.calls().len(), 1);
     let facts = commit.facts();
     assert!(
         facts
@@ -1257,9 +1358,9 @@ async fn zero_native_usage_and_uncommitted_execution_emit_nothing() {
         .expect("zero model usage commits");
     assert_eq!(
         zero_model_report.operational_usage,
-        CommittedNativeModelUsageOutcome::Failed(CommittedNativeModelUsageError::Rejected)
+        CommittedNativeModelUsageOutcome::Published
     );
-    assert!(usage.calls().is_empty());
+    assert_eq!(usage.calls().len(), 1);
 
     let uncommitted_ports = ports(Arc::new(FakeCommit::failing()))
         .with_committed_native_model_usage_port(usage.clone());
@@ -1274,7 +1375,7 @@ async fn zero_native_usage_and_uncommitted_execution_emit_nothing() {
         uncommitted_report.operational_usage,
         CommittedNativeModelUsageOutcome::NotApplicable
     );
-    assert!(usage.calls().is_empty());
+    assert_eq!(usage.calls().len(), 1);
 }
 
 #[tokio::test]
@@ -1322,7 +1423,7 @@ async fn distinct_invocations_do_not_reuse_published_invocation_coordinates() {
         .await
         .expect("second invocation commits");
 
-    assert!(usage.calls().is_empty());
+    assert_eq!(usage.calls().len(), 2);
 }
 
 /// A composition port that records every receiver it is handed, so a test can

@@ -15,10 +15,9 @@ use apxm_execution::{
     execute,
 };
 use apxm_inference::{
-    AttemptDisposition, ExactModelTargetRef, ExactPortBindingRef, ModelBindingAdmission,
-    ModelCallPreparation, ModelCallRequest, ModelCallRequestMetadata, ModelCallRequestMetadataPort,
-    ModelDeploymentRef, ModelInferencePort, ModelOutcome, ModelTargetRef, ResolvedModelBinding,
-    TypedError, Usage,
+    AttemptDisposition, InferenceTargetCommitment, ModelBindingAdmission, ModelCallPreparation,
+    ModelCallRequest, ModelCallRequestMetadata, ModelCallRequestMetadataPort, ModelInferencePort,
+    ModelOutcome, ResolvedModelBinding, TypedError, Usage,
 };
 use apxm_kernel::{
     AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, ExactPortBinding, ExecutionCommitPort,
@@ -166,17 +165,19 @@ fn dev_model_admission(air: &AirModule) -> ModelBindingAdmission {
     ModelBindingAdmission::for_invocation(
         model_targets(air)
             .into_iter()
-            .map(|target| ResolvedModelBinding {
-                model_target: ExactModelTargetRef {
-                    reference: ModelTargetRef(target),
-                    target_digest: digest('b'),
-                },
-                model_deployment_ref: ModelDeploymentRef("dev-profile.model".into()),
-                exact_port_binding: ExactPortBindingRef {
-                    binding_digest: DEV_BINDING_DIGEST.into(),
-                    port_contract_digest: digest('c'),
-                },
-                composition_digest: digest('d'),
+            .map(|target| {
+                ResolvedModelBinding::from_target_commitment(
+                    InferenceTargetCommitment::commit(
+                        target,
+                        digest('b'),
+                        "dev-profile.model",
+                        DEV_BINDING_DIGEST,
+                        digest('c'),
+                        digest('d'),
+                        1,
+                    )
+                    .expect("development target commitment"),
+                )
             })
             .collect(),
     )

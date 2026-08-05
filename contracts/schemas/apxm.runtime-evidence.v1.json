@@ -327,8 +327,14 @@
         "model_effect_id",
         "request_digest",
         "model_target_ref",
+        "model_target_digest",
         "model_deployment_ref",
         "exact_port_binding_digest",
+        "target_commitment_digest",
+        "generation_cohort_digest",
+        "target_generation",
+        "target_port_contract_digest",
+        "target_composition_digest",
         "native_input_tokens",
         "native_output_tokens"
       ],
@@ -368,10 +374,29 @@
         "model_target_ref": {
           "$ref": "apxm.contract-common.v1#/$defs/Identifier"
         },
+        "model_target_digest": {
+          "$ref": "apxm.contract-common.v1#/$defs/Digest"
+        },
         "model_deployment_ref": {
           "$ref": "apxm.contract-common.v1#/$defs/Identifier"
         },
         "exact_port_binding_digest": {
+          "$ref": "apxm.contract-common.v1#/$defs/Digest"
+        },
+        "target_commitment_digest": {
+          "$ref": "apxm.contract-common.v1#/$defs/Digest"
+        },
+        "generation_cohort_digest": {
+          "$ref": "apxm.contract-common.v1#/$defs/Digest"
+        },
+        "target_generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "target_port_contract_digest": {
+          "$ref": "apxm.contract-common.v1#/$defs/Digest"
+        },
+        "target_composition_digest": {
           "$ref": "apxm.contract-common.v1#/$defs/Digest"
         },
         "native_input_tokens": {

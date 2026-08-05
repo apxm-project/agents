@@ -6,12 +6,11 @@
 use std::cell::{Cell, RefCell};
 
 use apxm_inference::{
-    AttemptDisposition, BindingError, CancelToken, ErrorCategory, ExactModelTargetRef,
-    ExactPortBindingRef, IdempotencyKey, ModelBindingAdmission, ModelCallPreparation,
-    ModelCallRequest, ModelCallRequestMetadata, ModelContentRef, ModelContextEnvelopeRef,
-    ModelDeploymentRef, ModelInferencePort, ModelOutcome, ModelStreamEvent, ModelStreamMode,
-    ModelStreamPort, ModelStreamStep, ModelTargetRef, ResolvedModelBinding, RetryPolicy,
-    TypedError, Usage, execute, stream,
+    AttemptDisposition, BindingError, CancelToken, ErrorCategory, IdempotencyKey,
+    InferenceTargetCommitment, ModelBindingAdmission, ModelCallPreparation, ModelCallRequest,
+    ModelCallRequestMetadata, ModelContentRef, ModelContextEnvelopeRef, ModelInferencePort,
+    ModelOutcome, ModelStreamEvent, ModelStreamMode, ModelStreamPort, ModelStreamStep,
+    ModelTargetRef, ResolvedModelBinding, RetryPolicy, TypedError, Usage, execute, stream,
 };
 
 const DIGEST_A: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -21,18 +20,12 @@ const DIGEST_D: &str = "sha256:ddddddddddddddddddddddddddddddddddddddddddddddddd
 const DIGEST_E: &str = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 
 fn binding(target: &str, deployment: &str, digest: &str) -> ResolvedModelBinding {
-    ResolvedModelBinding {
-        model_target: ExactModelTargetRef {
-            reference: ModelTargetRef(target.to_string()),
-            target_digest: DIGEST_B.to_string(),
-        },
-        model_deployment_ref: ModelDeploymentRef(deployment.to_string()),
-        exact_port_binding: ExactPortBindingRef {
-            binding_digest: digest.to_string(),
-            port_contract_digest: DIGEST_C.to_string(),
-        },
-        composition_digest: DIGEST_D.to_string(),
-    }
+    ResolvedModelBinding::from_target_commitment(
+        InferenceTargetCommitment::commit(
+            target, DIGEST_B, deployment, digest, DIGEST_C, DIGEST_D, 0,
+        )
+        .expect("resolved target commitment"),
+    )
 }
 
 fn admission() -> ModelBindingAdmission {
@@ -82,8 +75,9 @@ fn mismatched_target_fails_closed_with_no_substitution() {
 
 #[test]
 fn invalid_binding_digest_fails_closed() {
-    let admission =
-        ModelBindingAdmission::new(binding("model.alpha", "deploy.alpha", "not-a-digest"));
+    let mut invalid = binding("model.alpha", "deploy.alpha", DIGEST_A);
+    invalid.exact_port_binding.binding_digest = "not-a-digest".to_string();
+    let admission = ModelBindingAdmission::new(invalid);
     let err = admission
         .validate(&ModelTargetRef("model.alpha".to_string()))
         .expect_err("invalid binding digest");
