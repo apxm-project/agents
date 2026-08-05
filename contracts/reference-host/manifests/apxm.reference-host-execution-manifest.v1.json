@@ -11,6 +11,13 @@
     "owner_revision": "ff48332f2ce6af8a45eb38a15f4510a134223f5f",
     "fail_closed_on": ["missing", "stale", "dirty", "mismatched"]
   },
+  "startup_input_schema": {
+    "schema_id": "apxm.reference-host-startup-input.v1",
+    "path": "reference-host/schemas/apxm.reference-host-startup-input.v1.json",
+    "digest": "sha256:c302ef92982cf60866caff3767fa0ef9e4e1e5d4729391b3ad80abbb15ad3e9e",
+    "semantic_owner": "agents",
+    "canonical_source_path": "schemas/apxm.reference-host-startup-input.v1.json"
+  },
   "host_execution_manifest_schema": {
     "schema_id": "apxm.host-execution-manifest.v1",
     "path": "reference-host/schemas/apxm.host-execution-manifest.v1.json",
@@ -43,6 +50,12 @@
     "path": "reference-host/vectors/apxm.runtime-drain-quiescence.v1.json",
     "digest": "sha256:d0da8d669973836093f80c20b6696ea3b4b6ed6738312ac9d9aeae31988c0c28",
     "canonical_source_path": "vectors/apxm.runtime-drain-quiescence.v1.json"
+  },
+  "startup_input_vector": {
+    "schema_id": "apxm.reference-host-startup-input.v1",
+    "path": "reference-host/vectors/apxm.reference-host-startup-input.v1.json",
+    "digest": "sha256:73ad787ce769e58b808ce134ed6cda3012b59e2c35f38f8fac442431c8189a37",
+    "canonical_source_path": "vectors/apxm.reference-host-startup-input.v1.json"
   },
   "invocation_admission_schema": {
     "schema_id": "apxm.invocation-admission.v1",

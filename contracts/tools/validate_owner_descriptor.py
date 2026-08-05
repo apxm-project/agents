@@ -47,6 +47,18 @@ REFERENCE_HOST_RELEASE_MANIFEST_PATH = (
 REFERENCE_HOST_EXECUTION_MANIFEST_PATH = (
     CONTRACTS_DIR / "reference-host" / "manifests" / "apxm.reference-host-execution-manifest.v1.json"
 )
+REFERENCE_HOST_STARTUP_INPUT_SCHEMA_PATH = (
+    CONTRACTS_DIR / "schemas" / "apxm.reference-host-startup-input.v1.json"
+)
+REFERENCE_HOST_STARTUP_INPUT_VECTOR_PATH = (
+    CONTRACTS_DIR / "vectors" / "apxm.reference-host-startup-input.v1.json"
+)
+REFERENCE_HOST_PUBLISHED_STARTUP_INPUT_SCHEMA_PATH = (
+    CONTRACTS_DIR / "reference-host" / "schemas" / "apxm.reference-host-startup-input.v1.json"
+)
+REFERENCE_HOST_PUBLISHED_STARTUP_INPUT_VECTOR_PATH = (
+    CONTRACTS_DIR / "reference-host" / "vectors" / "apxm.reference-host-startup-input.v1.json"
+)
 REFERENCE_HOST_INVOKE_PARITY_VECTOR_PATH = (
     CONTRACTS_DIR / "reference-host" / "vectors" / "apxm.reference-host.invoke-parity.v1.json"
 )
@@ -181,6 +193,7 @@ VECTOR_SCHEMA = {
     "apxm.runtime-readiness.v1.json": "apxm.runtime-readiness.v1",
     "apxm.runtime-drain-quiescence.v1.json": "apxm.runtime-drain-quiescence.v1",
     "apxm.invocation-admission.v1.json": "apxm.invocation-admission.v1",
+    "apxm.reference-host-startup-input.v1.json": "apxm.reference-host-startup-input.v1",
     "apxm.execution-admission.v1.json": "apxm.execution-admission.v1",
 }
 
@@ -220,15 +233,75 @@ REFERENCE_HOST_INVOKE_VECTOR_ID = "apxm.reference-host.invoke-parity.v1"
 REFERENCE_HOST_LIFECYCLE_VECTOR_ID = "apxm.reference-host.lifecycle-parity.v1"
 RETIRED_REFERENCE_HOST_ADMISSION_ALIAS = "apxm.execution-admission.v1"
 REFERENCE_HOST_EXECUTION_SCHEMA_KEYS = (
+    "startup_input_schema",
     "host_execution_manifest_schema",
     "runtime_readiness_schema",
     "runtime_drain_quiescence_schema",
     "invocation_admission_schema",
 )
 REFERENCE_HOST_EXECUTION_VECTOR_KEYS = (
+    "startup_input_vector",
     "runtime_readiness_vector",
     "runtime_drain_quiescence_vector",
     "invocation_admission_vector",
+)
+REFERENCE_HOST_EXECUTION_SCHEMA_SPECS = (
+    (
+        "startup_input_schema",
+        "apxm.reference-host-startup-input.v1",
+        "reference-host/schemas/apxm.reference-host-startup-input.v1.json",
+        "schemas/apxm.reference-host-startup-input.v1.json",
+    ),
+    (
+        "host_execution_manifest_schema",
+        "apxm.host-execution-manifest.v1",
+        "reference-host/schemas/apxm.host-execution-manifest.v1.json",
+        "schemas/apxm.host-execution-manifest.v1.json",
+    ),
+    (
+        "runtime_readiness_schema",
+        "apxm.runtime-readiness.v1",
+        "reference-host/schemas/apxm.runtime-readiness.v1.json",
+        "schemas/apxm.runtime-readiness.v1.json",
+    ),
+    (
+        "runtime_drain_quiescence_schema",
+        "apxm.runtime-drain-quiescence.v1",
+        "reference-host/schemas/apxm.runtime-drain-quiescence.v1.json",
+        "schemas/apxm.runtime-drain-quiescence.v1.json",
+    ),
+    (
+        "invocation_admission_schema",
+        "apxm.invocation-admission.v1",
+        "reference-host/schemas/apxm.invocation-admission.v1.json",
+        "schemas/apxm.invocation-admission.v1.json",
+    ),
+)
+REFERENCE_HOST_EXECUTION_VECTOR_SPECS = (
+    (
+        "startup_input_vector",
+        "apxm.reference-host-startup-input.v1",
+        "reference-host/vectors/apxm.reference-host-startup-input.v1.json",
+        "vectors/apxm.reference-host-startup-input.v1.json",
+    ),
+    (
+        "runtime_readiness_vector",
+        "apxm.runtime-readiness.v1",
+        "reference-host/vectors/apxm.runtime-readiness.v1.json",
+        "vectors/apxm.runtime-readiness.v1.json",
+    ),
+    (
+        "runtime_drain_quiescence_vector",
+        "apxm.runtime-drain-quiescence.v1",
+        "reference-host/vectors/apxm.runtime-drain-quiescence.v1.json",
+        "vectors/apxm.runtime-drain-quiescence.v1.json",
+    ),
+    (
+        "invocation_admission_vector",
+        "apxm.invocation-admission.v1",
+        "reference-host/vectors/apxm.invocation-admission.v1.json",
+        "vectors/apxm.invocation-admission.v1.json",
+    ),
 )
 REFERENCE_HOST_DESCRIPTOR = {
     "semantic_owner": "host-sdk",
@@ -315,6 +388,13 @@ def file_digest(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def is_placeholder_digest(digest: str) -> bool:
+    if not digest.startswith("sha256:") or len(digest) != 71:
+        return False
+    hex_value = digest.removeprefix("sha256:")
+    return len(set(hex_value)) == 1
+
+
 def repo_relative_path(path: Path) -> str:
     return path.relative_to(CHECKOUT_ROOT).as_posix()
 
@@ -392,11 +472,11 @@ def reference_host_publication_cohort(
         "manifests": [reference_host_execution_manifest_ref()],
         "schemas": [
             publication_entry(field, key="schema_id")
-            for field in REFERENCE_HOST_EXECUTION_SCHEMA_KEYS
+            for field, *_ in REFERENCE_HOST_EXECUTION_SCHEMA_SPECS
         ],
         "vectors": [
             publication_entry(field, key="schema_id")
-            for field in REFERENCE_HOST_EXECUTION_VECTOR_KEYS
+            for field, *_ in REFERENCE_HOST_EXECUTION_VECTOR_SPECS
         ],
     }
 
@@ -890,6 +970,41 @@ def semantic_errors(schema_id: str, instance: object) -> list[str]:
             return ["artifact_digest must equal release_digest"]
         if artifact_digest != provenance_digest:
             return ["artifact_digest must equal provenance_digest"]
+    if schema_id == "apxm.reference-host-startup-input.v1":
+        return reference_host_startup_input_errors(instance)
+    return []
+
+
+def reference_host_startup_input_errors(instance: dict[str, Any]) -> list[str]:
+    if instance.get("fail_closed_on") != [
+        "missing",
+        "placeholder",
+        "dirty",
+        "mismatched",
+        "implicit-default",
+    ]:
+        return ["fail_closed_on must publish the exact fail-closed reasons"]
+
+    for field in ("release_digest", "port_bindings_digest", "resource_ceiling_digest"):
+        digest = instance.get(field)
+        if isinstance(digest, str) and is_placeholder_digest(digest):
+            return [f"{field} must not be a placeholder digest"]
+
+    manifest_ref = instance.get("reference_host_release_manifest")
+    if isinstance(manifest_ref, dict):
+        digest = manifest_ref.get("digest")
+        if isinstance(digest, str) and is_placeholder_digest(digest):
+            return ["reference_host_release_manifest.digest must not be a placeholder digest"]
+
+    provenance = instance.get("provenance")
+    if isinstance(provenance, dict):
+        for field in ("descriptor_semantic_digest", "descriptor_exact_checksum"):
+            digest = provenance.get(field)
+            if isinstance(digest, str) and is_placeholder_digest(digest):
+                return [f"provenance.{field} must not be a placeholder digest"]
+        if provenance.get("dirty") is not False:
+            return ["provenance.dirty must remain false"]
+
     return []
 
 
@@ -1510,6 +1625,7 @@ def check_reference_host_release_evidence(descriptor: dict[str, Any]) -> None:
                 f"reference-host execution manifest {key} must match the release manifest"
             )
     check_reference_host_startup_input_preflight(execution_manifest)
+    check_reference_host_execution_publications(execution_manifest)
     expected_publication_cohort = reference_host_publication_cohort(execution_manifest)
     publication_cohort = release_manifest.get("publication_cohort")
     if publication_cohort != expected_publication_cohort:
@@ -1653,6 +1769,46 @@ def check_reference_host_startup_input_preflight(
         )
     if provenance.get("dirty") is not False:
         raise ValidationError("reference-host startup-input fixture must be clean")
+
+
+def check_reference_host_execution_publications(
+    execution_manifest: dict[str, Any],
+) -> None:
+    for field, schema_id, published_path, canonical_source_path in (
+        *REFERENCE_HOST_EXECUTION_SCHEMA_SPECS,
+        *REFERENCE_HOST_EXECUTION_VECTOR_SPECS,
+    ):
+        entry = execution_manifest.get(field)
+        if not isinstance(entry, dict):
+            raise ValidationError(
+                f"reference-host execution manifest field {field} must be an object"
+            )
+        if entry.get("schema_id") != schema_id:
+            raise ValidationError(
+                f"reference-host execution manifest field {field} schema_id drifted"
+            )
+        if entry.get("path") != published_path:
+            raise ValidationError(
+                f"reference-host execution manifest field {field} path drifted"
+            )
+        if entry.get("canonical_source_path") != canonical_source_path:
+            raise ValidationError(
+                f"reference-host execution manifest field {field} canonical_source_path drifted"
+            )
+        if field in REFERENCE_HOST_EXECUTION_SCHEMA_KEYS and entry.get("semantic_owner") != "agents":
+            raise ValidationError(
+                f"reference-host execution manifest field {field} semantic_owner must be agents"
+            )
+        published_file = resolve_contract_relative_path(published_path, label=field)
+        source_file = resolve_contract_relative_path(canonical_source_path, label=field)
+        if entry.get("digest") != file_digest(published_file):
+            raise ValidationError(
+                f"reference-host execution manifest field {field} digest is stale"
+            )
+        if published_file.read_bytes() != source_file.read_bytes():
+            raise ValidationError(
+                f"reference-host execution manifest field {field} must copy the canonical source bytes"
+            )
 
 
 def scan_plan_references() -> None:

@@ -43,6 +43,32 @@ REFERENCE_HOST_LIFECYCLE_VECTOR = (
     / "vectors"
     / "apxm.reference-host.lifecycle-parity.v1.json"
 )
+REFERENCE_HOST_STARTUP_INPUT_SCHEMA = (
+    REPOSITORY_ROOT
+    / "contracts"
+    / "schemas"
+    / "apxm.reference-host-startup-input.v1.json"
+)
+REFERENCE_HOST_PUBLISHED_STARTUP_INPUT_SCHEMA = (
+    REPOSITORY_ROOT
+    / "contracts"
+    / "reference-host"
+    / "schemas"
+    / "apxm.reference-host-startup-input.v1.json"
+)
+REFERENCE_HOST_STARTUP_INPUT_VECTOR = (
+    REPOSITORY_ROOT
+    / "contracts"
+    / "vectors"
+    / "apxm.reference-host-startup-input.v1.json"
+)
+REFERENCE_HOST_PUBLISHED_STARTUP_INPUT_VECTOR = (
+    REPOSITORY_ROOT
+    / "contracts"
+    / "reference-host"
+    / "vectors"
+    / "apxm.reference-host-startup-input.v1.json"
+)
 REFERENCE_HOST_SOURCE = (
     REPOSITORY_ROOT / "crates" / "tools" / "cli" / "src" / "bin" / "reference_host.rs"
 )
@@ -216,6 +242,37 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
             expected_release_manifest_ref,
         )
 
+    def test_reference_host_execution_manifest_publishes_startup_input_contracts(self) -> None:
+        execution_manifest = load_json(REFERENCE_HOST_EXECUTION_MANIFEST)
+
+        self.assertEqual(
+            execution_manifest["startup_input_schema"],
+            {
+                "schema_id": "apxm.reference-host-startup-input.v1",
+                "path": "reference-host/schemas/apxm.reference-host-startup-input.v1.json",
+                "digest": self.validator.file_digest(REFERENCE_HOST_PUBLISHED_STARTUP_INPUT_SCHEMA),
+                "semantic_owner": "agents",
+                "canonical_source_path": "schemas/apxm.reference-host-startup-input.v1.json",
+            },
+        )
+        self.assertEqual(
+            execution_manifest["startup_input_vector"],
+            {
+                "schema_id": "apxm.reference-host-startup-input.v1",
+                "path": "reference-host/vectors/apxm.reference-host-startup-input.v1.json",
+                "digest": self.validator.file_digest(REFERENCE_HOST_PUBLISHED_STARTUP_INPUT_VECTOR),
+                "canonical_source_path": "vectors/apxm.reference-host-startup-input.v1.json",
+            },
+        )
+        self.assertEqual(
+            REFERENCE_HOST_PUBLISHED_STARTUP_INPUT_SCHEMA.read_bytes(),
+            REFERENCE_HOST_STARTUP_INPUT_SCHEMA.read_bytes(),
+        )
+        self.assertEqual(
+            REFERENCE_HOST_PUBLISHED_STARTUP_INPUT_VECTOR.read_bytes(),
+            REFERENCE_HOST_STARTUP_INPUT_VECTOR.read_bytes(),
+        )
+
     def test_reference_host_release_manifest_rejects_retired_admission_alias(self) -> None:
         release_manifest_text = REFERENCE_HOST_RELEASE_MANIFEST.read_text(encoding="utf-8")
         self.assertNotIn(
@@ -269,11 +326,42 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
         )
         self.assertIn(
             {
+                "kind": "owned-schema",
+                "contract_id": "apxm.reference-host-startup-input.v1",
+                "path": "contracts/schemas/apxm.reference-host-startup-input.v1.json",
+                "exact_bytes_digest": self.validator.file_digest(
+                    REFERENCE_HOST_STARTUP_INPUT_SCHEMA
+                ),
+            },
+            attestation["owner_source_contracts"],
+        )
+        self.assertIn(
+            {
                 "schema_version": "apxm.reference-host-execution-manifest.v1",
                 "path": "contracts/reference-host/manifests/apxm.reference-host-execution-manifest.v1.json",
                 "exact_bytes_digest": self.validator.file_digest(REFERENCE_HOST_EXECUTION_MANIFEST),
             },
             attestation["publication_cohort"]["manifests"],
+        )
+        self.assertIn(
+            {
+                "schema_id": "apxm.reference-host-startup-input.v1",
+                "path": "contracts/reference-host/schemas/apxm.reference-host-startup-input.v1.json",
+                "exact_bytes_digest": self.validator.file_digest(
+                    REFERENCE_HOST_PUBLISHED_STARTUP_INPUT_SCHEMA
+                ),
+            },
+            attestation["publication_cohort"]["schemas"],
+        )
+        self.assertIn(
+            {
+                "schema_id": "apxm.reference-host-startup-input.v1",
+                "path": "contracts/reference-host/vectors/apxm.reference-host-startup-input.v1.json",
+                "exact_bytes_digest": self.validator.file_digest(
+                    REFERENCE_HOST_PUBLISHED_STARTUP_INPUT_VECTOR
+                ),
+            },
+            attestation["publication_cohort"]["vectors"],
         )
 
     def test_reference_host_source_requires_explicit_startup_input_and_no_placeholders(self) -> None:
