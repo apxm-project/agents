@@ -24,6 +24,7 @@ pub mod identity;
 pub mod lease;
 pub mod lineage;
 pub mod stream;
+pub mod target;
 
 pub use backend_join::{
     JoinError, PINNED_VLLM_OWNER_REVISION, PINNED_VLLM_PORT_CONTRACT_DIGEST,
@@ -63,4 +64,8 @@ pub use lineage::{
 pub use stream::{
     CancelToken, ModelContentRef, ModelStreamEvent, ModelStreamPort, ModelStreamStep, StreamResult,
     stream,
+};
+pub use target::{
+    INFERENCE_TARGET_COMMITMENT_SCHEMA, InferenceTargetCommitment, TargetCommitState,
+    TargetCommitmentError,
 };

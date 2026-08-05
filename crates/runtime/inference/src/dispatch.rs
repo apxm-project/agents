@@ -12,6 +12,7 @@ use crate::effect::{
 use crate::identity::ModelTargetRef;
 use crate::lease::{InferenceCredentialLease, LeaseError};
 use crate::lineage::{InferenceUsageLineage, LineageError};
+use crate::target::InferenceTargetCommitment;
 
 /// Closed failure set for exact inference dispatch.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,6 +59,7 @@ pub struct InferenceDispatchResult {
     pub lineage: InferenceUsageLineage,
     pub driver_id: String,
     pub inference_profile_ref: String,
+    pub target_commitment: InferenceTargetCommitment,
 }
 
 /// Lease-aware backend used only inside adapter memory for one attempt.
@@ -149,14 +151,11 @@ pub fn dispatch_exact_inference<B: LeasedInferenceBackend + ?Sized>(
         ),
     };
     let attempt_index = execution.committed_attempt.unwrap_or(0);
-    let lineage = InferenceUsageLineage::seal(
+    let lineage = InferenceUsageLineage::seal_with_target_commitment(
         request.effect_id(),
         attempt_index,
         request.request_digest(),
-        &binding.model_target_ref,
-        &binding.model_target_digest,
-        &binding.model_deployment_ref,
-        &binding.exact_port_binding_digest,
+        &binding.target_commitment,
         usage,
         duration_ms,
         typed_error,
@@ -166,5 +165,6 @@ pub fn dispatch_exact_inference<B: LeasedInferenceBackend + ?Sized>(
         lineage,
         driver_id: binding.driver_id.clone(),
         inference_profile_ref: binding.inference_profile_ref.clone(),
+        target_commitment: binding.target_commitment.clone(),
     })
 }
