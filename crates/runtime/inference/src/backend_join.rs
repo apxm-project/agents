@@ -1,7 +1,8 @@
-//! Join released vLLM conformance evidence into the agents inference owner.
+//! Join exact vLLM conformance evidence into the agents inference owner.
 //!
-//! Agents verifies digest membership of released backend vectors. It does not
-//! become a second owner of vLLM semantics and does not stub backend authority.
+//! Agents verifies digest membership of pinned backend vectors and keeps them
+//! candidate-only until external release evidence exists. It does not become a
+//! second owner of vLLM semantics or stub backend authority.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -35,7 +36,7 @@ pub enum VllmJoinStatus {
     CandidateAwaitingVllmRelease,
 }
 
-/// Agents-owned join record for released vLLM conformance digests.
+/// Agents-owned join record for candidate or released vLLM conformance digests.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VllmConformanceJoin {
@@ -55,6 +56,7 @@ pub enum JoinError {
     UnknownVectorDigest(String),
     PortContractMismatch { expected: String, actual: String },
     DuplicateVectorDigest(String),
+    ReleaseEvidenceRequired,
 }
 
 impl std::fmt::Display for JoinError {
@@ -72,6 +74,12 @@ impl std::fmt::Display for JoinError {
             Self::DuplicateVectorDigest(digest) => {
                 write!(f, "vector digest {digest} occurs more than once")
             }
+            Self::ReleaseEvidenceRequired => {
+                write!(
+                    f,
+                    "joined status requires exact external vLLM release evidence"
+                )
+            }
         }
     }
 }
@@ -81,6 +89,9 @@ impl std::error::Error for JoinError {}
 impl VllmConformanceJoin {
     /// Build a join record from an exact vLLM port-contract digest and vector
     /// digests. Unknown digests fail closed; there is no silent substitution.
+    /// The `released` flag is retained as an explicit call-site assertion, but
+    /// it cannot manufacture the external release evidence required for a
+    /// joined record.
     pub fn join(
         vllm_port_contract_digest: impl Into<String>,
         joined_vector_digests: Vec<String>,
@@ -115,17 +126,16 @@ impl VllmConformanceJoin {
         {
             return Err(JoinError::DuplicateVectorDigest(duplicate));
         }
+        if released {
+            return Err(JoinError::ReleaseEvidenceRequired);
+        }
         Ok(Self {
             schema_version: VLLM_CONFORMANCE_JOIN_SCHEMA.to_string(),
             agents_driver_contract_id: "apxm.inference-driver-binding.v1".to_string(),
             vllm_port_contract_id: "apxm.vllm-inference.v1".to_string(),
             vllm_port_contract_digest,
             joined_vector_digests,
-            join_status: if released {
-                VllmJoinStatus::Joined
-            } else {
-                VllmJoinStatus::CandidateAwaitingVllmRelease
-            },
+            join_status: VllmJoinStatus::CandidateAwaitingVllmRelease,
         })
     }
 
