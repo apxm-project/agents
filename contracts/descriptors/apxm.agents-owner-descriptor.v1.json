@@ -911,7 +911,7 @@
     {
       "schema_id": "apxm.vllm-conformance-join.v1",
       "path": "vectors/apxm.vllm-conformance-join.v1.json",
-      "digest": "sha256:a42bafd2161079cdd7c049a18852f9c85b6176a67680d2bf9ca0e2d98a0ce07f",
+      "digest": "sha256:f2fdeadf86980ab71f05d6820304bba3a2bd7ebb1b2e3d1089e80cd5219ea27f",
       "coverage": [
         "positive",
         "candidate_without_live_release",
@@ -1022,5 +1022,5 @@
       ]
     }
   ],
-  "descriptor_digest": "sha256:fbeb4a5b0b005c0714f0fde67f4a4d528a8ab3550613e047abb0377cf1a73946"
+  "descriptor_digest": "sha256:ea66d532624fbfc749908893d5281c888ee3e7708eb9376be872247ced1495f7"
 }
