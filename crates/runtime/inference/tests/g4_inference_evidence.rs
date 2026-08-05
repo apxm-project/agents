@@ -791,6 +791,31 @@ fn vllm_conformance_join_pins_released_vector_digests_without_substitution() {
 }
 
 #[test]
+fn vllm_conformance_join_cannot_claim_release_without_external_evidence() {
+    let err = VllmConformanceJoin::join(
+        PINNED_VLLM_PORT_CONTRACT_DIGEST,
+        vec![PINNED_VLLM_VECTOR_DIGESTS[0].to_string()],
+        true,
+    )
+    .expect_err("release assertion cannot manufacture external evidence");
+    assert!(matches!(
+        err,
+        apxm_inference::JoinError::ReleaseEvidenceRequired
+    ));
+
+    let mut candidate =
+        VllmConformanceJoin::candidate_from_pinned_vectors().expect("candidate join");
+    candidate.join_status = VllmJoinStatus::Joined;
+    let err = candidate
+        .validate()
+        .expect_err("deserialized joined status fails closed");
+    assert!(matches!(
+        err,
+        apxm_inference::JoinError::ReleaseEvidenceRequired
+    ));
+}
+
+#[test]
 fn pinned_vllm_vector_digests_match_workspace_files_when_present() {
     // agents/crates/runtime/inference -> workspace/vllm
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))

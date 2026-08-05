@@ -915,7 +915,7 @@ def inference_diagnostic_correlation_errors(instance: dict[str, Any]) -> list[st
 def vllm_conformance_join_errors(instance: dict[str, Any]) -> list[str]:
     # Mirror of crates/runtime/inference/src/backend_join.rs.
     if instance.get("vllm_port_contract_digest") != (
-        "sha256:2106082c92a9dae2cd9e0c623315198f9ed8d736e8f5860ed043c58690428c01"
+        "sha256:361aaf5fd82ae1dd8279726769088c2711a55d964a8376faf4646a149fee9f3c"
     ):
         return ["vllm_port_contract_digest must match the pinned backend contract"]
     pinned_vectors = {
@@ -932,6 +932,8 @@ def vllm_conformance_join_errors(instance: dict[str, Any]) -> list[str]:
         return ["joined_vector_digests contains an unpinned backend evidence digest"]
     if len(vectors) != len(set(vectors)):
         return ["joined_vector_digests must be unique"]
+    if instance.get("join_status") == "joined":
+        return ["join_status requires exact external vLLM release evidence"]
     return []
 
 
