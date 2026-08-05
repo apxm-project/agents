@@ -26,8 +26,10 @@ pub mod lineage;
 pub mod stream;
 
 pub use backend_join::{
-    JoinError, PINNED_VLLM_PORT_CONTRACT_DIGEST, PINNED_VLLM_VECTOR_DIGESTS,
-    VLLM_CONFORMANCE_JOIN_SCHEMA, VllmConformanceJoin, VllmJoinStatus, digest_bytes,
+    JoinError, PINNED_VLLM_OWNER_REVISION, PINNED_VLLM_PORT_CONTRACT_DIGEST,
+    PINNED_VLLM_RELEASE_ID, PINNED_VLLM_RELEASE_MANIFEST_DIGEST, PINNED_VLLM_VECTOR_DIGESTS,
+    VLLM_CONFORMANCE_JOIN_SCHEMA, VllmConformanceJoin, VllmJoinStatus, VllmReleaseAttestation,
+    digest_bytes,
 };
 pub use diagnostics::{
     BoundedMetricLabels, CorrelateDiagnosticsRequest, DIAGNOSTIC_CORRELATION_SCHEMA,

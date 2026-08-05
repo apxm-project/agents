@@ -1,8 +1,9 @@
-//! Live JSONL lifecycle coverage for the reference-host binary.
+//! Vector-backed JSONL parity coverage for the reference-host binary.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use serde_json::{Value, json};
@@ -11,6 +12,10 @@ use tempfile::TempDir;
 
 fn exact_digest(label: &str) -> String {
     format!("sha256:{:x}", Sha256::digest(label.as_bytes()))
+}
+
+fn load_json(path: &Path) -> Value {
+    serde_json::from_str(&fs::read_to_string(path).expect("read json fixture")).expect("parse json")
 }
 
 fn release_manifest_path() -> PathBuf {
@@ -24,6 +29,61 @@ fn release_manifest_digest() -> String {
         "sha256:{:x}",
         Sha256::digest(fs::read(release_manifest_path()).expect("read release manifest"))
     )
+}
+
+fn invoke_vector_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .join("contracts/reference-host/vectors/apxm.reference-host.invoke-parity.v1.json")
+}
+
+fn lifecycle_vector_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .join("contracts/reference-host/vectors/apxm.reference-host.lifecycle-parity.v1.json")
+}
+
+fn release_manifest() -> Value {
+    load_json(&release_manifest_path())
+}
+
+fn invoke_vector() -> Value {
+    load_json(&invoke_vector_path())
+}
+
+fn lifecycle_vector() -> Value {
+    load_json(&lifecycle_vector_path())
+}
+
+fn live_required_cases() -> Vec<String> {
+    release_manifest()["executable_parity_evidence"]["live_required_cases"]
+        .as_array()
+        .expect("live_required_cases array")
+        .iter()
+        .map(|entry| entry.as_str().expect("live case name").to_owned())
+        .collect()
+}
+
+fn vector_case_names(vector: &Value) -> Vec<String> {
+    vector["cases"]
+        .as_array()
+        .expect("vector cases array")
+        .iter()
+        .map(|case| case["name"].as_str().expect("case name").to_owned())
+        .collect()
+}
+
+fn case_by_name<'a>(vector: &'a Value, name: &str) -> &'a Value {
+    vector["cases"]
+        .as_array()
+        .expect("vector cases array")
+        .iter()
+        .find(|case| case["name"].as_str() == Some(name))
+        .unwrap_or_else(|| panic!("missing vector case {name}"))
+}
+
+fn fixture<'a>(vector: &'a Value, name: &str) -> &'a Value {
+    &vector["fixtures"][name]
 }
 
 fn write_startup_input() -> (TempDir, PathBuf, String, String, String) {
@@ -101,7 +161,7 @@ impl HostProcess {
         }
     }
 
-    fn request(&mut self, value: Value) -> Value {
+    fn request(&mut self, value: &Value) -> Value {
         writeln!(self.stdin, "{value}").expect("write request");
         self.stdin.flush().expect("flush request");
 
@@ -124,154 +184,397 @@ fn request(operation: &str) -> Value {
     })
 }
 
-fn admission(host: &HostProcess) -> Value {
-    json!({
-        "schema_version": "apxm.invocation-admission.v1",
-        "invocation_id": "invocation.1",
-        "artifact_digest": host.release_digest.clone(),
-        "release_digest": host.release_digest.clone(),
-        "port_bindings_digest": host.port_bindings_digest.clone(),
-        "resource_ceiling_digest": host.resource_ceiling_digest.clone(),
-        "provenance_digest": host.release_digest.clone()
-    })
+fn readiness(host: &mut HostProcess) -> Value {
+    host.request(&request("readiness"))
 }
 
-fn minimal_air() -> Value {
-    json!({
-        "schema_version": "apxm.air.v1",
-        "semantic_operations": [],
-        "structural_ir": [],
-        "context_flow": [],
-        "source_map": {
-            "schema_version": "apxm.source-map.v1",
-            "source_language": "python",
-            "node_spans": [],
-            "region_annotations": []
+fn materialize_admission(host: &HostProcess, fixture: &Value) -> Value {
+    let mut admission = fixture.clone();
+    let provenance_matches_artifact =
+        admission["provenance_digest"] == admission["artifact_digest"];
+    admission["artifact_digest"] = Value::String(host.release_digest.clone());
+    admission["release_digest"] = Value::String(host.release_digest.clone());
+    admission["port_bindings_digest"] = Value::String(host.port_bindings_digest.clone());
+    admission["resource_ceiling_digest"] = Value::String(host.resource_ceiling_digest.clone());
+    if provenance_matches_artifact {
+        admission["provenance_digest"] = Value::String(host.release_digest.clone());
+    }
+    admission
+}
+
+fn materialize_expected_response(host: &HostProcess, expected: &Value) -> Value {
+    let mut materialized = expected.clone();
+    if let Some(readiness) = materialized
+        .get_mut("readiness")
+        .and_then(Value::as_object_mut)
+    {
+        readiness.insert(
+            "release_digest".into(),
+            Value::String(host.release_digest.clone()),
+        );
+        readiness.insert(
+            "port_bindings_digest".into(),
+            Value::String(host.port_bindings_digest.clone()),
+        );
+        readiness.insert(
+            "resource_ceiling_digest".into(),
+            Value::String(host.resource_ceiling_digest.clone()),
+        );
+    }
+    materialized
+}
+
+fn assert_json_subset(actual: &Value, expected: &Value, path: &str) {
+    match expected {
+        Value::Object(expected_map) => {
+            let actual_map = actual
+                .as_object()
+                .unwrap_or_else(|| panic!("{path} must be an object"));
+            for (key, expected_value) in expected_map {
+                let child_path = format!("{path}.{key}");
+                let actual_value = actual_map
+                    .get(key)
+                    .unwrap_or_else(|| panic!("{child_path} is missing"));
+                assert_json_subset(actual_value, expected_value, &child_path);
+            }
         }
-    })
+        Value::Array(expected_items) => {
+            let actual_items = actual
+                .as_array()
+                .unwrap_or_else(|| panic!("{path} must be an array"));
+            assert_eq!(
+                actual_items.len(),
+                expected_items.len(),
+                "{path} length mismatch"
+            );
+            for (index, (actual_item, expected_item)) in
+                actual_items.iter().zip(expected_items.iter()).enumerate()
+            {
+                assert_json_subset(actual_item, expected_item, &format!("{path}[{index}]"));
+            }
+        }
+        _ => assert_eq!(actual, expected, "{path} mismatch"),
+    }
+}
+
+fn assert_no_runtime_evidence(response: &Value) {
+    if let Some(runtime_evidence) = response.get("runtime_evidence") {
+        assert!(
+            runtime_evidence.is_null(),
+            "runtime_evidence must be null or absent"
+        );
+    }
+}
+
+fn terminal_fact(runtime_evidence: &Value) -> &Value {
+    runtime_evidence["facts"]
+        .as_array()
+        .expect("runtime_evidence facts")
+        .last()
+        .expect("runtime_evidence terminal fact")
+}
+
+fn live_case_names_for(vector: &Value) -> Vec<String> {
+    let live_cases: BTreeSet<_> = live_required_cases().into_iter().collect();
+    vector_case_names(vector)
+        .into_iter()
+        .filter(|name| live_cases.contains(name))
+        .collect()
+}
+
+fn assert_case_partition() {
+    let invoke_vector = invoke_vector();
+    let lifecycle_vector = lifecycle_vector();
+    let all_cases = [
+        vector_case_names(&invoke_vector),
+        vector_case_names(&lifecycle_vector),
+    ]
+    .concat();
+    let live_cases = live_required_cases();
+    assert_eq!(
+        live_cases, all_cases,
+        "live executable cases drifted from the vectors"
+    );
 }
 
 #[test]
-fn cancellation_before_admission_is_terminal_and_restartable() {
-    let mut host = HostProcess::spawn();
-
-    let cancelled = host.request(request("cancel"));
-    assert_eq!(cancelled["status"], "cancelled");
-    assert_eq!(cancelled["reason"], "cancelled_before_admission");
-    assert_eq!(cancelled["readiness"]["state"], "stopped");
-    assert_eq!(
-        cancelled["readiness"]["release_digest"],
-        host.release_digest.clone()
-    );
-
-    let restarted = host.request(request("restart"));
-    assert_eq!(restarted["status"], "restarted");
-    assert_eq!(restarted["recovery"]["status"], "no_runtime_evidence");
-    assert_eq!(restarted["readiness"]["state"], "ready");
-
-    host.shutdown();
+fn executable_parity_manifest_covers_every_published_case() {
+    assert_case_partition();
 }
 
 #[test]
-fn revoke_closes_admission_until_explicit_restart() {
-    let mut host = HostProcess::spawn();
+fn invoke_parity_vectors_execute_live_cases() {
+    assert_case_partition();
+    let vector = invoke_vector();
+    let executed_cases = live_case_names_for(&vector);
+    assert_eq!(
+        executed_cases,
+        vec![
+            "positive_commit_minimal_air".to_owned(),
+            "negative_admission_provenance_rejection".to_owned(),
+            "invalid_air_failure".to_owned(),
+        ]
+    );
 
-    assert_eq!(host.request(request("readiness"))["state"], "ready");
+    for case_name in executed_cases {
+        let case = case_by_name(&vector, &case_name);
+        let expected = &case["expected"];
+        let mut host = HostProcess::spawn();
+        let response = host.request(&json!({
+            "schema_version": "apxm.runtime.host-request.v1",
+            "operation": "invoke",
+            "admission": materialize_admission(
+                &host,
+                fixture(&vector, case["admission_fixture"].as_str().expect("admission fixture")),
+            ),
+            "air": fixture(&vector, case["air_fixture"].as_str().expect("air fixture")).clone(),
+        }));
 
-    let revoked = host.request(request("revoke"));
-    assert_eq!(revoked["status"], "revoked");
-    assert_eq!(revoked["reason"], "admission_revoked");
-    assert_eq!(revoked["readiness"]["state"], "stopped");
+        match expected["parity_outcome"]
+            .as_str()
+            .expect("invoke parity outcome")
+        {
+            "committed_return" => {
+                assert_eq!(response["status"], "committed");
+                let terminal = terminal_fact(&response["runtime_evidence"]);
+                assert_eq!(
+                    terminal["fact_kind"],
+                    expected["runtime_evidence_terminal_kind"]
+                );
+                assert_eq!(terminal["commit_sequence"], expected["commit_sequence"]);
+                assert_eq!(
+                    readiness(&mut host)["state"],
+                    expected["reference_host_state_after"]
+                );
+            }
+            "rejected_before_commit" => {
+                assert_eq!(response["status"], "rejected");
+                assert_eq!(response["error"]["code"], expected["error_code"]);
+                assert_no_runtime_evidence(&response);
+                assert_eq!(
+                    response["readiness"]["state"],
+                    expected["reference_host_state_after"]
+                );
+            }
+            other => panic!("unexpected invoke parity outcome {other}"),
+        }
 
-    let rejected = host.request(json!({
-        "schema_version": "apxm.runtime.host-request.v1",
-        "operation": "invoke",
-        "admission": admission(&host),
-        "air": minimal_air(),
-    }));
-    assert_eq!(rejected["status"], "rejected");
-    assert_eq!(rejected["error"]["code"], "admission_revoked");
-    assert_eq!(rejected["readiness"]["state"], "stopped");
-
-    let restarted = host.request(request("restart"));
-    assert_eq!(restarted["status"], "restarted");
-    assert_eq!(restarted["readiness"]["state"], "ready");
-
-    let committed = host.request(json!({
-        "schema_version": "apxm.runtime.host-request.v1",
-        "operation": "invoke",
-        "admission": admission(&host),
-        "air": minimal_air(),
-    }));
-    assert_eq!(committed["status"], "committed");
-
-    host.shutdown();
+        host.shutdown();
+    }
 }
 
 #[test]
-fn shutdown_restart_reports_runtime_evidence_recovery() {
-    let mut host = HostProcess::spawn();
-
-    let committed = host.request(json!({
-        "schema_version": "apxm.runtime.host-request.v1",
-        "operation": "invoke",
-        "admission": admission(&host),
-        "air": minimal_air(),
-    }));
-    assert_eq!(committed["status"], "committed");
-    let runtime_evidence = committed["runtime_evidence"].clone();
-
-    let shutdown = host.request(request("shutdown"));
-    assert_eq!(shutdown["status"], "shutdown");
-    assert_eq!(shutdown["reason"], "shutdown_terminal");
-    assert_eq!(shutdown["readiness"]["state"], "stopped");
-
-    let restarted = host.request(request("restart"));
-    assert_eq!(restarted["status"], "restarted");
-    assert_eq!(restarted["recovery"]["status"], "reconciled");
-    assert_eq!(restarted["recovery"]["runtime_evidence"], runtime_evidence);
-    assert_eq!(restarted["readiness"]["state"], "ready");
-
-    host.shutdown();
-}
-
-#[test]
-fn draining_host_fails_closed_before_dispatch() {
-    let mut host = HostProcess::spawn();
-
-    let drain = host.request(request("drain"));
-    assert_eq!(drain["state"], "draining");
-    assert_eq!(drain["release_digest"], host.release_digest.clone());
+fn lifecycle_parity_vectors_execute_live_cases() {
+    assert_case_partition();
+    let vector = lifecycle_vector();
+    let executed_cases = live_case_names_for(&vector);
     assert_eq!(
-        drain["port_bindings_digest"],
-        host.port_bindings_digest.clone()
-    );
-    assert_eq!(
-        drain["resource_ceiling_digest"],
-        host.resource_ceiling_digest.clone()
+        executed_cases,
+        vec![
+            "cancellation_before_admission".to_owned(),
+            "drain_shutdown_after_in_flight_completion".to_owned(),
+            "explicit_shutdown_terminal_state".to_owned(),
+            "restart_recovery_from_runtime_evidence".to_owned(),
+            "revocation_before_dispatch".to_owned(),
+            "boundary_fail_closed".to_owned(),
+        ]
     );
 
-    let rejected = host.request(json!({
-        "schema_version": "apxm.runtime.host-request.v1",
-        "operation": "invoke",
-        "admission": admission(&host),
-        "air": minimal_air(),
-    }));
-    assert_eq!(rejected["status"], "rejected");
-    assert_eq!(rejected["error"]["code"], "host_not_accepting");
-    assert_eq!(rejected["readiness"]["state"], "draining");
-    assert_eq!(
-        rejected["readiness"]["release_digest"],
-        host.release_digest.clone()
-    );
-    assert_eq!(
-        rejected["readiness"]["port_bindings_digest"],
-        host.port_bindings_digest.clone()
-    );
-    assert_eq!(
-        rejected["readiness"]["resource_ceiling_digest"],
-        host.resource_ceiling_digest.clone()
-    );
+    for case_name in executed_cases {
+        let case = case_by_name(&vector, &case_name);
+        let expected = &case["expected"];
+        match case_name.as_str() {
+            "cancellation_before_admission" => {
+                let mut host = HostProcess::spawn();
+                let cancelled = host.request(&request("cancel"));
+                assert_json_subset(
+                    &cancelled,
+                    &materialize_expected_response(&host, &expected["expected_host_response"]),
+                    "cancelled",
+                );
+                assert_no_runtime_evidence(&cancelled);
+                let restarted = host.request(&request("restart"));
+                assert_eq!(restarted["readiness"]["state"], expected["restart_state"]);
+                host.shutdown();
+            }
+            "drain_shutdown_after_in_flight_completion" => {
+                let (_temp_dir, startup_path, _, _, _) = write_startup_input();
+                let output = Command::new(env!("CARGO_BIN_EXE_apxm-reference-host"))
+                    .arg("--startup-input")
+                    .arg(startup_path)
+                    .arg("--lifecycle-probe")
+                    .arg("drain_shutdown_after_in_flight_completion")
+                    .output()
+                    .expect("run in-flight drain probe");
+                assert!(
+                    output.status.success(),
+                    "in-flight drain probe exited with {}",
+                    output.status
+                );
+                let probe: Value =
+                    serde_json::from_slice(&output.stdout).expect("parse in-flight drain probe");
+                assert_eq!(
+                    probe["schema_version"],
+                    "apxm.reference-host.lifecycle-probe.v1"
+                );
+                assert_eq!(probe["case"], "drain_shutdown_after_in_flight_completion");
+                assert_eq!(probe["transition"], "stop_admission_then_finish_in_flight");
+                assert_eq!(probe["in_flight_before_drain"]["state"], "ready");
+                assert_eq!(probe["in_flight_before_drain"]["in_flight"], 1);
+                assert_eq!(probe["drain_response"]["state"], "draining");
+                assert_eq!(probe["drain_response"]["in_flight"], 1);
+                assert_eq!(probe["completion_response"]["status"], "committed");
+                assert_eq!(
+                    terminal_fact(&probe["completion_response"]["runtime_evidence"])["fact_kind"],
+                    expected["runtime_evidence_terminal_kind"]
+                );
+                assert_eq!(probe["terminal_readiness"]["state"], "stopped");
+                assert_eq!(probe["terminal_readiness"]["in_flight"], 0);
+            }
+            "explicit_shutdown_terminal_state" => {
+                let mut host = HostProcess::spawn();
+                let shutdown = host.request(&request("shutdown"));
+                assert_json_subset(
+                    &shutdown,
+                    &materialize_expected_response(&host, &expected["expected_host_response"]),
+                    "shutdown",
+                );
+                assert_no_runtime_evidence(&shutdown);
+                host.shutdown();
+            }
+            "restart_recovery_from_runtime_evidence" => {
+                let invoke = invoke_vector();
+                let mut host = HostProcess::spawn();
+                let committed = host.request(&json!({
+                    "schema_version": "apxm.runtime.host-request.v1",
+                    "operation": "invoke",
+                    "admission": materialize_admission(
+                        &host,
+                        fixture(&invoke, "valid_exact_admission"),
+                    ),
+                    "air": fixture(&invoke, "minimal_valid_air").clone(),
+                }));
+                assert_eq!(committed["status"], "committed");
+                let shutdown = host.request(&request("shutdown"));
+                assert_eq!(shutdown["status"], "shutdown");
+                let restarted = host.request(&request("restart"));
+                assert_json_subset(
+                    &restarted,
+                    &materialize_expected_response(&host, &expected["expected_host_response"]),
+                    "restarted",
+                );
+                assert_eq!(
+                    restarted["recovery"]["runtime_evidence"]["schema_version"],
+                    expected["recovery_source"]
+                );
+                assert_eq!(
+                    terminal_fact(&restarted["recovery"]["runtime_evidence"])["fact_kind"],
+                    expected["runtime_evidence_terminal_kind"]
+                );
+                host.shutdown();
+            }
+            "revocation_before_dispatch" => {
+                let invoke = invoke_vector();
+                let mut host = HostProcess::spawn();
+                let revoked = host.request(&request("revoke"));
+                assert_json_subset(
+                    &revoked,
+                    &materialize_expected_response(&host, &expected["expected_host_response"]),
+                    "revoked",
+                );
+                assert_no_runtime_evidence(&revoked);
+                let rejected = host.request(&json!({
+                    "schema_version": "apxm.runtime.host-request.v1",
+                    "operation": "invoke",
+                    "admission": materialize_admission(
+                        &host,
+                        fixture(&invoke, "valid_exact_admission"),
+                    ),
+                    "air": fixture(&invoke, "minimal_valid_air").clone(),
+                }));
+                assert_eq!(rejected["status"], "rejected");
+                assert_eq!(rejected["error"]["code"], "admission_revoked");
+                assert_eq!(rejected["readiness"]["state"], "stopped");
+                host.shutdown();
+            }
+            "boundary_fail_closed" => {
+                let invoke = invoke_vector();
+                let mut seen = BTreeSet::new();
 
-    host.shutdown();
+                let mut host = HostProcess::spawn();
+                let missing_admission = host.request(&json!({
+                    "schema_version": "apxm.runtime.host-request.v1",
+                    "operation": "invoke",
+                    "air": fixture(&invoke, "minimal_valid_air").clone(),
+                }));
+                assert_eq!(missing_admission["status"], "rejected");
+                assert_no_runtime_evidence(&missing_admission);
+                seen.insert(
+                    missing_admission["error"]["code"]
+                        .as_str()
+                        .expect("missing admission code")
+                        .to_owned(),
+                );
+                host.shutdown();
+
+                let mut host = HostProcess::spawn();
+                let invalid_schema = host.request(&json!({
+                    "schema_version": "apxm.runtime.host-request.v0",
+                    "operation": "readiness",
+                }));
+                assert_eq!(invalid_schema["status"], "rejected");
+                assert_no_runtime_evidence(&invalid_schema);
+                seen.insert(
+                    invalid_schema["error"]["code"]
+                        .as_str()
+                        .expect("invalid schema code")
+                        .to_owned(),
+                );
+                host.shutdown();
+
+                let mut host = HostProcess::spawn();
+                let unknown_operation = host.request(&request("unknown"));
+                assert_eq!(unknown_operation["status"], "rejected");
+                assert_no_runtime_evidence(&unknown_operation);
+                seen.insert(
+                    unknown_operation["error"]["code"]
+                        .as_str()
+                        .expect("unknown operation code")
+                        .to_owned(),
+                );
+                host.shutdown();
+
+                let mut host = HostProcess::spawn();
+                let drain = host.request(&request("drain"));
+                assert_eq!(drain["state"], "draining");
+                let host_not_accepting = host.request(&json!({
+                    "schema_version": "apxm.runtime.host-request.v1",
+                    "operation": "invoke",
+                    "admission": materialize_admission(
+                        &host,
+                        fixture(&invoke, "valid_exact_admission"),
+                    ),
+                    "air": fixture(&invoke, "minimal_valid_air").clone(),
+                }));
+                assert_eq!(host_not_accepting["status"], "rejected");
+                assert_no_runtime_evidence(&host_not_accepting);
+                seen.insert(
+                    host_not_accepting["error"]["code"]
+                        .as_str()
+                        .expect("host_not_accepting code")
+                        .to_owned(),
+                );
+                host.shutdown();
+
+                let expected_rejections: BTreeSet<_> = expected["boundary_rejections"]
+                    .as_array()
+                    .expect("boundary_rejections array")
+                    .iter()
+                    .map(|entry| entry.as_str().expect("boundary rejection").to_owned())
+                    .collect();
+                assert_eq!(seen, expected_rejections);
+            }
+            other => panic!("unexpected live lifecycle case {other}"),
+        }
+    }
 }
