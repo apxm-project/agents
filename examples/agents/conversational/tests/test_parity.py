@@ -159,6 +159,20 @@ def _canonical_shape(air: dict) -> dict:
     }
 
 
+def _closed_semantics(air: dict) -> dict:
+    """Return executable AIR semantics with language-local source maps removed.
+
+    Source maps intentionally differ by language (paths, spans, source_language).
+    Closed program meaning is the remaining AIR: operations, structural IR,
+    context flow, and stable value/type identities.
+    """
+    return {
+        key: value
+        for key, value in air.items()
+        if key != "source_map"
+    }
+
+
 def _frontend_intent(graph: dict) -> dict:
     """Project typed FrontendGraph intent without language-specific spans or ids."""
     declarations = [
@@ -312,6 +326,11 @@ def test_conversational_examples_lower_equivalently() -> None:
     assert python["schema_version"] == "apxm.air.v1"
     assert typescript["schema_version"] == "apxm.air.v1"
     assert _canonical_shape(python) == _canonical_shape(typescript)
+    assert _closed_semantics(python) == _closed_semantics(typescript), json.dumps(
+        {"python": _closed_semantics(python), "typescript": _closed_semantics(typescript)},
+        indent=2,
+        sort_keys=True,
+    )
 
 
 def test_conversational_examples_record_equivalent_frontend_graph_intent_and_diagnostics() -> None:
@@ -347,6 +366,11 @@ def test_paired_corpus_covers_every_public_operation_and_structural_family() -> 
     python = _python_parity("--air")
     typescript = _typescript_parity("canonicalAir")
     assert _canonical_shape(python) == _canonical_shape(typescript)
+    assert _closed_semantics(python) == _closed_semantics(typescript), json.dumps(
+        {"python": _closed_semantics(python), "typescript": _closed_semantics(typescript)},
+        indent=2,
+        sort_keys=True,
+    )
     assert {operation["op"] for operation in python["semantic_operations"]} == {
         "model.call",
         "capability.invoke",

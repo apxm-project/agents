@@ -168,9 +168,16 @@ def _lock_down() -> None:
     """Close the interpreter around the already-resolved frontend."""
     resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0))
     resource.setrlimit(resource.RLIMIT_CPU, (CPU_LIMIT_SECONDS, CPU_LIMIT_SECONDS))
-    resource.setrlimit(
-        resource.RLIMIT_AS, (ADDRESS_SPACE_LIMIT_BYTES, ADDRESS_SPACE_LIMIT_BYTES)
-    )
+    try:
+        resource.setrlimit(
+            resource.RLIMIT_AS, (ADDRESS_SPACE_LIMIT_BYTES, ADDRESS_SPACE_LIMIT_BYTES)
+        )
+    except ValueError:
+        # Darwin exposes RLIMIT_AS as an unlimited sentinel that cannot be
+        # lowered after the interpreter has started. Keep the CPU, file-size,
+        # and audit-hook guards active; Linux and other platforms remain strict.
+        if sys.platform != "darwin":
+            raise
     resolved = frozenset(sys.modules)
 
     def audit(event: str, args: tuple) -> None:
