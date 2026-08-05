@@ -36,6 +36,18 @@
     }
   },
   {
+    "name": "reject-joined-without-release-evidence",
+    "expected_valid": false,
+    "input": {
+      "schema_version": "apxm.vllm-conformance-join.v1",
+      "agents_driver_contract_id": "apxm.inference-driver-binding.v1",
+      "vllm_port_contract_id": "apxm.vllm-inference.v1",
+      "vllm_port_contract_digest": "sha256:361aaf5fd82ae1dd8279726769088c2711a55d964a8376faf4646a149fee9f3c",
+      "joined_vector_digests": ["sha256:7add76f8f7df341785ef45ff51b38e979a309299509b32e76b311268cc93ea32"],
+      "join_status": "joined"
+    }
+  },
+  {
     "name": "valid-candidate-pinned-vector-set",
     "expected_valid": true,
     "input": {
