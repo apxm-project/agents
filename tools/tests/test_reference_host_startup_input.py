@@ -39,7 +39,7 @@ class ReferenceHostStartupInputTests(unittest.TestCase):
             output_path = temp_dir / "startup-input.json"
             self.module.git_stdout = lambda *args: {
                 ("rev-parse", "HEAD"): "1" * 40,
-                ("status", "--porcelain", "--ignored=matching"): "",
+                ("status", "--porcelain"): "",
             }[args]
             try:
                 payload = self.module.build_startup_input(
@@ -74,7 +74,7 @@ class ReferenceHostStartupInputTests(unittest.TestCase):
         original_git_stdout = self.module.git_stdout
         self.module.git_stdout = lambda *args: {
             ("rev-parse", "HEAD"): "b" * 40,
-            ("status", "--porcelain", "--ignored=matching"): "",
+            ("status", "--porcelain"): "",
         }[args]
         try:
             with self.assertRaisesRegex(RuntimeError, "owner revision mismatch"):
@@ -91,7 +91,7 @@ class ReferenceHostStartupInputTests(unittest.TestCase):
         original_git_stdout = self.module.git_stdout
         self.module.git_stdout = lambda *args: {
             ("rev-parse", "HEAD"): "a" * 40,
-            ("status", "--porcelain", "--ignored=matching"): " M tools/scripts/reference_host.rs",
+            ("status", "--porcelain"): " M tools/scripts/reference_host.rs",
         }[args]
         try:
             with self.assertRaisesRegex(RuntimeError, "owner checkout is dirty"):
