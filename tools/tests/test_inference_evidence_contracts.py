@@ -158,6 +158,35 @@ class InferenceEvidenceContractTests(unittest.TestCase):
             ["join_status requires exact external vLLM release evidence"],
         )
 
+    def test_join_schema_requires_exact_attestation_for_joined_status(self) -> None:
+        schema = self.schema_ids["apxm.vllm-conformance-join.v1"]
+        cases = self._cases("apxm.vllm-conformance-join.v1.json")
+        joined = next(
+            case["input"]
+            for case in cases
+            if case["name"] == "valid-joined-with-external-release-evidence"
+        )
+        joined_schema_errors = self.validator.schema_instance_errors(
+            schema, joined, self.schema_ids, schema
+        )
+        self.assertEqual(joined_schema_errors, [])
+
+        missing_attestation = copy.deepcopy(joined)
+        missing_attestation.pop("release_attestation")
+        missing_errors = self.validator.schema_instance_errors(
+            schema, missing_attestation, self.schema_ids, schema
+        )
+        self.assertTrue(missing_errors)
+
+        wrong_attestation = copy.deepcopy(joined)
+        wrong_attestation["release_attestation"]["vector_digests"] = [
+            joined["release_attestation"]["vector_digests"][0]
+        ]
+        wrong_errors = self.validator.schema_instance_errors(
+            schema, wrong_attestation, self.schema_ids, schema
+        )
+        self.assertTrue(wrong_errors)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -187,7 +187,7 @@
     {
       "schema_id": "apxm.vllm-conformance-join.v1",
       "path": "schemas/apxm.vllm-conformance-join.v1.json",
-      "digest": "sha256:b606d7d5f38b7050cfc468f59898da08a7c4e46540023114cf6570b81ca70ed9"
+      "digest": "sha256:b2ffb39e5e005b9e6b99010953195e868256298f68bdd992f1bcec70cdb66918"
     },
     {
       "schema_id": "apxm.external-agent-request.v1",
@@ -1022,5 +1022,5 @@
       ]
     }
   ],
-  "descriptor_digest": "sha256:2a60302aaa7d83395eea7ab8dff3ed95c4286c73d479d476f28bc74c71379bf9"
+  "descriptor_digest": "sha256:557bf4f5dbbcc1b471b48d9e13a807433075154ac26dd4828daaa847e843b515"
 }
