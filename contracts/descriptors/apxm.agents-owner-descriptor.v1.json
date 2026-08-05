@@ -102,7 +102,7 @@
     {
       "schema_id": "apxm.runtime-evidence.v1",
       "path": "schemas/apxm.runtime-evidence.v1.json",
-      "digest": "sha256:901ffd649b92b717f6401b5c051d370927ed2953f3d9c28d14e6598572344e4f"
+      "digest": "sha256:9992b4d6ca2c4a7720eb2e508f7f8f6082f5d40729342cd4f4cce12f5c87dc0b"
     },
     {
       "schema_id": "apxm.committed-native-model-usage.v1",
@@ -716,7 +716,7 @@
     {
       "schema_id": "apxm.runtime-evidence.v1",
       "path": "vectors/apxm.runtime-evidence.v1.json",
-      "digest": "sha256:9a74f9d41252045e5239efce43824264923242b4bc16f384622e632313fb0995",
+      "digest": "sha256:9d7ae29d4313abc5554de7affcac3bff9447d2dfa92d0d15f645fce93f8d3475",
       "coverage": [
         "positive",
         "replay",
@@ -729,7 +729,7 @@
     {
       "schema_id": "apxm.committed-native-model-usage.v1",
       "path": "vectors/apxm.committed-native-model-usage.v1.json",
-      "digest": "sha256:d2f9778f4ffc5eb95dcc93bff94314048e53459b7ffdb6b3479b1f030dfa2b3e",
+      "digest": "sha256:9827b5b93a50317259e73db9590e4ed5ce3d06db62c28095812567fe86d62e93",
       "coverage": [
         "positive",
         "replay",
@@ -868,11 +868,12 @@
     {
       "schema_id": "apxm.inference-driver-binding.v1",
       "path": "vectors/apxm.inference-driver-binding.v1.json",
-      "digest": "sha256:69763f13c2fdad867bc41fe38caa2213b565a047fa776fa2e2300c4cb8d1f273",
+      "digest": "sha256:3788d65bfbc4328bbc3fca246135500570b0dda92538bb521c2dbc48422d0896",
       "coverage": [
         "positive",
         "unavailable",
-        "unknown_discriminant"
+        "unknown_discriminant",
+        "duplicated_identity"
       ]
     },
     {
@@ -889,7 +890,7 @@
     {
       "schema_id": "apxm.inference-usage-lineage.v1",
       "path": "vectors/apxm.inference-usage-lineage.v1.json",
-      "digest": "sha256:5bbb094399acaaf303c6b7d24d33f56c5284118fcf93d597a0adb0e4b9380d4c",
+      "digest": "sha256:8cb51d933a8164a2d79dfa5f2b5dad6bc65fd0bb79efe50baff136ccd20c45da",
       "coverage": [
         "positive",
         "typed_failure",
@@ -1022,5 +1023,5 @@
       ]
     }
   ],
-  "descriptor_digest": "sha256:648bc307b6e9b8cace02c33a76f6903b3808ba7fd2d0fcc9f0a7bb8edec4bf98"
+  "descriptor_digest": "sha256:9b59588a2bd87cdcc3e777d7b15bab523b47d372eef025b13ea2b0989a9147c1"
 }

@@ -30,9 +30,10 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use apxm_inference::{
-    BindingError, ModelBindingAdmission, ModelCallPreparation, ModelCallRequest,
-    ModelCallRequestError, ModelCallRequestMetadataPort, ModelInferencePort, ModelOutcome,
-    ModelTargetRef, RetryPolicy, TypedError, Usage, execute_with_attempt as run_model,
+    BindingError, InferenceTargetCommitment, ModelBindingAdmission, ModelCallPreparation,
+    ModelCallRequest, ModelCallRequestError, ModelCallRequestMetadataPort, ModelInferencePort,
+    ModelOutcome, ModelTargetRef, RetryPolicy, TargetCommitmentError, TypedError, Usage,
+    execute_with_attempt as run_model,
 };
 use apxm_kernel::{
     AcpPromptRequest, AtomicWriteSet, ExecutionCommitPort, ExecutionCommitRequest,
@@ -282,6 +283,7 @@ pub enum ExecutionError {
     },
     CapabilityRequest(CapabilityRequestError),
     Binding(BindingError),
+    TargetCommitment(TargetCommitmentError),
     ModelRequest(ModelCallRequestError),
     ModelRequestMetadata(TypedError),
     Continuation(ContinuationError),
@@ -321,6 +323,7 @@ impl std::fmt::Display for ExecutionError {
             ),
             Self::CapabilityRequest(error) => write!(f, "Capability request error: {error}"),
             Self::Binding(error) => write!(f, "model binding error: {error}"),
+            Self::TargetCommitment(error) => write!(f, "target commitment error: {error}"),
             Self::ModelRequest(error) => write!(f, "model request error: {error}"),
             Self::ModelRequestMetadata(error) => {
                 write!(f, "model request metadata error: {}", error.message)
@@ -891,6 +894,11 @@ async fn drive_from(
                         if let (ModelOutcome::CommittedSuccess { usage }, Some(attempt_index)) =
                             (&outcome, execution.committed_attempt)
                         {
+                            let target_commitment = InferenceTargetCommitment::from_resolved(
+                                call.resolved_binding(),
+                                0,
+                            )
+                            .map_err(ExecutionError::TargetCommitment)?;
                             state.native_usage.input_tokens += usage.input_tokens;
                             state.native_usage.output_tokens += usage.output_tokens;
                             state.seq += 1;
@@ -915,6 +923,7 @@ async fn drive_from(
                                     .reference
                                     .0
                                     .clone(),
+                                model_target_digest: target_commitment.target_digest.clone(),
                                 model_deployment_ref: call
                                     .resolved_binding()
                                     .model_deployment_ref
@@ -925,6 +934,12 @@ async fn drive_from(
                                     .exact_port_binding
                                     .binding_digest
                                     .clone(),
+                                target_commitment_digest: target_commitment.commit_digest,
+                                generation_cohort_digest: target_commitment
+                                    .generation_cohort_digest,
+                                target_generation: target_commitment.target_generation,
+                                target_port_contract_digest: target_commitment.port_contract_digest,
+                                target_composition_digest: target_commitment.composition_digest,
                                 native_input_tokens: usage.input_tokens,
                                 native_output_tokens: usage.output_tokens,
                             };

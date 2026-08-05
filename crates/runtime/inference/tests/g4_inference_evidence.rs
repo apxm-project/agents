@@ -311,6 +311,22 @@ fn exact_driver_binding_rejects_target_digest_revision_drift() {
     ));
 }
 
+#[test]
+fn duplicated_driver_identity_rejects_nested_commitment_drift() {
+    let resolved = resolved("model.alpha");
+    let mut binding =
+        InferenceDriverBinding::from_resolved("driver.vllm", "profile.exact", &resolved)
+            .expect("binding");
+    binding.target_commitment.exact_port_binding_digest = DIGEST_E.to_string();
+
+    assert!(matches!(
+        binding.validate_shape(),
+        Err(apxm_inference::DriverBindingError::TargetCommitment(
+            apxm_inference::TargetCommitmentError::CommitDigestMismatch
+        ))
+    ));
+}
+
 // ── Lease ───────────────────────────────────────────────────────────────────
 
 #[test]
@@ -527,6 +543,48 @@ fn usage_lineage_rejects_target_commitment_tamper() {
         lineage.validate(),
         Err(apxm_inference::LineageError::CommitMismatch)
     );
+}
+
+#[test]
+fn evidence_coordinates_are_digest_bound_and_swaps_fail() {
+    let mut lineage = InferenceUsageLineage::seal(
+        "effect.1",
+        0,
+        DIGEST_A,
+        "model.alpha",
+        DIGEST_B,
+        "deploy.alpha",
+        DIGEST_C,
+        Usage {
+            input_tokens: 2,
+            output_tokens: 3,
+        },
+        4,
+        None,
+    )
+    .expect("seal lineage");
+    lineage
+        .bind_evidence("fact.1", "commit.1")
+        .expect("bind evidence");
+    lineage.validate().expect("bound lineage validates");
+    assert!(matches!(
+        lineage.authorize_exporter_claim("commit.other", Usage::default()),
+        Err(apxm_inference::LineageError::CommitMismatch)
+    ));
+
+    let mut swapped_fact = lineage.clone();
+    swapped_fact.evidence_fact_id = Some("fact.2".into());
+    assert!(matches!(
+        swapped_fact.validate(),
+        Err(apxm_inference::LineageError::DigestMismatch)
+    ));
+
+    let mut swapped_commit = lineage;
+    swapped_commit.commit_id = Some("commit.2".into());
+    assert!(matches!(
+        swapped_commit.validate(),
+        Err(apxm_inference::LineageError::DigestMismatch)
+    ));
 }
 
 #[test]
