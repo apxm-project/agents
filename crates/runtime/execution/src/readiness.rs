@@ -360,7 +360,11 @@ pub struct RunnableNode {
 /// [`ReadinessKernelBuilder::build`].
 #[derive(Debug, Default)]
 pub struct ReadinessKernelBuilder {
-    nodes: Vec<(NodeOccurrenceId, Vec<OperandSlotDecl>, Vec<NodeOccurrenceId>)>,
+    nodes: Vec<(
+        NodeOccurrenceId,
+        Vec<OperandSlotDecl>,
+        Vec<NodeOccurrenceId>,
+    )>,
 }
 
 impl ReadinessKernelBuilder {
@@ -813,10 +817,7 @@ impl ReadinessKernel {
     /// Returns [`ReadinessError::IllegalTransition`] unless the node is runnable
     /// and [`ReadinessError::OperandsIncomplete`] if a declared slot is
     /// unpublished.
-    pub fn runnable_node(
-        &self,
-        node: &NodeOccurrenceId,
-    ) -> Result<RunnableNode, ReadinessError> {
+    pub fn runnable_node(&self, node: &NodeOccurrenceId) -> Result<RunnableNode, ReadinessError> {
         let state = self.state(node)?;
         if state.lifecycle != NodeLifecycle::Runnable {
             return Err(ReadinessError::IllegalTransition {

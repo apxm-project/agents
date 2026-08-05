@@ -34,9 +34,9 @@ pub use driver::{
     StaticHookResult, execute, execute_resumable, resume, resume_event,
 };
 pub use operational_usage::{
-    CommittedNativeModelUsage, CommittedNativeModelUsageError, CommittedNativeModelUsageOutcome,
-    CommittedNativeModelUsagePort, CommittedNativeModelUsageVersion, EvidencePositionRef,
-    EvidencePositionRefType,
+    CommittedNativeModelUsage, CommittedNativeModelUsageError, CommittedNativeModelUsageGateError,
+    CommittedNativeModelUsageOutcome, CommittedNativeModelUsagePort,
+    CommittedNativeModelUsageVersion, EvidencePositionRef, EvidencePositionRefType,
 };
 pub use ports::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,

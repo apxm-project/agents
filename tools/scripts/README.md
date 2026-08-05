@@ -17,6 +17,9 @@ script-local package when a command grows beyond one responsibility.
   - `dist.py` builds archives, Python distributions, and checksums.
   - `publish.py` owns GitHub and PyPI publishing.
   - `cli.py` owns argument parsing.
+- `reference_host_receipt.py` builds the canonical `apxm-reference-host`
+  executable through the APXM Cargo wrapper and records an exact receipt under
+  `.apxm/reference-host/receipts/`.
 
 ## Validators and Installers
 
