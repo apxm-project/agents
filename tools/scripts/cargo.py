@@ -74,6 +74,7 @@ NATIVE_TOOLCHAIN_GATED_SUBCOMMANDS = frozenset({
     "run",
 })
 LINUX_GNU_COMPILER_MARKERS = ("-conda-linux-gnu-", "-linux-gnu-")
+LINUX_GNU_COMPILER_SUFFIXES = ("-gcc", "-g++", "-ld")
 NATIVE_TOOLCHAIN_ENV_KEYS = ("CC", "CXX")
 READINESS_FAILURE_EXIT_CODE = 2
 SKIP_RELEASE_ENTRIES = frozenset({
@@ -148,6 +149,15 @@ def _cargo_env(project_root: Path, target_dir: Path, command: list[str]) -> dict
     return env
 
 
+def _explicit_target(command: list[str]) -> str | None:
+    for idx, value in enumerate(command):
+        if value == TARGET_FLAG and idx + 1 < len(command):
+            return command[idx + 1]
+        if value.startswith(f"{TARGET_FLAG}="):
+            return value.split("=", 1)[1]
+    return None
+
+
 def _selected_package(command: list[str]) -> str | None:
     for idx, value in enumerate(command):
         if value in {PACKAGE_FLAG, LONG_PACKAGE_FLAG} and idx + 1 < len(command):
@@ -177,6 +187,116 @@ def _looks_like_linux_gnu_compiler(value: str) -> bool:
     return any(marker in compiler_name for marker in LINUX_GNU_COMPILER_MARKERS)
 
 
+def _linux_gnu_compiler_prefix(value: str) -> str | None:
+    compiler_name = Path(value).name.lower()
+    for marker in LINUX_GNU_COMPILER_MARKERS:
+        if marker not in compiler_name:
+            continue
+        prefix, _, suffix = compiler_name.partition(marker)
+        if not suffix:
+            continue
+        if any(suffix == candidate[1:] for candidate in LINUX_GNU_COMPILER_SUFFIXES):
+            return f"{prefix}{marker[:-1]}"
+    return None
+
+
+def _declared_linux_compiler_packages(project_root: Path) -> list[str]:
+    environment_path = project_root / ".dekk" / "environment.yaml"
+    if not environment_path.is_file():
+        return []
+
+    packages: list[str] = []
+    for raw_line in environment_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line.startswith("- "):
+            continue
+        package = line[2:].strip()
+        if package.startswith(("gxx_linux", "gcc_linux", "binutils_linux", "sysroot_linux")):
+            packages.append(package)
+    return packages
+
+
+def _installed_linux_gnu_compiler_prefixes(project_root: Path) -> list[str]:
+    env_bin = project_root / ".dekk" / "env" / "bin"
+    if not env_bin.is_dir():
+        return []
+
+    prefixes = {
+        prefix
+        for pattern in ("*-linux-gnu-gcc", "*-linux-gnu-g++", "*-linux-gnu-ld")
+        for path in env_bin.glob(pattern)
+        if (prefix := _linux_gnu_compiler_prefix(path.name)) is not None
+    }
+    return sorted(prefixes)
+
+
+def _is_explicit_linux_target(target: str | None) -> bool:
+    return bool(target) and "-linux-" in target.lower()
+
+
+def _is_linux_arm64_target(target: str | None) -> bool:
+    return bool(target) and target.lower().startswith("aarch64-unknown-linux-")
+
+
+def _unsupported_linux_arm64_target_error(
+    project_root: Path,
+    cargo_args: list[str],
+    env: dict[str, str],
+) -> str | None:
+    target = _explicit_target(cargo_args)
+    if not _is_linux_arm64_target(target):
+        return None
+
+    declared_packages = _declared_linux_compiler_packages(project_root)
+    installed_prefixes = _installed_linux_gnu_compiler_prefixes(project_root)
+    mismatches = [
+        (key, value, prefix)
+        for key in NATIVE_TOOLCHAIN_ENV_KEYS
+        if (value := env.get(key))
+        and (prefix := _linux_gnu_compiler_prefix(value)) is not None
+        and not prefix.startswith("aarch64")
+    ]
+    has_declared_arm64 = any("aarch64" in package or "arm64" in package for package in declared_packages)
+    has_installed_arm64 = any(prefix.startswith("aarch64") for prefix in installed_prefixes)
+    if not mismatches and has_declared_arm64 and has_installed_arm64:
+        return None
+    if not mismatches and not declared_packages and not installed_prefixes:
+        return None
+
+    detail_lines = [
+        "error: APXM Linux target readiness failed.",
+        f"  Requested cargo target: {target}",
+        f"  Blocked cargo subcommand: {cargo_args[0]}",
+    ]
+    if REFERENCE_HOST_BINARY in cargo_args:
+        detail_lines.append(f"  Build target: {REFERENCE_HOST_BINARY}")
+    detail_lines.append(
+        "  The sanctioned Cargo/Dekk toolchain does not provide a matching Linux arm64 compiler/sysroot."
+    )
+    if declared_packages:
+        detail_lines.append(
+            "  Declared Dekk Linux compiler packages: " + ", ".join(declared_packages)
+        )
+    if installed_prefixes:
+        detail_lines.append(
+            "  Installed Linux GNU compiler prefixes under .dekk/env/bin: "
+            + ", ".join(installed_prefixes)
+        )
+    if mismatches:
+        detail_lines.append("  Active compiler selections:")
+        detail_lines.extend(f"    {key}={value}" for key, value, _ in mismatches)
+    detail_lines.extend(
+        [
+            "  No configured or installed compiler matches `aarch64*-linux-gnu`, so a reproducible Linux arm64 build cannot be claimed through the current wrapper.",
+            "  Fix this before claiming support:",
+            "  - provision an `aarch64` Linux GNU compiler and sysroot in the Dekk environment",
+            "  - keep the build on the sanctioned Cargo/Dekk path and add focused verification for the arm64 artifact",
+            "  The readiness gate stays closed until the repository ships a matching Linux arm64 toolchain.",
+        ]
+    )
+    return "\n".join(detail_lines)
+
+
 def _native_toolchain_readiness_error(
     cargo_args: list[str],
     env: dict[str, str],
@@ -190,6 +310,8 @@ def _native_toolchain_readiness_error(
     host_system = system or platform.system()
     host_machine = machine or platform.machine()
     if host_system.lower() != "darwin":
+        return None
+    if _is_explicit_linux_target(_explicit_target(cargo_args)):
         return None
 
     mismatches = [
@@ -220,6 +342,10 @@ def _native_toolchain_readiness_error(
 def _run(command: list[str], *, project_root: Path, target_dir: Path) -> int:
     env = _cargo_env(project_root, target_dir, command)
     if Path(command[0]).name == CARGO:
+        target_error = _unsupported_linux_arm64_target_error(project_root, command[1:], env)
+        if target_error is not None:
+            print(target_error, file=sys.stderr)
+            return READINESS_FAILURE_EXIT_CODE
         readiness_error = _native_toolchain_readiness_error(command[1:], env)
         if readiness_error is not None:
             print(readiness_error, file=sys.stderr)
