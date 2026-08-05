@@ -6,12 +6,11 @@
 use std::cell::{Cell, RefCell};
 
 use apxm_inference::{
-    AttemptDisposition, BindingError, CancelToken, ErrorCategory, ExactModelTargetRef,
-    ExactPortBindingRef, IdempotencyKey, ModelBindingAdmission, ModelCallPreparation,
-    ModelCallRequest, ModelCallRequestMetadata, ModelContentRef, ModelContextEnvelopeRef,
-    ModelDeploymentRef, ModelInferencePort, ModelOutcome, ModelStreamEvent, ModelStreamMode,
-    ModelStreamPort, ModelStreamStep, ModelTargetRef, ResolvedModelBinding, RetryPolicy,
-    TypedError, Usage, execute, stream,
+    AttemptDisposition, BindingError, CancelToken, ErrorCategory, IdempotencyKey,
+    InferenceTargetCommitment, ModelBindingAdmission, ModelCallPreparation, ModelCallRequest,
+    ModelCallRequestMetadata, ModelContentRef, ModelContextEnvelopeRef, ModelInferencePort,
+    ModelOutcome, ModelStreamEvent, ModelStreamMode, ModelStreamPort, ModelStreamStep,
+    ModelTargetRef, ResolvedModelBinding, RetryPolicy, TypedError, Usage, execute,
 };
 
 const DIGEST_A: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -21,18 +20,12 @@ const DIGEST_D: &str = "sha256:ddddddddddddddddddddddddddddddddddddddddddddddddd
 const DIGEST_E: &str = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 
 fn binding(target: &str, deployment: &str, digest: &str) -> ResolvedModelBinding {
-    ResolvedModelBinding {
-        model_target: ExactModelTargetRef {
-            reference: ModelTargetRef(target.to_string()),
-            target_digest: DIGEST_B.to_string(),
-        },
-        model_deployment_ref: ModelDeploymentRef(deployment.to_string()),
-        exact_port_binding: ExactPortBindingRef {
-            binding_digest: digest.to_string(),
-            port_contract_digest: DIGEST_C.to_string(),
-        },
-        composition_digest: DIGEST_D.to_string(),
-    }
+    ResolvedModelBinding::from_target_commitment(
+        InferenceTargetCommitment::commit(
+            target, DIGEST_B, deployment, digest, DIGEST_C, DIGEST_D, 0,
+        )
+        .expect("resolved target commitment"),
+    )
 }
 
 fn admission() -> ModelBindingAdmission {

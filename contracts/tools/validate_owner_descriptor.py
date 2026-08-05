@@ -990,6 +990,30 @@ def inference_driver_binding_errors(instance: dict[str, Any]) -> list[str]:
     return []
 
 
+def model_inference_request_errors(instance: dict[str, Any]) -> list[str]:
+    binding = instance.get("resolved_binding")
+    if not isinstance(binding, dict):
+        return []
+    commitment = binding.get("target_commitment")
+    if not isinstance(commitment, dict):
+        return ["resolved binding must carry a target commitment"]
+    commitment_errors = target_commitment_errors(commitment)
+    if commitment_errors:
+        return commitment_errors
+    duplicated = (
+        ("model_target.reference", binding.get("model_target", {}).get("reference"), commitment.get("target_ref")),
+        ("model_target.target_digest", binding.get("model_target", {}).get("target_digest"), commitment.get("target_digest")),
+        ("model_deployment_ref", binding.get("model_deployment_ref"), commitment.get("model_deployment_ref")),
+        ("exact_port_binding.binding_digest", binding.get("exact_port_binding", {}).get("binding_digest"), commitment.get("exact_port_binding_digest")),
+        ("exact_port_binding.port_contract_digest", binding.get("exact_port_binding", {}).get("port_contract_digest"), commitment.get("port_contract_digest")),
+        ("composition_digest", binding.get("composition_digest"), commitment.get("composition_digest")),
+    )
+    for field, binding_value, commitment_value in duplicated:
+        if binding_value != commitment_value:
+            return [f"{field} must match target_commitment"]
+    return []
+
+
 def inference_usage_lineage_errors(instance: dict[str, Any]) -> list[str]:
     if instance.get("sealed") is not True:
         return ["usage lineage must be sealed before publication"]
@@ -1160,6 +1184,8 @@ def semantic_errors(schema_id: str, instance: object) -> list[str]:
                 return ["usage_measurement_id must match the exact committed attempt tuple"]
     if schema_id == "apxm.inference-credential-lease.v1":
         return inference_credential_lease_errors(instance)
+    if schema_id == "apxm.model-inference-request.v1":
+        return model_inference_request_errors(instance)
     if schema_id == "apxm.inference-driver-binding.v1":
         return inference_driver_binding_errors(instance)
     if schema_id == "apxm.inference-usage-lineage.v1":

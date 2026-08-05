@@ -105,8 +105,8 @@ impl InferenceDriverBinding {
         inference_profile_ref: impl Into<String>,
         resolved: &ResolvedModelBinding,
     ) -> Result<Self, DriverBindingError> {
-        let target_commitment = InferenceTargetCommitment::from_resolved(resolved, 0)
-            .map_err(DriverBindingError::from)?;
+        let target_commitment =
+            InferenceTargetCommitment::from_resolved(resolved).map_err(DriverBindingError::from)?;
         let binding = Self {
             schema_version: INFERENCE_DRIVER_BINDING_SCHEMA.to_string(),
             driver_id: driver_id.into(),
