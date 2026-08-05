@@ -30,7 +30,8 @@ from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 CONTRACTS_DIR = SCRIPT_DIR.parent
-AGENTS_ROOT = CONTRACTS_DIR.parent
+CHECKOUT_ROOT = CONTRACTS_DIR.parent.resolve(strict=False)
+AGENTS_ROOT = CHECKOUT_ROOT
 WORKSPACE_DIR = AGENTS_ROOT.parent
 CONSTITUTION_SCHEMAS_DIR = WORKSPACE_DIR / "contracts" / "schemas"
 
@@ -45,6 +46,9 @@ REFERENCE_HOST_RELEASE_MANIFEST_PATH = (
 )
 REFERENCE_HOST_EXECUTION_MANIFEST_PATH = (
     CONTRACTS_DIR / "reference-host" / "manifests" / "apxm.reference-host-execution-manifest.v1.json"
+)
+REFERENCE_HOST_INVOKE_PARITY_VECTOR_PATH = (
+    CONTRACTS_DIR / "reference-host" / "vectors" / "apxm.reference-host.invoke-parity.v1.json"
 )
 REFERENCE_HOST_LIFECYCLE_PARITY_VECTOR_PATH = (
     CONTRACTS_DIR / "reference-host" / "vectors" / "apxm.reference-host.lifecycle-parity.v1.json"
@@ -174,6 +178,9 @@ VECTOR_SCHEMA = {
     "apxm.inference-usage-lineage.v1.json": "apxm.inference-usage-lineage.v1",
     "apxm.diagnostic-correlation.v1.json": "apxm.diagnostic-correlation.v1",
     "apxm.vllm-conformance-join.v1.json": "apxm.vllm-conformance-join.v1",
+    "apxm.runtime-readiness.v1.json": "apxm.runtime-readiness.v1",
+    "apxm.runtime-drain-quiescence.v1.json": "apxm.runtime-drain-quiescence.v1",
+    "apxm.invocation-admission.v1.json": "apxm.invocation-admission.v1",
 }
 
 # Authoring rule: no product surface may cite the delivery plan or its
@@ -208,6 +215,7 @@ REFERENCE_HOST_STARTUP_INPUT_FAIL_CLOSED_REASONS = [
     "dirty",
     "mismatched",
 ]
+REFERENCE_HOST_INVOKE_VECTOR_ID = "apxm.reference-host.invoke-parity.v1"
 REFERENCE_HOST_LIFECYCLE_VECTOR_ID = "apxm.reference-host.lifecycle-parity.v1"
 RETIRED_REFERENCE_HOST_ADMISSION_ALIAS = "apxm.execution-admission.v1"
 REFERENCE_HOST_EXECUTION_SCHEMA_KEYS = (
@@ -306,6 +314,41 @@ def file_digest(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def repo_relative_path(path: Path) -> str:
+    return path.relative_to(CHECKOUT_ROOT).as_posix()
+
+
+def resolve_contract_relative_path(raw_path: str, *, label: str) -> Path:
+    candidate = (CONTRACTS_DIR / raw_path).resolve(strict=False)
+    contracts_root = CONTRACTS_DIR.resolve(strict=False)
+    try:
+        candidate.relative_to(contracts_root)
+    except ValueError as error:
+        raise ValidationError(f"{label} path escapes contracts/: {raw_path}") from error
+    if not candidate.is_file():
+        raise ValidationError(f"{label} file is missing: {raw_path}")
+    return candidate
+
+
+def descriptor_exact_checksum() -> str:
+    if not DESCRIPTOR_SIDECAR_PATH.is_file():
+        raise ValidationError("owner descriptor exact-checksum sidecar is missing")
+    lines = DESCRIPTOR_SIDECAR_PATH.read_text(encoding="utf-8").splitlines()
+    if len(lines) != 2:
+        raise ValidationError("owner descriptor exact-checksum sidecar shape drifted")
+    recorded_digest, separator, recorded_path = lines[0].partition("  ")
+    if separator != "  ":
+        raise ValidationError("owner descriptor exact-checksum sidecar must use git checksum spacing")
+    if recorded_path != f"contracts/descriptors/{DESCRIPTOR_PATH.name}":
+        raise ValidationError("owner descriptor exact-checksum sidecar path drifted")
+    if lines[1] != "digest_scope: exact repository bytes":
+        raise ValidationError("owner descriptor exact-checksum sidecar scope drifted")
+    actual_digest = file_digest(DESCRIPTOR_PATH)
+    if recorded_digest != actual_digest:
+        raise ValidationError("owner descriptor exact-checksum sidecar is stale")
+    return actual_digest
+
+
 def reference_host_execution_manifest_ref() -> dict[str, str]:
     return {
         "schema_version": REFERENCE_HOST_EXECUTION_MANIFEST_SCHEMA_VERSION,
@@ -366,6 +409,15 @@ def reference_host_lifecycle_vector_ref(lifecycle_vector: dict[str, Any]) -> dic
     }
 
 
+def reference_host_invoke_vector_ref(invoke_vector: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "vector_id": REFERENCE_HOST_INVOKE_VECTOR_ID,
+        "path": "reference-host/vectors/apxm.reference-host.invoke-parity.v1.json",
+        "digest": file_digest(REFERENCE_HOST_INVOKE_PARITY_VECTOR_PATH),
+        "profiles": REFERENCE_HOST_PROFILE_COHORT,
+    }
+
+
 def reference_host_published_lifecycle_profile(
     release_manifest: dict[str, Any],
     execution_manifest: dict[str, Any],
@@ -383,6 +435,136 @@ def reference_host_published_lifecycle_profile(
         "shared_contracts": lifecycle_vector["shared_contracts"],
         "required_cases": [case["name"] for case in lifecycle_vector["cases"]],
     }
+
+
+def attested_release_entry(
+    raw_entry: dict[str, Any], *, identifier_field: str, label: str
+) -> dict[str, str]:
+    identifier = raw_entry.get(identifier_field)
+    raw_path = raw_entry.get("path")
+    if not isinstance(identifier, str) or not identifier:
+        raise ValidationError(f"{label} {identifier_field} is missing")
+    if not isinstance(raw_path, str) or not raw_path:
+        raise ValidationError(f"{label} path is missing")
+    path = resolve_contract_relative_path(raw_path, label=label)
+    return {
+        identifier_field: identifier,
+        "path": repo_relative_path(path),
+        "exact_bytes_digest": file_digest(path),
+    }
+
+
+def owner_source_contract_attestations(descriptor: dict[str, Any]) -> list[dict[str, str]]:
+    attestations: list[dict[str, str]] = []
+    for entry in descriptor.get("owned_schemas", []):
+        if not isinstance(entry, dict):
+            raise ValidationError("owned_schemas entries must be objects")
+        contract_id = entry.get("schema_id")
+        raw_path = entry.get("path")
+        if not isinstance(contract_id, str) or not isinstance(raw_path, str):
+            raise ValidationError("owned_schemas entries must carry schema_id and path")
+        path = resolve_contract_relative_path(raw_path, label=f"owned schema {contract_id}")
+        attestations.append(
+            {
+                "kind": "owned-schema",
+                "contract_id": contract_id,
+                "path": repo_relative_path(path),
+                "exact_bytes_digest": file_digest(path),
+            }
+        )
+    for entry in descriptor.get("owned_port_contracts", []):
+        if not isinstance(entry, dict):
+            raise ValidationError("owned_port_contracts entries must be objects")
+        contract_id = entry.get("port_contract_id")
+        raw_path = entry.get("path")
+        if not isinstance(contract_id, str) or not isinstance(raw_path, str):
+            raise ValidationError("owned_port_contracts entries must carry port_contract_id and path")
+        path = resolve_contract_relative_path(
+            raw_path, label=f"owned port contract {contract_id}"
+        )
+        attestations.append(
+            {
+                "kind": "owned-port-contract",
+                "contract_id": contract_id,
+                "path": repo_relative_path(path),
+                "exact_bytes_digest": file_digest(path),
+            }
+        )
+    return attestations
+
+
+def reference_host_release_attestation(
+    *, owner_revision: str, owner_descriptor_digest: str
+) -> dict[str, Any]:
+    if not owner_revision:
+        raise ValidationError("reference-host release attestation requires owner_revision")
+    if not owner_descriptor_digest:
+        raise ValidationError("reference-host release attestation requires owner_descriptor_digest")
+    descriptor = load_json(DESCRIPTOR_PATH)
+    check_reference_host_boundary(descriptor)
+    check_reference_host_release_evidence(descriptor)
+    release_manifest = load_json(REFERENCE_HOST_RELEASE_MANIFEST_PATH)
+    attestation = {
+        "cohort": {
+            "revision": owner_revision,
+            "descriptor_digest": owner_descriptor_digest,
+            "manifest_digest": file_digest(REFERENCE_HOST_RELEASE_MANIFEST_PATH),
+        },
+        "release_manifest": {
+            "path": repo_relative_path(REFERENCE_HOST_RELEASE_MANIFEST_PATH),
+            "exact_bytes_digest": file_digest(REFERENCE_HOST_RELEASE_MANIFEST_PATH),
+        },
+        "golden_vectors": [],
+        "publication_cohort": {
+            "manifests": [],
+            "schemas": [],
+            "vectors": [],
+        },
+        "owner_source_contracts": owner_source_contract_attestations(descriptor),
+    }
+    golden_vectors = release_manifest.get("golden_vectors")
+    if not isinstance(golden_vectors, list):
+        raise ValidationError("reference-host release manifest golden_vectors must be an array")
+    for entry in golden_vectors:
+        if not isinstance(entry, dict):
+            raise ValidationError("reference-host release manifest golden_vectors entry must be an object")
+        raw_path = entry.get("path")
+        if not isinstance(raw_path, str) or not raw_path:
+            raise ValidationError("reference-host release manifest golden vector path is missing")
+        path = resolve_contract_relative_path(raw_path, label="reference-host golden vector")
+        attestation["golden_vectors"].append(
+            {
+                "path": repo_relative_path(path),
+                "exact_bytes_digest": file_digest(path),
+            }
+        )
+    publication_cohort = release_manifest.get("publication_cohort")
+    if not isinstance(publication_cohort, dict):
+        raise ValidationError("reference-host release manifest publication_cohort must be an object")
+    for group, identifier_field in (
+        ("manifests", "schema_version"),
+        ("schemas", "schema_id"),
+        ("vectors", "schema_id"),
+    ):
+        entries = publication_cohort.get(group)
+        if not isinstance(entries, list):
+            raise ValidationError(
+                f"reference-host release manifest publication_cohort {group} must be an array"
+            )
+        attestation["publication_cohort"][group] = [
+            attested_release_entry(
+                entry,
+                identifier_field=identifier_field,
+                label=f"reference-host publication cohort {group[:-1]}",
+            )
+            for entry in entries
+            if isinstance(entry, dict)
+        ]
+        if len(attestation["publication_cohort"][group]) != len(entries):
+            raise ValidationError(
+                f"reference-host release manifest publication_cohort {group} entries must be objects"
+            )
+    return attestation
 
 
 def _matches_json_type(instance: Any, name: str) -> bool:
@@ -546,6 +728,14 @@ def semantic_errors(schema_id: str, instance: object) -> list[str]:
         return external_agent_evidence_errors(instance)
     if schema_id == "apxm.capability-invocation.v1":
         return capability_invocation_errors(instance)
+    if schema_id == "apxm.invocation-admission.v1":
+        artifact_digest = instance.get("artifact_digest")
+        release_digest = instance.get("release_digest")
+        provenance_digest = instance.get("provenance_digest")
+        if artifact_digest != release_digest:
+            return ["artifact_digest must equal release_digest"]
+        if artifact_digest != provenance_digest:
+            return ["artifact_digest must equal provenance_digest"]
     return []
 
 
@@ -1178,16 +1368,29 @@ def check_reference_host_release_evidence(descriptor: dict[str, Any]) -> None:
         raise ValidationError("reference-host lifecycle parity vector schema_version drifted")
     if lifecycle_vector.get("profiles") != REFERENCE_HOST_PROFILE_COHORT:
         raise ValidationError("reference-host lifecycle parity vector profiles drifted")
+    invoke_vector = load_json(REFERENCE_HOST_INVOKE_PARITY_VECTOR_PATH)
+    if invoke_vector.get("schema_version") != REFERENCE_HOST_INVOKE_VECTOR_ID:
+        raise ValidationError("reference-host invoke parity vector schema_version drifted")
+    if invoke_vector.get("profiles") != REFERENCE_HOST_PROFILE_COHORT:
+        raise ValidationError("reference-host invoke parity vector profiles drifted")
     expected_execution_manifest_ref = reference_host_execution_manifest_ref()
+    expected_invoke_vector_ref = reference_host_invoke_vector_ref(invoke_vector)
     expected_lifecycle_vector_ref = reference_host_lifecycle_vector_ref(lifecycle_vector)
     golden_vectors = release_manifest.get("golden_vectors")
     if not isinstance(golden_vectors, list):
         raise ValidationError("reference-host release manifest golden_vectors must be an array")
+    invoke_entries = [
+        entry
+        for entry in golden_vectors
+        if isinstance(entry, dict) and entry.get("vector_id") == REFERENCE_HOST_INVOKE_VECTOR_ID
+    ]
     lifecycle_entries = [
         entry
         for entry in golden_vectors
         if isinstance(entry, dict) and entry.get("vector_id") == REFERENCE_HOST_LIFECYCLE_VECTOR_ID
     ]
+    if invoke_entries != [expected_invoke_vector_ref]:
+        raise ValidationError("reference-host release manifest invoke parity golden vector drifted")
     if lifecycle_entries != [expected_lifecycle_vector_ref]:
         raise ValidationError(
             "reference-host release manifest lifecycle parity golden vector drifted"

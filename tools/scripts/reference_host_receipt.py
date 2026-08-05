@@ -7,6 +7,8 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import os
+import platform
 import subprocess
 import sys
 from pathlib import Path
@@ -103,6 +105,43 @@ def build_runner(command: list[str]) -> int:
     return int(result.returncode)
 
 
+def git_stdout(*args: str) -> str:
+    env = os.environ.copy()
+    if platform.system() == "Darwin":
+        env.pop("DYLD_LIBRARY_PATH", None)
+        env.pop("DYLD_FALLBACK_LIBRARY_PATH", None)
+        env.pop("LD_LIBRARY_PATH", None)
+    result = subprocess.run(
+        ["git", *args],
+        cwd=REPOSITORY_ROOT,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or str(result.returncode)
+        raise RuntimeError(f"git {' '.join(args)} failed: {detail}")
+    return result.stdout.strip()
+
+
+def committed_reference_host_release_attestation(validator: Any) -> dict[str, Any]:
+    revision = git_stdout("rev-parse", "HEAD")
+    if not revision:
+        raise RuntimeError("owner revision is unavailable")
+    status = git_stdout("status", "--porcelain", "--ignored=matching")
+    if status:
+        raise RuntimeError(
+            "owner checkout is dirty; committed reference-host release inputs are unavailable"
+        )
+    descriptor_digest = validator.descriptor_exact_checksum()
+    return validator.reference_host_release_attestation(
+        owner_revision=revision,
+        owner_descriptor_digest=descriptor_digest,
+    )
+
+
 def base_receipt(
     *,
     execution_manifest: dict[str, Any],
@@ -157,7 +196,23 @@ def write_reference_host_receipt(
     output_path: Path | None = None,
     run_build: Callable[[list[str]], int] = build_runner,
 ) -> tuple[int, dict[str, Any]]:
+    receipt: dict[str, Any] = {
+        "schema_version": RECEIPT_SCHEMA_VERSION,
+        "semantic_owner": "agents",
+    }
     validator = load_validator_module()
+    try:
+        receipt["reference_host_release"] = committed_reference_host_release_attestation(
+            validator
+        )
+    except Exception as error:
+        receipt["status"] = "unverifiable-release-cohort"
+        receipt["error"] = {
+            "code": "unverifiable_release_cohort",
+            "message": f"reference-host release cohort is unverifiable: {error}",
+        }
+        write_json(receipt_path, receipt)
+        return 1, receipt
     execution_manifest = load_json(EXECUTION_MANIFEST_PATH)
     resolved_target_dir = resolve_target_dir(target_dir)
     resolved_output_path = output_path or canonical_output_path(
@@ -165,12 +220,14 @@ def write_reference_host_receipt(
     )
     resolved_source_path = source_path or manifest_source_path(execution_manifest)
 
-    receipt = base_receipt(
-        execution_manifest=execution_manifest,
-        validator=validator,
-        receipt_path=receipt_path,
-        target_dir=resolved_target_dir,
-        output_path=resolved_output_path,
+    receipt.update(
+        base_receipt(
+            execution_manifest=execution_manifest,
+            validator=validator,
+            receipt_path=receipt_path,
+            target_dir=resolved_target_dir,
+            output_path=resolved_output_path,
+        )
     )
     receipt["source"] = {
         "path": str(resolved_source_path),
