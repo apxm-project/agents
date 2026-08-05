@@ -12,7 +12,7 @@
       {
         "schema_version": "apxm.reference-host-execution-manifest.v1",
         "path": "reference-host/manifests/apxm.reference-host-execution-manifest.v1.json",
-        "digest": "sha256:8e708711c3cbc42fa4af38409512a2463e9dfc5768a21bdc032203f5f03b8eaa"
+        "digest": "sha256:e64ee19a68e379b69b82fc6e131dee150834ea650a81815d239a950948a85cb8"
       }
     ],
     "schemas": [
@@ -20,6 +20,11 @@
         "schema_id": "apxm.host-execution-manifest.v1",
         "path": "reference-host/schemas/apxm.host-execution-manifest.v1.json",
         "digest": "sha256:54f1a76367a34f105fd019aef2d34ca18416a6843e50bd84203139bfccabd428"
+      },
+      {
+        "schema_id": "apxm.reference-host-startup-input.v1",
+        "path": "reference-host/schemas/apxm.reference-host-startup-input.v1.json",
+        "digest": "sha256:a5773b1560e5cc9c91ef35ec2bbeef67d55a8b2607329c2a00eaff72e293feed"
       },
       {
         "schema_id": "apxm.runtime-readiness.v1",
@@ -38,6 +43,11 @@
       }
     ],
     "vectors": [
+      {
+        "schema_id": "apxm.reference-host-startup-input.v1",
+        "path": "reference-host/vectors/apxm.reference-host-startup-input.v1.json",
+        "digest": "sha256:e959d8d513ab11633e92ea64a75e7455cb884aff2b1884062226a97a9051c35c"
+      },
       {
         "schema_id": "apxm.runtime-readiness.v1",
         "path": "reference-host/vectors/apxm.runtime-readiness.v1.json",
@@ -74,7 +84,7 @@
     "execution_manifest": {
       "schema_version": "apxm.reference-host-execution-manifest.v1",
       "path": "reference-host/manifests/apxm.reference-host-execution-manifest.v1.json",
-      "digest": "sha256:8e708711c3cbc42fa4af38409512a2463e9dfc5768a21bdc032203f5f03b8eaa"
+      "digest": "sha256:e64ee19a68e379b69b82fc6e131dee150834ea650a81815d239a950948a85cb8"
     },
     "lifecycle_vector": {
       "vector_id": "apxm.reference-host.lifecycle-parity.v1",

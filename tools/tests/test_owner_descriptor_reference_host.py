@@ -53,6 +53,20 @@ REFERENCE_HOST_STARTUP_INPUT_FIXTURE = (
     / "fixtures"
     / "apxm.reference-host.startup-input.test.json"
 )
+REFERENCE_HOST_STARTUP_INPUT_SCHEMA = (
+    REPOSITORY_ROOT
+    / "contracts"
+    / "reference-host"
+    / "schemas"
+    / "apxm.reference-host-startup-input.v1.json"
+)
+REFERENCE_HOST_STARTUP_INPUT_VECTOR = (
+    REPOSITORY_ROOT
+    / "contracts"
+    / "reference-host"
+    / "vectors"
+    / "apxm.reference-host-startup-input.v1.json"
+)
 
 README_REFERENCE_HOST = re.compile(
     r"This consumer is pinned to Host SDK source revision\s+"
@@ -269,11 +283,41 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
         )
         self.assertIn(
             {
+                "kind": "owned-schema",
+                "contract_id": "apxm.reference-host-startup-input.v1",
+                "path": "contracts/schemas/apxm.reference-host-startup-input.v1.json",
+                "exact_bytes_digest": self.validator.file_digest(
+                    REPOSITORY_ROOT
+                    / "contracts"
+                    / "schemas"
+                    / "apxm.reference-host-startup-input.v1.json"
+                ),
+            },
+            attestation["owner_source_contracts"],
+        )
+        self.assertIn(
+            {
                 "schema_version": "apxm.reference-host-execution-manifest.v1",
                 "path": "contracts/reference-host/manifests/apxm.reference-host-execution-manifest.v1.json",
                 "exact_bytes_digest": self.validator.file_digest(REFERENCE_HOST_EXECUTION_MANIFEST),
             },
             attestation["publication_cohort"]["manifests"],
+        )
+        self.assertIn(
+            {
+                "schema_id": "apxm.reference-host-startup-input.v1",
+                "path": "contracts/reference-host/schemas/apxm.reference-host-startup-input.v1.json",
+                "exact_bytes_digest": self.validator.file_digest(REFERENCE_HOST_STARTUP_INPUT_SCHEMA),
+            },
+            attestation["publication_cohort"]["schemas"],
+        )
+        self.assertIn(
+            {
+                "schema_id": "apxm.reference-host-startup-input.v1",
+                "path": "contracts/reference-host/vectors/apxm.reference-host-startup-input.v1.json",
+                "exact_bytes_digest": self.validator.file_digest(REFERENCE_HOST_STARTUP_INPUT_VECTOR),
+            },
+            attestation["publication_cohort"]["vectors"],
         )
 
     def test_reference_host_source_requires_explicit_startup_input_and_no_placeholders(self) -> None:
@@ -302,6 +346,10 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
             "the reference-host execution manifest must pin one exact test-scoped startup input fixture",
         )
         self.validator.check_reference_host_startup_input_preflight(execution_manifest)
+
+    def test_reference_host_execution_manifest_pins_runtime_startup_input_contract(self) -> None:
+        execution_manifest = load_json(REFERENCE_HOST_EXECUTION_MANIFEST)
+        self.validator.check_reference_host_runtime_startup_input_contract(execution_manifest)
 
     def test_reference_host_startup_input_preflight_rejects_missing_fixture(self) -> None:
         execution_manifest = load_json(REFERENCE_HOST_EXECUTION_MANIFEST)
