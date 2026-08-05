@@ -8,10 +8,12 @@ use std::collections::{HashMap, HashSet};
 
 use apxm_kernel::{
     ExecutionCommitRequest, ExecutionCommitResult, ExecutionCommitTuple, ProgramInstanceRef,
+    ProgramInvocationRef,
 };
 use apxm_program::runtime_evidence::Fact;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 /// On-disk / in-memory schema identity for owner-local commit records.
@@ -23,6 +25,14 @@ pub const MAX_TUPLE_BYTES: usize = 8 * 1024 * 1024;
 
 /// Maximum retained idempotent commit results per store (restart / retention bound).
 pub const MAX_COMMIT_RESULTS: usize = 10_000;
+
+/// Maximum bytes accepted by the owner-local Session Output preparation path.
+pub const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
+
+/// Maximum prepared plus committed output records retained by one local store.
+pub const MAX_OUTPUT_RECORDS: usize = 10_000;
+
+const LOCAL_OUTPUT_REF_PREFIX: &str = "apxm.local-session-output.v1/";
 
 #[derive(Debug, Error)]
 pub enum CommitLocalError {
@@ -42,6 +52,16 @@ pub enum CommitLocalError {
     Io(String),
     #[error("commit-local encode/decode error: {0}")]
     Codec(String),
+    #[error("session output exceeds owner-local bound ({MAX_OUTPUT_BYTES} bytes)")]
+    OutputTooLarge { bytes: usize },
+    #[error("session output field is invalid: {0}")]
+    InvalidOutput(String),
+    #[error("session output {output_ref} was not prepared for this commit")]
+    OutputNotPrepared { output_ref: String },
+    #[error("session output {output_ref} belongs to a different commit scope")]
+    OutputScopeMismatch { output_ref: String },
+    #[error("session output {output_ref} is already committed")]
+    OutputAlreadyCommitted { output_ref: String },
 }
 
 /// One authoritative instance record after a successful atomic commit.
@@ -66,6 +86,49 @@ pub struct CommitLocalRecord {
 pub struct StoredCommit {
     pub request_identity: CommitRequestIdentity,
     pub result: StoredCommitResult,
+}
+
+/// A typed, digest-addressed Session Output reference prepared by an
+/// owner-local composition root. Its bytes remain non-authoritative until the
+/// corresponding Execution Commit succeeds.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreparedOutputRef {
+    pub output_ref: String,
+    pub content_digest: String,
+    pub byte_length: usize,
+    pub media_type: String,
+}
+
+impl PreparedOutputRef {
+    #[must_use]
+    pub fn to_json(&self) -> Value {
+        json!({
+            "ref_type": "SessionOutputRef",
+            "ref": self.output_ref,
+            "content_digest": self.content_digest,
+            "byte_length": self.byte_length,
+            "media_type": self.media_type,
+        })
+    }
+}
+
+/// Input to the owner-local Session Output preparation boundary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionOutputPreparation {
+    pub commit_id: String,
+    pub program_instance_ref: ProgramInstanceRef,
+    pub program_invocation_ref: ProgramInvocationRef,
+    pub content: Vec<u8>,
+    pub media_type: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoredOutput {
+    pub prepared: PreparedOutputRef,
+    pub commit_id: String,
+    pub program_instance_ref: String,
+    pub program_invocation_ref: String,
+    pub content: Vec<u8>,
 }
 
 /// Request dimensions that must remain identical for an idempotent replay.
@@ -180,6 +243,12 @@ pub struct CommitLocalStore {
     pub schema_version: String,
     pub instances: HashMap<String, CommitLocalRecord>,
     pub by_commit_scope: HashMap<String, StoredCommit>,
+    /// Prepared bytes are durable but not visible until their commit wins.
+    #[serde(default)]
+    pub prepared_outputs: HashMap<String, StoredOutput>,
+    /// Only successfully committed output refs are readable as Session Output.
+    #[serde(default)]
+    pub committed_outputs: HashMap<String, StoredOutput>,
     /// Commit ids forced to `outcome_unknown` without writing (failure injection).
     #[serde(default, skip_serializing_if = "HashSet::is_empty")]
     pub force_unknown: HashSet<String>,
@@ -192,6 +261,8 @@ impl CommitLocalStore {
             schema_version: COMMIT_LOCAL_SCHEMA.to_string(),
             instances: HashMap::new(),
             by_commit_scope: HashMap::new(),
+            prepared_outputs: HashMap::new(),
+            committed_outputs: HashMap::new(),
             force_unknown: HashSet::new(),
         }
     }
@@ -220,6 +291,105 @@ impl CommitLocalStore {
         self.instances
             .get(program_instance_ref.as_str())
             .and_then(|r| r.continuation.clone())
+    }
+
+    pub fn prepare_output(
+        &mut self,
+        preparation: SessionOutputPreparation,
+    ) -> Result<PreparedOutputRef, CommitLocalError> {
+        if preparation.commit_id.trim().is_empty()
+            || preparation.program_instance_ref.as_str().trim().is_empty()
+            || preparation
+                .program_invocation_ref
+                .as_str()
+                .trim()
+                .is_empty()
+        {
+            return Err(CommitLocalError::InvalidOutput(
+                "commit and invocation scope must be non-empty".to_string(),
+            ));
+        }
+        if preparation.content.len() > MAX_OUTPUT_BYTES {
+            return Err(CommitLocalError::OutputTooLarge {
+                bytes: preparation.content.len(),
+            });
+        }
+        if preparation.media_type.trim().is_empty()
+            || preparation.media_type.contains('\n')
+            || preparation.media_type.contains('\r')
+        {
+            return Err(CommitLocalError::InvalidOutput(
+                "media_type must be one non-empty line".to_string(),
+            ));
+        }
+
+        let content_digest = sha256_digest(&preparation.content);
+        let identity_digest = sha256_digest(
+            format!(
+                "{}\n{}\n{}\n{}",
+                preparation.commit_id,
+                preparation.program_instance_ref.as_str(),
+                preparation.program_invocation_ref.as_str(),
+                content_digest,
+            )
+            .as_bytes(),
+        );
+        let output_ref = format!("{LOCAL_OUTPUT_REF_PREFIX}{identity_digest}");
+        let prepared = PreparedOutputRef {
+            output_ref: output_ref.clone(),
+            content_digest,
+            byte_length: preparation.content.len(),
+            media_type: preparation.media_type,
+        };
+        let stored = StoredOutput {
+            prepared: prepared.clone(),
+            commit_id: preparation.commit_id,
+            program_instance_ref: preparation.program_instance_ref.as_str().to_string(),
+            program_invocation_ref: preparation.program_invocation_ref.as_str().to_string(),
+            content: preparation.content,
+        };
+
+        if let Some(existing) = self.prepared_outputs.get(&output_ref) {
+            if existing != &stored {
+                return Err(CommitLocalError::InvalidOutput(
+                    "replayed preparation has different content or scope".to_string(),
+                ));
+            }
+            return Ok(prepared);
+        }
+        if let Some(existing) = self.committed_outputs.get(&output_ref) {
+            if existing != &stored {
+                return Err(CommitLocalError::InvalidOutput(
+                    "replayed preparation has different content or scope".to_string(),
+                ));
+            }
+            return Ok(prepared);
+        }
+        if self.prepared_outputs.len() + self.committed_outputs.len() >= MAX_OUTPUT_RECORDS {
+            return Err(CommitLocalError::RetentionExceeded);
+        }
+        self.prepared_outputs.insert(output_ref, stored);
+        Ok(prepared)
+    }
+
+    pub fn read_output(&self, output_ref: &str) -> Option<Vec<u8>> {
+        self.committed_outputs
+            .get(output_ref)
+            .map(|output| output.content.clone())
+    }
+
+    pub fn reclaim_prepared_output(&mut self, output_ref: &str) -> Result<bool, CommitLocalError> {
+        if !output_ref.starts_with(LOCAL_OUTPUT_REF_PREFIX) {
+            return Err(CommitLocalError::InvalidOutput(
+                "output ref is not an owner-local Session Output ref".to_string(),
+            ));
+        }
+        if self.committed_outputs.contains_key(output_ref) {
+            return Err(CommitLocalError::OutputAlreadyCommitted {
+                output_ref: output_ref.to_string(),
+            });
+        }
+        Ok(self.prepared_outputs.remove(output_ref).is_some())
     }
 
     /// Apply one compare-and-commit against this store. Writes all members or none.
@@ -251,6 +421,8 @@ impl CommitLocalStore {
             self.retain_result(&scope_key, request_identity, &result)?;
             return Ok(result);
         }
+
+        let output_refs = self.validate_prepared_outputs(request)?;
 
         let current = self.current_version(&request.program_instance_ref);
         if request.expected_program_state_version != current {
@@ -289,8 +461,75 @@ impl CommitLocalStore {
         self.ensure_retention_capacity(&scope_key)?;
         self.instances
             .insert(request.program_instance_ref.as_str().to_string(), record);
+        for output_ref in output_refs {
+            let output = self
+                .prepared_outputs
+                .remove(&output_ref)
+                .expect("validated prepared output remains present");
+            self.committed_outputs.insert(output_ref, output);
+        }
         self.retain_result(&scope_key, request_identity, &result)?;
         Ok(result)
+    }
+
+    fn validate_prepared_outputs(
+        &self,
+        request: &ExecutionCommitRequest,
+    ) -> Result<Vec<String>, CommitLocalError> {
+        let mut output_refs = HashSet::new();
+        for value in &request.tuple.output_refs {
+            let Some(output_ref) = value.get("ref").and_then(Value::as_str) else {
+                continue;
+            };
+            if !output_ref.starts_with(LOCAL_OUTPUT_REF_PREFIX) {
+                continue;
+            }
+            if !output_refs.insert(output_ref.to_string()) {
+                continue;
+            }
+            if value.get("ref_type").and_then(Value::as_str) != Some("SessionOutputRef") {
+                return Err(CommitLocalError::InvalidOutput(
+                    "local Session Output ref has the wrong ref_type".to_string(),
+                ));
+            }
+            let Some(output) = self.prepared_outputs.get(output_ref) else {
+                return Err(CommitLocalError::OutputNotPrepared {
+                    output_ref: output_ref.to_string(),
+                });
+            };
+            let Some(content_digest) = value.get("content_digest").and_then(Value::as_str) else {
+                return Err(CommitLocalError::InvalidOutput(
+                    "local Session Output ref is missing content_digest".to_string(),
+                ));
+            };
+            let Some(byte_length) = value.get("byte_length").and_then(Value::as_u64) else {
+                return Err(CommitLocalError::InvalidOutput(
+                    "local Session Output ref is missing byte_length".to_string(),
+                ));
+            };
+            let Some(media_type) = value.get("media_type").and_then(Value::as_str) else {
+                return Err(CommitLocalError::InvalidOutput(
+                    "local Session Output ref is missing media_type".to_string(),
+                ));
+            };
+            if content_digest != output.prepared.content_digest
+                || byte_length != output.prepared.byte_length as u64
+                || media_type != output.prepared.media_type
+            {
+                return Err(CommitLocalError::InvalidOutput(
+                    "local Session Output ref metadata does not match prepared bytes".to_string(),
+                ));
+            }
+            if output.commit_id != request.commit_id
+                || output.program_instance_ref != request.program_instance_ref.as_str()
+                || output.program_invocation_ref != request.program_invocation_ref.as_str()
+            {
+                return Err(CommitLocalError::OutputScopeMismatch {
+                    output_ref: output_ref.to_string(),
+                });
+            }
+        }
+        Ok(output_refs.into_iter().collect())
     }
 
     fn ensure_retention_capacity(&self, scope_key: &str) -> Result<(), CommitLocalError> {
@@ -345,4 +584,8 @@ fn enforce_tuple_bound(tuple: &ExecutionCommitTuple) -> Result<(), CommitLocalEr
         return Err(CommitLocalError::TupleTooLarge { bytes });
     }
     Ok(())
+}
+
+fn sha256_digest(bytes: &[u8]) -> String {
+    format!("sha256:{:x}", Sha256::digest(bytes))
 }
