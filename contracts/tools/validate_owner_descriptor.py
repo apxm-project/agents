@@ -932,6 +932,8 @@ def vllm_conformance_join_errors(instance: dict[str, Any]) -> list[str]:
         return ["joined_vector_digests contains an unpinned backend evidence digest"]
     if len(vectors) != len(set(vectors)):
         return ["joined_vector_digests must be unique"]
+    if instance.get("join_status") == "joined":
+        return ["join_status requires exact external vLLM release evidence"]
     return []
 
 

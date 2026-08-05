@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "apxm.vllm-conformance-join.v1",
   "title": "VllmConformanceJoin",
-  "description": "Agents-owned join record that binds released vLLM backend conformance digests to the agents inference-driver contract. Agents never becomes a second owner of vLLM semantics; this record only verifies digest membership of released backend evidence.",
+  "description": "Agents-owned candidate or joined record that binds exact vLLM backend conformance digests to the agents inference-driver contract. Agents never becomes a second owner of vLLM semantics; candidate records remain pending until exact external release evidence exists, and joined status is rejected without that evidence.",
   "type": "object",
   "required": [
     "schema_version",
