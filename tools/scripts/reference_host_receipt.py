@@ -11,6 +11,7 @@ import os
 import platform
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 from typing import Any, Callable
 
@@ -195,6 +196,26 @@ def git_stdout(*args: str) -> str:
     return result.stdout.strip()
 
 
+def build_command_target(command: list[str]) -> str | None:
+    for index, value in enumerate(command):
+        if value == "--target" and index + 1 < len(command):
+            return command[index + 1]
+        if value.startswith("--target="):
+            return value.split("=", 1)[1]
+    return None
+
+
+def binary_platform_evidence(command: list[str]) -> dict[str, Any]:
+    target = build_command_target(command)
+    return {
+        "selection": "explicit-target" if target else "native-host-default",
+        "target": target,
+        "system": platform.system().lower() or "unknown",
+        "machine": platform.machine().lower() or "unknown",
+        "platform_tag": target or sysconfig.get_platform(),
+    }
+
+
 def committed_reference_host_release_attestation(validator: Any) -> dict[str, Any]:
     revision = git_stdout("rev-parse", "HEAD")
     if not revision:
@@ -228,6 +249,12 @@ def base_receipt(
         "execution_manifest": {
             "path": str(EXECUTION_MANIFEST_PATH.relative_to(REPOSITORY_ROOT)),
             "digest": file_digest(EXECUTION_MANIFEST_PATH),
+        },
+        "build_identity": {
+            "owner_revision": release_attestation["cohort"]["revision"],
+            "release_manifest_path": release_attestation["release_manifest"]["path"],
+            "execution_manifest_path": str(EXECUTION_MANIFEST_PATH.relative_to(REPOSITORY_ROOT)),
+            "binary_platform": binary_platform_evidence(BUILD_COMMAND),
         },
         "referenced_host_sdk": {
             "name": validator.REFERENCE_HOST_DEPENDENCY_NAME,
