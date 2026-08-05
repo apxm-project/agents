@@ -10,22 +10,28 @@ use serde_json::{Value, json};
 
 use apxm_execution::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
-    CompositionReceiver, CompositionRequest, EventAwait, EventOutcome, EventPort,
-    ExecutionPortBundle, ExecutionPorts, ExecutionRequest, NodeOutcome, NoopStaticHookHandler,
-    execute,
+    CompositionReceiver, CompositionRequest, EventAwait, EventOutcome, EventPort, ExecutionRequest,
+    NodeOutcome, NoopStaticHookHandler, RuntimeProfile,
 };
+#[cfg(test)]
+use apxm_execution::{ExecutionPortBundle, ExecutionPorts, RuntimeProfileError, execute};
 use apxm_inference::{
     AttemptDisposition, InferenceTargetCommitment, ModelBindingAdmission, ModelCallPreparation,
     ModelCallRequest, ModelCallRequestMetadata, ModelCallRequestMetadataPort, ModelInferencePort,
     ModelOutcome, ResolvedModelBinding, TypedError, Usage,
 };
 use apxm_kernel::{
-    AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, ExactPortBinding, ExecutionCommitPort,
-    ExecutionCommitRequest, ExecutionCommitResult, ExternalAgentCapabilityPort, PortBundle,
-    PortBundleSpec, PortImplementation, PortSlot, ProgramInstanceRef, ProgramInvocationRef,
-    PromptEffectState,
+    AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, ExecutionCommitPort,
+    ExecutionCommitRequest, ExecutionCommitResult, ExternalAgentCapabilityPort, IssuerKeyring,
+    IssuerSigningKey, NonceLedger, PortImplementation, PortSlot, ProgramInstanceRef,
+    ProgramInvocationRef, PromptEffectState, RuntimeAdmission, unsigned_admission_skeleton,
+    verify_execution_admission,
 };
+use apxm_kernel::{ConfinementAttestation, ConfinementError, ConfinementPort, ConfinementRequest};
+#[cfg(test)]
+use apxm_kernel::{ExactPortBinding, PortBundle, PortBundleSpec};
 use apxm_program::air::{AirModule, SemanticOpKind};
+#[cfg(test)]
 use apxm_program::artifact::SchemaDigestRef;
 use apxm_program::external_agent::{AttributedEvent, AttributedEventKind, PeerUsage};
 
@@ -55,8 +61,9 @@ pub async fn execute_canonical_air(air: AirModule) -> Result<Value> {
         write_set: dev_write_set(),
     };
     let commit = Arc::new(DevCommit::default());
-    let ports = dev_ports(commit, Arc::new(UnavailableModelRequestMetadata))?;
-    let report = execute(&ports, request, Value::Null)
+    let profile = dev_runtime_profile(commit, Arc::new(UnavailableModelRequestMetadata)).await?;
+    let report = profile
+        .execute(request, Value::Null)
         .await
         .map_err(|err| anyhow::anyhow!(err))?;
 
@@ -208,6 +215,27 @@ impl ModelInferencePort for DevModel {
     }
 }
 
+struct DevConfinement;
+
+#[async_trait]
+impl ConfinementPort for DevConfinement {
+    async fn attest(
+        &self,
+        request: ConfinementRequest,
+    ) -> Result<ConfinementAttestation, ConfinementError> {
+        Ok(ConfinementAttestation {
+            attestation_id: format!("dev-attestation.{}", request.execution_id),
+            host_id: request.host_id,
+            execution_id: request.execution_id,
+            confinement_type: request.confinement_type,
+            sandbox_digest: request.sandbox_digest,
+            policy_digest: request.policy_digest,
+            attested_at: "dev-profile".into(),
+            signature: "dev-profile-attestation".into(),
+        })
+    }
+}
+
 struct UnavailableModelRequestMetadata;
 
 impl ModelCallRequestMetadataPort for UnavailableModelRequestMetadata {
@@ -333,6 +361,7 @@ impl ExecutionCommitPort for DevCommit {
     }
 }
 
+#[cfg(test)]
 fn dev_ports(
     commit: Arc<DevCommit>,
     model_call_request_metadata: Arc<dyn ModelCallRequestMetadataPort>,
@@ -400,6 +429,92 @@ fn dev_ports(
         model_call_request_metadata,
         Arc::new(NoopStaticHookHandler),
     )?)
+}
+
+/// Construct the exact admitted profile used by the local/reference fixture.
+///
+/// The reference host and the embedded command both enter through this one
+/// composition root. The signer and adapters are process-local fixture
+/// implementations; the admission boundary still verifies every exact slot,
+/// signature, nonce, and confinement attestation before RuntimeProfile owns
+/// the bundle. No implementation discovery or fallback occurs here.
+async fn dev_runtime_profile(
+    commit: Arc<DevCommit>,
+    model_call_request_metadata: Arc<dyn ModelCallRequestMetadataPort>,
+) -> Result<RuntimeProfile> {
+    let signer = IssuerSigningKey::generate("issuer.dev-profile");
+    let keyring = IssuerKeyring::from_keys([signer.enrollment(u64::MAX, false)])?;
+    let unsigned = unsigned_admission_skeleton(
+        "invocation.dev-profile",
+        "nonce.dev-profile",
+        "runtime-profile.dev",
+        u64::MAX,
+        dev_admitted_port_bindings(),
+    );
+    let admission = signer.seal_admission(unsigned);
+    let verified = verify_execution_admission(
+        &admission,
+        &keyring,
+        &NonceLedger::new(),
+        "runtime-profile.dev",
+        0,
+        false,
+    )?;
+    let entries = verified
+        .port_bindings
+        .iter()
+        .map(|binding| {
+            let implementation = match binding.slot {
+                PortSlot::ExecutionCommit => PortImplementation::ExecutionCommit(commit.clone()),
+                PortSlot::Confinement => PortImplementation::Confinement(Arc::new(DevConfinement)),
+                PortSlot::ModelInference => PortImplementation::ModelInference(Arc::new(DevModel)),
+                PortSlot::Capability => PortImplementation::Capability(Arc::new(DevCapability)),
+                PortSlot::ExternalAgentCapability => {
+                    PortImplementation::ExternalAgentCapability(Arc::new(DevExternalAgent))
+                }
+                PortSlot::DurableEvent => PortImplementation::DurableEvent(Arc::new(DevEvents)),
+                PortSlot::ProgramComposition => {
+                    PortImplementation::ProgramComposition(Arc::new(DevComposition))
+                }
+            };
+            (binding.clone(), implementation)
+        })
+        .collect();
+    let runtime_admission = RuntimeAdmission::admit(
+        verified,
+        entries,
+        "apxm-reference-host",
+        "execution.dev-profile",
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!(error))?;
+    RuntimeProfile::from_fully_admitted(
+        runtime_admission,
+        model_call_request_metadata,
+        Arc::new(NoopStaticHookHandler),
+    )
+    .map_err(|error| anyhow::anyhow!(error))
+}
+
+fn dev_admitted_port_bindings() -> Vec<apxm_kernel::AdmittedPortBinding> {
+    [
+        (PortSlot::ExecutionCommit, "apxm.execution-commit.v1"),
+        (PortSlot::Confinement, "apxm.confinement.v1"),
+        (PortSlot::ModelInference, "apxm.model-inference.v1"),
+        (PortSlot::Capability, "apxm.capability-invocation.v1"),
+        (PortSlot::ExternalAgentCapability, "apxm.external-agent.v1"),
+        (PortSlot::DurableEvent, "apxm.durable-event.v1"),
+        (PortSlot::ProgramComposition, "apxm.program-composition.v1"),
+    ]
+    .into_iter()
+    .map(|(slot, schema_id)| apxm_kernel::AdmittedPortBinding {
+        slot: slot.as_str().into(),
+        port_contract_schema_id: schema_id.into(),
+        port_contract_digest: DEV_BINDING_DIGEST.into(),
+        binding_digest: DEV_BINDING_DIGEST.into(),
+        proof_digest: DEV_BINDING_DIGEST.into(),
+    })
+    .collect()
 }
 
 fn node_outcome_json(outcome: &NodeOutcome) -> Value {
@@ -530,6 +645,119 @@ fn commit_result_json(result: &ExecutionCommitResult) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn empty_profile_air() -> AirModule {
+        serde_json::from_value(json!({
+            "schema_version": "apxm.air.v1",
+            "semantic_operations": [],
+            "structural_ir": [{"region_id": "r.root", "kind": "function", "execution_order": 0}],
+            "context_flow": [],
+            "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
+        }))
+        .expect("empty profile AIR")
+    }
+
+    fn profile_request(air: AirModule, suffix: &str) -> ExecutionRequest {
+        ExecutionRequest {
+            model_admission: dev_model_admission(&air),
+            air,
+            hook_bindings: Vec::new(),
+            capability_invocations: BTreeMap::new(),
+            program_instance_ref: ProgramInstanceRef::new(format!("profile.instance.{suffix}")),
+            program_invocation_ref: ProgramInvocationRef::new(format!(
+                "profile.invocation.{suffix}"
+            )),
+            commit_id: format!("profile.commit.{suffix}"),
+            write_set: dev_write_set(),
+        }
+    }
+
+    #[tokio::test]
+    async fn canonical_execution_enters_through_the_fully_admitted_profile() {
+        let output = execute_canonical_air(empty_profile_air())
+            .await
+            .expect("reference and embedded composition roots share RuntimeProfile");
+        assert_eq!(output["runtime"], "apxm_execution");
+        assert_eq!(output["status"], "completed");
+    }
+
+    #[tokio::test]
+    async fn profile_shutdown_rejects_new_work_fail_closed() {
+        let profile = dev_runtime_profile(
+            Arc::new(DevCommit::default()),
+            Arc::new(UnavailableModelRequestMetadata),
+        )
+        .await
+        .expect("fully admitted profile");
+        profile.shutdown();
+
+        let error = profile
+            .execute(profile_request(empty_profile_air(), "closed"), Value::Null)
+            .await
+            .expect_err("closed profile must reject new work");
+        assert!(matches!(error, RuntimeProfileError::Closed));
+    }
+
+    #[test]
+    fn profile_admission_rejects_missing_required_slot() {
+        let signer = IssuerSigningKey::generate("issuer.dev-profile-negative");
+        let keyring = IssuerKeyring::from_keys([signer.enrollment(u64::MAX, false)])
+            .expect("negative fixture keyring");
+        let bindings = dev_admitted_port_bindings()
+            .into_iter()
+            .filter(|binding| binding.slot != PortSlot::Confinement.as_str())
+            .collect();
+        let admission = signer.seal_admission(unsigned_admission_skeleton(
+            "invocation.dev-profile-negative",
+            "nonce.dev-profile-negative",
+            "runtime-profile.dev",
+            u64::MAX,
+            bindings,
+        ));
+
+        assert!(
+            verify_execution_admission(
+                &admission,
+                &keyring,
+                &NonceLedger::new(),
+                "runtime-profile.dev",
+                0,
+                false,
+            )
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn profile_recovery_is_instance_local_and_new_profile_can_run() {
+        let stopped = dev_runtime_profile(
+            Arc::new(DevCommit::default()),
+            Arc::new(UnavailableModelRequestMetadata),
+        )
+        .await
+        .expect("stopped profile");
+        stopped.shutdown();
+
+        let recovered = dev_runtime_profile(
+            Arc::new(DevCommit::default()),
+            Arc::new(UnavailableModelRequestMetadata),
+        )
+        .await
+        .expect("recovered profile");
+        let report = recovered
+            .execute(
+                profile_request(empty_profile_air(), "recovered"),
+                Value::Null,
+            )
+            .await
+            .expect("new profile accepts work after recovery");
+        assert!(matches!(
+            report.commit,
+            ExecutionCommitResult::Committed { .. }
+        ));
+        assert!(!stopped.is_accepting());
+        assert!(recovered.is_accepting());
+    }
 
     struct TestModelRequestMetadata;
 

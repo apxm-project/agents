@@ -249,6 +249,10 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
             release_manifest["profile_cohort"],
             list(self.validator.REFERENCE_HOST_PROFILE_COHORT),
         )
+        self.assertEqual(
+            release_manifest["canonical_driver"],
+            "apxm_execution::RuntimeProfile::from_fully_admitted",
+        )
         self.assertEqual(execution_manifest["semantic_owner"], "agents")
         for field in ("owner_executable", "owner_executable_path", "transport_protocol"):
             self.assertEqual(execution_manifest[field], release_manifest[field])
