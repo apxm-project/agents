@@ -1,7 +1,8 @@
 //! Shared durable record shape for owner-local Execution Commit adapters.
 //!
 //! One writer mutates one store. Compare-and-commit publishes the whole five-
-//! member write set or none of it. Idempotency is keyed by `commit_id`.
+//! member write set or none of it. Replay identity is scoped to one commit,
+//! Program Instance, and Program Invocation.
 
 use std::collections::{HashMap, HashSet};
 
@@ -14,7 +15,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 /// On-disk / in-memory schema identity for owner-local commit records.
-pub const COMMIT_LOCAL_SCHEMA: &str = "apxm.execution-commit-local.v1";
+pub const COMMIT_LOCAL_SCHEMA: &str = "apxm.execution-commit-local.v2";
 
 /// Maximum serialized tuple bytes accepted by owner-local adapters (8 MiB).
 /// Larger payloads fail closed; hosted multi-tenant retention is out of scope.
@@ -31,6 +32,12 @@ pub enum CommitLocalError {
     TupleTooLarge { bytes: usize },
     #[error("commit-local retention bound exceeded ({MAX_COMMIT_RESULTS} commit results)")]
     RetentionExceeded,
+    #[error("commit-local request is invalid: {0}")]
+    InvalidRequest(String),
+    #[error("commit-local replay conflicts with the existing request for commit {commit_id}")]
+    ConflictingReplay { commit_id: String },
+    #[error("commit-local filesystem directory is already owned by another process")]
+    OwnershipContended,
     #[error("commit-local I/O error: {0}")]
     Io(String),
     #[error("commit-local encode/decode error: {0}")]
@@ -57,7 +64,55 @@ pub struct CommitLocalRecord {
 /// Idempotent commit result retained for replay.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StoredCommit {
+    pub request_identity: CommitRequestIdentity,
     pub result: StoredCommitResult,
+}
+
+/// Request dimensions that must remain identical for an idempotent replay.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CommitRequestIdentity {
+    pub commit_id: String,
+    pub program_instance_ref: String,
+    pub program_invocation_ref: String,
+    pub idempotency_key: String,
+    pub expected_program_state_version: u64,
+    pub write_set: apxm_kernel::AtomicWriteSet,
+    pub tuple: CommitLocalTuple,
+    pub evidence_batch: Vec<Fact>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CommitLocalTuple {
+    pub context: Value,
+    pub continuation: Option<Value>,
+    pub event_wait: Option<Value>,
+    pub effect_outcomes: Vec<Value>,
+    pub evidence: Vec<Fact>,
+    pub usage: Value,
+    pub output_refs: Vec<Value>,
+}
+
+impl From<&ExecutionCommitRequest> for CommitRequestIdentity {
+    fn from(request: &ExecutionCommitRequest) -> Self {
+        Self {
+            commit_id: request.commit_id.clone(),
+            program_instance_ref: request.program_instance_ref.as_str().to_string(),
+            program_invocation_ref: request.program_invocation_ref.as_str().to_string(),
+            idempotency_key: request.idempotency_key.clone(),
+            expected_program_state_version: request.expected_program_state_version,
+            write_set: request.write_set.clone(),
+            tuple: CommitLocalTuple {
+                context: request.tuple.context.clone(),
+                continuation: request.tuple.continuation.clone(),
+                event_wait: request.tuple.event_wait.clone(),
+                effect_outcomes: request.tuple.effect_outcomes.clone(),
+                evidence: request.tuple.evidence.clone(),
+                usage: request.tuple.usage.clone(),
+                output_refs: request.tuple.output_refs.clone(),
+            },
+            evidence_batch: request.evidence_batch.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -124,7 +179,7 @@ impl From<&StoredCommitResult> for ExecutionCommitResult {
 pub struct CommitLocalStore {
     pub schema_version: String,
     pub instances: HashMap<String, CommitLocalRecord>,
-    pub by_commit_id: HashMap<String, StoredCommit>,
+    pub by_commit_scope: HashMap<String, StoredCommit>,
     /// Commit ids forced to `outcome_unknown` without writing (failure injection).
     #[serde(default, skip_serializing_if = "HashSet::is_empty")]
     pub force_unknown: HashSet<String>,
@@ -136,7 +191,7 @@ impl CommitLocalStore {
         Self {
             schema_version: COMMIT_LOCAL_SCHEMA.to_string(),
             instances: HashMap::new(),
-            by_commit_id: HashMap::new(),
+            by_commit_scope: HashMap::new(),
             force_unknown: HashSet::new(),
         }
     }
@@ -173,9 +228,19 @@ impl CommitLocalStore {
         request: &ExecutionCommitRequest,
     ) -> Result<ExecutionCommitResult, CommitLocalError> {
         self.validate_schema()?;
+        request
+            .validate()
+            .map_err(|error| CommitLocalError::InvalidRequest(error.to_string()))?;
         enforce_tuple_bound(&request.tuple)?;
 
-        if let Some(prior) = self.by_commit_id.get(&request.commit_id) {
+        let scope_key = commit_scope_key(request);
+        let request_identity = CommitRequestIdentity::from(request);
+        if let Some(prior) = self.by_commit_scope.get(&scope_key) {
+            if prior.request_identity != request_identity {
+                return Err(CommitLocalError::ConflictingReplay {
+                    commit_id: request.commit_id.clone(),
+                });
+            }
             return Ok(ExecutionCommitResult::from(&prior.result));
         }
 
@@ -183,7 +248,7 @@ impl CommitLocalStore {
             let result = ExecutionCommitResult::OutcomeUnknown {
                 reconciliation_ref: format!("reconcile:{}", request.commit_id),
             };
-            self.retain_result(&request.commit_id, &result)?;
+            self.retain_result(&scope_key, request_identity, &result)?;
             return Ok(result);
         }
 
@@ -192,7 +257,7 @@ impl CommitLocalStore {
             let result = ExecutionCommitResult::CompareConflict {
                 current_program_state_version: current,
             };
-            self.retain_result(&request.commit_id, &result)?;
+            self.retain_result(&scope_key, request_identity, &result)?;
             return Ok(result);
         }
 
@@ -221,16 +286,16 @@ impl CommitLocalStore {
             new_program_state_version: new_version,
             evidence_position_ref,
         };
-        self.ensure_retention_capacity(&request.commit_id)?;
+        self.ensure_retention_capacity(&scope_key)?;
         self.instances
             .insert(request.program_instance_ref.as_str().to_string(), record);
-        self.retain_result(&request.commit_id, &result)?;
+        self.retain_result(&scope_key, request_identity, &result)?;
         Ok(result)
     }
 
-    fn ensure_retention_capacity(&self, commit_id: &str) -> Result<(), CommitLocalError> {
-        if self.by_commit_id.len() >= MAX_COMMIT_RESULTS
-            && !self.by_commit_id.contains_key(commit_id)
+    fn ensure_retention_capacity(&self, scope_key: &str) -> Result<(), CommitLocalError> {
+        if self.by_commit_scope.len() >= MAX_COMMIT_RESULTS
+            && !self.by_commit_scope.contains_key(scope_key)
         {
             return Err(CommitLocalError::RetentionExceeded);
         }
@@ -239,18 +304,29 @@ impl CommitLocalStore {
 
     fn retain_result(
         &mut self,
-        commit_id: &str,
+        scope_key: &str,
+        request_identity: CommitRequestIdentity,
         result: &ExecutionCommitResult,
     ) -> Result<(), CommitLocalError> {
-        self.ensure_retention_capacity(commit_id)?;
-        self.by_commit_id.insert(
-            commit_id.to_string(),
+        self.ensure_retention_capacity(scope_key)?;
+        self.by_commit_scope.insert(
+            scope_key.to_string(),
             StoredCommit {
+                request_identity,
                 result: StoredCommitResult::from(result),
             },
         );
         Ok(())
     }
+}
+
+fn commit_scope_key(request: &ExecutionCommitRequest) -> String {
+    serde_json::to_string(&[
+        request.commit_id.as_str(),
+        request.program_instance_ref.as_str(),
+        request.program_invocation_ref.as_str(),
+    ])
+    .expect("commit scope strings are serializable")
 }
 
 fn enforce_tuple_bound(tuple: &ExecutionCommitTuple) -> Result<(), CommitLocalError> {

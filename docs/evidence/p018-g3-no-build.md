@@ -37,7 +37,7 @@ env -u CC -u CXX -u CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER \
 - `dekk agents test-owner-gates`: **22 passed / 0 failed**
 - `git diff --check`: **PASS**
 
-The evidence record covers the five lines above, in order, and is attached to
+The evidence record covers the listed owner-local and absence checks, and is attached to
 the issue conversation with the pushed commit identity.
 
 ## Repository gate notes
