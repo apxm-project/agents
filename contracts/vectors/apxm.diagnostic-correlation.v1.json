@@ -35,5 +35,42 @@
       "authority": "canonical_evidence",
       "agreement": "agrees_with_evidence"
     }
+  },
+  {
+    "name": "valid-disagreement-preserves-claimed-usage",
+    "expected_valid": true,
+    "input": {
+      "schema_version": "apxm.diagnostic-correlation.v1",
+      "correlation_id": "correlation.2",
+      "commit_id": "commit.1",
+      "evidence_fact_ids": ["fact.attempt.1"],
+      "request_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "model_target_ref": "model-target.1",
+      "model_target_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "model_deployment_ref": "model-deployment.1",
+      "exact_port_binding_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "authority": "diagnostic_only",
+      "agreement": "disagrees_evidence_authoritative",
+      "claimed_input_tokens": 99,
+      "claimed_output_tokens": 100
+    }
+  },
+  {
+    "name": "reject-unbounded-diagnostic-reference",
+    "expected_valid": false,
+    "input": {
+      "schema_version": "apxm.diagnostic-correlation.v1",
+      "correlation_id": "correlation.1",
+      "commit_id": "commit.1",
+      "evidence_fact_ids": ["fact.attempt.1"],
+      "request_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "model_target_ref": "model-target.1",
+      "model_target_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "model_deployment_ref": "model-deployment.1",
+      "exact_port_binding_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "log_refs": ["private payload"],
+      "authority": "diagnostic_only",
+      "agreement": "agrees_with_evidence"
+    }
   }
 ]

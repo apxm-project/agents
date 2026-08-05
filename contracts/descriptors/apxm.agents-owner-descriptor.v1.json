@@ -863,45 +863,54 @@
     {
       "schema_id": "apxm.inference-driver-binding.v1",
       "path": "vectors/apxm.inference-driver-binding.v1.json",
-      "digest": "sha256:aacf4986b9ec8a4925c17c687e834900bc56326ec2f0270bfdf73f5d201eb53c",
+      "digest": "sha256:8ca05b60dfd84c4b5f46bde38cfdede17e25cafe5605a9a381c9e5b22000061d",
       "coverage": [
         "positive",
+        "unavailable",
         "unknown_discriminant"
       ]
     },
     {
       "schema_id": "apxm.inference-credential-lease.v1",
       "path": "vectors/apxm.inference-credential-lease.v1.json",
-      "digest": "sha256:981951847c76940869a69d5b2b51ace1ff6b638ef1165d3d0a12bd9da1d2b826",
+      "digest": "sha256:2a528d10050d7a777124de4f7f15020ae4c8b020ef722f0c2ff8cd7f73f21bfc",
       "coverage": [
         "positive",
+        "expiry_boundary",
+        "revocation_boundary",
         "unknown_discriminant"
       ]
     },
     {
       "schema_id": "apxm.inference-usage-lineage.v1",
       "path": "vectors/apxm.inference-usage-lineage.v1.json",
-      "digest": "sha256:95388ab7d2b8db8a9e1cdf59158a1892da9722f163ffb2b718c5cade5540dd20",
+      "digest": "sha256:5bbb094399acaaf303c6b7d24d33f56c5284118fcf93d597a0adb0e4b9380d4c",
       "coverage": [
         "positive",
+        "typed_failure",
+        "evidence_binding",
         "mutation"
       ]
     },
     {
       "schema_id": "apxm.diagnostic-correlation.v1",
       "path": "vectors/apxm.diagnostic-correlation.v1.json",
-      "digest": "sha256:31af92a35d398e3ef9f3e4b0b6bb971c70e884d2393376d19a842d5f036346bc",
+      "digest": "sha256:6e50aef9c6de78f444945d6623e03cb2cc4d1ce4e2ddb8b27b975ea0f9f1f9f6",
       "coverage": [
         "positive",
+        "disagreement",
+        "bounded_reference",
         "mutation"
       ]
     },
     {
       "schema_id": "apxm.vllm-conformance-join.v1",
       "path": "vectors/apxm.vllm-conformance-join.v1.json",
-      "digest": "sha256:ef1ccfe293af1927d5e8334129cc14bef6e427143f5120264238e9c8afc7d191",
+      "digest": "sha256:0c9cd93fdb9a7856a0a02bcb35fa47fd5b2fa21dd2447d97ac6fad2d8406de37",
       "coverage": [
         "positive",
+        "candidate_without_live_release",
+        "pinned_membership",
         "mutation"
       ]
     },
@@ -998,5 +1007,5 @@
       ]
     }
   ],
-  "descriptor_digest": "sha256:b73a178b3e644b9bee469dfb234e7151dab9be4b105fd460a4965db69c31c02f"
+  "descriptor_digest": "sha256:45808d70c58e92ea632ba9ff485ca2840a56ee8ce2bba78422eb341d81dbc2b6"
 }
