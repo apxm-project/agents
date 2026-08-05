@@ -722,6 +722,21 @@ fn an_invalid_request_rejects_before_any_capture() {
             "{class} is rejected as an invalid request, before capture"
         );
     }
+
+    let exact_boundary = SourceBundleRequest::new(
+        Frontend::Python,
+        "Reviewer",
+        "#".repeat(apxm_source_port::MAX_SOURCE_BYTES),
+    );
+    let absent = common::repository_root().join("crates/compiler/source-port/no-frontend-here");
+    let unavailable_roots = FrontendRoots::new(&absent, &absent);
+    let diagnostics = compile_source_bundle(&exact_boundary, &unavailable_roots, &drivers)
+        .expect_err("the exact source-size boundary reaches frontend availability validation");
+    assert_eq!(
+        diagnostics[0].code,
+        SourceDiagnosticCode::FrontendUnavailable,
+        "the maximum accepted byte count is inclusive; only the next byte is request-invalid"
+    );
 }
 
 // ── External source ─────────────────────────────────────────────────────────
