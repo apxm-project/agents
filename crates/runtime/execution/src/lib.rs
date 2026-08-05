@@ -21,6 +21,7 @@ mod bundle;
 pub mod driver;
 pub mod operational_usage;
 pub mod ports;
+pub mod profile;
 pub mod readiness;
 pub mod resume;
 pub mod session_ledger;
@@ -42,6 +43,7 @@ pub use ports::{
     CompositionReceiver, CompositionRequest, EventAwait, EventOutcome, EventPort, EventRef,
     EventRefError, MemoryError, MemorySpace, ScopedMemoryPort,
 };
+pub use profile::{RuntimeProfile, RuntimeProfileError};
 pub use readiness::{
     NodeLifecycle, NodeOccurrenceId, OperandSlotDecl, OperandValue, ReadinessError,
     ReadinessKernel, ReadinessKernelBuilder, ReadinessTransition, RunnableNode, SlotClaim,
