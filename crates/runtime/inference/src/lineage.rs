@@ -134,6 +134,8 @@ impl InferenceUsageLineage {
             None,
             None,
             None,
+            None,
+            None,
             usage.input_tokens,
             usage.output_tokens,
             duration_ms,
@@ -201,6 +203,8 @@ impl InferenceUsageLineage {
             Some(commitment.target_generation),
             Some(&commitment.port_contract_digest),
             Some(&commitment.composition_digest),
+            None,
+            None,
             usage.input_tokens,
             usage.output_tokens,
             duration_ms,
@@ -298,6 +302,18 @@ impl InferenceUsageLineage {
             (None, None, None, None, None) => {}
             _ => return Err(LineageError::CommitMismatch),
         }
+        match (&self.evidence_fact_id, &self.commit_id) {
+            (Some(fact_id), Some(commit_id)) => {
+                if fact_id.trim().is_empty() {
+                    return Err(LineageError::EmptyField("evidence_fact_id"));
+                }
+                if commit_id.trim().is_empty() {
+                    return Err(LineageError::EmptyField("commit_id"));
+                }
+            }
+            (None, None) => {}
+            _ => return Err(LineageError::CommitMismatch),
+        }
         if !is_digest(&self.lineage_id) {
             return Err(LineageError::InvalidDigest("lineage_id"));
         }
@@ -322,6 +338,8 @@ impl InferenceUsageLineage {
             self.target_generation,
             self.target_port_contract_digest.as_deref(),
             self.target_composition_digest.as_deref(),
+            self.evidence_fact_id.as_deref(),
+            self.commit_id.as_deref(),
             self.native_input_tokens,
             self.native_output_tokens,
             self.duration_ms,
@@ -353,6 +371,27 @@ impl InferenceUsageLineage {
         }
         self.evidence_fact_id = Some(evidence_fact_id);
         self.commit_id = Some(commit_id);
+        self.lineage_id = lineage_digest(
+            &self.effect_id,
+            self.attempt_index,
+            &self.request_digest,
+            &self.model_target_ref,
+            &self.model_target_digest,
+            &self.model_deployment_ref,
+            &self.exact_port_binding_digest,
+            self.target_commitment_digest.as_deref(),
+            self.generation_cohort_digest.as_deref(),
+            self.target_generation,
+            self.target_port_contract_digest.as_deref(),
+            self.target_composition_digest.as_deref(),
+            self.evidence_fact_id.as_deref(),
+            self.commit_id.as_deref(),
+            self.native_input_tokens,
+            self.native_output_tokens,
+            self.duration_ms,
+            self.typed_error.as_ref(),
+        );
+        self.validate()?;
         Ok(())
     }
 
@@ -410,6 +449,8 @@ fn lineage_digest(
     target_generation: Option<u64>,
     target_port_contract_digest: Option<&str>,
     target_composition_digest: Option<&str>,
+    evidence_fact_id: Option<&str>,
+    commit_id: Option<&str>,
     input_tokens: u64,
     output_tokens: u64,
     duration_ms: u64,
@@ -442,6 +483,12 @@ fn lineage_digest(
         hasher.update(target_port_contract_digest.unwrap_or_default().as_bytes());
         hasher.update(b"\0");
         hasher.update(target_composition_digest.unwrap_or_default().as_bytes());
+    }
+    if let Some(evidence_fact_id) = evidence_fact_id {
+        hasher.update(b"\0");
+        hasher.update(evidence_fact_id.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(commit_id.unwrap_or_default().as_bytes());
     }
     hasher.update(b"\0");
     hasher.update(input_tokens.to_string().as_bytes());
