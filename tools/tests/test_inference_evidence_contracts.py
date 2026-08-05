@@ -138,6 +138,15 @@ class InferenceEvidenceContractTests(unittest.TestCase):
             if case["name"] == "reject-unpinned-vector-digest"
         )
         self.assertTrue(self.validator.vllm_conformance_join_errors(unknown))
+        joined_without_release = next(
+            case["input"]
+            for case in cases
+            if case["name"] == "reject-joined-without-release-evidence"
+        )
+        self.assertEqual(
+            self.validator.vllm_conformance_join_errors(joined_without_release),
+            ["join_status requires exact external vLLM release evidence"],
+        )
 
 
 if __name__ == "__main__":
