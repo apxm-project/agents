@@ -868,6 +868,86 @@ fn agreeing_diagnostics_remain_non_authoritative() {
 }
 
 #[test]
+fn diagnostic_correlation_digest_rejects_swaps_and_target_drift() {
+    let mut legacy_lineage = InferenceUsageLineage::seal(
+        "effect.diagnostic",
+        0,
+        DIGEST_B,
+        "model.alpha",
+        DIGEST_C,
+        "model-deployment.diagnostic",
+        DIGEST_A,
+        Usage::default(),
+        1,
+        None,
+    )
+    .expect("seal legacy lineage");
+    legacy_lineage
+        .bind_evidence("fact.diagnostic.legacy", "commit.diagnostic.legacy")
+        .expect("bind legacy evidence");
+    let diagnostic = correlate_diagnostics(CorrelateDiagnosticsRequest {
+        correlation_id: "corr.diagnostic.legacy".into(),
+        commit_id: "commit.diagnostic.legacy".into(),
+        evidence_fact_ids: vec!["fact.diagnostic.legacy".into()],
+        lineage: &legacy_lineage,
+        claimed_usage: None,
+        log_refs: vec!["log.diagnostic".into()],
+        metric_refs: vec!["metric.diagnostic".into()],
+        trace_refs: vec!["trace.diagnostic".into()],
+    })
+    .expect("correlate legacy diagnostic");
+    diagnostic.validate().expect("correlation is digest-bound");
+
+    let mut swapped = diagnostic.clone();
+    swapped.metric_refs = vec!["metric.swapped".into()];
+    assert_eq!(
+        swapped.validate(),
+        Err(apxm_inference::DiagnosticError::DigestMismatch)
+    );
+
+    let commitment = target_commitment();
+    let mut committed_lineage = InferenceUsageLineage::seal_with_target_commitment(
+        "effect.diagnostic.committed",
+        0,
+        DIGEST_B,
+        &commitment,
+        Usage {
+            input_tokens: 2,
+            output_tokens: 3,
+        },
+        4,
+        None,
+    )
+    .expect("seal committed lineage");
+    committed_lineage
+        .bind_evidence("fact.diagnostic.committed", "commit.diagnostic.committed")
+        .expect("bind committed evidence");
+    let committed = correlate_diagnostics(CorrelateDiagnosticsRequest {
+        correlation_id: "corr.diagnostic.committed".into(),
+        commit_id: "commit.diagnostic.committed".into(),
+        evidence_fact_ids: vec!["fact.diagnostic.committed".into()],
+        lineage: &committed_lineage,
+        claimed_usage: None,
+        log_refs: Vec::new(),
+        metric_refs: Vec::new(),
+        trace_refs: Vec::new(),
+    })
+    .expect("correlate committed diagnostic");
+    assert_eq!(
+        committed.target_commitment_digest.as_deref(),
+        Some(commitment.commit_digest.as_str())
+    );
+    committed.validate().expect("committed identity validates");
+
+    let mut drifted = committed;
+    drifted.target_generation = Some(commitment.target_generation + 1);
+    assert_eq!(
+        drifted.validate(),
+        Err(apxm_inference::DiagnosticError::TargetCommitmentMismatch)
+    );
+}
+
+#[test]
 fn diagnostics_reject_foreign_commit_or_unbounded_reference() {
     let mut lineage = InferenceUsageLineage::seal(
         "effect.1",
