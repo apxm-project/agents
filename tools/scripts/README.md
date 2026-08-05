@@ -20,6 +20,11 @@ script-local package when a command grows beyond one responsibility.
 - `reference_host_receipt.py` builds the canonical `apxm-reference-host`
   executable through the APXM Cargo wrapper and records an exact receipt under
   `.apxm/reference-host/receipts/`.
+- `reference_host_startup_input.py` emits the exact
+  `apxm.reference-host-startup-input.v1` artifact under
+  `.apxm/reference-host/startup-inputs/` for one explicit clean owner revision
+  plus explicit operator-supplied release, port-binding, and resource-ceiling
+  digests. It does not sign readiness or mutate committed release manifests.
 
 ## Validators and Installers
 
