@@ -79,25 +79,26 @@ digest. A missing canonical request, a post-digest argument edit, or any
 coordinate/authority mismatch fails before implementation dispatch.
 
 This consumer is pinned to Host SDK source revision
-`61863cdf8cd57f4bc3c8e066b86ab229d5e9e860`. Its
+`ff48332f2ce6af8a45eb38a15f4510a134223f5f`. Its
 `apxm.host-sdk-owner-descriptor.v1` semantic digest is
-`sha256:5e2240c5cbb53c09f2ddc2a17b7c295a091318e7e6eb4943a1d2f41170cc1ce6`,
+`sha256:a007bb8daee44cfc5156a358bd4c0f4665adefc0d731738ead9c50a31734e14b`,
 and the SHA-256 checksum of the exact descriptor repository bytes is
-`sha256:804f7e3d07ccfdb162b4eed87ba2bc404f59302b042348e44c0202491bdb7540`.
+`sha256:d771d3f2c4a50fdeee0c57475c4c00fc6b4121b1e4bf5147a57a76bf11ad7a88`.
 The semantic digest identifies the canonical descriptor content without its
 self-digest field; the exact checksum detects any byte-level descriptor drift.
 
 ## Gate
 
 ```
-python3 contracts/tools/validate_owner_descriptor.py
+dekk agents owner-descriptor
 ```
 
 The gate validates every vector against its schema, enforces the
 `artifact_semantic`-only abstraction rule and the single atomic write-set rule,
-verifies every recorded content-addressed digest is current, and confirms the
-descriptor carries no delivery-process references. Regenerate digests after any
-change with `--write-digests`.
+verifies every recorded content-addressed digest is current, pins the exact
+referenced Host SDK cohort by revision plus semantic and exact descriptor
+digests, and confirms the descriptor carries no delivery-process references.
+Regenerate digests after any change with `dekk agents owner-descriptor-sync`.
 
 The owner descriptor is identified by its deterministic canonical digest.
 Optional distribution signatures remain detached metadata and are not part of

@@ -88,7 +88,10 @@ impl ExecutionCommitPort for FixtureCommit {
     }
 
     /// This fixture never parks, so it holds no committed continuation.
-    async fn load_continuation(&self, _program_instance_ref: &ProgramInstanceRef) -> Option<serde_json::Value> {
+    async fn load_continuation(
+        &self,
+        _program_instance_ref: &ProgramInstanceRef,
+    ) -> Option<serde_json::Value> {
         None
     }
 }

@@ -175,7 +175,10 @@ impl ExecutionCommitPort for FixtureCommit {
     }
 
     /// The lifecycle fixture commits without parking, so no continuation is held.
-    async fn load_continuation(&self, _program_instance_ref: &ProgramInstanceRef) -> Option<serde_json::Value> {
+    async fn load_continuation(
+        &self,
+        _program_instance_ref: &ProgramInstanceRef,
+    ) -> Option<serde_json::Value> {
         None
     }
 }
@@ -524,7 +527,10 @@ impl ExecutionCommitPort for GatedCommit {
         self.inner.current_version(program_instance_ref).await
     }
 
-    async fn load_continuation(&self, program_instance_ref: &ProgramInstanceRef) -> Option<serde_json::Value> {
+    async fn load_continuation(
+        &self,
+        program_instance_ref: &ProgramInstanceRef,
+    ) -> Option<serde_json::Value> {
         self.inner.load_continuation(program_instance_ref).await
     }
 }

@@ -330,21 +330,23 @@ push, an overwritten branch, or a tainted benchmark.
 <!-- BEGIN SKILLS INVENTORY -->
 ## Available Skills
 
+Before editing CARTS sources, scan the Skills inventory below and read the SKILL.md for any whose description matches your task.
+
 ### Other
 
 | Skill | Description | Path |
 | --- | --- | --- |
 | `ais-op-design` | Use before adding or modifying an AIS op in apxm-core. Enforces the design-before-code gate, the canonical-attribute rule, the definitions.rs source-of-truth layer map, and the build-dialect + codegen cadence. | `.agents/skills/ais-op-design/SKILL.md` |
-| `backend-add` | Use when registering a new APXM inference backend (cloud, on-prem, or local). Enforces hard-fail-at-config-time resolver behavior. | `.agents/skills/backend-add/SKILL.md` |
+| `backend-add` | Use when registering a new APXM model-inference implementation or target binding (cloud, on-prem, or local). Enforces hard-fail-at-config-time resolver behavior. | `.agents/skills/backend-add/SKILL.md` |
 | `commit` | Commit gate — runs simplify + finish first, drafts message in repo log style, lints it with dekk agents commit-lint, commits at a clean stopping point, and pushes only when authorized. Never --force. Does not open PRs. | `.agents/skills/commit/SKILL.md` |
 | `compile-and-execute` | Use when compiling APXM AIR workflows, running .apxmobj artifacts, or executing AIR/IR through the runtime. Enforces dekk agents as the authority CLI and correct artifact placement under .apxm/. | `.agents/skills/compile-and-execute/SKILL.md` |
 | `context` | Prime an APXM session before broad work — runs doctor, reads project.md and the relevant _shared rules, surfaces subsystem ownership, and recalls APXM memory. Run at the start of any session that will touch >1 file or any non-trivial change. | `.agents/skills/context/SKILL.md` |
-| `design-docs` | Use when editing conceptual docs under docs/. Gates two shipped failure modes — overclaim (present-tense prose about unwired behaviour) and citation drift (claims with no anchor to shipped code). | `.agents/skills/design-docs/SKILL.md` |
+| `design-docs` | Use when editing conceptual docs under docs/. Gates two shipped failure modes — overclaim (present-tense prose about unwired behavior) and citation drift (claims with no anchor to shipped code). | `.agents/skills/design-docs/SKILL.md` |
 | `execute-plan` | Drive an APXM plan to completion without scope creep. Tracks phases with the harness's task tracker, runs focused per-phase verification, refuses to add features beyond the plan, and surfaces blockers immediately. Invoke only after plan produces an approved plan. | `.agents/skills/execute-plan/SKILL.md` |
 | `finish` | Pre-claim gate — runs focused dekk agents test, doctor, release checks when relevant, secrets scan, and artifact-placement check before any claim of completion. Refuses to claim done until all pass. | `.agents/skills/finish/SKILL.md` |
 | `fork-vllm-rebase` | Use when rebasing the external/vllm fork onto a new upstream tag, cherry-picking APXM commits, or resolving conflicts in the fork. Covers the G1 build/smoke gate. | `.agents/skills/fork-vllm-rebase/SKILL.md` |
-| `frontend-implementation` | Use when changing APXM compiler frontends: Rust FrontendGraph lowering, TypeScript @apxm/frontend, Python apxm_program, frontend codegen, or Studio/source lowering into AIR. | `.agents/skills/frontend-implementation/SKILL.md` |
-| `mcp-server` | Use when working on APXM MCP contract constants, local stdio registration, the outbound MCP bridge, or the Server-owned managed HTTP boundary. | `.agents/skills/mcp-server/SKILL.md` |
+| `frontend-implementation` | Use when changing APXM compiler frontends: Rust FrontendGraph lowering, TypeScript @apxm/frontend, Python apxm_program, frontend codegen, or downstream source lowering into AIR. | `.agents/skills/frontend-implementation/SKILL.md` |
+| `mcp-server` | Use when working on APXM MCP contract constants, local stdio registration, the outbound MCP bridge, or a downstream-managed inbound MCP boundary. | `.agents/skills/mcp-server/SKILL.md` |
 | `mlir-pass-development` | Use when adding, modifying, or reordering MLIR passes in the APXM compiler pipeline. Enforces the single pass-list source of truth, the AIS-core ownership rule, and the build-dialect + codegen cadence after .td edits. | `.agents/skills/mlir-pass-development/SKILL.md` |
 | `model-zoo-operate` | Use when adding, scaling, or probing models in the vLLM zoo (deploy/vllm/zoo*.toml). Enforces docker-load then cache-warm then zoo-apply then service-exec/status; use the zoo surface only. | `.agents/skills/model-zoo-operate/SKILL.md` |
 | `plan` | Produce a written plan before non-trivial APXM implementation. Required for changes touching >3 files, modifying a public API or AIS op, or needing Slurm GPU allocation. Enforces APXM-specific gates (AIS-op-vs-compose decision, dialect-codegen impact). | `.agents/skills/plan/SKILL.md` |
