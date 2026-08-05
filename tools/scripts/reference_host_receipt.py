@@ -72,6 +72,75 @@ def file_digest(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def path_evidence(
+    path: Path,
+    *,
+    expected_path: Path | None = None,
+    expected_digest: str | None = None,
+) -> dict[str, Any]:
+    evidence: dict[str, Any] = {
+        "path": str(path),
+        "exists": path.exists(),
+        "is_file": path.is_file(),
+    }
+    if expected_path is not None:
+        evidence["expected_path"] = str(expected_path)
+        evidence["path_matches_expected"] = path.resolve(strict=False) == expected_path.resolve(
+            strict=False
+        )
+    if expected_digest is not None:
+        evidence["expected_digest"] = expected_digest
+    if path.is_file():
+        evidence["observed_digest"] = file_digest(path)
+        if expected_digest is not None:
+            evidence["digest_matches_expected"] = evidence["observed_digest"] == expected_digest
+    elif expected_digest is not None:
+        evidence["digest_matches_expected"] = False
+    return evidence
+
+
+def startup_input_preflight_evidence(execution_manifest: dict[str, Any]) -> dict[str, Any]:
+    fixture = execution_manifest.get("startup_input_preflight_test_fixture")
+    if not isinstance(fixture, dict):
+        return {
+            "status": "missing-declaration",
+            "expected_path": None,
+            "exists": False,
+            "is_file": False,
+            "digest_matches_expected": False,
+        }
+    raw_path = fixture.get("artifact_path")
+    if not isinstance(raw_path, str) or not raw_path:
+        return {
+            "status": "invalid-declaration",
+            "expected_path": raw_path if isinstance(raw_path, str) else None,
+            "exists": False,
+            "is_file": False,
+            "digest_matches_expected": False,
+        }
+    artifact_path = REPOSITORY_ROOT / "contracts" / raw_path
+    evidence = path_evidence(
+        artifact_path,
+        expected_digest=fixture.get("artifact_digest")
+        if isinstance(fixture.get("artifact_digest"), str)
+        else None,
+    )
+    evidence["scope"] = fixture.get("scope")
+    evidence["artifact_path"] = raw_path
+    return evidence
+
+
+def provenance_evidence(validator: Any, execution_manifest: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "owner_descriptor": path_evidence(validator.DESCRIPTOR_PATH),
+        "owner_descriptor_exact_checksum": path_evidence(
+            validator.DESCRIPTOR_SIDECAR_PATH
+        ),
+        "release_manifest": path_evidence(validator.REFERENCE_HOST_RELEASE_MANIFEST_PATH),
+        "startup_input_preflight": startup_input_preflight_evidence(execution_manifest),
+    }
+
+
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -149,6 +218,7 @@ def base_receipt(
     receipt_path: Path,
     target_dir: Path,
     output_path: Path,
+    release_attestation: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "schema_version": RECEIPT_SCHEMA_VERSION,
@@ -180,6 +250,7 @@ def base_receipt(
         "runtime_startup": {
             "required_argv": [STARTUP_INPUT_FLAG, "<path>"],
             "startup_input_schema": STARTUP_INPUT_SCHEMA,
+            "startup_input_preflight": release_attestation["startup_input_preflight"],
             "reference_host_release_manifest": {
                 "path": str(RELEASE_MANIFEST_PATH.relative_to(REPOSITORY_ROOT)),
                 "digest": file_digest(RELEASE_MANIFEST_PATH),
@@ -201,24 +272,28 @@ def write_reference_host_receipt(
         "semantic_owner": "agents",
     }
     validator = load_validator_module()
+    execution_manifest = load_json(EXECUTION_MANIFEST_PATH)
+    receipt["evidence"] = provenance_evidence(validator, execution_manifest)
     try:
-        receipt["reference_host_release"] = committed_reference_host_release_attestation(
-            validator
-        )
+        release_attestation = committed_reference_host_release_attestation(validator)
+        receipt["reference_host_release"] = release_attestation
     except Exception as error:
         receipt["status"] = "unverifiable-release-cohort"
         receipt["error"] = {
             "code": "unverifiable_release_cohort",
             "message": f"reference-host release cohort is unverifiable: {error}",
         }
+        receipt["evidence"]["owner_release_provenance_verified"] = False
         write_json(receipt_path, receipt)
         return 1, receipt
-    execution_manifest = load_json(EXECUTION_MANIFEST_PATH)
+    receipt["evidence"]["owner_release_provenance_verified"] = True
     resolved_target_dir = resolve_target_dir(target_dir)
-    resolved_output_path = output_path or canonical_output_path(
+    expected_output_path = canonical_output_path(
         resolved_target_dir, execution_manifest["owner_executable"]
     )
-    resolved_source_path = source_path or manifest_source_path(execution_manifest)
+    resolved_output_path = output_path or expected_output_path
+    expected_source_path = manifest_source_path(execution_manifest)
+    resolved_source_path = source_path or expected_source_path
 
     receipt.update(
         base_receipt(
@@ -227,13 +302,26 @@ def write_reference_host_receipt(
             receipt_path=receipt_path,
             target_dir=resolved_target_dir,
             output_path=resolved_output_path,
+            release_attestation=release_attestation,
         )
     )
-    receipt["source"] = {
-        "path": str(resolved_source_path),
-        "repo_relative_path": execution_manifest["owner_executable_path"],
-        "exists": resolved_source_path.is_file(),
-    }
+    receipt["source"] = path_evidence(
+        resolved_source_path,
+        expected_path=expected_source_path,
+    )
+    receipt["source"]["repo_relative_path"] = execution_manifest["owner_executable_path"]
+
+    if not receipt["source"]["path_matches_expected"]:
+        receipt["status"] = "mismatched-source"
+        receipt["error"] = {
+            "code": "mismatched_source",
+            "message": (
+                "reference-host source path does not match the execution manifest; "
+                "the build gate stays closed"
+            ),
+        }
+        write_json(receipt_path, receipt)
+        return 1, receipt
 
     if not resolved_source_path.is_file():
         receipt["status"] = "missing-source"
@@ -248,6 +336,22 @@ def write_reference_host_receipt(
 
     receipt["source"]["digest"] = file_digest(resolved_source_path)
 
+    receipt["output"] = path_evidence(
+        resolved_output_path,
+        expected_path=expected_output_path,
+    )
+    if not receipt["output"]["path_matches_expected"]:
+        receipt["status"] = "mismatched-output"
+        receipt["error"] = {
+            "code": "mismatched_output",
+            "message": (
+                "reference-host output path does not match the canonical release path; "
+                "the build gate stays closed"
+            ),
+        }
+        write_json(receipt_path, receipt)
+        return 1, receipt
+
     build_exit_code = run_build(BUILD_COMMAND)
     if build_exit_code != 0:
         receipt["status"] = "build-failed"
@@ -258,6 +362,10 @@ def write_reference_host_receipt(
         write_json(receipt_path, receipt)
         return build_exit_code, receipt
 
+    receipt["output"] = path_evidence(
+        resolved_output_path,
+        expected_path=expected_output_path,
+    )
     if not resolved_output_path.is_file():
         receipt["status"] = "missing-output"
         receipt["error"] = {
@@ -269,11 +377,23 @@ def write_reference_host_receipt(
         write_json(receipt_path, receipt)
         return 1, receipt
 
+    if not os.access(resolved_output_path, os.X_OK):
+        receipt["status"] = "non-executable-output"
+        receipt["error"] = {
+            "code": "non_executable_output",
+            "message": (
+                "reference-host build produced a non-executable file at the canonical "
+                "release path"
+            ),
+        }
+        write_json(receipt_path, receipt)
+        return 1, receipt
+
     receipt["status"] = "built"
-    receipt["output"] = {
+    receipt["output"].update({
         "path": str(resolved_output_path),
         "digest": file_digest(resolved_output_path),
-    }
+    })
     write_json(receipt_path, receipt)
     return 0, receipt
 
