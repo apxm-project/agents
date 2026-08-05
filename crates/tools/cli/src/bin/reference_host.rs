@@ -389,6 +389,13 @@ fn file_digest(path: &Path) -> Result<String> {
     ))
 }
 
+fn canonical_release_manifest_path() -> PathBuf {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .join("contracts/reference-host/manifests/apxm.reference-host-release-manifest.v1.json");
+    fs::canonicalize(&path).unwrap_or(path)
+}
+
 fn load_startup_input(path: &Path) -> Result<AdmittedDigests> {
     let startup: StartupInput = serde_json::from_slice(
         &fs::read(path).with_context(|| format!("read startup input {}", path.display()))?,
@@ -406,7 +413,17 @@ fn load_startup_input(path: &Path) -> Result<AdmittedDigests> {
     validate_exact_digest("port_bindings_digest", &startup.port_bindings_digest)?;
     validate_exact_digest("resource_ceiling_digest", &startup.resource_ceiling_digest)?;
 
-    let manifest_path = PathBuf::from(&startup.reference_host_release_manifest.path);
+    let manifest_path =
+        fs::canonicalize(PathBuf::from(&startup.reference_host_release_manifest.path))
+            .unwrap_or_else(|_| PathBuf::from(&startup.reference_host_release_manifest.path));
+    let expected_manifest_path = canonical_release_manifest_path();
+    if manifest_path != expected_manifest_path {
+        bail!(
+            "reference-host release manifest path mismatch: expected {}, got {}",
+            expected_manifest_path.display(),
+            manifest_path.display()
+        );
+    }
     let actual_manifest_digest = file_digest(&manifest_path).with_context(|| {
         format!(
             "load reference-host release manifest {}",
@@ -467,6 +484,11 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink as symlink_file;
+    #[cfg(windows)]
+    use std::os::windows::fs::symlink_file;
+
     fn exact_digest(label: &str) -> String {
         format!("sha256:{:x}", Sha256::digest(label.as_bytes()))
     }
@@ -481,6 +503,30 @@ mod tests {
             port_bindings_digest: exact_digest("port-bindings"),
             resource_ceiling_digest: exact_digest("resource-ceiling"),
         }
+    }
+
+    fn write_startup_input_file(
+        startup_path: &Path,
+        manifest_path: &Path,
+        release_digest: &str,
+        port_bindings_digest: &str,
+        resource_ceiling_digest: &str,
+    ) {
+        fs::write(
+            startup_path,
+            serde_json::to_string(&json!({
+                "schema_version": STARTUP_INPUT_SCHEMA,
+                "reference_host_release_manifest": {
+                    "path": manifest_path,
+                    "digest": file_digest(&canonical_release_manifest_path()).expect("manifest digest"),
+                },
+                "release_digest": release_digest,
+                "port_bindings_digest": port_bindings_digest,
+                "resource_ceiling_digest": resource_ceiling_digest,
+            }))
+            .expect("startup json"),
+        )
+        .expect("startup file");
     }
 
     fn admission(digests: &AdmittedDigests) -> Admission {
@@ -761,30 +807,79 @@ mod tests {
     #[test]
     fn startup_input_rejects_placeholder_digests() {
         let temp_dir = tempdir().expect("temp dir");
-        let manifest_path = temp_dir.path().join("release-manifest.json");
-        fs::write(&manifest_path, "{\"schema_version\":\"test\"}\n").expect("manifest");
+        let manifest_path = canonical_release_manifest_path();
         let startup_path = temp_dir.path().join("startup.json");
-        fs::write(
+        write_startup_input_file(
             &startup_path,
-            serde_json::to_string(&json!({
-                "schema_version": STARTUP_INPUT_SCHEMA,
-                "reference_host_release_manifest": {
-                    "path": manifest_path,
-                    "digest": file_digest(&manifest_path).expect("manifest digest"),
-                },
-                "release_digest": placeholder_digest('a'),
-                "port_bindings_digest": exact_digest("port-bindings"),
-                "resource_ceiling_digest": exact_digest("resource-ceiling"),
-            }))
-            .expect("startup json"),
-        )
-        .expect("startup file");
+            &manifest_path,
+            &placeholder_digest('a'),
+            &exact_digest("port-bindings"),
+            &exact_digest("resource-ceiling"),
+        );
 
         let error = load_startup_input(&startup_path).expect_err("placeholder digest must fail");
         assert!(
             error
                 .to_string()
                 .contains("release_digest must not be a placeholder digest"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn startup_input_accepts_runtime_mounted_manifest_path_when_it_resolves_to_canonical_source() {
+        let temp_dir = tempdir().expect("temp dir");
+        let mounted_manifest_path = temp_dir
+            .path()
+            .join("apxm-owner/contracts/reference-host/manifests/apxm.reference-host-release-manifest.v1.json");
+        fs::create_dir_all(
+            mounted_manifest_path
+                .parent()
+                .expect("mounted manifest parent"),
+        )
+        .expect("mounted manifest dirs");
+        symlink_file(canonical_release_manifest_path(), &mounted_manifest_path)
+            .expect("symlink mounted manifest");
+
+        let startup_path = temp_dir.path().join("startup.json");
+        write_startup_input_file(
+            &startup_path,
+            &mounted_manifest_path,
+            &exact_digest("release"),
+            &exact_digest("port-bindings"),
+            &exact_digest("resource-ceiling"),
+        );
+
+        let admitted = load_startup_input(&startup_path).expect("mounted manifest must resolve");
+        assert_eq!(admitted.release_digest, exact_digest("release"));
+        assert_eq!(admitted.port_bindings_digest, exact_digest("port-bindings"));
+        assert_eq!(
+            admitted.resource_ceiling_digest,
+            exact_digest("resource-ceiling")
+        );
+    }
+
+    #[test]
+    fn startup_input_rejects_stale_release_manifest_checkout_paths() {
+        let temp_dir = tempdir().expect("temp dir");
+        let stale_manifest_path = temp_dir
+            .path()
+            .join("stale-checkout/contracts/reference-host/manifests/apxm.reference-host-release-manifest.v1.json");
+        let startup_path = temp_dir.path().join("startup.json");
+        write_startup_input_file(
+            &startup_path,
+            &stale_manifest_path,
+            &exact_digest("release"),
+            &exact_digest("port-bindings"),
+            &exact_digest("resource-ceiling"),
+        );
+
+        let error =
+            load_startup_input(&startup_path).expect_err("stale checkout path must fail closed");
+        assert!(
+            error
+                .to_string()
+                .contains("reference-host release manifest path mismatch"),
             "unexpected error: {error}"
         );
     }
