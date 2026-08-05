@@ -8,7 +8,9 @@ use apxm_kernel::{
 use async_trait::async_trait;
 use serde_json::Value;
 
-use crate::store::CommitLocalStore;
+use crate::store::{
+    CommitLocalError, CommitLocalStore, PreparedOutputRef, SessionOutputPreparation,
+};
 
 /// Single-writer in-memory commit adapter for owner-local conformance.
 pub struct InMemoryExecutionCommit {
@@ -29,6 +31,30 @@ impl InMemoryExecutionCommit {
             .lock()
             .expect("commit-local memory lock")
             .inject_outcome_unknown(commit_id);
+    }
+
+    pub fn prepare_output(
+        &self,
+        preparation: SessionOutputPreparation,
+    ) -> Result<PreparedOutputRef, CommitLocalError> {
+        self.store
+            .lock()
+            .expect("commit-local memory lock")
+            .prepare_output(preparation)
+    }
+
+    pub fn read_output(&self, output_ref: &str) -> Option<Vec<u8>> {
+        self.store
+            .lock()
+            .expect("commit-local memory lock")
+            .read_output(output_ref)
+    }
+
+    pub fn reclaim_prepared_output(&self, output_ref: &str) -> Result<bool, CommitLocalError> {
+        self.store
+            .lock()
+            .expect("commit-local memory lock")
+            .reclaim_prepared_output(output_ref)
     }
 }
 

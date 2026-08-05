@@ -19,5 +19,6 @@ pub use filesystem::FilesystemExecutionCommit;
 pub use memory::InMemoryExecutionCommit;
 pub use store::{
     COMMIT_LOCAL_SCHEMA, CommitLocalError, CommitLocalRecord, CommitLocalStore, CommitLocalTuple,
-    CommitRequestIdentity, MAX_COMMIT_RESULTS, MAX_TUPLE_BYTES, StoredCommit,
+    CommitRequestIdentity, MAX_COMMIT_RESULTS, MAX_OUTPUT_BYTES, MAX_OUTPUT_RECORDS,
+    MAX_TUPLE_BYTES, PreparedOutputRef, SessionOutputPreparation, StoredCommit, StoredOutput,
 };
