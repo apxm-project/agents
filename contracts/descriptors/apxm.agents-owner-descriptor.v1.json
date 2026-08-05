@@ -248,6 +248,11 @@
       "schema_id": "apxm.invocation-admission.v1",
       "path": "schemas/apxm.invocation-admission.v1.json",
       "digest": "sha256:08aece04a3ddf6d076b7af43a451a0159363e2c369d1ea16aad00ec4a8d288c6"
+    },
+    {
+      "schema_id": "apxm.execution-admission.v1",
+      "path": "schemas/apxm.execution-admission.v1.json",
+      "digest": "sha256:7ae02d8c769816a85b0c2d0056676c26af79334e9c1460c35bdc778cf7c615de"
     }
   ],
   "owned_port_contracts": [
@@ -676,7 +681,7 @@
     {
       "schema_id": "apxm.frontend-graph.v1",
       "path": "vectors/apxm.frontend-graph.v1.json",
-      "digest": "sha256:2247d6640c314b8a712f5cc1b17b68e5edd4c456084465433c450b9a960e1ed4",
+      "digest": "sha256:1ea07e680d2e49df5c948427e2ef51940769fbbe2ff9a3325c2e227a66a27c77",
       "coverage": [
         "positive",
         "unknown_discriminant",
@@ -981,7 +986,17 @@
         "scope",
         "mutation"
       ]
+    },
+    {
+      "schema_id": "apxm.execution-admission.v1",
+      "path": "vectors/apxm.execution-admission.v1.json",
+      "digest": "sha256:7083d2ae70f5054dff3d90babfacb5952cb22fdfb751663cbc369fe71e1fe558",
+      "coverage": [
+        "positive",
+        "unknown_field",
+        "unconfined_rejection"
+      ]
     }
   ],
-  "descriptor_digest": "sha256:df7ed2a7fea8681e8b22fc114d63303c69191d918a56074fbca8c2b0f019a7ec"
+  "descriptor_digest": "sha256:b73a178b3e644b9bee469dfb234e7151dab9be4b105fd460a4965db69c31c02f"
 }

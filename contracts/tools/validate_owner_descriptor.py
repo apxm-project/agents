@@ -181,6 +181,7 @@ VECTOR_SCHEMA = {
     "apxm.runtime-readiness.v1.json": "apxm.runtime-readiness.v1",
     "apxm.runtime-drain-quiescence.v1.json": "apxm.runtime-drain-quiescence.v1",
     "apxm.invocation-admission.v1.json": "apxm.invocation-admission.v1",
+    "apxm.execution-admission.v1.json": "apxm.execution-admission.v1",
 }
 
 # Authoring rule: no product surface may cite the delivery plan or its
