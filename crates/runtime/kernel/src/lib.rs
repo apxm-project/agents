@@ -48,7 +48,7 @@ pub use confinement::{
 pub use effect::{
     EffectError, EffectId, EffectRecord, EffectState, EffectTransition, PreparedEffect,
 };
-pub use events::{EventSink, NullEventSink, TelemetryNote};
+pub use events::{EventSink, NullEventSink, TelemetryNote, diagnostic_may_override_evidence};
 pub use external_agent::{
     AcpPromptOutcome, AcpPromptRequest, ExternalAgentCapabilityPort, PromptEffectState,
     assemble_evidence,

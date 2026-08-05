@@ -1,7 +1,7 @@
 ---
 name: backend-add
 group: Domain
-description: Use when registering a new APXM inference backend (cloud, on-prem, or local). Enforces hard-fail-at-config-time resolver behavior.
+description: Use when registering a new APXM model-inference implementation or target binding (cloud, on-prem, or local). Enforces hard-fail-at-config-time resolver behavior.
 user-invocable: true
 ---
 
@@ -41,7 +41,11 @@ dekk agents backend add-model <name> <model-id>
 - Backend commands manage registry entries only. Container/image/service
   lifecycle belongs to `dekk agents vllm ...`.
 - Backend auth fields are references only. Use `env:<NAME>` for API keys and
-  sensitive headers; durable OAuth/API-key custody belongs to `auth`.
+  sensitive headers; durable OAuth/API-key custody stays outside APXM and
+  enters only through explicit injected secret/config references.
+- In design prose and contracts, prefer precise nouns such as model inference
+  implementation, target binding, or vLLM service over the catch-all "backend"
+  when the distinction matters.
 
 ## Workflow
 
