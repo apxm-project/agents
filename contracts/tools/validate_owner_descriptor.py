@@ -438,6 +438,35 @@ def reference_host_published_lifecycle_profile(
     }
 
 
+def reference_host_startup_input_attestation(
+    execution_manifest: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Attest the exact committed startup-input preflight bytes."""
+    manifest = (
+        load_json(REFERENCE_HOST_EXECUTION_MANIFEST_PATH)
+        if execution_manifest is None
+        else execution_manifest
+    )
+    check_reference_host_startup_input_preflight(manifest)
+    fixture = manifest["startup_input_preflight_test_fixture"]
+    artifact_file = resolve_contract_relative_path(
+        fixture["artifact_path"], label="reference-host startup-input preflight fixture"
+    )
+    startup_input = load_json(artifact_file)
+    return {
+        "scope": fixture["scope"],
+        "path": repo_relative_path(artifact_file),
+        "schema_version": startup_input["schema_version"],
+        "artifact_digest": fixture["artifact_digest"],
+        "exact_bytes_digest": file_digest(artifact_file),
+        "owner_executable": startup_input["owner_executable"],
+        "owner_executable_path": startup_input["owner_executable_path"],
+        "transport_protocol": startup_input["transport_protocol"],
+        "provenance": startup_input["provenance"],
+        "fail_closed_on": startup_input["fail_closed_on"],
+    }
+
+
 def attested_release_entry(
     raw_entry: dict[str, Any], *, identifier_field: str, label: str
 ) -> dict[str, str]:
@@ -505,6 +534,7 @@ def reference_host_release_attestation(
     check_reference_host_boundary(descriptor)
     check_reference_host_release_evidence(descriptor)
     release_manifest = load_json(REFERENCE_HOST_RELEASE_MANIFEST_PATH)
+    execution_manifest = load_json(REFERENCE_HOST_EXECUTION_MANIFEST_PATH)
     attestation = {
         "cohort": {
             "revision": owner_revision,
@@ -515,6 +545,9 @@ def reference_host_release_attestation(
             "path": repo_relative_path(REFERENCE_HOST_RELEASE_MANIFEST_PATH),
             "exact_bytes_digest": file_digest(REFERENCE_HOST_RELEASE_MANIFEST_PATH),
         },
+        "startup_input_preflight": reference_host_startup_input_attestation(
+            execution_manifest
+        ),
         "golden_vectors": [],
         "publication_cohort": {
             "manifests": [],
