@@ -14,6 +14,10 @@ fn exact_digest(label: &str) -> String {
     format!("sha256:{:x}", Sha256::digest(label.as_bytes()))
 }
 
+fn load_json(path: &Path) -> Value {
+    serde_json::from_str(&fs::read_to_string(path).expect("read json fixture")).expect("parse json")
+}
+
 fn release_manifest_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../..")
@@ -25,6 +29,61 @@ fn release_manifest_digest() -> String {
         "sha256:{:x}",
         Sha256::digest(fs::read(release_manifest_path()).expect("read release manifest"))
     )
+}
+
+fn invoke_vector_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .join("contracts/reference-host/vectors/apxm.reference-host.invoke-parity.v1.json")
+}
+
+fn lifecycle_vector_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .join("contracts/reference-host/vectors/apxm.reference-host.lifecycle-parity.v1.json")
+}
+
+fn release_manifest() -> Value {
+    load_json(&release_manifest_path())
+}
+
+fn invoke_vector() -> Value {
+    load_json(&invoke_vector_path())
+}
+
+fn lifecycle_vector() -> Value {
+    load_json(&lifecycle_vector_path())
+}
+
+fn live_required_cases() -> Vec<String> {
+    release_manifest()["executable_parity_evidence"]["live_required_cases"]
+        .as_array()
+        .expect("live_required_cases array")
+        .iter()
+        .map(|entry| entry.as_str().expect("live case name").to_owned())
+        .collect()
+}
+
+fn vector_case_names(vector: &Value) -> Vec<String> {
+    vector["cases"]
+        .as_array()
+        .expect("vector cases array")
+        .iter()
+        .map(|case| case["name"].as_str().expect("case name").to_owned())
+        .collect()
+}
+
+fn case_by_name<'a>(vector: &'a Value, name: &str) -> &'a Value {
+    vector["cases"]
+        .as_array()
+        .expect("vector cases array")
+        .iter()
+        .find(|case| case["name"].as_str() == Some(name))
+        .unwrap_or_else(|| panic!("missing vector case {name}"))
+}
+
+fn fixture<'a>(vector: &'a Value, name: &str) -> &'a Value {
+    &vector["fixtures"][name]
 }
 
 fn write_startup_input() -> (TempDir, PathBuf, String, String, String) {

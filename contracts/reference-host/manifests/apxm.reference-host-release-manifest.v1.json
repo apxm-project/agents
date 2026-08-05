@@ -116,7 +116,7 @@
     "harness": {
       "kind": "rust-integration-test",
       "path": "crates/tools/cli/tests/reference_host_jsonl.rs",
-      "digest": "sha256:1111501b604a5c86bf449d5135b708873ae584d25ffd5768f4e771446470db42"
+      "digest": "sha256:099b535d31c220698a76cb20d2d66bf304e7d5bf9c7aab4c286f43db1380ea3f"
     },
     "vectors": [
       {

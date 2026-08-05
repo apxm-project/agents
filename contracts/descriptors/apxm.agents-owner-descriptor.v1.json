@@ -24,7 +24,7 @@
       "release_manifest": {
         "schema_version": "apxm.reference-host-release-manifest.v1",
         "path": "reference-host/manifests/apxm.reference-host-release-manifest.v1.json",
-        "digest": "sha256:2ec632fa67ed82173090c5c0d97932b5137e23632e8a754d46e7710204672e1a"
+        "digest": "sha256:51893f7718299f9eedaa9aee48bd9969a495c412b0335c82e77aa82f7049d91b"
       },
       "execution_manifest": {
         "schema_version": "apxm.reference-host-execution-manifest.v1",
@@ -187,7 +187,7 @@
     {
       "schema_id": "apxm.vllm-conformance-join.v1",
       "path": "schemas/apxm.vllm-conformance-join.v1.json",
-      "digest": "sha256:df4eb8f95649f0b8a922da8b207616f2a26aeeeb8fc1f11695e9eda325fd9d30"
+      "digest": "sha256:b606d7d5f38b7050cfc468f59898da08a7c4e46540023114cf6570b81ca70ed9"
     },
     {
       "schema_id": "apxm.external-agent-request.v1",
@@ -911,7 +911,7 @@
     {
       "schema_id": "apxm.vllm-conformance-join.v1",
       "path": "vectors/apxm.vllm-conformance-join.v1.json",
-      "digest": "sha256:f2fdeadf86980ab71f05d6820304bba3a2bd7ebb1b2e3d1089e80cd5219ea27f",
+      "digest": "sha256:8e8f5012734c04af07bce980bc79c72a9373dabdaef9fe6000d1a71829cc5a64",
       "coverage": [
         "positive",
         "candidate_without_live_release",
@@ -1022,5 +1022,5 @@
       ]
     }
   ],
-  "descriptor_digest": "sha256:ea66d532624fbfc749908893d5281c888ee3e7708eb9376be872247ced1495f7"
+  "descriptor_digest": "sha256:2a60302aaa7d83395eea7ab8dff3ed95c4286c73d479d476f28bc74c71379bf9"
 }

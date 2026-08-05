@@ -982,22 +982,38 @@ def vllm_conformance_join_errors(instance: dict[str, Any]) -> list[str]:
         "sha256:361aaf5fd82ae1dd8279726769088c2711a55d964a8376faf4646a149fee9f3c"
     ):
         return ["vllm_port_contract_digest must match the pinned backend contract"]
-    pinned_vectors = {
+    pinned_vectors = [
         "sha256:7add76f8f7df341785ef45ff51b38e979a309299509b32e76b311268cc93ea32",
         "sha256:a60b2364bbbe1304e96defcf55a8600d501933e0fbae97c140f2bc4377d5e822",
         "sha256:96914ff1d56cc2d1e74fda3a063287615392cb0197bcc1c853cb1a18a5e7e8c3",
         "sha256:5e7abcccf5c7f7276b9398ccd2c255671f23a6914eb23287b44518b30b8c7723",
         "sha256:1e9a389b24f08411738594ca3646bbcbeb18a77c398c6b07933d04903bd9be39",
-    }
+    ]
     vectors = instance.get("joined_vector_digests", [])
     if not isinstance(vectors, list):
         return []
-    if any(vector not in pinned_vectors for vector in vectors):
+    if any(vector not in set(pinned_vectors) for vector in vectors):
         return ["joined_vector_digests contains an unpinned backend evidence digest"]
     if len(vectors) != len(set(vectors)):
         return ["joined_vector_digests must be unique"]
     if instance.get("join_status") == "joined":
-        return ["join_status requires exact external vLLM release evidence"]
+        attestation = instance.get("release_attestation")
+        if not isinstance(attestation, dict):
+            return ["join_status requires exact external vLLM release evidence"]
+        if attestation.get("release_id") != "apxm-vllm-5d825f6c1896":
+            return ["release_attestation.release_id must match the pinned release"]
+        if attestation.get("owner_revision") != "5d825f6c18961c2b38edb15834acbd794fc549eb":
+            return ["release_attestation.owner_revision must match the pinned release"]
+        if attestation.get("manifest_digest") != "sha256:b489043b6f723b3e7bf9b4a054f55383dde90f8cf25290275a813c0970bcaeb4":
+            return ["release_attestation.manifest_digest must match the pinned release"]
+        if attestation.get("port_contract_digest") != instance.get("vllm_port_contract_digest"):
+            return ["release_attestation.port_contract_digest must match the joined port contract"]
+        if attestation.get("vector_digests") != pinned_vectors:
+            return ["release_attestation.vector_digests must match the pinned vector membership"]
+        if vectors != attestation["vector_digests"]:
+            return ["joined_vector_digests must match release_attestation.vector_digests"]
+    elif instance.get("release_attestation") is not None:
+        return ["candidate join must not carry release attestation"]
     return []
 
 

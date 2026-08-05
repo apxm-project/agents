@@ -130,8 +130,18 @@ class InferenceEvidenceContractTests(unittest.TestCase):
     def test_backend_join_stays_candidate_without_live_release_evidence(self) -> None:
         cases = self._cases("apxm.vllm-conformance-join.v1.json")
         self.assertTrue(
-            all(case["input"]["join_status"] == "candidate_awaiting_vllm_release" for case in cases if case["expected_valid"])
+            all(
+                case["input"]["join_status"] == "candidate_awaiting_vllm_release"
+                for case in cases
+                if case["expected_valid"] and case["name"] != "valid-joined-with-external-release-evidence"
+            )
         )
+        joined = next(
+            case["input"]
+            for case in cases
+            if case["name"] == "valid-joined-with-external-release-evidence"
+        )
+        self.assertEqual(self.validator.vllm_conformance_join_errors(joined), [])
         unknown = next(
             case["input"]
             for case in cases
