@@ -39,6 +39,41 @@
         "joined",
         "candidate_awaiting_vllm_release"
       ]
+    },
+    "release_attestation": {
+      "type": "object",
+      "required": [
+        "release_id",
+        "owner_revision",
+        "manifest_digest",
+        "port_contract_digest",
+        "vector_digests"
+      ],
+      "properties": {
+        "release_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "owner_revision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "manifest_digest": {
+          "$ref": "apxm.contract-common.v1#/$defs/Digest"
+        },
+        "port_contract_digest": {
+          "$ref": "apxm.contract-common.v1#/$defs/Digest"
+        },
+        "vector_digests": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "apxm.contract-common.v1#/$defs/Digest"
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false
