@@ -1,0 +1,250 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.contract-common.v1",
+  "title": "ContractCommon",
+  "description": "Common APXM contract envelope primitives for ids, refs, digests, typed errors, and idempotency keys.",
+  "$defs": {
+    "SchemaId": {
+      "type": "string",
+      "pattern": "^apxm\\.[a-z0-9]+(?:-[a-z0-9]+)*\\.v[0-9]+$"
+    },
+    "Digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "Identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,255}$"
+    },
+    "NonEmptyReference": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "SemanticOwner": {
+      "type": "string",
+      "enum": [
+        "contracts",
+        "coordinator",
+        "agents",
+        "server",
+        "os",
+        "auth",
+        "studio",
+        "plugin",
+        "host-sdk",
+        "adapters",
+        "vllm"
+      ]
+    },
+    "TypedRef": {
+      "type": "object",
+      "required": [
+        "ref_type",
+        "ref"
+      ],
+      "properties": {
+        "ref_type": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "ref": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "digest": {
+          "$ref": "#/$defs/Digest"
+        }
+      },
+      "additionalProperties": false
+    },
+    "SchemaDigestRef": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "digest"
+      ],
+      "properties": {
+        "schema_id": {
+          "$ref": "#/$defs/SchemaId"
+        },
+        "digest": {
+          "$ref": "#/$defs/Digest"
+        }
+      },
+      "additionalProperties": false
+    },
+    "SignatureEnvelope": {
+      "type": "object",
+      "required": [
+        "algorithm",
+        "key_ref",
+        "signature"
+      ],
+      "properties": {
+        "algorithm": {
+          "const": "ed25519"
+        },
+        "key_ref": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "signature": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "TypedErrorEnvelope": {
+      "type": "object",
+      "required": [
+        "error_id",
+        "category",
+        "code_ref",
+        "message"
+      ],
+      "properties": {
+        "error_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "validation",
+            "admission",
+            "authority",
+            "configuration",
+            "unavailable",
+            "conflict",
+            "outcome_unknown",
+            "internal"
+          ]
+        },
+        "code_ref": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "details_digest": {
+          "$ref": "#/$defs/Digest"
+        }
+      },
+      "additionalProperties": false
+    },
+    "IdempotencyKey": {
+      "type": "object",
+      "required": [
+        "key_id",
+        "scope_ref",
+        "request_digest"
+      ],
+      "properties": {
+        "key_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "scope_ref": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "request_digest": {
+          "$ref": "#/$defs/Digest"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ProviderScopedId": {
+      "description": "A provider-namespaced identifier minted by exactly one signed provider contribution under the reserved apxm.integration.<provider>.<name...>.v<major> namespace. The <provider> segment is a free contribution-chosen label, never a contracts-registered enum, so the value space stays open across contributions while each contribution's own descriptor closes its finite set.",
+      "type": "string",
+      "pattern": "^apxm\\.integration\\.[a-z0-9]+(?:-[a-z0-9]+)*\\.[a-z0-9]+(?:-[a-z0-9]+)*(?:\\.[a-z0-9]+(?:-[a-z0-9]+)*)*\\.v[0-9]+$"
+    },
+    "ProviderScopedSchemaId": {
+      "description": "Provider-scoped schema id for a closed payload/descriptor schema published by one signed provider contribution. Same namespace as ProviderScopedId; contracts never owns or enumerates these ids.",
+      "$ref": "#/$defs/ProviderScopedId"
+    },
+    "ProviderScopedKindId": {
+      "description": "Provider-scoped closed event/action discriminant id published by one signed provider contribution. Open provider event/action strings are not canonical; the finite set is closed by the contribution descriptor, not by this generic primitive.",
+      "$ref": "#/$defs/ProviderScopedId"
+    },
+    "Base64CanonicalBytes": {
+      "description": "Base64 encoding of the exact canonical-JSON (utf8, sorted keys, no ambient inputs) byte serialization of one typed provider payload object. The generic envelope treats these bytes as opaque; their shape is fixed only by the exact provider-scoped payload schema and digest they are carried with, so this is not an arbitrary-JSON escape hatch.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9+/]+={0,2}$",
+      "contentEncoding": "base64",
+      "contentMediaType": "application/json"
+    },
+    "ProviderScopedSchemaDigestRef": {
+      "description": "Exact reference to one provider-scoped payload/descriptor schema: the owning provider label, the provider-scoped schema id, and the sha256 of that schema's exact bytes. provider must equal the <provider> segment of schema_id.",
+      "type": "object",
+      "required": [
+        "provider",
+        "schema_id",
+        "digest"
+      ],
+      "properties": {
+        "provider": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "schema_id": {
+          "$ref": "#/$defs/ProviderScopedSchemaId"
+        },
+        "digest": {
+          "$ref": "#/$defs/Digest"
+        }
+      },
+      "additionalProperties": false
+    },
+    "CanonicalTypedPayload": {
+      "description": "One typed provider payload carried as canonical bytes bound to its exact provider-scoped schema. payload_digest is the sha256 of the base64-decoded canonical_bytes; payload_schema pins the exact provider schema id and digest that decode and validate those bytes. Carries no free-form object and no untyped fields.",
+      "type": "object",
+      "required": [
+        "payload_schema",
+        "payload_digest",
+        "canonical_bytes"
+      ],
+      "properties": {
+        "payload_schema": {
+          "$ref": "#/$defs/ProviderScopedSchemaDigestRef"
+        },
+        "payload_digest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "canonical_bytes": {
+          "$ref": "#/$defs/Base64CanonicalBytes"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ProviderContributionRef": {
+      "description": "Signed-contribution identity that binds one generic envelope instance to exactly one provider contribution by descriptor digest and ed25519 signature. provider is the free contribution-chosen label, not a contracts enum; every provider-scoped id in the same envelope must share this provider segment.",
+      "type": "object",
+      "required": [
+        "provider",
+        "contribution_id",
+        "descriptor_schema",
+        "descriptor_digest",
+        "signature"
+      ],
+      "properties": {
+        "provider": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "contribution_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "descriptor_schema": {
+          "$ref": "#/$defs/ProviderScopedSchemaId"
+        },
+        "descriptor_digest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "signature": {
+          "$ref": "#/$defs/SignatureEnvelope"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "additionalProperties": false
+}

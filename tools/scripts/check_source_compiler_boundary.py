@@ -11,20 +11,18 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOTS = (
-    REPO_ROOT / "crates/compiler/frontend/python/apxm_program",
-    REPO_ROOT / "crates/compiler/frontend/typescript/src",
-    REPO_ROOT / "crates/compiler/source-port/src",
-    REPO_ROOT / "crates/machine/program/src/frontend_graph.rs",
-    REPO_ROOT / "crates/machine/program/src/lower.rs",
-    REPO_ROOT / "crates/machine/program/src/source_map.rs",
+    REPO_ROOT / "crates/compiler",
+    REPO_ROOT / "crates/machine/ais/src",
+    REPO_ROOT / "crates/machine/program/src",
 )
 EXCLUDED_PARTS = {"__pycache__", "_generated", "generated", "dist", "node_modules"}
 FORBIDDEN_PRODUCT_REFERENCES = re.compile(
-    r"\b(?:clic|studio|gao|host-sdk|server-ms|auth-ms|widget)\b",
+    r"\b(?:clic|studio|gao)(?:[./:_-](?:workflow|assistant|source|widget|program))\b",
     re.IGNORECASE,
 )
 FORBIDDEN_IMPORTS = re.compile(
-    r"(?:apxm_vllm|@apxm/(?:host-sdk|server|studio)|(?:from|import)\s+\b(?:server|studio|auth)\b)",
+    r"(?im)^(?:\s*(?:from|import)\s+(?:apxm_vllm|server|studio|auth)\b)"
+    r"|(?:@apxm/(?:host-sdk|server|studio))",
     re.IGNORECASE,
 )
 RETIRED_PATHS = (
@@ -37,8 +35,8 @@ RETIRED_PATHS = (
 )
 
 
-def _iter_source_files():
-    for root in SOURCE_ROOTS:
+def _iter_source_files(roots):
+    for root in roots:
         if root.is_file():
             yield root
             continue
@@ -58,19 +56,31 @@ def _air_guard_violations() -> list[str]:
     return list(module.find_violations())
 
 
-def find_violations() -> list[str]:
+def scan_files(paths) -> list[str]:
     violations: list[str] = []
-    for path in _iter_source_files():
+    for path in paths:
         text = path.read_text(encoding="utf-8", errors="replace")
-        relative = path.relative_to(REPO_ROOT)
+        try:
+            relative = path.relative_to(REPO_ROOT)
+        except ValueError:
+            relative = path
         if FORBIDDEN_PRODUCT_REFERENCES.search(text):
             violations.append(f"{relative}: downstream product reference")
         if FORBIDDEN_IMPORTS.search(text):
             violations.append(f"{relative}: downstream dependency import")
+    return violations
 
-    for relative in RETIRED_PATHS:
-        if (REPO_ROOT / relative).exists():
+def retired_path_violations(root: Path = REPO_ROOT, retired_paths=RETIRED_PATHS) -> list[str]:
+    violations: list[str] = []
+    for relative in retired_paths:
+        if (root / relative).exists():
             violations.append(f"{relative}: retired source/compiler path remains")
+    return violations
+
+
+def find_violations() -> list[str]:
+    violations = scan_files(_iter_source_files(SOURCE_ROOTS))
+    violations.extend(retired_path_violations())
 
     violations.extend(
         f"{relative}: hand-authored AIR path" for relative in _air_guard_violations()

@@ -23,7 +23,7 @@ class SourceCompilerAcceptanceTests(unittest.TestCase):
                 "test-program-source",
                 "test-compiler",
                 "check-frontend-parity",
-                "test-external-source-package",
+                "test-typescript-frontend",
                 "check-source-compiler-boundary",
                 "compile-service-canonical",
             ],

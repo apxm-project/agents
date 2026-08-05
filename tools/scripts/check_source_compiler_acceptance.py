@@ -80,9 +80,9 @@ def acceptance_steps() -> tuple[AcceptanceStep, ...]:
             ("dekk", "agents", "check-frontend-parity"),
         ),
         AcceptanceStep(
-            "test-external-source-package",
-            "an external TypeScript package compiles through the public source boundary without aliases or fallbacks",
-            ("dekk", "agents", "test-external-source-package"),
+            "test-typescript-frontend",
+            "the public TypeScript frontend package stays closed, typed, and deterministic",
+            ("dekk", "agents", "test-typescript-frontend"),
         ),
         AcceptanceStep(
             "check-source-compiler-boundary",
@@ -143,6 +143,9 @@ def run_step(
         if combined_output and not combined_output.endswith("\n"):
             combined_output += "\n"
         combined_output += completed.stderr
+    combined_output = "\n".join(line.rstrip() for line in combined_output.splitlines())
+    if combined_output:
+        combined_output += "\n"
     log_path.write_text(combined_output, encoding="utf-8")
     if completed.stdout:
         print(completed.stdout, end="" if completed.stdout.endswith("\n") else "\n")
@@ -170,9 +173,17 @@ def run_acceptance(
 
     steps = [run_step(step, logs_dir, runner=runner) for step in acceptance_steps()]
     passed = all(step.status == "passed" for step in steps)
+    revision = subprocess.run(
+        ("git", "rev-parse", "HEAD"),
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
     return {
         "schema_version": "apxm.source-compiler-acceptance.v1",
         "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
+        "source_revision": revision,
         "issue_scope": {
             "issue": 35,
             "plan_tags": ["P-002", "P-003", "P-004", "P-005", "G1", "G2"],
