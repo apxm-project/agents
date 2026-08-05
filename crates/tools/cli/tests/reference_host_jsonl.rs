@@ -36,6 +36,10 @@ fn write_startup_input() -> (TempDir, PathBuf, String, String, String) {
         &startup_path,
         serde_json::to_string(&json!({
             "schema_version": "apxm.reference-host-startup-input.v1",
+            "semantic_owner": "agents",
+            "owner_executable": "apxm-reference-host",
+            "owner_executable_path": "crates/tools/cli/src/bin/reference_host.rs",
+            "transport_protocol": "jsonl-stdin-stdout",
             "reference_host_release_manifest": {
                 "path": release_manifest_path(),
                 "digest": release_manifest_digest(),
@@ -43,6 +47,13 @@ fn write_startup_input() -> (TempDir, PathBuf, String, String, String) {
             "release_digest": release_digest,
             "port_bindings_digest": port_bindings_digest,
             "resource_ceiling_digest": resource_ceiling_digest,
+            "provenance": {
+                "owner_revision": "a".repeat(40),
+                "descriptor_semantic_digest": exact_digest("descriptor-semantic"),
+                "descriptor_exact_checksum": exact_digest("descriptor-exact"),
+                "dirty": false
+            },
+            "fail_closed_on": ["missing", "placeholder", "dirty", "mismatched", "implicit-default"],
         }))
         .expect("startup json"),
     )

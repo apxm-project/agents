@@ -21,6 +21,16 @@ const REQUEST_SCHEMA: &str = "apxm.runtime.host-request.v1";
 const ADMISSION_SCHEMA: &str = "apxm.invocation-admission.v1";
 const STARTUP_INPUT_SCHEMA: &str = "apxm.reference-host-startup-input.v1";
 const DIGEST_PREFIX: &str = "sha256:";
+const OWNER_EXECUTABLE: &str = "apxm-reference-host";
+const OWNER_EXECUTABLE_PATH: &str = "crates/tools/cli/src/bin/reference_host.rs";
+const TRANSPORT_PROTOCOL: &str = "jsonl-stdin-stdout";
+const FAIL_CLOSED_ON: [&str; 5] = [
+    "missing",
+    "placeholder",
+    "dirty",
+    "mismatched",
+    "implicit-default",
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum State {
@@ -68,10 +78,16 @@ struct Admission {
 #[serde(deny_unknown_fields)]
 struct StartupInput {
     schema_version: String,
+    semantic_owner: String,
+    owner_executable: String,
+    owner_executable_path: String,
+    transport_protocol: String,
     reference_host_release_manifest: StartupManifestRef,
     release_digest: String,
     port_bindings_digest: String,
     resource_ceiling_digest: String,
+    provenance: StartupInputProvenance,
+    fail_closed_on: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -79,6 +95,15 @@ struct StartupInput {
 struct StartupManifestRef {
     path: String,
     digest: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StartupInputProvenance {
+    owner_revision: String,
+    descriptor_semantic_digest: String,
+    descriptor_exact_checksum: String,
+    dirty: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -389,6 +414,20 @@ fn file_digest(path: &Path) -> Result<String> {
     ))
 }
 
+fn canonical_release_manifest_path() -> PathBuf {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .join("contracts/reference-host/manifests/apxm.reference-host-release-manifest.v1.json");
+    fs::canonicalize(&path).unwrap_or(path)
+}
+
+fn is_hex_revision(revision: &str) -> bool {
+    revision.len() == 40
+        && revision
+            .chars()
+            .all(|value| value.is_ascii_digit() || ('a'..='f').contains(&value))
+}
+
 fn load_startup_input(path: &Path) -> Result<AdmittedDigests> {
     let startup: StartupInput = serde_json::from_slice(
         &fs::read(path).with_context(|| format!("read startup input {}", path.display()))?,
@@ -396,6 +435,26 @@ fn load_startup_input(path: &Path) -> Result<AdmittedDigests> {
     .with_context(|| format!("parse startup input {}", path.display()))?;
     if startup.schema_version != STARTUP_INPUT_SCHEMA {
         bail!("startup input must use schema_version {STARTUP_INPUT_SCHEMA}");
+    }
+    if startup.semantic_owner != "agents" {
+        bail!("startup input semantic_owner must be agents");
+    }
+    if startup.owner_executable != OWNER_EXECUTABLE {
+        bail!("startup input owner_executable must be the canonical reference host");
+    }
+    if startup.owner_executable_path != OWNER_EXECUTABLE_PATH {
+        bail!("startup input owner_executable_path must be the canonical source path");
+    }
+    if startup.transport_protocol != TRANSPORT_PROTOCOL {
+        bail!("startup input transport_protocol must remain jsonl-stdin-stdout");
+    }
+    if !startup
+        .fail_closed_on
+        .iter()
+        .map(String::as_str)
+        .eq(FAIL_CLOSED_ON.iter().copied())
+    {
+        bail!("startup input fail_closed_on must publish the exact fail-closed reasons");
     }
 
     validate_exact_digest(
@@ -405,8 +464,32 @@ fn load_startup_input(path: &Path) -> Result<AdmittedDigests> {
     validate_exact_digest("release_digest", &startup.release_digest)?;
     validate_exact_digest("port_bindings_digest", &startup.port_bindings_digest)?;
     validate_exact_digest("resource_ceiling_digest", &startup.resource_ceiling_digest)?;
+    if !is_hex_revision(&startup.provenance.owner_revision) {
+        bail!("startup input provenance.owner_revision must be a lowercase 40-hex revision");
+    }
+    validate_exact_digest(
+        "provenance.descriptor_semantic_digest",
+        &startup.provenance.descriptor_semantic_digest,
+    )?;
+    validate_exact_digest(
+        "provenance.descriptor_exact_checksum",
+        &startup.provenance.descriptor_exact_checksum,
+    )?;
+    if startup.provenance.dirty {
+        bail!("startup input provenance must prove a clean owner checkout");
+    }
 
-    let manifest_path = PathBuf::from(&startup.reference_host_release_manifest.path);
+    let manifest_path =
+        fs::canonicalize(PathBuf::from(&startup.reference_host_release_manifest.path))
+            .unwrap_or_else(|_| PathBuf::from(&startup.reference_host_release_manifest.path));
+    let expected_manifest_path = canonical_release_manifest_path();
+    if manifest_path != expected_manifest_path {
+        bail!(
+            "reference-host release manifest path mismatch: expected {}, got {}",
+            expected_manifest_path.display(),
+            manifest_path.display()
+        );
+    }
     let actual_manifest_digest = file_digest(&manifest_path).with_context(|| {
         format!(
             "load reference-host release manifest {}",
@@ -768,6 +851,10 @@ mod tests {
             &startup_path,
             serde_json::to_string(&json!({
                 "schema_version": STARTUP_INPUT_SCHEMA,
+                "semantic_owner": "agents",
+                "owner_executable": OWNER_EXECUTABLE,
+                "owner_executable_path": OWNER_EXECUTABLE_PATH,
+                "transport_protocol": TRANSPORT_PROTOCOL,
                 "reference_host_release_manifest": {
                     "path": manifest_path,
                     "digest": file_digest(&manifest_path).expect("manifest digest"),
@@ -775,6 +862,13 @@ mod tests {
                 "release_digest": placeholder_digest('a'),
                 "port_bindings_digest": exact_digest("port-bindings"),
                 "resource_ceiling_digest": exact_digest("resource-ceiling"),
+                "provenance": {
+                    "owner_revision": "a".repeat(40),
+                    "descriptor_semantic_digest": exact_digest("descriptor-semantic"),
+                    "descriptor_exact_checksum": exact_digest("descriptor-exact"),
+                    "dirty": false,
+                },
+                "fail_closed_on": FAIL_CLOSED_ON,
             }))
             .expect("startup json"),
         )
@@ -785,6 +879,47 @@ mod tests {
             error
                 .to_string()
                 .contains("release_digest must not be a placeholder digest"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn startup_input_rejects_dirty_provenance() {
+        let temp_dir = tempdir().expect("temp dir");
+        let manifest_path = canonical_release_manifest_path();
+        let startup_path = temp_dir.path().join("startup.json");
+        fs::write(
+            &startup_path,
+            serde_json::to_string(&json!({
+                "schema_version": STARTUP_INPUT_SCHEMA,
+                "semantic_owner": "agents",
+                "owner_executable": OWNER_EXECUTABLE,
+                "owner_executable_path": OWNER_EXECUTABLE_PATH,
+                "transport_protocol": TRANSPORT_PROTOCOL,
+                "reference_host_release_manifest": {
+                    "path": manifest_path,
+                    "digest": file_digest(&manifest_path).expect("manifest digest"),
+                },
+                "release_digest": exact_digest("release"),
+                "port_bindings_digest": exact_digest("port-bindings"),
+                "resource_ceiling_digest": exact_digest("resource-ceiling"),
+                "provenance": {
+                    "owner_revision": "a".repeat(40),
+                    "descriptor_semantic_digest": exact_digest("descriptor-semantic"),
+                    "descriptor_exact_checksum": exact_digest("descriptor-exact"),
+                    "dirty": true,
+                },
+                "fail_closed_on": FAIL_CLOSED_ON,
+            }))
+            .expect("startup json"),
+        )
+        .expect("startup file");
+
+        let error = load_startup_input(&startup_path).expect_err("dirty startup input must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("startup input provenance must prove a clean owner checkout"),
             "unexpected error: {error}"
         );
     }
