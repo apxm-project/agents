@@ -32,7 +32,7 @@ env -u CC -u CXX -u CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER \
 ## Results
 
 - `dekk agents test-commit-local`: **blocked by repo-configured macOS native-toolchain readiness gate**
-- Supplemental `apxm-commit-local` tests: **5 passed / 0 failed**
+- Supplemental `apxm-commit-local` tests: **9 passed / 0 failed**
 - Supplemental absence unittest: **5 passed / 0 failed**
 - `dekk agents test-owner-gates`: **22 passed / 0 failed**
 - `git diff --check`: **PASS**
