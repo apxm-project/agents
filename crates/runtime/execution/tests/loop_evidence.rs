@@ -15,8 +15,8 @@ use apxm_execution::{
 use apxm_inference::{
     AttemptDisposition, IdempotencyKey, InferenceTargetCommitment, ModelBindingAdmission,
     ModelCallPreparation, ModelCallRequest, ModelCallRequestMetadata, ModelCallRequestMetadataPort,
-    ModelContextEnvelopeRef, ModelInferencePort, ModelStreamMode, ModelTargetRef,
-    ResolvedModelBinding, TypedError, Usage,
+    ModelContextEnvelopeRef, ModelInferencePort, ModelStreamMode, ResolvedModelBinding, TypedError,
+    Usage,
 };
 use apxm_kernel::{
     AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, ExactPortBinding, ExecutionCommitPort,
