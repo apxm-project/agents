@@ -24,12 +24,12 @@
       "release_manifest": {
         "schema_version": "apxm.reference-host-release-manifest.v1",
         "path": "reference-host/manifests/apxm.reference-host-release-manifest.v1.json",
-        "digest": "sha256:51893f7718299f9eedaa9aee48bd9969a495c412b0335c82e77aa82f7049d91b"
+        "digest": "sha256:7376e419fc683a2e000caf30192ae236559ff1fb6f740dbaa67b6856b9dcb067"
       },
       "execution_manifest": {
         "schema_version": "apxm.reference-host-execution-manifest.v1",
         "path": "reference-host/manifests/apxm.reference-host-execution-manifest.v1.json",
-        "digest": "sha256:cb9704ceffb1709d8e807c9fcb52bf34015560e7cb1551e9b79cca575e676bc6"
+        "digest": "sha256:19bd74d54e608023853685266fcfb914ffe023e9d365ee3229803ba86a5802ac"
       },
       "lifecycle_vector": {
         "vector_id": "apxm.reference-host.lifecycle-parity.v1",
@@ -1025,5 +1025,5 @@
       ]
     }
   ],
-  "descriptor_digest": "sha256:176742d71234a362d56435c707c5b477b0b4c864f1ce06796cfd92e6e611dcdd"
+  "descriptor_digest": "sha256:a06fcb5058cf57dcbe67ac98908660526d8925f4931ff47b7c30fe98c38cec23"
 }

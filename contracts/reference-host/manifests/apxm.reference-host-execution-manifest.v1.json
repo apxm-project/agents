@@ -67,7 +67,7 @@
   "invocation_admission_vector": {
     "schema_id": "apxm.invocation-admission.v1",
     "path": "reference-host/vectors/apxm.invocation-admission.v1.json",
-    "digest": "sha256:60e40579340e788bde09a165aa0072659a4fe1fb6c38e03e5df526d3258d825d",
+    "digest": "sha256:89b70bfa6182b844685cead3cc7a55f100ed719f6957a4b9878e0bcb0d7f67e6",
     "canonical_source_path": "vectors/apxm.invocation-admission.v1.json"
   }
 }

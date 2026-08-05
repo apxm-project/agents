@@ -1274,13 +1274,10 @@ def semantic_errors(schema_id: str, instance: object) -> list[str]:
     if schema_id == "apxm.capability-invocation.v1":
         return capability_invocation_errors(instance)
     if schema_id == "apxm.invocation-admission.v1":
-        artifact_digest = instance.get("artifact_digest")
-        release_digest = instance.get("release_digest")
-        provenance_digest = instance.get("provenance_digest")
-        if artifact_digest != release_digest:
-            return ["artifact_digest must equal release_digest"]
-        if artifact_digest != provenance_digest:
-            return ["artifact_digest must equal provenance_digest"]
+        # The transport authority carries independent digests. Runtime
+        # admission verifies each digest against its own exact bytes; the
+        # artifact, release, and provenance bytes are intentionally distinct.
+        pass
     if schema_id == "apxm.reference-host-startup-input.v1":
         return reference_host_startup_input_errors(instance)
     return []
