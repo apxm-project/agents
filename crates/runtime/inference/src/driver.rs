@@ -238,14 +238,16 @@ impl InferenceDriverBinding {
         resolved: &ResolvedModelBinding,
     ) -> Result<(), DriverBindingError> {
         self.validate_shape()?;
-        self.target_commitment
-            .matches_resolved(authored_target, resolved)?;
+        // Preserve the public authored-target error contract before the
+        // immutable commitment compares the same coordinate.
         if self.model_target_ref != authored_target.0 {
             return Err(DriverBindingError::TargetMismatch {
                 authored: authored_target.0.clone(),
                 admitted: self.model_target_ref.clone(),
             });
         }
+        self.target_commitment
+            .matches_resolved(authored_target, resolved)?;
         if self.model_target_ref != resolved.model_target.reference.0 {
             return Err(DriverBindingError::TargetMismatch {
                 authored: authored_target.0.clone(),
