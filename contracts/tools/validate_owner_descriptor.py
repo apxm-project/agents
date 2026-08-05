@@ -28,10 +28,35 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+
+def git_common_repo_root(root: Path) -> Path:
+    resolved = root.resolve(strict=False)
+    result = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(resolved),
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+        ],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return resolved
+    common_dir = Path(result.stdout.strip()).resolve(strict=False)
+    if common_dir.name != ".git":
+        return resolved
+    return common_dir.parent
+
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 CONTRACTS_DIR = SCRIPT_DIR.parent
 CHECKOUT_ROOT = CONTRACTS_DIR.parent.resolve(strict=False)
-AGENTS_ROOT = CHECKOUT_ROOT
+AGENTS_ROOT = git_common_repo_root(CHECKOUT_ROOT)
 WORKSPACE_DIR = AGENTS_ROOT.parent
 CONSTITUTION_SCHEMAS_DIR = WORKSPACE_DIR / "contracts" / "schemas"
 
@@ -64,6 +89,9 @@ REFERENCE_HOST_INVOKE_PARITY_VECTOR_PATH = (
 )
 REFERENCE_HOST_LIFECYCLE_PARITY_VECTOR_PATH = (
     CONTRACTS_DIR / "reference-host" / "vectors" / "apxm.reference-host.lifecycle-parity.v1.json"
+)
+REFERENCE_HOST_EXECUTABLE_HARNESS_PATH = (
+    CHECKOUT_ROOT / "crates" / "tools" / "cli" / "tests" / "reference_host_jsonl.rs"
 )
 EXECUTION_COMMIT_PORT_CONTRACT_PATH = (
     PORT_CONTRACTS_DIR / "apxm.execution-commit.port-contract.v1.json"
@@ -508,6 +536,37 @@ def reference_host_invoke_vector_ref(invoke_vector: dict[str, Any]) -> dict[str,
     }
 
 
+def reference_host_executable_harness_ref() -> dict[str, str]:
+    return {
+        "kind": "rust-integration-test",
+        "path": "crates/tools/cli/tests/reference_host_jsonl.rs",
+        "digest": file_digest(REFERENCE_HOST_EXECUTABLE_HARNESS_PATH),
+    }
+
+
+def reference_host_executable_parity_evidence(
+    invoke_vector: dict[str, Any], lifecycle_vector: dict[str, Any]
+) -> dict[str, Any]:
+    case_names = [
+        *(case["name"] for case in invoke_vector["cases"]),
+        *(case["name"] for case in lifecycle_vector["cases"]),
+    ]
+    return {
+        "owner_executable": {
+            "name": "apxm-reference-host",
+            "path": "crates/tools/cli/src/bin/reference_host.rs",
+            "transport_protocol": "jsonl-stdin-stdout",
+        },
+        "harness": reference_host_executable_harness_ref(),
+        "vectors": [
+            reference_host_invoke_vector_ref(invoke_vector),
+            reference_host_lifecycle_vector_ref(lifecycle_vector),
+        ],
+        "live_required_cases": case_names,
+        "unavailable_required_cases": [],
+    }
+
+
 def reference_host_published_lifecycle_profile(
     release_manifest: dict[str, Any],
     execution_manifest: dict[str, Any],
@@ -624,6 +683,8 @@ def reference_host_release_attestation(
     check_reference_host_release_evidence(descriptor)
     release_manifest = load_json(REFERENCE_HOST_RELEASE_MANIFEST_PATH)
     execution_manifest = load_json(REFERENCE_HOST_EXECUTION_MANIFEST_PATH)
+    invoke_vector = load_json(REFERENCE_HOST_INVOKE_PARITY_VECTOR_PATH)
+    lifecycle_vector = load_json(REFERENCE_HOST_LIFECYCLE_PARITY_VECTOR_PATH)
     attestation = {
         "cohort": {
             "revision": owner_revision,
@@ -644,6 +705,9 @@ def reference_host_release_attestation(
             "vectors": [],
         },
         "owner_source_contracts": owner_source_contract_attestations(descriptor),
+        "executable_parity_evidence": reference_host_executable_parity_evidence(
+            invoke_vector, lifecycle_vector
+        ),
     }
     golden_vectors = release_manifest.get("golden_vectors")
     if not isinstance(golden_vectors, list):
@@ -1689,6 +1753,14 @@ def check_reference_host_release_evidence(descriptor: dict[str, Any]) -> None:
     if attestation != expected_attestation:
         raise ValidationError(
             "reference-host release manifest lifecycle_cohort_attestation drifted"
+        )
+
+    expected_executable_parity_evidence = reference_host_executable_parity_evidence(
+        invoke_vector, lifecycle_vector
+    )
+    if release_manifest.get("executable_parity_evidence") != expected_executable_parity_evidence:
+        raise ValidationError(
+            "reference-host release manifest executable_parity_evidence drifted"
         )
 
     expected_profile = reference_host_published_lifecycle_profile(
