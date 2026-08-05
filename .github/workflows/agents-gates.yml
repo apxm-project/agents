@@ -80,3 +80,43 @@ jobs:
 # for this `.dekk.toml`, identified by image digest and carrying the exact
 # MLIR/LLVM 22 native libraries. Until that concrete input exists, the commands
 # remain absent rather than skipped or marked continue-on-error.
+
+  source-compiler-acceptance:
+    name: G1–G2 — source/compiler acceptance bundle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash -el {0}
+        working-directory: workspace/agents
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          path: workspace/agents
+          persist-credentials: false
+
+      - name: Provision the complete Dekk environment
+        uses: conda-incubator/setup-miniconda@fc2d68f6413eb2d87b895e92f8584b5b94a10167 # v3.3.0
+        with:
+          activate-environment: ${{ github.workspace }}/workspace/agents/.dekk/env
+          channels: conda-forge
+          conda-remove-defaults: "true"
+          miniforge-version: "25.3.1-0"
+          python-version: "3.11"
+
+      - name: Install the pinned public Dekk runner
+        run: python -m pip install --disable-pip-version-check "dekk==1.11.5"
+
+      - name: Install the declared native toolchain
+        run: dekk agents install --no-interactive
+
+      - name: Run the nine-gate source/compiler acceptance bundle
+        run: dekk agents test-source-compiler-acceptance
+
+      - name: Upload the acceptance report and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-compiler-acceptance-${{ github.sha }}
+          path: workspace/agents/.apxm/compiler/source-compiler-acceptance
+          if-no-files-found: error
