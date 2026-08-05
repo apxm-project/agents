@@ -116,6 +116,11 @@ impl CommittedNativeModelUsage {
                 "model_target_ref",
             ));
         }
+        if lineage.model_target_digest != attempt.model_target_digest {
+            return Err(CommittedNativeModelUsageGateError::EvidenceMismatch(
+                "model_target_digest",
+            ));
+        }
         if lineage.model_deployment_ref != attempt.model_deployment_ref {
             return Err(CommittedNativeModelUsageGateError::EvidenceMismatch(
                 "model_deployment_ref",
@@ -124,6 +129,39 @@ impl CommittedNativeModelUsage {
         if lineage.exact_port_binding_digest != attempt.exact_port_binding_digest {
             return Err(CommittedNativeModelUsageGateError::EvidenceMismatch(
                 "exact_port_binding_digest",
+            ));
+        }
+        if lineage.target_commitment_digest.as_deref()
+            != Some(attempt.target_commitment_digest.as_str())
+        {
+            return Err(CommittedNativeModelUsageGateError::EvidenceMismatch(
+                "target_commitment_digest",
+            ));
+        }
+        if lineage.generation_cohort_digest.as_deref()
+            != Some(attempt.generation_cohort_digest.as_str())
+        {
+            return Err(CommittedNativeModelUsageGateError::EvidenceMismatch(
+                "generation_cohort_digest",
+            ));
+        }
+        if lineage.target_generation != Some(attempt.target_generation) {
+            return Err(CommittedNativeModelUsageGateError::EvidenceMismatch(
+                "target_generation",
+            ));
+        }
+        if lineage.target_port_contract_digest.as_deref()
+            != Some(attempt.target_port_contract_digest.as_str())
+        {
+            return Err(CommittedNativeModelUsageGateError::EvidenceMismatch(
+                "target_port_contract_digest",
+            ));
+        }
+        if lineage.target_composition_digest.as_deref()
+            != Some(attempt.target_composition_digest.as_str())
+        {
+            return Err(CommittedNativeModelUsageGateError::EvidenceMismatch(
+                "target_composition_digest",
             ));
         }
         Ok(Self {

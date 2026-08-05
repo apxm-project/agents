@@ -14,15 +14,16 @@
 use apxm_inference::effect::{ErrorCategory, IdempotencyKey};
 use apxm_inference::{
     AttemptDisposition, BoundedMetricLabels, CorrelateDiagnosticsRequest, DiagnosticAgreement,
-    ExactInferenceDispatch, ExactModelTargetRef, ExactPortBindingRef, InferenceCredentialLease,
-    InferenceCredentialLeaseIdentity, InferenceDriverBinding, InferenceUsageLineage,
-    LeasedInferenceBackend, ModelBindingAdmission, ModelCallPreparation, ModelCallRequest,
-    ModelCallRequestMetadata, ModelContextEnvelopeRef, ModelDeploymentRef, ModelOutcome,
-    ModelStreamMode, ModelTargetRef, PINNED_VLLM_PORT_CONTRACT_DIGEST, PINNED_VLLM_VECTOR_DIGESTS,
-    ResolvedModelBinding, RetryPolicy, TypedError, Usage, VllmConformanceJoin, VllmJoinStatus,
-    authoritative_usage, correlate_diagnostics, digest_bytes, dispatch_exact_inference,
-    redact_diagnostic_value,
+    ExactInferenceDispatch, InferenceCredentialLease, InferenceCredentialLeaseIdentity,
+    InferenceDriverBinding, InferenceUsageLineage, LeasedInferenceBackend, ModelBindingAdmission,
+    ModelCallPreparation, ModelCallRequest, ModelCallRequestMetadata, ModelContextEnvelopeRef,
+    ModelOutcome, ModelStreamMode, ModelTargetRef, PINNED_VLLM_OWNER_REVISION,
+    PINNED_VLLM_PORT_CONTRACT_DIGEST, PINNED_VLLM_RELEASE_ID, PINNED_VLLM_RELEASE_MANIFEST_DIGEST,
+    PINNED_VLLM_VECTOR_DIGESTS, ResolvedModelBinding, RetryPolicy, TypedError, Usage,
+    VllmConformanceJoin, VllmJoinStatus, VllmReleaseAttestation, authoritative_usage,
+    correlate_diagnostics, digest_bytes, dispatch_exact_inference, redact_diagnostic_value,
 };
+use apxm_inference::{InferenceTargetCommitment, TargetCommitState};
 use std::cell::Cell;
 
 const DIGEST_A: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -32,18 +33,18 @@ const DIGEST_D: &str = "sha256:ddddddddddddddddddddddddddddddddddddddddddddddddd
 const DIGEST_E: &str = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 
 fn resolved(target: &str) -> ResolvedModelBinding {
-    ResolvedModelBinding {
-        model_target: ExactModelTargetRef {
-            reference: ModelTargetRef(target.to_string()),
-            target_digest: DIGEST_B.to_string(),
-        },
-        model_deployment_ref: ModelDeploymentRef("deploy.alpha".to_string()),
-        exact_port_binding: ExactPortBindingRef {
-            binding_digest: DIGEST_A.to_string(),
-            port_contract_digest: DIGEST_C.to_string(),
-        },
-        composition_digest: DIGEST_D.to_string(),
-    }
+    ResolvedModelBinding::from_target_commitment(
+        InferenceTargetCommitment::commit(
+            target,
+            DIGEST_B,
+            "deploy.alpha",
+            DIGEST_A,
+            DIGEST_C,
+            DIGEST_D,
+            0,
+        )
+        .expect("resolved target commitment"),
+    )
 }
 
 fn request_for(target: &str) -> ModelCallRequest {
@@ -77,6 +78,101 @@ fn lease_for(target: &str, expires_at_unix_ms: u64) -> InferenceCredentialLease 
         InferenceCredentialLeaseIdentity::mint("lease.1", target, DIGEST_A, expires_at_unix_ms)
             .expect("mint lease identity");
     InferenceCredentialLease::issue(identity, "super-secret-material").expect("issue lease")
+}
+
+fn target_commitment() -> InferenceTargetCommitment {
+    InferenceTargetCommitment::commit(
+        "model.alpha",
+        DIGEST_B,
+        "deploy.alpha",
+        DIGEST_A,
+        DIGEST_C,
+        DIGEST_D,
+        7,
+    )
+    .expect("committed target")
+}
+
+// ── Committed target generation ────────────────────────────────────────────
+
+#[test]
+fn committed_target_freezes_one_generation_cohort_and_digest() {
+    let commitment = target_commitment();
+    commitment.validate().expect("committed target validates");
+    assert_eq!(commitment.target_generation, 7);
+    assert_eq!(commitment.deployment_generation, 7);
+    assert_eq!(commitment.binding_generation, 7);
+    assert_eq!(commitment.composition_generation, 7);
+    assert!(commitment.commit_digest.starts_with("sha256:"));
+    assert!(commitment.generation_cohort_digest.starts_with("sha256:"));
+
+    let binding = InferenceDriverBinding::from_target_commitment(
+        "driver.exact",
+        "profile.exact",
+        commitment.clone(),
+    )
+    .expect("driver accepts committed target");
+    binding
+        .authorize(
+            &ModelTargetRef("model.alpha".into()),
+            &resolved("model.alpha"),
+        )
+        .expect("committed target authorizes exact resolution");
+}
+
+#[test]
+fn moving_stale_dirty_and_ambiguous_targets_fail_before_dispatch() {
+    for (state, expected) in [
+        (
+            TargetCommitState::Moving,
+            apxm_inference::TargetCommitmentError::Moving,
+        ),
+        (
+            TargetCommitState::Stale,
+            apxm_inference::TargetCommitmentError::Stale,
+        ),
+        (
+            TargetCommitState::Dirty,
+            apxm_inference::TargetCommitmentError::Dirty,
+        ),
+        (
+            TargetCommitState::Ambiguous,
+            apxm_inference::TargetCommitmentError::Ambiguous,
+        ),
+    ] {
+        let mut commitment = target_commitment();
+        commitment.state = state;
+        assert_eq!(commitment.validate(), Err(expected.clone()));
+        assert!(matches!(
+            InferenceDriverBinding::from_target_commitment(
+                "driver.exact",
+                "profile.exact",
+                commitment,
+            ),
+            Err(apxm_inference::DriverBindingError::TargetCommitment(error))
+                if error == expected
+        ));
+    }
+}
+
+#[test]
+fn mixed_generation_target_fails_closed_even_when_each_digest_is_valid() {
+    let mut commitment = target_commitment();
+    commitment.deployment_generation += 1;
+    assert_eq!(
+        commitment.validate(),
+        Err(apxm_inference::TargetCommitmentError::MixedGeneration)
+    );
+
+    let err =
+        InferenceDriverBinding::from_target_commitment("driver.exact", "profile.exact", commitment)
+            .expect_err("mixed generation cannot become a driver binding");
+    assert!(matches!(
+        err,
+        apxm_inference::DriverBindingError::TargetCommitment(
+            apxm_inference::TargetCommitmentError::MixedGeneration
+        )
+    ));
 }
 
 struct ExactBackend {
@@ -211,6 +307,22 @@ fn exact_driver_binding_rejects_target_digest_revision_drift() {
         apxm_inference::DriverBindingError::DigestMismatch {
             field: "model_target_digest"
         }
+    ));
+}
+
+#[test]
+fn duplicated_driver_identity_rejects_nested_commitment_drift() {
+    let resolved = resolved("model.alpha");
+    let mut binding =
+        InferenceDriverBinding::from_resolved("driver.vllm", "profile.exact", &resolved)
+            .expect("binding");
+    binding.target_commitment.exact_port_binding_digest = DIGEST_E.to_string();
+
+    assert!(matches!(
+        binding.validate_shape(),
+        Err(apxm_inference::DriverBindingError::TargetCommitment(
+            apxm_inference::TargetCommitmentError::CommitDigestMismatch
+        ))
     ));
 }
 
@@ -402,6 +514,76 @@ fn exact_dispatch_seals_usage_lineage_with_timing_and_target() {
     assert_eq!(result.lineage.duration_ms, 77);
     assert_eq!(result.lineage.model_target_ref, "model.alpha");
     assert_eq!(result.driver_id, "driver.vllm");
+    assert_eq!(
+        result.lineage.target_commitment_digest.as_deref(),
+        Some(result.target_commitment.commit_digest.as_str())
+    );
+    assert_eq!(result.lineage.target_generation, Some(0));
+}
+
+#[test]
+fn usage_lineage_rejects_target_commitment_tamper() {
+    let commitment = target_commitment();
+    let mut lineage = InferenceUsageLineage::seal_with_target_commitment(
+        "effect.1",
+        0,
+        DIGEST_A,
+        &commitment,
+        Usage {
+            input_tokens: 2,
+            output_tokens: 3,
+        },
+        4,
+        None,
+    )
+    .expect("seal committed target lineage");
+    lineage.target_commitment_digest = Some(DIGEST_E.to_string());
+    assert_eq!(
+        lineage.validate(),
+        Err(apxm_inference::LineageError::CommitMismatch)
+    );
+}
+
+#[test]
+fn evidence_coordinates_are_digest_bound_and_swaps_fail() {
+    let mut lineage = InferenceUsageLineage::seal(
+        "effect.1",
+        0,
+        DIGEST_A,
+        "model.alpha",
+        DIGEST_B,
+        "deploy.alpha",
+        DIGEST_C,
+        Usage {
+            input_tokens: 2,
+            output_tokens: 3,
+        },
+        4,
+        None,
+    )
+    .expect("seal lineage");
+    lineage
+        .bind_evidence("fact.1", "commit.1")
+        .expect("bind evidence");
+    lineage.validate().expect("bound lineage validates");
+    assert!(matches!(
+        lineage.authorize_exporter_claim("commit.other", Usage::default()),
+        Err(apxm_inference::LineageError::CommitMismatch)
+    ));
+
+    let mut swapped_fact = lineage.clone();
+    swapped_fact.evidence_fact_id = Some("fact.2".into());
+    assert!(matches!(
+        swapped_fact.validate(),
+        Err(apxm_inference::LineageError::DigestMismatch)
+    ));
+
+    let mut swapped_commit = lineage;
+    swapped_commit.commit_id = Some("commit.2".into());
+    assert!(matches!(
+        swapped_commit.validate(),
+        Err(apxm_inference::LineageError::DigestMismatch)
+    ));
 }
 
 #[test]
@@ -787,6 +969,67 @@ fn vllm_conformance_join_pins_released_vector_digests_without_substitution() {
     assert!(matches!(
         err,
         apxm_inference::JoinError::DuplicateVectorDigest(_)
+    ));
+}
+
+#[test]
+fn vllm_conformance_join_cannot_claim_release_without_external_evidence() {
+    let err = VllmConformanceJoin::join(
+        PINNED_VLLM_PORT_CONTRACT_DIGEST,
+        vec![PINNED_VLLM_VECTOR_DIGESTS[0].to_string()],
+        true,
+    )
+    .expect_err("release assertion cannot manufacture external evidence");
+    assert!(matches!(
+        err,
+        apxm_inference::JoinError::ReleaseEvidenceRequired
+    ));
+
+    let mut candidate =
+        VllmConformanceJoin::candidate_from_pinned_vectors().expect("candidate join");
+    candidate.join_status = VllmJoinStatus::Joined;
+    let err = candidate
+        .validate()
+        .expect_err("deserialized joined status fails closed");
+    assert!(matches!(
+        err,
+        apxm_inference::JoinError::ReleaseEvidenceRequired
+    ));
+}
+
+#[test]
+fn vllm_conformance_join_requires_verified_release_coordinates_and_membership() {
+    let attestation = VllmReleaseAttestation {
+        release_id: PINNED_VLLM_RELEASE_ID.to_string(),
+        owner_revision: PINNED_VLLM_OWNER_REVISION.to_string(),
+        manifest_digest: PINNED_VLLM_RELEASE_MANIFEST_DIGEST.to_string(),
+        port_contract_digest: PINNED_VLLM_PORT_CONTRACT_DIGEST.to_string(),
+        vector_digests: PINNED_VLLM_VECTOR_DIGESTS
+            .iter()
+            .map(|digest| (*digest).to_string())
+            .collect(),
+    };
+    let joined = VllmConformanceJoin::join_with_release_attestation(
+        PINNED_VLLM_PORT_CONTRACT_DIGEST,
+        attestation.vector_digests.clone(),
+        attestation.clone(),
+    )
+    .expect("verified external release evidence joins");
+    assert_eq!(joined.join_status, VllmJoinStatus::Joined);
+    assert_eq!(joined.release_attestation, Some(attestation));
+    joined.validate().expect("verified joined record validates");
+
+    let mut tampered = joined.clone();
+    tampered
+        .release_attestation
+        .as_mut()
+        .expect("attestation")
+        .owner_revision = "f".repeat(40);
+    assert!(matches!(
+        tampered.validate(),
+        Err(apxm_inference::JoinError::InvalidReleaseAttestation(
+            "owner_revision"
+        ))
     ));
 }
 

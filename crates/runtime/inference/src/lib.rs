@@ -24,10 +24,13 @@ pub mod identity;
 pub mod lease;
 pub mod lineage;
 pub mod stream;
+pub mod target;
 
 pub use backend_join::{
-    JoinError, PINNED_VLLM_PORT_CONTRACT_DIGEST, PINNED_VLLM_VECTOR_DIGESTS,
-    VLLM_CONFORMANCE_JOIN_SCHEMA, VllmConformanceJoin, VllmJoinStatus, digest_bytes,
+    JoinError, PINNED_VLLM_OWNER_REVISION, PINNED_VLLM_PORT_CONTRACT_DIGEST,
+    PINNED_VLLM_RELEASE_ID, PINNED_VLLM_RELEASE_MANIFEST_DIGEST, PINNED_VLLM_VECTOR_DIGESTS,
+    VLLM_CONFORMANCE_JOIN_SCHEMA, VllmConformanceJoin, VllmJoinStatus, VllmReleaseAttestation,
+    digest_bytes,
 };
 pub use diagnostics::{
     BoundedMetricLabels, CorrelateDiagnosticsRequest, DIAGNOSTIC_CORRELATION_SCHEMA,
@@ -35,8 +38,9 @@ pub use diagnostics::{
     correlate_diagnostics,
 };
 pub use dispatch::{
-    ExactInferenceDispatch, InferenceDispatchError, InferenceDispatchResult,
-    LeasedInferenceBackend, dispatch_exact_inference,
+    CommittedInferenceDispatch, CommittedInferenceDispatchResult, ExactInferenceDispatch,
+    InferenceDispatchError, InferenceDispatchResult, LeasedInferenceBackend,
+    dispatch_committed_inference, dispatch_exact_inference,
 };
 pub use driver::{
     DriverAvailability, DriverBindingError, INFERENCE_DRIVER_BINDING_SCHEMA, InferenceDriverBinding,
@@ -61,4 +65,8 @@ pub use lineage::{
 pub use stream::{
     CancelToken, ModelContentRef, ModelStreamEvent, ModelStreamPort, ModelStreamStep, StreamResult,
     stream,
+};
+pub use target::{
+    INFERENCE_TARGET_COMMITMENT_SCHEMA, InferenceTargetCommitment, TargetCommitState,
+    TargetCommitmentError,
 };

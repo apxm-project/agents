@@ -28,10 +28,35 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+
+def git_common_repo_root(root: Path) -> Path:
+    resolved = root.resolve(strict=False)
+    result = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(resolved),
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+        ],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return resolved
+    common_dir = Path(result.stdout.strip()).resolve(strict=False)
+    if common_dir.name != ".git":
+        return resolved
+    return common_dir.parent
+
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 CONTRACTS_DIR = SCRIPT_DIR.parent
 CHECKOUT_ROOT = CONTRACTS_DIR.parent.resolve(strict=False)
-AGENTS_ROOT = CHECKOUT_ROOT
+AGENTS_ROOT = git_common_repo_root(CHECKOUT_ROOT)
 WORKSPACE_DIR = AGENTS_ROOT.parent
 CONSTITUTION_SCHEMAS_DIR = WORKSPACE_DIR / "contracts" / "schemas"
 
@@ -64,6 +89,9 @@ REFERENCE_HOST_INVOKE_PARITY_VECTOR_PATH = (
 )
 REFERENCE_HOST_LIFECYCLE_PARITY_VECTOR_PATH = (
     CONTRACTS_DIR / "reference-host" / "vectors" / "apxm.reference-host.lifecycle-parity.v1.json"
+)
+REFERENCE_HOST_EXECUTABLE_HARNESS_PATH = (
+    CHECKOUT_ROOT / "crates" / "tools" / "cli" / "tests" / "reference_host_jsonl.rs"
 )
 EXECUTION_COMMIT_PORT_CONTRACT_PATH = (
     PORT_CONTRACTS_DIR / "apxm.execution-commit.port-contract.v1.json"
@@ -508,6 +536,37 @@ def reference_host_invoke_vector_ref(invoke_vector: dict[str, Any]) -> dict[str,
     }
 
 
+def reference_host_executable_harness_ref() -> dict[str, str]:
+    return {
+        "kind": "rust-integration-test",
+        "path": "crates/tools/cli/tests/reference_host_jsonl.rs",
+        "digest": file_digest(REFERENCE_HOST_EXECUTABLE_HARNESS_PATH),
+    }
+
+
+def reference_host_executable_parity_evidence(
+    invoke_vector: dict[str, Any], lifecycle_vector: dict[str, Any]
+) -> dict[str, Any]:
+    case_names = [
+        *(case["name"] for case in invoke_vector["cases"]),
+        *(case["name"] for case in lifecycle_vector["cases"]),
+    ]
+    return {
+        "owner_executable": {
+            "name": "apxm-reference-host",
+            "path": "crates/tools/cli/src/bin/reference_host.rs",
+            "transport_protocol": "jsonl-stdin-stdout",
+        },
+        "harness": reference_host_executable_harness_ref(),
+        "vectors": [
+            reference_host_invoke_vector_ref(invoke_vector),
+            reference_host_lifecycle_vector_ref(lifecycle_vector),
+        ],
+        "live_required_cases": case_names,
+        "unavailable_required_cases": [],
+    }
+
+
 def reference_host_published_lifecycle_profile(
     release_manifest: dict[str, Any],
     execution_manifest: dict[str, Any],
@@ -624,6 +683,8 @@ def reference_host_release_attestation(
     check_reference_host_release_evidence(descriptor)
     release_manifest = load_json(REFERENCE_HOST_RELEASE_MANIFEST_PATH)
     execution_manifest = load_json(REFERENCE_HOST_EXECUTION_MANIFEST_PATH)
+    invoke_vector = load_json(REFERENCE_HOST_INVOKE_PARITY_VECTOR_PATH)
+    lifecycle_vector = load_json(REFERENCE_HOST_LIFECYCLE_PARITY_VECTOR_PATH)
     attestation = {
         "cohort": {
             "revision": owner_revision,
@@ -644,6 +705,9 @@ def reference_host_release_attestation(
             "vectors": [],
         },
         "owner_source_contracts": owner_source_contract_attestations(descriptor),
+        "executable_parity_evidence": reference_host_executable_parity_evidence(
+            invoke_vector, lifecycle_vector
+        ),
     }
     golden_vectors = release_manifest.get("golden_vectors")
     if not isinstance(golden_vectors, list):
@@ -849,6 +913,107 @@ def inference_credential_lease_errors(instance: dict[str, Any]) -> list[str]:
     return []
 
 
+def target_commitment_errors(instance: dict[str, Any]) -> list[str]:
+    fields = (
+        "target_ref",
+        "target_digest",
+        "model_deployment_ref",
+        "exact_port_binding_digest",
+        "port_contract_digest",
+        "composition_digest",
+        "target_generation",
+        "deployment_generation",
+        "binding_generation",
+        "composition_generation",
+        "generation_cohort_digest",
+        "commit_digest",
+        "state",
+    )
+    if any(field not in instance for field in fields):
+        return ["target commitment must carry its complete closed identity"]
+    if len(
+        {
+            instance["target_generation"],
+            instance["deployment_generation"],
+            instance["binding_generation"],
+            instance["composition_generation"],
+        }
+    ) != 1:
+        return ["target commitment generations must form one cohort"]
+    if instance["state"] != "committed":
+        return ["target commitment state must be committed"]
+    generation = instance["target_generation"]
+    cohort = _inference_digest(
+        "apxm.inference-target-commitment.v1",
+        "cohort",
+        instance["target_ref"],
+        instance["target_digest"],
+        instance["model_deployment_ref"],
+        instance["exact_port_binding_digest"],
+        instance["port_contract_digest"],
+        instance["composition_digest"],
+        generation,
+        instance["deployment_generation"],
+        instance["binding_generation"],
+        instance["composition_generation"],
+    )
+    if instance["generation_cohort_digest"] != cohort:
+        return ["target commitment generation cohort digest is not canonical"]
+    commit = _inference_digest(
+        "apxm.inference-target-commitment.v1",
+        "commit",
+        cohort,
+        instance["state"],
+    )
+    if instance["commit_digest"] != commit:
+        return ["target commitment digest is not canonical"]
+    return []
+
+
+def inference_driver_binding_errors(instance: dict[str, Any]) -> list[str]:
+    commitment = instance.get("target_commitment")
+    if not isinstance(commitment, dict):
+        return ["driver binding must carry a target commitment"]
+    commitment_errors = target_commitment_errors(commitment)
+    if commitment_errors:
+        return commitment_errors
+    for binding_field, commitment_field in (
+        ("model_target_ref", "target_ref"),
+        ("model_target_digest", "target_digest"),
+        ("model_deployment_ref", "model_deployment_ref"),
+        ("exact_port_binding_digest", "exact_port_binding_digest"),
+        ("port_contract_digest", "port_contract_digest"),
+        ("composition_digest", "composition_digest"),
+    ):
+        if instance.get(binding_field) != commitment.get(commitment_field):
+            return [f"{binding_field} must match target_commitment.{commitment_field}"]
+    return []
+
+
+def model_inference_request_errors(instance: dict[str, Any]) -> list[str]:
+    binding = instance.get("resolved_binding")
+    if not isinstance(binding, dict):
+        return []
+    commitment = binding.get("target_commitment")
+    if not isinstance(commitment, dict):
+        return ["resolved binding must carry a target commitment"]
+    commitment_errors = target_commitment_errors(commitment)
+    if commitment_errors:
+        return commitment_errors
+    duplicated = (
+        ("model_target.reference", binding.get("model_target", {}).get("reference"), commitment.get("target_ref")),
+        ("model_target.target_digest", binding.get("model_target", {}).get("target_digest"), commitment.get("target_digest")),
+        ("model_deployment_ref", binding.get("model_deployment_ref"), commitment.get("model_deployment_ref")),
+        ("exact_port_binding.binding_digest", binding.get("exact_port_binding", {}).get("binding_digest"), commitment.get("exact_port_binding_digest")),
+        ("exact_port_binding.port_contract_digest", binding.get("exact_port_binding", {}).get("port_contract_digest"), commitment.get("port_contract_digest")),
+        ("composition_digest", binding.get("composition_digest"), commitment.get("composition_digest")),
+    )
+    for field, binding_value, commitment_value in duplicated:
+        if binding_value != commitment_value:
+            return [f"{field} must match target_commitment"]
+    return []
+
+
 def inference_usage_lineage_errors(instance: dict[str, Any]) -> list[str]:
     if instance.get("sealed") is not True:
         return ["usage lineage must be sealed before publication"]
@@ -857,6 +1022,19 @@ def inference_usage_lineage_errors(instance: dict[str, Any]) -> list[str]:
     commit_id = instance.get("commit_id")
     if (evidence_fact_id is None) != (commit_id is None):
         return ["evidence_fact_id and commit_id must be bound together"]
+
+    commitment_fields = (
+        "target_commitment_digest",
+        "generation_cohort_digest",
+        "target_generation",
+        "target_port_contract_digest",
+        "target_composition_digest",
+    )
+    commitment_values = [instance.get(field) for field in commitment_fields]
+    if any(value is None for value in commitment_values) and any(
+        value is not None for value in commitment_values
+    ):
+        return ["target commitment evidence fields must be bound together"]
 
     typed_error = instance.get("typed_error")
     parts: list[object] = [
@@ -867,10 +1045,37 @@ def inference_usage_lineage_errors(instance: dict[str, Any]) -> list[str]:
         instance.get("model_target_digest", ""),
         instance.get("model_deployment_ref", ""),
         instance.get("exact_port_binding_digest", ""),
-        instance.get("native_input_tokens", ""),
-        instance.get("native_output_tokens", ""),
-        instance.get("duration_ms", ""),
     ]
+    if all(value is not None for value in commitment_values):
+        target_generation = instance["target_generation"]
+        commitment = {
+            "target_ref": instance.get("model_target_ref", ""),
+            "target_digest": instance.get("model_target_digest", ""),
+            "model_deployment_ref": instance.get("model_deployment_ref", ""),
+            "exact_port_binding_digest": instance.get("exact_port_binding_digest", ""),
+            "port_contract_digest": instance["target_port_contract_digest"],
+            "composition_digest": instance["target_composition_digest"],
+            "target_generation": target_generation,
+            "deployment_generation": target_generation,
+            "binding_generation": target_generation,
+            "composition_generation": target_generation,
+            "generation_cohort_digest": instance["generation_cohort_digest"],
+            "commit_digest": instance["target_commitment_digest"],
+            "state": "committed",
+        }
+        commitment_errors = target_commitment_errors(commitment)
+        if commitment_errors:
+            return commitment_errors
+        parts.extend(commitment_values)
+    if evidence_fact_id is not None:
+        parts.extend((evidence_fact_id, commit_id))
+    parts.extend(
+        (
+            instance.get("native_input_tokens", ""),
+            instance.get("native_output_tokens", ""),
+            instance.get("duration_ms", ""),
+        )
+    )
     if isinstance(typed_error, dict):
         parts.extend(
             (
@@ -915,23 +1120,41 @@ def inference_diagnostic_correlation_errors(instance: dict[str, Any]) -> list[st
 def vllm_conformance_join_errors(instance: dict[str, Any]) -> list[str]:
     # Mirror of crates/runtime/inference/src/backend_join.rs.
     if instance.get("vllm_port_contract_digest") != (
-        "sha256:2106082c92a9dae2cd9e0c623315198f9ed8d736e8f5860ed043c58690428c01"
+        "sha256:361aaf5fd82ae1dd8279726769088c2711a55d964a8376faf4646a149fee9f3c"
     ):
         return ["vllm_port_contract_digest must match the pinned backend contract"]
-    pinned_vectors = {
+    pinned_vectors = [
         "sha256:7add76f8f7df341785ef45ff51b38e979a309299509b32e76b311268cc93ea32",
         "sha256:a60b2364bbbe1304e96defcf55a8600d501933e0fbae97c140f2bc4377d5e822",
         "sha256:96914ff1d56cc2d1e74fda3a063287615392cb0197bcc1c853cb1a18a5e7e8c3",
         "sha256:5e7abcccf5c7f7276b9398ccd2c255671f23a6914eb23287b44518b30b8c7723",
         "sha256:1e9a389b24f08411738594ca3646bbcbeb18a77c398c6b07933d04903bd9be39",
-    }
+    ]
     vectors = instance.get("joined_vector_digests", [])
     if not isinstance(vectors, list):
         return []
-    if any(vector not in pinned_vectors for vector in vectors):
+    if any(vector not in set(pinned_vectors) for vector in vectors):
         return ["joined_vector_digests contains an unpinned backend evidence digest"]
     if len(vectors) != len(set(vectors)):
         return ["joined_vector_digests must be unique"]
+    if instance.get("join_status") == "joined":
+        attestation = instance.get("release_attestation")
+        if not isinstance(attestation, dict):
+            return ["join_status requires exact external vLLM release evidence"]
+        if attestation.get("release_id") != "apxm-vllm-5d825f6c1896":
+            return ["release_attestation.release_id must match the pinned release"]
+        if attestation.get("owner_revision") != "5d825f6c18961c2b38edb15834acbd794fc549eb":
+            return ["release_attestation.owner_revision must match the pinned release"]
+        if attestation.get("manifest_digest") != "sha256:b489043b6f723b3e7bf9b4a054f55383dde90f8cf25290275a813c0970bcaeb4":
+            return ["release_attestation.manifest_digest must match the pinned release"]
+        if attestation.get("port_contract_digest") != instance.get("vllm_port_contract_digest"):
+            return ["release_attestation.port_contract_digest must match the joined port contract"]
+        if attestation.get("vector_digests") != pinned_vectors:
+            return ["release_attestation.vector_digests must match the pinned vector membership"]
+        if vectors != attestation["vector_digests"]:
+            return ["joined_vector_digests must match release_attestation.vector_digests"]
+    elif instance.get("release_attestation") is not None:
+        return ["candidate join must not carry release attestation"]
     return []
 
 
@@ -961,6 +1184,10 @@ def semantic_errors(schema_id: str, instance: object) -> list[str]:
                 return ["usage_measurement_id must match the exact committed attempt tuple"]
     if schema_id == "apxm.inference-credential-lease.v1":
         return inference_credential_lease_errors(instance)
+    if schema_id == "apxm.model-inference-request.v1":
+        return model_inference_request_errors(instance)
+    if schema_id == "apxm.inference-driver-binding.v1":
+        return inference_driver_binding_errors(instance)
     if schema_id == "apxm.inference-usage-lineage.v1":
         return inference_usage_lineage_errors(instance)
     if schema_id == "apxm.diagnostic-correlation.v1":
@@ -1268,6 +1495,27 @@ def runtime_evidence_errors(instance: dict[str, Any]) -> list[str]:
                 return [
                     f"facts[{index}]: a model attempt must match its NodeExecution AIR node"
                 ]
+            commitment_errors = target_commitment_errors(
+                {
+                    "target_ref": fact.get("model_target_ref", ""),
+                    "target_digest": fact.get("model_target_digest", ""),
+                    "model_deployment_ref": fact.get("model_deployment_ref", ""),
+                    "exact_port_binding_digest": fact.get(
+                        "exact_port_binding_digest", ""
+                    ),
+                    "port_contract_digest": fact.get("target_port_contract_digest", ""),
+                    "composition_digest": fact.get("target_composition_digest", ""),
+                    "target_generation": fact.get("target_generation"),
+                    "deployment_generation": fact.get("target_generation"),
+                    "binding_generation": fact.get("target_generation"),
+                    "composition_generation": fact.get("target_generation"),
+                    "generation_cohort_digest": fact.get("generation_cohort_digest", ""),
+                    "commit_digest": fact.get("target_commitment_digest", ""),
+                    "state": "committed",
+                }
+            )
+            if commitment_errors:
+                return [f"facts[{index}]: {commitment_errors[0]}"]
             attempt_id_identity = (
                 fact.get("program_invocation_id"),
                 fact.get("node_execution_id"),
@@ -1687,6 +1935,14 @@ def check_reference_host_release_evidence(descriptor: dict[str, Any]) -> None:
     if attestation != expected_attestation:
         raise ValidationError(
             "reference-host release manifest lifecycle_cohort_attestation drifted"
+        )
+
+    expected_executable_parity_evidence = reference_host_executable_parity_evidence(
+        invoke_vector, lifecycle_vector
+    )
+    if release_manifest.get("executable_parity_evidence") != expected_executable_parity_evidence:
+        raise ValidationError(
+            "reference-host release manifest executable_parity_evidence drifted"
         )
 
     expected_profile = reference_host_published_lifecycle_profile(
