@@ -17,7 +17,7 @@ pub const VLLM_CONFORMANCE_JOIN_SCHEMA: &str = "apxm.vllm-conformance-join.v1";
 /// release may advance it, at which point this constant is updated with the
 /// released value (never silently substituted at runtime).
 pub const PINNED_VLLM_PORT_CONTRACT_DIGEST: &str =
-    "sha256:2106082c92a9dae2cd9e0c623315198f9ed8d736e8f5860ed043c58690428c01";
+    "sha256:361aaf5fd82ae1dd8279726769088c2711a55d964a8376faf4646a149fee9f3c";
 
 /// Pinned conformance vector digests from the vLLM owner vectors directory.
 pub const PINNED_VLLM_VECTOR_DIGESTS: &[&str] = &[
