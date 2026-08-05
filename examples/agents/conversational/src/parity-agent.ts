@@ -28,6 +28,8 @@ const source = staticSource(import.meta.url);
 
 const ParityChild = Agent<unknown, unknown, ParityContext>({
   name: "ParityChild",
+  input: "Input",
+  output: "Output",
   source,
   context: ParityContext,
   use: { ParityModel },
@@ -38,6 +40,8 @@ const ParityChild = Agent<unknown, unknown, ParityContext>({
 
 export const ParityCorpus: ParityProgram = Agent<unknown, unknown, ParityContext>({
   name: "ParityCorpus",
+  input: "Input",
+  output: "Output",
   source,
   context: ParityContext,
   use: {

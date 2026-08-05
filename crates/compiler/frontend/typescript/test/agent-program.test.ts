@@ -8,6 +8,7 @@ import "../src/node.ts";
 import { Agent, Capability, Context, Event, Hook, Model, TaskGroup, Tool } from "../src/index.ts";
 import { CaptureError, captureProgram } from "../src/capture.ts";
 import { decodeFact } from "../src/generated/runtime-evidence.ts";
+import { stableDigest } from "../src/markers.ts";
 
 const sourceFile = fileURLToPath(import.meta.url);
 const source = { fileName: sourceFile, text: readFileSync(sourceFile, "utf8") };
@@ -70,6 +71,12 @@ void SupportPolicy;
 
 type Graph = {
   schema_version: string;
+  program_definitions: Array<{
+    program_id: string;
+    entrypoint: string;
+    input_type_ref: string;
+    output_type_ref: string;
+  }>;
   declarations: Array<{ decl_kind: string }>;
   values: Array<{
     value_id: string;
@@ -84,7 +91,7 @@ type Graph = {
     execution_order: number;
   }>;
   regions: Array<{ region_id: string }>;
-  call_intents: Array<{ intent_kind: string }>;
+  call_intents: Array<{ intent_kind: string; operand_values?: string[] }>;
   control_intents: Array<{ control_kind: string }>;
   context_flow: Array<{ from_node: string; to_node: string }>;
   hook_bindings: Array<{ scope: string; phase: string }>;
@@ -94,6 +101,12 @@ type Graph = {
 };
 
 describe("source-first TypeScript authoring", () => {
+  it("emits standard SHA-256 digests without a Node-only root import", () => {
+    expect(stableDigest("abc")).toBe(
+      "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+    );
+  });
+
   it("binds a minimal one-shot Model agent", () => {
     const graph = Summarizer.frontendGraph() as unknown as Graph;
     expect(graph.schema_version).toBe("apxm.frontend-graph.v1");
@@ -151,12 +164,40 @@ describe("source-first TypeScript authoring", () => {
     ]);
     expect(graph.context_flow.length).toBeGreaterThan(0);
     expect(graph.hook_bindings).toEqual([
-      expect.objectContaining({ scope: "model", phase: "before" }),
+      expect.objectContaining({
+        scope: "model",
+        phase: "before",
+        handler_ref: "SupportPolicy",
+      }),
     ]);
+    expect(graph.declarations).toContainEqual(
+      expect.objectContaining({ decl_id: "decl.context.Context" }),
+    );
     expect(graph.imported_program_refs).toEqual([
       expect.objectContaining({ program_ref: "Specialist" }),
     ]);
     expect(Support.diagnostics()).toBeNull();
+  });
+
+  it("reuses named values and allocates instance identities like the Python frontend", () => {
+    const graph = Support.frontendGraph() as unknown as Graph;
+    const creation = graph.values.find((value) =>
+      value.origin === "call_result" &&
+      value.type_ref === "ProgramInstanceRef"
+    );
+    expect(creation?.value_id).toMatch(/^Support\.instance\.\d+$/);
+
+    const invoke = graph.call_intents.find((call) => call.intent_kind === "agent_invocation");
+    expect(invoke?.operand_values).toContain("Support.param.input");
+
+    expect(graph.program_definitions[0]).toEqual(
+      expect.objectContaining({
+        program_id: "Support",
+        entrypoint: "Support",
+        input_type_ref: "Input",
+        output_type_ref: "Output",
+      }),
+    );
   });
 
   it("emits deterministic lexical blocks with typed resume arguments", () => {

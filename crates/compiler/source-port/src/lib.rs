@@ -255,25 +255,32 @@ pub fn compile_source_bundle(
     )
     .map_err(|diagnostic| vec![diagnostic])?;
 
+    compile_captured_graph(request.frontend, captured)
+}
+
+fn compile_captured_graph(
+    frontend: Frontend,
+    captured: serde_json::Value,
+) -> Result<CompiledSource, Vec<SourceDiagnostic>> {
     let frontend_graph: FrontendGraph =
         serde_json::from_value(captured).map_err(|error| {
             vec![SourceDiagnostic::new(
                 SourceDiagnosticCode::FrontendOutputInvalid,
                 format!(
                     "the {} authoring frontend recorded a value outside apxm.frontend-graph.v1: {error}",
-                    request.frontend.wire()
+                    frontend.wire()
                 ),
             )]
         })?;
 
     // A frontend records the source language it authored. A graph that claims a
     // different one is not the graph this request asked for.
-    if frontend_graph.source_language != request.frontend.source_language() {
+    if frontend_graph.source_language != frontend.source_language() {
         return Err(vec![SourceDiagnostic::new(
             SourceDiagnosticCode::FrontendOutputInvalid,
             format!(
                 "the {} authoring frontend recorded source_language '{}'",
-                request.frontend.wire(),
+                frontend.wire(),
                 frontend_graph.source_language.wire()
             ),
         )]);
@@ -305,4 +312,126 @@ pub fn compile_source_bundle(
         air,
         source_map,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    use serde::Deserialize;
+    use serde_json::Value;
+
+    use super::{Frontend, SourceDiagnosticCode, compile_captured_graph};
+
+    #[derive(Debug, Deserialize)]
+    struct FrontendGraphVector {
+        name: String,
+        input: Value,
+        expected_valid: bool,
+    }
+
+    fn repository_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(3)
+            .expect("the source-port crate sits three levels under the repository root")
+            .to_path_buf()
+    }
+
+    fn frontend_graph_vector(name: &str) -> FrontendGraphVector {
+        let vectors: Vec<FrontendGraphVector> = serde_json::from_str(
+            &fs::read_to_string(repository_root().join("contracts/vectors/apxm.frontend-graph.v1.json"))
+                .expect("read checked-in frontend-graph vectors"),
+        )
+        .expect("decode checked-in frontend-graph vectors");
+        vectors
+            .into_iter()
+            .find(|vector| vector.name == name)
+            .unwrap_or_else(|| panic!("frontend-graph vector '{name}' is checked in"))
+    }
+
+    fn requested_frontend(vector: &FrontendGraphVector) -> Frontend {
+        match vector.input["source_language"]
+            .as_str()
+            .expect("vector source_language is a string")
+        {
+            "python" => Frontend::Python,
+            "typescript" => Frontend::Typescript,
+            other => panic!("unexpected vector source_language '{other}'"),
+        }
+    }
+
+    #[test]
+    fn valid_frontend_graph_vector_compiles_through_the_source_port_boundary() {
+        let vector = frontend_graph_vector("valid-frontend-graph-typed-intents");
+        assert!(vector.expected_valid, "the checked-in positive vector stays positive");
+        let frontend = requested_frontend(&vector);
+
+        let compiled = compile_captured_graph(frontend, vector.input)
+            .expect("the checked-in positive vector compiles through source-port lowering");
+
+        assert_eq!(
+            compiled.frontend_graph.source_language,
+            frontend.source_language(),
+            "the compiled graph preserves the requested source language"
+        );
+        assert_eq!(
+            compiled.source_map,
+            compiled.air.source_map,
+            "the source port returns the AIR source map it lowered"
+        );
+        assert!(
+            !compiled.air.semantic_operations.is_empty(),
+            "the checked-in positive vector lowers to executable AIR"
+        );
+    }
+
+    #[test]
+    fn incompatible_frontend_graph_schema_version_is_invalid_frontend_output() {
+        let vector = frontend_graph_vector("incompatible-frontend-graph-schema-version-rejected");
+        assert!(!vector.expected_valid, "the checked-in negative vector stays negative");
+        let diagnostics = compile_captured_graph(requested_frontend(&vector), vector.input)
+            .expect_err("an incompatible frontend-graph version is rejected");
+
+        assert_eq!(
+            diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code)
+                .collect::<Vec<_>>(),
+            vec![SourceDiagnosticCode::FrontendOutputInvalid]
+        );
+    }
+
+    #[test]
+    fn unknown_frontend_graph_field_is_invalid_frontend_output() {
+        let vector = frontend_graph_vector("unknown-frontend-graph-field-rejected");
+        assert!(!vector.expected_valid, "the checked-in negative vector stays negative");
+        let diagnostics = compile_captured_graph(requested_frontend(&vector), vector.input)
+            .expect_err("a captured graph with an unknown field is rejected");
+
+        assert_eq!(
+            diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code)
+                .collect::<Vec<_>>(),
+            vec![SourceDiagnosticCode::FrontendOutputInvalid]
+        );
+    }
+
+    #[test]
+    fn unknown_semantic_discriminant_is_invalid_frontend_output() {
+        let vector = frontend_graph_vector("ais-kind-in-graph-intent-rejected");
+        assert!(!vector.expected_valid, "the checked-in negative vector stays negative");
+        let diagnostics = compile_captured_graph(requested_frontend(&vector), vector.input)
+            .expect_err("a captured graph with an AIS discriminant in source intent is rejected");
+
+        assert_eq!(
+            diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code)
+                .collect::<Vec<_>>(),
+            vec![SourceDiagnosticCode::FrontendOutputInvalid]
+        );
+    }
 }

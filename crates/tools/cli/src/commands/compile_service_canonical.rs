@@ -72,7 +72,11 @@ fn run_canonical_python_entry(input: &Path, config_path: Option<&Path>) -> Resul
     let mut output = None;
     for candidate in ["python3", "python"] {
         let mut command = std::process::Command::new(candidate);
-        command.arg(input);
+        // Canonical package entries may expose both their frontend graph and
+        // AIR for parity tooling. The compile service must request the AIR
+        // representation explicitly so a package-level entry cannot
+        // accidentally return a graph that this command then misclassifies.
+        command.arg(input).arg("--air");
         if let Some(pythonpath) = pythonpath.as_ref() {
             command.env(apxm_env::PYTHONPATH, pythonpath);
         }
