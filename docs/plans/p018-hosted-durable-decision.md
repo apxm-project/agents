@@ -1,7 +1,7 @@
 # P-018 — Hosted durable checkpoint/output decision (G3)
 
 - Status: **no-build** (closed for G3)
-- Date: 2026-08-03
+- Date: 2026-08-05
 - Owner: APXM `agents`
 - Issue: [agents#39](https://github.com/apxm-project/agents/issues/39)
 - Authority: [ADR-0028](https://github.com/apxm-project/apxm/blob/main/docs/adr/0028-apxm-is-the-product-neutral-agent-program-and-inference-core.md), [ADR-0029](https://github.com/apxm-project/apxm/blob/main/docs/adr/0029-agent-program-source-and-closed-semantics-are-behavior-truth.md), [ADR-0030](https://github.com/apxm-project/apxm/blob/main/docs/adr/0030-execution-inference-evidence-and-deployment-are-exact-and-product-neutral.md); master-plan P-018 / G3
@@ -65,13 +65,14 @@ the Port plus owner-local conformance.
   artifacts; APXM never depends on them.
 - Do not add aliases, dual paths, mixed generations, hidden fallbacks or
   product-plane services.
-- Do not weaken Execution Admission behavior from agents#36 / PR #41.
+- Do not weaken Execution Admission behavior from agents#36.
 
 ## Relationship to G3 / agents#36
 
-- agents#36 delivers Execution Admission, effects, confinement and atomic
-  commit semantics (PR #41).
-- This decision closes P-018 so the G3 gate can record an explicit no-build
-  result instead of a silent deferral.
-- After this branch merges (and #41 is reviewed/merged), the P-018 blocker for G3
-  close on #36 is cleared.
+- agents#36 owns Execution Admission, effects, confinement, and atomic commit
+  semantics; P-018 must not weaken that boundary.
+- The explicit no-build result is now published in default-branch authority
+  through this dossier, the evidence record, and the G3 checklist cross-link.
+- Issue #39 may remain open for review or coordination, but the hosted
+  durable build/no-build decision is no longer unpublished or conditional on a
+  side branch.
