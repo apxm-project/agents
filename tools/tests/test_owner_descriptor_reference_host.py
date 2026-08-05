@@ -140,6 +140,29 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
             "the owner descriptor must reference exactly one canonical Host SDK cohort",
         )
 
+    def test_boundary_rejects_absent_reference_host_cohort(self) -> None:
+        descriptor = load_json(DESCRIPTOR_PATH)
+        descriptor["referenced_owner_descriptors"] = []
+
+        with self.assertRaisesRegex(
+            self.validator.ValidationError,
+            "exactly the canonical Host SDK cohort",
+        ):
+            self.validator.check_reference_host_boundary(descriptor)
+
+    def test_boundary_rejects_drifted_reference_host_cohort(self) -> None:
+        descriptor = load_json(DESCRIPTOR_PATH)
+        drifted = copy.deepcopy(descriptor)
+        drifted["referenced_owner_descriptors"][0]["descriptor_semantic_digest"] = (
+            "sha256:" + ("0" * 64)
+        )
+
+        with self.assertRaisesRegex(
+            self.validator.ValidationError,
+            "drifted from the canonical Host SDK cohort: descriptor_semantic_digest",
+        ):
+            self.validator.check_reference_host_boundary(drifted)
+
     def test_workspace_host_sdk_dependency_matches_the_reference_host(self) -> None:
         manifest = tomllib.loads(CARGO_TOML.read_text(encoding="utf-8"))
         dependency = manifest["workspace"]["dependencies"]["apxm-host-sdk"]
@@ -279,6 +302,28 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
             self.validator.RETIRED_REFERENCE_HOST_ADMISSION_ALIAS,
             release_manifest_text,
         )
+
+    def test_reference_host_release_manifest_rejects_transport_drift(self) -> None:
+        release_manifest = load_json(REFERENCE_HOST_RELEASE_MANIFEST)
+        drifted = copy.deepcopy(release_manifest)
+        drifted["transport_protocol"] = "http-json"
+
+        with self.assertRaisesRegex(
+            self.validator.ValidationError,
+            "transport_protocol must stay product-neutral jsonl-stdin-stdout",
+        ):
+            self.validator.check_reference_host_release_manifest_contract(drifted)
+
+    def test_reference_host_release_manifest_rejects_fail_closed_constraint_drift(self) -> None:
+        release_manifest = load_json(REFERENCE_HOST_RELEASE_MANIFEST)
+        drifted = copy.deepcopy(release_manifest)
+        drifted["constraints"]["http_surface"] = "present"
+
+        with self.assertRaisesRegex(
+            self.validator.ValidationError,
+            "fail-closed constraints drifted",
+        ):
+            self.validator.check_reference_host_release_manifest_contract(drifted)
 
     def test_reference_host_release_attestation_matches_committed_owner_artifacts(self) -> None:
         revision = git_head_revision()
