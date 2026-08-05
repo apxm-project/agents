@@ -148,6 +148,8 @@ impl PortBundleSpec {
 pub enum BundleError {
     /// A required slot had no provided binding.
     MissingSlot(PortSlot),
+    /// The declared spec required the same slot more than once.
+    DuplicateRequiredSlot(PortSlot),
     /// A binding was provided for a slot the spec did not declare (no discovery).
     UnexpectedSlot(PortSlot),
     /// Two bindings filled the same slot.
@@ -223,6 +225,13 @@ impl PortBundle {
         spec: &PortBundleSpec,
         entries: Vec<(ExactPortBinding, PortImplementation)>,
     ) -> Result<Self, BundleError> {
+        let mut required_slots = HashSet::new();
+        for (slot, _) in &spec.required {
+            if !required_slots.insert(*slot) {
+                return Err(BundleError::DuplicateRequiredSlot(*slot));
+            }
+        }
+
         if spec.expected_contract(PortSlot::ExecutionCommit).is_none() {
             return Err(BundleError::ExecutionCommitNotRequired);
         }
