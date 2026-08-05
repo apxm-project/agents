@@ -1091,6 +1091,15 @@ def inference_usage_lineage_errors(instance: dict[str, Any]) -> list[str]:
 
 
 def inference_diagnostic_correlation_errors(instance: dict[str, Any]) -> list[str]:
+    for field in ("correlation_id", "commit_id", "model_target_ref", "model_deployment_ref"):
+        value = instance.get(field)
+        if (
+            not isinstance(value, str)
+            or not value
+            or len(value) > 128
+            or re.fullmatch(r"[A-Za-z0-9._:/-]+", value) is None
+        ):
+            return [f"{field} contains an unbounded or invalid diagnostic identifier"]
     for field in ("evidence_fact_ids", "log_refs", "metric_refs", "trace_refs"):
         references = instance.get(field, [])
         if not isinstance(references, list):
@@ -1112,9 +1121,75 @@ def inference_diagnostic_correlation_errors(instance: dict[str, Any]) -> list[st
             and not isinstance(instance.get(field), bool)
             for field in ("claimed_input_tokens", "claimed_output_tokens")
         )
-    ):
+        ):
         return ["a disagreeing diagnostic must preserve both claimed usage values"]
+    commitment_fields = (
+        "target_commitment_digest",
+        "generation_cohort_digest",
+        "target_generation",
+        "target_port_contract_digest",
+        "target_composition_digest",
+    )
+    commitment_values = [instance.get(field) for field in commitment_fields]
+    if any(value is None for value in commitment_values) and any(
+        value is not None for value in commitment_values
+    ):
+        return ["diagnostic target commitment fields must be bound together"]
+    if all(value is not None for value in commitment_values):
+        generation = instance["target_generation"]
+        commitment = {
+            "target_ref": instance.get("model_target_ref", ""),
+            "target_digest": instance.get("model_target_digest", ""),
+            "model_deployment_ref": instance.get("model_deployment_ref", ""),
+            "exact_port_binding_digest": instance.get("exact_port_binding_digest", ""),
+            "port_contract_digest": instance["target_port_contract_digest"],
+            "composition_digest": instance["target_composition_digest"],
+            "target_generation": generation,
+            "deployment_generation": generation,
+            "binding_generation": generation,
+            "composition_generation": generation,
+            "generation_cohort_digest": instance["generation_cohort_digest"],
+            "commit_digest": instance["target_commitment_digest"],
+            "state": "committed",
+        }
+        commitment_errors = target_commitment_errors(commitment)
+        if commitment_errors:
+            return commitment_errors
+    expected = _diagnostic_correlation_digest(instance)
+    if instance.get("correlation_digest") != expected:
+        return ["correlation_digest must cover the complete diagnostic envelope"]
     return []
+
+
+def _diagnostic_correlation_digest(instance: dict[str, Any]) -> str:
+    parts: list[object] = [
+        instance.get("correlation_id", ""),
+        instance.get("commit_id", ""),
+        instance.get("request_digest", ""),
+        instance.get("model_target_ref", ""),
+        instance.get("model_target_digest", ""),
+        instance.get("model_deployment_ref", ""),
+        instance.get("exact_port_binding_digest", ""),
+        instance.get("target_commitment_digest", "") or "",
+        instance.get("generation_cohort_digest", "") or "",
+        instance.get("target_generation", "") if instance.get("target_generation") is not None else "",
+        instance.get("target_port_contract_digest", "") or "",
+        instance.get("target_composition_digest", "") or "",
+        instance.get("authority", ""),
+        instance.get("agreement", ""),
+        instance.get("claimed_input_tokens", "")
+        if instance.get("claimed_input_tokens") is not None
+        else "",
+        instance.get("claimed_output_tokens", "")
+        if instance.get("claimed_output_tokens") is not None
+        else "",
+    ]
+    for field in ("evidence_fact_ids", "log_refs", "metric_refs", "trace_refs"):
+        references = instance.get(field, [])
+        parts.append(len(references) if isinstance(references, list) else "")
+        if isinstance(references, list):
+            parts.extend(references)
+    return _inference_digest("apxm.diagnostic-correlation.v1", *parts)
 
 
 def vllm_conformance_join_errors(instance: dict[str, Any]) -> list[str]:
