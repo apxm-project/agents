@@ -1,0 +1,141 @@
+{
+  "schema_version": "apxm.reference-host.lifecycle-parity.v1",
+  "semantic_owner": "agents",
+  "profiles": ["embedded", "reference-host"],
+  "shared_contracts": {
+    "admission": "apxm.invocation-admission.v1",
+    "drain_quiescence": "apxm.runtime-drain-quiescence.v1",
+    "readiness": "apxm.runtime-readiness.v1",
+    "evidence": "apxm.runtime-evidence.v1"
+  },
+  "cases": [
+    {
+      "name": "cancellation_before_admission",
+      "category": "cancellation",
+      "reference_host_operation": "cancel",
+      "expected": {
+        "parity_outcome": "cancelled_before_commit",
+        "runtime_evidence_terminal_kind": null,
+        "reference_host_state_after": "stopped",
+        "restart_state": "ready",
+        "expected_host_response": {
+          "schema_version": "apxm.runtime.host.v1",
+          "status": "cancelled",
+          "reason": "cancelled_before_admission",
+          "readiness": {
+            "schema_version": "apxm.runtime.host.v1",
+            "contract_id": "apxm.runtime.host.v1",
+            "state": "stopped",
+            "release_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "port_bindings_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "resource_ceiling_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "in_flight": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "drain_shutdown_after_in_flight_completion",
+      "category": "drain_shutdown",
+      "reference_host_operation": "drain",
+      "expected": {
+        "parity_outcome": "stop_admission_then_finish_in_flight",
+        "runtime_evidence_terminal_kind": "invocation.committed",
+        "reference_host_state_after": "draining",
+        "terminal_state_after_in_flight": "stopped"
+      }
+    },
+    {
+      "name": "explicit_shutdown_terminal_state",
+      "category": "drain_shutdown",
+      "reference_host_operation": "shutdown",
+      "expected": {
+        "parity_outcome": "shutdown_terminal",
+        "runtime_evidence_terminal_kind": null,
+        "expected_host_response": {
+          "schema_version": "apxm.runtime.host.v1",
+          "status": "shutdown",
+          "reason": "shutdown_terminal",
+          "readiness": {
+            "schema_version": "apxm.runtime.host.v1",
+            "contract_id": "apxm.runtime.host.v1",
+            "state": "stopped",
+            "release_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "port_bindings_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "resource_ceiling_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "in_flight": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "restart_recovery_from_runtime_evidence",
+      "category": "restart_recovery",
+      "reference_host_operation": "restart",
+      "expected": {
+        "parity_outcome": "recover_from_runtime_evidence",
+        "recovery_source": "apxm.runtime-evidence.v1",
+        "runtime_evidence_terminal_kind": "invocation.committed",
+        "reference_host_state_after": "ready",
+        "expected_host_response": {
+          "schema_version": "apxm.runtime.host.v1",
+          "status": "restarted",
+          "recovery": {
+            "contract": "reconcile_from_runtime_evidence",
+            "status": "reconciled"
+          },
+          "readiness": {
+            "schema_version": "apxm.runtime.host.v1",
+            "contract_id": "apxm.runtime.host.v1",
+            "state": "ready",
+            "release_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "port_bindings_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "resource_ceiling_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "in_flight": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "revocation_before_dispatch",
+      "category": "revocation",
+      "reference_host_operation": "revoke",
+      "expected": {
+        "parity_outcome": "revoked_before_send",
+        "runtime_evidence_terminal_kind": null,
+        "authorizes_next_activation": false,
+        "reference_host_admission_window": "closed_before_dispatch",
+        "expected_host_response": {
+          "schema_version": "apxm.runtime.host.v1",
+          "status": "revoked",
+          "reason": "admission_revoked",
+          "readiness": {
+            "schema_version": "apxm.runtime.host.v1",
+            "contract_id": "apxm.runtime.host.v1",
+            "state": "stopped",
+            "release_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "port_bindings_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "resource_ceiling_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "in_flight": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "boundary_fail_closed",
+      "category": "boundary",
+      "reference_host_operation": "invoke",
+      "expected": {
+        "parity_outcome": "fail_closed",
+        "boundary_rejections": [
+          "host_not_accepting",
+          "unknown_operation",
+          "invalid_request_schema",
+          "missing_admission"
+        ],
+        "runtime_evidence_terminal_kind": null,
+        "reference_host_state_after": "ready"
+      }
+    }
+  ]
+}

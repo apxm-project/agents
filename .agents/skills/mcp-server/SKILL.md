@@ -1,11 +1,11 @@
 ---
 name: mcp-server
 group: Domain
-description: Use when working on APXM MCP contract constants, local stdio registration, the outbound MCP bridge, or the Server-owned managed HTTP boundary.
+description: Use when working on APXM MCP contract constants, local stdio registration, the outbound MCP bridge, or a downstream-managed inbound MCP boundary.
 user-invocable: true
 ---
 
-# APXM MCP Server
+# APXM MCP Surfaces
 
 Load `_shared/apxm-development-rules.md` before broad work.
 
@@ -13,15 +13,17 @@ Load `_shared/apxm-development-rules.md` before broad work.
 
 APXM keeps its MCP roles separate:
 
-- Managed HTTP terminates OAuth at Auth and reaches Server's private MCP
-  transport. Its principal-scoped tool surface is the fixed Server catalogue
-  plus granted Host Capabilities.
-- Local stdio registration is a separate transport for compile/query/debug
-  tools and does not authorize managed HTTP calls.
-- The outbound MCP client bridge is a separate trust boundary from inbound
-  managed MCP.
+- Any inbound managed HTTP MCP surface is downstream-owned. `agents` may expose
+  product-neutral tool and handle contracts, but OAuth termination, acting-
+  principal resolution, and external Capability projection stay outside this
+  repo's semantic authority.
+- Local stdio registration is an APXM-owned transport for compile/query/debug
+  tools and does not authorize any downstream-managed HTTP surface.
+- The outbound MCP client bridge is a separate trust boundary from any inbound
+  MCP surface.
 
-MCP should stay a thin interface over APXM server/runtime capabilities.
+MCP should stay a thin interface over APXM CLI/runtime contracts and exact
+handles.
 
 ## HTTP MCP Tools
 
@@ -30,8 +32,8 @@ MCP should stay a thin interface over APXM server/runtime capabilities.
   `evidence_lookup`, `capability_discovery`.
 - Skills: `skills_list`, `skill_get`, `skill_validate`,
   `skill_call`.
-- Granted Host Capabilities, filtered and authorized for the resolved acting
-  principal.
+- Exact admitted Capabilities, when a downstream-managed inbound surface
+  projects them for one acting principal.
 
 ## Stdio MCP Tools
 
@@ -54,9 +56,10 @@ Do not bypass it.
 
 - Keep MCP thin. Do not duplicate scheduling, worker admission, budget policy,
   trigger matching, or session ownership in MCP wrappers.
-- Server-owned tools return APXM handles such as `execution_id`, `session_id`,
+- Managed tools return APXM handles such as `execution_id`, `session_id`,
   `session_dir`, `workflow_path`, and retained event cursors. Do not invent
-  shell process handles for server-managed runs.
+  shell process handles, alternate lifecycle ids, or product-owned authority
+  envelopes around them.
 - Secrets stay in the env — never accept `api_key` or
   `LLM_GATEWAY_KEY` as a tool argument.
 
@@ -75,6 +78,6 @@ handler literals.
 
 ## Anti-patterns
 
-- Putting business logic in the MCP server. It is a thin shim.
+- Putting business logic in the MCP layer. It is a thin shim.
 - Accepting secrets as tool arguments.
 - Adding a second orchestration status/events/cancel control plane.

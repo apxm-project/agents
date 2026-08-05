@@ -1,7 +1,7 @@
 ---
 name: frontend-implementation
 group: Domain
-description: Use when changing APXM compiler frontends: Rust FrontendGraph lowering, TypeScript @apxm/frontend, Python apxm_program, frontend codegen, or Studio/source lowering into AIR.
+description: Use when changing APXM compiler frontends: Rust FrontendGraph lowering, TypeScript @apxm/frontend, Python apxm_program, frontend codegen, or downstream source lowering into AIR.
 user-invocable: true
 ---
 
@@ -21,8 +21,9 @@ load `_shared/apxm-comment-rules.md`; when writing tests load
 - TypeScript and Python frontends own authoring ergonomics, graph recording,
   validation, and handler sidecars. They submit FrontendGraph to the compiler
   before AIR exists.
-- Studio and other authoring surfaces generate TypeScript or Python frontend
-  source, then invoke the frontend path. They do not keep private AIR emitters.
+- Downstream authoring surfaces generate TypeScript or Python frontend source,
+  then invoke the frontend path. They do not keep private AIR emitters,
+  alternate target binders, or product-specific lowering paths.
 
 ## Rules
 
@@ -69,7 +70,8 @@ load `_shared/apxm-comment-rules.md`; when writing tests load
 ## Anti-patterns
 
 - A second TS/Python AIR printer that formats `ais.*` MLIR directly.
-- A Studio-only AIR emitter or widget bridge that bypasses `@apxm/frontend`.
+- A downstream-only AIR emitter or private bridge that bypasses
+  `@apxm/frontend`.
 - JSON input treated as executable graph source; JSON is data/DTO, not a
   runtime input format.
 - Duplicating operation metadata because importing generated metadata is
