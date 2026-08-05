@@ -870,6 +870,7 @@ async fn drive_from(
                                 operand: "model_ref",
                             }
                         })?;
+                        let authored_target = ModelTargetRef(target);
                         let effect_id =
                             model_effect_identity(&state.program_invocation_id, &node_execution_id);
                         let request_digest = model_request_digest(
@@ -882,7 +883,7 @@ async fn drive_from(
                             effect_id,
                             node_execution_id.clone(),
                             request_digest,
-                            &ModelTargetRef(target),
+                            &authored_target,
                             model_admission,
                         )
                         .map_err(ExecutionError::Binding)?;
@@ -899,7 +900,7 @@ async fn drive_from(
                         let committed_dispatch =
                             dispatch_committed_inference(CommittedInferenceDispatch {
                                 target_commitment: &target_commitment,
-                                authored_target: &ModelTargetRef(target.clone()),
+                                authored_target: &authored_target,
                                 request: &call,
                                 backend: &*ports.model_inference,
                                 duration_ms: dispatch_started.elapsed().as_millis() as u64,
