@@ -10,10 +10,16 @@
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostic::{SourceDiagnostic, SourceDiagnosticCode};
+
+/// The maximum time an authoring frontend may hold the source-port boundary.
+/// The Python harness has interpreter resource limits, but the TypeScript
+/// harness runs under Node's permission model, which does not bound CPU time.
+const CAPTURE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The closed authoring-frontend selector. It matches the source-language
 /// closure of the semantic surface exactly: there is no third frontend and no
@@ -156,6 +162,17 @@ fn spawn(
     driver: &Path,
     request: &[u8],
 ) -> Result<std::process::Output, SourceDiagnostic> {
+    spawn_with_timeout(frontend, frontend_root, driver, request, CAPTURE_TIMEOUT)
+}
+
+/// Run one declared interpreter with a bounded lifetime.
+fn spawn_with_timeout(
+    frontend: Frontend,
+    frontend_root: &Path,
+    driver: &Path,
+    request: &[u8],
+    timeout: Duration,
+) -> Result<std::process::Output, SourceDiagnostic> {
     let mut command = Command::new(driver);
     command
         .args(frontend.confinement_arguments(frontend_root))
@@ -176,23 +193,63 @@ fn spawn(
         )
     })?;
 
-    if let Some(stdin) = child.stdin.as_mut() {
-        // A harness that exits before reading closes the pipe; that is a
-        // rejection to read from its status, not a failure to report here.
-        let _ = stdin.write_all(request);
-    }
-    drop(child.stdin.take());
+    let started = Instant::now();
+    let stdin = child.stdin.take();
+    let request = request.to_vec();
+    let writer = std::thread::spawn(move || {
+        if let Some(mut stdin) = stdin {
+            // A harness that exits before reading closes the pipe; that is a
+            // rejection to read from its status, not a failure to report here.
+            let _ = stdin.write_all(&request);
+        }
+    });
 
-    child.wait_with_output().map_err(|error| {
-        SourceDiagnostic::new(
-            SourceDiagnosticCode::FrontendUnavailable,
-            format!(
-                "the declared {} authoring frontend driver '{}' did not complete: {error}",
-                frontend.wire(),
-                driver.display()
-            ),
-        )
-    })
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                let output = child.wait_with_output().map_err(|error| {
+                    SourceDiagnostic::new(
+                        SourceDiagnosticCode::FrontendUnavailable,
+                        format!(
+                            "the declared {} authoring frontend driver '{}' did not complete: {error}",
+                            frontend.wire(),
+                            driver.display()
+                        ),
+                    )
+                });
+                let _ = writer.join();
+                return output;
+            }
+            Ok(None) if started.elapsed() >= timeout => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = writer.join();
+                return Err(SourceDiagnostic::new(
+                    SourceDiagnosticCode::FrontendUnavailable,
+                    format!(
+                        "the declared {} authoring frontend driver '{}' exceeded the capture timeout of {} ms",
+                        frontend.wire(),
+                        driver.display(),
+                        timeout.as_millis()
+                    ),
+                ));
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = writer.join();
+                return Err(SourceDiagnostic::new(
+                    SourceDiagnosticCode::FrontendUnavailable,
+                    format!(
+                        "the declared {} authoring frontend driver '{}' could not be observed: {error}",
+                        frontend.wire(),
+                        driver.display()
+                    ),
+                ));
+            }
+        }
+    }
 }
 
 /// Translate a harness exit into one closed diagnostic. The first stderr line is
@@ -222,7 +279,11 @@ fn harness_rejection(frontend: Frontend, stderr: &[u8]) -> SourceDiagnostic {
 
 #[cfg(test)]
 mod tests {
-    use super::{Frontend, decode_response};
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    use super::{Frontend, decode_response, harness_rejection, spawn_with_timeout};
     use crate::diagnostic::SourceDiagnosticCode;
 
     /// The one accepted shape: exactly one document carrying exactly the graph.
@@ -255,5 +316,66 @@ mod tests {
         )
         .expect_err("a capture output with trailing bytes is rejected");
         assert_eq!(diagnostic.code, SourceDiagnosticCode::FrontendOutputInvalid);
+    }
+
+    #[test]
+    fn a_capture_without_a_closed_reason_is_unavailable() {
+        let diagnostic = harness_rejection(Frontend::Python, b"");
+
+        assert_eq!(diagnostic.code, SourceDiagnosticCode::FrontendUnavailable);
+        assert!(diagnostic.message.contains("without a reported reason"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_capture_that_does_not_exit_is_killed_at_the_boundary() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = unique_test_path("sleeping-driver");
+        fs::write(&path, "#!/bin/sh\nwhile :; do :; done\n").expect("write sleeping driver");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+            .expect("make sleeping driver executable");
+
+        let diagnostic = spawn_with_timeout(
+            Frontend::Python,
+            PathBuf::from("/tmp"),
+            &path,
+            &[b'x'; 128 * 1024],
+            Duration::from_millis(25),
+        )
+        .expect_err("a capture that exceeds its deadline is rejected");
+
+        let _ = fs::remove_file(&path);
+        assert_eq!(diagnostic.code, SourceDiagnosticCode::FrontendUnavailable);
+        assert!(diagnostic.message.contains("capture timeout"));
+    }
+
+    #[test]
+    fn a_decode_failure_does_not_poison_the_next_capture() {
+        let failed = decode_response(Frontend::Typescript, b"not-json")
+            .expect_err("invalid capture output is rejected");
+        assert_eq!(failed.code, SourceDiagnosticCode::FrontendOutputInvalid);
+
+        let recovered = decode_response(
+            Frontend::Typescript,
+            br#"{"frontend_graph":{"schema_version":"apxm.frontend-graph.v1"}}"#,
+        )
+        .expect("the next independent capture still decodes");
+        assert_eq!(
+            recovered,
+            serde_json::json!({"schema_version": "apxm.frontend-graph.v1"})
+        );
+    }
+
+    #[cfg(unix)]
+    fn unique_test_path(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "apxm-source-port-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock is after the Unix epoch")
+                .as_nanos()
+        ))
     }
 }
