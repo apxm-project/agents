@@ -22,8 +22,8 @@ speculative topology for that job.
 
 ## Decision dossier
 
-- [x] Measure checkpoint/output size, throughput, retention, restart and
-      portability requirements (see bounds below; proven by owner-local suite).
+- [x] Characterize checkpoint/output size, retention, restart and portability
+      requirements (see bounds below; proven by owner-local suite).
 - [x] Identify the exact customer-neutral job not met by current owner-local
       persistence — **none**. Downstream composition roots inject
       `ExecutionCommitPort` for any stronger durability topology.
@@ -32,15 +32,15 @@ speculative topology for that job.
       confirm absence of hosted placeholders/flags/speculative services.
 - [x] Record the decision and evidence before G3 closes.
 
-## Measured owner-local bounds
+## Owner-local bounds
 
 | Concern | Owner-local bound | Evidence |
 | --- | --- | --- |
 | Size | Serialized tuple ≤ 8 MiB; larger fails closed | `tuple_size_bound_fails_closed` |
-| Throughput | Single-writer process-local / directory-local; no hosted SLA | adapter design + suite |
+| Throughput | No throughput measurement or SLA is claimed; single-writer ownership is a correctness constraint | no benchmark is part of this decision |
 | Retention | ≤ 10_000 idempotent commit results; directory lifetime for filesystem | `MAX_COMMIT_RESULTS` + suite |
 | Restart | Filesystem store survives process reopen via atomic JSON rename | `filesystem_owner_local_survives_reopen_and_is_portable` |
-| Portability | Directory of `execution-commit-local.v1.json` is the portable unit | copy/reopen in suite |
+| Portability | Directory of `execution-commit-local.v2.json` is the portable unit | copy/reopen in suite |
 
 ## Customer-neutral job analysis
 
