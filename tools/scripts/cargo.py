@@ -260,8 +260,6 @@ def _unsupported_linux_arm64_target_error(
     has_installed_arm64 = any(prefix.startswith("aarch64") for prefix in installed_prefixes)
     if not mismatches and has_declared_arm64 and has_installed_arm64:
         return None
-    if not mismatches and not declared_packages and not installed_prefixes:
-        return None
 
     detail_lines = [
         "error: APXM Linux target readiness failed.",
@@ -281,6 +279,10 @@ def _unsupported_linux_arm64_target_error(
         detail_lines.append(
             "  Installed Linux GNU compiler prefixes under .dekk/env/bin: "
             + ", ".join(installed_prefixes)
+        )
+    if not declared_packages and not installed_prefixes:
+        detail_lines.append(
+            "  No Dekk Linux compiler metadata was found under `.dekk/` for this target."
         )
     if mismatches:
         detail_lines.append("  Active compiler selections:")
