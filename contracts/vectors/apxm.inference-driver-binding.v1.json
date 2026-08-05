@@ -1,0 +1,34 @@
+[
+  {
+    "name": "valid-available-exact-driver-binding",
+    "expected_valid": true,
+    "input": {
+      "schema_version": "apxm.inference-driver-binding.v1",
+      "driver_id": "driver.exact",
+      "inference_profile_ref": "profile.exact",
+      "model_target_ref": "model-target.1",
+      "model_target_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "model_deployment_ref": "model-deployment.1",
+      "exact_port_binding_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "port_contract_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "composition_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "availability": "available"
+    }
+  },
+  {
+    "name": "reject-unknown-availability",
+    "expected_valid": false,
+    "input": {
+      "schema_version": "apxm.inference-driver-binding.v1",
+      "driver_id": "driver.exact",
+      "inference_profile_ref": "profile.exact",
+      "model_target_ref": "model-target.1",
+      "model_target_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "model_deployment_ref": "model-deployment.1",
+      "exact_port_binding_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "port_contract_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "composition_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "availability": "fallback"
+    }
+  }
+]

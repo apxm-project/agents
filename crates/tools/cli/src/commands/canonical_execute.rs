@@ -35,6 +35,15 @@ const DEV_BINDING_DIGEST: &str =
 
 pub async fn execute_canonical_command(input: PathBuf, _json_output: bool) -> Result<()> {
     let air = load_canonical_air(&input)?;
+    let output = execute_canonical_air(air).await?;
+    println!("{}", serde_json::to_string_pretty(&output)?);
+    Ok(())
+}
+
+/// Execute an already parsed and verified canonical AIR module through the
+/// product-neutral APXM driver. Reference-host transports call this function;
+/// they do not duplicate the runtime or select another implementation.
+pub async fn execute_canonical_air(air: AirModule) -> Result<Value> {
     ensure_local_capability_authority_available(&air)?;
     let request = ExecutionRequest {
         model_admission: dev_model_admission(&air),
@@ -78,8 +87,7 @@ pub async fn execute_canonical_command(input: PathBuf, _json_output: bool) -> Re
         "commit": commit_result_json(&report.commit),
     });
 
-    println!("{}", serde_json::to_string_pretty(&output)?);
-    Ok(())
+    Ok(output)
 }
 
 fn load_canonical_air(input: &PathBuf) -> Result<AirModule> {

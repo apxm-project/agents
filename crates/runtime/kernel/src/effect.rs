@@ -313,7 +313,10 @@ impl std::fmt::Display for EffectError {
                 effect_id,
                 from,
                 transition,
-            } => write!(f, "effect {effect_id} cannot apply {transition} from {from}"),
+            } => write!(
+                f,
+                "effect {effect_id} cannot apply {transition} from {from}"
+            ),
             Self::StaleClaim {
                 effect_id,
                 last_epoch,
@@ -452,9 +455,9 @@ impl EffectRecord {
             (S::Dispatchable, T::AuthorityRevoked) => S::RevokedBeforeSend,
             (S::Dispatchable, T::CancelledBeforeSend) => S::CancelledBeforeSend,
 
-            (S::ClaimedBeforeSend { attempt, .. }, T::DispatchStarted) => S::DispatchStarted {
-                attempt: *attempt,
-            },
+            (S::ClaimedBeforeSend { attempt, .. }, T::DispatchStarted) => {
+                S::DispatchStarted { attempt: *attempt }
+            }
             (S::ClaimedBeforeSend { .. }, T::ProvenNotSentRetryable) => S::Dispatchable,
             (S::ClaimedBeforeSend { .. }, T::ProvenNotSentTerminal) => S::TerminalNotSent,
 

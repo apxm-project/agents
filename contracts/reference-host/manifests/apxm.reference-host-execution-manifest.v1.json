@@ -1,0 +1,60 @@
+{
+  "schema_version": "apxm.reference-host-execution-manifest.v1",
+  "semantic_owner": "agents",
+  "owner_executable": "apxm-reference-host",
+  "owner_executable_path": "crates/tools/cli/src/bin/reference_host.rs",
+  "transport_protocol": "jsonl-stdin-stdout",
+  "startup_input_preflight_test_fixture": {
+    "scope": "test-only",
+    "artifact_path": "reference-host/fixtures/apxm.reference-host.startup-input.test.json",
+    "artifact_digest": "sha256:3be733c6f69f6469f706bc50f0359515de0a38ed0b9aa1ae1ba14191d9383f85",
+    "owner_revision": "ff48332f2ce6af8a45eb38a15f4510a134223f5f",
+    "fail_closed_on": ["missing", "stale", "dirty", "mismatched"]
+  },
+  "host_execution_manifest_schema": {
+    "schema_id": "apxm.host-execution-manifest.v1",
+    "path": "reference-host/schemas/apxm.host-execution-manifest.v1.json",
+    "digest": "sha256:54f1a76367a34f105fd019aef2d34ca18416a6843e50bd84203139bfccabd428",
+    "semantic_owner": "agents",
+    "canonical_source_path": "schemas/apxm.host-execution-manifest.v1.json"
+  },
+  "runtime_readiness_schema": {
+    "schema_id": "apxm.runtime-readiness.v1",
+    "path": "reference-host/schemas/apxm.runtime-readiness.v1.json",
+    "digest": "sha256:698f5ba1ad079a23afc61773064e1822d1ee8c54caa53ea5eeb106e81d55737e",
+    "semantic_owner": "agents",
+    "canonical_source_path": "schemas/apxm.runtime-readiness.v1.json"
+  },
+  "runtime_drain_quiescence_schema": {
+    "schema_id": "apxm.runtime-drain-quiescence.v1",
+    "path": "reference-host/schemas/apxm.runtime-drain-quiescence.v1.json",
+    "digest": "sha256:f654417caabece0b9366424bf24ab0417e103a34e28536c79e991e6917555820",
+    "semantic_owner": "agents",
+    "canonical_source_path": "schemas/apxm.runtime-drain-quiescence.v1.json"
+  },
+  "runtime_readiness_vector": {
+    "schema_id": "apxm.runtime-readiness.v1",
+    "path": "reference-host/vectors/apxm.runtime-readiness.v1.json",
+    "digest": "sha256:ea29bdeaea8017661af03ff3c0dedbc30bb8fcc930389d554ab4c1d73df42a85",
+    "canonical_source_path": "vectors/apxm.runtime-readiness.v1.json"
+  },
+  "runtime_drain_quiescence_vector": {
+    "schema_id": "apxm.runtime-drain-quiescence.v1",
+    "path": "reference-host/vectors/apxm.runtime-drain-quiescence.v1.json",
+    "digest": "sha256:d0da8d669973836093f80c20b6696ea3b4b6ed6738312ac9d9aeae31988c0c28",
+    "canonical_source_path": "vectors/apxm.runtime-drain-quiescence.v1.json"
+  },
+  "invocation_admission_schema": {
+    "schema_id": "apxm.invocation-admission.v1",
+    "path": "reference-host/schemas/apxm.invocation-admission.v1.json",
+    "digest": "sha256:08aece04a3ddf6d076b7af43a451a0159363e2c369d1ea16aad00ec4a8d288c6",
+    "semantic_owner": "agents",
+    "canonical_source_path": "schemas/apxm.invocation-admission.v1.json"
+  },
+  "invocation_admission_vector": {
+    "schema_id": "apxm.invocation-admission.v1",
+    "path": "reference-host/vectors/apxm.invocation-admission.v1.json",
+    "digest": "sha256:60e40579340e788bde09a165aa0072659a4fe1fb6c38e03e5df526d3258d825d",
+    "canonical_source_path": "vectors/apxm.invocation-admission.v1.json"
+  }
+}

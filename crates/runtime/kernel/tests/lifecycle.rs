@@ -179,7 +179,7 @@ impl ExecutionCommitPort for FixtureCommit {
         self.version(program_instance_ref.as_str())
     }
 
-    /// The lifecycle fixture commits without parking, so no continuation is held.
+    /// The lifecycle fixture replays the last committed continuation when present.
     async fn load_continuation(
         &self,
         _program_instance_ref: &ProgramInstanceRef,
