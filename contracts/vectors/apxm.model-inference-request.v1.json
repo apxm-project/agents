@@ -16,7 +16,23 @@
           "binding_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
           "port_contract_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
         },
-        "composition_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+        "composition_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+        "target_commitment": {
+          "schema_version": "apxm.inference-target-commitment.v1",
+          "target_ref": "model-target.1",
+          "target_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "model_deployment_ref": "model-deployment.1",
+          "exact_port_binding_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+          "port_contract_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+          "composition_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+          "target_generation": 0,
+          "deployment_generation": 0,
+          "binding_generation": 0,
+          "composition_generation": 0,
+          "generation_cohort_digest": "sha256:39cfb577b8adefc9834bd183153decb7713e07901ad53db5a471e4bf1a26a38b",
+          "commit_digest": "sha256:d656f70ced27ade4ff0ab2c63f2b5261bfad014edbfc206a83192f812b8c87df",
+          "state": "committed"
+        }
       },
       "model_context_envelope_ref": {
         "context_id": "model-context.1",
@@ -43,7 +59,23 @@
           "binding_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
           "port_contract_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
         },
-        "composition_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+        "composition_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+        "target_commitment": {
+          "schema_version": "apxm.inference-target-commitment.v1",
+          "target_ref": "model-target.1",
+          "target_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "model_deployment_ref": "model-deployment.1",
+          "exact_port_binding_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+          "port_contract_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+          "composition_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+          "target_generation": 0,
+          "deployment_generation": 0,
+          "binding_generation": 0,
+          "composition_generation": 0,
+          "generation_cohort_digest": "sha256:39cfb577b8adefc9834bd183153decb7713e07901ad53db5a471e4bf1a26a38b",
+          "commit_digest": "sha256:d656f70ced27ade4ff0ab2c63f2b5261bfad014edbfc206a83192f812b8c87df",
+          "state": "committed"
+        }
       },
       "model_context_envelope_ref": {
         "context_id": "model-context.1",

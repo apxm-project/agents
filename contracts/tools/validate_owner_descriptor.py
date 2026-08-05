@@ -913,6 +913,107 @@ def inference_credential_lease_errors(instance: dict[str, Any]) -> list[str]:
     return []
 
 
+def target_commitment_errors(instance: dict[str, Any]) -> list[str]:
+    fields = (
+        "target_ref",
+        "target_digest",
+        "model_deployment_ref",
+        "exact_port_binding_digest",
+        "port_contract_digest",
+        "composition_digest",
+        "target_generation",
+        "deployment_generation",
+        "binding_generation",
+        "composition_generation",
+        "generation_cohort_digest",
+        "commit_digest",
+        "state",
+    )
+    if any(field not in instance for field in fields):
+        return ["target commitment must carry its complete closed identity"]
+    if len(
+        {
+            instance["target_generation"],
+            instance["deployment_generation"],
+            instance["binding_generation"],
+            instance["composition_generation"],
+        }
+    ) != 1:
+        return ["target commitment generations must form one cohort"]
+    if instance["state"] != "committed":
+        return ["target commitment state must be committed"]
+    generation = instance["target_generation"]
+    cohort = _inference_digest(
+        "apxm.inference-target-commitment.v1",
+        "cohort",
+        instance["target_ref"],
+        instance["target_digest"],
+        instance["model_deployment_ref"],
+        instance["exact_port_binding_digest"],
+        instance["port_contract_digest"],
+        instance["composition_digest"],
+        generation,
+        instance["deployment_generation"],
+        instance["binding_generation"],
+        instance["composition_generation"],
+    )
+    if instance["generation_cohort_digest"] != cohort:
+        return ["target commitment generation cohort digest is not canonical"]
+    commit = _inference_digest(
+        "apxm.inference-target-commitment.v1",
+        "commit",
+        cohort,
+        instance["state"],
+    )
+    if instance["commit_digest"] != commit:
+        return ["target commitment digest is not canonical"]
+    return []
+
+
+def inference_driver_binding_errors(instance: dict[str, Any]) -> list[str]:
+    commitment = instance.get("target_commitment")
+    if not isinstance(commitment, dict):
+        return ["driver binding must carry a target commitment"]
+    commitment_errors = target_commitment_errors(commitment)
+    if commitment_errors:
+        return commitment_errors
+    for binding_field, commitment_field in (
+        ("model_target_ref", "target_ref"),
+        ("model_target_digest", "target_digest"),
+        ("model_deployment_ref", "model_deployment_ref"),
+        ("exact_port_binding_digest", "exact_port_binding_digest"),
+        ("port_contract_digest", "port_contract_digest"),
+        ("composition_digest", "composition_digest"),
+    ):
+        if instance.get(binding_field) != commitment.get(commitment_field):
+            return [f"{binding_field} must match target_commitment.{commitment_field}"]
+    return []
+
+
+def model_inference_request_errors(instance: dict[str, Any]) -> list[str]:
+    binding = instance.get("resolved_binding")
+    if not isinstance(binding, dict):
+        return []
+    commitment = binding.get("target_commitment")
+    if not isinstance(commitment, dict):
+        return ["resolved binding must carry a target commitment"]
+    commitment_errors = target_commitment_errors(commitment)
+    if commitment_errors:
+        return commitment_errors
+    duplicated = (
+        ("model_target.reference", binding.get("model_target", {}).get("reference"), commitment.get("target_ref")),
+        ("model_target.target_digest", binding.get("model_target", {}).get("target_digest"), commitment.get("target_digest")),
+        ("model_deployment_ref", binding.get("model_deployment_ref"), commitment.get("model_deployment_ref")),
+        ("exact_port_binding.binding_digest", binding.get("exact_port_binding", {}).get("binding_digest"), commitment.get("exact_port_binding_digest")),
+        ("exact_port_binding.port_contract_digest", binding.get("exact_port_binding", {}).get("port_contract_digest"), commitment.get("port_contract_digest")),
+        ("composition_digest", binding.get("composition_digest"), commitment.get("composition_digest")),
+    )
+    for field, binding_value, commitment_value in duplicated:
+        if binding_value != commitment_value:
+            return [f"{field} must match target_commitment"]
+    return []
+
+
 def inference_usage_lineage_errors(instance: dict[str, Any]) -> list[str]:
     if instance.get("sealed") is not True:
         return ["usage lineage must be sealed before publication"]
@@ -921,6 +1022,19 @@ def inference_usage_lineage_errors(instance: dict[str, Any]) -> list[str]:
     commit_id = instance.get("commit_id")
     if (evidence_fact_id is None) != (commit_id is None):
         return ["evidence_fact_id and commit_id must be bound together"]
+
+    commitment_fields = (
+        "target_commitment_digest",
+        "generation_cohort_digest",
+        "target_generation",
+        "target_port_contract_digest",
+        "target_composition_digest",
+    )
+    commitment_values = [instance.get(field) for field in commitment_fields]
+    if any(value is None for value in commitment_values) and any(
+        value is not None for value in commitment_values
+    ):
+        return ["target commitment evidence fields must be bound together"]
 
     typed_error = instance.get("typed_error")
     parts: list[object] = [
@@ -931,10 +1045,37 @@ def inference_usage_lineage_errors(instance: dict[str, Any]) -> list[str]:
         instance.get("model_target_digest", ""),
         instance.get("model_deployment_ref", ""),
         instance.get("exact_port_binding_digest", ""),
-        instance.get("native_input_tokens", ""),
-        instance.get("native_output_tokens", ""),
-        instance.get("duration_ms", ""),
     ]
+    if all(value is not None for value in commitment_values):
+        target_generation = instance["target_generation"]
+        commitment = {
+            "target_ref": instance.get("model_target_ref", ""),
+            "target_digest": instance.get("model_target_digest", ""),
+            "model_deployment_ref": instance.get("model_deployment_ref", ""),
+            "exact_port_binding_digest": instance.get("exact_port_binding_digest", ""),
+            "port_contract_digest": instance["target_port_contract_digest"],
+            "composition_digest": instance["target_composition_digest"],
+            "target_generation": target_generation,
+            "deployment_generation": target_generation,
+            "binding_generation": target_generation,
+            "composition_generation": target_generation,
+            "generation_cohort_digest": instance["generation_cohort_digest"],
+            "commit_digest": instance["target_commitment_digest"],
+            "state": "committed",
+        }
+        commitment_errors = target_commitment_errors(commitment)
+        if commitment_errors:
+            return commitment_errors
+        parts.extend(commitment_values)
+    if evidence_fact_id is not None:
+        parts.extend((evidence_fact_id, commit_id))
+    parts.extend(
+        (
+            instance.get("native_input_tokens", ""),
+            instance.get("native_output_tokens", ""),
+            instance.get("duration_ms", ""),
+        )
+    )
     if isinstance(typed_error, dict):
         parts.extend(
             (
@@ -1043,6 +1184,10 @@ def semantic_errors(schema_id: str, instance: object) -> list[str]:
                 return ["usage_measurement_id must match the exact committed attempt tuple"]
     if schema_id == "apxm.inference-credential-lease.v1":
         return inference_credential_lease_errors(instance)
+    if schema_id == "apxm.model-inference-request.v1":
+        return model_inference_request_errors(instance)
+    if schema_id == "apxm.inference-driver-binding.v1":
+        return inference_driver_binding_errors(instance)
     if schema_id == "apxm.inference-usage-lineage.v1":
         return inference_usage_lineage_errors(instance)
     if schema_id == "apxm.diagnostic-correlation.v1":
@@ -1350,6 +1495,27 @@ def runtime_evidence_errors(instance: dict[str, Any]) -> list[str]:
                 return [
                     f"facts[{index}]: a model attempt must match its NodeExecution AIR node"
                 ]
+            commitment_errors = target_commitment_errors(
+                {
+                    "target_ref": fact.get("model_target_ref", ""),
+                    "target_digest": fact.get("model_target_digest", ""),
+                    "model_deployment_ref": fact.get("model_deployment_ref", ""),
+                    "exact_port_binding_digest": fact.get(
+                        "exact_port_binding_digest", ""
+                    ),
+                    "port_contract_digest": fact.get("target_port_contract_digest", ""),
+                    "composition_digest": fact.get("target_composition_digest", ""),
+                    "target_generation": fact.get("target_generation"),
+                    "deployment_generation": fact.get("target_generation"),
+                    "binding_generation": fact.get("target_generation"),
+                    "composition_generation": fact.get("target_generation"),
+                    "generation_cohort_digest": fact.get("generation_cohort_digest", ""),
+                    "commit_digest": fact.get("target_commitment_digest", ""),
+                    "state": "committed",
+                }
+            )
+            if commitment_errors:
+                return [f"facts[{index}]: {commitment_errors[0]}"]
             attempt_id_identity = (
                 fact.get("program_invocation_id"),
                 fact.get("node_execution_id"),
