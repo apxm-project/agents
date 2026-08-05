@@ -390,6 +390,25 @@ impl ProgramInstance {
             ))?
             .clone();
 
+        // Validate immutable commit members before the external effect can run.
+        // The final request is validated again after its evidence batch is
+        // assembled, so an adapter never sees a malformed atomic boundary.
+        let preflight = ExecutionCommitRequest {
+            commit_id: invocation.commit_id.clone(),
+            program_instance_ref: self.program_instance_ref.clone(),
+            program_invocation_ref: invocation.program_invocation_ref.clone(),
+            idempotency_key: format!("idem.{}", invocation.commit_id),
+            expected_program_state_version: 0,
+            write_set: invocation.write_set.clone(),
+            tuple: ExecutionCommitTuple::empty(Vec::new()),
+            evidence_batch: Vec::new(),
+        };
+        preflight
+            .validate()
+            .map_err(|error| InstanceError::InvalidCommitRequest {
+                message: error.to_string(),
+            })?;
+
         let node_exec = invocation.capability_node_execution_id.clone();
         let outcome = port.prompt(invocation.request).await;
         let evidence = assemble_evidence(node_exec.clone(), &outcome);
@@ -445,6 +464,12 @@ impl ProgramInstance {
             tuple: ExecutionCommitTuple::empty(batch.clone()),
             evidence_batch: batch.clone(),
         };
+
+        request
+            .validate()
+            .map_err(|error| InstanceError::InvalidCommitRequest {
+                message: error.to_string(),
+            })?;
 
         let commit = match self.bundle.execution_commit().commit(request).await {
             ExecutionCommitResult::Committed {

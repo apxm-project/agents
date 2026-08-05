@@ -287,6 +287,15 @@ impl ExternalAgentCapabilityPort for FakeAcpPeer {
     }
 }
 
+struct NeverCalledAcp;
+
+#[async_trait]
+impl ExternalAgentCapabilityPort for NeverCalledAcp {
+    async fn prompt(&self, _request: AcpPromptRequest) -> AcpPromptOutcome {
+        panic!("rejected external-agent admission must not dispatch an effect")
+    }
+}
+
 struct FakeEvents;
 #[async_trait]
 impl EventPort for FakeEvents {
@@ -461,6 +470,22 @@ fn ports_with_model_composition_and_capability(
     composition: Arc<dyn CompositionPort>,
     capability: Arc<dyn CapabilityPort>,
 ) -> ExecutionPorts {
+    ports_with_model_composition_capability_and_external(
+        commit,
+        model,
+        composition,
+        capability,
+        Arc::new(FakeAcpPeer),
+    )
+}
+
+fn ports_with_model_composition_capability_and_external(
+    commit: Arc<FakeCommit>,
+    model: Arc<dyn ModelInferencePort + Send + Sync>,
+    composition: Arc<dyn CompositionPort>,
+    capability: Arc<dyn CapabilityPort>,
+    external_agent: Arc<dyn ExternalAgentCapabilityPort>,
+) -> ExecutionPorts {
     let contract = |schema_id: &str| SchemaDigestRef {
         schema_id: schema_id.into(),
         digest: digest('e'),
@@ -506,7 +531,7 @@ fn ports_with_model_composition_and_capability(
             ),
             (
                 binding(PortSlot::ExternalAgentCapability, "apxm.external-agent.v1"),
-                PortImplementation::ExternalAgentCapability(Arc::new(FakeAcpPeer)),
+                PortImplementation::ExternalAgentCapability(external_agent),
             ),
         ],
     )
@@ -557,20 +582,36 @@ fn request() -> ExecutionRequest {
             return_mode: HookReturnMode::ReplaceResult,
         }],
         model_admission: admission(),
-        capability_invocations: BTreeMap::from([(
-            "n.cap".to_string(),
-            CapabilityInvocationAdmission {
-                capability_ref: "cap.search".into(),
-                arguments: json!({"query": "release checklist"}),
-                authority: CapabilityInvocationAuthority::new(
-                    "principal.user.1",
-                    "agent.gao.1",
-                    "grant.search.1",
-                    ["approval.search.1".to_string()],
-                )
-                .expect("valid test authority"),
-            },
-        )]),
+        capability_invocations: BTreeMap::from([
+            (
+                "n.cap".to_string(),
+                CapabilityInvocationAdmission {
+                    capability_ref: "cap.search".into(),
+                    arguments: json!({"query": "release checklist"}),
+                    authority: CapabilityInvocationAuthority::new(
+                        "principal.user.1",
+                        "agent.gao.1",
+                        "grant.search.1",
+                        ["approval.search.1".to_string()],
+                    )
+                    .expect("valid test authority"),
+                },
+            ),
+            (
+                "n.acp".to_string(),
+                CapabilityInvocationAdmission {
+                    capability_ref: "external-agent:acp:claude-code".into(),
+                    arguments: json!({"session_ref": "session.1"}),
+                    authority: CapabilityInvocationAuthority::new(
+                        "principal.user.1",
+                        "agent.gao.1",
+                        "grant.acp.1",
+                        ["approval.acp.1".to_string()],
+                    )
+                    .expect("valid external-agent authority"),
+                },
+            ),
+        ]),
         program_instance_ref: ProgramInstanceRef::new("instance.1"),
         program_invocation_ref: ProgramInvocationRef::new("invocation.1"),
         commit_id: "c1".into(),
@@ -778,6 +819,86 @@ async fn capability_dispatch_fails_closed_without_exact_invocation_admission() {
             admitted,
         } if node_id == "n.cap" && authored == "cap.search" && admitted == "cap.other"
     ));
+}
+
+#[tokio::test]
+async fn external_agent_dispatch_requires_exact_invocation_admission() {
+    let mut missing = request();
+    missing.capability_invocations.remove("n.acp");
+    let error = execute(
+        &ports_with_model_composition_capability_and_external(
+            Arc::new(FakeCommit::new()),
+            Arc::new(FakeModel),
+            Arc::new(FakeComposition),
+            Arc::new(FakeCapability),
+            Arc::new(NeverCalledAcp),
+        ),
+        missing,
+        Value::Null,
+    )
+    .await
+    .expect_err("external-agent admission is required");
+    assert!(matches!(
+        error,
+        ExecutionError::MissingCapabilityInvocationAdmission { node_id }
+            if node_id == "n.acp"
+    ));
+
+    let mut mismatched = request();
+    mismatched
+        .capability_invocations
+        .get_mut("n.acp")
+        .expect("external-agent admission")
+        .capability_ref = "external-agent:acp:other".into();
+    let error = execute(
+        &ports_with_model_composition_capability_and_external(
+            Arc::new(FakeCommit::new()),
+            Arc::new(FakeModel),
+            Arc::new(FakeComposition),
+            Arc::new(FakeCapability),
+            Arc::new(NeverCalledAcp),
+        ),
+        mismatched,
+        Value::Null,
+    )
+    .await
+    .expect_err("external-agent binding mismatch");
+    assert!(matches!(
+        error,
+        ExecutionError::CapabilityInvocationAdmissionMismatch {
+            node_id,
+            authored,
+            admitted,
+        } if node_id == "n.acp"
+            && authored == "external-agent:acp:claude-code"
+            && admitted == "external-agent:acp:other"
+    ));
+}
+
+#[tokio::test]
+async fn invalid_atomic_commit_request_rejects_before_any_effect_path() {
+    let commit = Arc::new(FakeCommit::new());
+    let mut invalid = request();
+    invalid.write_set.runtime_evidence_batch_digest = "not-a-digest".into();
+
+    let error = execute(
+        &ports_with_model_composition_capability_and_external(
+            commit.clone(),
+            Arc::new(FakeModel),
+            Arc::new(FakeComposition),
+            Arc::new(FakeCapability),
+            Arc::new(NeverCalledAcp),
+        ),
+        invalid,
+        Value::Null,
+    )
+    .await
+    .expect_err("malformed atomic request");
+    assert!(matches!(error, ExecutionError::InvalidCommitRequest { .. }));
+    assert!(
+        commit.invocation_refs().is_empty(),
+        "rejected commit inputs publish no commit or effect evidence"
+    );
 }
 
 #[tokio::test]
