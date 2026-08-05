@@ -1,0 +1,108 @@
+
+running 19 tests
+test capability::tests::capability_outcome_uses_the_closed_contract_discriminant ... ok
+test grammar::tests::digest_grammar ... ok
+test grammar::tests::identifier_grammar ... ok
+test grammar::tests::schema_id_grammar ... ok
+test capability::tests::constructors_reject_empty_identity_and_authority_references ... ok
+test capability::tests::request_preparation_rejects_empty_owned_coordinates ... ok
+test capability::tests::deserialization_rejects_wrong_and_noncanonical_authority_refs ... ok
+test capability::tests::request_separates_canonical_arguments_from_authority_and_identity ... ok
+test artifact::from_air_tests::model_free_air_has_no_requirements_but_still_validates ... ok
+test capability::tests::request_deserialization_recomputes_effect_and_request_identity ... ok
+test artifact::from_air_tests::from_air_emits_one_artifact_semantic_requirement_per_distinct_model_target ... ok
+test capability::tests::canonical_vector_pins_effect_and_request_digest_preimages ... ok
+test artifact::from_air_tests::from_air_produces_a_validating_digest_bound_artifact ... ok
+test capability::tests::effect_identity_is_stable_and_request_sensitive ... ok
+test artifact::from_air_tests::from_air_is_deterministic_and_content_addressed ... ok
+test artifact::from_graph_tests::capability_requirement_binds_the_exact_owned_port_contract ... ok
+test artifact::from_graph_tests::rejects_mixed_requirement_scope_in_validation ... ok
+test artifact::from_graph_tests::from_frontend_graph_binds_entrypoints_handlers_and_requirements ... ok
+test capability::tests::oversized_arguments_fail_before_effect_identity_is_prepared ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 5 tests
+test source_scope_enum_does_not_drift ... ok
+test example_artifacts_carry_no_field_the_schema_rejects ... ok
+test only_artifact_semantic_requirements_pass ... ok
+test artifact_vectors_match_validator ... ok
+test codec_round_trips_valid_artifact ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 5 tests
+test frontend_graph_rejects_an_air_model_ref_before_lowering ... ok
+test generic_graph_lowers_and_carries_source_map ... ok
+test hook_wrapper_is_a_non_colliding_sibling_of_its_call_target ... ok
+test yield_resume_value_is_owned_once_by_its_lexical_block ... ok
+test generic_graph_produces_validating_artifact ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 7 tests
+test source_map_enums_do_not_drift ... ok
+test air_semantic_op_enum_does_not_drift ... ok
+test air_structural_kind_enum_does_not_drift ... ok
+test source_map_vectors_match_verifier ... ok
+test air_vectors_match_verifier ... ok
+test verifier_is_deterministic ... ok
+test frontend_graph_vectors_match_verifier ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 2 tests
+test typed_nested_and_sibling_containment_verifies_and_lowers ... ok
+test verifier_rejects_missing_parent_cycles_and_duplicate_sibling_order ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+warning: constant `TO` is never used
+  --> /var/folders/7z/7_hrgq652jdg25_rczwmffk40000gn/T/apxm-cargo-targets/agents-issue-35-source-compiler-20260805-c7ee8208c236ed62/debug/build/apxm-core-d89ed6bf7c19f9a8/out/apxm_operation_mlir_keywords.rs:11:11
+   |
+11 | pub const TO: &str = "to";
+   |           ^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `apxm-core` (lib) generated 1 warning
+warning: function `load_contract_snapshot` is never used
+  --> crates/machine/program/tests/common/mod.rs:25:8
+   |
+25 | pub fn load_contract_snapshot(relative: &str) -> Value {
+   |        ^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `compile_schema` is never used
+  --> crates/machine/program/tests/common/mod.rs:79:8
+   |
+79 | pub fn compile_schema(relative: &str, referenced_snapshots: &[&str]) -> jsonschema::JSONSchema {
+   |        ^^^^^^^^^^^^^^
+
+warning: function `compile_schema` is never used
+  --> crates/machine/program/tests/common/mod.rs:79:8
+   |
+79 | pub fn compile_schema(relative: &str, referenced_snapshots: &[&str]) -> jsonschema::JSONSchema {
+   |        ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `schema_enum` is never used
+   --> crates/machine/program/tests/common/mod.rs:103:8
+    |
+103 | pub fn schema_enum(schema: &Value, def: &str, property: &str) -> Vec<String> {
+    |        ^^^^^^^^^^^
+
+warning: `apxm-program` (test "semantic_conformance") generated 2 warnings
+warning: `apxm-program` (test "artifact_conformance") generated 2 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.14s
+     Running unittests src/lib.rs (/var/folders/7z/7_hrgq652jdg25_rczwmffk40000gn/T/apxm-cargo-targets/agents-issue-35-source-compiler-20260805-c7ee8208c236ed62/debug/deps/apxm_program-b396aad476919dd5)
+     Running tests/artifact_conformance.rs (/var/folders/7z/7_hrgq652jdg25_rczwmffk40000gn/T/apxm-cargo-targets/agents-issue-35-source-compiler-20260805-c7ee8208c236ed62/debug/deps/artifact_conformance-e3556dccf307076b)
+     Running tests/lower_conformance.rs (/var/folders/7z/7_hrgq652jdg25_rczwmffk40000gn/T/apxm-cargo-targets/agents-issue-35-source-compiler-20260805-c7ee8208c236ed62/debug/deps/lower_conformance-4bccf46dd8d012a2)
+     Running tests/semantic_conformance.rs (/var/folders/7z/7_hrgq652jdg25_rczwmffk40000gn/T/apxm-cargo-targets/agents-issue-35-source-compiler-20260805-c7ee8208c236ed62/debug/deps/semantic_conformance-5580c0e7613e1b19)
+     Running tests/structural_containment.rs (/var/folders/7z/7_hrgq652jdg25_rczwmffk40000gn/T/apxm-cargo-targets/agents-issue-35-source-compiler-20260805-c7ee8208c236ed62/debug/deps/structural_containment-12bb31e2fa1d52dd)
