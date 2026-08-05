@@ -1968,6 +1968,12 @@ def check_reference_host_release_manifest_contract(
         raise ValidationError(
             "reference-host release manifest transport_protocol must stay product-neutral jsonl-stdin-stdout"
         )
+    if release_manifest.get("canonical_driver") != (
+        "apxm_execution::RuntimeProfile::from_fully_admitted"
+    ):
+        raise ValidationError(
+            "reference-host release manifest canonical_driver must use the shared fully admitted RuntimeProfile"
+        )
     if release_manifest.get("constraints") != REFERENCE_HOST_RELEASE_CONSTRAINTS:
         raise ValidationError(
             "reference-host release manifest fail-closed constraints drifted"
