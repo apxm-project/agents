@@ -22,10 +22,10 @@ use apxm_inference::{
 };
 use apxm_kernel::{
     AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, ExecutionCommitPort,
-    ExecutionCommitRequest, ExecutionCommitResult, ExternalAgentCapabilityPort, IssuerKeyring,
-    IssuerSigningKey, NonceLedger, PortImplementation, PortSlot, ProgramInstanceRef,
-    ProgramInvocationRef, PromptEffectState, RuntimeAdmission, unsigned_admission_skeleton,
-    verify_execution_admission,
+    ExecutionCommitRequest, ExecutionCommitResult, ExternalAgentCapabilityPort,
+    InvocationAdmission, IssuerKeyring, IssuerSigningKey, NonceLedger, PortImplementation,
+    PortSlot, ProgramInstanceRef, ProgramInvocationRef, PromptEffectState, RuntimeAdmission,
+    unsigned_admission_skeleton, verify_execution_admission,
 };
 use apxm_kernel::{ConfinementAttestation, ConfinementError, ConfinementPort, ConfinementRequest};
 #[cfg(test)]
@@ -49,19 +49,66 @@ pub async fn execute_canonical_command(input: PathBuf, _json_output: bool) -> Re
 /// product-neutral APXM driver. Reference-host transports call this function;
 /// they do not duplicate the runtime or select another implementation.
 pub async fn execute_canonical_air(air: AirModule) -> Result<Value> {
+    execute_canonical_air_inner(air, None).await
+}
+
+/// Execute canonical AIR only after the host's exact invocation admission has
+/// been validated and carried into the runtime profile construction. This is
+/// the reference-host/embedded composition seam: the transport record cannot
+/// be accepted and then silently replaced by an unrelated development
+/// admission.
+pub async fn execute_canonical_air_with_invocation_admission(
+    air: AirModule,
+    admission: &InvocationAdmission,
+) -> Result<Value> {
+    admission
+        .validate()
+        .map_err(|error| anyhow::anyhow!(error))?;
+    execute_canonical_air_inner(air, Some(admission)).await
+}
+
+async fn execute_canonical_air_inner(
+    air: AirModule,
+    invocation_admission: Option<&InvocationAdmission>,
+) -> Result<Value> {
     ensure_local_capability_authority_available(&air)?;
+    let (instance_ref, invocation_ref, commit_id) = invocation_admission
+        .map(|admission| {
+            (
+                ProgramInstanceRef::new("reference-host.instance"),
+                ProgramInvocationRef::new(admission.invocation_id.clone()),
+                format!("reference-host.commit.{}", admission.invocation_id),
+            )
+        })
+        .unwrap_or_else(|| {
+            (
+                ProgramInstanceRef::new("dev.instance"),
+                ProgramInvocationRef::new("dev.invocation.1"),
+                "dev.commit.1".to_string(),
+            )
+        });
     let request = ExecutionRequest {
         model_admission: dev_model_admission(&air),
         air,
         hook_bindings: Vec::new(),
         capability_invocations: BTreeMap::new(),
-        program_instance_ref: ProgramInstanceRef::new("dev.instance"),
-        program_invocation_ref: ProgramInvocationRef::new("dev.invocation.1"),
-        commit_id: "dev.commit.1".to_string(),
+        program_instance_ref: instance_ref,
+        program_invocation_ref: invocation_ref,
+        commit_id,
         write_set: dev_write_set(),
     };
     let commit = Arc::new(DevCommit::default());
-    let profile = dev_runtime_profile(commit, Arc::new(UnavailableModelRequestMetadata)).await?;
+    let profile = match invocation_admission {
+        Some(admission) => {
+            dev_runtime_profile_for_invocation(
+                commit,
+                Arc::new(UnavailableModelRequestMetadata),
+                admission,
+            )
+            .await?
+        }
+        None => dev_runtime_profile(commit, Arc::new(UnavailableModelRequestMetadata)).await?,
+    };
     let report = profile
         .execute(request, Value::Null)
         .await
@@ -460,6 +507,56 @@ async fn dev_runtime_profile(
         0,
         false,
     )?;
+    dev_runtime_profile_from_verified(
+        commit,
+        model_call_request_metadata,
+        verified,
+        "execution.dev-profile",
+    )
+    .await
+}
+
+async fn dev_runtime_profile_for_invocation(
+    commit: Arc<DevCommit>,
+    model_call_request_metadata: Arc<dyn ModelCallRequestMetadataPort>,
+    invocation: &InvocationAdmission,
+) -> Result<RuntimeProfile> {
+    let signer = IssuerSigningKey::generate("issuer.dev-profile");
+    let keyring = IssuerKeyring::from_keys([signer.enrollment(u64::MAX, false)])?;
+    let unsigned = unsigned_admission_skeleton(
+        invocation.invocation_id.clone(),
+        format!("nonce.{}", invocation.invocation_id),
+        "reference-host.runtime",
+        u64::MAX,
+        dev_admitted_port_bindings_with_digest(&invocation.port_bindings_digest),
+    );
+    let mut unsigned = unsigned;
+    unsigned.artifact_digest = invocation.artifact_digest.clone();
+    unsigned.context_digest = invocation.resource_ceiling_digest.clone();
+    let admission = signer.seal_admission(unsigned);
+    let verified = verify_execution_admission(
+        &admission,
+        &keyring,
+        &NonceLedger::new(),
+        "reference-host.runtime",
+        0,
+        false,
+    )?;
+    dev_runtime_profile_from_verified(
+        commit,
+        model_call_request_metadata,
+        verified,
+        "reference-host.execution",
+    )
+    .await
+}
+
+async fn dev_runtime_profile_from_verified(
+    commit: Arc<DevCommit>,
+    model_call_request_metadata: Arc<dyn ModelCallRequestMetadataPort>,
+    verified: apxm_kernel::VerifiedExecutionAdmission,
+    execution_id: &str,
+) -> Result<RuntimeProfile> {
     let entries = verified
         .port_bindings
         .iter()
@@ -480,14 +577,10 @@ async fn dev_runtime_profile(
             (binding.clone(), implementation)
         })
         .collect();
-    let runtime_admission = RuntimeAdmission::admit(
-        verified,
-        entries,
-        "apxm-reference-host",
-        "execution.dev-profile",
-    )
-    .await
-    .map_err(|error| anyhow::anyhow!(error))?;
+    let runtime_admission =
+        RuntimeAdmission::admit(verified, entries, "apxm-reference-host", execution_id)
+            .await
+            .map_err(|error| anyhow::anyhow!(error))?;
     RuntimeProfile::from_fully_admitted(
         runtime_admission,
         model_call_request_metadata,
@@ -497,6 +590,12 @@ async fn dev_runtime_profile(
 }
 
 fn dev_admitted_port_bindings() -> Vec<apxm_kernel::AdmittedPortBinding> {
+    dev_admitted_port_bindings_with_digest(DEV_BINDING_DIGEST)
+}
+
+fn dev_admitted_port_bindings_with_digest(
+    binding_digest: &str,
+) -> Vec<apxm_kernel::AdmittedPortBinding> {
     [
         (PortSlot::ExecutionCommit, "apxm.execution-commit.v1"),
         (PortSlot::Confinement, "apxm.confinement.v1"),
@@ -511,8 +610,8 @@ fn dev_admitted_port_bindings() -> Vec<apxm_kernel::AdmittedPortBinding> {
         slot: slot.as_str().into(),
         port_contract_schema_id: schema_id.into(),
         port_contract_digest: DEV_BINDING_DIGEST.into(),
-        binding_digest: DEV_BINDING_DIGEST.into(),
-        proof_digest: DEV_BINDING_DIGEST.into(),
+        binding_digest: binding_digest.into(),
+        proof_digest: binding_digest.into(),
     })
     .collect()
 }
@@ -645,6 +744,8 @@ fn commit_result_json(result: &ExecutionCommitResult) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use apxm_inference::ModelTargetRef;
+    use apxm_kernel::digest_char;
 
     fn empty_profile_air() -> AirModule {
         serde_json::from_value(json!({
@@ -679,6 +780,45 @@ mod tests {
             .expect("reference and embedded composition roots share RuntimeProfile");
         assert_eq!(output["runtime"], "apxm_execution");
         assert_eq!(output["status"], "completed");
+    }
+
+    #[tokio::test]
+    async fn invocation_admission_is_carried_into_atomic_runtime_commit() {
+        let admission = InvocationAdmission {
+            schema_version: apxm_kernel::INVOCATION_ADMISSION_SCHEMA.into(),
+            invocation_id: "invocation.reference-host.1".into(),
+            artifact_digest: digest_char('a'),
+            release_digest: digest_char('a'),
+            port_bindings_digest: digest_char('b'),
+            resource_ceiling_digest: digest_char('c'),
+            provenance_digest: digest_char('a'),
+        };
+
+        let output =
+            execute_canonical_air_with_invocation_admission(empty_profile_air(), &admission)
+                .await
+                .expect("exact host admission reaches canonical runtime");
+        assert_eq!(output["status"], "completed");
+        assert_eq!(output["commit"]["status"], "committed");
+    }
+
+    #[tokio::test]
+    async fn invocation_admission_provenance_drift_fails_before_commit() {
+        let admission = InvocationAdmission {
+            schema_version: apxm_kernel::INVOCATION_ADMISSION_SCHEMA.into(),
+            invocation_id: "invocation.reference-host.negative".into(),
+            artifact_digest: digest_char('a'),
+            release_digest: digest_char('a'),
+            port_bindings_digest: digest_char('b'),
+            resource_ceiling_digest: digest_char('c'),
+            provenance_digest: digest_char('d'),
+        };
+
+        let error =
+            execute_canonical_air_with_invocation_admission(empty_profile_air(), &admission)
+                .await
+                .expect_err("provenance drift must fail closed");
+        assert!(error.to_string().contains("provenance_digest"));
     }
 
     #[tokio::test]

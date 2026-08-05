@@ -35,6 +35,14 @@ use crate::confinement::{
 /// Frozen schema id for the product-neutral Execution Admission envelope.
 pub const EXECUTION_ADMISSION_SCHEMA: &str = "apxm.execution-admission.v1";
 
+/// Frozen schema id for the product-neutral host-to-runtime invocation record.
+///
+/// This smaller record is the transport-facing admission used by the
+/// reference host. It is not a replacement for the signed Execution
+/// Admission below; the runtime still constructs its immutable signed
+/// admission closure before executing any work.
+pub const INVOCATION_ADMISSION_SCHEMA: &str = "apxm.invocation-admission.v1";
+
 /// Closed Port Contract schema IDs accepted by the runtime admission boundary.
 pub const EXECUTION_COMMIT_PORT_SCHEMA: &str = "apxm.execution-commit.v1";
 pub const CONFINEMENT_PORT_SCHEMA: &str = "apxm.confinement.v1";
@@ -43,6 +51,118 @@ pub const CAPABILITY_PORT_SCHEMA: &str = "apxm.capability-invocation.v1";
 pub const EXTERNAL_AGENT_PORT_SCHEMA: &str = "apxm.external-agent.v1";
 pub const DURABLE_EVENT_PORT_SCHEMA: &str = "apxm.durable-event.v1";
 pub const PROGRAM_COMPOSITION_PORT_SCHEMA: &str = "apxm.program-composition.v1";
+
+/// Exact product-neutral authority supplied by an APXM host transport.
+///
+/// The four release/provenance fields are deliberately retained as separate
+/// fields in the wire contract, then checked for equality here. A serde shape
+/// check alone would allow a valid-looking record to mix release, artifact, or
+/// provenance bytes before the runtime admission closure is built.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InvocationAdmission {
+    pub schema_version: String,
+    pub invocation_id: String,
+    pub artifact_digest: String,
+    pub release_digest: String,
+    pub port_bindings_digest: String,
+    pub resource_ceiling_digest: String,
+    pub provenance_digest: String,
+}
+
+/// Fail-closed validation errors for the transport-facing invocation record.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum InvocationAdmissionError {
+    SchemaMismatch(String),
+    InvalidInvocationId,
+    MalformedDigest(&'static str),
+    ArtifactReleaseMismatch,
+    ArtifactProvenanceMismatch,
+    ReleaseMismatch,
+    PortBindingsMismatch,
+    ResourceCeilingMismatch,
+}
+
+impl std::fmt::Display for InvocationAdmissionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SchemaMismatch(actual) => {
+                write!(
+                    f,
+                    "schema mismatch: expected {INVOCATION_ADMISSION_SCHEMA}, got {actual}"
+                )
+            }
+            Self::InvalidInvocationId => f.write_str("invocation_id is not a valid identifier"),
+            Self::MalformedDigest(field) => write!(f, "malformed digest: {field}"),
+            Self::ArtifactReleaseMismatch => {
+                f.write_str("artifact_digest must equal release_digest")
+            }
+            Self::ArtifactProvenanceMismatch => {
+                f.write_str("artifact_digest must equal provenance_digest")
+            }
+            Self::ReleaseMismatch => f.write_str("release digest is not admitted"),
+            Self::PortBindingsMismatch => f.write_str("port binding digest is not admitted"),
+            Self::ResourceCeilingMismatch => f.write_str("resource ceiling digest is not admitted"),
+        }
+    }
+}
+
+impl std::error::Error for InvocationAdmissionError {}
+
+impl InvocationAdmission {
+    /// Validate the published wire contract independently of any host state.
+    pub fn validate(&self) -> Result<(), InvocationAdmissionError> {
+        if self.schema_version != INVOCATION_ADMISSION_SCHEMA {
+            return Err(InvocationAdmissionError::SchemaMismatch(
+                self.schema_version.clone(),
+            ));
+        }
+        if !is_identifier(&self.invocation_id) {
+            return Err(InvocationAdmissionError::InvalidInvocationId);
+        }
+        for (field, value) in [
+            ("artifact_digest", self.artifact_digest.as_str()),
+            ("release_digest", self.release_digest.as_str()),
+            ("port_bindings_digest", self.port_bindings_digest.as_str()),
+            (
+                "resource_ceiling_digest",
+                self.resource_ceiling_digest.as_str(),
+            ),
+            ("provenance_digest", self.provenance_digest.as_str()),
+        ] {
+            if !is_digest(value) {
+                return Err(InvocationAdmissionError::MalformedDigest(field));
+            }
+        }
+        if self.artifact_digest != self.release_digest {
+            return Err(InvocationAdmissionError::ArtifactReleaseMismatch);
+        }
+        if self.artifact_digest != self.provenance_digest {
+            return Err(InvocationAdmissionError::ArtifactProvenanceMismatch);
+        }
+        Ok(())
+    }
+
+    /// Verify this record against the immutable digests published by a host.
+    pub fn verify_against(
+        &self,
+        release_digest: &str,
+        port_bindings_digest: &str,
+        resource_ceiling_digest: &str,
+    ) -> Result<(), InvocationAdmissionError> {
+        self.validate()?;
+        if self.release_digest != release_digest {
+            return Err(InvocationAdmissionError::ReleaseMismatch);
+        }
+        if self.port_bindings_digest != port_bindings_digest {
+            return Err(InvocationAdmissionError::PortBindingsMismatch);
+        }
+        if self.resource_ceiling_digest != resource_ceiling_digest {
+            return Err(InvocationAdmissionError::ResourceCeilingMismatch);
+        }
+        Ok(())
+    }
+}
 
 /// The only signature algorithm the closed envelope admits.
 const ED25519: &str = "ed25519";

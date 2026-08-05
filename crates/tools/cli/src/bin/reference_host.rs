@@ -14,11 +14,12 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use apxm_cli::canonical_execute::execute_canonical_air;
+use apxm_cli::canonical_execute::execute_canonical_air_with_invocation_admission;
+use apxm_kernel::{INVOCATION_ADMISSION_SCHEMA, InvocationAdmission};
 
 const HOST_SCHEMA: &str = "apxm.runtime.host.v1";
 const REQUEST_SCHEMA: &str = "apxm.runtime.host-request.v1";
-const ADMISSION_SCHEMA: &str = "apxm.invocation-admission.v1";
+const ADMISSION_SCHEMA: &str = INVOCATION_ADMISSION_SCHEMA;
 const STARTUP_INPUT_SCHEMA: &str = "apxm.reference-host-startup-input.v1";
 const IN_FLIGHT_DRAIN_PROBE: &str = "drain_shutdown_after_in_flight_completion";
 const IN_FLIGHT_DRAIN_PROBE_SCHEMA: &str = "apxm.reference-host.lifecycle-probe.v1";
@@ -66,17 +67,7 @@ struct Request {
     air: Option<Value>,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Admission {
-    schema_version: String,
-    invocation_id: String,
-    artifact_digest: String,
-    release_digest: String,
-    port_bindings_digest: String,
-    resource_ceiling_digest: String,
-    provenance_digest: String,
-}
+type Admission = InvocationAdmission;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -126,7 +117,7 @@ struct Host {
 }
 
 struct PreparedInvocation {
-    invocation_id: String,
+    admission: Admission,
     air: AirModule,
 }
 
@@ -245,37 +236,34 @@ impl Host {
                 format!("host state is {}", self.state.as_str()),
             ));
         }
-        if admission.schema_version != ADMISSION_SCHEMA {
-            return Err(self.reject(
-                "invalid_admission_schema",
-                "exact apxm.invocation-admission.v1 is required",
-            ));
-        }
-        if admission.invocation_id.is_empty() {
-            return Err(self.reject("missing_invocation_id", "invocation_id is required"));
-        }
-        if admission.artifact_digest != self.admitted_digests.release_digest
-            || admission.provenance_digest != admission.artifact_digest
-        {
-            return Err(self.reject(
-                "provenance_mismatch",
-                "artifact and provenance digests must match the admitted release",
-            ));
-        }
-        if admission.release_digest != self.admitted_digests.release_digest {
-            return Err(self.reject("release_mismatch", "release digest is not admitted"));
-        }
-        if admission.port_bindings_digest != self.admitted_digests.port_bindings_digest {
-            return Err(self.reject(
-                "port_bindings_mismatch",
-                "port binding digest is not admitted",
-            ));
-        }
-        if admission.resource_ceiling_digest != self.admitted_digests.resource_ceiling_digest {
-            return Err(self.reject(
-                "resource_ceiling_mismatch",
-                "resource ceiling digest is not admitted",
-            ));
+        if let Err(error) = admission.verify_against(
+            &self.admitted_digests.release_digest,
+            &self.admitted_digests.port_bindings_digest,
+            &self.admitted_digests.resource_ceiling_digest,
+        ) {
+            let code = match error {
+                apxm_kernel::InvocationAdmissionError::SchemaMismatch(_) => {
+                    "invalid_admission_schema"
+                }
+                apxm_kernel::InvocationAdmissionError::InvalidInvocationId => {
+                    "invalid_invocation_id"
+                }
+                apxm_kernel::InvocationAdmissionError::MalformedDigest(_) => {
+                    "invalid_admission_digest"
+                }
+                apxm_kernel::InvocationAdmissionError::ArtifactReleaseMismatch
+                | apxm_kernel::InvocationAdmissionError::ArtifactProvenanceMismatch => {
+                    "provenance_mismatch"
+                }
+                apxm_kernel::InvocationAdmissionError::ReleaseMismatch => "release_mismatch",
+                apxm_kernel::InvocationAdmissionError::PortBindingsMismatch => {
+                    "port_bindings_mismatch"
+                }
+                apxm_kernel::InvocationAdmissionError::ResourceCeilingMismatch => {
+                    "resource_ceiling_mismatch"
+                }
+            };
+            return Err(self.reject(code, error.to_string()));
         }
         Ok(())
     }
@@ -302,10 +290,7 @@ impl Host {
             return Err(self.reject("invalid_air", "canonical AIR verification failed"));
         }
         self.in_flight = 1;
-        Ok(PreparedInvocation {
-            invocation_id: admission.invocation_id,
-            air,
-        })
+        Ok(PreparedInvocation { admission, air })
     }
 
     fn complete_invocation(
@@ -345,10 +330,12 @@ impl Host {
             Ok(prepared) => prepared,
             Err(rejection) => return rejection,
         };
-        let execution = execute_canonical_air(prepared.air)
-            .await
-            .map_err(|error| error.to_string());
-        self.complete_invocation(prepared.invocation_id, execution)
+        let invocation_id = prepared.admission.invocation_id.clone();
+        let execution =
+            execute_canonical_air_with_invocation_admission(prepared.air, &prepared.admission)
+                .await
+                .map_err(|error| error.to_string());
+        self.complete_invocation(invocation_id, execution)
     }
 
     async fn probe_in_flight_drain(&mut self) -> Result<Value> {
@@ -387,10 +374,12 @@ impl Host {
             admission: None,
             air: None,
         });
-        let execution = execute_canonical_air(prepared.air)
-            .await
-            .map_err(|error| error.to_string());
-        let completion_response = self.complete_invocation(prepared.invocation_id, execution);
+        let invocation_id = prepared.admission.invocation_id.clone();
+        let execution =
+            execute_canonical_air_with_invocation_admission(prepared.air, &prepared.admission)
+                .await
+                .map_err(|error| error.to_string());
+        let completion_response = self.complete_invocation(invocation_id, execution);
         let terminal_readiness = self.readiness();
         Ok(json!({
             "schema_version": IN_FLIGHT_DRAIN_PROBE_SCHEMA,
