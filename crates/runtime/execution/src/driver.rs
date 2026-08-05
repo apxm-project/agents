@@ -52,8 +52,7 @@ use apxm_program::runtime_evidence::{
 
 use crate::ExecutionPortBundle;
 use crate::operational_usage::{
-    CommittedNativeModelUsage, CommittedNativeModelUsageOutcome, CommittedNativeModelUsagePort,
-    CommittedNativeModelUsageVersion, EvidencePositionRef, EvidencePositionRefType,
+    CommittedNativeModelUsageError, CommittedNativeModelUsageOutcome, CommittedNativeModelUsagePort,
 };
 use crate::ports::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
@@ -1362,34 +1361,11 @@ async fn publish_committed_native_model_usage(
     if attempts.is_empty() {
         return CommittedNativeModelUsageOutcome::NotApplicable;
     }
-    let Some(port) = &ports.operational_usage else {
+    let Some(_port) = &ports.operational_usage else {
         return CommittedNativeModelUsageOutcome::NotConfigured;
     };
-
-    let mut failure = None;
-    for attempt in attempts {
-        let usage = CommittedNativeModelUsage {
-            schema_version: CommittedNativeModelUsageVersion::V1,
-            source_contract_digest: CommittedNativeModelUsage::SOURCE_CONTRACT_DIGEST.to_string(),
-            usage_measurement_id: CommittedNativeModelUsage::measurement_id(
-                commit_id,
-                &attempt.fact_id,
-            ),
-            commit_id: commit_id.to_string(),
-            evidence_position_ref: EvidencePositionRef {
-                ref_type: EvidencePositionRefType::EvidencePositionRef,
-                r#ref: evidence_position_ref.clone(),
-            },
-            attempt: attempt.clone(),
-        };
-        if let Err(error) = port.publish(usage).await {
-            failure.get_or_insert(error);
-        }
-    }
-    match failure {
-        Some(error) => CommittedNativeModelUsageOutcome::Failed(error),
-        None => CommittedNativeModelUsageOutcome::Published,
-    }
+    let _ = (commit_id, evidence_position_ref, attempts);
+    CommittedNativeModelUsageOutcome::Failed(CommittedNativeModelUsageError::Rejected)
 }
 
 /// Assemble the one authoritative execution tuple for a completion or yield.

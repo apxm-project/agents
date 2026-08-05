@@ -1,0 +1,22 @@
+{
+  "schema_version": "apxm.reference-host.startup-input.test.v1",
+  "semantic_owner": "agents",
+  "scope": "test-only",
+  "owner_executable": "apxm-reference-host",
+  "owner_executable_path": "crates/tools/cli/src/bin/reference_host.rs",
+  "transport_protocol": "jsonl-stdin-stdout",
+  "startup_input": {
+    "host_execution_manifest_schema": "apxm.host-execution-manifest.v1",
+    "readiness_contract": "apxm.runtime-readiness.v1",
+    "drain_quiescence_contract": "apxm.runtime-drain-quiescence.v1",
+    "admission_contract": "apxm.invocation-admission.v1",
+    "evidence_contract": "apxm.runtime-evidence.v1"
+  },
+  "provenance": {
+    "owner_revision": "ff48332f2ce6af8a45eb38a15f4510a134223f5f",
+    "descriptor_semantic_digest": "sha256:a007bb8daee44cfc5156a358bd4c0f4665adefc0d731738ead9c50a31734e14b",
+    "descriptor_exact_checksum": "sha256:d771d3f2c4a50fdeee0c57475c4c00fc6b4121b1e4bf5147a57a76bf11ad7a88",
+    "dirty": false
+  },
+  "fail_closed_on": ["missing", "stale", "dirty", "mismatched"]
+}

@@ -10,10 +10,7 @@ pub fn render_runtime_evidence_python() -> String {
         env!("CARGO_MANIFEST_DIR"),
         "/../../../contracts/schemas/apxm.runtime-evidence.v1.json"
     )));
-    let common_schema = py_string(include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../../../contracts/schemas/contract-common.v1.json"
-    )));
+    let common_schema = py_string(include_str!(env!("APXM_CONTRACT_COMMON_SCHEMA_PATH")));
     format!(
         r##"# AUTO-GENERATED from apxm.runtime-evidence.v1; DO NOT EDIT.
 import json

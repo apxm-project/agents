@@ -17,6 +17,10 @@ workspace = true
 name = "apxm"
 path = "src/main.rs"
 
+[[bin]]
+name = "apxm-reference-host"
+path = "src/bin/reference_host.rs"
+
 [dependencies]
 # Typed apxm-server HTTP client (folded in from the former standalone
 # apxm-client crate, - no consumer outside this binary).

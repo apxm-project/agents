@@ -3,13 +3,17 @@
 `agents` is the APXM abstract-machine repo: AIS dialect, compiler, runtime,
 capability contracts, context handling, permissions, orchestration, CLI, and
 the profile-backed agent execution path. It is not the whole APXM workspace;
-the `apxm` coordinator owns repo composition, while `server`, `os`, `auth`,
-and `studio` own their own planes.
+the top-level workspace coordinates docs and release entry points but owns no
+product control plane or alternate execution semantics. Downstream products may
+pin APXM, but `agents` stays product-neutral and cannot depend on their
+identifiers, schemas, routes, or services.
 
-The public surface here is a typed IR plus runtime contracts that let higher
-level systems express *what* they want executed while the runtime decides *how*
-to admit, schedule, and dispatch it. The vLLM glue remains in this repo as one
-backend path, not as the repo identity.
+The public surface here is typed source/artifact/runtime contracts that let an
+outer composition root admit one exact artifact with exact Port bindings, exact
+model target binding when inference is required, portable checkpoint and
+confinement semantics, and canonical evidence. The vLLM glue remains in this
+repo as one APXM-owned inference implementation, not as the repo identity or a
+product topology.
 
 ## What is in this repo
 
@@ -20,8 +24,8 @@ backend path, not as the repo identity.
   TypeScript authoring packages that lower through it.
 - **Runtime** (`crates/runtime/`) — executor, handlers, backend adapters
   (LLM, local, tool); `apxm-backends` holds the vLLM-fork glue.
-- **Tools** (`crates/tools/`) — `apxm-cli` and developer clients. The HTTP server
-  lives in the `server` repo.
+- **Tools** (`crates/tools/`) — `apxm-cli` and developer clients. Any managed
+  HTTP product surface lives outside this repo's semantic authority.
 - **`apxm-project/vllm`** — graph-aware vLLM fork. In the APXM coordinator
   workspace it is checked out as `workspace/vllm`; override with
   `APXM_VLLM_DIR` when running APXM standalone.

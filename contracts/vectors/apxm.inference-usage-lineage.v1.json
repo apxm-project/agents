@@ -1,0 +1,40 @@
+[
+  {
+    "name": "valid-sealed-native-usage-lineage",
+    "expected_valid": true,
+    "input": {
+      "schema_version": "apxm.inference-usage-lineage.v1",
+      "lineage_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "effect_id": "effect.model.1",
+      "attempt_index": 0,
+      "request_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "model_target_ref": "model-target.1",
+      "model_target_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "model_deployment_ref": "model-deployment.1",
+      "exact_port_binding_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "native_input_tokens": 4,
+      "native_output_tokens": 7,
+      "duration_ms": 12,
+      "sealed": true
+    }
+  },
+  {
+    "name": "reject-unsealed-lineage",
+    "expected_valid": false,
+    "input": {
+      "schema_version": "apxm.inference-usage-lineage.v1",
+      "lineage_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "effect_id": "effect.model.1",
+      "attempt_index": 0,
+      "request_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "model_target_ref": "model-target.1",
+      "model_target_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "model_deployment_ref": "model-deployment.1",
+      "exact_port_binding_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "native_input_tokens": 4,
+      "native_output_tokens": 7,
+      "duration_ms": 12,
+      "sealed": false
+    }
+  }
+]

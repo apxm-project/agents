@@ -33,18 +33,18 @@ pub use driver::{
     StaticHookResult, execute, execute_resumable, resume, resume_event,
 };
 pub use operational_usage::{
-    CommittedNativeModelUsage, CommittedNativeModelUsageError, CommittedNativeModelUsageOutcome,
-    CommittedNativeModelUsagePort, CommittedNativeModelUsageVersion, EvidencePositionRef,
-    EvidencePositionRefType,
-};
-pub use readiness::{
-    NodeLifecycle, NodeOccurrenceId, OperandSlotDecl, OperandValue, ReadinessError,
-    ReadinessKernel, ReadinessKernelBuilder, ReadinessTransition, RunnableNode, SlotClaim,
+    CommittedNativeModelUsage, CommittedNativeModelUsageError, CommittedNativeModelUsageGateError,
+    CommittedNativeModelUsageOutcome, CommittedNativeModelUsagePort,
+    CommittedNativeModelUsageVersion, EvidencePositionRef, EvidencePositionRefType,
 };
 pub use ports::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
     CompositionReceiver, CompositionRequest, EventAwait, EventOutcome, EventPort, EventRef,
     EventRefError, MemoryError, MemorySpace, ScopedMemoryPort,
+};
+pub use readiness::{
+    NodeLifecycle, NodeOccurrenceId, OperandSlotDecl, OperandValue, ReadinessError,
+    ReadinessKernel, ReadinessKernelBuilder, ReadinessTransition, RunnableNode, SlotClaim,
 };
 pub use resume::{Continuation, ContinuationError, DurableLoopFrame, RunOutcome};
 pub use session_ledger::{LedgerState, SessionLedger, SessionLedgerError, SessionLedgerStore};
