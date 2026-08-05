@@ -229,6 +229,15 @@ REFERENCE_HOST_STARTUP_INPUT_FAIL_CLOSED_REASONS = [
     "dirty",
     "mismatched",
 ]
+REFERENCE_HOST_TRANSPORT_PROTOCOL = "jsonl-stdin-stdout"
+REFERENCE_HOST_RELEASE_CONSTRAINTS = {
+    "http_surface": "absent",
+    "apxm_server_dependency": "absent",
+    "source_checkout_fallback": "absent",
+    "schema_aliases": "absent",
+    "mixed_generation": "absent",
+    "clic_dependency": "absent",
+}
 REFERENCE_HOST_INVOKE_VECTOR_ID = "apxm.reference-host.invoke-parity.v1"
 REFERENCE_HOST_LIFECYCLE_VECTOR_ID = "apxm.reference-host.lifecycle-parity.v1"
 RETIRED_REFERENCE_HOST_ADMISSION_ALIAS = "apxm.execution-admission.v1"
@@ -1607,6 +1616,7 @@ def check_reference_host_release_evidence(descriptor: dict[str, Any]) -> None:
         raise ValidationError("reference-host release manifest schema_version drifted")
     if release_manifest.get("semantic_owner") != "agents":
         raise ValidationError("reference-host release manifest semantic_owner must be agents")
+    check_reference_host_release_manifest_contract(release_manifest)
     if release_manifest.get("profile_cohort") != REFERENCE_HOST_PROFILE_COHORT:
         raise ValidationError("reference-host release manifest profile_cohort drifted")
     if RETIRED_REFERENCE_HOST_ADMISSION_ALIAS in canonical(release_manifest):
@@ -1688,6 +1698,23 @@ def check_reference_host_release_evidence(descriptor: dict[str, Any]) -> None:
     if published_profiles != [expected_profile]:
         raise ValidationError(
             "owner descriptor published_host_lifecycle_profiles drifted from the exact reference-host publication"
+        )
+
+
+def check_reference_host_release_manifest_contract(
+    release_manifest: dict[str, Any],
+) -> None:
+    if release_manifest.get("owner_executable") != "apxm-reference-host":
+        raise ValidationError(
+            "reference-host release manifest owner_executable must stay apxm-reference-host"
+        )
+    if release_manifest.get("transport_protocol") != REFERENCE_HOST_TRANSPORT_PROTOCOL:
+        raise ValidationError(
+            "reference-host release manifest transport_protocol must stay product-neutral jsonl-stdin-stdout"
+        )
+    if release_manifest.get("constraints") != REFERENCE_HOST_RELEASE_CONSTRAINTS:
+        raise ValidationError(
+            "reference-host release manifest fail-closed constraints drifted"
         )
 
 
