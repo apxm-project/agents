@@ -1195,8 +1195,7 @@ mod tests {
         )
         .expect("startup file");
 
-        let error =
-            load_startup_input(&startup_path).expect_err("missing manifest path must fail");
+        let error = load_startup_input(&startup_path).expect_err("missing manifest path must fail");
         assert!(
             error
                 .to_string()

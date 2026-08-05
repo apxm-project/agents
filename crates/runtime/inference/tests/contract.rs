@@ -10,7 +10,7 @@ use apxm_inference::{
     InferenceTargetCommitment, ModelBindingAdmission, ModelCallPreparation, ModelCallRequest,
     ModelCallRequestMetadata, ModelContentRef, ModelContextEnvelopeRef, ModelInferencePort,
     ModelOutcome, ModelStreamEvent, ModelStreamMode, ModelStreamPort, ModelStreamStep,
-    ModelTargetRef, ResolvedModelBinding, RetryPolicy, TypedError, Usage, execute,
+    ModelTargetRef, ResolvedModelBinding, RetryPolicy, TypedError, Usage, execute, stream,
 };
 
 const DIGEST_A: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -75,8 +75,9 @@ fn mismatched_target_fails_closed_with_no_substitution() {
 
 #[test]
 fn invalid_binding_digest_fails_closed() {
-    let admission =
-        ModelBindingAdmission::new(binding("model.alpha", "deploy.alpha", "not-a-digest"));
+    let mut invalid = binding("model.alpha", "deploy.alpha", DIGEST_A);
+    invalid.exact_port_binding.binding_digest = "not-a-digest".to_string();
+    let admission = ModelBindingAdmission::new(invalid);
     let err = admission
         .validate(&ModelTargetRef("model.alpha".to_string()))
         .expect_err("invalid binding digest");

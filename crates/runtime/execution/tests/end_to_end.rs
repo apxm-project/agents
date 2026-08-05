@@ -1019,7 +1019,10 @@ async fn production_dispatch_preserves_nonzero_generation_in_usage_evidence() {
 
     let report = execute(&ports, request, json!({})).await.expect("run");
 
-    assert_eq!(report.operational_usage, CommittedNativeModelUsageOutcome::Published);
+    assert_eq!(
+        report.operational_usage,
+        CommittedNativeModelUsageOutcome::Published
+    );
     assert_eq!(usage.calls().len(), 1);
     assert_eq!(usage.calls()[0].attempt.target_generation, 9);
     assert_ne!(
@@ -1044,9 +1047,8 @@ async fn production_dispatch_rejects_moving_commitment_before_model_port() {
     .expect("target commitment");
     let mut moving = moving;
     moving.state = apxm_inference::TargetCommitState::Moving;
-    request.model_admission = ModelBindingAdmission::new(
-        ResolvedModelBinding::from_target_commitment(moving),
-    );
+    request.model_admission =
+        ModelBindingAdmission::new(ResolvedModelBinding::from_target_commitment(moving));
 
     let error = execute(&ports(commit), request, json!({}))
         .await
