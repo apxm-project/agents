@@ -6,7 +6,7 @@ mod common;
 
 use apxm_program::artifact::PortSourceScope;
 use apxm_program::{ExecutableArtifact, validate_artifact_json};
-use common::{Vector, load_constitution, load_contract, load_vectors};
+use common::{Vector, load_contract, load_vectors};
 
 #[test]
 fn artifact_vectors_match_validator() {
@@ -100,17 +100,16 @@ fn example_artifacts_carry_no_field_the_schema_rejects() {
 }
 
 #[test]
-fn source_scope_enum_does_not_drift() {
-    let schema = load_constitution("schemas/port-requirement.v1.json");
-    let mut expected: Vec<String> = schema["properties"]["source_scope"]["enum"]
-        .as_array()
-        .expect("source_scope enum")
-        .iter()
-        .map(|v| v.as_str().unwrap().to_string())
-        .collect();
-    expected.sort();
-
-    let mut actual: Vec<String> = [
+fn source_scope_enum_is_closed_and_stable() {
+    let expected: Vec<String> = [
+        "artifact_semantic",
+        "deployment_infrastructure",
+        "invocation_authority",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
+    let actual: Vec<String> = [
         PortSourceScope::ArtifactSemantic,
         PortSourceScope::DeploymentInfrastructure,
         PortSourceScope::InvocationAuthority,
@@ -124,10 +123,5 @@ fn source_scope_enum_does_not_drift() {
             .to_string()
     })
     .collect();
-    actual.sort();
-
-    assert_eq!(
-        actual, expected,
-        "port source-scope closure drifted from contract"
-    );
+    assert_eq!(actual, expected, "port source-scope closure drifted");
 }

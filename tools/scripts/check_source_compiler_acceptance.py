@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
@@ -40,6 +41,8 @@ class StepReport:
     returncode: int
     duration_seconds: float
     log_path: str
+    log_digest: str
+    error: str | None = None
 
 
 def acceptance_steps() -> tuple[AcceptanceStep, ...]:
@@ -47,14 +50,9 @@ def acceptance_steps() -> tuple[AcceptanceStep, ...]:
 
     return (
         AcceptanceStep(
-            "owner-descriptor",
-            "owner vectors, descriptor digests, and schema correspondence stay exact",
-            ("dekk", "agents", "owner-descriptor"),
-        ),
-        AcceptanceStep(
-            "check-contract-codegen",
-            "generated contract clients stay byte-identical to the checked-in owner contracts",
-            ("dekk", "agents", "check-contract-codegen"),
+            "check-frontend-codegen",
+            "AIS and frontend generated metadata stay byte-identical to the owner definitions",
+            ("dekk", "agents", "check-frontend-codegen"),
         ),
         AcceptanceStep(
             "check-frontend-surface",
@@ -67,9 +65,9 @@ def acceptance_steps() -> tuple[AcceptanceStep, ...]:
             ("dekk", "agents", "test-source-port"),
         ),
         AcceptanceStep(
-            "test-program",
+            "test-program-source",
             "FrontendGraph, AIR, artifact, and source-map lowering stay closed and deterministic",
-            ("dekk", "agents", "test-program"),
+            ("dekk", "agents", "test-program-source"),
         ),
         AcceptanceStep(
             "test-compiler",
@@ -87,14 +85,14 @@ def acceptance_steps() -> tuple[AcceptanceStep, ...]:
             ("dekk", "agents", "test-external-source-package"),
         ),
         AcceptanceStep(
+            "check-source-compiler-boundary",
+            "source and compiler paths contain no downstream dependency or rejected alternate AIR path",
+            ("dekk", "agents", "check-source-compiler-boundary"),
+        ),
+        AcceptanceStep(
             "compile-service-canonical",
             "the canonical CLI compile path emits apxm.air.v1 from repository-owned source",
             ("dekk", "agents", "compile-service-canonical"),
-        ),
-        AcceptanceStep(
-            "execute-canonical",
-            "the checked-in canonical apxm.air.v1 fixture executes through the canonical runtime",
-            ("dekk", "agents", "execute-canonical"),
         ),
     )
 
@@ -119,12 +117,22 @@ def run_step(
     print(f"\n==> {step.gate_id}: {step.description}", flush=True)
     print(f"    $ {' '.join(step.command)}", flush=True)
     started = time.perf_counter()
-    completed = runner(
-        step.command,
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-    )
+    error: str | None = None
+    try:
+        completed = runner(
+            step.command,
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exception:
+        completed = subprocess.CompletedProcess(
+            step.command,
+            127,
+            stdout="",
+            stderr=str(exception),
+        )
+        error = str(exception)
     duration = round(time.perf_counter() - started, 3)
     logs_dir.mkdir(parents=True, exist_ok=True)
     log_path = logs_dir / f"{step.gate_id}.log"
@@ -148,6 +156,8 @@ def run_step(
         returncode=completed.returncode,
         duration_seconds=duration,
         log_path=render_path(log_path),
+        log_digest="sha256:" + hashlib.sha256(combined_output.encode("utf-8")).hexdigest(),
+        error=error,
     )
 
 

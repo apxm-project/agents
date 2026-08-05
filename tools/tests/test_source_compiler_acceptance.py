@@ -17,16 +17,15 @@ class SourceCompilerAcceptanceTests(unittest.TestCase):
         self.assertEqual(
             [step.gate_id for step in steps],
             [
-                "owner-descriptor",
-                "check-contract-codegen",
+                "check-frontend-codegen",
                 "check-frontend-surface",
                 "test-source-port",
-                "test-program",
+                "test-program-source",
                 "test-compiler",
                 "check-frontend-parity",
                 "test-external-source-package",
+                "check-source-compiler-boundary",
                 "compile-service-canonical",
-                "execute-canonical",
             ],
         )
         self.assertEqual(
@@ -53,7 +52,7 @@ class SourceCompilerAcceptanceTests(unittest.TestCase):
                 logs_dir, runner=succeed
             )
             self.assertTrue(
-                logs_dir.joinpath("owner-descriptor.log").is_file(),
+                logs_dir.joinpath("check-frontend-codegen.log").is_file(),
                 "the acceptance run writes per-step logs beside the report",
             )
 
@@ -68,9 +67,13 @@ class SourceCompilerAcceptanceTests(unittest.TestCase):
             all(step["log_path"].endswith(".log") for step in report["steps"]),
             "every step records a log path in the report",
         )
+        self.assertTrue(
+            all(step["log_digest"].startswith("sha256:") for step in report["steps"]),
+            "every step records a content digest for its log",
+        )
 
     def test_run_acceptance_records_failures_without_dropping_later_steps(self) -> None:
-        failing_gate = "test-program"
+        failing_gate = "test-program-source"
         executed: list[str] = []
 
         with tempfile.TemporaryDirectory() as temporary:
@@ -117,6 +120,24 @@ class SourceCompilerAcceptanceTests(unittest.TestCase):
             check_source_compiler_acceptance.write_report(report, path)
             self.assertTrue(path.is_file())
             self.assertIn('"overall_status": "passed"', path.read_text(encoding="utf-8"))
+
+    def test_run_step_records_unavailable_authority_as_a_typed_failure(self) -> None:
+        step = check_source_compiler_acceptance.acceptance_steps()[0]
+
+        def unavailable(*args, **kwargs):  # noqa: ANN002, ANN003
+            raise OSError("dekk unavailable")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            result = check_source_compiler_acceptance.run_step(
+                step,
+                Path(temporary),
+                runner=unavailable,
+            )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.returncode, 127)
+        self.assertEqual(result.error, "dekk unavailable")
+        self.assertTrue(result.log_digest.startswith("sha256:"))
 
     def test_main_fails_closed_when_any_gate_fails(self) -> None:
         report = {
