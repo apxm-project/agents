@@ -6,7 +6,7 @@ test canonical::tests::registered_model_call_missing_required_operand_fails_veri
 test canonical::tests::tokens_require_and_round_trip_dialect_owned_type_refs ... ok
 test canonical::tests::lowered_mlir_parses_and_verifies ... ok
 
-test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
 
 running 0 tests
@@ -23,6 +23,7 @@ warning: constant `TO` is never used
 
 warning: `apxm-core` (lib) generated 1 warning
 warning: `apxm-core` (lib) generated 1 warning (1 duplicate)
+   Compiling apxm-compiler v0.1.0 (/Users/randreshg/Projects/worktrees/agents-issue-35-source-compiler-20260805/crates/compiler/pipeline)
 warning: function `pass_info_from_raw` is never used
   --> crates/compiler/pipeline/src/ffi/conversions.rs:13:22
    |
@@ -33,7 +34,7 @@ warning: function `pass_info_from_raw` is never used
 
 warning: `apxm-compiler` (lib) generated 1 warning
 warning: `apxm-compiler` (lib test) generated 1 warning (1 duplicate)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.20s
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.06s
      Running unittests src/lib.rs (/var/folders/7z/7_hrgq652jdg25_rczwmffk40000gn/T/apxm-cargo-targets/agents-issue-35-source-compiler-20260805-c7ee8208c236ed62/debug/deps/apxm_compiler-f83ccf6b5eca538d)
 error: 'ais.model_call' op expected 2 or more operands, but found 0
   --> "-":3:11
