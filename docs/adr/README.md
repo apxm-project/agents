@@ -44,6 +44,8 @@ opaque correlations and exact admitted bindings only.
 
 Canonical owner contract and plan:
 
+- [Execution Admission contract (P-006 / G3)](../agents/execution-admission-contract.md)
+- [G3 admission/runtime checklist](../plans/g3-admission-runtime-checklist.md)
 - [Agent Program composition and AIR contract](../agents/agent-program-composition-and-air-contract.md)
 - [Agent Program composition and AIR full-replacement plan](../agents/agent-program-composition-and-air-full-replacement-plan.md)
 - [ACP interoperability and selection contract](../agents/acp-and-routing-contract.md)
