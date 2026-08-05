@@ -120,7 +120,7 @@ def build_startup_input(
             "owner revision mismatch: "
             f"expected {owner_revision}, checkout is {checkout_revision}"
         )
-    status = git_stdout("status", "--porcelain", "--ignored=matching")
+    status = git_stdout("status", "--porcelain")
     if status:
         raise RuntimeError(
             "owner checkout is dirty; exact reference-host startup input requires committed bytes"

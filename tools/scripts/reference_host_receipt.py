@@ -220,7 +220,7 @@ def committed_reference_host_release_attestation(validator: Any) -> dict[str, An
     revision = git_stdout("rev-parse", "HEAD")
     if not revision:
         raise RuntimeError("owner revision is unavailable")
-    status = git_stdout("status", "--porcelain", "--ignored=matching")
+    status = git_stdout("status", "--porcelain")
     if status:
         raise RuntimeError(
             "owner checkout is dirty; committed reference-host release inputs are unavailable"
