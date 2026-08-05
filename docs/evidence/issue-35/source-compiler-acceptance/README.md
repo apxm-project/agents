@@ -1,9 +1,9 @@
 # Issue 35 source/compiler acceptance evidence
 
 The nine-gate bundle was run at source revision
-`8c371296045481737e0c099c293118a544c5a9a3` on 2026-08-05. Seven gates
+`eb99c0fd4f3f84d4320d7d81bae287386ad51945` on 2026-08-05. Seven gates
 passed and two failed. The structured report is `report.json` with SHA-256
-`355d19aad11ad41dc428a473edaa36c312a980d7ab7eca8e3bfd21a9a225fa9c`; each
+`31d9352e4b183219355a74e6114105975b8ae3ff40bcc1ede785ce11b3b26d4e`; each
 gate log is in `logs/` and its digest is recorded in the report.
 
 The two failures are the real macOS arm64 PyO3 link failure in
