@@ -22,12 +22,14 @@ GitHub Copilot reads `.github/copilot-instructions.md`.
 `agents` is the APXM abstract-machine repo: AIS dialect, compiler, runtime,
 capability contracts, context handling, permissions, orchestration, CLI, and
 the profile-backed agent execution path. It is not the whole APXM workspace;
-the `apxm` coordinator owns repo composition, while `server`, `auth`, `studio`,
-Host SDK, and Adapters own their exact planes.
+the top-level workspace coordinates docs and release entry points but owns no
+product control plane or alternate execution semantics. Downstream products may
+pin APXM, but `agents` stays product-neutral and cannot depend on their
+identifiers, schemas, routes, or services.
 
-Do **not** describe `agents` as the APXM coordinator, the HTTP/managed-durability
-server, the Host protocol owner, or only "vLLM dispatch". The correct anchor
-is: *the abstract machine and runtime contracts for APXM agents*.
+Do **not** describe `agents` as the APXM coordinator, a managed product control
+plane, a downstream Host/SDK owner, or only "vLLM dispatch". The correct
+anchor is: *the abstract machine and runtime contracts for APXM agents*.
 
 ## 2. Authority CLI
 
@@ -54,8 +56,9 @@ Command groups (see `dekk agents --help` for the live list):
 If a needed action isn't yet wrapped, **add a Dekk command** in `.dekk.toml`
 rather than shelling out — that is the project-wide pattern.
 
-Managed MCP presents granted Host Capabilities, not an Agents-owned Agent
-Program lifecycle tool family.
+Any downstream-managed MCP surface may project exact granted Capabilities
+through its own transport, but it is not an Agents-owned Agent Program
+lifecycle tool family.
 
 ## 3. Lifecycle workflow
 
@@ -253,16 +256,19 @@ Each capability composes a **capability_binding** (callable implementation) plus
 **permission policy** (authority). Runtime authority flows through typed
 **capability grants** (`grant_*` ids), not bare handler strings.
 
-Canonical terms, reserved aliases, route naming, and schema versions live in
-the coordinator glossary:
+Canonical capability, Port-binding, and execution terms live in the local owner
+contracts:
 
-- `../../docs/context/capability-vocabulary.md` — SSOT for APXM-owned capability
-  vocabulary (`CapabilityDefinition`, `CapabilityBinding`, `PermissionPolicy`,
-  `CapabilityGrant`, `PermissionOperation`, `PromptPolicy`, …).
+- `docs/agents/portable-core-interface-contract.md` — Port Contracts,
+  Implementation Descriptors, Runtime Profiles, exact Port Bindings, and
+  product-neutral Execution/Invocation Admission.
+- `docs/agents/agent-program-composition-and-air-contract.md` — Capability,
+  Tool, Skill, `ModelTargetRef`, Program Invocation, checkpoint, confinement,
+  and evidence semantics.
 
-When touching capability registry, admission, pack schemas, AIS
-`REGISTER_CAPABILITY` / `INV_CAP.capability`, or server `/v1/capability-templates`
-routes, read that doc first and keep code, schemas, and UI copy aligned.
+When touching Capability definitions, admission, pack schemas,
+`capability.invoke` lowering, or MCP tool projection, read those docs first and
+keep code, schemas, and evidence aligned.
 
 ## 11. Storage layout
 
@@ -335,16 +341,16 @@ push, an overwritten branch, or a tainted benchmark.
 | Skill | Description | Path |
 | --- | --- | --- |
 | `ais-op-design` | Use before adding or modifying an AIS op in apxm-core. Enforces the design-before-code gate, the canonical-attribute rule, the definitions.rs source-of-truth layer map, and the build-dialect + codegen cadence. | `.agents/skills/ais-op-design/SKILL.md` |
-| `backend-add` | Use when registering a new APXM inference backend (cloud, on-prem, or local). Enforces hard-fail-at-config-time resolver behavior. | `.agents/skills/backend-add/SKILL.md` |
+| `backend-add` | Use when registering a new APXM model-inference implementation or target binding (cloud, on-prem, or local). Enforces hard-fail-at-config-time resolver behavior. | `.agents/skills/backend-add/SKILL.md` |
 | `commit` | Commit gate — runs simplify + finish first, drafts message in repo log style, lints it with dekk agents commit-lint, commits at a clean stopping point, and pushes only when authorized. Never --force. Does not open PRs. | `.agents/skills/commit/SKILL.md` |
 | `compile-and-execute` | Use when compiling APXM AIR workflows, running .apxmobj artifacts, or executing AIR/IR through the runtime. Enforces dekk agents as the authority CLI and correct artifact placement under .apxm/. | `.agents/skills/compile-and-execute/SKILL.md` |
 | `context` | Prime an APXM session before broad work — runs doctor, reads project.md and the relevant _shared rules, surfaces subsystem ownership, and recalls APXM memory. Run at the start of any session that will touch >1 file or any non-trivial change. | `.agents/skills/context/SKILL.md` |
-| `design-docs` | Use when editing conceptual docs under docs/. Gates two shipped failure modes — overclaim (present-tense prose about unwired behaviour) and citation drift (claims with no anchor to shipped code). | `.agents/skills/design-docs/SKILL.md` |
+| `design-docs` | Use when editing conceptual docs under docs/. Gates two shipped failure modes — overclaim (present-tense prose about unwired behavior) and citation drift (claims with no anchor to shipped code). | `.agents/skills/design-docs/SKILL.md` |
 | `execute-plan` | Drive an APXM plan to completion without scope creep. Tracks phases with the harness's task tracker, runs focused per-phase verification, refuses to add features beyond the plan, and surfaces blockers immediately. Invoke only after plan produces an approved plan. | `.agents/skills/execute-plan/SKILL.md` |
 | `finish` | Pre-claim gate — runs focused dekk agents test, doctor, release checks when relevant, secrets scan, and artifact-placement check before any claim of completion. Refuses to claim done until all pass. | `.agents/skills/finish/SKILL.md` |
 | `fork-vllm-rebase` | Use when rebasing the external/vllm fork onto a new upstream tag, cherry-picking APXM commits, or resolving conflicts in the fork. Covers the G1 build/smoke gate. | `.agents/skills/fork-vllm-rebase/SKILL.md` |
-| `frontend-implementation` | Use when changing APXM compiler frontends: Rust FrontendGraph lowering, TypeScript @apxm/frontend, Python apxm_program, frontend codegen, or Studio/source lowering into AIR. | `.agents/skills/frontend-implementation/SKILL.md` |
-| `mcp-server` | Use when working on APXM MCP contract constants, local stdio registration, the outbound MCP bridge, or the Server-owned managed HTTP boundary. | `.agents/skills/mcp-server/SKILL.md` |
+| `frontend-implementation` | Use when changing APXM compiler frontends: Rust FrontendGraph lowering, TypeScript @apxm/frontend, Python apxm_program, frontend codegen, or downstream source lowering into AIR. | `.agents/skills/frontend-implementation/SKILL.md` |
+| `mcp-server` | Use when working on APXM MCP contract constants, local stdio registration, the outbound MCP bridge, or a downstream-managed inbound MCP boundary. | `.agents/skills/mcp-server/SKILL.md` |
 | `mlir-pass-development` | Use when adding, modifying, or reordering MLIR passes in the APXM compiler pipeline. Enforces the single pass-list source of truth, the AIS-core ownership rule, and the build-dialect + codegen cadence after .td edits. | `.agents/skills/mlir-pass-development/SKILL.md` |
 | `model-zoo-operate` | Use when adding, scaling, or probing models in the vLLM zoo (deploy/vllm/zoo*.toml). Enforces docker-load then cache-warm then zoo-apply then service-exec/status; use the zoo surface only. | `.agents/skills/model-zoo-operate/SKILL.md` |
 | `plan` | Produce a written plan before non-trivial APXM implementation. Required for changes touching >3 files, modifying a public API or AIS op, or needing Slurm GPU allocation. Enforces APXM-specific gates (AIS-op-vs-compose decision, dialect-codegen impact). | `.agents/skills/plan/SKILL.md` |

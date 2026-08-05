@@ -34,7 +34,9 @@ fn record() -> EffectRecord {
 /// Drive a record to `dispatch_started` under one claim.
 fn dispatched() -> EffectRecord {
     let mut record = record();
-    record.apply(EffectTransition::CommitWon).expect("commit won");
+    record
+        .apply(EffectTransition::CommitWon)
+        .expect("commit won");
     record
         .apply(EffectTransition::ClaimedBeforeSend {
             epoch: 1,
@@ -67,14 +69,18 @@ fn a_prepared_effect_is_not_dispatchable_until_a_commit_wins() {
     assert!(matches!(error, EffectError::IllegalTransition { .. }));
     assert_eq!(record.state(), &EffectState::Prepared);
 
-    record.apply(EffectTransition::CommitWon).expect("commit won");
+    record
+        .apply(EffectTransition::CommitWon)
+        .expect("commit won");
     assert_eq!(record.state(), &EffectState::Dispatchable);
 }
 
 #[test]
 fn a_claim_records_its_epoch_and_attempt() {
     let mut record = record();
-    record.apply(EffectTransition::CommitWon).expect("commit won");
+    record
+        .apply(EffectTransition::CommitWon)
+        .expect("commit won");
     record
         .apply(EffectTransition::ClaimedBeforeSend {
             epoch: 3,
@@ -94,7 +100,9 @@ fn a_claim_records_its_epoch_and_attempt() {
 #[test]
 fn a_claim_that_does_not_advance_is_stale_and_changes_nothing() {
     let mut record = record();
-    record.apply(EffectTransition::CommitWon).expect("commit won");
+    record
+        .apply(EffectTransition::CommitWon)
+        .expect("commit won");
     record
         .apply(EffectTransition::ClaimedBeforeSend {
             epoch: 2,
@@ -150,7 +158,9 @@ fn revocation_and_cancellation_before_send_are_terminal_and_authorize_the_next_a
         EffectTransition::CancelledBeforeSend,
     ] {
         let mut record = record();
-        record.apply(EffectTransition::CommitWon).expect("commit won");
+        record
+            .apply(EffectTransition::CommitWon)
+            .expect("commit won");
         record.apply(transition).expect("pre-send terminal");
         assert!(record.state().is_terminal());
         // No byte left, so the outcome is settled and downstream work is safe.
@@ -256,7 +266,9 @@ fn proven_not_applied_is_resolved_but_may_be_retried_under_the_same_effect_ident
 #[test]
 fn a_claim_released_with_proof_may_be_terminal_instead_of_retryable() {
     let mut record = record();
-    record.apply(EffectTransition::CommitWon).expect("commit won");
+    record
+        .apply(EffectTransition::CommitWon)
+        .expect("commit won");
     record
         .apply(EffectTransition::ClaimedBeforeSend {
             epoch: 1,

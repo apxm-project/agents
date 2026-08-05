@@ -90,14 +90,15 @@ self-digest field; the exact checksum detects any byte-level descriptor drift.
 ## Gate
 
 ```
-python3 contracts/tools/validate_owner_descriptor.py
+dekk agents owner-descriptor
 ```
 
 The gate validates every vector against its schema, enforces the
 `artifact_semantic`-only abstraction rule and the single atomic write-set rule,
-verifies every recorded content-addressed digest is current, and confirms the
-descriptor carries no delivery-process references. Regenerate digests after any
-change with `--write-digests`.
+verifies every recorded content-addressed digest is current, pins the exact
+referenced Host SDK cohort by revision plus semantic and exact descriptor
+digests, and confirms the descriptor carries no delivery-process references.
+Regenerate digests after any change with `dekk agents owner-descriptor-sync`.
 
 The owner descriptor is identified by its deterministic canonical digest.
 Optional distribution signatures remain detached metadata and are not part of

@@ -9,6 +9,7 @@ use std::fmt;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+use apxm_inference::{InferenceUsageLineage, LineageError, Usage};
 use apxm_program::runtime_evidence::ModelAttemptRecordedFact;
 
 /// The single accepted schema version.
@@ -63,7 +64,103 @@ impl CommittedNativeModelUsage {
         hasher.update(attempt_fact_id.as_bytes());
         format!("sha256:{:x}", hasher.finalize())
     }
+
+    /// Build one publishable usage measurement only from commit-bound sealed
+    /// lineage evidence.
+    pub fn from_lineage(
+        commit_id: impl Into<String>,
+        evidence_position_ref: EvidencePositionRef,
+        attempt: ModelAttemptRecordedFact,
+        lineage: &InferenceUsageLineage,
+    ) -> Result<Self, CommittedNativeModelUsageGateError> {
+        let commit_id = commit_id.into();
+        if commit_id.trim().is_empty() {
+            return Err(CommittedNativeModelUsageGateError::EmptyField("commit_id"));
+        }
+        if evidence_position_ref.r#ref.trim().is_empty() {
+            return Err(CommittedNativeModelUsageGateError::EmptyField(
+                "evidence_position_ref.ref",
+            ));
+        }
+        lineage
+            .authorize_exporter_claim(
+                &commit_id,
+                Usage {
+                    input_tokens: attempt.native_input_tokens,
+                    output_tokens: attempt.native_output_tokens,
+                },
+            )
+            .map_err(CommittedNativeModelUsageGateError::Lineage)?;
+        if lineage.evidence_fact_id.as_deref() != Some(attempt.fact_id.as_str()) {
+            return Err(CommittedNativeModelUsageGateError::EvidenceMismatch(
+                "fact_id",
+            ));
+        }
+        if lineage.effect_id != attempt.model_effect_id {
+            return Err(CommittedNativeModelUsageGateError::EvidenceMismatch(
+                "model_effect_id",
+            ));
+        }
+        if lineage.attempt_index != attempt.attempt_index {
+            return Err(CommittedNativeModelUsageGateError::EvidenceMismatch(
+                "attempt_index",
+            ));
+        }
+        if lineage.request_digest != attempt.request_digest {
+            return Err(CommittedNativeModelUsageGateError::EvidenceMismatch(
+                "request_digest",
+            ));
+        }
+        if lineage.model_target_ref != attempt.model_target_ref {
+            return Err(CommittedNativeModelUsageGateError::EvidenceMismatch(
+                "model_target_ref",
+            ));
+        }
+        if lineage.model_deployment_ref != attempt.model_deployment_ref {
+            return Err(CommittedNativeModelUsageGateError::EvidenceMismatch(
+                "model_deployment_ref",
+            ));
+        }
+        if lineage.exact_port_binding_digest != attempt.exact_port_binding_digest {
+            return Err(CommittedNativeModelUsageGateError::EvidenceMismatch(
+                "exact_port_binding_digest",
+            ));
+        }
+        Ok(Self {
+            schema_version: CommittedNativeModelUsageVersion::V1,
+            source_contract_digest: Self::SOURCE_CONTRACT_DIGEST.to_string(),
+            usage_measurement_id: Self::measurement_id(&commit_id, &attempt.fact_id),
+            commit_id,
+            evidence_position_ref,
+            attempt,
+        })
+    }
 }
+
+/// Why post-commit native usage publication is rejected before calling a
+/// composition publisher.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CommittedNativeModelUsageGateError {
+    EmptyField(&'static str),
+    Lineage(LineageError),
+    EvidenceMismatch(&'static str),
+}
+
+impl fmt::Display for CommittedNativeModelUsageGateError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyField(field) => {
+                write!(formatter, "native usage gate field {field} is empty")
+            }
+            Self::Lineage(error) => write!(formatter, "{error}"),
+            Self::EvidenceMismatch(field) => {
+                write!(formatter, "native usage gate evidence mismatch for {field}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for CommittedNativeModelUsageGateError {}
 
 /// The narrow post-commit publication seam supplied by composition.
 #[async_trait]
