@@ -127,7 +127,26 @@ class ReferenceHostLifecycleReceiptTests(unittest.TestCase):
 
         return runner
 
-    def test_partial_receipt_records_case_evidence_and_exact_remaining_blocker(self) -> None:
+    def make_in_flight_drain_probe(
+        self, startup_input: dict[str, object], runtime_evidence: dict[str, object]
+    ) -> dict[str, object]:
+        return {
+            "schema_version": self.module.LIFECYCLE_PROBE_SCHEMA,
+            "semantic_owner": "agents",
+            "case": self.module.IN_FLIGHT_DRAIN_PROBE,
+            "transition": "stop_admission_then_finish_in_flight",
+            "in_flight_before_drain": self.module.host_readiness(startup_input, "ready", 1),
+            "drain_response": self.module.host_readiness(startup_input, "draining", 1),
+            "completion_response": {
+                "schema_version": self.module.HOST_SCHEMA,
+                "status": "committed",
+                "invocation_id": "probe.invocation.1",
+                "runtime_evidence": runtime_evidence,
+            },
+            "terminal_readiness": self.module.host_readiness(startup_input, "stopped"),
+        }
+
+    def test_complete_receipt_records_in_flight_drain_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir_name:
             temp_dir = Path(temp_dir_name)
             startup_input_path, startup_input = self.make_startup_input(temp_dir)
@@ -233,6 +252,7 @@ class ReferenceHostLifecycleReceiptTests(unittest.TestCase):
                     ],
                 ]
             )
+            probe = self.make_in_flight_drain_probe(startup_input, runtime_evidence)
             build_receipt_path = temp_dir / "build-receipt.json"
             receipt_path = temp_dir / "lifecycle-receipt.json"
             executable_path = temp_dir / "target" / "release" / "apxm-reference-host"
@@ -243,35 +263,21 @@ class ReferenceHostLifecycleReceiptTests(unittest.TestCase):
                 startup_input_path=startup_input_path,
                 build_receipt_runner=self.make_build_receipt_runner(executable_path),
                 transport_factory=factory,
+                lifecycle_probe_runner=lambda _executable, _startup: probe,
             )
             persisted = json.loads(receipt_path.read_text(encoding="utf-8"))
 
         self.assertEqual(exit_code, 0)
-        self.assertEqual(receipt["status"], "partial")
+        self.assertEqual(receipt["status"], "complete")
         self.assertEqual(receipt, persisted)
         self.assertEqual(factory.call_count, 10)
-        self.assertEqual(
-            receipt["coverage"]["remaining_release_cases"],
-            ["drain_shutdown_after_in_flight_completion"],
-        )
-        self.assertEqual(
-            receipt["coverage"]["remaining_release_case_blockers"],
-            [
-                {
-                    "case": "drain_shutdown_after_in_flight_completion",
-                    "code": "missing_in_flight_drain_probe",
-                    "message": (
-                        "the current operator receipt exercises pre-dispatch drain rejection, "
-                        "but not an in-flight drain followed by terminal quiescence under one durable "
-                        "JSONL transport receipt"
-                    ),
-                }
-            ],
-        )
+        self.assertEqual(receipt["coverage"]["remaining_release_cases"], [])
+        self.assertEqual(receipt["coverage"]["remaining_release_case_blockers"], [])
         self.assertEqual(
             receipt["coverage"]["covered_release_cases"],
             [
                 "cancellation_before_admission",
+                "drain_shutdown_after_in_flight_completion",
                 "explicit_shutdown_terminal_state",
                 "restart_recovery_from_runtime_evidence",
                 "revocation_before_dispatch",
@@ -286,6 +292,7 @@ class ReferenceHostLifecycleReceiptTests(unittest.TestCase):
                 "negative_admission_provenance_rejection",
                 "invalid_air_failure",
                 "drain_rejection_before_dispatch",
+                "drain_shutdown_after_in_flight_completion",
                 "cancellation_before_admission",
                 "explicit_shutdown_terminal_state",
                 "restart_recovery_from_runtime_evidence",
@@ -293,6 +300,41 @@ class ReferenceHostLifecycleReceiptTests(unittest.TestCase):
                 "boundary_fail_closed",
             ],
         )
+        drain_case = next(
+            case for case in receipt["cases"] if case["name"] == "drain_shutdown_after_in_flight_completion"
+        )
+        self.assertEqual(drain_case["in_flight_before_drain"], 1)
+        self.assertEqual(drain_case["terminal_state_after_in_flight"], "stopped")
+        self.assertEqual(drain_case["runtime_evidence_terminal_kind"], "invocation.committed")
+
+    def test_in_flight_drain_probe_fails_closed_on_terminal_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir_name:
+            temp_dir = Path(temp_dir_name)
+            startup_input_path, startup_input = self.make_startup_input(temp_dir)
+            bad_probe = {
+                "schema_version": self.module.LIFECYCLE_PROBE_SCHEMA,
+                "semantic_owner": "agents",
+                "case": self.module.IN_FLIGHT_DRAIN_PROBE,
+                "transition": "stop_admission_then_finish_in_flight",
+                "in_flight_before_drain": self.module.host_readiness(startup_input, "ready", 1),
+                "drain_response": self.module.host_readiness(startup_input, "draining", 1),
+                "completion_response": {
+                    "schema_version": self.module.HOST_SCHEMA,
+                    "status": "committed",
+                    "runtime_evidence": self.make_runtime_evidence("probe.invocation.1"),
+                },
+                "terminal_readiness": self.module.host_readiness(startup_input, "draining", 0),
+            }
+
+            with self.assertRaises(self.module.LifecycleReceiptError) as raised:
+                self.module.run_case_in_flight_drain(
+                    executable_path=temp_dir / "apxm-reference-host",
+                    startup_input_path=startup_input_path,
+                    startup_input=startup_input,
+                    lifecycle_probe_runner=lambda _executable, _startup: bad_probe,
+                )
+
+        self.assertEqual(raised.exception.code, "case_failed")
 
     def test_missing_startup_input_fails_closed_before_build(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir_name:
