@@ -215,6 +215,23 @@ fn duplicate_slot_fails_closed() {
 }
 
 #[test]
+fn duplicate_required_slot_fails_closed() {
+    let spec = PortBundleSpec::new(vec![
+        (PortSlot::ExecutionCommit, commit_contract()),
+        (PortSlot::ExecutionCommit, commit_contract()),
+    ]);
+    let err = PortBundle::construct(
+        &spec,
+        vec![(commit_binding(commit_contract(), 'b', 'c'), commit_impl())],
+    )
+    .expect_err("duplicate required slot");
+    assert_eq!(
+        err,
+        BundleError::DuplicateRequiredSlot(PortSlot::ExecutionCommit)
+    );
+}
+
+#[test]
 fn model_inference_slot_binds_when_declared() {
     let spec = PortBundleSpec::new(vec![
         (PortSlot::ExecutionCommit, commit_contract()),

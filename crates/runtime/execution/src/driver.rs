@@ -23,6 +23,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 use async_trait::async_trait;
 use serde::Serialize;
@@ -30,9 +31,10 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use apxm_inference::{
-    BindingError, ModelBindingAdmission, ModelCallPreparation, ModelCallRequest,
-    ModelCallRequestError, ModelCallRequestMetadataPort, ModelInferencePort, ModelOutcome,
-    ModelTargetRef, RetryPolicy, TypedError, Usage, execute_with_attempt as run_model,
+    BindingError, CommittedInferenceDispatch, InferenceTargetCommitment, InferenceUsageLineage,
+    ModelBindingAdmission, ModelCallPreparation, ModelCallRequest, ModelCallRequestError,
+    ModelCallRequestMetadataPort, ModelInferencePort, ModelOutcome, ModelTargetRef, RetryPolicy,
+    TargetCommitmentError, TypedError, Usage, dispatch_committed_inference,
 };
 use apxm_kernel::{
     AcpPromptRequest, AtomicWriteSet, ExecutionCommitPort, ExecutionCommitRequest,
@@ -52,7 +54,8 @@ use apxm_program::runtime_evidence::{
 
 use crate::ExecutionPortBundle;
 use crate::operational_usage::{
-    CommittedNativeModelUsageError, CommittedNativeModelUsageOutcome, CommittedNativeModelUsagePort,
+    CommittedNativeModelUsage, CommittedNativeModelUsageError, CommittedNativeModelUsageOutcome,
+    CommittedNativeModelUsagePort, EvidencePositionRef, EvidencePositionRefType,
 };
 use crate::ports::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
@@ -282,6 +285,8 @@ pub enum ExecutionError {
     },
     CapabilityRequest(CapabilityRequestError),
     Binding(BindingError),
+    TargetCommitment(TargetCommitmentError),
+    Lineage(apxm_inference::LineageError),
     ModelRequest(ModelCallRequestError),
     ModelRequestMetadata(TypedError),
     Continuation(ContinuationError),
@@ -321,6 +326,8 @@ impl std::fmt::Display for ExecutionError {
             ),
             Self::CapabilityRequest(error) => write!(f, "Capability request error: {error}"),
             Self::Binding(error) => write!(f, "model binding error: {error}"),
+            Self::TargetCommitment(error) => write!(f, "target commitment error: {error}"),
+            Self::Lineage(error) => write!(f, "usage lineage error: {error}"),
             Self::ModelRequest(error) => write!(f, "model request error: {error}"),
             Self::ModelRequestMetadata(error) => {
                 write!(f, "model request metadata error: {}", error.message)
@@ -455,6 +462,7 @@ struct DriveState {
     node_outcomes: Vec<NodeOutcome>,
     native_usage: Usage,
     committed_model_attempts: Vec<ModelAttemptRecordedFact>,
+    committed_model_lineages: Vec<InferenceUsageLineage>,
     external_agent_evidence: Vec<ExternalAgentEvidence>,
     context: Value,
     last_result: Value,
@@ -537,6 +545,7 @@ impl DriveState {
             node_outcomes: Vec::new(),
             native_usage: Usage::default(),
             committed_model_attempts: Vec::new(),
+            committed_model_lineages: Vec::new(),
             external_agent_evidence: Vec::new(),
             context: initial_context,
             last_result: Value::Null,
@@ -861,6 +870,7 @@ async fn drive_from(
                                 operand: "model_ref",
                             }
                         })?;
+                        let authored_target = ModelTargetRef(target);
                         let effect_id =
                             model_effect_identity(&state.program_invocation_id, &node_execution_id);
                         let request_digest = model_request_digest(
@@ -873,7 +883,7 @@ async fn drive_from(
                             effect_id,
                             node_execution_id.clone(),
                             request_digest,
-                            &ModelTargetRef(target),
+                            &authored_target,
                             model_admission,
                         )
                         .map_err(ExecutionError::Binding)?;
@@ -883,8 +893,38 @@ async fn drive_from(
                             .map_err(ExecutionError::ModelRequestMetadata)?;
                         let call = ModelCallRequest::prepare(preparation, metadata)
                             .map_err(ExecutionError::ModelRequest)?;
-                        let execution =
-                            run_model(&*ports.model_inference, &call, RetryPolicy::default());
+                        let dispatch_started = Instant::now();
+                        let target_commitment =
+                            InferenceTargetCommitment::from_resolved(call.resolved_binding())
+                                .map_err(ExecutionError::TargetCommitment)?;
+                        let committed_dispatch =
+                            dispatch_committed_inference(CommittedInferenceDispatch {
+                                target_commitment: &target_commitment,
+                                authored_target: &authored_target,
+                                request: &call,
+                                backend: &*ports.model_inference,
+                                duration_ms: dispatch_started.elapsed().as_millis() as u64,
+                                policy: RetryPolicy::default(),
+                            })
+                            .map_err(|error| match error {
+                                apxm_inference::InferenceDispatchError::TargetCommitment(error) => {
+                                    ExecutionError::TargetCommitment(error)
+                                }
+                                apxm_inference::InferenceDispatchError::Lineage(error) => {
+                                    ExecutionError::Lineage(error)
+                                }
+                                apxm_inference::InferenceDispatchError::Driver(error) => {
+                                    unreachable!(
+                                        "production dispatch does not use a driver wrapper: {error}"
+                                    )
+                                }
+                                apxm_inference::InferenceDispatchError::Lease(error) => {
+                                    unreachable!(
+                                        "production dispatch does not use a lease: {error}"
+                                    )
+                                }
+                            })?;
+                        let execution = committed_dispatch.execution;
                         let outcome = execution.outcome;
                         state.last_operation_succeeded =
                             matches!(&outcome, ModelOutcome::CommittedSuccess { .. });
@@ -915,6 +955,7 @@ async fn drive_from(
                                     .reference
                                     .0
                                     .clone(),
+                                model_target_digest: target_commitment.target_digest.clone(),
                                 model_deployment_ref: call
                                     .resolved_binding()
                                     .model_deployment_ref
@@ -925,11 +966,20 @@ async fn drive_from(
                                     .exact_port_binding
                                     .binding_digest
                                     .clone(),
+                                target_commitment_digest: target_commitment.commit_digest,
+                                generation_cohort_digest: target_commitment
+                                    .generation_cohort_digest,
+                                target_generation: target_commitment.target_generation,
+                                target_port_contract_digest: target_commitment.port_contract_digest,
+                                target_composition_digest: target_commitment.composition_digest,
                                 native_input_tokens: usage.input_tokens,
                                 native_output_tokens: usage.output_tokens,
                             };
                             state.batch.push(Fact::AttemptRecorded(attempt.clone()));
                             state.committed_model_attempts.push(attempt);
+                            state
+                                .committed_model_lineages
+                                .push(committed_dispatch.lineage);
                         }
                         let result = model_result_value(&outcome);
                         state.last_result = result.clone();
@@ -1356,6 +1406,7 @@ async fn commit_and_report(
         commit_id,
         &commit,
         &state.committed_model_attempts,
+        &state.committed_model_lineages,
     )
     .await;
 
@@ -1374,6 +1425,7 @@ async fn publish_committed_native_model_usage(
     commit_id: &str,
     commit: &ExecutionCommitResult,
     attempts: &[ModelAttemptRecordedFact],
+    lineages: &[InferenceUsageLineage],
 ) -> CommittedNativeModelUsageOutcome {
     let ExecutionCommitResult::Committed {
         evidence_position_ref,
@@ -1385,11 +1437,44 @@ async fn publish_committed_native_model_usage(
     if attempts.is_empty() {
         return CommittedNativeModelUsageOutcome::NotApplicable;
     }
-    let Some(_port) = &ports.operational_usage else {
+    let Some(port) = &ports.operational_usage else {
         return CommittedNativeModelUsageOutcome::NotConfigured;
     };
-    let _ = (commit_id, evidence_position_ref, attempts);
-    CommittedNativeModelUsageOutcome::Failed(CommittedNativeModelUsageError::Rejected)
+    if attempts.len() != lineages.len() {
+        return CommittedNativeModelUsageOutcome::Failed(CommittedNativeModelUsageError::Rejected);
+    }
+    let evidence_position_ref = EvidencePositionRef {
+        ref_type: EvidencePositionRefType::EvidencePositionRef,
+        r#ref: evidence_position_ref.clone(),
+    };
+    for (attempt, sealed_lineage) in attempts.iter().zip(lineages) {
+        let mut lineage = sealed_lineage.clone();
+        if lineage
+            .bind_evidence(attempt.fact_id.clone(), commit_id.to_string())
+            .is_err()
+        {
+            return CommittedNativeModelUsageOutcome::Failed(
+                CommittedNativeModelUsageError::Rejected,
+            );
+        }
+        let usage = match CommittedNativeModelUsage::from_lineage(
+            commit_id.to_string(),
+            evidence_position_ref.clone(),
+            attempt.clone(),
+            &lineage,
+        ) {
+            Ok(usage) => usage,
+            Err(_) => {
+                return CommittedNativeModelUsageOutcome::Failed(
+                    CommittedNativeModelUsageError::Rejected,
+                );
+            }
+        };
+        if let Err(error) = port.publish(usage).await {
+            return CommittedNativeModelUsageOutcome::Failed(error);
+        }
+    }
+    CommittedNativeModelUsageOutcome::Published
 }
 
 fn validate_commit_inputs(
@@ -1478,6 +1563,7 @@ async fn commit_suspension(
         })
     });
     let attempts = state.committed_model_attempts.clone();
+    let lineages = state.committed_model_lineages.clone();
     let request = ExecutionCommitRequest {
         commit_id: format!("{}.yield", continuation.commit_id),
         program_instance_ref: continuation.program_instance_ref.clone(),
@@ -1499,6 +1585,7 @@ async fn commit_suspension(
         &format!("{}.yield", continuation.commit_id),
         &commit,
         &attempts,
+        &lineages,
     )
     .await;
     Ok((commit, operational_usage))
@@ -1717,6 +1804,7 @@ async fn resume_from_continuation(
         node_outcomes: Vec::new(),
         native_usage,
         committed_model_attempts: Vec::new(),
+        committed_model_lineages: Vec::new(),
         external_agent_evidence,
         context,
         last_result: Value::Null,

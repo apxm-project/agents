@@ -43,6 +43,13 @@ REFERENCE_HOST_LIFECYCLE_VECTOR = (
     / "vectors"
     / "apxm.reference-host.lifecycle-parity.v1.json"
 )
+REFERENCE_HOST_INVOKE_VECTOR = (
+    REPOSITORY_ROOT
+    / "contracts"
+    / "reference-host"
+    / "vectors"
+    / "apxm.reference-host.invoke-parity.v1.json"
+)
 REFERENCE_HOST_STARTUP_INPUT_SCHEMA = (
     REPOSITORY_ROOT
     / "contracts"
@@ -256,6 +263,13 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
             "the reference-host release manifest must attest the exact lifecycle cohort",
         )
         self.assertEqual(
+            release_manifest["executable_parity_evidence"],
+            self.validator.reference_host_executable_parity_evidence(
+                load_json(REFERENCE_HOST_INVOKE_VECTOR), lifecycle_vector
+            ),
+            "the release manifest must attest the exact executable parity cohort",
+        )
+        self.assertEqual(
             descriptor["published_host_lifecycle_profiles"],
             [expected_profile],
             "the owner descriptor must publish the exact reference-host lifecycle profile",
@@ -264,6 +278,22 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
             descriptor["published_host_lifecycle_profiles"][0]["release_manifest"],
             expected_release_manifest_ref,
         )
+
+    def test_reference_host_executable_parity_evidence_covers_every_published_case(self) -> None:
+        release_manifest = load_json(REFERENCE_HOST_RELEASE_MANIFEST)
+        invoke_vector = load_json(REFERENCE_HOST_INVOKE_VECTOR)
+        lifecycle_vector = load_json(REFERENCE_HOST_LIFECYCLE_VECTOR)
+        evidence = release_manifest["executable_parity_evidence"]
+        expected = self.validator.reference_host_executable_parity_evidence(
+            invoke_vector, lifecycle_vector
+        )
+
+        self.assertEqual(evidence["harness"]["digest"], expected["harness"]["digest"])
+        self.assertEqual(
+            evidence["live_required_cases"],
+            [case["name"] for case in invoke_vector["cases"] + lifecycle_vector["cases"]],
+        )
+        self.assertEqual(evidence["unavailable_required_cases"], [])
 
     def test_reference_host_execution_manifest_publishes_startup_input_contracts(self) -> None:
         execution_manifest = load_json(REFERENCE_HOST_EXECUTION_MANIFEST)

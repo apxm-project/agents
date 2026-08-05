@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 
 use apxm_program::grammar::is_digest;
 
+use crate::target::InferenceTargetCommitment;
+
 /// The one exact model target authored by a `model.call` effect.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ModelTargetRef(pub String);
@@ -50,9 +52,31 @@ pub struct ResolvedModelBinding {
     pub model_deployment_ref: ModelDeploymentRef,
     pub exact_port_binding: ExactPortBindingRef,
     pub composition_digest: String,
+    pub target_commitment: InferenceTargetCommitment,
 }
 
 impl ResolvedModelBinding {
+    /// Materialize the legacy resolution fields from one already committed
+    /// target snapshot. The snapshot remains the source of generation truth.
+    #[must_use]
+    pub fn from_target_commitment(target_commitment: InferenceTargetCommitment) -> Self {
+        Self {
+            model_target: ExactModelTargetRef {
+                reference: ModelTargetRef(target_commitment.target_ref.clone()),
+                target_digest: target_commitment.target_digest.clone(),
+            },
+            model_deployment_ref: ModelDeploymentRef(
+                target_commitment.model_deployment_ref.clone(),
+            ),
+            exact_port_binding: ExactPortBindingRef {
+                binding_digest: target_commitment.exact_port_binding_digest.clone(),
+                port_contract_digest: target_commitment.port_contract_digest.clone(),
+            },
+            composition_digest: target_commitment.composition_digest.clone(),
+            target_commitment,
+        }
+    }
+
     /// The exact port binding digest this resolution references.
     #[must_use]
     pub fn binding_digest(&self) -> &str {

@@ -107,6 +107,44 @@
       "boundary_fail_closed"
     ]
   },
+  "executable_parity_evidence": {
+    "owner_executable": {
+      "name": "apxm-reference-host",
+      "path": "crates/tools/cli/src/bin/reference_host.rs",
+      "transport_protocol": "jsonl-stdin-stdout"
+    },
+    "harness": {
+      "kind": "rust-integration-test",
+      "path": "crates/tools/cli/tests/reference_host_jsonl.rs",
+      "digest": "sha256:099b535d31c220698a76cb20d2d66bf304e7d5bf9c7aab4c286f43db1380ea3f"
+    },
+    "vectors": [
+      {
+        "vector_id": "apxm.reference-host.invoke-parity.v1",
+        "path": "reference-host/vectors/apxm.reference-host.invoke-parity.v1.json",
+        "digest": "sha256:5e0c704199f433279095338f49263535ebaaa702efd05d20b998a64c3b972372",
+        "profiles": ["embedded", "reference-host"]
+      },
+      {
+        "vector_id": "apxm.reference-host.lifecycle-parity.v1",
+        "path": "reference-host/vectors/apxm.reference-host.lifecycle-parity.v1.json",
+        "digest": "sha256:423a8dbd90839e94cdabd278e445706bd645974e776a510afd795704b1afd15e",
+        "profiles": ["embedded", "reference-host"]
+      }
+    ],
+    "live_required_cases": [
+      "positive_commit_minimal_air",
+      "negative_admission_provenance_rejection",
+      "invalid_air_failure",
+      "cancellation_before_admission",
+      "drain_shutdown_after_in_flight_completion",
+      "explicit_shutdown_terminal_state",
+      "restart_recovery_from_runtime_evidence",
+      "revocation_before_dispatch",
+      "boundary_fail_closed"
+    ],
+    "unavailable_required_cases": []
+  },
   "constraints": {
     "http_surface": "absent",
     "apxm_server_dependency": "absent",

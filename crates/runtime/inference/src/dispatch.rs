@@ -12,11 +12,13 @@ use crate::effect::{
 use crate::identity::ModelTargetRef;
 use crate::lease::{InferenceCredentialLease, LeaseError};
 use crate::lineage::{InferenceUsageLineage, LineageError};
+use crate::target::{InferenceTargetCommitment, TargetCommitmentError};
 
 /// Closed failure set for exact inference dispatch.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InferenceDispatchError {
     Driver(DriverBindingError),
+    TargetCommitment(TargetCommitmentError),
     Lease(LeaseError),
     Lineage(LineageError),
 }
@@ -25,6 +27,7 @@ impl std::fmt::Display for InferenceDispatchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Driver(error) => write!(f, "{error}"),
+            Self::TargetCommitment(error) => write!(f, "{error}"),
             Self::Lease(error) => write!(f, "{error}"),
             Self::Lineage(error) => write!(f, "{error}"),
         }
@@ -45,6 +48,12 @@ impl From<LeaseError> for InferenceDispatchError {
     }
 }
 
+impl From<TargetCommitmentError> for InferenceDispatchError {
+    fn from(value: TargetCommitmentError) -> Self {
+        Self::TargetCommitment(value)
+    }
+}
+
 impl From<LineageError> for InferenceDispatchError {
     fn from(value: LineageError) -> Self {
         Self::Lineage(value)
@@ -58,6 +67,16 @@ pub struct InferenceDispatchResult {
     pub lineage: InferenceUsageLineage,
     pub driver_id: String,
     pub inference_profile_ref: String,
+    pub target_commitment: InferenceTargetCommitment,
+}
+
+/// Result of production or lease-backed dispatch after one shared immutable
+/// target-validation and retry/evidence core.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommittedInferenceDispatchResult {
+    pub execution: ModelExecution,
+    pub lineage: InferenceUsageLineage,
+    pub target_commitment: InferenceTargetCommitment,
 }
 
 /// Lease-aware backend used only inside adapter memory for one attempt.
@@ -104,6 +123,51 @@ pub struct ExactInferenceDispatch<'a, B: LeasedInferenceBackend + ?Sized> {
     pub policy: RetryPolicy,
 }
 
+/// Inputs for dispatch through the already admitted production model port.
+/// The target commitment is validated immediately before the first attempt;
+/// this path does not discover or substitute a binding.
+pub struct CommittedInferenceDispatch<'a, P: ModelInferencePort + ?Sized> {
+    pub target_commitment: &'a InferenceTargetCommitment,
+    pub authored_target: &'a ModelTargetRef,
+    pub request: &'a ModelCallRequest,
+    pub backend: &'a P,
+    pub duration_ms: u64,
+    pub policy: RetryPolicy,
+}
+
+/// Dispatch through one already admitted production model port using the same
+/// retry and lineage core as lease-backed exact dispatch.
+pub fn dispatch_committed_inference<P: ModelInferencePort + ?Sized>(
+    dispatch: CommittedInferenceDispatch<'_, P>,
+) -> Result<CommittedInferenceDispatchResult, InferenceDispatchError> {
+    let CommittedInferenceDispatch {
+        target_commitment,
+        authored_target,
+        request,
+        backend,
+        duration_ms,
+        policy,
+    } = dispatch;
+    target_commitment.matches_resolved(authored_target, request.resolved_binding())?;
+    let execution = execute_with_attempt(backend, request, policy);
+    let (usage, typed_error) = outcome_lineage_inputs(&execution.outcome);
+    let attempt_index = execution.committed_attempt.unwrap_or(0);
+    let lineage = InferenceUsageLineage::seal_with_target_commitment(
+        request.effect_id(),
+        attempt_index,
+        request.request_digest(),
+        target_commitment,
+        usage,
+        duration_ms,
+        typed_error,
+    )?;
+    Ok(CommittedInferenceDispatchResult {
+        execution,
+        lineage,
+        target_commitment: target_commitment.clone(),
+    })
+}
+
 /// Authorize one exact driver binding, redeem one purpose/target-bound lease,
 /// dispatch through the leased backend, and seal immutable usage lineage.
 pub fn dispatch_exact_inference<B: LeasedInferenceBackend + ?Sized>(
@@ -127,8 +191,25 @@ pub fn dispatch_exact_inference<B: LeasedInferenceBackend + ?Sized>(
     )?;
     let material = lease.expose()?;
     let port = RedeemedPort { backend, material };
-    let execution = execute_with_attempt(&port, request, policy);
-    let (usage, typed_error) = match &execution.outcome {
+    let committed = dispatch_committed_inference(CommittedInferenceDispatch {
+        target_commitment: &binding.target_commitment,
+        authored_target,
+        request,
+        backend: &port,
+        duration_ms,
+        policy,
+    })?;
+    Ok(InferenceDispatchResult {
+        execution: committed.execution,
+        lineage: committed.lineage,
+        driver_id: binding.driver_id.clone(),
+        inference_profile_ref: binding.inference_profile_ref.clone(),
+        target_commitment: committed.target_commitment,
+    })
+}
+
+fn outcome_lineage_inputs(outcome: &ModelOutcome) -> (Usage, Option<TypedError>) {
+    match outcome {
         ModelOutcome::CommittedSuccess { usage } => (*usage, None),
         ModelOutcome::TypedFailure { error } => (Usage::default(), Some(error.clone())),
         ModelOutcome::Cancelled => (
@@ -147,24 +228,5 @@ pub fn dispatch_exact_inference<B: LeasedInferenceBackend + ?Sized>(
                 message: "model effect outcome is unknown".to_string(),
             }),
         ),
-    };
-    let attempt_index = execution.committed_attempt.unwrap_or(0);
-    let lineage = InferenceUsageLineage::seal(
-        request.effect_id(),
-        attempt_index,
-        request.request_digest(),
-        &binding.model_target_ref,
-        &binding.model_target_digest,
-        &binding.model_deployment_ref,
-        &binding.exact_port_binding_digest,
-        usage,
-        duration_ms,
-        typed_error,
-    )?;
-    Ok(InferenceDispatchResult {
-        execution,
-        lineage,
-        driver_id: binding.driver_id.clone(),
-        inference_profile_ref: binding.inference_profile_ref.clone(),
-    })
+    }
 }

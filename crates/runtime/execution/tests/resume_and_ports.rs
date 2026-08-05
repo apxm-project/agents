@@ -14,10 +14,10 @@ use apxm_execution::{
     resume_event,
 };
 use apxm_inference::{
-    AttemptDisposition, ExactModelTargetRef, ExactPortBindingRef, IdempotencyKey,
-    ModelBindingAdmission, ModelCallPreparation, ModelCallRequest, ModelCallRequestMetadata,
-    ModelCallRequestMetadataPort, ModelContextEnvelopeRef, ModelDeploymentRef, ModelInferencePort,
-    ModelStreamMode, ModelTargetRef, ResolvedModelBinding, TypedError, Usage,
+    AttemptDisposition, IdempotencyKey, InferenceTargetCommitment, ModelBindingAdmission,
+    ModelCallPreparation, ModelCallRequest, ModelCallRequestMetadata, ModelCallRequestMetadataPort,
+    ModelContextEnvelopeRef, ModelInferencePort, ModelStreamMode, ResolvedModelBinding, TypedError,
+    Usage,
 };
 use apxm_kernel::{
     AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, ExactPortBinding, ExecutionCommitPort,
@@ -67,18 +67,18 @@ fn request(scope: &str) -> ExecutionRequest {
     ExecutionRequest {
         air,
         hook_bindings: Vec::new(),
-        model_admission: ModelBindingAdmission::new(ResolvedModelBinding {
-            model_target: ExactModelTargetRef {
-                reference: ModelTargetRef("model.target.v1".into()),
-                target_digest: digest('9'),
-            },
-            model_deployment_ref: ModelDeploymentRef("deployment.default".into()),
-            exact_port_binding: ExactPortBindingRef {
-                binding_digest: digest('a'),
-                port_contract_digest: digest('b'),
-            },
-            composition_digest: digest('c'),
-        }),
+        model_admission: ModelBindingAdmission::new(ResolvedModelBinding::from_target_commitment(
+            InferenceTargetCommitment::commit(
+                "model.target.v1",
+                digest('9'),
+                "deployment.default",
+                digest('a'),
+                digest('b'),
+                digest('c'),
+                0,
+            )
+            .expect("target commitment"),
+        )),
         capability_invocations,
         program_instance_ref: ProgramInstanceRef::new(scope),
         program_invocation_ref: ProgramInvocationRef::new(format!("invocation.{scope}")),
