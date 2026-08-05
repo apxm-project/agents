@@ -1,6 +1,6 @@
 # P-018 — Hosted durable checkpoint/output decision (G3)
 
-- Status: **no-build** (closed for G3)
+- Status: **no-build** (publication pending merge)
 - Date: 2026-08-05
 - Owner: APXM `agents`
 - Issue: [agents#39](https://github.com/apxm-project/agents/issues/39)
@@ -55,6 +55,14 @@ speculative topology for that job.
 No unmet product-neutral job remains that requires an APXM-hosted service beyond
 the Port plus owner-local conformance.
 
+## Publication authority
+
+This PR publishes the no-build decision, dossier and evidence candidate. This
+branch is not default-branch authority; the publication becomes authoritative
+on `main` only after this PR is merged. After merge, the root coordinator must
+rerun the verifier against the merged Agents `main` ref and confirm that issue
+#39 remains open.
+
 ## Permanent boundary
 
 - Keep every contract, package, fixture, configuration default, image and
@@ -71,8 +79,8 @@ the Port plus owner-local conformance.
 
 - agents#36 owns Execution Admission, effects, confinement, and atomic commit
   semantics; P-018 must not weaken that boundary.
-- The explicit no-build result is now published in default-branch authority
-  through this dossier, the evidence record, and the G3 checklist cross-link.
-- Issue #39 may remain open for review or coordination, but the hosted
-  durable build/no-build decision is no longer unpublished or conditional on a
-  side branch.
+- This PR is the publication vehicle for the explicit no-build result. The
+  post-merge G3 target is publication on default-branch `main`; this branch
+  remains a review candidate until then.
+- Issue #39 remains open for review or coordination after publication; merging
+  this PR must not close it.

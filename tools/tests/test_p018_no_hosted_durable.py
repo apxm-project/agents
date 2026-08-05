@@ -35,8 +35,6 @@ ALLOW_PATH_PREFIXES = (
 P018_ARTIFACT_PREFIXES = (
     "docs/plans/p018-hosted-durable-decision.md",
     "docs/evidence/p018-g3-no-build.md",
-    "tools/scripts/verify_p018_no_hosted_durable.py",
-    "tools/tests/test_p018_no_hosted_durable_verifier.py",
     "crates/runtime/commit-local/",
 )
 
@@ -113,10 +111,10 @@ class TestP018NoHostedDurable(unittest.TestCase):
         self.assertNotIn("After this branch merges", text)
         self.assertNotIn("PR #41", text)
 
-    def test_g3_checklist_points_at_published_default_branch_authority(self) -> None:
+    def test_g3_checklist_points_at_post_merge_main_target(self) -> None:
         checklist = ROOT / "docs/plans/g3-admission-runtime-checklist.md"
         text = checklist.read_text(encoding="utf-8")
-        self.assertIn("Published no-build decision on `main`", text)
+        self.assertIn("Post-merge target: **Published no-build decision on `main`**", text)
         self.assertNotIn("G3 gate blocker remains open", text)
 
     def test_p018_artifacts_have_no_downstream_product_names(self) -> None:
