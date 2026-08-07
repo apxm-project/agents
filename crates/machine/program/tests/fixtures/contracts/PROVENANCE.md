@@ -1,9 +1,9 @@
-# Contract schema test snapshots
+# Contract schema snapshots
 
-These files are immutable test inputs copied from the private Contracts owner;
-they are not Agents-owned production schemas. They keep owner-schema drift
-checks reproducible in an isolated Agents checkout without resolving a hidden
-`../contracts` path.
+These files are immutable inputs copied from the private Contracts owner; they
+are not Agents-owned production schemas. They keep owner-schema drift checks
+and generated frontend bindings reproducible in an isolated Agents checkout
+without resolving a hidden `../contracts` path.
 
 | Snapshot | Contracts revision | Blob | Content SHA-256 |
 | --- | --- | --- | --- |

@@ -12,6 +12,22 @@ from tools.scripts import check_source_compiler_acceptance
 
 
 class SourceCompilerAcceptanceTests(unittest.TestCase):
+    def test_cli_codegen_uses_the_checked_in_common_schema_snapshot(self) -> None:
+        build_script = (
+            check_source_compiler_acceptance.REPO_ROOT
+            / "crates"
+            / "tools"
+            / "cli"
+            / "build.rs"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "../../machine/program/tests/fixtures/contracts/"
+            "apxm.contract-common.v1.json",
+            build_script,
+        )
+        self.assertNotIn("workspace_root", build_script)
+        self.assertNotIn('.join("contracts")', build_script)
+
     def test_acceptance_steps_are_unique_and_exact(self) -> None:
         steps = check_source_compiler_acceptance.acceptance_steps()
         self.assertEqual(
