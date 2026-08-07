@@ -3,7 +3,10 @@
 //! Proves the mandatory local persistence bounds for the G3 no-build decision
 //! on hosted durable checkpoint/output. Does not introduce a hosted service.
 
-use apxm_commit_local::{FilesystemExecutionCommit, InMemoryExecutionCommit, MAX_COMMIT_RESULTS};
+use apxm_commit_local::{
+    FilesystemExecutionCommit, InMemoryExecutionCommit, MAX_COMMIT_RESULTS,
+    SessionOutputPreparation,
+};
 use apxm_kernel::{
     AtomicWriteSet, ExecutionCommitPort, ExecutionCommitRequest, ExecutionCommitResult,
     ExecutionCommitTuple, ProgramInstanceRef, ProgramInvocationRef,
@@ -168,6 +171,130 @@ async fn exact_replay_requires_the_complete_request_identity() {
     );
 }
 
+fn output_preparation(
+    commit_id: &str,
+    instance: &str,
+    invocation: &str,
+) -> SessionOutputPreparation {
+    SessionOutputPreparation {
+        commit_id: commit_id.into(),
+        program_instance_ref: ProgramInstanceRef::new(instance),
+        program_invocation_ref: ProgramInvocationRef::new(invocation),
+        content: b"durable-session-output".to_vec(),
+        media_type: "text/plain".into(),
+    }
+}
+
+#[tokio::test]
+async fn prepared_output_becomes_visible_only_with_atomic_commit_and_replays() {
+    let port = InMemoryExecutionCommit::new();
+    let prepared = port
+        .prepare_output(output_preparation(
+            "commit.output",
+            "instance.output",
+            "invoke.output",
+        ))
+        .expect("prepare output");
+    assert_eq!(port.read_output(&prepared.output_ref), None);
+
+    let mut commit = request("commit.output", "instance.output", 0, None);
+    commit.program_invocation_ref = ProgramInvocationRef::new("invoke.output");
+    commit.tuple.output_refs = vec![prepared.to_json()];
+    let first = port.commit(commit.clone()).await;
+    assert!(matches!(first, ExecutionCommitResult::Committed { .. }));
+    assert_eq!(
+        port.read_output(&prepared.output_ref),
+        Some(b"durable-session-output".to_vec())
+    );
+
+    // Replaying the exact commit returns the stored result and never creates a
+    // second visible output.
+    assert_eq!(port.commit(commit).await, first);
+    assert_eq!(
+        port.prepare_output(output_preparation(
+            "commit.output",
+            "instance.output",
+            "invoke.output",
+        ))
+        .expect("replay output preparation"),
+        prepared
+    );
+}
+
+#[tokio::test]
+async fn output_prepare_and_commit_fail_closed_on_scope_escape_and_conflict() {
+    let port = InMemoryExecutionCommit::new();
+    let prepared = port
+        .prepare_output(output_preparation(
+            "commit.scope",
+            "instance.scope",
+            "invoke.scope",
+        ))
+        .expect("prepare scoped output");
+    let mut escaped = request("commit.scope", "instance.other", 0, None);
+    escaped.program_invocation_ref = ProgramInvocationRef::new("invoke.other");
+    escaped.tuple.output_refs = vec![prepared.to_json()];
+    assert!(matches!(
+        port.commit(escaped).await,
+        ExecutionCommitResult::OutcomeUnknown { .. }
+    ));
+    assert_eq!(
+        port.current_version(&ProgramInstanceRef::new("instance.other"))
+            .await,
+        0
+    );
+    assert_eq!(port.read_output(&prepared.output_ref), None);
+    let mut malformed = prepared.to_json();
+    malformed["content_digest"] = json!(digest('f'));
+    let mut malformed_request = request("commit.scope", "instance.scope", 0, None);
+    malformed_request.program_invocation_ref = ProgramInvocationRef::new("invoke.scope");
+    malformed_request.tuple.output_refs = vec![malformed];
+    assert!(matches!(
+        port.commit(malformed_request).await,
+        ExecutionCommitResult::OutcomeUnknown { .. }
+    ));
+    assert!(
+        port.reclaim_prepared_output(&prepared.output_ref)
+            .expect("reclaim orphan")
+    );
+
+    assert!(matches!(
+        port.commit(request("commit.base", "instance.output", 0, None))
+            .await,
+        ExecutionCommitResult::Committed { .. }
+    ));
+    let conflict = port
+        .prepare_output(output_preparation(
+            "commit.conflict-output",
+            "instance.output",
+            "invoke.output",
+        ))
+        .expect("prepare conflict output");
+    let mut conflicting = request("commit.conflict-output", "instance.output", 0, None);
+    conflicting.program_invocation_ref = ProgramInvocationRef::new("invoke.output");
+    conflicting.tuple.output_refs = vec![conflict.to_json()];
+    assert!(matches!(
+        port.commit(conflicting).await,
+        ExecutionCommitResult::CompareConflict {
+            current_program_state_version: 1
+        }
+    ));
+    assert_eq!(port.read_output(&conflict.output_ref), None);
+}
+
+#[test]
+fn output_refs_are_owner_local_and_cannot_escape_by_path() {
+    let port = InMemoryExecutionCommit::new();
+    assert!(port.reclaim_prepared_output("../../outside").is_err());
+    let too_large = output_preparation("commit.large-output", "instance.large", "invoke.large");
+    let mut too_large = too_large;
+    too_large.content = vec![b'x'; apxm_commit_local::MAX_OUTPUT_BYTES + 1];
+    assert!(matches!(
+        port.prepare_output(too_large),
+        Err(apxm_commit_local::CommitLocalError::OutputTooLarge { .. })
+    ));
+}
+
 #[tokio::test]
 async fn in_memory_owner_local_commit_resume_and_conflict() {
     let port = InMemoryExecutionCommit::new();
@@ -234,6 +361,39 @@ async fn filesystem_owner_local_survives_reopen_and_is_portable() {
             .current_version(&ProgramInstanceRef::new("instance.1"))
             .await,
         1
+    );
+}
+
+#[tokio::test]
+async fn filesystem_prepared_output_survives_reopen_after_commit() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let port = FilesystemExecutionCommit::open(dir.path()).expect("open");
+    let prepared = port
+        .prepare_output(output_preparation(
+            "commit.filesystem-output",
+            "instance.filesystem-output",
+            "invoke.filesystem-output",
+        ))
+        .expect("prepare filesystem output");
+    let mut commit = request(
+        "commit.filesystem-output",
+        "instance.filesystem-output",
+        0,
+        None,
+    );
+    commit.program_invocation_ref = ProgramInvocationRef::new("invoke.filesystem-output");
+    commit.tuple.output_refs = vec![prepared.to_json()];
+    assert!(matches!(
+        port.commit(commit).await,
+        ExecutionCommitResult::Committed { .. }
+    ));
+    let root = port.root().to_path_buf();
+    drop(port);
+
+    let reopened = FilesystemExecutionCommit::open(root).expect("reopen");
+    assert_eq!(
+        reopened.read_output(&prepared.output_ref),
+        Some(b"durable-session-output".to_vec())
     );
 }
 

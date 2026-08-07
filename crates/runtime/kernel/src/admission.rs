@@ -35,6 +35,14 @@ use crate::confinement::{
 /// Frozen schema id for the product-neutral Execution Admission envelope.
 pub const EXECUTION_ADMISSION_SCHEMA: &str = "apxm.execution-admission.v1";
 
+/// Frozen schema id for the product-neutral host-to-runtime invocation record.
+///
+/// This record is the transport-facing runtime authority used by the
+/// reference host. It is verified against the exact artifact, release,
+/// provenance, Port bindings, resource ceilings, and confinement descriptors
+/// before the immutable runtime bundle is constructed.
+pub const INVOCATION_ADMISSION_SCHEMA: &str = "apxm.invocation-admission.v1";
+
 /// Closed Port Contract schema IDs accepted by the runtime admission boundary.
 pub const EXECUTION_COMMIT_PORT_SCHEMA: &str = "apxm.execution-commit.v1";
 pub const CONFINEMENT_PORT_SCHEMA: &str = "apxm.confinement.v1";
@@ -43,6 +51,153 @@ pub const CAPABILITY_PORT_SCHEMA: &str = "apxm.capability-invocation.v1";
 pub const EXTERNAL_AGENT_PORT_SCHEMA: &str = "apxm.external-agent.v1";
 pub const DURABLE_EVENT_PORT_SCHEMA: &str = "apxm.durable-event.v1";
 pub const PROGRAM_COMPOSITION_PORT_SCHEMA: &str = "apxm.program-composition.v1";
+
+/// Exact product-neutral authority supplied by an APXM host transport.
+///
+/// The release, artifact, and provenance fields remain separate because each
+/// is checked against its own exact bytes at the runtime boundary.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InvocationAdmission {
+    pub schema_version: String,
+    pub invocation_id: String,
+    pub artifact_digest: String,
+    pub release_digest: String,
+    pub port_bindings_digest: String,
+    pub resource_ceiling_digest: String,
+    pub provenance_digest: String,
+}
+
+/// Fail-closed validation errors for the transport-facing invocation record.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum InvocationAdmissionError {
+    SchemaMismatch(String),
+    InvalidInvocationId,
+    MalformedDigest(&'static str),
+    ArtifactMismatch { expected: String, actual: String },
+    ReleaseMismatch { expected: String, actual: String },
+    ProvenanceMismatch { expected: String, actual: String },
+    PortBindingsDigestMismatch { expected: String, actual: String },
+    ResourceCeilingDigestMismatch { expected: String, actual: String },
+    ConfinementUnavailable,
+    UnconfinedForbidden,
+    InvalidRuntimeDescriptor(&'static str),
+}
+
+impl std::fmt::Display for InvocationAdmissionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SchemaMismatch(actual) => {
+                write!(
+                    f,
+                    "schema mismatch: expected {INVOCATION_ADMISSION_SCHEMA}, got {actual}"
+                )
+            }
+            Self::InvalidInvocationId => f.write_str("invocation_id is not a valid identifier"),
+            Self::MalformedDigest(field) => write!(f, "malformed digest: {field}"),
+            Self::ArtifactMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "artifact digest mismatch: expected {expected}, got {actual}"
+                )
+            }
+            Self::ReleaseMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "release digest mismatch: expected {expected}, got {actual}"
+                )
+            }
+            Self::ProvenanceMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "provenance digest mismatch: expected {expected}, got {actual}"
+                )
+            }
+            Self::PortBindingsDigestMismatch { expected, actual } => write!(
+                f,
+                "port binding digest mismatch: expected {expected}, got {actual}"
+            ),
+            Self::ResourceCeilingDigestMismatch { expected, actual } => write!(
+                f,
+                "resource ceiling digest mismatch: expected {expected}, got {actual}"
+            ),
+            Self::ConfinementUnavailable => f.write_str("confinement is not available"),
+            Self::UnconfinedForbidden => f.write_str("unconfined execution is forbidden"),
+            Self::InvalidRuntimeDescriptor(field) => {
+                write!(f, "invalid runtime descriptor: {field}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for InvocationAdmissionError {}
+
+impl InvocationAdmission {
+    /// Validate the published wire contract independently of any host state.
+    pub fn validate(&self) -> Result<(), InvocationAdmissionError> {
+        if self.schema_version != INVOCATION_ADMISSION_SCHEMA {
+            return Err(InvocationAdmissionError::SchemaMismatch(
+                self.schema_version.clone(),
+            ));
+        }
+        if !is_identifier(&self.invocation_id) {
+            return Err(InvocationAdmissionError::InvalidInvocationId);
+        }
+        for (field, value) in [
+            ("artifact_digest", self.artifact_digest.as_str()),
+            ("release_digest", self.release_digest.as_str()),
+            ("port_bindings_digest", self.port_bindings_digest.as_str()),
+            (
+                "resource_ceiling_digest",
+                self.resource_ceiling_digest.as_str(),
+            ),
+            ("provenance_digest", self.provenance_digest.as_str()),
+        ] {
+            if !is_digest(value) {
+                return Err(InvocationAdmissionError::MalformedDigest(field));
+            }
+        }
+        Ok(())
+    }
+
+    /// Verify this record against the immutable digests published by a host.
+    pub fn verify_against(
+        &self,
+        release_digest: &str,
+        port_bindings_digest: &str,
+        resource_ceiling_digest: &str,
+    ) -> Result<(), InvocationAdmissionError> {
+        self.validate()?;
+        if self.release_digest != release_digest {
+            return Err(InvocationAdmissionError::ReleaseMismatch {
+                expected: release_digest.into(),
+                actual: self.release_digest.clone(),
+            });
+        }
+        if self.port_bindings_digest != port_bindings_digest {
+            return Err(InvocationAdmissionError::PortBindingsDigestMismatch {
+                expected: port_bindings_digest.into(),
+                actual: self.port_bindings_digest.clone(),
+            });
+        }
+        if self.resource_ceiling_digest != resource_ceiling_digest {
+            return Err(InvocationAdmissionError::ResourceCeilingDigestMismatch {
+                expected: resource_ceiling_digest.into(),
+                actual: self.resource_ceiling_digest.clone(),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Hash one serialized APXM descriptor using canonical JSON object ordering.
+pub fn digest_serializable<T: Serialize + ?Sized>(
+    value: &T,
+) -> Result<String, InvocationAdmissionError> {
+    let value = serde_json::to_value(value)
+        .map_err(|_| InvocationAdmissionError::InvalidRuntimeDescriptor("serialization"))?;
+    Ok(content_digest(canonical_json(&value).as_bytes()))
+}
 
 /// The only signature algorithm the closed envelope admits.
 const ED25519: &str = "ed25519";
@@ -428,6 +583,99 @@ pub struct VerifiedExecutionAdmission {
     pub policy_digest: String,
 }
 
+/// Inputs verified directly from one transport Invocation Admission.
+#[derive(Clone, Debug)]
+pub struct VerifiedInvocationAdmission {
+    pub admission: InvocationAdmission,
+    pub port_bindings: Vec<ExactPortBinding>,
+    pub bundle_spec: PortBundleSpec,
+    pub resource_ceilings: ResourceCeilings,
+    pub confinement_type: ConfinementType,
+    pub sandbox_digest: String,
+    pub policy_digest: String,
+}
+
+/// Verify the transport authority against the bytes and exact runtime
+/// descriptors it is claiming. No signing key, nonce ledger, or synthetic
+/// admission is introduced by this path.
+pub fn verify_invocation_admission(
+    admission: &InvocationAdmission,
+    artifact_bytes: &[u8],
+    release_bytes: &[u8],
+    provenance_bytes: &[u8],
+    admitted_port_bindings: &[AdmittedPortBinding],
+    resource_ceilings: ResourceCeilings,
+    confinement: &AdmittedConfinement,
+) -> Result<VerifiedInvocationAdmission, InvocationAdmissionError> {
+    admission.validate()?;
+    let artifact_actual = content_digest(artifact_bytes);
+    if admission.artifact_digest != artifact_actual {
+        return Err(InvocationAdmissionError::ArtifactMismatch {
+            expected: artifact_actual,
+            actual: admission.artifact_digest.clone(),
+        });
+    }
+    let release_actual = content_digest(release_bytes);
+    if admission.release_digest != release_actual {
+        return Err(InvocationAdmissionError::ReleaseMismatch {
+            expected: release_actual,
+            actual: admission.release_digest.clone(),
+        });
+    }
+    let provenance_actual = content_digest(provenance_bytes);
+    if admission.provenance_digest != provenance_actual {
+        return Err(InvocationAdmissionError::ProvenanceMismatch {
+            expected: provenance_actual,
+            actual: admission.provenance_digest.clone(),
+        });
+    }
+    let port_actual = digest_serializable(admitted_port_bindings)?;
+    if admission.port_bindings_digest != port_actual {
+        return Err(InvocationAdmissionError::PortBindingsDigestMismatch {
+            expected: port_actual,
+            actual: admission.port_bindings_digest.clone(),
+        });
+    }
+    let ceilings_actual = digest_serializable(&resource_ceilings)?;
+    if admission.resource_ceiling_digest != ceilings_actual {
+        return Err(InvocationAdmissionError::ResourceCeilingDigestMismatch {
+            expected: ceilings_actual,
+            actual: admission.resource_ceiling_digest.clone(),
+        });
+    }
+    if confinement
+        .confinement_type
+        .eq_ignore_ascii_case("unconfined")
+        || confinement.sandbox_digest == "unconfined"
+    {
+        return Err(InvocationAdmissionError::UnconfinedForbidden);
+    }
+    if !is_digest(&confinement.sandbox_digest) || !is_digest(&confinement.policy_digest) {
+        return Err(InvocationAdmissionError::InvalidRuntimeDescriptor(
+            "confinement digest",
+        ));
+    }
+    let confinement_type = parse_confinement_type(&confinement.confinement_type)
+        .map_err(|_| InvocationAdmissionError::InvalidRuntimeDescriptor("confinement type"))?;
+    let (port_bindings, bundle_spec) = resolve_exact_bindings(admitted_port_bindings)
+        .map_err(|_| InvocationAdmissionError::InvalidRuntimeDescriptor("port bindings"))?;
+    if !port_bindings
+        .iter()
+        .any(|binding| binding.slot == PortSlot::Confinement)
+    {
+        return Err(InvocationAdmissionError::ConfinementUnavailable);
+    }
+    Ok(VerifiedInvocationAdmission {
+        admission: admission.clone(),
+        port_bindings,
+        bundle_spec,
+        resource_ceilings,
+        confinement_type,
+        sandbox_digest: confinement.sandbox_digest.clone(),
+        policy_digest: confinement.policy_digest.clone(),
+    })
+}
+
 /// The only runtime construction result produced from a verified admission.
 ///
 /// The composition root supplies implementations, but this boundary verifies
@@ -435,9 +683,15 @@ pub struct VerifiedExecutionAdmission {
 /// admission and attests the exact confinement sandbox and policy before the
 /// bundle can be used by an instance.
 pub struct RuntimeAdmission {
-    verified: VerifiedExecutionAdmission,
+    authority: RuntimeAuthority,
     bundle: PortBundle,
     confinement_attestation: ConfinementAttestation,
+    resource_ceilings: ResourceCeilings,
+}
+
+enum RuntimeAuthority {
+    Signed(VerifiedExecutionAdmission),
+    Invocation(VerifiedInvocationAdmission),
 }
 
 /// Why an exact runtime admission could not be constructed. Every variant fails
@@ -505,6 +759,44 @@ impl RuntimeAdmission {
         host_id: impl Into<String>,
         execution_id: impl Into<String>,
     ) -> Result<Self, RuntimeAdmissionError> {
+        let resource_ceilings = verified.admission.resource_ceilings.clone();
+        Self::admit_authority(
+            RuntimeAuthority::Signed(verified),
+            resource_ceilings,
+            entries,
+            host_id,
+            execution_id,
+        )
+        .await
+    }
+
+    /// Construct the immutable runtime closure directly from the verified
+    /// transport Invocation Admission. This path preserves that authority and
+    /// does not mint a second signed envelope or replay nonce.
+    pub async fn admit_invocation(
+        verified: VerifiedInvocationAdmission,
+        entries: Vec<(ExactPortBinding, PortImplementation)>,
+        host_id: impl Into<String>,
+        execution_id: impl Into<String>,
+    ) -> Result<Self, RuntimeAdmissionError> {
+        let resource_ceilings = verified.resource_ceilings.clone();
+        Self::admit_authority(
+            RuntimeAuthority::Invocation(verified),
+            resource_ceilings,
+            entries,
+            host_id,
+            execution_id,
+        )
+        .await
+    }
+
+    async fn admit_authority(
+        authority: RuntimeAuthority,
+        resource_ceilings: ResourceCeilings,
+        entries: Vec<(ExactPortBinding, PortImplementation)>,
+        host_id: impl Into<String>,
+        execution_id: impl Into<String>,
+    ) -> Result<Self, RuntimeAdmissionError> {
         let host_id = host_id.into();
         let execution_id = execution_id.into();
         if host_id.trim().is_empty() {
@@ -514,9 +806,26 @@ impl RuntimeAdmission {
             return Err(RuntimeAdmissionError::EmptyRuntimeIdentity("execution_id"));
         }
 
+        let (port_bindings, bundle_spec, confinement_type, sandbox_digest, policy_digest) =
+            match &authority {
+                RuntimeAuthority::Signed(verified) => (
+                    &verified.port_bindings,
+                    &verified.bundle_spec,
+                    verified.confinement_type,
+                    &verified.sandbox_digest,
+                    &verified.policy_digest,
+                ),
+                RuntimeAuthority::Invocation(verified) => (
+                    &verified.port_bindings,
+                    &verified.bundle_spec,
+                    verified.confinement_type,
+                    &verified.sandbox_digest,
+                    &verified.policy_digest,
+                ),
+            };
+
         for (supplied, _) in &entries {
-            let expected = verified
-                .port_bindings
+            let expected = port_bindings
                 .iter()
                 .find(|admitted| admitted.slot == supplied.slot)
                 .ok_or(RuntimeAdmissionError::BindingMismatch(supplied.slot))?;
@@ -525,7 +834,7 @@ impl RuntimeAdmission {
             }
         }
 
-        let bundle = PortBundle::construct(&verified.bundle_spec, entries)?;
+        let bundle = PortBundle::construct(bundle_spec, entries)?;
         let confinement = bundle
             .confinement()
             .ok_or(AdmissionError::ConfinementUnavailable)?
@@ -534,9 +843,9 @@ impl RuntimeAdmission {
             .attest(ConfinementRequest {
                 host_id: host_id.clone(),
                 execution_id: execution_id.clone(),
-                confinement_type: verified.confinement_type,
-                sandbox_digest: verified.sandbox_digest.clone(),
-                policy_digest: verified.policy_digest.clone(),
+                confinement_type,
+                sandbox_digest: sandbox_digest.clone(),
+                policy_digest: policy_digest.clone(),
             })
             .await?;
 
@@ -546,15 +855,15 @@ impl RuntimeAdmission {
         if attestation.execution_id != execution_id {
             return Err(RuntimeAdmissionError::AttestationMismatch("execution_id"));
         }
-        if attestation.confinement_type != verified.confinement_type {
+        if attestation.confinement_type != confinement_type {
             return Err(RuntimeAdmissionError::AttestationMismatch(
                 "confinement_type",
             ));
         }
-        if attestation.sandbox_digest != verified.sandbox_digest {
+        if attestation.sandbox_digest != *sandbox_digest {
             return Err(RuntimeAdmissionError::AttestationMismatch("sandbox_digest"));
         }
-        if attestation.policy_digest != verified.policy_digest {
+        if attestation.policy_digest != *policy_digest {
             return Err(RuntimeAdmissionError::AttestationMismatch("policy_digest"));
         }
         if attestation.attestation_id.trim().is_empty() {
@@ -565,15 +874,34 @@ impl RuntimeAdmission {
         }
 
         Ok(Self {
-            verified,
+            authority,
             bundle,
             confinement_attestation: attestation,
+            resource_ceilings,
         })
     }
 
     #[must_use]
     pub fn verified(&self) -> &VerifiedExecutionAdmission {
-        &self.verified
+        match &self.authority {
+            RuntimeAuthority::Signed(verified) => verified,
+            RuntimeAuthority::Invocation(_) => {
+                panic!("signed admission requested from invocation authority")
+            }
+        }
+    }
+
+    #[must_use]
+    pub fn invocation_admission(&self) -> Option<&InvocationAdmission> {
+        match &self.authority {
+            RuntimeAuthority::Signed(_) => None,
+            RuntimeAuthority::Invocation(verified) => Some(&verified.admission),
+        }
+    }
+
+    #[must_use]
+    pub fn resource_ceilings(&self) -> &ResourceCeilings {
+        &self.resource_ceilings
     }
 
     #[must_use]

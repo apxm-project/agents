@@ -10,15 +10,19 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use apxm_program::air::AirModule;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use apxm_cli::canonical_execute::execute_canonical_air;
+use apxm_cli::canonical_execute::{
+    CanonicalRuntime, reference_host_port_bindings_digest, reference_host_resource_ceiling_digest,
+    reference_host_runtime_descriptor,
+};
+use apxm_kernel::{INVOCATION_ADMISSION_SCHEMA, InvocationAdmission, verify_invocation_admission};
 
 const HOST_SCHEMA: &str = "apxm.runtime.host.v1";
 const REQUEST_SCHEMA: &str = "apxm.runtime.host-request.v1";
-const ADMISSION_SCHEMA: &str = "apxm.invocation-admission.v1";
+const ADMISSION_SCHEMA: &str = INVOCATION_ADMISSION_SCHEMA;
 const STARTUP_INPUT_SCHEMA: &str = "apxm.reference-host-startup-input.v1";
 const IN_FLIGHT_DRAIN_PROBE: &str = "drain_shutdown_after_in_flight_completion";
 const IN_FLIGHT_DRAIN_PROBE_SCHEMA: &str = "apxm.reference-host.lifecycle-probe.v1";
@@ -66,17 +70,7 @@ struct Request {
     air: Option<Value>,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Admission {
-    schema_version: String,
-    invocation_id: String,
-    artifact_digest: String,
-    release_digest: String,
-    port_bindings_digest: String,
-    resource_ceiling_digest: String,
-    provenance_digest: String,
-}
+type Admission = InvocationAdmission;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -101,7 +95,7 @@ struct StartupManifestRef {
     digest: String,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct StartupInputProvenance {
     owner_revision: String,
@@ -115,6 +109,9 @@ struct AdmittedDigests {
     release_digest: String,
     port_bindings_digest: String,
     resource_ceiling_digest: String,
+    release_bytes: Vec<u8>,
+    provenance_bytes: Vec<u8>,
+    provenance_digest: String,
 }
 
 struct Host {
@@ -123,11 +120,35 @@ struct Host {
     admission_revoked: bool,
     last_runtime_evidence: Option<Value>,
     admitted_digests: AdmittedDigests,
+    runtime: CanonicalRuntime,
+    replayed_invocations: std::collections::BTreeMap<String, Value>,
 }
 
 struct PreparedInvocation {
-    invocation_id: String,
+    admission: Admission,
     air: AirModule,
+}
+
+fn admission_error_code(error: &apxm_kernel::InvocationAdmissionError) -> &'static str {
+    match error {
+        apxm_kernel::InvocationAdmissionError::SchemaMismatch(_) => "invalid_admission_schema",
+        apxm_kernel::InvocationAdmissionError::InvalidInvocationId => "invalid_invocation_id",
+        apxm_kernel::InvocationAdmissionError::MalformedDigest(_) => "invalid_admission_digest",
+        apxm_kernel::InvocationAdmissionError::ArtifactMismatch { .. } => "artifact_mismatch",
+        apxm_kernel::InvocationAdmissionError::ReleaseMismatch { .. } => "release_mismatch",
+        apxm_kernel::InvocationAdmissionError::ProvenanceMismatch { .. } => "provenance_mismatch",
+        apxm_kernel::InvocationAdmissionError::PortBindingsDigestMismatch { .. } => {
+            "port_bindings_mismatch"
+        }
+        apxm_kernel::InvocationAdmissionError::ResourceCeilingDigestMismatch { .. } => {
+            "resource_ceiling_mismatch"
+        }
+        apxm_kernel::InvocationAdmissionError::ConfinementUnavailable => "confinement_unavailable",
+        apxm_kernel::InvocationAdmissionError::UnconfinedForbidden => "unconfined_forbidden",
+        apxm_kernel::InvocationAdmissionError::InvalidRuntimeDescriptor(_) => {
+            "invalid_runtime_descriptor"
+        }
+    }
 }
 
 impl Host {
@@ -138,6 +159,8 @@ impl Host {
             admission_revoked: false,
             last_runtime_evidence: None,
             admitted_digests,
+            runtime: CanonicalRuntime::new(),
+            replayed_invocations: std::collections::BTreeMap::new(),
         }
     }
 
@@ -245,37 +268,12 @@ impl Host {
                 format!("host state is {}", self.state.as_str()),
             ));
         }
-        if admission.schema_version != ADMISSION_SCHEMA {
-            return Err(self.reject(
-                "invalid_admission_schema",
-                "exact apxm.invocation-admission.v1 is required",
-            ));
-        }
-        if admission.invocation_id.is_empty() {
-            return Err(self.reject("missing_invocation_id", "invocation_id is required"));
-        }
-        if admission.artifact_digest != self.admitted_digests.release_digest
-            || admission.provenance_digest != admission.artifact_digest
-        {
-            return Err(self.reject(
-                "provenance_mismatch",
-                "artifact and provenance digests must match the admitted release",
-            ));
-        }
-        if admission.release_digest != self.admitted_digests.release_digest {
-            return Err(self.reject("release_mismatch", "release digest is not admitted"));
-        }
-        if admission.port_bindings_digest != self.admitted_digests.port_bindings_digest {
-            return Err(self.reject(
-                "port_bindings_mismatch",
-                "port binding digest is not admitted",
-            ));
-        }
-        if admission.resource_ceiling_digest != self.admitted_digests.resource_ceiling_digest {
-            return Err(self.reject(
-                "resource_ceiling_mismatch",
-                "resource ceiling digest is not admitted",
-            ));
+        if let Err(error) = admission.verify_against(
+            &self.admitted_digests.release_digest,
+            &self.admitted_digests.port_bindings_digest,
+            &self.admitted_digests.resource_ceiling_digest,
+        ) {
+            return Err(self.reject(admission_error_code(&error), error.to_string()));
         }
         Ok(())
     }
@@ -301,30 +299,47 @@ impl Host {
         if !air.verify().is_accepted() {
             return Err(self.reject("invalid_air", "canonical AIR verification failed"));
         }
+        let descriptor = reference_host_runtime_descriptor();
+        let artifact_bytes = serde_json::to_vec(&air)
+            .map_err(|error| self.reject("invalid_air", error.to_string()))?;
+        verify_invocation_admission(
+            &admission,
+            &artifact_bytes,
+            &self.admitted_digests.release_bytes,
+            &self.admitted_digests.provenance_bytes,
+            &descriptor.port_bindings,
+            descriptor.resource_ceilings,
+            &descriptor.confinement,
+        )
+        .map_err(|error| self.reject(admission_error_code(&error), error.to_string()))?;
         self.in_flight = 1;
-        Ok(PreparedInvocation {
-            invocation_id: admission.invocation_id,
-            air,
-        })
+        Ok(PreparedInvocation { admission, air })
     }
 
     fn complete_invocation(
         &mut self,
         invocation_id: String,
+        artifact_digest: String,
         execution: std::result::Result<Value, String>,
     ) -> Value {
         let result = match execution {
             Ok(output) => {
                 let runtime_evidence =
                     self.runtime_evidence(&invocation_id, "invocation.committed");
+                let mut runtime_evidence = runtime_evidence;
+                runtime_evidence["program_identity"]["artifact_digest"] =
+                    Value::String(artifact_digest);
                 self.last_runtime_evidence = Some(runtime_evidence.clone());
-                json!({
+                let response = json!({
                     "schema_version": HOST_SCHEMA,
                     "status": "committed",
-                    "invocation_id": invocation_id,
+                    "invocation_id": invocation_id.clone(),
                     "result": output,
                     "runtime_evidence": runtime_evidence,
-                })
+                });
+                self.replayed_invocations
+                    .insert(invocation_id, response.clone());
+                response
             }
             Err(error) => json!({
                 "schema_version": HOST_SCHEMA,
@@ -341,18 +356,49 @@ impl Host {
     }
 
     async fn invoke(&mut self, request: Request) -> Value {
+        if let Some(invocation_id) = request
+            .admission
+            .as_ref()
+            .map(|admission| admission.invocation_id.as_str())
+        {
+            if let Some(response) = self.replayed_invocations.get(invocation_id) {
+                return response.clone();
+            }
+        }
         let prepared = match self.prepare_invocation(request) {
             Ok(prepared) => prepared,
             Err(rejection) => return rejection,
         };
-        let execution = execute_canonical_air(prepared.air)
+        let invocation_id = prepared.admission.invocation_id.clone();
+        let artifact_digest = prepared.admission.artifact_digest.clone();
+        let execution = self
+            .runtime
+            .execute(
+                prepared.air,
+                &prepared.admission,
+                &self.admitted_digests.release_bytes,
+                &self.admitted_digests.provenance_bytes,
+            )
             .await
             .map_err(|error| error.to_string());
-        self.complete_invocation(prepared.invocation_id, execution)
+        self.complete_invocation(invocation_id, artifact_digest, execution)
     }
 
     async fn probe_in_flight_drain(&mut self) -> Result<Value> {
         let probe_invocation_id = "probe.invocation.1";
+        let probe_air = json!({
+            "schema_version": "apxm.air.v1",
+            "semantic_operations": [],
+            "structural_ir": [],
+            "context_flow": [],
+            "source_map": {
+                "schema_version": "apxm.source-map.v1",
+                "source_language": "python",
+                "node_spans": [],
+                "region_annotations": []
+            }
+        });
+        let probe_artifact_digest = serialized_air_digest(&probe_air)?;
         let prepared = self
             .prepare_invocation(Request {
                 schema_version: REQUEST_SCHEMA.into(),
@@ -360,24 +406,13 @@ impl Host {
                 admission: Some(Admission {
                     schema_version: ADMISSION_SCHEMA.into(),
                     invocation_id: probe_invocation_id.into(),
-                    artifact_digest: self.admitted_digests.release_digest.clone(),
+                    artifact_digest: probe_artifact_digest,
                     release_digest: self.admitted_digests.release_digest.clone(),
                     port_bindings_digest: self.admitted_digests.port_bindings_digest.clone(),
                     resource_ceiling_digest: self.admitted_digests.resource_ceiling_digest.clone(),
-                    provenance_digest: self.admitted_digests.release_digest.clone(),
+                    provenance_digest: self.admitted_digests.provenance_digest.clone(),
                 }),
-                air: Some(json!({
-                    "schema_version": "apxm.air.v1",
-                    "semantic_operations": [],
-                    "structural_ir": [],
-                    "context_flow": [],
-                    "source_map": {
-                        "schema_version": "apxm.source-map.v1",
-                        "source_language": "python",
-                        "node_spans": [],
-                        "region_annotations": []
-                    }
-                })),
+                air: Some(probe_air),
             })
             .map_err(|rejection| anyhow!("{rejection}"))?;
         let in_flight_before_drain = self.readiness();
@@ -387,10 +422,20 @@ impl Host {
             admission: None,
             air: None,
         });
-        let execution = execute_canonical_air(prepared.air)
+        let invocation_id = prepared.admission.invocation_id.clone();
+        let artifact_digest = prepared.admission.artifact_digest.clone();
+        let execution = self
+            .runtime
+            .execute(
+                prepared.air,
+                &prepared.admission,
+                &self.admitted_digests.release_bytes,
+                &self.admitted_digests.provenance_bytes,
+            )
             .await
             .map_err(|error| error.to_string());
-        let completion_response = self.complete_invocation(prepared.invocation_id, execution);
+        let completion_response =
+            self.complete_invocation(invocation_id, artifact_digest, execution);
         let terminal_readiness = self.readiness();
         Ok(json!({
             "schema_version": IN_FLIGHT_DRAIN_PROBE_SCHEMA,
@@ -502,10 +547,18 @@ fn validate_exact_digest(field: &str, digest: &str) -> Result<()> {
 }
 
 fn file_digest(path: &Path) -> Result<String> {
-    Ok(format!(
-        "sha256:{:x}",
-        Sha256::digest(fs::read(path).with_context(|| format!("read {}", path.display()))?)
+    Ok(bytes_digest(
+        &fs::read(path).with_context(|| format!("read {}", path.display()))?,
     ))
+}
+
+fn bytes_digest(bytes: &[u8]) -> String {
+    format!("sha256:{:x}", Sha256::digest(bytes))
+}
+
+fn serialized_air_digest(value: &Value) -> Result<String> {
+    let air: AirModule = serde_json::from_value(value.clone()).context("parse canonical AIR")?;
+    Ok(bytes_digest(&serde_json::to_vec(&air)?))
 }
 
 fn canonical_release_manifest_source_path() -> &'static Path {
@@ -588,12 +641,13 @@ fn load_startup_input(path: &Path) -> Result<AdmittedDigests> {
             manifest_path.display()
         );
     }
-    let actual_manifest_digest = file_digest(&manifest_path).with_context(|| {
+    let release_bytes = fs::read(&manifest_path).with_context(|| {
         format!(
             "load reference-host release manifest {}",
             manifest_path.display()
         )
     })?;
+    let actual_manifest_digest = format!("sha256:{:x}", Sha256::digest(&release_bytes));
     if actual_manifest_digest != startup.reference_host_release_manifest.digest {
         bail!(
             "reference-host release manifest digest mismatch: expected {}, got {}",
@@ -601,11 +655,39 @@ fn load_startup_input(path: &Path) -> Result<AdmittedDigests> {
             actual_manifest_digest
         );
     }
+    if startup.release_digest != actual_manifest_digest {
+        bail!(
+            "release digest must match the exact reference-host release manifest: expected {}, got {}",
+            actual_manifest_digest,
+            startup.release_digest
+        );
+    }
+    let expected_port_bindings_digest = reference_host_port_bindings_digest();
+    if startup.port_bindings_digest != expected_port_bindings_digest {
+        bail!(
+            "startup port bindings digest is not the exact APXM reference-host binding set: expected {}, got {}",
+            expected_port_bindings_digest,
+            startup.port_bindings_digest
+        );
+    }
+    let expected_resource_ceiling_digest = reference_host_resource_ceiling_digest();
+    if startup.resource_ceiling_digest != expected_resource_ceiling_digest {
+        bail!(
+            "startup resource ceiling digest is not the exact APXM reference-host ceiling set: expected {}, got {}",
+            expected_resource_ceiling_digest,
+            startup.resource_ceiling_digest
+        );
+    }
+    let provenance_bytes = serde_json::to_vec(&startup.provenance)?;
+    let provenance_digest = bytes_digest(&provenance_bytes);
 
     Ok(AdmittedDigests {
         release_digest: startup.release_digest,
         port_bindings_digest: startup.port_bindings_digest,
         resource_ceiling_digest: startup.resource_ceiling_digest,
+        release_bytes,
+        provenance_bytes,
+        provenance_digest,
     })
 }
 
@@ -680,22 +762,31 @@ mod tests {
     }
 
     fn startup_digests() -> AdmittedDigests {
+        let release_bytes = b"reference-release-v1".to_vec();
+        let provenance_bytes = b"reference-provenance-v1".to_vec();
         AdmittedDigests {
-            release_digest: exact_digest("release"),
-            port_bindings_digest: exact_digest("port-bindings"),
-            resource_ceiling_digest: exact_digest("resource-ceiling"),
+            release_digest: bytes_digest(&release_bytes),
+            port_bindings_digest: reference_host_port_bindings_digest(),
+            resource_ceiling_digest: reference_host_resource_ceiling_digest(),
+            provenance_digest: bytes_digest(&provenance_bytes),
+            release_bytes,
+            provenance_bytes,
         }
     }
 
     fn admission(digests: &AdmittedDigests) -> Admission {
+        let air = minimal_air();
+        let air_module: AirModule =
+            serde_json::from_value(air).expect("minimal AIR deserialization");
+        let artifact_bytes = serde_json::to_vec(&air_module).expect("minimal AIR serialization");
         Admission {
             schema_version: ADMISSION_SCHEMA.into(),
             invocation_id: "invocation.1".into(),
-            artifact_digest: digests.release_digest.clone(),
+            artifact_digest: bytes_digest(&artifact_bytes),
             release_digest: digests.release_digest.clone(),
             port_bindings_digest: digests.port_bindings_digest.clone(),
             resource_ceiling_digest: digests.resource_ceiling_digest.clone(),
-            provenance_digest: digests.release_digest.clone(),
+            provenance_digest: digests.provenance_digest.clone(),
         }
     }
 
@@ -909,6 +1000,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn duplicate_invocation_replays_the_same_receipt_without_a_second_commit() {
+        let digests = startup_digests();
+        let mut host = Host::new(digests.clone());
+        host.mark_ready();
+        let request = || Request {
+            schema_version: REQUEST_SCHEMA.into(),
+            operation: "invoke".into(),
+            admission: Some(admission(&digests)),
+            air: Some(minimal_air()),
+        };
+
+        let first = host.handle(request()).await;
+        let replay = host.handle(request()).await;
+        assert_eq!(first["status"], "committed");
+        assert_eq!(replay, first, "replay must return the committed receipt");
+        assert_eq!(host.in_flight, 0);
+    }
+
+    #[tokio::test]
     async fn shutdown_is_terminal_until_explicit_restart() {
         let mut host = Host::new(startup_digests());
         host.mark_ready();
@@ -1091,9 +1201,9 @@ mod tests {
                     "path": relocated_manifest,
                     "digest": file_digest(&relocated_manifest).expect("manifest digest"),
                 },
-                "release_digest": exact_digest("release"),
-                "port_bindings_digest": exact_digest("port-bindings"),
-                "resource_ceiling_digest": exact_digest("resource-ceiling"),
+                "release_digest": file_digest(&relocated_manifest).expect("manifest digest"),
+                "port_bindings_digest": reference_host_port_bindings_digest(),
+                "resource_ceiling_digest": reference_host_resource_ceiling_digest(),
                 "provenance": {
                     "owner_revision": "a".repeat(40),
                     "descriptor_semantic_digest": exact_digest("descriptor-semantic"),
@@ -1107,11 +1217,17 @@ mod tests {
         .expect("startup file");
 
         let admitted = load_startup_input(&startup_path).expect("relocated startup input");
-        assert_eq!(admitted.release_digest, exact_digest("release"));
-        assert_eq!(admitted.port_bindings_digest, exact_digest("port-bindings"));
+        assert_eq!(
+            admitted.release_digest,
+            file_digest(&relocated_manifest).expect("manifest digest")
+        );
+        assert_eq!(
+            admitted.port_bindings_digest,
+            reference_host_port_bindings_digest()
+        );
         assert_eq!(
             admitted.resource_ceiling_digest,
-            exact_digest("resource-ceiling")
+            reference_host_resource_ceiling_digest()
         );
     }
 

@@ -6,6 +6,11 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
+use apxm_cli::canonical_execute::{
+    reference_host_port_bindings_digest, reference_host_resource_ceiling_digest,
+};
+use apxm_program::air::AirModule;
+use serde::Serialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
@@ -86,12 +91,32 @@ fn fixture<'a>(vector: &'a Value, name: &str) -> &'a Value {
     &vector["fixtures"][name]
 }
 
-fn write_startup_input() -> (TempDir, PathBuf, String, String, String) {
+#[derive(Serialize)]
+struct StartupProvenance {
+    owner_revision: String,
+    descriptor_semantic_digest: String,
+    descriptor_exact_checksum: String,
+    dirty: bool,
+}
+
+fn bytes_digest(bytes: &[u8]) -> String {
+    format!("sha256:{:x}", Sha256::digest(bytes))
+}
+
+fn write_startup_input() -> (TempDir, PathBuf, String, String, String, String) {
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let startup_path = temp_dir.path().join("startup-input.json");
-    let release_digest = exact_digest("reference-host-release");
-    let port_bindings_digest = exact_digest("reference-host-port-bindings");
-    let resource_ceiling_digest = exact_digest("reference-host-resource-ceiling");
+    let release_digest = release_manifest_digest();
+    let port_bindings_digest = reference_host_port_bindings_digest();
+    let resource_ceiling_digest = reference_host_resource_ceiling_digest();
+    let provenance = StartupProvenance {
+        owner_revision: "a".repeat(40),
+        descriptor_semantic_digest: exact_digest("descriptor-semantic"),
+        descriptor_exact_checksum: exact_digest("descriptor-exact"),
+        dirty: false,
+    };
+    let provenance_bytes = serde_json::to_vec(&provenance).expect("provenance json");
+    let provenance_digest = bytes_digest(&provenance_bytes);
     fs::write(
         &startup_path,
         serde_json::to_string(&json!({
@@ -107,12 +132,7 @@ fn write_startup_input() -> (TempDir, PathBuf, String, String, String) {
             "release_digest": release_digest,
             "port_bindings_digest": port_bindings_digest,
             "resource_ceiling_digest": resource_ceiling_digest,
-            "provenance": {
-                "owner_revision": "a".repeat(40),
-                "descriptor_semantic_digest": exact_digest("descriptor-semantic"),
-                "descriptor_exact_checksum": exact_digest("descriptor-exact"),
-                "dirty": false
-            },
+            "provenance": provenance,
             "fail_closed_on": ["missing", "placeholder", "dirty", "mismatched", "implicit-default"],
         }))
         .expect("startup json"),
@@ -124,6 +144,7 @@ fn write_startup_input() -> (TempDir, PathBuf, String, String, String) {
         release_digest,
         port_bindings_digest,
         resource_ceiling_digest,
+        provenance_digest,
     )
 }
 
@@ -135,12 +156,19 @@ struct HostProcess {
     release_digest: String,
     port_bindings_digest: String,
     resource_ceiling_digest: String,
+    provenance_digest: String,
 }
 
 impl HostProcess {
     fn spawn() -> Self {
-        let (temp_dir, startup_path, release_digest, port_bindings_digest, resource_ceiling_digest) =
-            write_startup_input();
+        let (
+            temp_dir,
+            startup_path,
+            release_digest,
+            port_bindings_digest,
+            resource_ceiling_digest,
+            provenance_digest,
+        ) = write_startup_input();
         let mut child = Command::new(env!("CARGO_BIN_EXE_apxm-reference-host"))
             .arg("--startup-input")
             .arg(&startup_path)
@@ -158,6 +186,7 @@ impl HostProcess {
             release_digest,
             port_bindings_digest,
             resource_ceiling_digest,
+            provenance_digest,
         }
     }
 
@@ -188,16 +217,18 @@ fn readiness(host: &mut HostProcess) -> Value {
     host.request(&request("readiness"))
 }
 
-fn materialize_admission(host: &HostProcess, fixture: &Value) -> Value {
+fn materialize_admission(host: &HostProcess, fixture: &Value, air: &Value) -> Value {
     let mut admission = fixture.clone();
-    let provenance_matches_artifact =
+    let provenance_matches_fixture_artifact =
         admission["provenance_digest"] == admission["artifact_digest"];
-    admission["artifact_digest"] = Value::String(host.release_digest.clone());
+    let air: AirModule = serde_json::from_value(air.clone()).expect("admitted AIR fixture");
+    let artifact_bytes = serde_json::to_vec(&air).expect("admitted AIR serialization");
+    admission["artifact_digest"] = Value::String(bytes_digest(&artifact_bytes));
     admission["release_digest"] = Value::String(host.release_digest.clone());
     admission["port_bindings_digest"] = Value::String(host.port_bindings_digest.clone());
     admission["resource_ceiling_digest"] = Value::String(host.resource_ceiling_digest.clone());
-    if provenance_matches_artifact {
-        admission["provenance_digest"] = Value::String(host.release_digest.clone());
+    if provenance_matches_fixture_artifact {
+        admission["provenance_digest"] = Value::String(host.provenance_digest.clone());
     }
     admission
 }
@@ -320,14 +351,22 @@ fn invoke_parity_vectors_execute_live_cases() {
         let case = case_by_name(&vector, &case_name);
         let expected = &case["expected"];
         let mut host = HostProcess::spawn();
+        let air_fixture_name = case["air_fixture"].as_str().expect("air fixture");
+        let air = fixture(&vector, air_fixture_name).clone();
+        let admission_air = if case_name == "invalid_air_failure" {
+            fixture(&vector, "minimal_valid_air")
+        } else {
+            &air
+        };
         let response = host.request(&json!({
             "schema_version": "apxm.runtime.host-request.v1",
             "operation": "invoke",
             "admission": materialize_admission(
                 &host,
                 fixture(&vector, case["admission_fixture"].as_str().expect("admission fixture")),
+                admission_air,
             ),
-            "air": fixture(&vector, case["air_fixture"].as_str().expect("air fixture")).clone(),
+            "air": air,
         }));
 
         match expected["parity_outcome"]
@@ -398,7 +437,7 @@ fn lifecycle_parity_vectors_execute_live_cases() {
                 host.shutdown();
             }
             "drain_shutdown_after_in_flight_completion" => {
-                let (_temp_dir, startup_path, _, _, _) = write_startup_input();
+                let (_temp_dir, startup_path, _, _, _, _) = write_startup_input();
                 let output = Command::new(env!("CARGO_BIN_EXE_apxm-reference-host"))
                     .arg("--startup-input")
                     .arg(startup_path)
@@ -451,6 +490,7 @@ fn lifecycle_parity_vectors_execute_live_cases() {
                     "admission": materialize_admission(
                         &host,
                         fixture(&invoke, "valid_exact_admission"),
+                        fixture(&invoke, "minimal_valid_air"),
                     ),
                     "air": fixture(&invoke, "minimal_valid_air").clone(),
                 }));
@@ -489,6 +529,7 @@ fn lifecycle_parity_vectors_execute_live_cases() {
                     "admission": materialize_admission(
                         &host,
                         fixture(&invoke, "valid_exact_admission"),
+                        fixture(&invoke, "minimal_valid_air"),
                     ),
                     "air": fixture(&invoke, "minimal_valid_air").clone(),
                 }));
@@ -553,6 +594,7 @@ fn lifecycle_parity_vectors_execute_live_cases() {
                     "admission": materialize_admission(
                         &host,
                         fixture(&invoke, "valid_exact_admission"),
+                        fixture(&invoke, "minimal_valid_air"),
                     ),
                     "air": fixture(&invoke, "minimal_valid_air").clone(),
                 }));

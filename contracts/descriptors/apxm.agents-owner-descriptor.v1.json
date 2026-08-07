@@ -24,12 +24,12 @@
       "release_manifest": {
         "schema_version": "apxm.reference-host-release-manifest.v1",
         "path": "reference-host/manifests/apxm.reference-host-release-manifest.v1.json",
-        "digest": "sha256:51893f7718299f9eedaa9aee48bd9969a495c412b0335c82e77aa82f7049d91b"
+        "digest": "sha256:7376e419fc683a2e000caf30192ae236559ff1fb6f740dbaa67b6856b9dcb067"
       },
       "execution_manifest": {
         "schema_version": "apxm.reference-host-execution-manifest.v1",
         "path": "reference-host/manifests/apxm.reference-host-execution-manifest.v1.json",
-        "digest": "sha256:cb9704ceffb1709d8e807c9fcb52bf34015560e7cb1551e9b79cca575e676bc6"
+        "digest": "sha256:19bd74d54e608023853685266fcfb914ffe023e9d365ee3229803ba86a5802ac"
       },
       "lifecycle_vector": {
         "vector_id": "apxm.reference-host.lifecycle-parity.v1",
@@ -182,7 +182,7 @@
     {
       "schema_id": "apxm.diagnostic-correlation.v1",
       "path": "schemas/apxm.diagnostic-correlation.v1.json",
-      "digest": "sha256:a1da8d0f61c45e5b74b14aeba01986c9564c84e4e6cf4e0858f742b3d8b36243"
+      "digest": "sha256:29b2a46bac272b0e696a4ac6a2114847c3fb93a10c39e135fd2d78e8ec948a3c"
     },
     {
       "schema_id": "apxm.vllm-conformance-join.v1",
@@ -901,12 +901,14 @@
     {
       "schema_id": "apxm.diagnostic-correlation.v1",
       "path": "vectors/apxm.diagnostic-correlation.v1.json",
-      "digest": "sha256:6e50aef9c6de78f444945d6623e03cb2cc4d1ce4e2ddb8b27b975ea0f9f1f9f6",
+      "digest": "sha256:0bd4ec23936846b5bbce552b916852db650b43939d6a4560dc95998a07d2b0b8",
       "coverage": [
         "positive",
         "disagreement",
         "bounded_reference",
-        "mutation"
+        "mutation",
+        "committed_target",
+        "digest_binding"
       ]
     },
     {
@@ -1023,5 +1025,5 @@
       ]
     }
   ],
-  "descriptor_digest": "sha256:e3196e1e023509430671e720ed669fca4b1fbbc95c095c6cfa1a00a7313946b0"
+  "descriptor_digest": "sha256:a06fcb5058cf57dcbe67ac98908660526d8925f4931ff47b7c30fe98c38cec23"
 }

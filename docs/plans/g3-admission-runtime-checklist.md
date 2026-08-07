@@ -47,7 +47,7 @@ Frozen contract: [execution-admission-contract.md](../agents/execution-admission
 | [agents#35](https://github.com/apxm-project/agents/issues/35) | Stable artifact digests / FrontendGraph→AIR for golden programs | Independent: admission consumes digests only |
 | [agents#37](https://github.com/apxm-project/agents/issues/37) | Exact inference driver + usage evidence | Independent: model_target field frozen; driver not required for G3 admission slice |
 | [vllm#3](https://github.com/apxm-project/vllm/issues/3) | Backend conformance | Out of scope for #36 |
-| [agents#39](https://github.com/apxm-project/agents/issues/39) | P-018 hosted durable checkpoint build/no-build | **G3 gate blocker remains open** — in-memory/filesystem commit fixtures satisfy owner-local conformance for this PR; decision dossier: [`docs/plans/p018-hosted-durable-decision.md`](p018-hosted-durable-decision.md); evidence: [`docs/evidence/p018-g3-no-build.md`](../evidence/p018-g3-no-build.md); hosted decision tracked on #39 |
+| [agents#39](https://github.com/apxm-project/agents/issues/39) | P-018 hosted durable checkpoint build/no-build | Post-merge target: **Published no-build decision on `main`** — this PR is the publication vehicle; root coordinator reruns the verifier against merged `main` and confirms issue remains open. Decision dossier: [`docs/plans/p018-hosted-durable-decision.md`](p018-hosted-durable-decision.md); evidence: [`docs/evidence/p018-g3-no-build.md`](../evidence/p018-g3-no-build.md) |
 
 ## Non-goals
 
