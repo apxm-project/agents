@@ -67,7 +67,11 @@ jobs:
       - name: Provision the complete Dekk environment
         uses: conda-incubator/setup-miniconda@fc2d68f6413eb2d87b895e92f8584b5b94a10167 # v3.3.0
         with:
-          activate-environment: ${{ github.workspace }}/workspace/agents/.dekk/env
+          # Keep the runner itself in base. Dekk must create the declared
+          # .dekk/env from .dekk.toml; pre-creating that prefix with Python
+          # alone makes `dekk install` treat an incomplete environment as
+          # already provisioned and leaves clang/MLIR/uv absent.
+          activate-environment: base
           channels: conda-forge
           conda-remove-defaults: "true"
           miniforge-version: "25.3.1-0"
