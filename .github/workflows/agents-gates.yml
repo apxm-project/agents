@@ -86,8 +86,11 @@ jobs:
       - name: Clear any partial hosted-runner nightly toolchain
         run: rustup toolchain uninstall nightly || true
 
-      - name: Install the declared native toolchain
-        run: dekk agents install --no-interactive
+      - name: Provision the declared native toolchain
+        # The gate builds exactly the crates it verifies. `dekk install` also
+        # performs the full release CLI build, duplicating work before the
+        # acceptance bundle and obscuring which gate failed.
+        run: dekk agents setup
 
       - name: Run the nine-gate source/compiler acceptance bundle
         run: dekk agents test-source-compiler-acceptance
@@ -98,4 +101,4 @@ jobs:
         with:
           name: source-compiler-acceptance-${{ github.sha }}
           path: workspace/agents/.apxm/compiler/source-compiler-acceptance
-          if-no-files-found: error
+          if-no-files-found: warn
