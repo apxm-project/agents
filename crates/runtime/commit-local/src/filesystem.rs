@@ -16,7 +16,10 @@ use async_trait::async_trait;
 use fs2::FileExt;
 use serde_json::Value;
 
-use crate::store::{COMMIT_LOCAL_SCHEMA, CommitLocalError, CommitLocalStore};
+use crate::store::{
+    COMMIT_LOCAL_SCHEMA, CommitLocalError, CommitLocalStore, PreparedOutputRef,
+    SessionOutputPreparation,
+};
 
 /// Single-writer filesystem commit adapter for owner-local conformance.
 pub struct FilesystemExecutionCommit {
@@ -47,6 +50,36 @@ impl FilesystemExecutionCommit {
         let mut guard = self.store.lock().expect("commit-local filesystem lock");
         guard.inject_outcome_unknown(commit_id);
         persist(&self.root, &guard)
+    }
+
+    pub fn prepare_output(
+        &self,
+        preparation: SessionOutputPreparation,
+    ) -> Result<PreparedOutputRef, CommitLocalError> {
+        let mut guard = self.store.lock().expect("commit-local filesystem lock");
+        let mut staged = guard.clone();
+        let prepared = staged.prepare_output(preparation)?;
+        persist(&self.root, &staged)?;
+        *guard = staged;
+        Ok(prepared)
+    }
+
+    pub fn read_output(&self, output_ref: &str) -> Option<Vec<u8>> {
+        self.store
+            .lock()
+            .expect("commit-local filesystem lock")
+            .read_output(output_ref)
+    }
+
+    pub fn reclaim_prepared_output(&self, output_ref: &str) -> Result<bool, CommitLocalError> {
+        let mut guard = self.store.lock().expect("commit-local filesystem lock");
+        let mut staged = guard.clone();
+        let reclaimed = staged.reclaim_prepared_output(output_ref)?;
+        if reclaimed {
+            persist(&self.root, &staged)?;
+            *guard = staged;
+        }
+        Ok(reclaimed)
     }
 
     #[must_use]
