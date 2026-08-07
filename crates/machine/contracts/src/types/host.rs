@@ -253,11 +253,109 @@ fn is_local_exec_op(kind: Option<OpKind>) -> bool {
 #[path = "generated_host_execution_manifest.rs"]
 mod generated_host_execution_manifest;
 
-pub use apxm_host_sdk::{
-    HostEffectAdapterResult, HostEffectCommit, HostEffectOutcome, HostEffectRejection,
-    HostEffectRejectionCategory, HostEffectRequest, HostTypedPayload,
-};
 pub use generated_host_execution_manifest::HostExecutionManifest;
+
+// These product-neutral effect records are owned by Agents because the runtime
+// creates the request and consumes the terminal result. Downstream host SDKs
+// implement this wire contract; Agents must not depend on any downstream SDK.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostTypedPayload {
+    pub schema_id: String,
+    pub value: serde_json::Value,
+    pub digest: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostEffectRequest {
+    pub execution_id: String,
+    pub graph_id: String,
+    pub node_id: u64,
+    pub invocation_id: String,
+    pub call_id: String,
+    pub capability_id: String,
+    pub agent_identity_ref: String,
+    pub host_op: String,
+    pub capability_binding: String,
+    pub implementation_ref: String,
+    pub request_digest: String,
+    pub idempotency_key: String,
+    pub expected_host_key_id: String,
+    pub grant_refs: Vec<String>,
+    pub approval_refs: Vec<String>,
+    pub args: serde_json::Value,
+    pub acting_principal_attestation: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HostEffectOutcome {
+    #[serde(rename = "committed")]
+    Committed,
+    #[serde(rename = "deduplicated")]
+    Deduplicated,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HostEffectRejectionCategory {
+    #[serde(rename = "validation")]
+    Validation,
+    #[serde(rename = "not_found")]
+    NotFound,
+    #[serde(rename = "authority")]
+    Authority,
+    #[serde(rename = "approval")]
+    Approval,
+    #[serde(rename = "conflict")]
+    Conflict,
+    #[serde(rename = "unsupported")]
+    Unsupported,
+    #[serde(rename = "unavailable")]
+    Unavailable,
+    #[serde(rename = "outcome_unknown")]
+    OutcomeUnknown,
+    #[serde(rename = "internal")]
+    Internal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostEffectCommit {
+    pub execution_id: String,
+    pub graph_id: String,
+    pub node_id: u64,
+    pub invocation_id: String,
+    pub call_id: String,
+    pub request_digest: String,
+    pub idempotency_key: String,
+    pub effect_digest: String,
+    pub effect_outcome: HostEffectOutcome,
+    pub result: HostTypedPayload,
+    pub host_key_id: String,
+    pub signature: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostEffectRejection {
+    pub execution_id: String,
+    pub graph_id: String,
+    pub node_id: u64,
+    pub invocation_id: String,
+    pub call_id: String,
+    pub request_digest: String,
+    pub idempotency_key: String,
+    pub category: HostEffectRejectionCategory,
+    pub failure: HostTypedPayload,
+}
+
+/// Terminal result of one downstream effect dispatch. This is an internal SDK
+/// seam over the two closed wire records and adds no serialized discriminant.
+#[derive(Debug, Clone)]
+pub enum HostEffectAdapterResult {
+    Commit(HostEffectCommit),
+    Rejection(HostEffectRejection),
+}
 
 // ── HostDispatchGateway ───────────────────────────────────────────────────────
 
