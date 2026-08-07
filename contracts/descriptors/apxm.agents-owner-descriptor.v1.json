@@ -275,7 +275,7 @@
     {
       "port_contract_id": "apxm.model-inference.v1",
       "path": "port-contracts/apxm.model-inference.port-contract.v1.json",
-      "digest": "sha256:fdf6aea657550b87f8b66f63f8e50cf793cec427b320c5bce940ba24fbc97362"
+      "digest": "sha256:f76427af3977016d4667165abbc4c21e81b38eeb179b1dea2045e9ee9a9802b8"
     },
     {
       "port_contract_id": "apxm.external-agent.v1",
@@ -1025,5 +1025,5 @@
       ]
     }
   ],
-  "descriptor_digest": "sha256:a06fcb5058cf57dcbe67ac98908660526d8925f4931ff47b7c30fe98c38cec23"
+  "descriptor_digest": "sha256:7423725364df87b2c0c75a5329d7159091bdbd34f703dcd27267523b7dee0a5c"
 }
