@@ -1,12 +1,12 @@
 {
   "schema_version": "apxm.port-contract.v1",
   "port_contract_id": "apxm.model-inference.v1",
-  "port_contract_digest": "sha256:7662a81d6da08b6ec84cbbd980f50597a2d602fce0b8609b9c3577d56834005d",
+  "port_contract_digest": "sha256:75faad31910d32fb13e1fc93da4d25574a9873a35e948e954abad08c6e676b6b",
   "semantic_owner": "agents",
   "primary_responsibility": "send one exact admitted model request to its already-bound inference implementation and preserve typed terminal, cancellation, usage, and outcome-unknown semantics without selection or fallback",
   "request_schema": {
     "schema_id": "apxm.model-inference-request.v1",
-    "digest": "sha256:cbed1657fb4d98acab46ba13130088b35d66b1f4e2dd2c6d44f661a83b94e778"
+    "digest": "sha256:b5a667f038913eb079417549a325f54c3703992c26f435a974cfb5150b34e42d"
   },
   "result_schema": {
     "schema_id": "apxm.model-inference-outcome.v1",
@@ -20,5 +20,5 @@
   "authority_data_classification_digest": "sha256:855ce3e43747529e35ca5233b31533d93e59cf6d440911bf6f3bdf93addf8db1",
   "feature_vocabulary_digest": "sha256:5614979abb451bee4c903a78d7522157121f72c7f7a58e8a7b7cddc82260e5fc",
   "configuration_contract_digest": "sha256:e2978241b8f00a3f6cd73b1385963c598aae1ad0657da95436fca0ef90147dfb",
-  "conformance_vector_digest": "sha256:8dded2ebbdcc0b259980edac77629ed38a75f35610466dc02383c79bb4fe7fbe"
+  "conformance_vector_digest": "sha256:f92efd61b3bcf9dfb6bb88a9f403ef573c31178099a00f0259a6cba66519a086"
 }

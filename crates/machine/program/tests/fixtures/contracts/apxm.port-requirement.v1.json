@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.port-requirement.v1",
+  "title": "PortRequirement",
+  "description": "Typed requirement for one Port Contract. The source scope is closed and requirements never select implementations.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "typed_port_slot",
+    "required_port_contract",
+    "required_feature_set",
+    "semantic_limits_digest",
+    "source_scope",
+    "source_owner",
+    "source_digest",
+    "requirement_digest"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "apxm.port-requirement.v1"
+    },
+    "typed_port_slot": {
+      "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+    },
+    "required_port_contract": {
+      "$ref": "apxm.contract-common.v1#/$defs/SchemaDigestRef"
+    },
+    "required_feature_set": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+      }
+    },
+    "semantic_limits_digest": {
+      "$ref": "apxm.contract-common.v1#/$defs/Digest"
+    },
+    "source_scope": {
+      "type": "string",
+      "enum": [
+        "artifact_semantic",
+        "deployment_infrastructure",
+        "invocation_authority"
+      ]
+    },
+    "source_owner": {
+      "$ref": "apxm.contract-common.v1#/$defs/SemanticOwner"
+    },
+    "source_digest": {
+      "$ref": "apxm.contract-common.v1#/$defs/Digest"
+    },
+    "requirement_digest": {
+      "$ref": "apxm.contract-common.v1#/$defs/Digest"
+    }
+  },
+  "additionalProperties": false
+}
