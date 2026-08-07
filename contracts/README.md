@@ -80,7 +80,7 @@ NodeExecution, argument type, identity, authority, effect id, or request
 digest. A missing canonical request, a post-digest argument edit, or any
 coordinate/authority mismatch fails before implementation dispatch.
 
-This consumer is pinned to Host SDK source revision
+The frozen interoperability provenance is pinned to Host SDK source revision
 `ff48332f2ce6af8a45eb38a15f4510a134223f5f`. Its
 `apxm.host-sdk-owner-descriptor.v1` semantic digest is
 `sha256:a007bb8daee44cfc5156a358bd4c0f4665adefc0d731738ead9c50a31734e14b`,
@@ -97,9 +97,10 @@ dekk agents owner-descriptor
 
 The gate validates every vector against its schema, enforces the
 `artifact_semantic`-only abstraction rule and the single atomic write-set rule,
-verifies every recorded content-addressed digest is current, pins the exact
-referenced Host SDK cohort by revision plus semantic and exact descriptor
-digests, and confirms the descriptor carries no delivery-process references.
+verifies every recorded content-addressed digest is current, pins the frozen
+Host SDK wire provenance by revision plus semantic and exact descriptor
+digests, rejects an active downstream SDK build dependency, and confirms the
+descriptor carries no delivery-process references.
 Regenerate digests after any change with `dekk agents owner-descriptor-sync`.
 
 The owner descriptor is identified by its deterministic canonical digest.

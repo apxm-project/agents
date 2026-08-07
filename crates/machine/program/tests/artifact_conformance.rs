@@ -1,12 +1,12 @@
 //! Conformance: the artifact/binding validation API accepts and rejects exactly
 //! the checked-in vectors, the codec round-trips a valid artifact, and the
-//! closed source-scope set does not drift from the owning contract.
+//! closed source-scope set does not drift from the owner schema snapshot.
 
 mod common;
 
 use apxm_program::artifact::PortSourceScope;
 use apxm_program::{ExecutableArtifact, validate_artifact_json};
-use common::{Vector, load_constitution, load_contract, load_vectors};
+use common::{Vector, load_contract, load_contract_snapshot, load_vectors};
 
 #[test]
 fn artifact_vectors_match_validator() {
@@ -101,12 +101,12 @@ fn example_artifacts_carry_no_field_the_schema_rejects() {
 
 #[test]
 fn source_scope_enum_does_not_drift() {
-    let schema = load_constitution("schemas/port-requirement.v1.json");
+    let schema = load_contract_snapshot("schemas/port-requirement.v1.json");
     let mut expected: Vec<String> = schema["properties"]["source_scope"]["enum"]
         .as_array()
         .expect("source_scope enum")
         .iter()
-        .map(|v| v.as_str().unwrap().to_string())
+        .map(|v| v.as_str().expect("source scope enum member").to_string())
         .collect();
     expected.sort();
 
@@ -125,9 +125,8 @@ fn source_scope_enum_does_not_drift() {
     })
     .collect();
     actual.sort();
-
     assert_eq!(
         actual, expected,
-        "port source-scope closure drifted from contract"
+        "port source-scope closure drifted from owner schema"
     );
 }

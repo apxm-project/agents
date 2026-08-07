@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 apxm-ais.workspace = true
-apxm-host-sdk.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 blake3.workspace = true

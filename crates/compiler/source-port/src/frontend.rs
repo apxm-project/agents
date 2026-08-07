@@ -338,7 +338,7 @@ mod tests {
 
         let diagnostic = spawn_with_timeout(
             Frontend::Python,
-            PathBuf::from("/tmp"),
+            &PathBuf::from("/tmp"),
             &path,
             &[b'x'; 128 * 1024],
             Duration::from_millis(25),
