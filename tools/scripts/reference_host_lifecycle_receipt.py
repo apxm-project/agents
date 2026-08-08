@@ -174,6 +174,12 @@ def file_digest(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def serialized_air_digest(air: dict[str, Any]) -> str:
+    """Match the owner runtime's AirModule serde digest exactly."""
+    encoded = json.dumps(air, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
 def is_exact_digest(value: str) -> bool:
     if not value.startswith("sha256:") or len(value) != 71:
         return False
@@ -216,11 +222,16 @@ def request_payload(
     return payload
 
 
-def valid_admission(startup_input: dict[str, Any], *, invocation_id: str = "invocation.1") -> dict[str, Any]:
+def valid_admission(
+    startup_input: dict[str, Any],
+    *,
+    invocation_id: str = "invocation.1",
+    artifact_digest: str | None = None,
+) -> dict[str, Any]:
     return {
         "schema_version": ADMISSION_SCHEMA,
         "invocation_id": invocation_id,
-        "artifact_digest": startup_input["release_digest"],
+        "artifact_digest": artifact_digest or startup_input["release_digest"],
         "release_digest": startup_input["release_digest"],
         "port_bindings_digest": startup_input["port_bindings_digest"],
         "resource_ceiling_digest": startup_input["resource_ceiling_digest"],
@@ -228,8 +239,10 @@ def valid_admission(startup_input: dict[str, Any], *, invocation_id: str = "invo
     }
 
 
-def invalid_provenance_admission(startup_input: dict[str, Any]) -> dict[str, Any]:
-    admission = valid_admission(startup_input)
+def invalid_provenance_admission(
+    startup_input: dict[str, Any], *, artifact_digest: str | None = None
+) -> dict[str, Any]:
+    admission = valid_admission(startup_input, artifact_digest=artifact_digest)
     wrong_digest = "sha256:" + ("d" * 64)
     if wrong_digest == startup_input["release_digest"]:
         wrong_digest = "sha256:" + ("e" * 64)
@@ -537,7 +550,13 @@ def run_case_positive_commit(
 ) -> dict[str, Any]:
     transport = transport_factory(executable_path, startup_input_path)
     try:
-        request = request_payload("invoke", admission=valid_admission(startup_input), air=minimal_air)
+        request = request_payload(
+            "invoke",
+            admission=valid_admission(
+                startup_input, artifact_digest=serialized_air_digest(minimal_air)
+            ),
+            air=minimal_air,
+        )
         response = transport.request(request)
         expect(response.get("status") == "committed", "case_failed", "positive admission must commit")
         runtime_evidence = assert_runtime_evidence(response, "invocation.committed")
@@ -565,7 +584,9 @@ def run_case_negative_admission(
     try:
         request = request_payload(
             "invoke",
-            admission=invalid_provenance_admission(startup_input),
+            admission=invalid_provenance_admission(
+                startup_input, artifact_digest=serialized_air_digest(minimal_air)
+            ),
             air=minimal_air,
         )
         response = transport.request(request)
@@ -600,7 +621,13 @@ def run_case_invalid_air(
 ) -> dict[str, Any]:
     transport = transport_factory(executable_path, startup_input_path)
     try:
-        request = request_payload("invoke", admission=valid_admission(startup_input), air=invalid_air)
+        request = request_payload(
+            "invoke",
+            admission=valid_admission(
+                startup_input, artifact_digest=serialized_air_digest(invalid_air)
+            ),
+            air=invalid_air,
+        )
         response = transport.request(request)
         expect(response.get("status") == "rejected", "case_failed", "invalid AIR must be rejected")
         expect(
@@ -639,7 +666,9 @@ def run_case_drain_rejection(
         expect(drain_response == expected_draining, "case_failed", "drain response drifted")
         rejected_request = request_payload(
             "invoke",
-            admission=valid_admission(startup_input),
+            admission=valid_admission(
+                startup_input, artifact_digest=serialized_air_digest(minimal_air)
+            ),
             air=minimal_air,
         )
         rejected_response = transport.request(rejected_request)
@@ -862,7 +891,9 @@ def run_case_restart_recovery(
     try:
         invoke_request = request_payload(
             "invoke",
-            admission=valid_admission(startup_input),
+            admission=valid_admission(
+                startup_input, artifact_digest=serialized_air_digest(minimal_air)
+            ),
             air=minimal_air,
         )
         committed = transport.request(invoke_request)
@@ -932,7 +963,9 @@ def run_case_revocation(
         )
         rejected_request = request_payload(
             "invoke",
-            admission=valid_admission(startup_input),
+            admission=valid_admission(
+                startup_input, artifact_digest=serialized_air_digest(minimal_air)
+            ),
             air=minimal_air,
         )
         rejected = transport.request(rejected_request)

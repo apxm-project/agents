@@ -58,6 +58,24 @@ class ReferenceHostLifecycleReceiptTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.module = load_module(SCRIPT_PATH, "reference_host_lifecycle_receipt")
 
+    def test_serialized_air_digest_matches_owner_field_order(self) -> None:
+        air = {
+            "schema_version": "apxm.air.v1",
+            "semantic_operations": [],
+            "structural_ir": [],
+            "context_flow": [],
+            "source_map": {
+                "schema_version": "apxm.source-map.v1",
+                "source_language": "python",
+                "node_spans": [],
+                "region_annotations": [],
+            },
+        }
+        self.assertEqual(
+            self.module.serialized_air_digest(air),
+            "sha256:f3755ae0ba0b4e73d5d058291ba830e4668ab6b83b48d7413688c58befe57383",
+        )
+
     def make_startup_input(self, root: Path) -> tuple[Path, dict[str, object]]:
         release_digest = "sha256:" + ("0123456789abcdef" * 4)
         port_bindings_digest = "sha256:" + ("abcdef0123456789" * 4)
