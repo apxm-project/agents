@@ -280,19 +280,18 @@ impl ProgramInstance {
         }
     }
 
-    /// Commit a cancellation for this instance's in-flight invocation. The
-    /// cancellation is durable only if the atomic commit succeeds.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`InstanceError::Busy`] if an invocation is already in flight.
+    /// Commit cancellation for this instance, including while another
+    /// invocation is in flight. Cancellation competes with that invocation at
+    /// the atomic compare-and-commit boundary: whichever exact commit wins is
+    /// authoritative, while the loser observes a conflict and publishes
+    /// nothing. This keeps cancellation able to interrupt a blocked commit
+    /// without creating a second writer or a partial lifecycle transition.
     pub async fn cancel(
         &self,
         commit_id: impl Into<String>,
         program_invocation_ref: ProgramInvocationRef,
         write_set: AtomicWriteSet,
     ) -> Result<InvocationReport, InstanceError> {
-        let _guard = self.acquire()?;
         let commit_id = commit_id.into();
         let expected = self
             .bundle

@@ -31,6 +31,37 @@
     }
   },
   {
+    "name": "valid_private_unix_stream_startup_input",
+    "expected_valid": true,
+    "input": {
+      "schema_version": "apxm.reference-host-startup-input.v1",
+      "semantic_owner": "agents",
+      "owner_executable": "apxm-reference-host",
+      "owner_executable_path": "crates/tools/cli/src/bin/reference_host.rs",
+      "transport_protocol": "jsonl-unix-stream",
+      "reference_host_release_manifest": {
+        "path": "/abs/path/contracts/reference-host/manifests/apxm.reference-host-release-manifest.v1.json",
+        "digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      },
+      "release_digest": "sha256:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+      "port_bindings_digest": "sha256:11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff",
+      "resource_ceiling_digest": "sha256:22334455667788990011aabbccddeeff22334455667788990011aabbccddeeff",
+      "provenance": {
+        "owner_revision": "0123456789abcdef0123456789abcdef01234567",
+        "descriptor_semantic_digest": "sha256:33445566778899001122aabbccddeeff33445566778899001122aabbccddeeff",
+        "descriptor_exact_checksum": "sha256:44556677889900112233aabbccddeeff44556677889900112233aabbccddeeff",
+        "dirty": false
+      },
+      "fail_closed_on": [
+        "missing",
+        "placeholder",
+        "dirty",
+        "mismatched",
+        "implicit-default"
+      ]
+    }
+  },
+  {
     "name": "rejects_placeholder_release_digest",
     "expected_valid": false,
     "input": {

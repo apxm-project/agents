@@ -239,6 +239,8 @@ class ReleasePrivacyTests(unittest.TestCase):
             ), patch.object(
                 publish.shutil, "which", return_value="/usr/bin/twine"
             ), patch.object(
+                publish, "release_artifacts", return_value=[artifact]
+            ), patch.object(
                 publish, "run", return_value=completed
             ) as run:
                 result = publish.publish_python(args)
@@ -287,7 +289,7 @@ class ReleasePrivacyTests(unittest.TestCase):
         self.assertEqual(result, 2)
         self.assertEqual(run.call_count, 1)
 
-    def test_stale_internal_python_artifacts_are_not_release_assets(self) -> None:
+    def test_stale_internal_python_artifacts_fail_release_inventory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary)
             (output / "python").mkdir()
@@ -297,9 +299,36 @@ class ReleasePrivacyTests(unittest.TestCase):
             for path in (archive, checksum, internal):
                 path.write_bytes(b"artifact")
             with patch("apxm_release.dist.python_publish_enabled", return_value=False):
-                artifacts = release_artifacts(output)
+                with self.assertRaisesRegex(ValueError, "unlisted release files"):
+                    release_artifacts(output)
 
-        self.assertEqual(artifacts, [archive, checksum])
+    def test_release_artifacts_reject_unlisted_file_even_when_skip_dist_is_used(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            archive = output / "apxm-0.1.0-source.tar.gz"
+            checksum = output / "SHA256SUMS"
+            archive.write_bytes(b"archive")
+            checksum.write_text(
+                f"{privacy.hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n"
+            )
+            stale = output / "unexpected.txt"
+            stale.write_bytes(b"stale")
+
+            with patch("apxm_release.dist.python_publish_enabled", return_value=False):
+                with self.assertRaisesRegex(ValueError, "unlisted release files"):
+                    release_artifacts(output)
+
+    def test_release_artifacts_reject_checksum_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            archive = output / "apxm-0.1.0-source.tar.gz"
+            checksum = output / "SHA256SUMS"
+            archive.write_bytes(b"archive")
+            checksum.write_text(f"{'0' * 64}  {archive.name}\n")
+
+            with patch("apxm_release.dist.python_publish_enabled", return_value=False):
+                with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+                    release_artifacts(output)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import signal
 import subprocess
 import tempfile
 import unittest
@@ -17,16 +18,14 @@ class SourceCompilerAcceptanceTests(unittest.TestCase):
         self.assertEqual(
             [step.gate_id for step in steps],
             [
-                "owner-descriptor",
-                "check-contract-codegen",
+                "check-frontend-codegen",
                 "check-frontend-surface",
                 "test-source-port",
                 "test-program",
                 "test-compiler",
                 "check-frontend-parity",
-                "test-external-source-package",
+                "test-typescript-frontend",
                 "compile-service-canonical",
-                "execute-canonical",
             ],
         )
         self.assertEqual(
@@ -53,7 +52,7 @@ class SourceCompilerAcceptanceTests(unittest.TestCase):
                 logs_dir, runner=succeed
             )
             self.assertTrue(
-                logs_dir.joinpath("owner-descriptor.log").is_file(),
+                logs_dir.joinpath("check-frontend-codegen.log").is_file(),
                 "the acceptance run writes per-step logs beside the report",
             )
 
@@ -106,6 +105,126 @@ class SourceCompilerAcceptanceTests(unittest.TestCase):
             recorded[failing_gate]["log_path"].endswith(f"{failing_gate}.log")
         )
 
+    def test_run_acceptance_reports_toolchain_block_without_calling_it_a_failure(self) -> None:
+        blocked_gate = "test-program"
+
+        with tempfile.TemporaryDirectory() as temporary:
+            logs_dir = Path(temporary) / "logs"
+
+            def blocked(command, cwd, capture_output, text):  # noqa: ANN001
+                self.assertEqual(cwd, check_source_compiler_acceptance.REPO_ROOT)
+                if command[2] == blocked_gate:
+                    return subprocess.CompletedProcess(
+                        command,
+                        2,
+                        stdout="",
+                        stderr="error: APXM native toolchain readiness failed.\n",
+                    )
+                return subprocess.CompletedProcess(command, 0, stdout="ok\n", stderr="")
+
+            report = check_source_compiler_acceptance.run_acceptance(
+                logs_dir, runner=blocked
+            )
+
+        self.assertEqual(report["overall_status"], "blocked")
+        recorded = {step["gate_id"]: step for step in report["steps"]}
+        self.assertEqual(recorded[blocked_gate]["status"], "blocked")
+        self.assertEqual(recorded[blocked_gate]["block_reason"], "toolchain_unavailable")
+        self.assertNotEqual(report["overall_status"], "passed")
+
+    def test_unrelated_command_error_does_not_reclassify_an_ordinary_failure(self) -> None:
+        result = check_source_compiler_acceptance.classify_step(
+            subprocess.CompletedProcess(
+                ("dekk", "agents", "test-program"),
+                1,
+                stdout="",
+                stderr="source assertion failed: command not found in fixture",
+            )
+        )
+
+        self.assertEqual(result, ("failed", None))
+
+    def test_toolchain_detail_without_readiness_header_stays_a_failure(self) -> None:
+        result = check_source_compiler_acceptance.classify_step(
+            subprocess.CompletedProcess(
+                ("dekk", "agents", "test-program"),
+                1,
+                stdout="",
+                stderr="source assertion mentions matching Linux arm64 compiler/sysroot",
+            )
+        )
+
+        self.assertEqual(result, ("failed", None))
+
+    def test_signal_only_native_crash_is_reported_as_blocked(self) -> None:
+        result = check_source_compiler_acceptance.classify_step(
+            subprocess.CompletedProcess(
+                ("dekk", "agents", "test-program"),
+                256 - signal.SIGSEGV,
+                stdout="",
+                stderr="",
+            )
+        )
+
+        self.assertEqual(result, ("blocked", "native_toolchain_crash"))
+
+    def test_native_crash_with_assertion_output_remains_a_failure(self) -> None:
+        result = check_source_compiler_acceptance.classify_step(
+            subprocess.CompletedProcess(
+                ("dekk", "agents", "test-program"),
+                256 - signal.SIGSEGV,
+                stdout="source assertion failed",
+                stderr="",
+            )
+        )
+
+        self.assertEqual(result, ("failed", None))
+
+    def test_a_real_failure_takes_precedence_over_a_blocked_step(self) -> None:
+        def mixed(command, cwd, capture_output, text):  # noqa: ANN001
+            if command[2] == "test-program":
+                return subprocess.CompletedProcess(
+                    command,
+                    2,
+                    stdout="",
+                    stderr="error: APXM native toolchain readiness failed.",
+                )
+            if command[2] == "test-compiler":
+                return subprocess.CompletedProcess(
+                    command,
+                    1,
+                    stdout="",
+                    stderr="source assertion failed",
+                )
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            report = check_source_compiler_acceptance.run_acceptance(
+                Path(temporary) / "logs", runner=mixed
+            )
+
+        self.assertEqual(report["overall_status"], "failed")
+
+    def test_run_acceptance_reports_missing_launcher_as_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            logs_dir = Path(temporary) / "logs"
+
+            def missing_launcher(command, cwd, capture_output, text):  # noqa: ANN001
+                raise FileNotFoundError(2, "No such file or directory", command[0])
+
+            report = check_source_compiler_acceptance.run_acceptance(
+                logs_dir, runner=missing_launcher
+            )
+
+        self.assertEqual(report["overall_status"], "blocked")
+        self.assertTrue(
+            all(step["status"] == "blocked" for step in report["steps"])
+        )
+        self.assertTrue(
+            all(step["block_reason"] == "environment_unavailable" for step in report["steps"])
+        )
+        self.assertTrue(all(step["returncode"] is None for step in report["steps"]))
+
     def test_write_report_creates_parent_directories(self) -> None:
         report = {
             "schema_version": "apxm.source-compiler-acceptance.v1",
@@ -139,6 +258,27 @@ class SourceCompilerAcceptanceTests(unittest.TestCase):
             ):
                 self.assertEqual(check_source_compiler_acceptance.main(), 1)
                 self.assertTrue(destination.is_file())
+
+    def test_main_fails_closed_when_execution_is_blocked(self) -> None:
+        report = {
+            "schema_version": "apxm.source-compiler-acceptance.v1",
+            "generated_at": "2026-08-04T00:00:00+00:00",
+            "issue_scope": {"issue": 35, "plan_tags": ["P-002", "G2"]},
+            "overall_status": "blocked",
+            "steps": [],
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "report.json"
+            with patch.object(
+                check_source_compiler_acceptance,
+                "parse_args",
+                return_value=type("Args", (), {"report_json": destination})(),
+            ), patch.object(
+                check_source_compiler_acceptance,
+                "run_acceptance",
+                return_value=report,
+            ):
+                self.assertEqual(check_source_compiler_acceptance.main(), 1)
 
 
 if __name__ == "__main__":

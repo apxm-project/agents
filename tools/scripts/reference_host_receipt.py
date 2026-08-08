@@ -54,6 +54,27 @@ BUILD_COMMAND = [
 TARGET_DIR_COMMAND = ["python", "tools/scripts/cargo.py", "target-dir"]
 STARTUP_INPUT_SCHEMA = "apxm.reference-host-startup-input.v1"
 STARTUP_INPUT_FLAG = "--startup-input"
+HOST_REQUEST_SCHEMA_ID = "apxm.runtime.host-request.v1"
+HOST_REQUEST_SCHEMA_PATH = "reference-host/schemas/apxm.runtime.host-request.v1.json"
+HOST_REQUEST_SCHEMA_SOURCE_PATH = "schemas/apxm.runtime.host-request.v1.json"
+HOST_REQUEST_VECTOR_PATH = "reference-host/vectors/apxm.runtime.host-request.v1.json"
+HOST_REQUEST_VECTOR_SOURCE_PATH = "vectors/apxm.runtime.host-request.v1.json"
+HOST_RESPONSE_SCHEMA_ID = "apxm.runtime.host-response.v1"
+HOST_RESPONSE_SCHEMA_PATH = "reference-host/schemas/apxm.runtime.host-response.v1.json"
+HOST_RESPONSE_SCHEMA_SOURCE_PATH = "schemas/apxm.runtime.host-response.v1.json"
+HOST_RESPONSE_VECTOR_PATH = "reference-host/vectors/apxm.runtime.host-response.v1.json"
+HOST_RESPONSE_VECTOR_SOURCE_PATH = "vectors/apxm.runtime.host-response.v1.json"
+HOST_TRANSPORT_SCHEMA_ID = "apxm.runtime.host-transport.v1"
+HOST_TRANSPORT_SCHEMA_PATH = "reference-host/schemas/apxm.runtime.host-transport.v1.json"
+HOST_TRANSPORT_SCHEMA_SOURCE_PATH = "schemas/apxm.runtime.host-transport.v1.json"
+HOST_TRANSPORT_VECTOR_PATH = "reference-host/vectors/apxm.runtime.host-transport.v1.json"
+HOST_TRANSPORT_VECTOR_SOURCE_PATH = "vectors/apxm.runtime.host-transport.v1.json"
+EXECUTION_MANIFEST_RELATIVE_PATH = (
+    "reference-host/manifests/apxm.reference-host-execution-manifest.v1.json"
+)
+RELEASE_MANIFEST_RELATIVE_PATH = (
+    "contracts/reference-host/manifests/apxm.reference-host-release-manifest.v1.json"
+)
 
 
 def load_validator_module():
@@ -129,6 +150,154 @@ def startup_input_preflight_evidence(execution_manifest: dict[str, Any]) -> dict
     evidence["scope"] = fixture.get("scope")
     evidence["artifact_path"] = raw_path
     return evidence
+
+
+def _contract_file(relative_path: str, label: str) -> Path:
+    path = REPOSITORY_ROOT / "contracts" / relative_path
+    if not path.is_file():
+        raise RuntimeError(f"{label} is missing: {relative_path}")
+    return path
+
+
+def _published_contract_entry(
+    *,
+    manifest: dict[str, Any],
+    field: str,
+    schema_id: str,
+    published_path: str,
+    canonical_source_path: str,
+    semantic_owner: bool,
+) -> dict[str, Any]:
+    published_file = _contract_file(published_path, f"reference-host {field} publication")
+    source_file = _contract_file(canonical_source_path, f"reference-host {field} source")
+    if published_file.read_bytes() != source_file.read_bytes():
+        raise RuntimeError(
+            f"reference-host {field} published bytes differ from canonical source"
+        )
+    expected: dict[str, Any] = {
+        "schema_id": schema_id,
+        "path": published_path,
+        "digest": file_digest(published_file),
+        "canonical_source_path": canonical_source_path,
+    }
+    if semantic_owner:
+        expected["semantic_owner"] = "agents"
+    if manifest.get(field) != expected:
+        raise RuntimeError(f"reference-host execution manifest field {field} drifted")
+    return expected
+
+
+def validate_reference_host_publication(
+    execution_manifest: dict[str, Any], release_manifest: dict[str, Any]
+) -> dict[str, str]:
+    """Validate the exact owner-local host-request publication cohort."""
+    _published_contract_entry(
+        manifest=execution_manifest,
+        field="host_request_schema",
+        schema_id=HOST_REQUEST_SCHEMA_ID,
+        published_path=HOST_REQUEST_SCHEMA_PATH,
+        canonical_source_path=HOST_REQUEST_SCHEMA_SOURCE_PATH,
+        semantic_owner=True,
+    )
+    _published_contract_entry(
+        manifest=execution_manifest,
+        field="host_request_vector",
+        schema_id=HOST_REQUEST_SCHEMA_ID,
+        published_path=HOST_REQUEST_VECTOR_PATH,
+        canonical_source_path=HOST_REQUEST_VECTOR_SOURCE_PATH,
+        semantic_owner=False,
+    )
+    _published_contract_entry(
+        manifest=execution_manifest,
+        field="host_response_schema",
+        schema_id=HOST_RESPONSE_SCHEMA_ID,
+        published_path=HOST_RESPONSE_SCHEMA_PATH,
+        canonical_source_path=HOST_RESPONSE_SCHEMA_SOURCE_PATH,
+        semantic_owner=True,
+    )
+    _published_contract_entry(
+        manifest=execution_manifest,
+        field="host_response_vector",
+        schema_id=HOST_RESPONSE_SCHEMA_ID,
+        published_path=HOST_RESPONSE_VECTOR_PATH,
+        canonical_source_path=HOST_RESPONSE_VECTOR_SOURCE_PATH,
+        semantic_owner=False,
+    )
+    _published_contract_entry(
+        manifest=execution_manifest,
+        field="host_transport_schema",
+        schema_id=HOST_TRANSPORT_SCHEMA_ID,
+        published_path=HOST_TRANSPORT_SCHEMA_PATH,
+        canonical_source_path=HOST_TRANSPORT_SCHEMA_SOURCE_PATH,
+        semantic_owner=True,
+    )
+    _published_contract_entry(
+        manifest=execution_manifest,
+        field="host_transport_vector",
+        schema_id=HOST_TRANSPORT_SCHEMA_ID,
+        published_path=HOST_TRANSPORT_VECTOR_PATH,
+        canonical_source_path=HOST_TRANSPORT_VECTOR_SOURCE_PATH,
+        semantic_owner=False,
+    )
+
+    publication_cohort = release_manifest.get("publication_cohort")
+    if not isinstance(publication_cohort, dict):
+        raise RuntimeError("reference-host release manifest publication_cohort is missing")
+    expected_execution_ref = {
+        "schema_version": execution_manifest.get("schema_version"),
+        "path": EXECUTION_MANIFEST_RELATIVE_PATH,
+        "digest": file_digest(EXECUTION_MANIFEST_PATH),
+    }
+    if publication_cohort.get("manifests") != [expected_execution_ref]:
+        raise RuntimeError(
+            "reference-host release manifest execution-manifest digest drifted"
+        )
+
+    for group, identifier_field, field in (
+        ("schemas", "schema_id", "host_request_schema"),
+        ("vectors", "schema_id", "host_request_vector"),
+        ("schemas", "schema_id", "host_response_schema"),
+        ("vectors", "schema_id", "host_response_vector"),
+        ("schemas", "schema_id", "host_transport_schema"),
+        ("vectors", "schema_id", "host_transport_vector"),
+    ):
+        entries = publication_cohort.get(group)
+        if not isinstance(entries, list):
+            raise RuntimeError(
+                f"reference-host release manifest publication_cohort {group} is missing"
+            )
+        schema_id = execution_manifest[field][identifier_field]
+        expected_entry = {
+            identifier_field: schema_id,
+            "path": execution_manifest[field]["path"],
+            "digest": execution_manifest[field]["digest"],
+        }
+        matches = [
+            entry
+            for entry in entries
+            if isinstance(entry, dict) and entry.get(identifier_field) == schema_id
+        ]
+        if matches != [expected_entry]:
+            label = "host-request" if schema_id == HOST_REQUEST_SCHEMA_ID else schema_id
+            raise RuntimeError(
+                f"reference-host release manifest {group} {label} publication drifted"
+            )
+
+    release_manifest_digest = file_digest(RELEASE_MANIFEST_PATH)
+    fixture = execution_manifest.get("startup_input_preflight_test_fixture")
+    if not isinstance(fixture, dict):
+        raise RuntimeError("reference-host startup-input preflight declaration is missing")
+    raw_fixture_path = fixture.get("artifact_path")
+    declared_fixture_digest = fixture.get("artifact_digest")
+    if not isinstance(raw_fixture_path, str) or not isinstance(declared_fixture_digest, str):
+        raise RuntimeError("reference-host startup-input preflight digest declaration drifted")
+    fixture_file = _contract_file(raw_fixture_path, "reference-host startup-input preflight fixture")
+    if declared_fixture_digest != file_digest(fixture_file):
+        raise RuntimeError("reference-host startup-input preflight fixture digest drifted")
+    return {
+        "execution_manifest_digest": expected_execution_ref["digest"],
+        "release_manifest_digest": release_manifest_digest,
+    }
 
 
 def provenance_evidence(validator: Any, execution_manifest: dict[str, Any]) -> dict[str, Any]:
@@ -232,6 +401,84 @@ def committed_reference_host_release_attestation(validator: Any) -> dict[str, An
     )
 
 
+def validate_reference_host_release_attestation(
+    validator: Any,
+    release_attestation: Any,
+    *,
+    execution_manifest: dict[str, Any] | None = None,
+) -> None:
+    """Reject release evidence that does not match the canonical runtime inputs."""
+    if execution_manifest is None:
+        execution_manifest = load_json(EXECUTION_MANIFEST_PATH)
+    release_manifest = load_json(RELEASE_MANIFEST_PATH)
+    try:
+        manifest_digests = validate_reference_host_publication(
+            execution_manifest, release_manifest
+        )
+    except Exception as error:
+        raise RuntimeError(
+            "reference-host release attestation is inconsistent with canonical "
+            f"release/runtime evidence: {error}"
+        ) from error
+    if not isinstance(release_attestation, dict):
+        raise RuntimeError("reference-host release attestation must be an object")
+    cohort = release_attestation.get("cohort")
+    if not isinstance(cohort, dict):
+        raise RuntimeError("reference-host release attestation cohort is missing")
+    owner_revision = cohort.get("revision")
+    if (
+        not isinstance(owner_revision, str)
+        or len(owner_revision) != 40
+        or any(character not in "0123456789abcdef" for character in owner_revision)
+    ):
+        raise RuntimeError("reference-host release attestation owner revision is invalid")
+
+    descriptor_digest = validator.descriptor_exact_checksum()
+    if cohort.get("descriptor_digest") != descriptor_digest:
+        raise RuntimeError(
+            "reference-host release attestation descriptor digest is inconsistent"
+        )
+    expected_attestation = validator.reference_host_release_attestation(
+        owner_revision=owner_revision,
+        owner_descriptor_digest=descriptor_digest,
+    )
+    if release_attestation != expected_attestation:
+        raise RuntimeError(
+            "reference-host release attestation is inconsistent with canonical "
+            "release/runtime evidence"
+        )
+
+    if cohort.get("manifest_digest") != manifest_digests["release_manifest_digest"]:
+        raise RuntimeError(
+            "reference-host release attestation release manifest digest is inconsistent"
+        )
+    release_reference = release_attestation.get("release_manifest")
+    expected_release_reference = {
+        "path": RELEASE_MANIFEST_RELATIVE_PATH,
+        "exact_bytes_digest": manifest_digests["release_manifest_digest"],
+    }
+    if release_reference != expected_release_reference:
+        raise RuntimeError(
+            "reference-host release attestation release manifest reference drifted"
+        )
+    startup_preflight = release_attestation.get("startup_input_preflight")
+    fixture = execution_manifest["startup_input_preflight_test_fixture"]
+    fixture_file = _contract_file(
+        fixture["artifact_path"], "reference-host startup-input preflight fixture"
+    )
+    expected_startup_preflight_digest = file_digest(fixture_file)
+    if not isinstance(startup_preflight, dict):
+        raise RuntimeError("reference-host release attestation startup-input preflight is missing")
+    if startup_preflight.get("artifact_digest") != fixture["artifact_digest"]:
+        raise RuntimeError(
+            "reference-host release attestation startup-input artifact digest is inconsistent"
+        )
+    if startup_preflight.get("exact_bytes_digest") != expected_startup_preflight_digest:
+        raise RuntimeError(
+            "reference-host release attestation startup-input exact bytes digest is inconsistent"
+        )
+
+
 def base_receipt(
     *,
     execution_manifest: dict[str, Any],
@@ -303,6 +550,11 @@ def write_reference_host_receipt(
     receipt["evidence"] = provenance_evidence(validator, execution_manifest)
     try:
         release_attestation = committed_reference_host_release_attestation(validator)
+        validate_reference_host_release_attestation(
+            validator,
+            release_attestation,
+            execution_manifest=execution_manifest,
+        )
         receipt["reference_host_release"] = release_attestation
     except Exception as error:
         receipt["status"] = "unverifiable-release-cohort"

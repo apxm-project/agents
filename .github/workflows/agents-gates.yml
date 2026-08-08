@@ -41,6 +41,12 @@ jobs:
       - name: Audit private release surfaces
         run: dekk agents test-release-privacy
 
+      - name: Check reference-host contract parity
+        run: python contracts/tools/check_reference_host_contract_parity.py --root .
+
+      - name: Test reference-host contract parity gate
+        run: python -m unittest tools.tests.test_reference_host_contract_parity -v
+
       - name: Test offline evaluation evidence
         run: dekk agents test-offline-prompt-evaluation
 

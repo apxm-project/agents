@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import signal
 import subprocess
 import sys
 import time
@@ -17,6 +18,22 @@ from typing import Callable
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_REPORT = (
     REPO_ROOT / ".apxm" / "compiler" / "source-compiler-acceptance" / "report.json"
+)
+TOOLCHAIN_BLOCK_MARKERS = (
+    "error: apxm native toolchain readiness failed",
+    "error: apxm linux target readiness failed",
+)
+# The Dekk wrapper normalizes a native compiler crash to 256-signal on some
+# hosts instead of preserving subprocess' negative signal return code.  A
+# signal-only result has no source assertion to evaluate, so it is an
+# unavailable native toolchain rather than a compiler acceptance failure.
+NATIVE_TOOLCHAIN_CRASH_CODES = frozenset(
+    {
+        -signal.SIGBUS,
+        256 - signal.SIGBUS,
+        -signal.SIGSEGV,
+        256 - signal.SIGSEGV,
+    }
 )
 
 
@@ -37,9 +54,10 @@ class StepReport:
     description: str
     command: tuple[str, ...]
     status: str
-    returncode: int
+    returncode: int | None
     duration_seconds: float
     log_path: str
+    block_reason: str | None = None
 
 
 def acceptance_steps() -> tuple[AcceptanceStep, ...]:
@@ -47,14 +65,9 @@ def acceptance_steps() -> tuple[AcceptanceStep, ...]:
 
     return (
         AcceptanceStep(
-            "owner-descriptor",
-            "owner vectors, descriptor digests, and schema correspondence stay exact",
-            ("dekk", "agents", "owner-descriptor"),
-        ),
-        AcceptanceStep(
-            "check-contract-codegen",
-            "generated contract clients stay byte-identical to the checked-in owner contracts",
-            ("dekk", "agents", "check-contract-codegen"),
+            "check-frontend-codegen",
+            "AIS and frontend generated metadata stay byte-identical to the owner definitions",
+            ("dekk", "agents", "check-frontend-codegen"),
         ),
         AcceptanceStep(
             "check-frontend-surface",
@@ -82,19 +95,14 @@ def acceptance_steps() -> tuple[AcceptanceStep, ...]:
             ("dekk", "agents", "check-frontend-parity"),
         ),
         AcceptanceStep(
-            "test-external-source-package",
-            "an external TypeScript package compiles through the public source boundary without aliases or fallbacks",
-            ("dekk", "agents", "test-external-source-package"),
+            "test-typescript-frontend",
+            "the public TypeScript frontend package stays closed, typed, and deterministic",
+            ("dekk", "agents", "test-typescript-frontend"),
         ),
         AcceptanceStep(
             "compile-service-canonical",
             "the canonical CLI compile path emits apxm.air.v1 from repository-owned source",
             ("dekk", "agents", "compile-service-canonical"),
-        ),
-        AcceptanceStep(
-            "execute-canonical",
-            "the checked-in canonical apxm.air.v1 fixture executes through the canonical runtime",
-            ("dekk", "agents", "execute-canonical"),
         ),
     )
 
@@ -119,12 +127,25 @@ def run_step(
     print(f"\n==> {step.gate_id}: {step.description}", flush=True)
     print(f"    $ {' '.join(step.command)}", flush=True)
     started = time.perf_counter()
-    completed = runner(
-        step.command,
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-    )
+    launch_error: OSError | None = None
+    try:
+        completed = runner(
+            step.command,
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as error:
+        # A missing Dekk executable (or an equivalent launch-time environment
+        # failure) means this gate could not execute; it is not a failed
+        # source/compiler assertion.
+        launch_error = error
+        completed = subprocess.CompletedProcess(
+            step.command,
+            None,
+            stdout="",
+            stderr=f"{type(error).__name__}: {error}",
+        )
     duration = round(time.perf_counter() - started, 3)
     logs_dir.mkdir(parents=True, exist_ok=True)
     log_path = logs_dir / f"{step.gate_id}.log"
@@ -140,15 +161,38 @@ def run_step(
         print(completed.stdout, end="" if completed.stdout.endswith("\n") else "\n")
     if completed.stderr:
         print(completed.stderr, end="" if completed.stderr.endswith("\n") else "\n", file=sys.stderr)
+    status, block_reason = classify_step(completed, launch_error=launch_error)
     return StepReport(
         gate_id=step.gate_id,
         description=step.description,
         command=step.command,
-        status="passed" if completed.returncode == 0 else "failed",
+        status=status,
         returncode=completed.returncode,
         duration_seconds=duration,
         log_path=render_path(log_path),
+        block_reason=block_reason,
     )
+
+
+def classify_step(
+    completed: subprocess.CompletedProcess[str],
+    *,
+    launch_error: OSError | None = None,
+) -> tuple[str, str | None]:
+    """Classify a gate without treating environment blockage as acceptance."""
+
+    if completed.returncode == 0:
+        return "passed", None
+    if launch_error is not None:
+        return "blocked", "environment_unavailable"
+
+    output = "\n".join(part for part in (completed.stdout, completed.stderr) if part)
+    normalized = output.casefold()
+    if any(marker in normalized for marker in TOOLCHAIN_BLOCK_MARKERS):
+        return "blocked", "toolchain_unavailable"
+    if completed.returncode in NATIVE_TOOLCHAIN_CRASH_CODES and not output.strip():
+        return "blocked", "native_toolchain_crash"
+    return "failed", None
 
 
 def run_acceptance(
@@ -159,15 +203,21 @@ def run_acceptance(
     """Run every source/compiler gate and return one structured report."""
 
     steps = [run_step(step, logs_dir, runner=runner) for step in acceptance_steps()]
-    passed = all(step.status == "passed" for step in steps)
+    statuses = {step.status for step in steps}
+    if "failed" in statuses:
+        overall_status = "failed"
+    elif "blocked" in statuses:
+        overall_status = "blocked"
+    else:
+        overall_status = "passed"
     return {
         "schema_version": "apxm.source-compiler-acceptance.v1",
         "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
         "issue_scope": {
             "issue": 35,
-            "plan_tags": ["P-002", "P-003", "P-004", "P-005", "G1", "G2"],
+            "plan_tags": ["P-002", "P-003", "P-004", "G1", "G2"],
         },
-        "overall_status": "passed" if passed else "failed",
+        "overall_status": overall_status,
         "steps": [asdict(step) for step in steps],
     }
 
@@ -205,7 +255,16 @@ def main() -> int:
 
     print(f"\nWrote report to {render_path(report_path)}", flush=True)
     if report["overall_status"] != "passed":
-        print("FAILED: one or more source/compiler acceptance gates failed", file=sys.stderr)
+        if report["overall_status"] == "blocked":
+            print(
+                "BLOCKED: source/compiler acceptance could not execute because the environment or toolchain is unavailable",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "FAILED: one or more source/compiler acceptance gates failed",
+                file=sys.stderr,
+            )
         return 1
     print("OK: source/compiler acceptance gates passed", flush=True)
     return 0

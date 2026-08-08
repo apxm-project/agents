@@ -1,4 +1,8 @@
-use apxm_kernel::{INVOCATION_ADMISSION_SCHEMA, InvocationAdmission, InvocationAdmissionError};
+use apxm_kernel::{
+    AdmittedConfinement, INVOCATION_ADMISSION_SCHEMA, InvocationAdmission,
+    InvocationAdmissionError, ResourceCeilings, digest_serializable, minimal_port_bindings,
+    verify_invocation_admission,
+};
 
 fn digest(byte: char) -> String {
     format!("sha256:{}", byte.to_string().repeat(64))
@@ -29,9 +33,41 @@ fn invocation_admission_rejects_provenance_drift_before_runtime() {
     let mut admission = valid();
     admission.provenance_digest = digest('d');
 
+    let port_bindings = minimal_port_bindings();
+    let resource_ceilings = ResourceCeilings {
+        max_wall_ms: 60_000,
+        max_memory_bytes: 64 * 1024 * 1024,
+        max_effect_bytes: 1024 * 1024,
+    };
+    admission.artifact_digest =
+        "sha256:c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c".into();
+    admission.release_digest =
+        "sha256:a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829".into();
+    admission.port_bindings_digest = digest_serializable(&port_bindings).expect("port digest");
+    admission.resource_ceiling_digest =
+        digest_serializable(&resource_ceilings).expect("ceiling digest");
+
+    let error = verify_invocation_admission(
+        &admission,
+        b"artifact",
+        b"release",
+        b"provenance",
+        &port_bindings,
+        resource_ceilings,
+        &AdmittedConfinement {
+            confinement_type: "NATIVE-SANDBOX".into(),
+            sandbox_digest: digest('d'),
+            policy_digest: digest('e'),
+        },
+    );
+    let error = error.expect_err("provenance drift");
     assert_eq!(
-        admission.validate(),
-        Err(InvocationAdmissionError::ArtifactProvenanceMismatch)
+        error,
+        InvocationAdmissionError::ProvenanceMismatch {
+            expected: "sha256:96d815328a42cb4ef89d5e0b7a1df6be43b484832c83a7b4596d8402c7c0b12b"
+                .into(),
+            actual: digest('d'),
+        }
     );
 }
 
@@ -40,15 +76,24 @@ fn invocation_admission_rejects_release_port_and_ceiling_drift() {
     let admission = valid();
     assert_eq!(
         admission.verify_against(&digest('d'), &digest('b'), &digest('c')),
-        Err(InvocationAdmissionError::ReleaseMismatch)
+        Err(InvocationAdmissionError::ReleaseMismatch {
+            expected: digest('d'),
+            actual: digest('a'),
+        })
     );
     assert_eq!(
         admission.verify_against(&digest('a'), &digest('d'), &digest('c')),
-        Err(InvocationAdmissionError::PortBindingsMismatch)
+        Err(InvocationAdmissionError::PortBindingsDigestMismatch {
+            expected: digest('d'),
+            actual: digest('b'),
+        })
     );
     assert_eq!(
         admission.verify_against(&digest('a'), &digest('b'), &digest('d')),
-        Err(InvocationAdmissionError::ResourceCeilingMismatch)
+        Err(InvocationAdmissionError::ResourceCeilingDigestMismatch {
+            expected: digest('d'),
+            actual: digest('c'),
+        })
     );
 }
 

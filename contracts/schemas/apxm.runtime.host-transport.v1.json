@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.runtime.host-transport.v1",
+  "title": "APXM Reference Host Private Transport",
+  "description": "Product-neutral private JSONL transport for the already-published host request and response contracts.",
+  "type": "object",
+  "required": ["schema_version", "semantic_owner", "protocol", "endpoint", "framing", "request_schema", "response_schema", "authority", "failure_behavior"],
+  "properties": {
+    "schema_version": {"const": "apxm.runtime.host-transport.v1"},
+    "semantic_owner": {"const": "agents"},
+    "protocol": {"const": "jsonl-unix-stream"},
+    "endpoint": {
+      "type": "object",
+      "required": ["kind", "path_source", "public", "permissions"],
+      "properties": {
+        "kind": {"const": "unix-domain-socket"},
+        "path_source": {"const": "injected-runtime-endpoint"},
+        "public": {"const": false},
+        "permissions": {"const": "owner-only"}
+      },
+      "additionalProperties": false
+    },
+    "framing": {"const": "one-json-object-per-line-one-response-line"},
+    "request_schema": {"const": "apxm.runtime.host-request.v1"},
+    "response_schema": {"const": "apxm.runtime.host-response.v1"},
+    "authority": {"const": "caller-supplied-apxm-invocation-admission"},
+    "failure_behavior": {
+      "type": "object",
+      "required": ["invalid_request", "disconnect", "timeout", "replay"],
+      "properties": {
+        "invalid_request": {"const": "host-rejects-and-keeps-process-alive"},
+        "disconnect": {"const": "caller-records-outcome-unknown"},
+        "timeout": {"const": "caller-records-outcome-unknown"},
+        "replay": {"const": "host-returns-exact-receipt-for-exact-invocation-id"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

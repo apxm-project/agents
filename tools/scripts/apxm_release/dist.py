@@ -25,6 +25,7 @@ from apxm_release.util import (
     release_tag,
     release_version,
     run,
+    sha256,
     stdout,
     target_label,
     venv_bin,
@@ -159,6 +160,11 @@ def build_dist(args: argparse.Namespace) -> int:
         else []
     )
     checksum_path = write_checksums([binary_archive, source_archive, *python_artifacts], output_dir)
+    try:
+        release_artifacts(output_dir)
+    except (OSError, ValueError) as error:
+        print(f"error: release artifact verification failed: {error}", file=sys.stderr)
+        return 1
 
     print(f"wrote {binary_archive}")
     print(f"wrote {source_archive}")
@@ -169,10 +175,60 @@ def build_dist(args: argparse.Namespace) -> int:
 
 
 def release_artifacts(output_dir: Path) -> list[Path]:
+    """Return exactly the checksum-verified files eligible for publication.
+
+    The release directory is an immutable publication boundary. Do not let a
+    rerun or a hand-placed file silently widen the asset set.
+    """
+
+    if not output_dir.is_dir():
+        raise ValueError(f"release artifact directory is missing: {output_dir}")
     patterns = ["*.tar.gz", CHECKSUM_FILE]
     if python_publish_enabled():
         patterns.append("python/apxm-*")
-    artifacts: list[Path] = []
+    candidates: list[Path] = []
     for pattern in patterns:
-        artifacts.extend(sorted(output_dir.glob(pattern)))
-    return [path for path in artifacts if path.is_file()]
+        candidates.extend(sorted(output_dir.glob(pattern)))
+    candidates = sorted(set(path for path in candidates if path.is_file()))
+    checksum_path = output_dir / CHECKSUM_FILE
+    if checksum_path not in candidates:
+        raise ValueError(f"missing {CHECKSUM_FILE}")
+
+    files = sorted(
+        path for path in output_dir.rglob("*") if path.is_file() or path.is_symlink()
+    )
+    if any(path.is_symlink() for path in files):
+        raise ValueError("release artifact directory must not contain symlinks")
+    allowed = set(candidates)
+    unexpected = [path for path in files if path not in allowed]
+    if unexpected:
+        names = ", ".join(str(path.relative_to(output_dir)) for path in unexpected)
+        raise ValueError(f"unlisted release files: {names}")
+
+    entries: dict[Path, str] = {}
+    lines = checksum_path.read_text(encoding="utf-8").splitlines()
+    for line in lines:
+        if len(line) < 67 or line[64:66] != "  ":
+            raise ValueError(f"invalid {CHECKSUM_FILE} entry")
+        digest, relative_name = line[:64], line[66:]
+        if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+            raise ValueError(f"invalid digest in {CHECKSUM_FILE}")
+        relative = Path(relative_name)
+        if (
+            relative.is_absolute()
+            or relative_name != relative.as_posix()
+            or ".." in relative.parts
+        ):
+            raise ValueError(f"invalid path in {CHECKSUM_FILE}: {relative_name}")
+        path = output_dir / relative
+        if path not in allowed or path == checksum_path or path in entries:
+            raise ValueError(f"invalid or duplicate path in {CHECKSUM_FILE}: {relative_name}")
+        entries[path] = digest
+
+    expected = allowed - {checksum_path}
+    if set(entries) != expected:
+        raise ValueError(f"{CHECKSUM_FILE} does not cover exactly the release files")
+    for path, expected_digest in entries.items():
+        if sha256(path) != expected_digest:
+            raise ValueError(f"checksum mismatch: {path.relative_to(output_dir)}")
+    return candidates

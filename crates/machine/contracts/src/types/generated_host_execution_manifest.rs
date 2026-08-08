@@ -6,13 +6,13 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostExecutionManifest {
-    pub execution_id: String,
-    pub host_id: String,
-    pub tier: HostTier,
-    pub capabilities: Vec<String>,
-    pub principal: HostPrincipal,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_at: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expires_at: Option<String>,
+    pub schema_version: serde_json::Value,
+    pub semantic_owner: serde_json::Value,
+    pub executable: serde_json::Value,
+    pub protocol: serde_json::Value,
+    pub readiness_contract: serde_json::Value,
+    pub drain_quiescence_contract: serde_json::Value,
+    pub admission_contract: serde_json::Value,
+    pub evidence_contract: serde_json::Value,
+    pub lifecycle: serde_json::Value,
 }

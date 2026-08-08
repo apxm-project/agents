@@ -24,17 +24,17 @@
       "release_manifest": {
         "schema_version": "apxm.reference-host-release-manifest.v1",
         "path": "reference-host/manifests/apxm.reference-host-release-manifest.v1.json",
-        "digest": "sha256:7376e419fc683a2e000caf30192ae236559ff1fb6f740dbaa67b6856b9dcb067"
+        "digest": "sha256:a97888d4af7abcbe19c1c1c6073a9d8de0d1ca26323a7977b96f86e2822c41e6"
       },
       "execution_manifest": {
         "schema_version": "apxm.reference-host-execution-manifest.v1",
         "path": "reference-host/manifests/apxm.reference-host-execution-manifest.v1.json",
-        "digest": "sha256:19bd74d54e608023853685266fcfb914ffe023e9d365ee3229803ba86a5802ac"
+        "digest": "sha256:a0f10dd3b237c7897a26347bed7b41f7494ef13d3e010eb9e284216ef440ec0e"
       },
       "lifecycle_vector": {
         "vector_id": "apxm.reference-host.lifecycle-parity.v1",
         "path": "reference-host/vectors/apxm.reference-host.lifecycle-parity.v1.json",
-        "digest": "sha256:423a8dbd90839e94cdabd278e445706bd645974e776a510afd795704b1afd15e",
+        "digest": "sha256:82ee99ff605a232d848bc33047f06dd22c668c99e7f9e1a348b160b256bc2dcd",
         "profiles": [
           "embedded",
           "reference-host"
@@ -250,9 +250,24 @@
       "digest": "sha256:08aece04a3ddf6d076b7af43a451a0159363e2c369d1ea16aad00ec4a8d288c6"
     },
     {
+      "schema_id": "apxm.runtime.host-request.v1",
+      "path": "schemas/apxm.runtime.host-request.v1.json",
+      "digest": "sha256:12ca6c600fc50f150c02ebfad48b33a0f6e04b5367c9c9e5c89b995283be0458"
+    },
+    {
+      "schema_id": "apxm.runtime.host-response.v1",
+      "path": "schemas/apxm.runtime.host-response.v1.json",
+      "digest": "sha256:07a5f3fb9be192780902134490d15cc4df4dfa117fa8d759778922dc1cd0f546"
+    },
+    {
+      "schema_id": "apxm.runtime.host-transport.v1",
+      "path": "schemas/apxm.runtime.host-transport.v1.json",
+      "digest": "sha256:873e65facc5daf4a4b542e355076cd410cc99c9ce8d046191e33aa9a569c6390"
+    },
+    {
       "schema_id": "apxm.reference-host-startup-input.v1",
       "path": "schemas/apxm.reference-host-startup-input.v1.json",
-      "digest": "sha256:c302ef92982cf60866caff3767fa0ef9e4e1e5d4729391b3ad80abbb15ad3e9e"
+      "digest": "sha256:70e722381471a7cbd76b89ac25594fa668bfb63c9254ed1082a16b9752752e7d"
     },
     {
       "schema_id": "apxm.execution-admission.v1",
@@ -275,7 +290,7 @@
     {
       "port_contract_id": "apxm.model-inference.v1",
       "path": "port-contracts/apxm.model-inference.port-contract.v1.json",
-      "digest": "sha256:fdf6aea657550b87f8b66f63f8e50cf793cec427b320c5bce940ba24fbc97362"
+      "digest": "sha256:f76427af3977016d4667165abbc4c21e81b38eeb179b1dea2045e9ee9a9802b8"
     },
     {
       "port_contract_id": "apxm.external-agent.v1",
@@ -1017,13 +1032,44 @@
     {
       "schema_id": "apxm.reference-host-startup-input.v1",
       "path": "vectors/apxm.reference-host-startup-input.v1.json",
-      "digest": "sha256:73ad787ce769e58b808ce134ed6cda3012b59e2c35f38f8fac442431c8189a37",
+      "digest": "sha256:423cc3b61bde57e525893ef930d3eb363fba5e259cbea59ec18f6671da85156c",
       "coverage": [
         "positive",
         "placeholder_rejection",
         "dirty_rejection"
       ]
+    },
+    {
+      "schema_id": "apxm.runtime.host-request.v1",
+      "path": "vectors/apxm.runtime.host-request.v1.json",
+      "digest": "sha256:50fafaf0e3509f21e0b764d6ad295f8ad7109d967e6113b7cd78f98b739fb920",
+      "coverage": [
+        "control_request",
+        "invoke_request",
+        "unknown_operation_rejection",
+        "missing_admission_rejection"
+      ]
+    },
+    {
+      "schema_id": "apxm.runtime.host-response.v1",
+      "path": "vectors/apxm.runtime.host-response.v1.json",
+      "digest": "sha256:754b530b020c3159799e3d8d9afa18022a9f240f35351352714c3cea7d9a2adc",
+      "coverage": [
+        "readiness",
+        "committed_with_evidence",
+        "rejected_with_readiness",
+        "unknown_field_rejection"
+      ]
+    },
+    {
+      "schema_id": "apxm.runtime.host-transport.v1",
+      "path": "vectors/apxm.runtime.host-transport.v1.json",
+      "digest": "sha256:4fff3838733072d7ba70d82f3eababa7a8299785c211bb54df043644623d5478",
+      "coverage": [
+        "owner_only_unix_jsonl_transport",
+        "public_endpoint_rejection"
+      ]
     }
   ],
-  "descriptor_digest": "sha256:a06fcb5058cf57dcbe67ac98908660526d8925f4931ff47b7c30fe98c38cec23"
+  "descriptor_digest": "sha256:adbff0458520708b0e61e6fb97fb15fc14f43a4cfa35c9d39951c88e0d2f15cf"
 }

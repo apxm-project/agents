@@ -76,6 +76,10 @@ NATIVE_TOOLCHAIN_GATED_SUBCOMMANDS = frozenset({
 LINUX_GNU_COMPILER_MARKERS = ("-conda-linux-gnu-", "-linux-gnu-")
 LINUX_GNU_COMPILER_SUFFIXES = ("-gcc", "-g++", "-ld")
 NATIVE_TOOLCHAIN_ENV_KEYS = ("CC", "CXX")
+NATIVE_COMPILER_NAMES = {
+    "CC": ("clang", "clang-22"),
+    "CXX": ("clang++", "clang++-22"),
+}
 READINESS_FAILURE_EXIT_CODE = 2
 SKIP_RELEASE_ENTRIES = frozenset({
     BUILD_DIR_NAME,
@@ -136,6 +140,18 @@ def _prepend_env_path(env: dict[str, str], key: str, paths: list[Path]) -> None:
 def _cargo_env(project_root: Path, target_dir: Path, command: list[str]) -> dict[str, str]:
     env = dict(os.environ)
     env[EnvKey.CARGO_TARGET_DIR.value] = str(target_dir)
+    if platform.system().lower() == "darwin" and not _is_explicit_linux_target(
+        _explicit_target(command)
+    ):
+        mismatched_keys = [
+            key
+            for key in NATIVE_TOOLCHAIN_ENV_KEYS
+            if (value := env.get(key)) and _looks_like_linux_gnu_compiler(value)
+        ]
+        if mismatched_keys:
+            native_compilers = _native_compiler_pair(project_root, env)
+            if native_compilers is not None:
+                env["CC"], env["CXX"] = native_compilers
     profile = _command_profile(command)
     project_profile_dir = project_root / PROJECT_TARGET_DIR_NAME / profile
     # The native MLIR bridge is installed into the workspace target/profile
@@ -228,6 +244,62 @@ def _installed_linux_gnu_compiler_prefixes(project_root: Path) -> list[str]:
         if (prefix := _linux_gnu_compiler_prefix(path.name)) is not None
     }
     return sorted(prefixes)
+
+
+def _native_compiler_pair(project_root: Path, env: dict[str, str]) -> tuple[str, str] | None:
+    """Find an executable native Darwin clang pair in the active toolchain."""
+
+    search_dirs: list[Path] = []
+    conda_prefix = env.get("CONDA_PREFIX")
+    if conda_prefix:
+        search_dirs.append(Path(conda_prefix) / "bin")
+    search_dirs.append(project_root / ".dekk" / "env" / "bin")
+
+    path_entries = env.get("PATH", "").split(os.pathsep)
+    search_dirs.extend(Path(entry) for entry in path_entries if entry)
+    search_dirs.append(Path("/usr/bin"))
+
+    for directory in dict.fromkeys(search_dirs):
+        candidates = {}
+        for key, names in NATIVE_COMPILER_NAMES.items():
+            candidates[key] = next(
+                (
+                    candidate
+                    for name in names
+                    if _is_executable(candidate := directory / name)
+                    and _is_native_darwin_compiler(candidate)
+                ),
+                None,
+            )
+        if candidates["CC"] is not None and candidates["CXX"] is not None:
+            return str(candidates["CC"]), str(candidates["CXX"])
+    return None
+
+
+def _is_native_darwin_compiler(path: Path) -> bool:
+    """Verify a candidate compiler targets this Darwin host architecture."""
+
+    try:
+        result = subprocess.run(
+            [str(path), "-dumpmachine"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return False
+    if result.returncode != 0:
+        return False
+
+    target = result.stdout.strip().casefold()
+    if "-apple-darwin" not in target:
+        return False
+    host_machine = platform.machine().casefold()
+    expected_machine = {"arm64": ("arm64", "aarch64"), "x86_64": ("x86_64",)}.get(
+        host_machine,
+        (host_machine,),
+    )
+    return target.startswith(expected_machine)
 
 
 def _is_explicit_linux_target(target: str | None) -> bool:

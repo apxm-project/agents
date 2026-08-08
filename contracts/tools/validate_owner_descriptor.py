@@ -221,6 +221,7 @@ VECTOR_SCHEMA = {
     "apxm.runtime-readiness.v1.json": "apxm.runtime-readiness.v1",
     "apxm.runtime-drain-quiescence.v1.json": "apxm.runtime-drain-quiescence.v1",
     "apxm.invocation-admission.v1.json": "apxm.invocation-admission.v1",
+    "apxm.runtime.host-request.v1.json": "apxm.runtime.host-request.v1",
     "apxm.reference-host-startup-input.v1.json": "apxm.reference-host-startup-input.v1",
     "apxm.execution-admission.v1.json": "apxm.execution-admission.v1",
 }
@@ -275,12 +276,18 @@ REFERENCE_HOST_EXECUTION_SCHEMA_KEYS = (
     "runtime_readiness_schema",
     "runtime_drain_quiescence_schema",
     "invocation_admission_schema",
+    "host_request_schema",
+    "host_response_schema",
+    "host_transport_schema",
 )
 REFERENCE_HOST_EXECUTION_VECTOR_KEYS = (
     "startup_input_vector",
     "runtime_readiness_vector",
     "runtime_drain_quiescence_vector",
     "invocation_admission_vector",
+    "host_request_vector",
+    "host_response_vector",
+    "host_transport_vector",
 )
 REFERENCE_HOST_EXECUTION_SCHEMA_SPECS = (
     (
@@ -313,6 +320,24 @@ REFERENCE_HOST_EXECUTION_SCHEMA_SPECS = (
         "reference-host/schemas/apxm.invocation-admission.v1.json",
         "schemas/apxm.invocation-admission.v1.json",
     ),
+    (
+        "host_request_schema",
+        "apxm.runtime.host-request.v1",
+        "reference-host/schemas/apxm.runtime.host-request.v1.json",
+        "schemas/apxm.runtime.host-request.v1.json",
+    ),
+    (
+        "host_response_schema",
+        "apxm.runtime.host-response.v1",
+        "reference-host/schemas/apxm.runtime.host-response.v1.json",
+        "schemas/apxm.runtime.host-response.v1.json",
+    ),
+    (
+        "host_transport_schema",
+        "apxm.runtime.host-transport.v1",
+        "reference-host/schemas/apxm.runtime.host-transport.v1.json",
+        "schemas/apxm.runtime.host-transport.v1.json",
+    ),
 )
 REFERENCE_HOST_EXECUTION_VECTOR_SPECS = (
     (
@@ -338,6 +363,24 @@ REFERENCE_HOST_EXECUTION_VECTOR_SPECS = (
         "apxm.invocation-admission.v1",
         "reference-host/vectors/apxm.invocation-admission.v1.json",
         "vectors/apxm.invocation-admission.v1.json",
+    ),
+    (
+        "host_request_vector",
+        "apxm.runtime.host-request.v1",
+        "reference-host/vectors/apxm.runtime.host-request.v1.json",
+        "vectors/apxm.runtime.host-request.v1.json",
+    ),
+    (
+        "host_response_vector",
+        "apxm.runtime.host-response.v1",
+        "reference-host/vectors/apxm.runtime.host-response.v1.json",
+        "vectors/apxm.runtime.host-response.v1.json",
+    ),
+    (
+        "host_transport_vector",
+        "apxm.runtime.host-transport.v1",
+        "reference-host/vectors/apxm.runtime.host-transport.v1.json",
+        "vectors/apxm.runtime.host-transport.v1.json",
     ),
 )
 REFERENCE_HOST_DESCRIPTOR = {

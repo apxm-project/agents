@@ -8,7 +8,6 @@ canonical AIR through the in-process bridge with no CLI or network step.
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -17,6 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[5]
 PACKAGE_DIR = REPO_ROOT / "crates" / "compiler" / "frontend" / "python"
 NATIVE_DEST = PACKAGE_DIR / "apxm_program" / "_native.so"
 CARGO = REPO_ROOT / "tools" / "scripts" / "cargo.py"
+NATIVE_INSTALLER = REPO_ROOT / "tools" / "scripts" / "install_frontend_native.py"
 
 
 def _run(args: list[str]) -> str:
@@ -33,13 +33,22 @@ def _run(args: list[str]) -> str:
     return result.stdout.strip()
 
 
+def _run_script(script: Path, args: list[str]) -> str:
+    result = subprocess.run(
+        [sys.executable, str(script), *args],
+        cwd=str(REPO_ROOT),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
 def _build_native() -> None:
     _run(["build", "-p", "apxm-frontend-python", "--release"])
-    target_dir = Path(_run(["target-dir"]))
-    built = target_dir / "release" / "lib_native.so"
-    if not built.is_file():
-        raise RuntimeError(f"native bridge not found at {built}")
-    shutil.copy2(built, NATIVE_DEST)
+    _run_script(NATIVE_INSTALLER, ["python"])
+    if not NATIVE_DEST.is_file():
+        raise RuntimeError(f"native bridge not installed at {NATIVE_DEST}")
 
 
 def pytest_configure(config) -> None:  # noqa: ARG001

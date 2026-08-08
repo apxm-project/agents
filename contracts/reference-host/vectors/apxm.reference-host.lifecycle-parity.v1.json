@@ -19,7 +19,7 @@
         "reference_host_state_after": "stopped",
         "restart_state": "ready",
         "expected_host_response": {
-          "schema_version": "apxm.runtime.host.v1",
+          "schema_version": "apxm.runtime.host-response.v1",
           "status": "cancelled",
           "reason": "cancelled_before_admission",
           "readiness": {
@@ -53,7 +53,7 @@
         "parity_outcome": "shutdown_terminal",
         "runtime_evidence_terminal_kind": null,
         "expected_host_response": {
-          "schema_version": "apxm.runtime.host.v1",
+          "schema_version": "apxm.runtime.host-response.v1",
           "status": "shutdown",
           "reason": "shutdown_terminal",
           "readiness": {
@@ -78,7 +78,7 @@
         "runtime_evidence_terminal_kind": "invocation.committed",
         "reference_host_state_after": "ready",
         "expected_host_response": {
-          "schema_version": "apxm.runtime.host.v1",
+          "schema_version": "apxm.runtime.host-response.v1",
           "status": "restarted",
           "recovery": {
             "contract": "reconcile_from_runtime_evidence",
@@ -106,7 +106,7 @@
         "authorizes_next_activation": false,
         "reference_host_admission_window": "closed_before_dispatch",
         "expected_host_response": {
-          "schema_version": "apxm.runtime.host.v1",
+          "schema_version": "apxm.runtime.host-response.v1",
           "status": "revoked",
           "reason": "admission_revoked",
           "readiness": {

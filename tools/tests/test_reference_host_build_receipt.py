@@ -12,6 +12,9 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPOSITORY_ROOT / "tools" / "scripts" / "reference_host_receipt.py"
+STARTUP_INPUT_SCRIPT_PATH = (
+    REPOSITORY_ROOT / "tools" / "scripts" / "reference_host_startup_input.py"
+)
 VALIDATOR_PATH = REPOSITORY_ROOT / "contracts" / "tools" / "validate_owner_descriptor.py"
 
 
@@ -28,6 +31,9 @@ class ReferenceHostBuildReceiptTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.module = load_module(SCRIPT_PATH, "reference_host_receipt")
+        cls.startup_input_module = load_module(
+            STARTUP_INPUT_SCRIPT_PATH, "reference_host_startup_input_for_receipt_tests"
+        )
         cls.validator = load_module(VALIDATOR_PATH, "validate_owner_descriptor")
 
     def test_built_receipt_pins_exact_host_sdk_provenance(self) -> None:
@@ -342,6 +348,109 @@ class ReferenceHostBuildReceiptTests(unittest.TestCase):
         startup_evidence = receipt["evidence"]["startup_input_preflight"]
         self.assertFalse(startup_evidence["exists"])
         self.assertFalse(startup_evidence["digest_matches_expected"])
+
+    def test_host_request_publication_drift_fails_closed_before_build(self) -> None:
+        execution_manifest = copy.deepcopy(
+            self.module.load_json(self.module.EXECUTION_MANIFEST_PATH)
+        )
+        release_manifest = self.module.load_json(self.module.RELEASE_MANIFEST_PATH)
+        execution_manifest["host_request_schema"]["digest"] = "sha256:" + "0" * 64
+
+        with self.assertRaisesRegex(RuntimeError, "host_request_schema drifted"):
+            self.module.validate_reference_host_publication(
+                execution_manifest, release_manifest
+            )
+
+    def test_release_manifest_host_request_publication_drift_fails_closed(self) -> None:
+        execution_manifest = self.module.load_json(self.module.EXECUTION_MANIFEST_PATH)
+        release_manifest = copy.deepcopy(
+            self.module.load_json(self.module.RELEASE_MANIFEST_PATH)
+        )
+        for entry in release_manifest["publication_cohort"]["vectors"]:
+            if entry["schema_id"] == self.module.HOST_REQUEST_SCHEMA_ID:
+                entry["digest"] = "sha256:" + "0" * 64
+                break
+
+        with self.assertRaisesRegex(RuntimeError, "vectors host-request publication drifted"):
+            self.module.validate_reference_host_publication(
+                execution_manifest, release_manifest
+            )
+
+    def test_startup_input_rejects_execution_manifest_digest_drift(self) -> None:
+        startup_module = self.startup_input_module
+        original_git_stdout = startup_module.git_stdout
+        original_load_json = startup_module.load_json
+        release_manifest = copy.deepcopy(
+            original_load_json(startup_module.RELEASE_MANIFEST_PATH)
+        )
+        release_manifest["publication_cohort"]["manifests"][0]["digest"] = (
+            "sha256:" + "0" * 64
+        )
+
+        def load_json(path: Path) -> dict[str, object]:
+            if path == startup_module.RELEASE_MANIFEST_PATH:
+                return release_manifest
+            return original_load_json(path)
+
+        startup_module.git_stdout = lambda *args: {
+            ("rev-parse", "HEAD"): "1" * 40,
+            ("status", "--porcelain"): "",
+        }[args]
+        startup_module.load_json = load_json
+        try:
+            with self.assertRaisesRegex(RuntimeError, "execution-manifest digest drifted"):
+                startup_module.build_startup_input(
+                    owner_revision="1" * 40,
+                    release_digest="sha256:" + ("1" * 63) + "2",
+                    port_bindings_digest="sha256:" + ("2" * 63) + "3",
+                    resource_ceiling_digest="sha256:" + ("3" * 63) + "4",
+                )
+        finally:
+            startup_module.git_stdout = original_git_stdout
+            startup_module.load_json = original_load_json
+
+    def test_inconsistent_release_runtime_evidence_fails_closed_before_build(
+        self,
+    ) -> None:
+        expected_release = self.validator.reference_host_release_attestation(
+            owner_revision="7" * 40,
+            owner_descriptor_digest=self.validator.descriptor_exact_checksum(),
+        )
+        inconsistent_release = copy.deepcopy(expected_release)
+        inconsistent_release["startup_input_preflight"]["exact_bytes_digest"] = (
+            "sha256:" + "0" * 64
+        )
+        original_attestation = self.module.committed_reference_host_release_attestation
+        with tempfile.TemporaryDirectory() as temp_dir_name:
+            temp_dir = Path(temp_dir_name)
+            receipt_path = temp_dir / "receipt.json"
+            build_called = False
+
+            def unexpected_build(_command: list[str]) -> int:
+                nonlocal build_called
+                build_called = True
+                return 0
+
+            self.module.committed_reference_host_release_attestation = (
+                lambda _validator: inconsistent_release
+            )
+            try:
+                exit_code, receipt = self.module.write_reference_host_receipt(
+                    receipt_path=receipt_path,
+                    run_build=unexpected_build,
+                )
+            finally:
+                self.module.committed_reference_host_release_attestation = original_attestation
+
+        self.assertEqual(exit_code, 1)
+        self.assertFalse(
+            build_called, "build must not run with inconsistent release evidence"
+        )
+        self.assertEqual(receipt["status"], "unverifiable-release-cohort")
+        self.assertEqual(receipt["error"]["code"], "unverifiable_release_cohort")
+        self.assertIn(
+            "canonical release/runtime evidence", receipt["error"]["message"]
+        )
 
     def test_unverifiable_release_cohort_fails_closed_before_build(self) -> None:
         original_attestation = self.module.committed_reference_host_release_attestation
