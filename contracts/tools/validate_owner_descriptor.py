@@ -241,6 +241,11 @@ FORBIDDEN_LANE_IDS = re.compile(r"\b(?:A|C|S|O|H|T|P|K|D|V|E|M|R)\d[a-z]?\b")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 REFERENCE_HOST_DEPENDENCY_NAME = "apxm-host-sdk"
+# The reference-host receipt records the immutable Host SDK owner cohort even
+# though the Agents Cargo workspace must not depend on that downstream SDK.
+# Keep the provenance coordinate available to receipt validation without
+# reintroducing a build dependency.
+REFERENCE_HOST_DEPENDENCY_GIT = "https://github.com/apxm-project/host-sdk.git"
 REFERENCE_HOST_PROFILE_COHORT = ["embedded", "reference-host"]
 REFERENCE_HOST_EXECUTION_MANIFEST_SCHEMA_VERSION = (
     "apxm.reference-host-execution-manifest.v1"
