@@ -143,19 +143,19 @@
       "path": "contracts/reference-host/manifests/apxm.reference-host-release-manifest.v1.json"
     }
   },
-  "release_id": "apxm-agents-fe3d36c053ec",
+  "release_id": "apxm-agents-fc1ce85ef7e0",
   "release_kind": "source-provenance",
   "release_manifest": {
-    "exact_bytes_digest": "sha256:f107d785a8d41fe903afbf311647786801dc806995240a4df3641601f7abf741",
+    "exact_bytes_digest": "sha256:4e0961a147aec03d13ce05744b9e5e79f24230b0a6c914d1cbce01c8f4372180",
     "path": "release/manifests/agents-release.v1.json"
   },
   "schema_version": "apxm.agents-release-evidence.v1",
   "semantic_owner": "agents",
   "source": {
-    "archive_digest": "sha256:251ee9f808377f165a4f6f4a73732d2c3ff5bda2c905beb1723695a7f05cd8ca",
+    "archive_digest": "sha256:16edc67d818d8353e6de91617576e95eb90d0d8a500f5977d3f2150545b1fa2b",
     "repository": "https://github.com/apxm-project/agents.git",
-    "revision": "fe3d36c053ec144e3ede610df855d931ca4279b4",
-    "tree_digest": "sha256:d16d70223750c33e7ea1edc1350e7abb0aff62271fc39a802ef89b25e899df88"
+    "revision": "fc1ce85ef7e05ba48625b9939a27ca41c54dfdb3",
+    "tree_digest": "sha256:966d18bee806908615f25e25e32b2646f4e3667215d14756bb09bc57b1fb2dea"
   },
   "verification": {
     "gate": "tools/scripts/check_agents_release_manifest.py",
