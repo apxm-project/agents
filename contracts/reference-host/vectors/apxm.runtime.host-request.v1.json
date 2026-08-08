@@ -1,0 +1,67 @@
+[
+  {
+    "name": "valid_readiness_request",
+    "expected_valid": true,
+    "input": {
+      "schema_version": "apxm.runtime.host-request.v1",
+      "operation": "readiness"
+    }
+  },
+  {
+    "name": "valid_invoke_request",
+    "expected_valid": true,
+    "input": {
+      "schema_version": "apxm.runtime.host-request.v1",
+      "operation": "invoke",
+      "admission": {
+        "schema_version": "apxm.invocation-admission.v1",
+        "invocation_id": "invocation.1",
+        "artifact_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "release_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "port_bindings_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "resource_ceiling_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "provenance_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "air": {
+        "schema_version": "apxm.air.v1",
+        "semantic_operations": [],
+        "structural_ir": [],
+        "context_flow": [],
+        "source_map": {
+          "schema_version": "apxm.source-map.v1",
+          "source_language": "python",
+          "node_spans": [],
+          "region_annotations": []
+        }
+      }
+    }
+  },
+  {
+    "name": "rejects_unknown_operation",
+    "expected_valid": false,
+    "input": {
+      "schema_version": "apxm.runtime.host-request.v1",
+      "operation": "compile"
+    }
+  },
+  {
+    "name": "rejects_invoke_without_materialized_admission",
+    "expected_valid": false,
+    "input": {
+      "schema_version": "apxm.runtime.host-request.v1",
+      "operation": "invoke",
+      "air": {
+        "schema_version": "apxm.air.v1",
+        "semantic_operations": [],
+        "structural_ir": [],
+        "context_flow": [],
+        "source_map": {
+          "schema_version": "apxm.source-map.v1",
+          "source_language": "python",
+          "node_spans": [],
+          "region_annotations": []
+        }
+      }
+    }
+  }
+]

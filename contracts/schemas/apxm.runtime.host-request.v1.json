@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.runtime.host-request.v1",
+  "title": "APXM Reference Host Request",
+  "description": "Product-neutral JSONL request accepted by the APXM reference host. Compilation and authority issuance occur outside this transport; invoke carries already-materialized canonical AIR and Invocation Admission.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/InvokeRequest"
+    },
+    {
+      "$ref": "#/$defs/ControlRequest"
+    }
+  ],
+  "$defs": {
+    "InvokeRequest": {
+      "type": "object",
+      "required": ["schema_version", "operation", "admission", "air"],
+      "properties": {
+        "schema_version": {
+          "const": "apxm.runtime.host-request.v1"
+        },
+        "operation": {
+          "const": "invoke"
+        },
+        "admission": {
+          "$ref": "apxm.invocation-admission.v1"
+        },
+        "air": {
+          "$ref": "apxm.air.v1"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ControlRequest": {
+      "type": "object",
+      "required": ["schema_version", "operation"],
+      "properties": {
+        "schema_version": {
+          "const": "apxm.runtime.host-request.v1"
+        },
+        "operation": {
+          "enum": [
+            "readiness",
+            "drain",
+            "cancel",
+            "shutdown",
+            "revoke",
+            "restart"
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

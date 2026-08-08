@@ -39,7 +39,11 @@ def publish_github(args: argparse.Namespace) -> int:
         dist_rc = build_dist(args)
         if dist_rc != 0:
             return dist_rc
-    artifacts = release_artifacts(output_dir)
+    try:
+        artifacts = release_artifacts(output_dir)
+    except (OSError, ValueError) as error:
+        print(f"error: release artifact verification failed: {error}", file=sys.stderr)
+        return 2
     if not artifacts:
         print(f"error: no release artifacts found under {output_dir}", file=sys.stderr)
         return 1
@@ -101,12 +105,17 @@ def publish_python(args: argparse.Namespace) -> int:
         return 2
 
     normalized = distribution.replace("-", "_")
+    try:
+        verified_artifacts = release_artifacts(output_dir)
+    except (OSError, ValueError) as error:
+        print(f"error: release artifact verification failed: {error}", file=sys.stderr)
+        return 2
     python_artifacts = sorted(
         path
-        for path in (output_dir / "python").iterdir()
-        if path.is_file()
+        for path in verified_artifacts
+        if path.parent == output_dir / "python"
         and (path.name.startswith(f"{distribution}-") or path.name.startswith(f"{normalized}-"))
-    ) if (output_dir / "python").is_dir() else []
+    )
     if not python_artifacts:
         print(f"error: no Python artifacts found under {output_dir / 'python'}", file=sys.stderr)
         return 1

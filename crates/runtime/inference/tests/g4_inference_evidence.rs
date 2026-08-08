@@ -13,18 +13,20 @@
 
 use apxm_inference::effect::{ErrorCategory, IdempotencyKey};
 use apxm_inference::{
-    AttemptDisposition, BoundedMetricLabels, CorrelateDiagnosticsRequest, DiagnosticAgreement,
-    ExactInferenceDispatch, InferenceCredentialLease, InferenceCredentialLeaseIdentity,
-    InferenceDriverBinding, InferenceUsageLineage, LeasedInferenceBackend, ModelBindingAdmission,
-    ModelCallPreparation, ModelCallRequest, ModelCallRequestMetadata, ModelContextEnvelopeRef,
+    AttemptDisposition, BoundedMetricLabels, CommittedInferenceDispatch,
+    CorrelateDiagnosticsRequest, DiagnosticAgreement, ExactInferenceDispatch,
+    InferenceCredentialLease, InferenceCredentialLeaseIdentity, InferenceDriverBinding,
+    InferenceUsageLineage, LeasedInferenceBackend, ModelBindingAdmission, ModelCallPreparation,
+    ModelCallRequest, ModelCallRequestMetadata, ModelContextEnvelopeRef, ModelInferencePort,
     ModelOutcome, ModelStreamMode, ModelTargetRef, PINNED_VLLM_OWNER_REVISION,
     PINNED_VLLM_PORT_CONTRACT_DIGEST, PINNED_VLLM_RELEASE_ID, PINNED_VLLM_RELEASE_MANIFEST_DIGEST,
     PINNED_VLLM_VECTOR_DIGESTS, ResolvedModelBinding, RetryPolicy, TypedError, Usage,
     VllmConformanceJoin, VllmJoinStatus, VllmReleaseAttestation, authoritative_usage,
-    correlate_diagnostics, digest_bytes, dispatch_exact_inference, redact_diagnostic_value,
+    correlate_diagnostics, digest_bytes, dispatch_committed_inference, dispatch_exact_inference,
+    redact_diagnostic_value,
 };
 use apxm_inference::{InferenceTargetCommitment, TargetCommitState};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 const DIGEST_A: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const DIGEST_B: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -191,6 +193,91 @@ impl LeasedInferenceBackend for ExactBackend {
         assert_eq!(request.target().0, "model.alpha");
         AttemptDisposition::Success(self.usage)
     }
+}
+
+struct BindingRecordingPort {
+    seen_binding: RefCell<Option<ResolvedModelBinding>>,
+    outcome: AttemptDisposition,
+}
+
+impl ModelInferencePort for BindingRecordingPort {
+    fn attempt(&self, request: &ModelCallRequest, _attempt: u32) -> AttemptDisposition {
+        self.seen_binding
+            .borrow_mut()
+            .replace(request.resolved_binding().clone());
+        self.outcome.clone()
+    }
+}
+
+#[test]
+fn vllm_binding_reaches_model_inference_port_without_rebinding() {
+    let authored_target = ModelTargetRef("model.vllm.exact".into());
+    let target_commitment = InferenceTargetCommitment::commit(
+        authored_target.0.clone(),
+        DIGEST_B,
+        "deployment.vllm.exact",
+        DIGEST_A,
+        PINNED_VLLM_PORT_CONTRACT_DIGEST,
+        DIGEST_D,
+        3,
+    )
+    .expect("vLLM target commitment");
+    let resolved_binding = ResolvedModelBinding::from_target_commitment(target_commitment.clone());
+    let request = ModelCallRequest::prepare(
+        ModelCallPreparation::authorize(
+            "effect.vllm.1",
+            "node-execution.vllm.1",
+            "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            &authored_target,
+            &ModelBindingAdmission::new(resolved_binding.clone()),
+        )
+        .expect("authorize exact vLLM binding"),
+        ModelCallRequestMetadata {
+            model_context_envelope_ref: ModelContextEnvelopeRef {
+                context_id: "context.vllm.1".into(),
+                sealed_digest: DIGEST_E.into(),
+            },
+            idempotency: IdempotencyKey {
+                key_id: "idempotency.vllm.1".into(),
+                scope_ref: "scope.vllm.1".into(),
+            },
+            stream_mode: ModelStreamMode::Buffered,
+        },
+    )
+    .expect("prepare exact vLLM request");
+    let usage = Usage {
+        input_tokens: 13,
+        output_tokens: 29,
+    };
+    let port = BindingRecordingPort {
+        seen_binding: RefCell::new(None),
+        outcome: AttemptDisposition::Success(usage),
+    };
+
+    let result = dispatch_committed_inference(CommittedInferenceDispatch {
+        target_commitment: &target_commitment,
+        authored_target: &authored_target,
+        request: &request,
+        backend: &port,
+        duration_ms: 17,
+        policy: RetryPolicy { max_attempts: 1 },
+    })
+    .expect("dispatch exact vLLM request");
+
+    assert_eq!(port.seen_binding.borrow().as_ref(), Some(&resolved_binding));
+    assert_eq!(
+        result.execution.outcome,
+        ModelOutcome::CommittedSuccess { usage }
+    );
+    assert_eq!(result.lineage.model_target_ref, authored_target.0);
+    assert_eq!(result.lineage.model_deployment_ref, "deployment.vllm.exact");
+    assert_eq!(result.lineage.exact_port_binding_digest, DIGEST_A);
+    assert_eq!(
+        result.lineage.target_port_contract_digest.as_deref(),
+        Some(PINNED_VLLM_PORT_CONTRACT_DIGEST)
+    );
+    assert_eq!(result.lineage.native_input_tokens, usage.input_tokens);
+    assert_eq!(result.lineage.native_output_tokens, usage.output_tokens);
 }
 
 struct ScriptedBackend {

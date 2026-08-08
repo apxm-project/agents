@@ -197,7 +197,7 @@ class ReferenceHostLifecycleReceiptTests(unittest.TestCase):
             }
             factory = ScriptedTransportFactory(
                 [
-                    [ready],
+                    [self.module.host_readiness_response(startup_input, "ready")],
                     [committed],
                     [
                         {
@@ -397,7 +397,9 @@ class ReferenceHostLifecycleReceiptTests(unittest.TestCase):
             temp_dir = Path(temp_dir_name)
             startup_input_path, startup_input = self.make_startup_input(temp_dir)
             wrong_ready = self.module.host_readiness(startup_input, "starting")
-            factory = ScriptedTransportFactory([[wrong_ready]])
+            factory = ScriptedTransportFactory(
+                [[self.module.host_readiness_response(startup_input, "starting")]]
+            )
             receipt_path = temp_dir / "lifecycle-receipt.json"
             executable_path = temp_dir / "target" / "release" / "apxm-reference-host"
 

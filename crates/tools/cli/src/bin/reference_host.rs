@@ -5,7 +5,7 @@
 //! There is no HTTP compatibility route, runtime discovery, or fallback.
 
 use std::fs;
-use std::io::BufRead;
+use std::io::{BufRead, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -14,13 +14,21 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+#[cfg(unix)]
+use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
+#[cfg(unix)]
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+#[cfg(unix)]
+use tokio::net::UnixListener;
+
 use apxm_cli::canonical_execute::{
     CanonicalRuntime, reference_host_port_bindings_digest, reference_host_resource_ceiling_digest,
     reference_host_runtime_descriptor,
 };
 use apxm_kernel::{INVOCATION_ADMISSION_SCHEMA, InvocationAdmission, verify_invocation_admission};
 
-const HOST_SCHEMA: &str = "apxm.runtime.host.v1";
+const HOST_SCHEMA: &str = "apxm.runtime.host-response.v1";
+const READINESS_SCHEMA: &str = "apxm.runtime.host.v1";
 const REQUEST_SCHEMA: &str = "apxm.runtime.host-request.v1";
 const ADMISSION_SCHEMA: &str = INVOCATION_ADMISSION_SCHEMA;
 const STARTUP_INPUT_SCHEMA: &str = "apxm.reference-host-startup-input.v1";
@@ -32,6 +40,8 @@ const OWNER_EXECUTABLE_PATH: &str = "crates/tools/cli/src/bin/reference_host.rs"
 const RELEASE_MANIFEST_SOURCE_PATH: &str =
     "contracts/reference-host/manifests/apxm.reference-host-release-manifest.v1.json";
 const TRANSPORT_PROTOCOL: &str = "jsonl-stdin-stdout";
+const PRIVATE_TRANSPORT_PROTOCOL: &str = "jsonl-unix-stream";
+const REPLAY_JOURNAL_SUFFIX: &str = ".replay.jsonl";
 const FAIL_CLOSED_ON: [&str; 5] = [
     "missing",
     "placeholder",
@@ -71,6 +81,13 @@ struct Request {
 }
 
 type Admission = InvocationAdmission;
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ReplayRecord {
+    invocation_id: String,
+    response: Value,
+}
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -114,6 +131,93 @@ struct AdmittedDigests {
     provenance_digest: String,
 }
 
+struct ReplayJournal {
+    file: fs::File,
+}
+
+impl ReplayJournal {
+    fn open(
+        path: &Path,
+    ) -> Result<(
+        Self,
+        std::collections::BTreeMap<String, Value>,
+        Option<Value>,
+    )> {
+        if let Ok(metadata) = fs::symlink_metadata(path) {
+            if !metadata.file_type().is_file() {
+                bail!("replay journal must be a regular file: {}", path.display());
+            }
+            #[cfg(unix)]
+            if metadata.mode() & 0o777 != 0o600 {
+                bail!("replay journal must be owner-only: {}", path.display());
+            }
+        }
+
+        let mut options = fs::OpenOptions::new();
+        options.create(true).read(true).append(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut file = options
+            .open(path)
+            .with_context(|| format!("open replay journal {}", path.display()))?;
+        #[cfg(unix)]
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+
+        let mut bytes = Vec::new();
+        file.seek(SeekFrom::Start(0))?;
+        file.read_to_end(&mut bytes)?;
+        let complete_len = bytes
+            .iter()
+            .rposition(|byte| *byte == b'\n')
+            .map_or(0, |index| index + 1);
+        let mut replayed = std::collections::BTreeMap::new();
+        let mut last_runtime_evidence = None;
+        let mut start = 0;
+        while start < complete_len {
+            let end = bytes[start..complete_len]
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map_or(complete_len, |index| start + index);
+            let record: ReplayRecord = serde_json::from_slice(&bytes[start..end])
+                .with_context(|| format!("recover replay journal {}", path.display()))?;
+            if record.response["status"] != "committed"
+                || record.response["invocation_id"] != record.invocation_id
+            {
+                bail!("replay journal contains an invalid invocation receipt");
+            }
+            if let Some(previous) = replayed.get(&record.invocation_id) {
+                if previous != &record.response {
+                    bail!("replay journal contains a conflicting invocation receipt");
+                }
+            } else {
+                last_runtime_evidence = record.response.get("runtime_evidence").cloned();
+                replayed.insert(record.invocation_id, record.response);
+            }
+            start = end + 1;
+        }
+
+        // A process can die after writing only part of its final line. Recover
+        // all complete receipts and discard that torn tail before appending.
+        if complete_len != bytes.len() {
+            file.set_len(complete_len as u64)?;
+        }
+        file.seek(SeekFrom::End(0))?;
+        Ok((Self { file }, replayed, last_runtime_evidence))
+    }
+
+    fn append(&mut self, invocation_id: &str, response: &Value) -> Result<()> {
+        let record = ReplayRecord {
+            invocation_id: invocation_id.to_owned(),
+            response: response.clone(),
+        };
+        serde_json::to_writer(&mut self.file, &record)?;
+        self.file.write_all(b"\n")?;
+        self.file.flush()?;
+        self.file.sync_data()?;
+        Ok(())
+    }
+}
+
 struct Host {
     state: State,
     in_flight: u64,
@@ -122,6 +226,7 @@ struct Host {
     admitted_digests: AdmittedDigests,
     runtime: CanonicalRuntime,
     replayed_invocations: std::collections::BTreeMap<String, Value>,
+    replay_journal: Option<ReplayJournal>,
 }
 
 struct PreparedInvocation {
@@ -161,6 +266,7 @@ impl Host {
             admitted_digests,
             runtime: CanonicalRuntime::new(),
             replayed_invocations: std::collections::BTreeMap::new(),
+            replay_journal: None,
         }
     }
 
@@ -172,13 +278,21 @@ impl Host {
 
     fn readiness(&self) -> Value {
         json!({
-            "schema_version": HOST_SCHEMA,
-            "contract_id": HOST_SCHEMA,
+            "schema_version": READINESS_SCHEMA,
+            "contract_id": READINESS_SCHEMA,
             "state": self.state.as_str(),
             "release_digest": self.admitted_digests.release_digest.clone(),
             "port_bindings_digest": self.admitted_digests.port_bindings_digest.clone(),
             "resource_ceiling_digest": self.admitted_digests.resource_ceiling_digest.clone(),
             "in_flight": self.in_flight,
+        })
+    }
+
+    fn readiness_response(&self) -> Value {
+        json!({
+            "schema_version": HOST_SCHEMA,
+            "status": "readiness",
+            "readiness": self.readiness(),
         })
     }
 
@@ -312,7 +426,6 @@ impl Host {
             &descriptor.confinement,
         )
         .map_err(|error| self.reject(admission_error_code(&error), error.to_string()))?;
-        self.in_flight = 1;
         Ok(PreparedInvocation { admission, air })
     }
 
@@ -321,7 +434,7 @@ impl Host {
         invocation_id: String,
         artifact_digest: String,
         execution: std::result::Result<Value, String>,
-    ) -> Value {
+    ) -> Result<Value> {
         let result = match execution {
             Ok(output) => {
                 let runtime_evidence =
@@ -329,7 +442,6 @@ impl Host {
                 let mut runtime_evidence = runtime_evidence;
                 runtime_evidence["program_identity"]["artifact_digest"] =
                     Value::String(artifact_digest);
-                self.last_runtime_evidence = Some(runtime_evidence.clone());
                 let response = json!({
                     "schema_version": HOST_SCHEMA,
                     "status": "committed",
@@ -337,6 +449,10 @@ impl Host {
                     "result": output,
                     "runtime_evidence": runtime_evidence,
                 });
+                if let Some(journal) = self.replay_journal.as_mut() {
+                    journal.append(&invocation_id, &response)?;
+                }
+                self.last_runtime_evidence = Some(runtime_evidence.clone());
                 self.replayed_invocations
                     .insert(invocation_id, response.clone());
                 response
@@ -352,25 +468,20 @@ impl Host {
         if self.state == State::Draining {
             self.state = State::Stopped;
         }
-        result
+        Ok(result)
     }
 
-    async fn invoke(&mut self, request: Request) -> Value {
-        if let Some(invocation_id) = request
-            .admission
-            .as_ref()
-            .map(|admission| admission.invocation_id.as_str())
-        {
-            if let Some(response) = self.replayed_invocations.get(invocation_id) {
-                return response.clone();
-            }
-        }
+    async fn invoke(&mut self, request: Request) -> Result<Value> {
         let prepared = match self.prepare_invocation(request) {
             Ok(prepared) => prepared,
-            Err(rejection) => return rejection,
+            Err(rejection) => return Ok(rejection),
         };
         let invocation_id = prepared.admission.invocation_id.clone();
         let artifact_digest = prepared.admission.artifact_digest.clone();
+        if let Some(response) = self.replayed_invocations.get(&invocation_id) {
+            return Ok(response.clone());
+        }
+        self.in_flight = 1;
         let execution = self
             .runtime
             .execute(
@@ -415,6 +526,7 @@ impl Host {
                 air: Some(probe_air),
             })
             .map_err(|rejection| anyhow!("{rejection}"))?;
+        self.in_flight = 1;
         let in_flight_before_drain = self.readiness();
         let drain_response = self.handle_non_invoke(Request {
             schema_version: REQUEST_SCHEMA.into(),
@@ -435,7 +547,7 @@ impl Host {
             .await
             .map_err(|error| error.to_string());
         let completion_response =
-            self.complete_invocation(invocation_id, artifact_digest, execution);
+            self.complete_invocation(invocation_id, artifact_digest, execution)?;
         let terminal_readiness = self.readiness();
         Ok(json!({
             "schema_version": IN_FLIGHT_DRAIN_PROBE_SCHEMA,
@@ -451,10 +563,10 @@ impl Host {
 
     fn handle_non_invoke(&mut self, request: Request) -> Value {
         match request.operation.as_str() {
-            "readiness" => self.readiness(),
+            "readiness" => self.readiness_response(),
             "drain" if self.state == State::Ready => {
                 self.state = State::Draining;
-                self.readiness()
+                self.readiness_response()
             }
             "drain" => self.reject("invalid_transition", "host is not ready to drain"),
             "cancel" if self.state == State::Ready && self.in_flight == 0 => {
@@ -500,17 +612,24 @@ impl Host {
         }
     }
 
-    async fn handle(&mut self, request: Request) -> Value {
+    async fn handle_result(&mut self, request: Request) -> Result<Value> {
         if request.schema_version != REQUEST_SCHEMA {
-            return self.reject(
+            return Ok(self.reject(
                 "invalid_request_schema",
                 "exact host request schema is required",
-            );
+            ));
         }
         if request.operation == "invoke" {
             self.invoke(request).await
         } else {
-            self.handle_non_invoke(request)
+            Ok(self.handle_non_invoke(request))
+        }
+    }
+
+    async fn handle(&mut self, request: Request) -> Value {
+        match self.handle_result(request).await {
+            Ok(response) => response,
+            Err(error) => self.reject("replay_persistence_failed", error.to_string()),
         }
     }
 }
@@ -580,7 +699,7 @@ fn is_hex_revision(revision: &str) -> bool {
             .all(|value| value.is_ascii_digit() || ('a'..='f').contains(&value))
 }
 
-fn load_startup_input(path: &Path) -> Result<AdmittedDigests> {
+fn load_startup_input(path: &Path, expected_transport: &str) -> Result<AdmittedDigests> {
     let startup: StartupInput = serde_json::from_slice(
         &fs::read(path).with_context(|| format!("read startup input {}", path.display()))?,
     )
@@ -597,8 +716,12 @@ fn load_startup_input(path: &Path) -> Result<AdmittedDigests> {
     if startup.owner_executable_path != OWNER_EXECUTABLE_PATH {
         bail!("startup input owner_executable_path must be the canonical source path");
     }
-    if startup.transport_protocol != TRANSPORT_PROTOCOL {
-        bail!("startup input transport_protocol must remain jsonl-stdin-stdout");
+    if startup.transport_protocol != expected_transport {
+        bail!(
+            "startup input transport_protocol must match the selected transport: expected {}, got {}",
+            expected_transport,
+            startup.transport_protocol
+        );
     }
     if !startup
         .fail_closed_on
@@ -691,7 +814,7 @@ fn load_startup_input(path: &Path) -> Result<AdmittedDigests> {
     })
 }
 
-fn startup_input_path() -> Result<(PathBuf, Option<String>)> {
+fn startup_input_path() -> Result<(PathBuf, Option<String>, Option<PathBuf>)> {
     let mut args = std::env::args().skip(1);
     let Some(flag) = args.next() else {
         return Err(anyhow!(
@@ -708,19 +831,127 @@ fn startup_input_path() -> Result<(PathBuf, Option<String>)> {
             "missing startup input path; usage: apxm-reference-host --startup-input <path>"
         ));
     };
-    let probe = match (args.next(), args.next()) {
-        (None, None) => None,
-        (Some(flag), Some(case)) if flag == "--lifecycle-probe" => Some(case),
-        (Some(other), _) => return Err(anyhow!("unexpected argument {other:?}")),
-        (None, Some(_)) => return Err(anyhow!("unexpected trailing argument")),
+    let mut probe = None;
+    let mut unix_socket = None;
+    let mut remaining = args;
+    while let Some(flag) = remaining.next() {
+        match flag.as_str() {
+            "--lifecycle-probe" => {
+                let Some(case) = remaining.next() else {
+                    bail!("missing lifecycle probe case")
+                };
+                if probe.replace(case).is_some() {
+                    bail!("lifecycle probe may be supplied only once")
+                }
+            }
+            "--unix-socket" => {
+                let Some(socket_path) = remaining.next() else {
+                    bail!("missing Unix socket path")
+                };
+                if unix_socket.replace(PathBuf::from(socket_path)).is_some() {
+                    bail!("--unix-socket may be supplied only once")
+                }
+            }
+            other => return Err(anyhow!("unexpected argument {other:?}")),
+        }
+    }
+    Ok((PathBuf::from(path), probe, unix_socket))
+}
+
+async fn response_for_line(host: &mut Host, line: &str) -> Result<String> {
+    let response = match serde_json::from_str::<Request>(line) {
+        Ok(request) => host.handle(request).await,
+        Err(error) => host.reject("invalid_request", error.to_string()),
     };
-    Ok((PathBuf::from(path), probe))
+    Ok(serde_json::to_string(&response)?)
+}
+
+#[cfg(unix)]
+/// Returns whether a private transport peer belongs to the socket owner.
+fn private_transport_peer_is_owner(socket_owner_uid: u32, peer_uid: u32) -> bool {
+    peer_uid == socket_owner_uid
+}
+
+#[cfg(unix)]
+async fn run_unix_socket(mut host: Host, socket_path: &Path) -> Result<()> {
+    if !socket_path.is_absolute() {
+        bail!("{PRIVATE_TRANSPORT_PROTOCOL} requires an absolute Unix socket path")
+    }
+    let parent = socket_path
+        .parent()
+        .ok_or_else(|| anyhow!("private transport socket must have a parent directory"))?;
+    let parent_metadata = fs::metadata(parent)
+        .with_context(|| format!("inspect private transport directory {}", parent.display()))?;
+    if !parent_metadata.is_dir() {
+        bail!(
+            "private transport parent is not a directory: {}",
+            parent.display()
+        );
+    }
+    #[cfg(unix)]
+    if parent_metadata.mode() & 0o022 != 0 {
+        bail!(
+            "private transport parent must not be group/world writable: {}",
+            parent.display()
+        );
+    }
+    if let Ok(metadata) = fs::symlink_metadata(socket_path) {
+        if !metadata.file_type().is_socket() {
+            bail!("refusing to replace non-socket private transport endpoint")
+        }
+        fs::remove_file(socket_path)
+            .with_context(|| format!("remove stale Unix socket {}", socket_path.display()))?;
+    }
+    let listener = UnixListener::bind(socket_path)
+        .with_context(|| format!("bind private transport {}", socket_path.display()))?;
+    fs::set_permissions(socket_path, fs::Permissions::from_mode(0o600))
+        .with_context(|| format!("restrict private transport {}", socket_path.display()))?;
+    let socket_owner_uid = fs::metadata(socket_path)
+        .with_context(|| format!("inspect private transport {}", socket_path.display()))?
+        .uid();
+
+    let journal_path = PathBuf::from(format!(
+        "{}{}",
+        socket_path.display(),
+        REPLAY_JOURNAL_SUFFIX
+    ));
+    let (journal, replayed, last_runtime_evidence) = ReplayJournal::open(&journal_path)?;
+    host.replay_journal = Some(journal);
+    host.replayed_invocations = replayed;
+    host.last_runtime_evidence = last_runtime_evidence;
+
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let peer_uid = stream
+            .peer_cred()
+            .with_context(|| "inspect private transport peer credentials")?
+            .uid();
+        if !private_transport_peer_is_owner(socket_owner_uid, peer_uid) {
+            continue;
+        }
+        let (read_half, mut write_half) = stream.into_split();
+        let mut lines = BufReader::new(read_half).lines();
+        while let Some(line) = lines.next_line().await? {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let response = response_for_line(&mut host, &line).await?;
+            write_half.write_all(response.as_bytes()).await?;
+            write_half.write_all(b"\n").await?;
+            write_half.flush().await?;
+        }
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let (startup_input, probe) = startup_input_path()?;
-    let admitted_digests = load_startup_input(&startup_input)?;
+    let (startup_input, probe, unix_socket) = startup_input_path()?;
+    let expected_transport = if unix_socket.is_some() {
+        PRIVATE_TRANSPORT_PROTOCOL
+    } else {
+        TRANSPORT_PROTOCOL
+    };
+    let admitted_digests = load_startup_input(&startup_input, expected_transport)?;
     let stdin = std::io::stdin();
     let mut host = Host::new(admitted_digests);
     host.mark_ready();
@@ -734,16 +965,23 @@ async fn main() -> Result<()> {
         );
         return Ok(());
     }
+    if let Some(socket_path) = unix_socket {
+        #[cfg(unix)]
+        {
+            return run_unix_socket(host, &socket_path).await;
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = socket_path;
+            bail!("private Unix transport is unavailable on this platform")
+        }
+    }
     for line in stdin.lock().lines() {
         let line = line?;
         if line.trim().is_empty() {
             continue;
         }
-        let response = match serde_json::from_str::<Request>(&line) {
-            Ok(request) => host.handle(request).await,
-            Err(error) => host.reject("invalid_request", error.to_string()),
-        };
-        println!("{}", serde_json::to_string(&response)?);
+        println!("{}", response_for_line(&mut host, &line).await?);
     }
     Ok(())
 }
@@ -817,11 +1055,27 @@ mod tests {
     #[tokio::test]
     async fn readiness_and_drain_are_explicit() {
         let mut host = Host::new(startup_digests());
-        assert_eq!(host.handle(request("readiness")).await["state"], "starting");
+        assert_eq!(
+            host.handle(request("readiness")).await["status"],
+            "readiness"
+        );
+        assert_eq!(
+            host.handle(request("readiness")).await["readiness"]["state"],
+            "starting"
+        );
         host.mark_ready();
-        assert_eq!(host.handle(request("readiness")).await["state"], "ready");
-        assert_eq!(host.handle(request("drain")).await["state"], "draining");
-        assert_eq!(host.handle(request("readiness")).await["state"], "draining");
+        assert_eq!(
+            host.handle(request("readiness")).await["readiness"]["state"],
+            "ready"
+        );
+        assert_eq!(
+            host.handle(request("drain")).await["readiness"]["state"],
+            "draining"
+        );
+        assert_eq!(
+            host.handle(request("readiness")).await["readiness"]["state"],
+            "draining"
+        );
     }
 
     #[tokio::test]
@@ -831,7 +1085,10 @@ mod tests {
         let response = host.handle(request("cancel")).await;
         assert_eq!(response["status"], "cancelled");
         assert_eq!(response["readiness"]["state"], "stopped");
-        assert_eq!(host.handle(request("readiness")).await["state"], "stopped");
+        assert_eq!(
+            host.handle(request("readiness")).await["readiness"]["state"],
+            "stopped"
+        );
         let restart = host.handle(request("restart")).await;
         assert_eq!(restart["status"], "restarted");
         assert_eq!(restart["recovery"]["status"], "no_runtime_evidence");
@@ -855,8 +1112,8 @@ mod tests {
                     "message": "in-flight cancellation requires durable host evidence",
                 },
                 "readiness": {
-                    "schema_version": HOST_SCHEMA,
-                    "contract_id": HOST_SCHEMA,
+                    "schema_version": READINESS_SCHEMA,
+                    "contract_id": READINESS_SCHEMA,
                     "state": "ready",
                     "release_digest": host.admitted_digests.release_digest.clone(),
                     "port_bindings_digest": host.admitted_digests.port_bindings_digest.clone(),
@@ -877,8 +1134,8 @@ mod tests {
                     "message": "in-flight shutdown requires durable host evidence",
                 },
                 "readiness": {
-                    "schema_version": HOST_SCHEMA,
-                    "contract_id": HOST_SCHEMA,
+                    "schema_version": READINESS_SCHEMA,
+                    "contract_id": READINESS_SCHEMA,
                     "state": "ready",
                     "release_digest": host.admitted_digests.release_digest.clone(),
                     "port_bindings_digest": host.admitted_digests.port_bindings_digest.clone(),
@@ -899,8 +1156,8 @@ mod tests {
                     "message": "in-flight revocation requires durable host evidence",
                 },
                 "readiness": {
-                    "schema_version": HOST_SCHEMA,
-                    "contract_id": HOST_SCHEMA,
+                    "schema_version": READINESS_SCHEMA,
+                    "contract_id": READINESS_SCHEMA,
                     "state": "ready",
                     "release_digest": host.admitted_digests.release_digest.clone(),
                     "port_bindings_digest": host.admitted_digests.port_bindings_digest.clone(),
@@ -925,7 +1182,10 @@ mod tests {
         let digests = startup_digests();
         let mut host = Host::new(digests.clone());
         host.mark_ready();
-        assert_eq!(host.handle(request("drain")).await["state"], "draining");
+        assert_eq!(
+            host.handle(request("drain")).await["readiness"]["state"],
+            "draining"
+        );
 
         let response = host
             .handle(Request {
@@ -945,8 +1205,8 @@ mod tests {
                     "message": "host state is draining",
                 },
                 "readiness": {
-                    "schema_version": HOST_SCHEMA,
-                    "contract_id": HOST_SCHEMA,
+                    "schema_version": READINESS_SCHEMA,
+                    "contract_id": READINESS_SCHEMA,
                     "state": "draining",
                     "release_digest": host.admitted_digests.release_digest.clone(),
                     "port_bindings_digest": host.admitted_digests.port_bindings_digest.clone(),
@@ -971,8 +1231,9 @@ mod tests {
         assert_eq!(probe["case"], IN_FLIGHT_DRAIN_PROBE);
         assert_eq!(probe["in_flight_before_drain"]["state"], "ready");
         assert_eq!(probe["in_flight_before_drain"]["in_flight"], 1);
-        assert_eq!(probe["drain_response"]["state"], "draining");
-        assert_eq!(probe["drain_response"]["in_flight"], 1);
+        assert_eq!(probe["drain_response"]["status"], "readiness");
+        assert_eq!(probe["drain_response"]["readiness"]["state"], "draining");
+        assert_eq!(probe["drain_response"]["readiness"]["in_flight"], 1);
         assert_eq!(probe["completion_response"]["status"], "committed");
         assert_eq!(
             probe["completion_response"]["runtime_evidence"]["facts"][2]["fact_kind"],
@@ -1016,6 +1277,41 @@ mod tests {
         assert_eq!(first["status"], "committed");
         assert_eq!(replay, first, "replay must return the committed receipt");
         assert_eq!(host.in_flight, 0);
+    }
+
+    #[tokio::test]
+    async fn replay_conflict_rejects_invalid_admission_before_returning_prior_commit() {
+        let digests = startup_digests();
+        let mut host = Host::new(digests.clone());
+        host.mark_ready();
+
+        let first = host
+            .handle(Request {
+                schema_version: REQUEST_SCHEMA.into(),
+                operation: "invoke".into(),
+                admission: Some(admission(&digests)),
+                air: Some(minimal_air()),
+            })
+            .await;
+        assert_eq!(first["status"], "committed");
+        let committed_evidence = host.last_runtime_evidence.clone();
+
+        let mut conflicting_admission = admission(&digests);
+        conflicting_admission.provenance_digest = bytes_digest(b"conflicting-provenance");
+        let response = host
+            .handle(Request {
+                schema_version: REQUEST_SCHEMA.into(),
+                operation: "invoke".into(),
+                admission: Some(conflicting_admission),
+                air: Some(minimal_air()),
+            })
+            .await;
+
+        assert_eq!(response["status"], "rejected");
+        assert_eq!(response["error"]["code"], "provenance_mismatch");
+        assert_eq!(response["readiness"]["state"], "ready");
+        assert_eq!(response["readiness"]["in_flight"], 0);
+        assert_eq!(host.last_runtime_evidence, committed_evidence);
     }
 
     #[tokio::test]
@@ -1130,7 +1426,8 @@ mod tests {
         )
         .expect("startup file");
 
-        let error = load_startup_input(&startup_path).expect_err("placeholder digest must fail");
+        let error = load_startup_input(&startup_path, TRANSPORT_PROTOCOL)
+            .expect_err("placeholder digest must fail");
         assert!(
             error
                 .to_string()
@@ -1171,7 +1468,8 @@ mod tests {
         )
         .expect("startup file");
 
-        let error = load_startup_input(&startup_path).expect_err("dirty startup input must fail");
+        let error = load_startup_input(&startup_path, TRANSPORT_PROTOCOL)
+            .expect_err("dirty startup input must fail");
         assert!(
             error
                 .to_string()
@@ -1216,7 +1514,8 @@ mod tests {
         )
         .expect("startup file");
 
-        let admitted = load_startup_input(&startup_path).expect("relocated startup input");
+        let admitted =
+            load_startup_input(&startup_path, TRANSPORT_PROTOCOL).expect("relocated startup input");
         assert_eq!(
             admitted.release_digest,
             file_digest(&relocated_manifest).expect("manifest digest")
@@ -1267,8 +1566,8 @@ mod tests {
         )
         .expect("startup file");
 
-        let error =
-            load_startup_input(&startup_path).expect_err("mismatched manifest digest must fail");
+        let error = load_startup_input(&startup_path, TRANSPORT_PROTOCOL)
+            .expect_err("mismatched manifest digest must fail");
         assert!(
             error
                 .to_string()
@@ -1311,7 +1610,8 @@ mod tests {
         )
         .expect("startup file");
 
-        let error = load_startup_input(&startup_path).expect_err("missing manifest path must fail");
+        let error = load_startup_input(&startup_path, TRANSPORT_PROTOCOL)
+            .expect_err("missing manifest path must fail");
         assert!(
             error
                 .to_string()
@@ -1353,12 +1653,20 @@ mod tests {
         )
         .expect("startup file");
 
-        let error = load_startup_input(&startup_path).expect_err("noncanonical path must fail");
+        let error = load_startup_input(&startup_path, TRANSPORT_PROTOCOL)
+            .expect_err("noncanonical path must fail");
         assert!(
             error
                 .to_string()
                 .contains("reference-host release manifest path mismatch"),
             "unexpected error: {error}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_transport_requires_peer_uid_to_match_socket_owner() {
+        assert!(private_transport_peer_is_owner(1000, 1000));
+        assert!(!private_transport_peer_is_owner(1000, 1001));
     }
 }

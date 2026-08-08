@@ -631,13 +631,16 @@ async fn instances_are_isolated() {
 struct GatedCommit {
     released: Arc<AtomicBool>,
     inner: Arc<FixtureCommit>,
+    blocked_commit_id: String,
 }
 
 #[async_trait]
 impl ExecutionCommitPort for GatedCommit {
     async fn commit(&self, request: ExecutionCommitRequest) -> ExecutionCommitResult {
-        while !self.released.load(Ordering::SeqCst) {
-            tokio::task::yield_now().await;
+        if request.commit_id == self.blocked_commit_id {
+            while !self.released.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
         }
         self.inner.commit(request).await
     }
@@ -661,6 +664,7 @@ async fn single_flight_rejects_concurrent_invocation() {
     let port: Arc<dyn ExecutionCommitPort> = Arc::new(GatedCommit {
         released: released.clone(),
         inner: inner.clone(),
+        blocked_commit_id: "c1".into(),
     });
     let instance = Arc::new(instance_on(port, "instance.1"));
 
@@ -698,4 +702,54 @@ async fn single_flight_rejects_concurrent_invocation() {
         }
     );
     assert_eq!(inner.version("instance.1"), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancellation_can_win_against_an_in_flight_commit() {
+    let released = Arc::new(AtomicBool::new(false));
+    let inner = Arc::new(FixtureCommit::new());
+    let port: Arc<dyn ExecutionCommitPort> = Arc::new(GatedCommit {
+        released: released.clone(),
+        inner: inner.clone(),
+        blocked_commit_id: "invoke.1".into(),
+    });
+    let instance = Arc::new(instance_on(port, "instance.1"));
+
+    let driver = instance.clone();
+    let invocation = tokio::spawn(async move {
+        driver
+            .invoke(Invocation {
+                commit_id: "invoke.1".into(),
+                program_invocation_ref: ProgramInvocationRef::new("invocation.1"),
+                write_set: write_set(),
+            })
+            .await
+    });
+
+    while !instance.is_busy() {
+        tokio::task::yield_now().await;
+    }
+
+    let cancellation = instance
+        .cancel(
+            "cancel.1",
+            ProgramInvocationRef::new("invocation.1"),
+            write_set(),
+        )
+        .await
+        .expect("cancellation competes at the commit boundary");
+    assert_eq!(cancellation, InvocationReport::Cancelled);
+
+    released.store(true, Ordering::SeqCst);
+    assert_eq!(
+        invocation.await.expect("join").expect("invocation result"),
+        InvocationReport::CompareConflict {
+            current_program_state_version: 1,
+        }
+    );
+    assert_eq!(inner.version("instance.1"), 1);
+    assert_eq!(
+        reconstruct(&inner.evidence_for("instance.1")).invocation_state,
+        Some(InvocationState::Cancelled)
+    );
 }

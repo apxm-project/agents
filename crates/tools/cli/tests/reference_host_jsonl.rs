@@ -3,8 +3,18 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
+#[cfg(unix)]
+use std::net::Shutdown;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+#[cfg(unix)]
+use std::thread;
+#[cfg(unix)]
+use std::time::{Duration, Instant};
 
 use apxm_cli::canonical_execute::{
     reference_host_port_bindings_digest, reference_host_resource_ceiling_digest,
@@ -48,6 +58,12 @@ fn lifecycle_vector_path() -> PathBuf {
         .join("contracts/reference-host/vectors/apxm.reference-host.lifecycle-parity.v1.json")
 }
 
+fn startup_input_vector_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .join("contracts/reference-host/vectors/apxm.reference-host-startup-input.v1.json")
+}
+
 fn release_manifest() -> Value {
     load_json(&release_manifest_path())
 }
@@ -58,6 +74,26 @@ fn invoke_vector() -> Value {
 
 fn lifecycle_vector() -> Value {
     load_json(&lifecycle_vector_path())
+}
+
+#[test]
+fn startup_input_vector_covers_stdio_and_private_unix_stream_profiles() {
+    let vector = load_json(&startup_input_vector_path());
+    let cases = vector.as_array().expect("startup-input vector cases");
+    let valid_profiles: BTreeSet<&str> = cases
+        .iter()
+        .filter(|case| case["expected_valid"] == true)
+        .map(|case| {
+            case["input"]["transport_protocol"]
+                .as_str()
+                .expect("valid startup-input transport protocol")
+        })
+        .collect();
+
+    assert_eq!(
+        valid_profiles,
+        BTreeSet::from(["jsonl-stdin-stdout", "jsonl-unix-stream"])
+    );
 }
 
 fn live_required_cases() -> Vec<String> {
@@ -103,7 +139,9 @@ fn bytes_digest(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
 }
 
-fn write_startup_input() -> (TempDir, PathBuf, String, String, String, String) {
+fn write_startup_input(
+    transport_protocol: &str,
+) -> (TempDir, PathBuf, String, String, String, String) {
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let startup_path = temp_dir.path().join("startup-input.json");
     let release_digest = release_manifest_digest();
@@ -124,7 +162,7 @@ fn write_startup_input() -> (TempDir, PathBuf, String, String, String, String) {
             "semantic_owner": "agents",
             "owner_executable": "apxm-reference-host",
             "owner_executable_path": "crates/tools/cli/src/bin/reference_host.rs",
-            "transport_protocol": "jsonl-stdin-stdout",
+            "transport_protocol": transport_protocol,
             "reference_host_release_manifest": {
                 "path": release_manifest_path(),
                 "digest": release_manifest_digest(),
@@ -168,7 +206,7 @@ impl HostProcess {
             port_bindings_digest,
             resource_ceiling_digest,
             provenance_digest,
-        ) = write_startup_input();
+        ) = write_startup_input("jsonl-stdin-stdout");
         let mut child = Command::new(env!("CARGO_BIN_EXE_apxm-reference-host"))
             .arg("--startup-input")
             .arg(&startup_path)
@@ -206,6 +244,183 @@ impl HostProcess {
     }
 }
 
+#[cfg(unix)]
+struct PrivateHostProcess {
+    child: Child,
+    stream: BufReader<UnixStream>,
+    _temp_dir: TempDir,
+    startup_path: PathBuf,
+    socket_path: PathBuf,
+    release_digest: String,
+    port_bindings_digest: String,
+    resource_ceiling_digest: String,
+    provenance_digest: String,
+}
+
+#[cfg(unix)]
+impl PrivateHostProcess {
+    fn spawn() -> Self {
+        let (
+            temp_dir,
+            startup_path,
+            release_digest,
+            port_bindings_digest,
+            resource_ceiling_digest,
+            provenance_digest,
+        ) = write_startup_input("jsonl-unix-stream");
+        let socket_path = temp_dir.path().join("private.sock");
+        let mut child = Command::new(env!("CARGO_BIN_EXE_apxm-reference-host"))
+            .arg("--startup-input")
+            .arg(&startup_path)
+            .arg("--unix-socket")
+            .arg(&socket_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn private reference host");
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let stream = loop {
+            if let Ok(metadata) = fs::metadata(&socket_path)
+                && metadata.permissions().mode() & 0o777 == 0o600
+            {
+                match UnixStream::connect(&socket_path) {
+                    Ok(stream) => break stream,
+                    Err(error) if Instant::now() < deadline => {
+                        let _ = error;
+                    }
+                    Err(error) => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        panic!("connect private reference host socket: {error}");
+                    }
+                }
+            }
+
+            if let Ok(Some(status)) = child.try_wait() {
+                let _ = child.wait();
+                panic!("private reference host exited before socket readiness: {status}");
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("private reference host socket did not become owner-only");
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
+
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("set private socket read timeout");
+        Self {
+            child,
+            stream: BufReader::new(stream),
+            _temp_dir: temp_dir,
+            startup_path,
+            socket_path,
+            release_digest,
+            port_bindings_digest,
+            resource_ceiling_digest,
+            provenance_digest,
+        }
+    }
+
+    fn request(&mut self, value: &Value) -> Value {
+        writeln!(self.stream.get_mut(), "{value}").expect("write private socket request");
+        self.stream
+            .get_mut()
+            .flush()
+            .expect("flush private socket request");
+
+        let mut line = String::new();
+        self.stream
+            .read_line(&mut line)
+            .expect("read private socket response");
+        serde_json::from_str(line.trim()).expect("private socket response json")
+    }
+
+    fn restart(&mut self) {
+        let _ = self.stream.get_mut().shutdown(Shutdown::Both);
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_apxm-reference-host"))
+            .arg("--startup-input")
+            .arg(&self.startup_path)
+            .arg("--unix-socket")
+            .arg(&self.socket_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("restart private reference host");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let stream = loop {
+            if let Ok(metadata) = fs::metadata(&self.socket_path)
+                && metadata.permissions().mode() & 0o777 == 0o600
+            {
+                match UnixStream::connect(&self.socket_path) {
+                    Ok(stream) => break stream,
+                    Err(error) if Instant::now() < deadline => {
+                        let _ = error;
+                    }
+                    Err(error) => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        panic!("reconnect private reference host socket: {error}");
+                    }
+                }
+            }
+            if let Ok(Some(status)) = child.try_wait() {
+                let _ = child.wait();
+                panic!("private reference host exited during restart: {status}");
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("private reference host socket did not recover after restart");
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("set restarted socket read timeout");
+        self.child = child;
+        self.stream = BufReader::new(stream);
+    }
+}
+
+#[cfg(unix)]
+impl Drop for PrivateHostProcess {
+    fn drop(&mut self) {
+        if self.child.try_wait().ok().flatten().is_none() {
+            let _ = self.child.kill();
+        }
+        let _ = self.child.wait();
+    }
+}
+
+#[cfg(unix)]
+fn run_private_host_until_exit(startup_path: &Path, socket_path: &Path) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_apxm-reference-host"))
+        .arg("--startup-input")
+        .arg(startup_path)
+        .arg("--unix-socket")
+        .arg(socket_path)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run private reference host")
+}
+
+#[cfg(unix)]
+fn replay_record(invocation_id: &str, response: &Value) -> String {
+    serde_json::to_string(&json!({
+        "invocation_id": invocation_id,
+        "response": response,
+    }))
+    .expect("serialize replay record")
+}
+
 fn request(operation: &str) -> Value {
     json!({
         "schema_version": "apxm.runtime.host-request.v1",
@@ -213,24 +428,299 @@ fn request(operation: &str) -> Value {
     })
 }
 
-fn readiness(host: &mut HostProcess) -> Value {
-    host.request(&request("readiness"))
-}
-
-fn materialize_admission(host: &HostProcess, fixture: &Value, air: &Value) -> Value {
+fn materialize_admission_with_digests(
+    fixture: &Value,
+    air: &Value,
+    release_digest: &str,
+    port_bindings_digest: &str,
+    resource_ceiling_digest: &str,
+    provenance_digest: &str,
+) -> Value {
     let mut admission = fixture.clone();
     let provenance_matches_fixture_artifact =
         admission["provenance_digest"] == admission["artifact_digest"];
     let air: AirModule = serde_json::from_value(air.clone()).expect("admitted AIR fixture");
     let artifact_bytes = serde_json::to_vec(&air).expect("admitted AIR serialization");
     admission["artifact_digest"] = Value::String(bytes_digest(&artifact_bytes));
-    admission["release_digest"] = Value::String(host.release_digest.clone());
-    admission["port_bindings_digest"] = Value::String(host.port_bindings_digest.clone());
-    admission["resource_ceiling_digest"] = Value::String(host.resource_ceiling_digest.clone());
+    admission["release_digest"] = Value::String(release_digest.to_owned());
+    admission["port_bindings_digest"] = Value::String(port_bindings_digest.to_owned());
+    admission["resource_ceiling_digest"] = Value::String(resource_ceiling_digest.to_owned());
     if provenance_matches_fixture_artifact {
-        admission["provenance_digest"] = Value::String(host.provenance_digest.clone());
+        admission["provenance_digest"] = Value::String(provenance_digest.to_owned());
     }
     admission
+}
+
+#[cfg(unix)]
+#[test]
+fn private_unix_transport_is_owner_only_jsonl_and_host_response() {
+    let mut host = PrivateHostProcess::spawn();
+
+    let permissions = fs::metadata(&host.socket_path)
+        .expect("private socket metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(permissions, 0o600, "private socket must be owner-only");
+
+    let response = host.request(&request("readiness"));
+    assert_eq!(response["schema_version"], "apxm.runtime.host-response.v1");
+    assert_eq!(response["status"], "readiness");
+    assert_eq!(response["readiness"]["state"], "ready");
+}
+
+#[cfg(unix)]
+#[test]
+fn private_unix_transport_rejects_stdio_startup_attestation() {
+    let (temp_dir, startup_path, _, _, _, _) = write_startup_input("jsonl-stdin-stdout");
+    let socket_path = temp_dir.path().join("private.sock");
+    let output = Command::new(env!("CARGO_BIN_EXE_apxm-reference-host"))
+        .arg("--startup-input")
+        .arg(&startup_path)
+        .arg("--unix-socket")
+        .arg(&socket_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .output()
+        .expect("run mismatched private transport host");
+    assert!(!output.status.success());
+    assert!(
+        !socket_path.exists(),
+        "mismatched transport must fail before bind"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn private_unix_transport_rejects_conflicting_replay_receipts() {
+    let (temp_dir, startup_path, _, _, _, _) = write_startup_input("jsonl-unix-stream");
+    let socket_path = temp_dir.path().join("private.sock");
+    let journal_path = PathBuf::from(format!("{}{}", socket_path.display(), ".replay.jsonl"));
+    let first = json!({
+        "schema_version": "apxm.runtime.host-response.v1",
+        "status": "committed",
+        "invocation_id": "invocation.1",
+        "result": {"value": "first"},
+        "runtime_evidence": null,
+    });
+    let conflicting = json!({
+        "schema_version": "apxm.runtime.host-response.v1",
+        "status": "committed",
+        "invocation_id": "invocation.1",
+        "result": {"value": "different"},
+        "runtime_evidence": null,
+    });
+    fs::write(
+        &journal_path,
+        format!(
+            "{}\n{}\n",
+            replay_record("invocation.1", &first),
+            replay_record("invocation.1", &conflicting)
+        ),
+    )
+    .expect("write conflicting replay journal");
+    fs::set_permissions(&journal_path, fs::Permissions::from_mode(0o600))
+        .expect("restrict conflicting replay journal");
+
+    let output = run_private_host_until_exit(&startup_path, &socket_path);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("replay journal contains a conflicting invocation receipt"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn private_unix_transport_rejects_invalid_replay_receipt() {
+    let (temp_dir, startup_path, _, _, _, _) = write_startup_input("jsonl-unix-stream");
+    let socket_path = temp_dir.path().join("private.sock");
+    let journal_path = PathBuf::from(format!("{}{}", socket_path.display(), ".replay.jsonl"));
+    let invalid = json!({
+        "schema_version": "apxm.runtime.host-response.v1",
+        "status": "rejected",
+        "invocation_id": "invocation.1",
+    });
+    fs::write(
+        &journal_path,
+        format!("{}\n", replay_record("invocation.1", &invalid)),
+    )
+    .expect("write invalid replay journal");
+    fs::set_permissions(&journal_path, fs::Permissions::from_mode(0o600))
+        .expect("restrict invalid replay journal");
+
+    let output = run_private_host_until_exit(&startup_path, &socket_path);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("replay journal contains an invalid invocation receipt"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn private_unix_transport_recovers_torn_final_replay_line() {
+    let vector = invoke_vector();
+    let mut host = PrivateHostProcess::spawn();
+    let air = fixture(&vector, "minimal_valid_air").clone();
+    let invoke = json!({
+        "schema_version": "apxm.runtime.host-request.v1",
+        "operation": "invoke",
+        "admission": materialize_admission_with_digests(
+            fixture(&vector, "valid_exact_admission"),
+            &air,
+            &host.release_digest,
+            &host.port_bindings_digest,
+            &host.resource_ceiling_digest,
+            &host.provenance_digest,
+        ),
+        "air": air,
+    });
+    let first = host.request(&invoke);
+    assert_eq!(first["status"], "committed");
+
+    let journal_path = PathBuf::from(format!("{}{}", host.socket_path.display(), ".replay.jsonl"));
+    let mut journal = fs::OpenOptions::new()
+        .append(true)
+        .open(&journal_path)
+        .expect("open replay journal for torn tail");
+    journal
+        .write_all(br#"{"invocation_id":"invocation.torn","response":{"status":"committed"}"#)
+        .expect("append torn replay line");
+    journal.flush().expect("flush torn replay line");
+    drop(journal);
+
+    host.restart();
+    let recovered = host.request(&invoke);
+    assert_eq!(
+        recovered, first,
+        "complete receipt must survive torn tail recovery"
+    );
+    let journal_contents = fs::read_to_string(&journal_path).expect("read recovered journal");
+    assert_eq!(journal_contents.lines().count(), 1);
+    assert!(!journal_contents.contains("invocation.torn"));
+}
+
+#[cfg(unix)]
+#[test]
+fn private_unix_transport_rejects_group_or_world_writable_parent() {
+    let (temp_dir, startup_path, _, _, _, _) = write_startup_input("jsonl-unix-stream");
+    fs::set_permissions(temp_dir.path(), fs::Permissions::from_mode(0o777))
+        .expect("make private transport parent writable");
+    let socket_path = temp_dir.path().join("private.sock");
+
+    let output = run_private_host_until_exit(&startup_path, &socket_path);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("private transport parent must not be group/world writable"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn private_unix_transport_rejects_non_owner_replay_journal_permissions() {
+    let (temp_dir, startup_path, _, _, _, _) = write_startup_input("jsonl-unix-stream");
+    let socket_path = temp_dir.path().join("private.sock");
+    let journal_path = PathBuf::from(format!("{}{}", socket_path.display(), ".replay.jsonl"));
+    fs::write(&journal_path, "").expect("create replay journal");
+    fs::set_permissions(&journal_path, fs::Permissions::from_mode(0o644))
+        .expect("make replay journal readable by peers");
+
+    let output = run_private_host_until_exit(&startup_path, &socket_path);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("replay journal must be owner-only"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn private_unix_transport_commits_admitted_invoke_and_replays_exact_receipt() {
+    let vector = invoke_vector();
+    let mut host = PrivateHostProcess::spawn();
+    let air = fixture(&vector, "minimal_valid_air").clone();
+    let invoke = json!({
+        "schema_version": "apxm.runtime.host-request.v1",
+        "operation": "invoke",
+        "admission": materialize_admission_with_digests(
+            fixture(&vector, "valid_exact_admission"),
+            &air,
+            &host.release_digest,
+            &host.port_bindings_digest,
+            &host.resource_ceiling_digest,
+            &host.provenance_digest,
+        ),
+        "air": air,
+    });
+
+    let first = host.request(&invoke);
+    assert_eq!(first["status"], "committed");
+    assert_eq!(first["invocation_id"], "invocation.1");
+    assert_eq!(
+        terminal_fact(&first["runtime_evidence"])["commit_sequence"],
+        1
+    );
+    let journal_path = PathBuf::from(format!("{}{}", host.socket_path.display(), ".replay.jsonl"));
+    let journal_permissions = fs::metadata(&journal_path)
+        .expect("replay journal metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(
+        journal_permissions, 0o600,
+        "replay journal must be owner-only"
+    );
+    assert!(
+        fs::read_to_string(&journal_path)
+            .expect("read replay journal")
+            .contains("invocation.1"),
+        "committed receipt must be durably journaled"
+    );
+
+    let replay = host.request(&invoke);
+    assert_eq!(
+        replay, first,
+        "duplicate invocation must replay its exact receipt"
+    );
+    assert_eq!(
+        terminal_fact(&replay["runtime_evidence"])["commit_sequence"],
+        1
+    );
+
+    host.restart();
+    let recovered = host.request(&invoke);
+    assert_eq!(
+        recovered, first,
+        "duplicate invocation must replay its exact receipt after process restart"
+    );
+
+    let readiness = host.request(&request("readiness"));
+    assert_eq!(readiness["readiness"]["state"], "ready");
+    assert_eq!(readiness["readiness"]["in_flight"], 0);
+}
+
+fn readiness(host: &mut HostProcess) -> Value {
+    host.request(&request("readiness"))
+}
+
+fn materialize_admission(host: &HostProcess, fixture: &Value, air: &Value) -> Value {
+    materialize_admission_with_digests(
+        fixture,
+        air,
+        &host.release_digest,
+        &host.port_bindings_digest,
+        &host.resource_ceiling_digest,
+        &host.provenance_digest,
+    )
 }
 
 fn materialize_expected_response(host: &HostProcess, expected: &Value) -> Value {
@@ -382,7 +872,7 @@ fn invoke_parity_vectors_execute_live_cases() {
                 );
                 assert_eq!(terminal["commit_sequence"], expected["commit_sequence"]);
                 assert_eq!(
-                    readiness(&mut host)["state"],
+                    readiness(&mut host)["readiness"]["state"],
                     expected["reference_host_state_after"]
                 );
             }
@@ -437,7 +927,8 @@ fn lifecycle_parity_vectors_execute_live_cases() {
                 host.shutdown();
             }
             "drain_shutdown_after_in_flight_completion" => {
-                let (_temp_dir, startup_path, _, _, _, _) = write_startup_input();
+                let (_temp_dir, startup_path, _, _, _, _) =
+                    write_startup_input("jsonl-stdin-stdout");
                 let output = Command::new(env!("CARGO_BIN_EXE_apxm-reference-host"))
                     .arg("--startup-input")
                     .arg(startup_path)
@@ -460,8 +951,8 @@ fn lifecycle_parity_vectors_execute_live_cases() {
                 assert_eq!(probe["transition"], "stop_admission_then_finish_in_flight");
                 assert_eq!(probe["in_flight_before_drain"]["state"], "ready");
                 assert_eq!(probe["in_flight_before_drain"]["in_flight"], 1);
-                assert_eq!(probe["drain_response"]["state"], "draining");
-                assert_eq!(probe["drain_response"]["in_flight"], 1);
+                assert_eq!(probe["drain_response"]["readiness"]["state"], "draining");
+                assert_eq!(probe["drain_response"]["readiness"]["in_flight"], 1);
                 assert_eq!(probe["completion_response"]["status"], "committed");
                 assert_eq!(
                     terminal_fact(&probe["completion_response"]["runtime_evidence"])["fact_kind"],
@@ -587,7 +1078,7 @@ fn lifecycle_parity_vectors_execute_live_cases() {
 
                 let mut host = HostProcess::spawn();
                 let drain = host.request(&request("drain"));
-                assert_eq!(drain["state"], "draining");
+                assert_eq!(drain["readiness"]["state"], "draining");
                 let host_not_accepting = host.request(&json!({
                     "schema_version": "apxm.runtime.host-request.v1",
                     "operation": "invoke",

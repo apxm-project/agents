@@ -69,7 +69,7 @@ DEFAULT_LIFECYCLE_RECEIPT_PATH = (
     / "apxm.reference-host-lifecycle-receipt.v1.json"
 )
 REQUEST_SCHEMA = "apxm.runtime.host-request.v1"
-HOST_SCHEMA = "apxm.runtime.host.v1"
+HOST_SCHEMA = "apxm.runtime.host-response.v1"
 ADMISSION_SCHEMA = "apxm.invocation-admission.v1"
 STARTUP_INPUT_SCHEMA = "apxm.reference-host-startup-input.v1"
 TRANSPORT_PROTOCOL = "jsonl-stdin-stdout"
@@ -241,13 +241,23 @@ def host_readiness(
     startup_input: dict[str, Any], state: str, in_flight: int = 0
 ) -> dict[str, Any]:
     return {
-        "schema_version": HOST_SCHEMA,
-        "contract_id": HOST_SCHEMA,
+        "schema_version": "apxm.runtime.host.v1",
+        "contract_id": "apxm.runtime.host.v1",
         "state": state,
         "release_digest": startup_input["release_digest"],
         "port_bindings_digest": startup_input["port_bindings_digest"],
         "resource_ceiling_digest": startup_input["resource_ceiling_digest"],
         "in_flight": in_flight,
+    }
+
+
+def host_readiness_response(
+    startup_input: dict[str, Any], state: str, in_flight: int = 0
+) -> dict[str, Any]:
+    return {
+        "schema_version": HOST_SCHEMA,
+        "status": "readiness",
+        "readiness": host_readiness(startup_input, state, in_flight),
     }
 
 
@@ -506,7 +516,7 @@ def run_case_readiness(
     try:
         request = request_payload("readiness")
         response = transport.request(request)
-        expect(response == host_readiness(startup_input, "ready"), "case_failed", "readiness response drifted")
+        expect(response == host_readiness_response(startup_input, "ready"), "case_failed", "readiness response drifted")
         return {
             "name": "readiness",
             "status": "passed",

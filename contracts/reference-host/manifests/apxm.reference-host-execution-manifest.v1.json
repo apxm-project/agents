@@ -14,7 +14,7 @@
   "startup_input_schema": {
     "schema_id": "apxm.reference-host-startup-input.v1",
     "path": "reference-host/schemas/apxm.reference-host-startup-input.v1.json",
-    "digest": "sha256:c302ef92982cf60866caff3767fa0ef9e4e1e5d4729391b3ad80abbb15ad3e9e",
+    "digest": "sha256:70e722381471a7cbd76b89ac25594fa668bfb63c9254ed1082a16b9752752e7d",
     "semantic_owner": "agents",
     "canonical_source_path": "schemas/apxm.reference-host-startup-input.v1.json"
   },
@@ -54,7 +54,7 @@
   "startup_input_vector": {
     "schema_id": "apxm.reference-host-startup-input.v1",
     "path": "reference-host/vectors/apxm.reference-host-startup-input.v1.json",
-    "digest": "sha256:73ad787ce769e58b808ce134ed6cda3012b59e2c35f38f8fac442431c8189a37",
+    "digest": "sha256:423cc3b61bde57e525893ef930d3eb363fba5e259cbea59ec18f6671da85156c",
     "canonical_source_path": "vectors/apxm.reference-host-startup-input.v1.json"
   },
   "invocation_admission_schema": {
@@ -64,10 +64,49 @@
     "semantic_owner": "agents",
     "canonical_source_path": "schemas/apxm.invocation-admission.v1.json"
   },
+  "host_request_schema": {
+    "schema_id": "apxm.runtime.host-request.v1",
+    "path": "reference-host/schemas/apxm.runtime.host-request.v1.json",
+    "digest": "sha256:12ca6c600fc50f150c02ebfad48b33a0f6e04b5367c9c9e5c89b995283be0458",
+    "semantic_owner": "agents",
+    "canonical_source_path": "schemas/apxm.runtime.host-request.v1.json"
+  },
+  "host_response_schema": {
+    "schema_id": "apxm.runtime.host-response.v1",
+    "path": "reference-host/schemas/apxm.runtime.host-response.v1.json",
+    "digest": "sha256:07a5f3fb9be192780902134490d15cc4df4dfa117fa8d759778922dc1cd0f546",
+    "semantic_owner": "agents",
+    "canonical_source_path": "schemas/apxm.runtime.host-response.v1.json"
+  },
   "invocation_admission_vector": {
     "schema_id": "apxm.invocation-admission.v1",
     "path": "reference-host/vectors/apxm.invocation-admission.v1.json",
     "digest": "sha256:89b70bfa6182b844685cead3cc7a55f100ed719f6957a4b9878e0bcb0d7f67e6",
     "canonical_source_path": "vectors/apxm.invocation-admission.v1.json"
+  },
+  "host_request_vector": {
+    "schema_id": "apxm.runtime.host-request.v1",
+    "path": "reference-host/vectors/apxm.runtime.host-request.v1.json",
+    "digest": "sha256:50fafaf0e3509f21e0b764d6ad295f8ad7109d967e6113b7cd78f98b739fb920",
+    "canonical_source_path": "vectors/apxm.runtime.host-request.v1.json"
+  },
+  "host_response_vector": {
+    "schema_id": "apxm.runtime.host-response.v1",
+    "path": "reference-host/vectors/apxm.runtime.host-response.v1.json",
+    "digest": "sha256:754b530b020c3159799e3d8d9afa18022a9f240f35351352714c3cea7d9a2adc",
+    "canonical_source_path": "vectors/apxm.runtime.host-response.v1.json"
+  },
+  "host_transport_schema": {
+    "schema_id": "apxm.runtime.host-transport.v1",
+    "path": "reference-host/schemas/apxm.runtime.host-transport.v1.json",
+    "digest": "sha256:873e65facc5daf4a4b542e355076cd410cc99c9ce8d046191e33aa9a569c6390",
+    "semantic_owner": "agents",
+    "canonical_source_path": "schemas/apxm.runtime.host-transport.v1.json"
+  },
+  "host_transport_vector": {
+    "schema_id": "apxm.runtime.host-transport.v1",
+    "path": "reference-host/vectors/apxm.runtime.host-transport.v1.json",
+    "digest": "sha256:4fff3838733072d7ba70d82f3eababa7a8299785c211bb54df043644623d5478",
+    "canonical_source_path": "vectors/apxm.runtime.host-transport.v1.json"
   }
 }

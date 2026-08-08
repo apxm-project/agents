@@ -839,7 +839,10 @@ mod tests {
         tampered_json["source_map"]["source_language"] = Value::String("typescript".into());
         let tampered: AirModule =
             serde_json::from_value(tampered_json).expect("tampered AIR remains well-formed");
-        assert!(tampered.verify().is_accepted(), "tampered AIR remains valid");
+        assert!(
+            tampered.verify().is_accepted(),
+            "tampered AIR remains valid"
+        );
 
         let error = runtime
             .execute(

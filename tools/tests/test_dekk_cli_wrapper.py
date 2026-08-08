@@ -77,19 +77,20 @@ class DekkCliWrapperTests(unittest.TestCase):
         stderr = io.StringIO()
         with mock.patch.object(self.cargo_wrapper.platform, "system", return_value="Darwin"):
             with mock.patch.object(self.cargo_wrapper.platform, "machine", return_value="arm64"):
-                with mock.patch.dict(
-                    self.cargo_wrapper.os.environ,
-                    {
-                        "CC": "/tmp/x86_64-conda-linux-gnu-gcc",
-                        "CXX": "/tmp/x86_64-conda-linux-gnu-g++",
-                    },
-                    clear=False,
-                ):
-                    with contextlib.redirect_stderr(stderr):
-                        with mock.patch.object(self.cargo_wrapper.subprocess, "run") as run_mock:
-                            exit_code = self.cargo_wrapper.main(
-                                ["test", "-p", "apxm-cli", "--test", "reference_host_jsonl", "--release"]
-                            )
+                with mock.patch.object(self.cargo_wrapper, "_native_compiler_pair", return_value=None):
+                    with mock.patch.dict(
+                        self.cargo_wrapper.os.environ,
+                        {
+                            "CC": "/tmp/x86_64-conda-linux-gnu-gcc",
+                            "CXX": "/tmp/x86_64-conda-linux-gnu-g++",
+                        },
+                        clear=False,
+                    ):
+                        with contextlib.redirect_stderr(stderr):
+                            with mock.patch.object(self.cargo_wrapper.subprocess, "run") as run_mock:
+                                exit_code = self.cargo_wrapper.main(
+                                    ["test", "-p", "apxm-cli", "--test", "reference_host_jsonl", "--release"]
+                                )
 
         self.assertEqual(exit_code, self.cargo_wrapper.READINESS_FAILURE_EXIT_CODE)
         run_mock.assert_not_called()
@@ -99,6 +100,56 @@ class DekkCliWrapperTests(unittest.TestCase):
         self.assertIn("CC=/tmp/x86_64-conda-linux-gnu-gcc", rendered)
         self.assertIn("CXX=/tmp/x86_64-conda-linux-gnu-g++", rendered)
         self.assertIn("/usr/bin/clang", rendered)
+
+    def test_cargo_wrapper_resolves_native_pair_when_dekk_pins_linux_compilers(self) -> None:
+        with mock.patch.object(self.cargo_wrapper.platform, "system", return_value="Darwin"):
+            with mock.patch.object(self.cargo_wrapper.platform, "machine", return_value="arm64"):
+                with mock.patch.object(
+                    self.cargo_wrapper,
+                    "_native_compiler_pair",
+                    return_value=("/native/clang", "/native/clang++"),
+                ):
+                    with mock.patch.dict(
+                        self.cargo_wrapper.os.environ,
+                        {
+                            "CC": "/tmp/x86_64-conda-linux-gnu-gcc",
+                            "CXX": "/tmp/x86_64-conda-linux-gnu-g++",
+                        },
+                        clear=False,
+                    ):
+                        with mock.patch.object(
+                            self.cargo_wrapper.subprocess,
+                            "run",
+                            return_value=SimpleNamespace(returncode=29),
+                        ) as run_mock:
+                            exit_code = self.cargo_wrapper.main(["test", "-p", "apxm-cli"])
+
+        self.assertEqual(exit_code, 29)
+        run_mock.assert_called_once()
+        self.assertEqual(run_mock.call_args.kwargs["env"]["CC"], "/native/clang")
+        self.assertEqual(run_mock.call_args.kwargs["env"]["CXX"], "/native/clang++")
+
+    def test_native_compiler_pair_requires_same_host_native_toolchain(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir_name:
+            prefix = Path(temp_dir_name)
+            bin_dir = prefix / "bin"
+            bin_dir.mkdir()
+            for name in ("clang", "clang++-22"):
+                candidate = bin_dir / name
+                candidate.touch()
+                candidate.chmod(0o755)
+
+            with mock.patch.object(
+                self.cargo_wrapper,
+                "_is_native_darwin_compiler",
+                side_effect=lambda path: path.name in {"clang", "clang++-22"},
+            ):
+                pair = self.cargo_wrapper._native_compiler_pair(
+                    prefix,
+                    {"CONDA_PREFIX": str(prefix), "PATH": ""},
+                )
+
+        self.assertEqual(pair, (str(bin_dir / "clang"), str(bin_dir / "clang++-22")))
 
     def test_cargo_wrapper_allows_native_macos_compilers(self) -> None:
         with mock.patch.object(self.cargo_wrapper.platform, "system", return_value="Darwin"):
