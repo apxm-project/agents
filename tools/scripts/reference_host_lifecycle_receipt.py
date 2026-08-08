@@ -696,7 +696,11 @@ def run_case_drain_rejection(
         drain_request = request_payload("drain")
         drain_response = transport.request(drain_request)
         expected_draining = host_readiness(startup_input, "draining")
-        expect(drain_response == expected_draining, "case_failed", "drain response drifted")
+        expect(
+            drain_response == host_readiness_response(startup_input, "draining"),
+            "case_failed",
+            "drain response drifted",
+        )
         rejected_request = request_payload(
             "invoke",
             admission=valid_admission(

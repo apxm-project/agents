@@ -234,7 +234,7 @@ class ReferenceHostLifecycleReceiptTests(unittest.TestCase):
                         }
                     ],
                     [
-                        draining,
+                        self.module.host_readiness_response(startup_input, "draining"),
                         {
                             "schema_version": self.module.HOST_SCHEMA,
                             "status": "rejected",
