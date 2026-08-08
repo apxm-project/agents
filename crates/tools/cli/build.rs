@@ -11,9 +11,7 @@
 //!    outside this binary.
 
 use std::env;
-use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use apxm_core::toolchain_env;
 
@@ -91,39 +89,13 @@ fn prefix_lib_dir(prefix: &str) -> PathBuf {
     Path::new(prefix).join(toolchain_env::PREFIX_LIB_SUBDIR)
 }
 
-fn git_common_repo_root(start: &Path) -> PathBuf {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(start)
-        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
-        .output();
-    let Ok(output) = output else {
-        return start.to_path_buf();
-    };
-    if !output.status.success() {
-        return start.to_path_buf();
-    }
-    let common_dir = match std::str::from_utf8(&output.stdout) {
-        Ok(stdout) => PathBuf::from(stdout.trim()),
-        Err(_) => return start.to_path_buf(),
-    };
-    if common_dir.file_name() != Some(OsStr::new(".git")) {
-        return start.to_path_buf();
-    }
-    common_dir
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| start.to_path_buf())
-}
-
 fn export_contract_schema_env() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let agents_root = git_common_repo_root(&manifest_dir);
-    let workspace_root = agents_root.parent().unwrap_or(&agents_root);
-    let common_schema = workspace_root
-        .join("contracts")
-        .join("schemas")
-        .join("contract-common.v1.json");
+    // The common envelope is an immutable, provenance-pinned upstream input.
+    // Resolve the checked-in snapshot from the Agents repository itself so a
+    // standalone checkout never depends on a private sibling workspace.
+    let common_schema = manifest_dir
+        .join("../../machine/program/tests/fixtures/contracts/apxm.contract-common.v1.json");
     println!("cargo:rerun-if-changed={}", common_schema.display());
     println!(
         "cargo:rustc-env=APXM_CONTRACT_COMMON_SCHEMA_PATH={}",

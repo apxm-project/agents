@@ -1,6 +1,6 @@
-//! Shared helpers for loading the checked-in contract schemas and conformance
-//! vectors from the owning `contracts` and `agents` trees. Paths are workspace
-//! relative, resolved from this crate's manifest directory.
+//! Shared helpers for loading checked-in contract snapshots and conformance
+//! vectors. External owner snapshots are immutable test inputs under this
+//! crate's fixture root, so tests do not resolve a hidden sibling checkout.
 
 use std::path::PathBuf;
 
@@ -20,10 +20,23 @@ pub fn load_contract(relative: &str) -> Value {
     load_json(agents_root().join("contracts").join(relative))
 }
 
-/// Load a constitution schema owned by the sibling `contracts` repo.
+/// Load an immutable external-owner schema snapshot by its published path.
 #[must_use]
-pub fn load_constitution(relative: &str) -> Value {
-    load_json(agents_root().join("..").join("contracts").join(relative))
+pub fn load_contract_snapshot(relative: &str) -> Value {
+    let filename = std::path::Path::new(relative)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("contract snapshot filename");
+    let filename = if filename.starts_with("apxm.") {
+        filename.to_owned()
+    } else {
+        format!("apxm.{filename}")
+    };
+    load_json(
+        agents_root()
+            .join("crates/machine/program/tests/fixtures/contracts")
+            .join(filename),
+    )
 }
 
 fn load_json(path: PathBuf) -> Value {
@@ -63,7 +76,7 @@ pub fn load_vectors(file: &str) -> Vec<Vector> {
 /// the checked-in bytes. Only the `$id` is rebased; every constraint the schema
 /// states is compiled exactly as published.
 #[must_use]
-pub fn compile_schema(relative: &str, referenced_constitution: &[&str]) -> jsonschema::JSONSchema {
+pub fn compile_schema(relative: &str, referenced_snapshots: &[&str]) -> jsonschema::JSONSchema {
     fn rebase(mut schema: Value) -> (String, Value) {
         let id = schema["$id"]
             .as_str()
@@ -76,8 +89,8 @@ pub fn compile_schema(relative: &str, referenced_constitution: &[&str]) -> jsons
 
     let (_, schema) = rebase(load_contract(relative));
     let mut options = jsonschema::JSONSchema::options();
-    for reference in referenced_constitution {
-        let (scoped, document) = rebase(load_constitution(reference));
+    for reference in referenced_snapshots {
+        let (scoped, document) = rebase(load_contract_snapshot(reference));
         options.with_document(scoped, document);
     }
     options

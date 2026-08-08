@@ -1,0 +1,33 @@
+
+added 54 packages in 1s
+
+> @apxm/frontend@0.1.0 typecheck
+> tsc -p tsconfig.json --noEmit
+
+
+> @apxm/frontend@0.1.0 build
+> npm run clean && tsc -p tsconfig.json
+
+
+> @apxm/frontend@0.1.0 clean
+> node -e "require('fs').rmSync('dist',{recursive:true,force:true})"
+
+installed libapxm_frontend_typescript.dylib -> crates/compiler/frontend/typescript/dist/_native.node
+
+> @apxm/frontend@0.1.0 test
+> vitest run
+
+
+ RUN  v3.2.7 /Users/randreshg/Projects/worktrees/agents-issue-35-source-compiler-20260805/crates/compiler/frontend/typescript
+
+ ✓ test/agent-program.test.ts (12 tests) 165ms
+ ✓ test/packed-package.test.ts (2 tests) 3192ms
+   ✓ packed @apxm/frontend > installs as a generic-only clean-consumer surface  3187ms
+
+ Test Files  2 passed (2)
+      Tests  14 passed (14)
+   Start at  17:04:18
+   Duration  4.40s (transform 916ms, setup 0ms, collect 1.41s, tests 3.36s, environment 0ms, prepare 308ms)
+
+   Compiling apxm-frontend-typescript v0.1.0 (/Users/randreshg/Projects/worktrees/agents-issue-35-source-compiler-20260805/crates/compiler/frontend/native/typescript)
+    Finished `release` profile [optimized] target(s) in 7.87s

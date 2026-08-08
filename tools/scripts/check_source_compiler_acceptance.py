@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import signal
 import subprocess
@@ -57,6 +58,8 @@ class StepReport:
     returncode: int | None
     duration_seconds: float
     log_path: str
+    log_digest: str = ""
+    error: str | None = None
     block_reason: str | None = None
 
 
@@ -80,9 +83,9 @@ def acceptance_steps() -> tuple[AcceptanceStep, ...]:
             ("dekk", "agents", "test-source-port"),
         ),
         AcceptanceStep(
-            "test-program",
+            "test-program-source",
             "FrontendGraph, AIR, artifact, and source-map lowering stay closed and deterministic",
-            ("dekk", "agents", "test-program"),
+            ("dekk", "agents", "test-program-source"),
         ),
         AcceptanceStep(
             "test-compiler",
@@ -98,6 +101,11 @@ def acceptance_steps() -> tuple[AcceptanceStep, ...]:
             "test-typescript-frontend",
             "the public TypeScript frontend package stays closed, typed, and deterministic",
             ("dekk", "agents", "test-typescript-frontend"),
+        ),
+        AcceptanceStep(
+            "check-source-compiler-boundary",
+            "source and compiler paths contain no downstream dependency or rejected alternate AIR path",
+            ("dekk", "agents", "check-source-compiler-boundary"),
         ),
         AcceptanceStep(
             "compile-service-canonical",
@@ -128,6 +136,7 @@ def run_step(
     print(f"    $ {' '.join(step.command)}", flush=True)
     started = time.perf_counter()
     launch_error: OSError | None = None
+    error: str | None = None
     try:
         completed = runner(
             step.command,
@@ -135,17 +144,18 @@ def run_step(
             capture_output=True,
             text=True,
         )
-    except OSError as error:
+    except OSError as exception:
         # A missing Dekk executable (or an equivalent launch-time environment
         # failure) means this gate could not execute; it is not a failed
         # source/compiler assertion.
-        launch_error = error
+        launch_error = exception
         completed = subprocess.CompletedProcess(
             step.command,
             None,
             stdout="",
-            stderr=f"{type(error).__name__}: {error}",
+            stderr=f"{type(exception).__name__}: {exception}",
         )
+        error = str(exception)
     duration = round(time.perf_counter() - started, 3)
     logs_dir.mkdir(parents=True, exist_ok=True)
     log_path = logs_dir / f"{step.gate_id}.log"
@@ -156,6 +166,9 @@ def run_step(
         if combined_output and not combined_output.endswith("\n"):
             combined_output += "\n"
         combined_output += completed.stderr
+    combined_output = "\n".join(line.rstrip() for line in combined_output.splitlines())
+    if combined_output:
+        combined_output += "\n"
     log_path.write_text(combined_output, encoding="utf-8")
     if completed.stdout:
         print(completed.stdout, end="" if completed.stdout.endswith("\n") else "\n")
@@ -171,6 +184,8 @@ def run_step(
         duration_seconds=duration,
         log_path=render_path(log_path),
         block_reason=block_reason,
+        log_digest="sha256:" + hashlib.sha256(combined_output.encode("utf-8")).hexdigest(),
+        error=error,
     )
 
 
@@ -210,9 +225,17 @@ def run_acceptance(
         overall_status = "blocked"
     else:
         overall_status = "passed"
+    revision = subprocess.run(
+        ("git", "rev-parse", "HEAD"),
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
     return {
         "schema_version": "apxm.source-compiler-acceptance.v1",
         "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
+        "source_revision": revision,
         "issue_scope": {
             "issue": 35,
             "plan_tags": ["P-002", "P-003", "P-004", "G1", "G2"],

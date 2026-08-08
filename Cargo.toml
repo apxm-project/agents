@@ -60,7 +60,6 @@ apxm-commit-local = { version = "0.1.0", path = "crates/runtime/commit-local" }
 apxm-execution = { version = "0.1.0", path = "crates/runtime/execution" }
 apxm-artifact = { version = "0.1.0", path = "crates/orchestration/artifact" }
 apxm-observability = { version = "0.1.0", path = "crates/observability" }
-apxm-host-sdk = { version = "0.1.0", git = "https://github.com/apxm-project/host-sdk.git", rev = "ff48332f2ce6af8a45eb38a15f4510a134223f5f" }
 
 # ── Serialization ────────────────────────────────────────────
 serde = { version = "1.0", features = ["derive"] }
