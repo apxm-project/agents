@@ -180,6 +180,14 @@ def serialized_air_digest(air: dict[str, Any]) -> str:
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
 
+def serialized_provenance_digest(startup_input: dict[str, Any]) -> str:
+    """Match the owner runtime's StartupInputProvenance serde digest."""
+    encoded = json.dumps(
+        startup_input["provenance"], separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
 def is_exact_digest(value: str) -> bool:
     if not value.startswith("sha256:") or len(value) != 71:
         return False
@@ -227,6 +235,7 @@ def valid_admission(
     *,
     invocation_id: str = "invocation.1",
     artifact_digest: str | None = None,
+    provenance_digest: str | None = None,
 ) -> dict[str, Any]:
     return {
         "schema_version": ADMISSION_SCHEMA,
@@ -235,7 +244,7 @@ def valid_admission(
         "release_digest": startup_input["release_digest"],
         "port_bindings_digest": startup_input["port_bindings_digest"],
         "resource_ceiling_digest": startup_input["resource_ceiling_digest"],
-        "provenance_digest": startup_input["release_digest"],
+        "provenance_digest": provenance_digest or serialized_provenance_digest(startup_input),
     }
 
 
