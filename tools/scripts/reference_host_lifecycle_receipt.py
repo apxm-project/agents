@@ -821,7 +821,7 @@ def run_case_in_flight_drain(
         "in-flight drain probe must observe one admitted invocation before drain",
     )
     expect(
-        probe.get("drain_response") == host_readiness(startup_input, "draining", 1),
+        probe.get("drain_response") == host_readiness_response(startup_input, "draining", 1),
         "case_failed",
         "in-flight drain probe must stop admission while work remains in flight",
     )
