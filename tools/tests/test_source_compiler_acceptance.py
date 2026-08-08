@@ -13,6 +13,22 @@ from tools.scripts import check_source_compiler_acceptance
 
 
 class SourceCompilerAcceptanceTests(unittest.TestCase):
+    def test_cli_codegen_uses_the_checked_in_common_schema_snapshot(self) -> None:
+        build_script = (
+            check_source_compiler_acceptance.REPO_ROOT
+            / "crates"
+            / "tools"
+            / "cli"
+            / "build.rs"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "../../machine/program/tests/fixtures/contracts/"
+            "apxm.contract-common.v1.json",
+            build_script,
+        )
+        self.assertNotIn("workspace_root", build_script)
+        self.assertNotIn('.join("contracts")', build_script)
+
     def test_acceptance_steps_are_unique_and_exact(self) -> None:
         steps = check_source_compiler_acceptance.acceptance_steps()
         self.assertEqual(
@@ -21,10 +37,11 @@ class SourceCompilerAcceptanceTests(unittest.TestCase):
                 "check-frontend-codegen",
                 "check-frontend-surface",
                 "test-source-port",
-                "test-program",
+                "test-program-source",
                 "test-compiler",
                 "check-frontend-parity",
                 "test-typescript-frontend",
+                "check-source-compiler-boundary",
                 "compile-service-canonical",
             ],
         )
@@ -67,9 +84,13 @@ class SourceCompilerAcceptanceTests(unittest.TestCase):
             all(step["log_path"].endswith(".log") for step in report["steps"]),
             "every step records a log path in the report",
         )
+        self.assertTrue(
+            all(step["log_digest"].startswith("sha256:") for step in report["steps"]),
+            "every step records a content digest for its log",
+        )
 
     def test_run_acceptance_records_failures_without_dropping_later_steps(self) -> None:
-        failing_gate = "test-program"
+        failing_gate = "test-program-source"
         executed: list[str] = []
 
         with tempfile.TemporaryDirectory() as temporary:
@@ -106,7 +127,7 @@ class SourceCompilerAcceptanceTests(unittest.TestCase):
         )
 
     def test_run_acceptance_reports_toolchain_block_without_calling_it_a_failure(self) -> None:
-        blocked_gate = "test-program"
+        blocked_gate = "test-program-source"
 
         with tempfile.TemporaryDirectory() as temporary:
             logs_dir = Path(temporary) / "logs"
@@ -236,6 +257,25 @@ class SourceCompilerAcceptanceTests(unittest.TestCase):
             check_source_compiler_acceptance.write_report(report, path)
             self.assertTrue(path.is_file())
             self.assertIn('"overall_status": "passed"', path.read_text(encoding="utf-8"))
+
+    def test_run_step_records_unavailable_authority_as_a_typed_failure(self) -> None:
+        step = check_source_compiler_acceptance.acceptance_steps()[0]
+
+        def unavailable(*args, **kwargs):  # noqa: ANN002, ANN003
+            raise OSError("dekk unavailable")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            result = check_source_compiler_acceptance.run_step(
+                step,
+                Path(temporary),
+                runner=unavailable,
+            )
+
+        self.assertEqual(result.status, "blocked")
+        self.assertIsNone(result.returncode)
+        self.assertEqual(result.error, "dekk unavailable")
+        self.assertEqual(result.block_reason, "environment_unavailable")
+        self.assertTrue(result.log_digest.startswith("sha256:"))
 
     def test_main_fails_closed_when_any_gate_fails(self) -> None:
         report = {

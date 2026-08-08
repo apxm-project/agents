@@ -56,8 +56,8 @@ def git_common_repo_root(root: Path) -> Path:
 SCRIPT_DIR = Path(__file__).resolve().parent
 CONTRACTS_DIR = SCRIPT_DIR.parent
 CHECKOUT_ROOT = CONTRACTS_DIR.parent.resolve(strict=False)
-AGENTS_ROOT = git_common_repo_root(CHECKOUT_ROOT)
-WORKSPACE_DIR = AGENTS_ROOT.parent
+AGENTS_ROOT = CHECKOUT_ROOT
+WORKSPACE_DIR = git_common_repo_root(CHECKOUT_ROOT).parent
 CONSTITUTION_SCHEMAS_DIR = WORKSPACE_DIR / "contracts" / "schemas"
 
 SCHEMAS_DIR = CONTRACTS_DIR / "schemas"
@@ -241,7 +241,6 @@ FORBIDDEN_LANE_IDS = re.compile(r"\b(?:A|C|S|O|H|T|P|K|D|V|E|M|R)\d[a-z]?\b")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 REFERENCE_HOST_DEPENDENCY_NAME = "apxm-host-sdk"
-REFERENCE_HOST_DEPENDENCY_GIT = "https://github.com/apxm-project/host-sdk.git"
 REFERENCE_HOST_PROFILE_COHORT = ["embedded", "reference-host"]
 REFERENCE_HOST_EXECUTION_MANIFEST_SCHEMA_VERSION = (
     "apxm.reference-host-execution-manifest.v1"
@@ -1958,18 +1957,9 @@ def check_reference_host_boundary(descriptor: dict[str, Any]) -> None:
     dependencies = workspace.get("dependencies")
     if not isinstance(dependencies, dict):
         raise ValidationError("Cargo.toml must define workspace.dependencies")
-    host_dependency = dependencies.get(REFERENCE_HOST_DEPENDENCY_NAME)
-    if not isinstance(host_dependency, dict):
+    if REFERENCE_HOST_DEPENDENCY_NAME in dependencies:
         raise ValidationError(
-            f"Cargo.toml must declare workspace dependency {REFERENCE_HOST_DEPENDENCY_NAME}"
-        )
-    if host_dependency.get("git") != REFERENCE_HOST_DEPENDENCY_GIT:
-        raise ValidationError(
-            f"{REFERENCE_HOST_DEPENDENCY_NAME} must pin git {REFERENCE_HOST_DEPENDENCY_GIT}"
-        )
-    if host_dependency.get("rev") != REFERENCE_HOST_DESCRIPTOR["source_revision"]:
-        raise ValidationError(
-            f"{REFERENCE_HOST_DEPENDENCY_NAME} rev must match referenced owner descriptor source_revision"
+            f"Cargo.toml must not depend on downstream SDK {REFERENCE_HOST_DEPENDENCY_NAME}"
         )
 
 

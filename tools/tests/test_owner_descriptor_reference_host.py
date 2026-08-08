@@ -1,4 +1,4 @@
-"""Pin the Agents owner descriptor/reference-host cohort to one exact Host SDK tuple."""
+"""Pin reference-host wire provenance without a downstream SDK build dependency."""
 
 from __future__ import annotations
 
@@ -88,7 +88,7 @@ REFERENCE_HOST_STARTUP_INPUT_FIXTURE = (
 )
 
 README_REFERENCE_HOST = re.compile(
-    r"This consumer is pinned to Host SDK source revision\s+"
+    r"The frozen interoperability provenance is pinned to Host SDK source revision\s+"
     r"`(?P<revision>[0-9a-f]{40})`\.\s+Its\s+"
     r"`(?P<schema_version>apxm\.host-sdk-owner-descriptor\.v1)` semantic digest is\s+"
     r"`(?P<semantic_digest>sha256:[0-9a-f]{64})`,\s+and the SHA-256 checksum of the exact "
@@ -170,29 +170,19 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
         ):
             self.validator.check_reference_host_boundary(drifted)
 
-    def test_workspace_host_sdk_dependency_matches_the_reference_host(self) -> None:
+    def test_workspace_has_no_downstream_host_sdk_dependency(self) -> None:
         manifest = tomllib.loads(CARGO_TOML.read_text(encoding="utf-8"))
-        dependency = manifest["workspace"]["dependencies"]["apxm-host-sdk"]
-        self.assertEqual(dependency["git"], self.validator.REFERENCE_HOST_DEPENDENCY_GIT)
-        self.assertEqual(dependency["rev"], self.expected_reference["source_revision"])
+        self.assertNotIn("apxm-host-sdk", manifest["workspace"]["dependencies"])
 
-    def test_lockfile_host_sdk_source_matches_the_reference_host(self) -> None:
-        match = re.search(
-            r'name = "apxm-host-sdk"\nversion = "0\.1\.0"\nsource = '
-            r'"git\+https://github\.com/apxm-project/host-sdk\.git\?rev='
-            r'(?P<rev>[0-9a-f]{40})#(?P=rev)"',
-            CARGO_LOCK.read_text(encoding="utf-8"),
-        )
-        self.assertIsNotNone(match, "Cargo.lock must pin apxm-host-sdk to a git revision")
-        assert match is not None
-        self.assertEqual(match.group("rev"), self.expected_reference["source_revision"])
+    def test_lockfile_has_no_downstream_host_sdk_package(self) -> None:
+        self.assertNotRegex(CARGO_LOCK.read_text(encoding="utf-8"), r'name = "apxm-host-sdk"')
 
     def test_contracts_readme_matches_the_reference_host_cohort(self) -> None:
         readme = CONTRACTS_README.read_text(encoding="utf-8")
         match = README_REFERENCE_HOST.search(readme)
         self.assertIsNotNone(
             match,
-            "contracts/README.md must spell out the exact referenced Host SDK cohort",
+            "contracts/README.md must spell out the exact frozen Host SDK provenance",
         )
         assert match is not None
         self.assertEqual(match.group("revision"), self.expected_reference["source_revision"])

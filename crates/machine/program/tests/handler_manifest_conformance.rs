@@ -15,8 +15,8 @@ use common::{Vector, compile_schema, load_contract, load_vectors, schema_enum};
 use serde_json::Value;
 
 /// The published schema, compiled from its checked-in bytes. `Identifier` is
-/// owned by the constitution layer and referenced by `module`, `qualname`, and
-/// `name`, so it is supplied to the validator rather than restated here.
+/// owned by the common contract snapshot and referenced by `module`, `qualname`,
+/// and `name`, so it is supplied to the validator rather than restated here.
 fn manifest_schema() -> jsonschema::JSONSchema {
     compile_schema(
         "schemas/apxm.handler-manifest.v1.json",
