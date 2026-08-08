@@ -36,7 +36,7 @@ class AgentsReleaseManifestTests(unittest.TestCase):
         self.assertEqual(self.manifest["semantic_owner"], "agents")
         self.assertEqual(
             self.manifest["source"]["revision"],
-            "fe3d36c053ec144e3ede610df855d931ca4279b4",
+            "fc1ce85ef7e05ba48625b9939a27ca41c54dfdb3",
         )
         self.assertEqual(
             self.manifest["reference_host_release"]["profile_cohort"],
