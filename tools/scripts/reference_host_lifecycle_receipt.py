@@ -176,14 +176,38 @@ def file_digest(path: Path) -> str:
 
 def serialized_air_digest(air: dict[str, Any]) -> str:
     """Match the owner runtime's AirModule serde digest exactly."""
-    encoded = json.dumps(air, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    source_map = air.get("source_map")
+    ordered_air = {
+        "schema_version": air.get("schema_version"),
+        "semantic_operations": air.get("semantic_operations", []),
+        "structural_ir": air.get("structural_ir", []),
+        "context_flow": air.get("context_flow", []),
+        "source_map": (
+            {
+                "schema_version": source_map.get("schema_version"),
+                "source_language": source_map.get("source_language"),
+                "node_spans": source_map.get("node_spans", []),
+                "region_annotations": source_map.get("region_annotations", []),
+            }
+            if isinstance(source_map, dict)
+            else source_map
+        ),
+    }
+    encoded = json.dumps(ordered_air, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
 
 def serialized_provenance_digest(startup_input: dict[str, Any]) -> str:
     """Match the owner runtime's StartupInputProvenance serde digest."""
+    provenance = startup_input["provenance"]
+    ordered_provenance = {
+        "owner_revision": provenance["owner_revision"],
+        "descriptor_semantic_digest": provenance["descriptor_semantic_digest"],
+        "descriptor_exact_checksum": provenance["descriptor_exact_checksum"],
+        "dirty": provenance["dirty"],
+    }
     encoded = json.dumps(
-        startup_input["provenance"], separators=(",", ":"), ensure_ascii=False
+        ordered_provenance, separators=(",", ":"), ensure_ascii=False
     ).encode("utf-8")
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
