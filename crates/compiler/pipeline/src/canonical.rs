@@ -408,6 +408,7 @@ mod tests {
                 {"region_id": "region.loop.1", "kind": "ais.loop", "parent_region_id": "region.fn.1", "execution_order": 0, "block_arguments": [{"value_id": "value.loop.input", "type_ref": "ModelRequest"}], "operands": [{"slot": "initial", "value_id": "value.loop.initial", "type_ref": "ModelRequest"}, {"slot": "carried", "value_id": "value.loop.initial", "type_ref": "ModelRequest"}]},
                 {"region_id": "region.return.1", "kind": "return", "parent_region_id": "region.fn.1", "execution_order": 1}
             ],
+            "value_assemblies": [{"value_id": "value.args", "expression": {"kind": "object", "fields": [{"name": "query", "value": {"kind": "string", "value": "search"}}]}}],
             "context_flow": [],
             "source_map": {
                 "schema_version": "apxm.source-map.v1",
