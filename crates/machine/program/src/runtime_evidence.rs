@@ -628,6 +628,8 @@ pub struct RuntimeEvidence {
     pub facts: Vec<Fact>,
 }
 
+type SeenNodeExecutions<'a> = HashMap<&'a str, (&'a str, &'a str, HashSet<(&'a str, &'a str)>)>;
+
 impl RuntimeEvidence {
     /// Verify a decoded evidence sequence: at least one fact, strictly monotonic
     /// event sequence, grammar, and the honesty rule that an uncertain effect
@@ -661,8 +663,7 @@ impl RuntimeEvidence {
 
         let mut previous: Option<u64> = None;
         let mut seen_fact_ids = HashSet::new();
-        let mut seen_node_executions: HashMap<&str, (&str, &str, HashSet<(&str, &str)>)> =
-            HashMap::new();
+        let mut seen_node_executions: SeenNodeExecutions<'_> = HashMap::new();
         let mut seen_model_attempt_ids = HashSet::new();
         let mut seen_model_attempt_indexes = HashSet::new();
         let mut completed_iterations = HashSet::new();
