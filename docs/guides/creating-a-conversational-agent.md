@@ -42,159 +42,139 @@ readable Agent source
 
 ## 2. Python
 
+The executable Python reference is
+[`examples/agents/conversational/python/agent.py`](../../examples/agents/conversational/python/agent.py).
+Its request and response types define a closed union: the Model returns either
+a final reply or a `search_web` request. The Agent owns dispatch and Model
+re-entry:
+
 ```python
-from apxm_program import Agent, Context, Model, Tool
+SearchWeb = Tool[SearchWebRequest, SearchWebResult]("cap.search")
+SupportModel = Model[ModelRequest, ModelResponse]("model.target.v1")
 
 
 @Context
-class Conversation:
-    messages: tuple[Message, ...] = ()
-
-
-SearchSkills = Tool[SkillQuery, tuple[SkillSummary, ...]]("capability.skill-search.v1")
-ReadSkill = Tool[SkillRef, SkillBody]("capability.skill-read.v1")
-CrmLookup = Tool[CrmLookupInput, CrmLookupResult]("capability.crm-lookup.v1")
-CreateTicket = Tool[CreateTicketInput, Ticket]("capability.ticket-create.v1")
-SupportModel = Model[SupportRequest, SupportResponse]("model.support.v1")
+class ConversationContext:
+    messages: tuple[ConversationMessage, ...] = ()
+    tool_calls: int = 0
 
 
 @Agent(
-    input=UserMessage,
-    output=AgentReply,
-    context=Conversation,
+    input="ConversationInput",
+    output="ConversationOutput",
+    context=ConversationContext,
 )
-async def Support(agent, incoming):
+async def ConversationalExample(agent, incoming):
     while True:
-        summaries = await SearchSkills(
-            SkillQuery.from_context(agent.context, incoming)
+        turn_messages = ({"role": "user", "content": incoming["message"]},)
+        working_messages = (
+            *agent.context.messages,
+            *turn_messages,
         )
-        selected = choose_relevant_skills(summaries)
-        skill_context = []
-        for ref in selected:
-            skill_context.append(await ReadSkill(ref))
-
         response = await SupportModel(
-            SupportRequest(
-                messages=agent.context.messages,
-                incoming=incoming,
-                skills=skill_context,
-            )
+            {"messages": working_messages, "incoming": incoming}
         )
 
-        response = await run_requested_tools(response)
-        agent.context = Conversation(
-            messages=(
+        while response["kind"] == "tool_request":
+            tool_request = response["tool_request"]
+            tool_result = await SearchWeb(tool_request["arguments"])
+            turn_messages = (
+                *turn_messages,
+                {"role": "tool", "content": tool_result["content"]},
+            )
+            working_messages = (
                 *agent.context.messages,
-                incoming.as_message(),
-                response.message,
+                *turn_messages,
             )
+            response = await SupportModel(
+                {
+                    "messages": working_messages,
+                    "incoming": incoming,
+                    "tool_result": tool_result,
+                }
+            )
+
+        final_reply = response["reply"]
+        agent.context = ConversationContext(
+            messages=(
+                *working_messages,
+                {"role": "assistant", "content": final_reply["message"]},
+            ),
+            tool_calls=agent.context.tool_calls,
         )
-        incoming = await agent.yield_(AgentReply(response.content))
+        incoming = await agent.yield_(final_reply)
 ```
 
-`run_requested_tools` is ordinary authored source, not a runtime service. Its
-dispatch is closed and typed:
-
-```python
-async def run_requested_tools(response: SupportResponse) -> SupportResponse:
-    for request in response.tool_requests:
-        match request:
-            case CrmLookupRequest(arguments):
-                result = await CrmLookup(arguments)
-            case CreateTicketRequest(arguments):
-                result = await CreateTicket(arguments)
-        response = await SupportModel(response.with_tool_result(request, result))
-    return response
-```
-
-The Model returns Tool requests as data. Source chooses the Tool, invokes it,
-and decides whether another Model call is needed.
+If the first response is final, the inner loop performs zero iterations and
+`SearchWeb` is not invoked. A Tool response is appended to `working_messages`
+and included, together with the current input, in the next Model request.
 
 ## 3. TypeScript
 
+The equivalent executable source is
+[`examples/agents/conversational/src/conversational-agent.ts`](../../examples/agents/conversational/src/conversational-agent.ts).
+
 ```typescript
-import { Agent, Context, Model, Tool } from "@apxm/frontend";
-import "@apxm/frontend/node";
-import { staticSource } from "./static-source.js";
+import { Agent, Context, Hook, Model, Tool } from "@apxm/frontend";
 
-type Conversation = {
-  messages: readonly Message[];
-};
+const SearchWeb = Tool<SearchWebRequest, SearchWebResult>("cap.search");
+const SupportModel = Model<ModelRequest, ModelResponse>("model.target.v1");
 
-const ConversationContext = Context<Conversation>({ messages: [] });
-const SearchSkills = Tool<SkillQuery, readonly SkillSummary[]>(
-  "capability.skill-search.v1",
-);
-const ReadSkill = Tool<SkillRef, SkillBody>("capability.skill-read.v1");
-const CrmLookup = Tool<CrmLookupInput, CrmLookupResult>("capability.crm-lookup.v1");
-const CreateTicket = Tool<CreateTicketInput, Ticket>("capability.ticket-create.v1");
-const SupportModel = Model<SupportRequest, SupportResponse>(
-  "model.support.v1",
-);
-const source = staticSource(import.meta.url);
-
-export const Support = Agent<UserMessage, AgentReply, Conversation>({
-  name: "Support",
-  source,
+export const ConversationalExample = Agent<
+  ConversationInput,
+  ConversationOutput,
+  ConversationState
+>({
+  name: "ConversationalExample",
   context: ConversationContext,
-  use: { SearchSkills, ReadSkill, CrmLookup, CreateTicket, SupportModel },
+  use: { SearchWeb, SupportModel },
   async run(agent, incoming) {
-    for (;;) {
-      const summaries = await SearchSkills(
-        skillQueryFromContext(agent.context, incoming),
-      );
-      const selected = chooseRelevantSkills(summaries);
-      const skillContext: SkillBody[] = [];
-      for (const ref of selected) {
-        skillContext.push(await ReadSkill(ref));
-      }
-
+    while (true) {
+      let turnMessages = [{ role: "user", content: incoming.message }];
+      let workingMessages = [
+        ...agent.context.messages,
+        ...turnMessages,
+      ];
       let response = await SupportModel({
-        messages: agent.context.messages,
+        messages: workingMessages,
         incoming,
-        skills: skillContext,
       });
 
-      response = await runRequestedTools(response);
+      while (response.kind === "tool_request") {
+        const toolResult = await SearchWeb(response.toolRequest.arguments);
+        turnMessages = [
+          ...turnMessages,
+          { role: "tool", content: toolResult.content },
+        ];
+        workingMessages = [...agent.context.messages, ...turnMessages];
+        response = await SupportModel({
+          messages: workingMessages,
+          incoming,
+          toolResult,
+        });
+      }
+
+      const finalReply = response.reply;
       agent.context = {
         messages: [
-          ...agent.context.messages,
-          asMessage(incoming),
-          response.message,
+          ...workingMessages,
+          { role: "assistant", content: finalReply.message },
         ],
+        toolCalls: agent.context.toolCalls,
       };
-      incoming = await agent.yield_({ content: response.content });
+      incoming = await agent.yield_(finalReply);
     }
   },
 });
 ```
 
-The typed Tool dispatch is explicit:
-
-```typescript
-async function runRequestedTools(
-  initial: SupportResponse,
-): Promise<SupportResponse> {
-  let response = initial;
-  for (const request of response.toolRequests) {
-    let result: ToolResult;
-    switch (request.kind) {
-      case "crm.lookup":
-        result = await CrmLookup(request.arguments);
-        break;
-      case "ticket.create":
-        result = await CreateTicket(request.arguments);
-        break;
-    }
-    response = await SupportModel(withToolResult(response, request, result));
-  }
-  return response;
-}
-```
-
 Python and TypeScript goldens must capture equivalent typed loop intent, Tool
 dispatch, context flow, and yield/resume bindings. Rust must then select the
 same structural `ais.loop` and closed effect/composition operations for both.
+The paired executable sources also bind deterministic before/after Hooks around
+`SearchWeb`: the before Hook applies a persisted context-window policy and the
+after Hook records Tool-call accounting without moving dispatch or message
+transitions out of the Agent body.
 
 ## 4. Context is explicit
 
@@ -214,7 +194,7 @@ their bodies. Tool calls still require complete Auth-owned Capability Grants.
 
 ## 5. Why there is no `AgentLoop`
 
-The Python `while` and TypeScript `for (;;)` are the Agent loop. The frontend
+The Python and TypeScript `while` statements are the Agent loops. The frontend
 captures typed loop/CFG intent and Rust emits `ais.loop`. A separate
 `AgentLoop` import would expose lowering vocabulary and make ordinary control
 flow harder to read.

@@ -100,6 +100,78 @@ fn example_artifacts_carry_no_field_the_schema_rejects() {
 }
 
 #[test]
+fn conversational_example_artifacts_pin_tool_loop_and_hooks() {
+    for fixture in [
+        "../crates/machine/program/tests/fixtures/example-artifacts/conversational-python.v1.json",
+        "../crates/machine/program/tests/fixtures/example-artifacts/conversational-typescript.v1.json",
+    ] {
+        let artifact = load_contract(fixture);
+        let hooks = artifact["hook_bindings"]
+            .as_array()
+            .expect("example hook bindings");
+        assert_eq!(hooks.len(), 2, "{fixture}");
+        assert_eq!(hooks[0]["phase"], "before", "{fixture}");
+        assert_eq!(hooks[1]["phase"], "after", "{fixture}");
+        assert_eq!(hooks[0]["scope"], "capability", "{fixture}");
+        assert_eq!(hooks[1]["scope"], "capability", "{fixture}");
+        assert_eq!(
+            hooks[0]["target_selector"], hooks[1]["target_selector"],
+            "{fixture}",
+        );
+
+        let operations = artifact["air"]["semantic_operations"]
+            .as_array()
+            .expect("example semantic operations");
+        let operation_kinds = operations
+            .iter()
+            .map(|operation| operation["op"].as_str().expect("operation kind"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            operation_kinds,
+            ["model.call", "capability.invoke", "model.call"],
+            "{fixture}",
+        );
+
+        let initial_model = &operations[0];
+        let tool = &operations[1];
+        let reentry_model = &operations[2];
+        assert_ne!(
+            initial_model["parent_region_id"], tool["parent_region_id"],
+            "{fixture}",
+        );
+        assert_eq!(
+            tool["parent_region_id"], reentry_model["parent_region_id"],
+            "{fixture}",
+        );
+        assert!(
+            tool["execution_order"]
+                .as_u64()
+                .expect("Tool execution order")
+                < reentry_model["execution_order"]
+                    .as_u64()
+                    .expect("model re-entry execution order"),
+            "{fixture}",
+        );
+
+        let structural = artifact["air"]["structural_ir"]
+            .as_array()
+            .expect("example structural AIR");
+        assert_eq!(
+            structural
+                .iter()
+                .filter(|node| node["kind"] == "ais.loop")
+                .count(),
+            2,
+            "{fixture}",
+        );
+        assert!(
+            structural.iter().any(|node| node["kind"] == "yield"),
+            "{fixture}",
+        );
+    }
+}
+
+#[test]
 fn source_scope_enum_does_not_drift() {
     let schema = load_contract_snapshot("schemas/port-requirement.v1.json");
     let mut expected: Vec<String> = schema["properties"]["source_scope"]["enum"]
