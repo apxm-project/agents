@@ -545,18 +545,20 @@ fn lower_structural_ir(
         let kind = region_structural_kind(region, entry_body);
         let (parent_region_id, execution_order) = owned_control_regions
             .get(region.region_id.as_str())
-            .map(|(intent, arm_index)| {
-                (
-                    Some(intent.node_id.clone()),
-                    canonical_execution_order(*arm_index as u32, STRUCTURAL_ORDER_OFFSET),
-                )
-            })
-            .unwrap_or_else(|| {
-                (
-                    region.parent_region_id.clone(),
-                    canonical_execution_order(region.execution_order, STRUCTURAL_ORDER_OFFSET),
-                )
-            });
+            .map_or_else(
+                || {
+                    (
+                        region.parent_region_id.clone(),
+                        canonical_execution_order(region.execution_order, STRUCTURAL_ORDER_OFFSET),
+                    )
+                },
+                |(intent, arm_index)| {
+                    (
+                        Some(intent.node_id.clone()),
+                        canonical_execution_order(*arm_index as u32, STRUCTURAL_ORDER_OFFSET),
+                    )
+                },
+            );
         nodes.push(StructuralNode {
             region_id: region.region_id.clone(),
             kind,
