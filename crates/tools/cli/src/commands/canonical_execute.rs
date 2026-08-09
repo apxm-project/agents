@@ -85,6 +85,7 @@ impl CanonicalRuntime {
             .ok_or_else(|| anyhow::anyhow!("reference runtime model binding is absent"))?;
         let request = ExecutionRequest {
             model_admission: model_admission(&air, &model_binding_digest),
+            initial_values: initial_model_request_values(&air),
             air,
             hook_bindings: Vec::new(),
             capability_invocations: BTreeMap::new(),
@@ -188,6 +189,26 @@ fn model_targets(air: &AirModule) -> Vec<String> {
         }
     }
     targets
+}
+
+fn initial_model_request_values(air: &AirModule) -> BTreeMap<String, Value> {
+    air.semantic_operations
+        .iter()
+        .filter(|operation| operation.op == apxm_program::SemanticOpKind::ModelCall)
+        .filter_map(|operation| {
+            let value_id = operation
+                .operands
+                .iter()
+                .find(|operand| operand.slot == "request")?
+                .value_id
+                .clone();
+            (!air
+                .value_assemblies
+                .iter()
+                .any(|assembly| assembly.value_id == value_id))
+            .then(|| (value_id.clone(), serde_json::json!({"value_id": value_id})))
+        })
+        .collect()
 }
 
 fn ensure_local_capability_authority_available(air: &AirModule) -> Result<()> {
@@ -809,6 +830,7 @@ mod tests {
     fn profile_request(air: AirModule, suffix: &str) -> ExecutionRequest {
         ExecutionRequest {
             model_admission: model_admission(&air, DEV_BINDING_DIGEST),
+            initial_values: initial_model_request_values(&air),
             air,
             hook_bindings: Vec::new(),
             capability_invocations: BTreeMap::new(),
@@ -1019,6 +1041,7 @@ mod tests {
         let report = execute(
             &ports,
             ExecutionRequest {
+                initial_values: initial_model_request_values(&air),
                 air,
                 hook_bindings: Vec::new(),
                 model_admission,
@@ -1069,6 +1092,7 @@ mod tests {
             &ports,
             ExecutionRequest {
                 model_admission,
+                initial_values: initial_model_request_values(&air),
                 air,
                 hook_bindings: Vec::new(),
                 capability_invocations: BTreeMap::new(),

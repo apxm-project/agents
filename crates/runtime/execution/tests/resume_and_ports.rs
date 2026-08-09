@@ -10,8 +10,8 @@ use apxm_execution::{
     CapabilityInvocationAdmission, CapabilityOutcome, CapabilityPort, CapabilityRequest,
     CommittedNativeModelUsageOutcome, CompositionOutcome, CompositionPort, CompositionRequest,
     Continuation, EventAwait, EventOutcome, EventPort, EventRef, ExecutionPortBundle,
-    ExecutionPorts, ExecutionRequest, NoopStaticHookHandler, RunOutcome, execute_resumable,
-    resume_event,
+    ExecutionPorts, ExecutionRequest, NodeOutcome, NoopStaticHookHandler, RunOutcome,
+    execute_resumable, resume, resume_event,
 };
 use apxm_inference::{
     AttemptDisposition, IdempotencyKey, InferenceTargetCommitment, ModelBindingAdmission,
@@ -65,6 +65,17 @@ fn request(scope: &str) -> ExecutionRequest {
         },
     )]);
     ExecutionRequest {
+        initial_values: air
+            .semantic_operations
+            .iter()
+            .filter_map(|operation| {
+                operation
+                    .operands
+                    .iter()
+                    .find(|operand| operand.slot == "request")
+                    .map(|operand| (operand.value_id.clone(), json!({"prompt": "test"})))
+            })
+            .collect(),
         air,
         hook_bindings: Vec::new(),
         model_admission: ModelBindingAdmission::new(ResolvedModelBinding::from_target_commitment(
@@ -117,13 +128,13 @@ impl ModelCallRequestMetadataPort for TestModelRequestMetadata {
 
 struct Model;
 impl ModelInferencePort for Model {
-    fn attempt(&self, _request: &ModelCallRequest, _attempt: u32) -> AttemptDisposition {
+    fn attempt(&self, request: &ModelCallRequest, _attempt: u32) -> AttemptDisposition {
         AttemptDisposition::Success {
             usage: Usage {
                 input_tokens: 3,
                 output_tokens: 5,
             },
-            output: serde_json::Value::Null,
+            output: request.authored_request().clone(),
         }
     }
 }
@@ -397,7 +408,10 @@ async fn resume_reads_the_committed_structural_continuation() {
     )
     .await
     .expect("resume from committed state");
-    assert!(matches!(resumed, RunOutcome::Completed(_)));
+    let RunOutcome::Completed(report) = resumed else {
+        panic!("event resume must complete");
+    };
+    assert_eq!(report.final_context, json!({"iteration": 1}));
     assert_eq!(*commit.version.lock().unwrap(), 2);
     assert_eq!(
         *commit.invocation_refs.lock().unwrap(),
@@ -423,6 +437,127 @@ async fn resume_reads_the_committed_structural_continuation() {
         .filter(|fact| fact.loop_iteration_completed().is_some())
         .count();
     assert_eq!(completions, 1);
+}
+
+#[tokio::test]
+async fn structural_yield_binds_delivered_input_without_overwriting_context() {
+    let commit = Arc::new(Commit::default());
+    let mut yielded = request("instance.yield-input");
+    yielded.air = serde_json::from_value(json!({
+        "schema_version": "apxm.air.v1",
+        "semantic_operations": [{
+            "node_id": "node.after-yield",
+            "op": "model.call",
+            "parent_region_id": "region.root",
+            "execution_order": 1,
+            "operands": [
+                {"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"},
+                {"slot": "request", "value_id": "value.resume.input", "type_ref": "ConversationInput"}
+            ],
+            "result": {"value_id": "value.model.output", "type_ref": "ModelOutput"}
+        }],
+        "structural_ir": [
+            {"region_id": "region.root", "kind": "function", "execution_order": 0},
+            {"region_id": "yield.input", "kind": "yield", "parent_region_id": "region.root", "execution_order": 0, "block_arguments": [{"value_id": "value.resume.input", "type_ref": "ConversationInput"}]},
+            {"region_id": "return.done", "kind": "return", "parent_region_id": "region.root", "execution_order": 2}
+        ],
+        "context_flow": [],
+        "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
+    }))
+    .expect("yield-resume AIR");
+    yielded.initial_values.clear();
+    assert!(yielded.air.verify().is_accepted());
+
+    execute_resumable(
+        &ports(commit.clone()),
+        yielded,
+        json!({"persistent": "context"}),
+    )
+    .await
+    .expect("structural yield parks");
+    let continuation: Continuation = serde_json::from_value(
+        commit
+            .continuation
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("continuation"),
+    )
+    .expect("typed continuation");
+    assert_eq!(
+        continuation.resume_value_id.as_deref(),
+        Some("value.resume.input")
+    );
+
+    let resumed = resume(
+        &ports(commit),
+        &ProgramInstanceRef::new("instance.yield-input"),
+        json!({"message": "next"}),
+    )
+    .await
+    .expect("yield delivery resumes");
+    let RunOutcome::Completed(report) = resumed else {
+        panic!("yield resume must complete");
+    };
+    assert_eq!(report.final_context, json!({"persistent": "context"}));
+    assert!(matches!(
+        &report.node_outcomes[0],
+        NodeOutcome::Model { result, .. } if result == &json!({"message": "next"})
+    ));
+}
+
+#[tokio::test]
+async fn branch_decision_survives_an_await_inside_the_selected_arm() {
+    let commit = Arc::new(Commit::default());
+    let mut branched = request("instance.branch-await");
+    branched.air = serde_json::from_value(json!({
+        "schema_version": "apxm.air.v1",
+        "semantic_operations": [{
+            "node_id": "node.branch.await",
+            "op": "await.event",
+            "parent_region_id": "branch.then",
+            "execution_order": 0,
+            "operands": [{"slot": "event_ref", "value_id": "evt-atomic", "type_ref": "EventRef"}],
+            "result": {"value_id": "value.await.result", "type_ref": "EventOutput"}
+        }],
+        "structural_ir": [
+            {"region_id": "region.root", "kind": "function", "execution_order": 0, "block_arguments": [{"value_id": "value.condition", "type_ref": "Boolean"}]},
+            {"region_id": "branch.main", "kind": "branch", "parent_region_id": "region.root", "execution_order": 0, "predicate": {"root_value_id": "value.condition", "property_path": [], "comparator": "truthy"}},
+            {"region_id": "branch.then", "kind": "region", "parent_region_id": "branch.main", "execution_order": 0},
+            {"region_id": "branch.else", "kind": "region", "parent_region_id": "branch.main", "execution_order": 1},
+            {"region_id": "throw.unselected", "kind": "throw", "parent_region_id": "branch.else", "execution_order": 0},
+            {"region_id": "return.done", "kind": "return", "parent_region_id": "region.root", "execution_order": 1}
+        ],
+        "context_flow": [],
+        "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
+    }))
+    .expect("branch-await AIR");
+    branched.initial_values = BTreeMap::from([("value.condition".into(), json!(true))]);
+    assert!(branched.air.verify().is_accepted());
+
+    execute_resumable(&ports(commit.clone()), branched, json!({"context": 1}))
+        .await
+        .expect("selected branch awaits");
+    let continuation: Continuation = serde_json::from_value(
+        commit
+            .continuation
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("continuation"),
+    )
+    .expect("typed continuation");
+    assert_eq!(continuation.branch_decisions.get("branch.main"), Some(&0));
+
+    let resumed = resume_event(
+        &ports(commit),
+        &ProgramInstanceRef::new("instance.branch-await"),
+        EventRef::new("evt-atomic").unwrap(),
+        json!({"approved": true}),
+    )
+    .await
+    .expect("resume retains selected branch");
+    assert!(matches!(resumed, RunOutcome::Completed(_)));
 }
 
 #[tokio::test]
@@ -500,6 +635,8 @@ async fn nested_loop_park_restores_exact_stack_without_duplicate_work() {
     }))
     .expect("nested AIR");
     assert!(nested.air.verify().is_accepted());
+    nested.initial_values =
+        BTreeMap::from([("value.outer.request".into(), json!({"prompt": "nested"}))]);
     nested.capability_invocations = BTreeMap::from([(
         "node.outer.after".to_string(),
         CapabilityInvocationAdmission {

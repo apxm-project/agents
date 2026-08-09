@@ -73,6 +73,7 @@
             { "value_id": "value.carried.ctx", "type_ref": "SpecialistContext" }
           ],
           "operands": [
+            { "slot": "initial", "value_id": "value.carried.ctx", "type_ref": "SpecialistContext" },
             { "slot": "carried", "value_id": "value.carried.ctx", "type_ref": "SpecialistContext" }
           ]
         },

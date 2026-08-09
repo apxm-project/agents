@@ -50,6 +50,7 @@ pub enum ScheduleStep {
     },
     ProgramYield {
         region_id: String,
+        resume_value_id: Option<String>,
     },
     ProgramReturn {
         region_id: String,
@@ -169,6 +170,10 @@ fn emit_children(
                     }
                     StructuralOpKind::Yield => schedule.push(ScheduleStep::ProgramYield {
                         region_id: region.region_id.clone(),
+                        resume_value_id: region
+                            .block_arguments
+                            .first()
+                            .map(|argument| argument.value_id.clone()),
                     }),
                     StructuralOpKind::Return => schedule.push(ScheduleStep::ProgramReturn {
                         region_id: region.region_id.clone(),

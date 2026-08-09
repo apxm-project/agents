@@ -32,7 +32,7 @@ use apxm_ais::{SemanticOpKind, StructuralOpKind};
 use crate::air::{
     AirModule, AirVersion, ContextEdge as AirContextEdge, ControlPredicate as AirControlPredicate,
     Operand, PredicateComparator as AirPredicateComparator,
-    PredicateLiteral as AirPredicateLiteral, SemanticOp, SsaValue, StructuralNode,
+    PredicateLiteral as AirPredicateLiteral, SemanticOp, SsaValue, StructuralNode, ValueAssembly,
 };
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Verdict};
 use crate::frontend_graph::{
@@ -110,13 +110,27 @@ pub fn frontend_graph_to_air(graph: &FrontendGraph) -> Result<AirModule, Verdict
         return Err(lowering.finish());
     }
 
-    add_entry_block_arguments(&mut structural_ir, &semantic_operations, &mut lowering);
+    add_entry_block_arguments(
+        &mut structural_ir,
+        &semantic_operations,
+        &graph.values,
+        &mut lowering,
+    );
     if !lowering.is_accepted() {
         return Err(lowering.finish());
     }
 
     let air = AirModule {
         schema_version: AirVersion::V1,
+        value_assemblies: graph
+            .values
+            .iter()
+            .filter(|value| value.origin == crate::frontend_graph::ValueOrigin::Literal)
+            .map(|value| ValueAssembly {
+                value_id: value.value_id.clone(),
+                dependencies: value.dependencies.clone(),
+            })
+            .collect(),
         semantic_operations,
         structural_ir,
         context_flow: graph
@@ -250,6 +264,7 @@ fn reference_operand(
 fn add_entry_block_arguments(
     structural_ir: &mut [StructuralNode],
     semantic_operations: &[SemanticOp],
+    values: &[Value],
     verdict: &mut Verdict,
 ) {
     let mut definitions: HashSet<&str> = semantic_operations
@@ -257,6 +272,12 @@ fn add_entry_block_arguments(
         .filter_map(|operation| operation.result.as_ref())
         .map(|result| result.value_id.as_str())
         .collect();
+    definitions.extend(
+        values
+            .iter()
+            .filter(|value| value.origin == crate::frontend_graph::ValueOrigin::Literal)
+            .map(|value| value.value_id.as_str()),
+    );
     for node in structural_ir.iter() {
         for argument in &node.block_arguments {
             definitions.insert(argument.value_id.as_str());
@@ -271,6 +292,28 @@ fn add_entry_block_arguments(
                     .entry(operand.value_id.clone())
                     .or_insert_with(|| operand.type_ref.clone());
             }
+        }
+    }
+    for assembly in values
+        .iter()
+        .filter(|value| value.origin == crate::frontend_graph::ValueOrigin::Literal)
+    {
+        for dependency_id in &assembly.dependencies {
+            if definitions.contains(dependency_id.as_str()) {
+                continue;
+            }
+            let Some(dependency) = values.iter().find(|value| value.value_id == *dependency_id)
+            else {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    dependency_id,
+                    "value assembly dependency is not declared by the frontend graph",
+                ));
+                continue;
+            };
+            entry_values
+                .entry(dependency_id.clone())
+                .or_insert_with(|| dependency.type_ref.clone());
         }
     }
     let Some(entry) = structural_ir
@@ -593,6 +636,9 @@ fn region_block_arguments(
     for block in graph.blocks.iter().filter(|b| b.region_id == region_id) {
         for value_id in &block.block_arguments {
             if let Some(value) = values.get(value_id.as_str()) {
+                if value.origin == crate::frontend_graph::ValueOrigin::ResumeInput {
+                    continue;
+                }
                 args.push(SsaValue {
                     value_id: value.value_id.clone(),
                     type_ref: value.type_ref.clone(),
@@ -604,15 +650,13 @@ fn region_block_arguments(
     args
 }
 
-/// A loop carries its values as structural block arguments. Yield resume values
-/// are owned by their lexical FrontendGraph block, which prevents a second SSA
-/// definition on the compiler-emitted yield node.
+/// Loops own carried values and yield nodes own their exact resume destination.
 fn control_block_arguments(
     intent: &ControlIntent,
     values: &HashMap<&str, &Value>,
 ) -> Vec<SsaValue> {
     match intent.control_kind {
-        ControlKind::Loop => intent
+        ControlKind::Loop | ControlKind::Yield => intent
             .result_value
             .as_deref()
             .and_then(|value_id| values.get(value_id))

@@ -256,6 +256,12 @@
         "origin_id": {
           "$ref": "apxm.contract-common.v1#/$defs/Identifier",
           "description": "The id of the producing parameter, call_intent, block, or context edge."
+        },
+        "dependencies": {
+          "type": "array",
+          "items": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+          "uniqueItems": true,
+          "description": "Prior SSA values captured by a pure literal value assembly."
         }
       },
       "additionalProperties": false
@@ -457,7 +463,7 @@
         {
           "type": "object",
           "required": ["scalar_type", "value"],
-          "properties": { "scalar_type": { "const": "integer" }, "value": { "type": "integer" } },
+          "properties": { "scalar_type": { "const": "integer" }, "value": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 } },
           "additionalProperties": false
         },
         {

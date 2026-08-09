@@ -49,6 +49,10 @@ pub struct Continuation {
     pub loop_frames: Vec<DurableLoopFrame>,
     pub parked_node_execution_id: Option<String>,
     pub parked_loop_path: Vec<String>,
+    /// Selected conditional arms that remain active across an inner park.
+    pub branch_decisions: BTreeMap<String, usize>,
+    /// Exact SSA destination bound by a structural yield delivery.
+    pub resume_value_id: Option<String>,
     pub context: Value,
     /// Runtime SSA application values needed by predicates after resume.
     pub values: BTreeMap<String, Value>,

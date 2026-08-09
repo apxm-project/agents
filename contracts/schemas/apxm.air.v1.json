@@ -21,6 +21,10 @@
         "$ref": "#/$defs/SemanticOp"
       }
     },
+    "value_assemblies": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/ValueAssembly" }
+    },
     "structural_ir": {
       "type": "array",
       "items": {
@@ -39,6 +43,19 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "ValueAssembly": {
+      "type": "object",
+      "required": ["value_id"],
+      "properties": {
+        "value_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "dependencies": {
+          "type": "array",
+          "items": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
     "SemanticOp": {
       "type": "object",
       "description": "One public semantic operation with typed SSA operands and result selected by Rust from a FrontendGraph call intent. `operands` names each typed input slot (per the AIS operand catalogue) and binds it to a produced value id; the untyped operand bag is retired.",
@@ -218,7 +235,7 @@
         {
           "type": "object",
           "required": ["scalar_type", "value"],
-          "properties": { "scalar_type": { "const": "integer" }, "value": { "type": "integer" } },
+          "properties": { "scalar_type": { "const": "integer" }, "value": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 } },
           "additionalProperties": false
         },
         {

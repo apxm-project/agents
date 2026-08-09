@@ -21,7 +21,7 @@
 //! behavior is the only difference — effect dispatch, hooks, and the one atomic
 //! commit are identical.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -199,6 +199,8 @@ impl StaticHookHandlerPort for NoopStaticHookHandler {
 /// immutable instance and invocation identities, and prepared write set.
 pub struct ExecutionRequest {
     pub air: AirModule,
+    /// Exact externally supplied SSA values (entry parameters, admitted inputs).
+    pub initial_values: BTreeMap<String, Value>,
     pub hook_bindings: Vec<HookBinding>,
     pub model_admission: ModelBindingAdmission,
     pub capability_invocations: BTreeMap<String, CapabilityInvocationAdmission>,
@@ -502,6 +504,7 @@ struct DriveState {
     last_result: Value,
     values: BTreeMap<String, Value>,
     last_result_value_id: Option<String>,
+    branch_decisions: BTreeMap<String, usize>,
     last_operation_succeeded: bool,
     batch: Vec<Fact>,
     seq: u64,
@@ -520,6 +523,7 @@ struct CanonicalModelRequestEnvelope<'a> {
     node_execution_id: &'a str,
     operation: &'a SemanticOp,
     context_digest: String,
+    authored_request: &'a Value,
 }
 
 fn model_effect_identity(program_invocation_id: &str, node_execution_id: &str) -> String {
@@ -536,6 +540,7 @@ fn model_request_digest(
     node_execution_id: &str,
     operation: &SemanticOp,
     context_digest: &str,
+    authored_request: &Value,
 ) -> String {
     let envelope = CanonicalModelRequestEnvelope {
         schema_version: "apxm.model-request-identity.v1",
@@ -543,6 +548,7 @@ fn model_request_digest(
         node_execution_id,
         operation,
         context_digest: context_digest.to_string(),
+        authored_request,
     };
     let request_bytes = serde_json::to_vec(&envelope)
         .expect("canonical model request envelope serializes deterministically");
@@ -558,7 +564,12 @@ fn model_context_digest(context: &Value) -> String {
 impl DriveState {
     /// A fresh run: emit the instance-created and invocation-admitted lifecycle
     /// facts (sequences 1 and 2), exactly as the single-shot path always has.
-    fn new(initial_context: Value, _air: &AirModule, program_invocation_id: &str) -> Self {
+    fn new(
+        initial_context: Value,
+        initial_values: BTreeMap<String, Value>,
+        _air: &AirModule,
+        program_invocation_id: &str,
+    ) -> Self {
         let mut batch = Vec::new();
         let mut seq = 0u64;
         seq += 1;
@@ -589,8 +600,9 @@ impl DriveState {
             external_agent_evidence: Vec::new(),
             context: initial_context,
             last_result: Value::Null,
-            values: BTreeMap::new(),
+            values: initial_values,
             last_result_value_id: None,
+            branch_decisions: BTreeMap::new(),
             last_operation_succeeded: true,
             batch,
             seq,
@@ -738,6 +750,47 @@ fn context_ref(id: String) -> TypedRef {
     }
 }
 
+fn materialize_ssa_value(
+    air: &AirModule,
+    state: &DriveState,
+    region_id: &str,
+    value_id: &str,
+    visiting: &mut BTreeSet<String>,
+) -> Result<Value, ExecutionError> {
+    if let Some(value) = state.values.get(value_id) {
+        return Ok(value.clone());
+    }
+    if !visiting.insert(value_id.to_string()) {
+        return Err(ExecutionError::InvalidControlPredicate {
+            region_id: region_id.to_string(),
+            message: format!("value assembly cycle at {value_id}"),
+        });
+    }
+    let assembly = air
+        .value_assemblies
+        .iter()
+        .find(|assembly| assembly.value_id == value_id)
+        .ok_or_else(|| ExecutionError::MissingControlValue {
+            region_id: region_id.to_string(),
+            value_id: value_id.to_string(),
+        })?;
+    let dependencies = assembly
+        .dependencies
+        .iter()
+        .map(|dependency| {
+            Ok(serde_json::json!({
+                "value_id": dependency,
+                "value": materialize_ssa_value(air, state, region_id, dependency, visiting)?,
+            }))
+        })
+        .collect::<Result<Vec<_>, ExecutionError>>()?;
+    visiting.remove(value_id);
+    Ok(serde_json::json!({
+        "value_id": value_id,
+        "dependencies": dependencies,
+    }))
+}
+
 fn evaluate_predicate(
     state: &DriveState,
     region_id: &str,
@@ -821,6 +874,36 @@ fn matching_loop_back_edge(
         })
 }
 
+fn loop_value_pairs<'a>(
+    region: &'a apxm_program::air::StructuralNode,
+    slot: &str,
+) -> Result<
+    Vec<(
+        &'a apxm_program::air::SsaValue,
+        &'a apxm_program::air::Operand,
+    )>,
+    ExecutionError,
+> {
+    let operands: Vec<_> = region
+        .operands
+        .iter()
+        .filter(|operand| operand.slot == slot)
+        .collect();
+    if operands.len() != region.block_arguments.len()
+        || region
+            .block_arguments
+            .iter()
+            .zip(&operands)
+            .any(|(argument, operand)| argument.type_ref != operand.type_ref)
+    {
+        return Err(ExecutionError::InvalidControlPredicate {
+            region_id: region.region_id.clone(),
+            message: format!("loop has invalid {slot} carried-value signature"),
+        });
+    }
+    Ok(region.block_arguments.iter().zip(operands).collect())
+}
+
 fn matching_branch_arm_end(
     schedule: &[ScheduleStep],
     start: usize,
@@ -856,6 +939,7 @@ enum DriveEnd {
         next_schedule_position: usize,
         parked_node_execution_id: Option<String>,
         parked_loop_path: Vec<String>,
+        resume_value_id: Option<String>,
     },
 }
 
@@ -893,7 +977,6 @@ async fn drive_from(
     }
 
     let mut schedule_position = start_schedule_position;
-    let mut selected_branch_arms: BTreeMap<String, usize> = BTreeMap::new();
     while schedule_position < schedule.len() {
         let step = &schedule[schedule_position];
         match step {
@@ -982,13 +1065,10 @@ async fn drive_from(
                     .active_loops
                     .iter()
                     .any(|frame| frame.static_loop_id == *static_loop_id);
+                let initial_pairs = loop_value_pairs(region, "initial")?;
+                let _ = loop_value_pairs(region, "carried")?;
                 if !already_active {
-                    for (argument, initial) in region.block_arguments.iter().zip(
-                        region
-                            .operands
-                            .iter()
-                            .filter(|operand| operand.slot == "initial"),
-                    ) {
+                    for (argument, initial) in initial_pairs {
                         let value =
                             state
                                 .values
@@ -1024,19 +1104,24 @@ async fn drive_from(
                         })?;
                 let selected =
                     usize::from(!evaluate_predicate(&state, static_branch_id, predicate)?);
-                selected_branch_arms.insert(static_branch_id.clone(), selected);
+                state
+                    .branch_decisions
+                    .insert(static_branch_id.clone(), selected);
             }
             ScheduleStep::BranchArm {
                 static_branch_id,
                 arm_index,
             } => {
-                let selected = selected_branch_arms.get(static_branch_id).ok_or_else(|| {
-                    ExecutionError::Continuation(ContinuationError::InvalidCommittedState {
-                        message: format!(
-                            "branch {static_branch_id} arm encountered without a decision"
-                        ),
-                    })
-                })?;
+                let selected = state
+                    .branch_decisions
+                    .get(static_branch_id)
+                    .ok_or_else(|| {
+                        ExecutionError::Continuation(ContinuationError::InvalidCommittedState {
+                            message: format!(
+                                "branch {static_branch_id} arm encountered without a decision"
+                            ),
+                        })
+                    })?;
                 if selected != arm_index {
                     schedule_position = matching_branch_arm_end(
                         &schedule,
@@ -1049,7 +1134,7 @@ async fn drive_from(
             }
             ScheduleStep::BranchArmEnd { .. } => {}
             ScheduleStep::BranchEnd { static_branch_id } => {
-                selected_branch_arms.remove(static_branch_id);
+                state.branch_decisions.remove(static_branch_id);
             }
             ScheduleStep::Semantic { index, loop_path } => {
                 let op = &air.semantic_operations[*index];
@@ -1114,6 +1199,19 @@ async fn drive_from(
                             }
                         })?;
                         let authored_target = ModelTargetRef(target);
+                        let request_value_id = operand_str(op, "request").ok_or_else(|| {
+                            ExecutionError::MissingOperand {
+                                node_id: op.node_id.clone(),
+                                operand: "request",
+                            }
+                        })?;
+                        let authored_request = materialize_ssa_value(
+                            air,
+                            &state,
+                            &op.node_id,
+                            &request_value_id,
+                            &mut BTreeSet::new(),
+                        )?;
                         let effect_id =
                             model_effect_identity(&state.program_invocation_id, &node_execution_id);
                         let context_digest = model_context_digest(&state.context);
@@ -1122,12 +1220,14 @@ async fn drive_from(
                             &node_execution_id,
                             op,
                             &context_digest,
+                            &authored_request,
                         );
                         let preparation = ModelCallPreparation::authorize(
                             effect_id,
                             node_execution_id.clone(),
                             request_digest,
                             context_digest,
+                            authored_request,
                             &authored_target,
                             model_admission,
                         )
@@ -1505,6 +1605,10 @@ async fn drive_from(
                                 next_schedule_position: schedule_position + 1,
                                 parked_node_execution_id: Some(node_execution_id),
                                 parked_loop_path: loop_path.clone(),
+                                resume_value_id: op
+                                    .result
+                                    .as_ref()
+                                    .map(|result| result.value_id.clone()),
                             });
                         }
                         state.node_outcomes.push(NodeOutcome::AwaitEvent {
@@ -1531,12 +1635,7 @@ async fn drive_from(
                     .iter()
                     .find(|region| region.region_id == *static_loop_id)
                     .expect("schedule loop references its AIR structural node");
-                for (argument, carried) in region.block_arguments.iter().zip(
-                    region
-                        .operands
-                        .iter()
-                        .filter(|operand| operand.slot == "carried"),
-                ) {
+                for (argument, carried) in loop_value_pairs(region, "carried")? {
                     let value = state
                         .values
                         .get(&carried.value_id)
@@ -1578,7 +1677,10 @@ async fn drive_from(
                     continue;
                 }
             }
-            ScheduleStep::ProgramYield { region_id } => {
+            ScheduleStep::ProgramYield {
+                region_id,
+                resume_value_id,
+            } => {
                 let resumable_loop_entry = state.active_loops.last().and_then(|active| {
                     schedule[..schedule_position].iter().rposition(|step| {
                         matches!(
@@ -1601,6 +1703,7 @@ async fn drive_from(
                             .unwrap_or(schedule_position + 1),
                         parked_node_execution_id: None,
                         parked_loop_path: Vec::new(),
+                        resume_value_id: resume_value_id.clone(),
                     });
                 }
                 return Ok(DriveEnd::RanToEnd(state));
@@ -1944,6 +2047,7 @@ pub async fn execute(
     )?;
     let state = DriveState::new(
         initial_context,
+        request.initial_values.clone(),
         &request.air,
         request.program_invocation_ref.as_str(),
     );
@@ -1998,6 +2102,7 @@ pub async fn execute_resumable(
     )?;
     let state = DriveState::new(
         initial_context,
+        request.initial_values.clone(),
         &request.air,
         request.program_invocation_ref.as_str(),
     );
@@ -2080,6 +2185,8 @@ async fn resume_from_continuation(
         loop_frames,
         parked_node_execution_id,
         parked_loop_path,
+        branch_decisions,
+        resume_value_id,
         context,
         values,
         last_result,
@@ -2145,6 +2252,7 @@ async fn resume_from_continuation(
         last_result,
         values,
         last_result_value_id,
+        branch_decisions,
         last_operation_succeeded: true,
         batch: Vec::new(),
         seq: event_sequence,
@@ -2189,9 +2297,13 @@ async fn resume_from_continuation(
                 .causal_node_execution_ids
                 .push(parked_node_execution_id.clone());
         }
-    } else if event_ref.is_none() {
-        state.context = delivered;
     }
+    let resume_value_id = resume_value_id.ok_or_else(|| {
+        ExecutionError::Continuation(ContinuationError::InvalidCommittedState {
+            message: "continuation is missing its exact resume SSA destination".into(),
+        })
+    })?;
+    state.values.insert(resume_value_id, delivered);
 
     let yield_at_loop = event_ref.is_some();
     let end = drive_from(
@@ -2274,6 +2386,7 @@ async fn finish(
             next_schedule_position,
             parked_node_execution_id,
             parked_loop_path,
+            resume_value_id,
         } => {
             let cont = Continuation {
                 air: parts.air,
@@ -2284,6 +2397,8 @@ async fn finish(
                 loop_frames: state.active_loops.clone(),
                 parked_node_execution_id,
                 parked_loop_path,
+                branch_decisions: state.branch_decisions.clone(),
+                resume_value_id,
                 context: state.context.clone(),
                 values: state.values.clone(),
                 last_result: state.last_result.clone(),
@@ -2343,7 +2458,7 @@ mod loop_evidence_tests {
 
     #[test]
     fn completed_back_edge_adds_typed_fact_to_atomic_commit_tuple() {
-        let mut state = DriveState::new(Value::Null, &loop_air(), "invocation.1");
+        let mut state = DriveState::new(Value::Null, BTreeMap::new(), &loop_air(), "invocation.1");
         state.enter_loop("region.loop.main");
         state.seq += 1;
         let occurrence = state
@@ -2395,7 +2510,7 @@ mod loop_evidence_tests {
 
     #[test]
     fn earlier_failed_body_operation_is_sticky_after_later_success() {
-        let mut state = DriveState::new(Value::Null, &loop_air(), "invocation.1");
+        let mut state = DriveState::new(Value::Null, BTreeMap::new(), &loop_air(), "invocation.1");
         state.enter_loop("region.loop.main");
         let loop_path = ["region.loop.main".to_string()];
         state.record_node_outcome(&loop_path, "node-execution.failed", false);

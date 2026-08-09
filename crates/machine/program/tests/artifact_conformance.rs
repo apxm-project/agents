@@ -118,7 +118,6 @@ fn conversational_example_artifacts_pin_typed_tool_control_and_hooks() {
             hooks[0]["target_selector"], hooks[1]["target_selector"],
             "{fixture}",
         );
-
         let operations = artifact["air"]["semantic_operations"]
             .as_array()
             .expect("example semantic operations");
@@ -164,6 +163,32 @@ fn conversational_example_artifacts_pin_typed_tool_control_and_hooks() {
                     .as_u64()
                     .expect("model re-entry execution order"),
             "{fixture}",
+        );
+        assert_eq!(hooks[0]["target_selector"], tool["node_id"], "{fixture}");
+
+        let tool_result_id = tool["result"]["value_id"]
+            .as_str()
+            .expect("Tool result SSA id");
+        let reentry_request_id = reentry_model["operands"]
+            .as_array()
+            .expect("re-entry operands")
+            .iter()
+            .find(|operand| operand["slot"] == "request")
+            .and_then(|operand| operand["value_id"].as_str())
+            .expect("re-entry request SSA id");
+        let reentry_assembly = artifact["air"]["value_assemblies"]
+            .as_array()
+            .expect("request assemblies")
+            .iter()
+            .find(|assembly| assembly["value_id"] == reentry_request_id)
+            .expect("re-entry request assembly");
+        assert!(
+            reentry_assembly["dependencies"]
+                .as_array()
+                .expect("re-entry request dependencies")
+                .iter()
+                .any(|dependency| dependency == tool_result_id),
+            "{fixture}: Hooks must not mask the authored Tool-result -> Model-request SSA edge",
         );
 
         let structural = artifact["air"]["structural_ir"]

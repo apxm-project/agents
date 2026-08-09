@@ -86,6 +86,10 @@ export const ConversationalExample: ConversationalProgram = Agent<
         }
       }
 
+      if (response.kind !== "final") {
+        throw new Error("undeclared model response");
+      }
+
       const finalReply = response.reply;
       agent.context = {
         messages: [

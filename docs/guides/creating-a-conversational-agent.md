@@ -76,9 +76,8 @@ async def ConversationalExample(agent, incoming):
         )
 
         while response["kind"] == "tool_request":
-            tool_request = response["tool_request"]
             if response["tool_request"]["kind"] == "search_web":
-                tool_result = await SearchWeb(tool_request["arguments"])
+                tool_result = await SearchWeb(response["tool_request"]["arguments"])
                 turn_messages = (
                     *turn_messages,
                     {"role": "tool", "content": tool_result["content"]},
@@ -96,6 +95,9 @@ async def ConversationalExample(agent, incoming):
                 )
             else:
                 raise ValueError("undeclared tool request")
+
+        if response["kind"] != "final":
+            raise ValueError("undeclared model response")
 
         final_reply = response["reply"]
         agent.context = ConversationContext(
@@ -161,6 +163,10 @@ export const ConversationalExample = Agent<
         }
       }
 
+      if (response.kind !== "final") {
+        throw new Error("undeclared model response");
+      }
+
       const finalReply = response.reply;
       agent.context = {
         messages: [
@@ -176,7 +182,9 @@ export const ConversationalExample = Agent<
 ```
 
 Python and TypeScript goldens must capture equivalent typed loop intent, Tool
-dispatch, context flow, and yield/resume bindings. Rust must then select the
+dispatch, Model-request SSA dependencies, context flow, and yield/resume
+bindings. The re-entry request directly depends on the Tool-result SSA value;
+Hooks cannot supply or mask that authored data edge. Rust must then select the
 same structural `ais.loop` and closed effect/composition operations for both.
 The paired executable sources also bind deterministic before/after Hooks around
 `SearchWeb`: the before Hook applies a persisted context-window policy and the
@@ -200,9 +208,11 @@ Company, Area/Department, or Group makes them discoverable; it does not inject
 their bodies. Tool calls still require complete Auth-owned Capability Grants.
 
 At execution, every Model request carries the sealed Context-envelope reference
-and the digest of the exact persistent Context used for that call. The digest
-is part of request identity, so a Context update performed by an authored Hook
-before Model re-entry cannot be replaced with the previous turn's Context.
+and the digest of the exact persistent Context used for that call, plus a
+materialization of the exact authored request SSA and its dependencies. Both
+are part of request identity. Context does not substitute for request data: a
+Tool result reaches Model re-entry through its authored SSA dependency even
+when before/after Hooks leave Context unchanged.
 
 ## 5. Why there is no `AgentLoop`
 
@@ -213,7 +223,9 @@ flow harder to read.
 
 `agent.yield_(output)` is the one explicit stateful boundary. It commits the
 already assigned `agent.context`, returns the plain output, and binds the next
-typed invocation input when the Program Instance resumes. It is compiler-
+typed invocation input to the yield's exact resume SSA value when the Program
+Instance resumes. Resumption preserves that committed Context; the delivered
+input does not replace it. It is compiler-
 recognized structural syntax, not a sixth effect operation.
 
 ## 6. Events

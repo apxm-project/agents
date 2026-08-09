@@ -404,8 +404,8 @@ mod tests {
                 {"node_id": "node.await.1", "op": "await.event", "parent_region_id": "region.loop.1", "execution_order": 4, "operands": [{"slot": "event_ref", "value_id": "evt.ready", "type_ref": "EventRef"}], "result": {"value_id": "value.event.output", "type_ref": "EventOutput"}}
             ],
             "structural_ir": [
-                {"region_id": "region.fn.1", "kind": "function", "execution_order": 0},
-                {"region_id": "region.loop.1", "kind": "ais.loop", "parent_region_id": "region.fn.1", "execution_order": 0, "block_arguments": [{"value_id": "value.loop.input", "type_ref": "ModelRequest"}]},
+                {"region_id": "region.fn.1", "kind": "function", "execution_order": 0, "block_arguments": [{"value_id": "value.loop.initial", "type_ref": "ModelRequest"}]},
+                {"region_id": "region.loop.1", "kind": "ais.loop", "parent_region_id": "region.fn.1", "execution_order": 0, "block_arguments": [{"value_id": "value.loop.input", "type_ref": "ModelRequest"}], "operands": [{"slot": "initial", "value_id": "value.loop.initial", "type_ref": "ModelRequest"}, {"slot": "carried", "value_id": "value.loop.initial", "type_ref": "ModelRequest"}]},
                 {"region_id": "region.return.1", "kind": "return", "parent_region_id": "region.fn.1", "execution_order": 1}
             ],
             "context_flow": [],
@@ -436,7 +436,7 @@ mod tests {
         );
         assert!(first.contains("apxm.parent_region_id = \"region.loop.1\""));
         assert!(first.contains("apxm.execution_order = 0 : i64"));
-        assert!(first.contains("\"ais.loop\"() ({"));
+        assert!(first.contains("\"ais.loop\"(%arg_0_0, %arg_0_0) ({"));
         // Semantic operations emit as registered ais.* ops with exact token
         // payloads, including external source references and block arguments.
         assert!(first.contains("\"ais.model_call\"("));

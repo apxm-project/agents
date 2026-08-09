@@ -312,6 +312,21 @@ def test_value_position_rejects_an_unresolved_or_effectful_call() -> None:
         raise AssertionError("an un-awaited typed effect must not capture as data")
 
 
+def test_predicate_integer_rejects_values_outside_shared_safe_domain() -> None:
+    try:
+
+        @Agent(input="Input", output="Output")
+        async def UnsafeIntegerPredicate(agent, request):
+            if request["count"] == 9_007_199_254_740_992:
+                return request
+            return request
+
+    except ValueError as error:
+        assert "shared safe-integer domain" in str(error)
+    else:
+        raise AssertionError("Python accepted an integer TypeScript cannot represent exactly")
+
+
 def _value(graph: dict, value_id: str) -> dict:
     """Find one emitted FrontendGraph value by its stable identifier."""
     return next(value for value in graph["values"] if value["value_id"] == value_id)

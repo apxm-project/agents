@@ -324,6 +324,13 @@ class Capture {
     return this.checker.getSymbolAtLocation(node);
   }
 
+  private valueSymbolAt(node: ts.Identifier): ts.Symbol | undefined {
+    if (ts.isShorthandPropertyAssignment(node.parent) && node.parent.name === node) {
+      return this.checker.getShorthandAssignmentValueSymbol(node.parent) ?? this.symbolAt(node);
+    }
+    return this.symbolAt(node);
+  }
+
   private bindingNameFor(node: ts.Identifier): string | undefined {
     const symbol = this.symbolAt(node);
     return symbol === undefined ? undefined : this.bindingSymbols.get(symbol);
@@ -682,7 +689,7 @@ class Capture {
   private valueForExpression(expression: ts.Expression): string {
     // Reuse a prior named value when the operand is that identifier.
     if (ts.isIdentifier(expression)) {
-      const symbol = this.symbolAt(expression);
+      const symbol = this.valueSymbolAt(expression);
       if (symbol !== undefined) {
         const existing = this.valuesBySymbol.get(symbol);
         if (existing !== undefined) {
@@ -691,11 +698,26 @@ class Capture {
       }
     }
     this.rejectUnboundCalls(expression);
+    const dependencies: string[] = [];
+    const seen = new Set<string>();
+    const collect = (node: ts.Node): void => {
+      if (ts.isIdentifier(node)) {
+        const symbol = this.valueSymbolAt(node);
+        const valueId = symbol === undefined ? undefined : this.valuesBySymbol.get(symbol);
+        if (valueId !== undefined && !seen.has(valueId)) {
+          seen.add(valueId);
+          dependencies.push(valueId);
+        }
+      }
+      ts.forEachChild(node, collect);
+    };
+    collect(expression);
     const valueId = this.next("value");
     this.values.push({
       value_id: valueId,
       type_ref: "ArgumentValue",
       origin: "literal",
+      ...(dependencies.length === 0 ? {} : { dependencies }),
     });
     return valueId;
   }
@@ -974,6 +996,7 @@ class Capture {
           { from_value: carriedValue, to_consumer: nodeId, consumer_slot: "carried" },
         );
       }
+      this.valuesBySymbol.set(sourceSymbol, resultValue);
     }
     this.controls[controlIndex] = {
       node_id: nodeId,
@@ -1063,8 +1086,23 @@ class Capture {
     if (ts.isStringLiteral(expression)) {
       return { scalar_type: "string", value: expression.text };
     }
-    if (ts.isNumericLiteral(expression) && Number.isSafeInteger(Number(expression.text))) {
-      return { scalar_type: "integer", value: Number(expression.text) };
+    let integer: number | undefined;
+    if (ts.isNumericLiteral(expression)) {
+      integer = Number(expression.text);
+    } else if (
+      ts.isPrefixUnaryExpression(expression) &&
+      expression.operator === ts.SyntaxKind.MinusToken &&
+      ts.isNumericLiteral(expression.operand)
+    ) {
+      integer = -Number(expression.operand.text);
+    }
+    if (integer !== undefined) {
+      if (!Number.isSafeInteger(integer)) {
+        throw new CaptureError(
+          "predicate integer literal is within the shared safe-integer domain",
+        );
+      }
+      return { scalar_type: "integer", value: integer };
     }
     throw new CaptureError("predicate equality compares with a scalar literal");
   }

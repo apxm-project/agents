@@ -53,6 +53,7 @@ class BoundValue:
     type_ref: str
     origin: str  # parameter | call_result | block_argument | context_value | literal | resume_input
     origin_id: Optional[str] = None
+    dependencies: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

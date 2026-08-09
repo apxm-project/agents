@@ -215,7 +215,44 @@ fn control_predicate_negative_vectors_fail_closed() {
         json!({"scalar_type": "boolean", "value": "true"});
     assert!(!verify_air_json(&literal_mismatch).is_accepted());
 
+    let mut unsafe_integer = valid.clone();
+    unsafe_integer["structural_ir"][1]["predicate"]["literal"] =
+        json!({"scalar_type": "integer", "value": 9_007_199_254_740_992_i64});
+    assert!(!verify_air_json(&unsafe_integer).is_accepted());
+
     let mut unknown_field = valid;
     unknown_field["structural_ir"][1]["predicate"]["source_expression"] = json!("hidden");
     assert!(!verify_air_json(&unknown_field).is_accepted());
+}
+
+#[test]
+fn loop_carried_signatures_reject_arity_slot_and_type_drift() {
+    let mut valid = predicate_air();
+    valid["structural_ir"][1]["kind"] = json!("ais.loop");
+    valid["structural_ir"][1]["block_arguments"] =
+        json!([{"value_id": "value.current", "type_ref": "ModelResponse"}]);
+    valid["structural_ir"][1]["operands"] = json!([
+        {"slot": "initial", "value_id": "value.response", "type_ref": "ModelResponse"},
+        {"slot": "carried", "value_id": "value.response", "type_ref": "ModelResponse"}
+    ]);
+    valid["structural_ir"][1]["predicate"]["root_value_id"] = json!("value.current");
+    valid["source_map"]["region_annotations"] =
+        json!([{"region_id": "region.branch", "annotation": "structural_loop"}]);
+    let verdict = verify_air_json(&valid);
+    assert!(verdict.is_accepted(), "{:?}", verdict.into_diagnostics());
+
+    let mut missing_carried = valid.clone();
+    missing_carried["structural_ir"][1]["operands"]
+        .as_array_mut()
+        .unwrap()
+        .pop();
+    assert!(!verify_air_json(&missing_carried).is_accepted());
+
+    let mut wrong_slot = valid.clone();
+    wrong_slot["structural_ir"][1]["operands"][1]["slot"] = json!("condition");
+    assert!(!verify_air_json(&wrong_slot).is_accepted());
+
+    let mut wrong_type = valid;
+    wrong_type["structural_ir"][1]["operands"][1]["type_ref"] = json!("OtherResponse");
+    assert!(!verify_air_json(&wrong_type).is_accepted());
 }

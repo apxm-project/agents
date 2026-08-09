@@ -238,6 +238,9 @@ pub struct Value {
     pub origin: ValueOrigin,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin_id: Option<String>,
+    /// Prior SSA values captured inside this pure authored value expression.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<String>,
 }
 
 /// One basic block with typed block arguments, contained in a region.
@@ -614,6 +617,26 @@ fn collect_typed_link_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph) 
     }
 
     for value in &graph.values {
+        if value.origin != ValueOrigin::Literal && !value.dependencies.is_empty() {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                value.value_id.clone(),
+                "only literal value assemblies carry SSA dependencies",
+            ));
+        }
+        let mut seen_dependencies = HashSet::new();
+        for dependency in &value.dependencies {
+            if dependency == &value.value_id
+                || !seen_dependencies.insert(dependency.as_str())
+                || !values.contains_key(dependency.as_str())
+            {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    value.value_id.clone(),
+                    "value assembly dependencies must be unique declared prior SSA values",
+                ));
+            }
+        }
         match value.origin {
             ValueOrigin::Parameter => {
                 if value
