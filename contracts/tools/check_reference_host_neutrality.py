@@ -34,6 +34,55 @@ class NeutralityError(ValueError):
     """Raised when a generic reference-host neutrality check cannot pass."""
 
 
+TOKEN = r"[A-Za-z][A-Za-z0-9]*(?:[-_.][A-Za-z0-9]+)*"
+RUST_IMPORT = re.compile(
+    rf"(?im)^\s*(?:use|extern\s+crate)\s+(?P<coordinate>{TOKEN}(?:::{TOKEN})*)"
+)
+STANDALONE_TOKEN = re.compile(rf"(?i)^{TOKEN}$")
+GENERIC_CONTEXT_KEYS = frozenset(
+    {"crate", "dependency", "dependencies", "import", "module", "package"}
+)
+EXPECTED_ALLOWED_IMPORT_ROOTS = (
+    "alloc",
+    "anyhow",
+    "apxm_cli",
+    "apxm_kernel",
+    "apxm_program",
+    "core",
+    "serde",
+    "serde_json",
+    "sha2",
+    "std",
+    "super",
+    "tempfile",
+    "tokio",
+)
+GENERIC_ALLOWED_STANDALONE = frozenset(
+    {
+        "absent",
+        "apxm",
+        "apxm_server_dependency",
+        "downstream_dependency",
+        "host",
+        "reference_host",
+    }
+)
+
+
+class NeutralityPattern:
+    """Compiled generic coordinate rules plus their structural contexts."""
+
+    def __init__(self, raw: re.Pattern[str], allowed_import_roots: frozenset[str]) -> None:
+        self.raw = raw
+        self.allowed_import_roots = allowed_import_roots
+
+    def finditer(self, text: str):
+        return self.raw.finditer(text)
+
+    def search(self, text: str):
+        return self.raw.search(text)
+
+
 def load_json(path: Path, label: str) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -51,20 +100,64 @@ def _vector_paths(root: Path) -> tuple[Path, Path]:
     )
 
 
-def _forbidden_pattern(vector: dict[str, Any]) -> re.Pattern[str]:
+def _forbidden_pattern(vector: dict[str, Any]) -> NeutralityPattern:
     patterns = vector.get("forbidden_patterns")
     if not isinstance(patterns, list) or not patterns or not all(
         isinstance(pattern, str) and pattern for pattern in patterns
     ):
         raise NeutralityError("neutrality vector forbidden_patterns must be non-empty strings")
+    allowed_import_roots = vector.get("allowed_import_roots")
+    if allowed_import_roots != list(EXPECTED_ALLOWED_IMPORT_ROOTS):
+        raise NeutralityError("neutrality vector allowed_import_roots drifted")
+    if vector.get("coordinate_contexts") != sorted(GENERIC_CONTEXT_KEYS):
+        raise NeutralityError("neutrality vector coordinate_contexts drifted")
     try:
-        return re.compile("|".join(f"(?:{pattern})" for pattern in patterns), re.IGNORECASE)
+        raw = re.compile("|".join(f"(?:{pattern})" for pattern in patterns), re.IGNORECASE)
     except re.error as error:
         raise NeutralityError(f"neutrality vector contains an invalid forbidden pattern: {error}") from error
+    return NeutralityPattern(
+        raw=raw,
+        allowed_import_roots=frozenset(root.lower() for root in allowed_import_roots),
+    )
 
 
-def scan_text(text: str, pattern: re.Pattern[str]) -> list[str]:
-    return sorted({match.group(0) for match in pattern.finditer(text)})
+def _scan_structured(value: Any, pattern: NeutralityPattern, context: bool = False) -> set[str]:
+    matches: set[str] = set()
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_context = context or key.lower() in GENERIC_CONTEXT_KEYS
+            if context and key.lower() not in GENERIC_CONTEXT_KEYS:
+                matches.update(scan_text(key, pattern))
+            matches.update(_scan_structured(child, pattern, child_context))
+    elif isinstance(value, list):
+        for child in value:
+            matches.update(_scan_structured(child, pattern, context))
+    elif context and isinstance(value, str):
+        matches.update(scan_text(value, pattern))
+    return matches
+
+
+def scan_text(text: str, pattern: NeutralityPattern) -> list[str]:
+    matches = {match.group(0) for match in pattern.raw.finditer(text)}
+
+    for match in RUST_IMPORT.finditer(text):
+        coordinate = match.group("coordinate")
+        root = coordinate.split("::", 1)[0].lower()
+        if root not in pattern.allowed_import_roots:
+            matches.add(coordinate)
+
+    try:
+        value = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        value = None
+    if isinstance(value, (dict, list)):
+        matches.update(_scan_structured(value, pattern))
+
+    standalone = text.strip()
+    if STANDALONE_TOKEN.fullmatch(standalone):
+        if standalone.lower() not in GENERIC_ALLOWED_STANDALONE:
+            matches.add(standalone)
+    return sorted(matches)
 
 
 def validate_vector(vector: dict[str, Any]) -> re.Pattern[str]:
