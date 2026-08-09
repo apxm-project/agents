@@ -33,14 +33,14 @@ pub enum Commands {
         name: String,
     },
     /// Compile a canonical-authored agent session package to canonical
-    /// `apxm.air.v1` (`AirModule`) JSON on stdout, through the canonical
+    /// `apxm.air.v2` (`AirModule`) JSON on stdout, through the canonical
     /// `apxm_program` frontend. Stdout contains only canonical AIR JSON;
     /// diagnostics use stderr and failures are nonzero.
     CompileServiceCanonical {
         /// Agent directory (contains agent.toml with a canonical [compile].entry)
         agent_dir: PathBuf,
     },
-    /// Execute canonical `apxm.air.v1` JSON through the canonical runtime.
+    /// Execute canonical `apxm.air.v2` JSON through the canonical runtime.
     ExecuteCanonical {
         /// Canonical AIR JSON file.
         input: PathBuf,
@@ -107,8 +107,8 @@ pub enum Commands {
     },
     /// Emit canonical AIR from a canonical FrontendGraph via the native bridge.
     ///
-    /// Reads an `apxm.frontend-graph.v1` document from a file or stdin and lowers
-    /// it in-process to canonical `apxm.air.v1` JSON.
+    /// Reads an `apxm.frontend-graph.v2` document from a file or stdin and lowers
+    /// it in-process to canonical `apxm.air.v2` JSON.
     CanonicalAir {
         /// Canonical frontend graph JSON file. Omit to read stdin.
         input: Option<PathBuf>,

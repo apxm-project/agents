@@ -189,8 +189,8 @@ PORT_CONTRACT_SPECS = (
 # Vector file -> schema `$id` it is validated against. Constitution-owned
 # envelopes are resolved from the published constitution layer.
 VECTOR_SCHEMA = {
-    "apxm.frontend-graph.v1.json": "apxm.frontend-graph.v1",
-    "apxm.air.v1.json": "apxm.air.v1",
+    "apxm.frontend-graph.v2.json": "apxm.frontend-graph.v2",
+    "apxm.air.v2.json": "apxm.air.v2",
     "apxm.executable-artifact.v1.json": "apxm.executable-artifact.v1",
     "apxm.runtime-evidence.v1.json": "apxm.runtime-evidence.v1",
     "apxm.committed-native-model-usage.v1.json": "apxm.committed-native-model-usage.v1",

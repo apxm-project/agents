@@ -1,7 +1,7 @@
 //! Deterministic FrontendGraph → AIR lowering.
 //!
 //! This is the one canonical FrontendGraph→AIR owner. It consumes the typed
-//! discriminated intents of `apxm.frontend-graph.v1` and reconstructs canonical
+//! discriminated intents of `apxm.frontend-graph.v2` and reconstructs canonical
 //! AIR:
 //!
 //! - each typed [`CallIntent`] selects exactly one of the five semantic AIS
@@ -122,7 +122,7 @@ pub fn frontend_graph_to_air(graph: &FrontendGraph) -> Result<AirModule, Verdict
     }
 
     let air = AirModule {
-        schema_version: AirVersion::V1,
+        schema_version: AirVersion::V2,
         value_assemblies: graph
             .values
             .iter()

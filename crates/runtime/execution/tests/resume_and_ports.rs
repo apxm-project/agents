@@ -35,7 +35,7 @@ fn digest(c: char) -> String {
 
 fn request(scope: &str) -> ExecutionRequest {
     let air = serde_json::from_value::<AirModule>(json!({
-        "schema_version": "apxm.air.v1",
+        "schema_version": "apxm.air.v2",
         "semantic_operations": [
             {"node_id": "node.model", "op": "model.call", "parent_region_id": "loop.main", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.model.request", "type_ref": "ModelRequest"}], "result": {"value_id": "value.model.output", "type_ref": "ModelOutput"}},
             {"node_id": "node.await", "op": "await.event", "parent_region_id": "loop.main", "execution_order": 1, "operands": [{"slot": "event_ref", "value_id": "evt-atomic", "type_ref": "EventRef"}], "result": {"value_id": "value.event.output", "type_ref": "EventOutput"}},
@@ -447,7 +447,7 @@ async fn structural_yield_binds_delivered_input_without_overwriting_context() {
     let commit = Arc::new(Commit::default());
     let mut yielded = request("instance.yield-input");
     yielded.air = serde_json::from_value(json!({
-        "schema_version": "apxm.air.v1",
+        "schema_version": "apxm.air.v2",
         "semantic_operations": [{
             "node_id": "node.after-yield",
             "op": "model.call",
@@ -514,7 +514,7 @@ async fn branch_decision_survives_an_await_inside_the_selected_arm() {
     let commit = Arc::new(Commit::default());
     let mut branched = request("instance.branch-await");
     branched.air = serde_json::from_value(json!({
-        "schema_version": "apxm.air.v1",
+        "schema_version": "apxm.air.v2",
         "semantic_operations": [{
             "node_id": "node.branch.await",
             "op": "await.event",
@@ -568,7 +568,7 @@ async fn resumed_input_cannot_become_a_capability_argument() {
     let commit = Arc::new(Commit::default());
     let mut yielded = request("instance.resume-capability-input");
     yielded.air = serde_json::from_value(json!({
-        "schema_version": "apxm.air.v1",
+        "schema_version": "apxm.air.v2",
         "semantic_operations": [{
             "node_id": "node.capability",
             "op": "capability.invoke",
@@ -657,7 +657,7 @@ async fn nested_loop_park_restores_exact_stack_without_duplicate_work() {
     let commit = Arc::new(Commit::default());
     let mut nested = request("instance.nested");
     nested.air = serde_json::from_value(json!({
-        "schema_version": "apxm.air.v1",
+        "schema_version": "apxm.air.v2",
         "semantic_operations": [
             {"node_id": "node.outer.before", "op": "model.call", "parent_region_id": "loop.outer", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.outer.request", "type_ref": "ModelRequest"}], "result": {"value_id": "value.outer.output", "type_ref": "ModelOutput"}},
             {"node_id": "node.inner.await", "op": "await.event", "parent_region_id": "loop.inner", "execution_order": 0, "operands": [{"slot": "event_ref", "value_id": "evt-atomic", "type_ref": "EventRef"}], "result": {"value_id": "value.event.output", "type_ref": "EventOutput"}},

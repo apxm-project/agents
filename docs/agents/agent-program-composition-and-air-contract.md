@@ -3,7 +3,7 @@
 - Status: canonical APXM v1 contract
 - Owner: APXM `agents`
 - Decisions: [ADR-0008](../adr/0008-agent-programs-compose-through-new-and-invoke.md), [ADR-0009](../adr/0009-air-has-five-public-semantic-operations.md), [ADR-0010](../adr/0010-agent-program-source-owns-context-hooks-and-conversational-loops.md), [ADR-0011](../adr/0011-agent-program-execution-is-one-end-to-end-spine.md), [ADR-0014](../adr/0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md)
-- Canonical contracts: `apxm.frontend-graph.v1`, `apxm.air.v1`, `apxm.executable-artifact.v1`, `apxm.runtime-evidence.v1`
+- Canonical contracts: `apxm.frontend-graph.v2`, `apxm.air.v2`, `apxm.executable-artifact.v1`, `apxm.runtime-evidence.v1`
 - Baseline evidence: `agents@9e26a62adebb`
 
 This document is the normative APXM v1 contract for composing, compiling,
@@ -377,7 +377,7 @@ author any desired recursion, whose admitted depth limits still apply.
 
 ## 7. FrontendGraph v1
 
-`apxm.frontend-graph.v1` is a language-neutral typed value. At minimum it
+`apxm.frontend-graph.v2` is a language-neutral typed value. At minimum it
 contains:
 
 ```text

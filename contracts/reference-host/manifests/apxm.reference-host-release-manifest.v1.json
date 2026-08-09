@@ -12,7 +12,7 @@
       {
         "schema_version": "apxm.reference-host-execution-manifest.v1",
         "path": "reference-host/manifests/apxm.reference-host-execution-manifest.v1.json",
-        "digest": "sha256:a0f10dd3b237c7897a26347bed7b41f7494ef13d3e010eb9e284216ef440ec0e"
+        "digest": "sha256:8059b741dc39e17a204bec72e63b40734fdc40de47410978ed623cfbc55edbe7"
       }
     ],
     "schemas": [
@@ -44,7 +44,7 @@
       {
         "schema_id": "apxm.runtime.host-request.v1",
         "path": "reference-host/schemas/apxm.runtime.host-request.v1.json",
-        "digest": "sha256:12ca6c600fc50f150c02ebfad48b33a0f6e04b5367c9c9e5c89b995283be0458"
+        "digest": "sha256:abcd9707efe46826d858318bf0ae4e4e40d3839cde66c302d8805e4c6bc6577f"
       },
       {
         "schema_id": "apxm.runtime.host-response.v1",
@@ -81,7 +81,7 @@
       {
         "schema_id": "apxm.runtime.host-request.v1",
         "path": "reference-host/vectors/apxm.runtime.host-request.v1.json",
-        "digest": "sha256:50fafaf0e3509f21e0b764d6ad295f8ad7109d967e6113b7cd78f98b739fb920"
+        "digest": "sha256:a4090d3f131a5b43b90eb32d5b1a37643eab14bf369c2edda7f7182cbb3100ee"
       },
       {
         "schema_id": "apxm.runtime.host-response.v1",
@@ -99,7 +99,7 @@
     {
       "vector_id": "apxm.reference-host.invoke-parity.v1",
       "path": "reference-host/vectors/apxm.reference-host.invoke-parity.v1.json",
-      "digest": "sha256:5e0c704199f433279095338f49263535ebaaa702efd05d20b998a64c3b972372",
+      "digest": "sha256:d5aea4603b9535f8b6dfea583059dd88fbfb8722230ae9d7dee4f91d89b1709e",
       "profiles": ["embedded", "reference-host"]
     },
     {
@@ -114,7 +114,7 @@
     "execution_manifest": {
       "schema_version": "apxm.reference-host-execution-manifest.v1",
       "path": "reference-host/manifests/apxm.reference-host-execution-manifest.v1.json",
-      "digest": "sha256:a0f10dd3b237c7897a26347bed7b41f7494ef13d3e010eb9e284216ef440ec0e"
+      "digest": "sha256:8059b741dc39e17a204bec72e63b40734fdc40de47410978ed623cfbc55edbe7"
     },
     "lifecycle_vector": {
       "vector_id": "apxm.reference-host.lifecycle-parity.v1",
@@ -152,7 +152,7 @@
       {
         "vector_id": "apxm.reference-host.invoke-parity.v1",
         "path": "reference-host/vectors/apxm.reference-host.invoke-parity.v1.json",
-        "digest": "sha256:5e0c704199f433279095338f49263535ebaaa702efd05d20b998a64c3b972372",
+        "digest": "sha256:d5aea4603b9535f8b6dfea583059dd88fbfb8722230ae9d7dee4f91d89b1709e",
         "profiles": ["embedded", "reference-host"]
       },
       {

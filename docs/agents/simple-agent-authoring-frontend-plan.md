@@ -46,7 +46,7 @@ Agent     Context     Tool     Model     ordinary language control flow
 
 The frontend parses and binds that source into an immutable typed source tree,
 then deterministically traverses the tree into the single
-`apxm.frontend-graph.v1` contract family. Phase D0/P1 replaces the current
+`apxm.frontend-graph.v2` contract family. Phase D0/P1 replaces the current
 shallow v1 shape in one compatibility-set cutover; it does not introduce a
 second serialized frontend IR. Rust remains the canonical FrontendGraph
 verifier, CFG/SSA constructor, AIS selector, and AIR lowerer. The simple names
@@ -691,7 +691,7 @@ FrontendGraph is the only language-neutral handoff. Its target shape contains:
   spans.
 
 It contains neither arbitrary operation strings nor an `ais.*` kind. This is a
-replacement shape for `apxm.frontend-graph.v1`, not a serialized Python AST and
+replacement shape for `apxm.frontend-graph.v2`, not a serialized Python AST and
 not another IR between FrontendGraph and AIR. The exact discriminated unions
 and field names are frozen by D0/P1 before frontend implementation.
 
@@ -726,10 +726,10 @@ closure and byte determinism for a much thinner path than the target contract:
 | --- | --- | --- |
 | Current frontends record directly into mutable graph structures; there is no explicit bound/typed source-tree phase with pass invariants. | Historical baseline paths `crates/compiler/frontend/python/apxm_program/agent_program.py` and `crates/compiler/frontend/typescript/src/agent-program.ts`; both were subsequently replaced | Introduce a frontend-internal immutable `BoundAgentTree`, closed visitors/passes, and coverage tests before emitting FrontendGraph. |
 | FrontendGraph reuses AIR-owned `SemanticOpKind` and `StructuralOpKind`. | [`frontend_graph.rs`](../../crates/machine/program/src/frontend_graph.rs) | Give FrontendGraph its own typed source-semantic declarations, values, calls, CFG, and region records. |
-| The schema lets frontends write the five AIR strings and literal `ais.loop`; `operands` is an untyped object. | [`apxm.frontend-graph.v1.json`](../../contracts/schemas/apxm.frontend-graph.v1.json) | Replace raw spellings with closed discriminated intent records and typed value references; Rust selects AIS. |
+| The schema lets frontends write the five AIR strings and literal `ais.loop`; `operands` is an untyped object. | [`apxm.frontend-graph.v2.json`](../../contracts/schemas/apxm.frontend-graph.v2.json) | Replace raw spellings with closed discriminated intent records and typed value references; Rust selects AIS. |
 | Python and TypeScript publicly import/export generated operation constants and record raw operation/kind strings. | [Python frontend](../../crates/compiler/frontend/python/apxm_program/__init__.py) plus historical baseline TypeScript paths `crates/compiler/frontend/typescript/src/frontend-graph.ts` and `src/generated/frontend-contract.ts`, subsequently replaced | Generated frontend metadata describes declarations and intent DTOs; raw AIS/AIR names are absent from public authoring packages. |
 | FrontendGraph → AIR copies operations, structural records, operands, and context edges almost field-for-field. | [`lower.rs`](../../crates/machine/program/src/lower.rs) | Implement verification, CFG construction, SSA/block arguments, loop-carried context, yield/resume, Hook expansion, and deterministic AIS selection. |
-| FrontendGraph and AIR schemas omit the typed values/data edges/nested control flow required by the owner contract. | [FrontendGraph schema](../../contracts/schemas/apxm.frontend-graph.v1.json), [AIR schema](../../contracts/schemas/apxm.air.v1.json), [owner contract §7](agent-program-composition-and-air-contract.md#7-frontendgraph-v1) | Complete both schemas and their Rust types/vectors before either source frontend lands. |
+| FrontendGraph and AIR schemas omit the typed values/data edges/nested control flow required by the owner contract. | [FrontendGraph schema](../../contracts/schemas/apxm.frontend-graph.v2.json), [AIR schema](../../contracts/schemas/apxm.air.v2.json), [owner contract §7](agent-program-composition-and-air-contract.md#7-frontendgraph-v1) | Complete both schemas and their Rust types/vectors before either source frontend lands. |
 | The AIR emitter writes unregistered `apxm.*` semantic operations as `() -> ()`, drops semantic operands/results, and writes flat structural token records. | [`canonical.rs`](../../crates/compiler/pipeline/src/canonical.rs) | Emit registered `ais.*` operations with complete typed SSA operands/results, attributes, nested regions, and block arguments. |
 | The registered TableGen semantic operations currently declare only one token result and no operands. | [`AISOps.semantic.generated.td`](../../crates/compiler/pipeline/mlir/include/ais/Dialect/AIS/IR/AISOps.semantic.generated.td) | Amend the Rust-owned AIS signature definitions, regenerate TableGen, and verify each contract operand/result. |
 | MLIR verification permits unregistered dialects, so the current `apxm.*` output can pass. | [`Internal.h`](../../crates/compiler/pipeline/mlir/include/ais/CAPI/Internal.h) | Canonical lowering must verify with unregistered dialects disabled; no success may depend on this escape hatch. |

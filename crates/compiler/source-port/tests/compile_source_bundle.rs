@@ -281,7 +281,7 @@ fn the_frontend_emits_no_air_and_only_rust_lowering_produces_it() {
         "program.invoke",
         "await.event",
         "ais.",
-        "apxm.air.v1",
+        "apxm.air.v2",
         "module {",
         "func.func @",
     ];
@@ -308,7 +308,7 @@ fn the_frontend_emits_no_air_and_only_rust_lowering_produces_it() {
         // not about a graph that happened to be empty.
         let lowered = serde_json::to_string(&compiled.air).expect("lowered AIR serializes");
         assert!(
-            lowered.contains("apxm.air.v1"),
+            lowered.contains("apxm.air.v2"),
             "{} lowering produces an AIR document",
             frontend.wire()
         );

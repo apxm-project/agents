@@ -93,7 +93,7 @@ describe("packed @apxm/frontend", () => {
         "  },",
         "});",
         "const graph = Plan.frontendGraph();",
-        "if (graph.schema_version !== 'apxm.frontend-graph.v1') process.exit(4);",
+        "if (graph.schema_version !== 'apxm.frontend-graph.v2') process.exit(4);",
         "if (Plan.diagnostics() !== null) process.exit(5);",
         "const air = JSON.parse(Plan.canonicalAir());",
         "const ops = new Set(air.semantic_operations.map((o) => o.op));",

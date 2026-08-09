@@ -2,7 +2,7 @@
 //!
 //! This module is the single source of truth for the five public semantic
 //! operations and the compiler-emitted structural operations accepted by
-//! `apxm.air.v1` and `apxm.frontend-graph.v1`.
+//! `apxm.air.v2` and `apxm.frontend-graph.v2`.
 
 use super::category::OperationCategory;
 use serde::{Deserialize, Serialize};
@@ -131,7 +131,7 @@ pub enum SemanticOpKind {
 }
 
 impl SemanticOpKind {
-    /// Canonical wire string identical to `apxm.air.v1` / FrontendGraph `op`.
+    /// Canonical wire string identical to `apxm.air.v2` / FrontendGraph `op`.
     #[must_use]
     pub const fn wire(self) -> &'static str {
         match self {

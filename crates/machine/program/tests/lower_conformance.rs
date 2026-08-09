@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 fn generic_graph_value() -> Value {
     json!({
-        "schema_version": "apxm.frontend-graph.v1",
+        "schema_version": "apxm.frontend-graph.v2",
         "source_language": "python",
         "program_definitions": [{
             "program_id": "Worker",

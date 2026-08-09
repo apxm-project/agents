@@ -35,7 +35,7 @@ The `agents` repository will supply focused release descriptors for:
 - the APXM CLI application.
 
 The Python and TypeScript frontends both produce the compiler-owned
-`apxm.frontend-graph.v1`, delegate canonical AIR/MLIR/artifact lowering to the released
+`apxm.frontend-graph.v2`, delegate canonical AIR/MLIR/artifact lowering to the released
 Rust compiler boundary, and contain no execution runtime. D-004B is resolved by
 [ADR-0006](0006-authoring-frontends-use-explicit-compiler-bridges.md): separate
 PyO3/maturin and Node-API native bridges call the Rust compiler in-process,

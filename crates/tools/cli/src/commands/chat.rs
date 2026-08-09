@@ -369,7 +369,7 @@ mod tests {
 
     #[test]
     fn artifact_has_await_event_detects_canonical_json() {
-        let air = r#"{"schema_version":"apxm.air.v1","semantic_operations":[{"node_id":"n1","op":"await.event"}],"structural_ir":[],"source_map":{"schema_version":"apxm.source-map.v1","source_language":"json","node_spans":[],"region_annotations":[]}}"#;
+        let air = r#"{"schema_version":"apxm.air.v2","semantic_operations":[{"node_id":"n1","op":"await.event"}],"structural_ir":[],"source_map":{"schema_version":"apxm.source-map.v1","source_language":"json","node_spans":[],"region_annotations":[]}}"#;
         assert!(artifact_has_await_event(air));
     }
 

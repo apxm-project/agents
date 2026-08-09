@@ -1,4 +1,4 @@
-//! Execute canonical `apxm.air.v1` through the canonical runtime driver.
+//! Execute canonical `apxm.air.v2` through the canonical runtime driver.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -145,7 +145,7 @@ fn load_canonical_air(input: &PathBuf) -> Result<AirModule> {
         .with_context(|| format!("failed to read canonical AIR from {}", input.display()))?;
     let air: AirModule = serde_json::from_str(&text).with_context(|| {
         format!(
-            "{} must contain canonical apxm.air.v1 JSON",
+            "{} must contain canonical apxm.air.v2 JSON",
             input.display()
         )
     })?;
@@ -818,7 +818,7 @@ mod tests {
 
     fn empty_profile_air() -> AirModule {
         serde_json::from_value(json!({
-            "schema_version": "apxm.air.v1",
+            "schema_version": "apxm.air.v2",
             "semantic_operations": [],
             "structural_ir": [{"region_id": "r.root", "kind": "function", "execution_order": 0}],
             "context_flow": [],
@@ -1020,7 +1020,7 @@ mod tests {
     #[tokio::test]
     async fn executes_canonical_air_with_dev_ports() {
         let air: AirModule = serde_json::from_value(json!({
-            "schema_version": "apxm.air.v1",
+            "schema_version": "apxm.air.v2",
             "semantic_operations": [
                 {"node_id": "n.model", "op": "model.call", "parent_region_id": "r.root", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.model.request", "type_ref": "ModelRequest"}], "result": {"value_id": "value.model.output", "type_ref": "ModelOutput"}},
                 {"node_id": "n.new", "op": "program.new", "parent_region_id": "r.root", "execution_order": 1, "operands": [{"slot": "program_ref", "value_id": "child", "type_ref": "ProgramRef"}], "result": {"value_id": "value.program.instance", "type_ref": "ProgramInstanceRef"}},
@@ -1066,7 +1066,7 @@ mod tests {
     #[tokio::test]
     async fn executes_canonical_air_without_a_model_binding() {
         let air: AirModule = serde_json::from_value(json!({
-            "schema_version": "apxm.air.v1",
+            "schema_version": "apxm.air.v2",
             "semantic_operations": [
                 {"node_id": "n.new", "op": "program.new", "parent_region_id": "r.root", "execution_order": 0, "operands": [{"slot": "program_ref", "value_id": "child", "type_ref": "ProgramRef"}], "result": {"value_id": "value.program.instance", "type_ref": "ProgramInstanceRef"}},
                 {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.root", "execution_order": 1, "operands": [{"slot": "receiver", "value_id": "value.program.instance", "type_ref": "ProgramInstanceRef"}, {"slot": "input", "value_id": "value.program.input", "type_ref": "ProgramInput"}], "result": {"value_id": "value.program.output", "type_ref": "ProgramOutput"}},
@@ -1116,7 +1116,7 @@ mod tests {
     #[test]
     fn rejects_local_capability_without_invocation_admission_authority() {
         let air: AirModule = serde_json::from_value(json!({
-            "schema_version": "apxm.air.v1",
+            "schema_version": "apxm.air.v2",
             "semantic_operations": [
                 {"node_id": "n.cap", "op": "capability.invoke", "parent_region_id": "r.root", "execution_order": 0, "operands": [{"slot": "capability_ref", "value_id": "cap.search", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "value.capability.arguments", "type_ref": "CapabilityArguments"}], "result": {"value_id": "value.capability.output", "type_ref": "CapabilityOutput"}}
             ],
@@ -1138,7 +1138,7 @@ mod tests {
     #[test]
     fn admits_each_distinct_authored_model_target_once() {
         let air: AirModule = serde_json::from_value(json!({
-            "schema_version": "apxm.air.v1",
+            "schema_version": "apxm.air.v2",
             "semantic_operations": [
                 {"node_id": "n.model.first", "op": "model.call", "parent_region_id": "r.root", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target.first", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.request.first", "type_ref": "ModelRequest"}], "result": {"value_id": "value.output.first", "type_ref": "ModelOutput"}},
                 {"node_id": "n.model.second", "op": "model.call", "parent_region_id": "r.root", "execution_order": 1, "operands": [{"slot": "model_ref", "value_id": "model.target.second", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.request.second", "type_ref": "ModelRequest"}], "result": {"value_id": "value.output.second", "type_ref": "ModelOutput"}},
