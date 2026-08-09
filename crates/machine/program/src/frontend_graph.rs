@@ -939,10 +939,20 @@ fn validate_ssa_dominance(
         region_order: &region_order,
     };
 
-    let mut check_use = |value_id: &str, consumer: &str| {
-        let Some(location) = consumer_location(consumer, &calls, &controls) else {
+    let mut check_use = |value_id: &str, consumer: &str, consumer_slot: &str| {
+        let Some(mut location) = consumer_location(consumer, &calls, &controls) else {
             return;
         };
+        // A loop-carried operand is read by the loop-back edge after the body
+        // has completed, not by the loop header's initial entry.  This is the
+        // FrontendGraph counterpart of AIR's `u32::MAX` loop-back location and
+        // admits valid loop phis while retaining ordinary forward dominance for
+        // initial operands and every other structural consumer.
+        if controls.get(consumer).is_some_and(|control| {
+            control.control_kind == ControlKind::Loop && consumer_slot == "carried"
+        }) {
+            location.execution_order = u32::MAX;
+        }
         let mut visiting = HashSet::new();
         if !value_dominates_use(value_id, location, &context, &mut visiting) {
             verdict.push(Diagnostic::new(
@@ -974,7 +984,7 @@ fn validate_ssa_dominance(
                 resume_input_edges.push((edge.from_value.clone(), edge.to_consumer.clone()));
                 continue;
             }
-            check_use(&edge.from_value, &edge.to_consumer);
+            check_use(&edge.from_value, &edge.to_consumer, &edge.consumer_slot);
         }
     }
 
