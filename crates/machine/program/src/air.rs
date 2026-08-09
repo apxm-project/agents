@@ -285,9 +285,161 @@ impl AirModule {
             &self.structural_ir,
             &self.source_map,
         );
+        validate_air_ssa_dominance(&mut verdict, self);
         self.source_map.collect(&mut verdict);
         verdict.finish()
     }
+}
+
+#[derive(Clone)]
+struct AirSsaLocation {
+    region_id: String,
+    execution_order: u32,
+    entry: bool,
+}
+
+/// Validate authored Tool arguments against AIR def-use order as a second
+/// closed boundary after FrontendGraph verification. This prevents a decoded
+/// AIR payload from smuggling a future or sibling-branch SSA value into a
+/// capability request, even when the value id is globally declared.
+fn validate_air_ssa_dominance(verdict: &mut Verdict, air: &AirModule) {
+    let regions: std::collections::HashMap<&str, &StructuralNode> = air
+        .structural_ir
+        .iter()
+        .map(|region| (region.region_id.as_str(), region))
+        .collect();
+    let blocks: std::collections::HashMap<&str, AirSsaLocation> = air
+        .structural_ir
+        .iter()
+        .flat_map(|region| {
+            region.block_arguments.iter().map(move |argument| {
+                (
+                    argument.value_id.as_str(),
+                    AirSsaLocation {
+                        region_id: region.region_id.clone(),
+                        execution_order: 0,
+                        entry: true,
+                    },
+                )
+            })
+        })
+        .collect();
+    let results: std::collections::HashMap<&str, AirSsaLocation> = air
+        .semantic_operations
+        .iter()
+        .filter_map(|operation| {
+            operation.result.as_ref().map(|result| {
+                (
+                    result.value_id.as_str(),
+                    AirSsaLocation {
+                        region_id: operation.parent_region_id.clone(),
+                        execution_order: operation.execution_order,
+                        entry: false,
+                    },
+                )
+            })
+        })
+        .collect();
+    let assemblies: std::collections::HashMap<&str, &ValueExpression> = air
+        .value_assemblies
+        .iter()
+        .map(|assembly| (assembly.value_id.as_str(), &assembly.expression))
+        .collect();
+
+    for operation in &air.semantic_operations {
+        if operation.op != SemanticOpKind::CapabilityInvoke {
+            continue;
+        }
+        let Some(arguments) = operation
+            .operands
+            .iter()
+            .find(|operand| operand.slot == "arguments")
+        else {
+            continue;
+        };
+        let use_location = AirSsaLocation {
+            region_id: operation.parent_region_id.clone(),
+            execution_order: operation.execution_order,
+            entry: false,
+        };
+        let mut visiting = HashSet::new();
+        if !air_value_dominates(
+            &arguments.value_id,
+            &use_location,
+            &results,
+            &blocks,
+            &assemblies,
+            &regions,
+            &mut visiting,
+        ) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                operation.node_id.clone(),
+                format!(
+                    "authored capability argument '{}' does not dominate its effect site",
+                    arguments.value_id
+                ),
+            ));
+        }
+    }
+}
+
+fn air_value_dominates(
+    value_id: &str,
+    use_location: &AirSsaLocation,
+    results: &std::collections::HashMap<&str, AirSsaLocation>,
+    blocks: &std::collections::HashMap<&str, AirSsaLocation>,
+    assemblies: &std::collections::HashMap<&str, &ValueExpression>,
+    regions: &std::collections::HashMap<&str, &StructuralNode>,
+    visiting: &mut HashSet<String>,
+) -> bool {
+    if !visiting.insert(value_id.to_string()) {
+        return false;
+    }
+    let location = results.get(value_id).or_else(|| blocks.get(value_id));
+    let base_ok =
+        location.is_none_or(|definition| air_dominates_location(definition, use_location, regions));
+    if !base_ok {
+        return false;
+    }
+    let expression_ok = assemblies.get(value_id).is_none_or(|expression| {
+        let mut references = Vec::new();
+        collect_expression_references(expression, &mut references);
+        references.into_iter().all(|dependency| {
+            air_value_dominates(
+                &dependency,
+                use_location,
+                results,
+                blocks,
+                assemblies,
+                regions,
+                visiting,
+            )
+        })
+    });
+    visiting.remove(value_id);
+    expression_ok
+}
+
+fn air_dominates_location(
+    definition: &AirSsaLocation,
+    use_location: &AirSsaLocation,
+    regions: &std::collections::HashMap<&str, &StructuralNode>,
+) -> bool {
+    if definition.region_id == use_location.region_id {
+        return definition.entry || definition.execution_order < use_location.execution_order;
+    }
+    let mut child = use_location.region_id.as_str();
+    while let Some(region) = regions.get(child) {
+        let Some(parent) = region.parent_region_id.as_deref() else {
+            break;
+        };
+        if parent == definition.region_id {
+            return definition.entry || definition.execution_order < region.execution_order;
+        }
+        child = parent;
+    }
+    false
 }
 
 fn valid_property_path(path: &[String]) -> bool {

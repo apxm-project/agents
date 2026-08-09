@@ -27,6 +27,20 @@ SearchWeb = Tool[object, object]("search.web.capability.v1")
 SupportModel = Model[object, object]("support.model.v1")
 
 
+@Context
+class InitialContext:
+    messages: tuple = ()
+
+
+InitialModel = Model[object, object]("initial.model.v1")
+
+
+@Agent(input="InitialInput", output="InitialOutput", context=InitialContext)
+async def InitialContextAgent(agent, incoming):
+    agent.context = InitialContext()
+    return await InitialModel(incoming)
+
+
 @Agent(input="ConversationInput", output="ConversationOutput", context=Conversation)
 async def Support(agent, incoming):
     while True:
@@ -99,6 +113,19 @@ def test_minimal_agent_lowers_to_registered_model_call() -> None:
         for operand in air["semantic_operations"][0]["operands"]
         if operand["slot"] == "model_ref"
     ) == "summarizer.model.v1"
+
+
+def test_initial_context_assignment_is_bound_to_the_region_entry() -> None:
+    graph = InitialContextAgent.frontend_graph()
+    assert graph["context_flow"] == [
+        {
+            "from_node": "InitialContextAgent.body",
+            "to_node": graph["call_intents"][0]["node_id"],
+            "context_type_ref": "InitialContext",
+            "value_id": graph["context_flow"][0]["value_id"],
+        }
+    ]
+    assert InitialContextAgent.diagnostics() is None
 
 
 def test_static_bindings_reject_display_names_callables_and_bare_event_factories() -> None:

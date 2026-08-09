@@ -332,9 +332,11 @@ class _Capture:
                     expression=expression,
                 )
             )
-            last_node = self._last_node_by_region.get(region_id)
-            if last_node is not None:
-                self._pending_context_by_region[region_id] = (last_node, value_id)
+            # A context replacement before the first effect is anchored to the
+            # lexical region entry so it remains executable rather than being
+            # silently discarded.
+            source = self._last_node_by_region.get(region_id, region_id)
+            self._pending_context_by_region[region_id] = (source, value_id)
             return
         # name = await <call>  binds the call result to a named value.
         if isinstance(stmt.value, ast.Await) and isinstance(target, ast.Name):

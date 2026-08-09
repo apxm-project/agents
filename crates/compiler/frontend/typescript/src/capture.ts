@@ -465,10 +465,10 @@ class Capture {
           origin: "context_value",
           expression,
         });
-        const lastNode = this.lastNodeByRegion.get(regionId);
-        if (lastNode !== undefined) {
-          this.pendingContextByRegion.set(regionId, { source: lastNode, valueId: contextNode });
-        }
+        // Anchor an initial replacement to the lexical region entry so it is
+        // executable rather than silently discarded before the first effect.
+        const source = this.lastNodeByRegion.get(regionId) ?? regionId;
+        this.pendingContextByRegion.set(regionId, { source, valueId: contextNode });
       } else if (ts.isAwaitExpression(expr.right)) {
         const valueId = this.visitAwait(expr.right, regionId, source);
         if (valueId !== undefined && ts.isIdentifier(expr.left)) {

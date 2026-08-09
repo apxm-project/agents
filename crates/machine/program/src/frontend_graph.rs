@@ -841,12 +841,17 @@ fn collect_typed_link_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph) 
                 .map(|intent| intent.node_id.as_str()),
         )
         .collect::<HashSet<_>>();
+    let endpoints = nodes
+        .iter()
+        .copied()
+        .chain(graph.regions.iter().map(|region| region.region_id.as_str()))
+        .collect::<HashSet<_>>();
     for edge in &graph.context_flow {
         let valid_value = values
             .get(edge.value_id.as_str())
             .is_some_and(|value| value.origin == ValueOrigin::ContextValue);
-        if !nodes.contains(edge.from_node.as_str())
-            || !nodes.contains(edge.to_node.as_str())
+        if !endpoints.contains(edge.from_node.as_str())
+            || !endpoints.contains(edge.to_node.as_str())
             || !valid_value
         {
             verdict.push(Diagnostic::new(
@@ -856,6 +861,288 @@ fn collect_typed_link_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph) 
             ));
         }
     }
+    validate_ssa_dominance(verdict, graph, &values);
+}
+
+#[derive(Clone)]
+struct SsaLocation {
+    region_id: String,
+    execution_order: u32,
+    entry: bool,
+}
+
+/// Ensure every authored SSA dependency is available at every consumer. A
+/// declaration existing somewhere in the graph is insufficient: future
+/// results and sibling-branch values must never become Tool/Model operands.
+fn validate_ssa_dominance(
+    verdict: &mut Verdict,
+    graph: &FrontendGraph,
+    values: &HashMap<&str, &Value>,
+) {
+    let region_parent: HashMap<&str, Option<&str>> = graph
+        .regions
+        .iter()
+        .map(|region| {
+            (
+                region.region_id.as_str(),
+                region.parent_region_id.as_deref(),
+            )
+        })
+        .collect();
+    let region_order: HashMap<&str, u32> = graph
+        .regions
+        .iter()
+        .map(|region| (region.region_id.as_str(), region.execution_order))
+        .collect();
+    let functions: HashMap<&str, &str> = graph
+        .functions
+        .iter()
+        .map(|function| {
+            (
+                function.function_id.as_str(),
+                function.body_region_id.as_str(),
+            )
+        })
+        .collect();
+    let blocks: HashMap<&str, &Block> = graph
+        .blocks
+        .iter()
+        .map(|block| (block.block_id.as_str(), block))
+        .collect();
+    let calls: HashMap<&str, &CallIntent> = graph
+        .call_intents
+        .iter()
+        .map(|intent| (intent.node_id.as_str(), intent))
+        .collect();
+    let controls: HashMap<&str, &ControlIntent> = graph
+        .control_intents
+        .iter()
+        .map(|intent| (intent.node_id.as_str(), intent))
+        .collect();
+
+    let mut check_use = |value_id: &str, consumer: &str| {
+        let Some(location) = consumer_location(consumer, &calls, &controls) else {
+            return;
+        };
+        let mut visiting = HashSet::new();
+        if !value_dominates_use(
+            value_id,
+            location,
+            values,
+            &blocks,
+            &calls,
+            &functions,
+            &region_parent,
+            &region_order,
+            &mut visiting,
+        ) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                consumer.to_string(),
+                format!("SSA value '{value_id}' does not dominate its consumer"),
+            ));
+        }
+    };
+
+    for edge in &graph.data_edges {
+        // Control-flow/result plumbing may be a loop-carried edge rather than
+        // a forward SSA use. Effect operands, however, must be dominated at
+        // the exact call site because they become authored Model/Tool data.
+        if calls.get(edge.to_consumer.as_str()).is_some_and(|intent| {
+            matches!(
+                intent.intent_kind,
+                IntentKind::ToolInvocation | IntentKind::CapabilityInvocation
+            )
+        }) {
+            check_use(&edge.from_value, &edge.to_consumer);
+        }
+    }
+}
+
+fn consumer_location(
+    consumer: &str,
+    calls: &HashMap<&str, &CallIntent>,
+    controls: &HashMap<&str, &ControlIntent>,
+) -> Option<SsaLocation> {
+    calls
+        .get(consumer)
+        .map(|intent| SsaLocation {
+            region_id: intent.parent_region_id.clone(),
+            execution_order: intent.execution_order,
+            entry: false,
+        })
+        .or_else(|| {
+            controls.get(consumer).map(|intent| SsaLocation {
+                region_id: intent.parent_region_id.clone(),
+                execution_order: intent.execution_order,
+                entry: false,
+            })
+        })
+}
+
+fn value_dominates_use(
+    value_id: &str,
+    use_location: SsaLocation,
+    values: &HashMap<&str, &Value>,
+    blocks: &HashMap<&str, &Block>,
+    calls: &HashMap<&str, &CallIntent>,
+    functions: &HashMap<&str, &str>,
+    region_parent: &HashMap<&str, Option<&str>>,
+    region_order: &HashMap<&str, u32>,
+    visiting: &mut HashSet<String>,
+) -> bool {
+    if !visiting.insert(value_id.to_string()) {
+        return false;
+    }
+    let Some(value) = values.get(value_id) else {
+        return false;
+    };
+    let dominates = match value.origin {
+        ValueOrigin::CallResult => value
+            .origin_id
+            .as_deref()
+            .and_then(|node_id| calls.get(node_id))
+            .is_some_and(|intent| {
+                dominates_location(
+                    SsaLocation {
+                        region_id: intent.parent_region_id.clone(),
+                        execution_order: intent.execution_order,
+                        entry: false,
+                    },
+                    use_location.clone(),
+                    region_parent,
+                    region_order,
+                )
+            }),
+        ValueOrigin::BlockArgument => value
+            .origin_id
+            .as_deref()
+            .and_then(|block_id| blocks.get(block_id))
+            .is_some_and(|block| {
+                dominates_location(
+                    SsaLocation {
+                        region_id: block.region_id.clone(),
+                        execution_order: 0,
+                        entry: true,
+                    },
+                    use_location.clone(),
+                    region_parent,
+                    region_order,
+                )
+            }),
+        ValueOrigin::Parameter => value
+            .origin_id
+            .as_deref()
+            .and_then(|function_id| functions.get(function_id))
+            .is_some_and(|region_id| {
+                dominates_location(
+                    SsaLocation {
+                        region_id: region_id.to_string(),
+                        execution_order: 0,
+                        entry: true,
+                    },
+                    use_location.clone(),
+                    region_parent,
+                    region_order,
+                )
+            }),
+        // Resume values are produced by the structural yield and consumed by
+        // its loop-back edge, which is not an ordinary forward SSA use.
+        ValueOrigin::ResumeInput => true,
+        ValueOrigin::ContextValue | ValueOrigin::Literal => true,
+    };
+    if !dominates {
+        return false;
+    }
+
+    let expression_ok = match value.expression.as_ref() {
+        Some(expression) => expression_references(expression)
+            .into_iter()
+            .all(|dependency| {
+                value_dominates_use(
+                    &dependency,
+                    use_location.clone(),
+                    values,
+                    blocks,
+                    calls,
+                    functions,
+                    region_parent,
+                    region_order,
+                    visiting,
+                )
+            }),
+        None => true,
+    };
+    visiting.remove(value_id);
+    expression_ok
+}
+
+fn expression_references(expression: &ValueExpression) -> Vec<String> {
+    let mut references = Vec::new();
+    collect_expression_references(expression, &mut references);
+    references
+}
+
+fn collect_expression_references(expression: &ValueExpression, out: &mut Vec<String>) {
+    match expression {
+        ValueExpression::Ssa { value_id } => out.push(value_id.clone()),
+        ValueExpression::Projection { root, .. } => collect_expression_references(root, out),
+        ValueExpression::Object { fields } => fields
+            .iter()
+            .for_each(|field| collect_expression_references(&field.value, out)),
+        ValueExpression::Array { items } => items
+            .iter()
+            .for_each(|item| collect_expression_references(item, out)),
+        ValueExpression::Context { .. }
+        | ValueExpression::String { .. }
+        | ValueExpression::Integer { .. }
+        | ValueExpression::Boolean { .. }
+        | ValueExpression::Null => {}
+    }
+}
+
+fn dominates_location(
+    definition: SsaLocation,
+    use_location: SsaLocation,
+    region_parent: &HashMap<&str, Option<&str>>,
+    region_order: &HashMap<&str, u32>,
+) -> bool {
+    if definition.region_id == use_location.region_id {
+        return definition.entry || definition.execution_order < use_location.execution_order;
+    }
+    if !is_ancestor(
+        &definition.region_id,
+        &use_location.region_id,
+        region_parent,
+    ) {
+        return false;
+    }
+    let mut child = use_location.region_id.as_str();
+    while let Some(parent) = region_parent.get(child).copied().flatten() {
+        if parent == definition.region_id {
+            return definition.entry
+                || region_order
+                    .get(child)
+                    .is_some_and(|child_order| definition.execution_order < *child_order);
+        }
+        child = parent;
+    }
+    definition.entry
+}
+
+fn is_ancestor(
+    ancestor: &str,
+    descendant: &str,
+    region_parent: &HashMap<&str, Option<&str>>,
+) -> bool {
+    let mut cursor = Some(descendant);
+    while let Some(region) = cursor {
+        if region == ancestor {
+            return true;
+        }
+        cursor = region_parent.get(region).copied().flatten();
+    }
+    false
 }
 
 fn validate_control_predicate(
