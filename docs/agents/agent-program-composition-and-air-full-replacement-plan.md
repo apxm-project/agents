@@ -69,7 +69,7 @@ scope and never creates an out-of-scope or deferred category.
 
 ### Included
 
-- `apxm.frontend-graph.v1`, `apxm.air.v1`,
+- `apxm.frontend-graph.v2`, `apxm.air.v2`,
   `apxm.executable-artifact.v1`, and `apxm.runtime-evidence.v1`;
 - equivalent generic Python and TypeScript Agent Program composition, context,
   Hook, structured-control-flow, source-map, and compiler-bridge frontends;

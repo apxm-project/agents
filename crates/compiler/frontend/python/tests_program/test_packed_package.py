@@ -82,7 +82,7 @@ def test_packed_wheel_exposes_only_generic_agent_program_surface() -> None:
             "\n"
             "if __name__ == '__main__':\n"
             "    graph = Plan.frontend_graph()\n"
-            "    assert graph['schema_version'] == 'apxm.frontend-graph.v1'\n"
+            "    assert graph['schema_version'] == 'apxm.frontend-graph.v2'\n"
             "    assert Plan.diagnostics() is None\n"
             "    kinds = {c['intent_kind'] for c in graph['call_intents']}\n"
             "    assert kinds == {'tool_invocation', 'model_invocation'}, kinds\n"

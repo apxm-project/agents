@@ -7,7 +7,7 @@
   "required": ["schema_version", "surface_version", "everyday", "advanced", "non_public", "declarations"],
   "properties": {
     "schema_version": { "const": "apxm.frontend-surface.v1" },
-    "surface_version": { "const": "apxm.frontend-graph.v1" },
+    "surface_version": { "const": "apxm.frontend-graph.v2" },
     "everyday": {
       "type": "array",
       "description": "The five everyday author-facing names. A beginner needs only these.",

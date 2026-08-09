@@ -85,7 +85,7 @@ async def Coordinator(agent, request):
 
 def test_minimal_one_shot_agent_binds_model_and_verifies() -> None:
     graph = Summarizer.frontend_graph()
-    assert graph["schema_version"] == "apxm.frontend-graph.v1"
+    assert graph["schema_version"] == "apxm.frontend-graph.v2"
     assert graph["program_definitions"][0]["program_id"] == "Summarizer"
     assert [d["decl_kind"] for d in graph["declarations"]] == ["model_binding"]
     assert [c["intent_kind"] for c in graph["call_intents"]] == ["model_invocation"]

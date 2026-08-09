@@ -2,7 +2,7 @@
   {
     "name": "valid-frontend-graph-typed-intents",
     "input": {
-      "schema_version": "apxm.frontend-graph.v1",
+      "schema_version": "apxm.frontend-graph.v2",
       "source_language": "python",
       "program_definitions": [
         {
@@ -278,7 +278,7 @@
   {
     "name": "ais-kind-in-graph-intent-rejected",
     "input": {
-      "schema_version": "apxm.frontend-graph.v1",
+      "schema_version": "apxm.frontend-graph.v2",
       "source_language": "python",
       "program_definitions": [
         {
@@ -321,7 +321,7 @@
   {
     "name": "value-with-no-origin-rejected",
     "input": {
-      "schema_version": "apxm.frontend-graph.v1",
+      "schema_version": "apxm.frontend-graph.v2",
       "source_language": "python",
       "program_definitions": [
         {
@@ -362,7 +362,7 @@
   {
     "name": "runtime-placement-field-rejected",
     "input": {
-      "schema_version": "apxm.frontend-graph.v1",
+      "schema_version": "apxm.frontend-graph.v2",
       "source_language": "python",
       "program_definitions": [
         {
@@ -399,7 +399,7 @@
   {
     "name": "illegal-hook-return-mode-rejected",
     "input": {
-      "schema_version": "apxm.frontend-graph.v1",
+      "schema_version": "apxm.frontend-graph.v2",
       "source_language": "typescript",
       "program_definitions": [
         {
@@ -448,7 +448,7 @@
   {
     "name": "incompatible-frontend-graph-schema-version-rejected",
     "input": {
-      "schema_version": "apxm.frontend-graph.v0",
+      "schema_version": "apxm.frontend-graph.v1",
       "source_language": "python",
       "program_definitions": [
         {
@@ -484,7 +484,7 @@
   {
     "name": "unknown-frontend-graph-field-rejected",
     "input": {
-      "schema_version": "apxm.frontend-graph.v1",
+      "schema_version": "apxm.frontend-graph.v2",
       "source_language": "typescript",
       "program_definitions": [
         {

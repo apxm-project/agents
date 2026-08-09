@@ -358,12 +358,12 @@ mod tests {
 
         let recovered = decode_response(
             Frontend::Typescript,
-            br#"{"frontend_graph":{"schema_version":"apxm.frontend-graph.v1"}}"#,
+            br#"{"frontend_graph":{"schema_version":"apxm.frontend-graph.v2"}}"#,
         )
         .expect("the next independent capture still decodes");
         assert_eq!(
             recovered,
-            serde_json::json!({"schema_version": "apxm.frontend-graph.v1"})
+            serde_json::json!({"schema_version": "apxm.frontend-graph.v2"})
         );
     }
 

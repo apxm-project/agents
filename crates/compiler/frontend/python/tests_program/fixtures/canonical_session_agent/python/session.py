@@ -1,7 +1,7 @@
 """Canonical session agent package entry.
 
 Authors a minimal session Agent on the typed authoring surface and prints
-canonical ``apxm.air.v1`` AIR JSON to stdout. This is the exact stdout contract
+canonical ``apxm.air.v2`` AIR JSON to stdout. This is the exact stdout contract
 ``apxm compile-service-canonical`` captures and validates as an ``AirModule``
 before the Server session family drives it.
 """

@@ -1,4 +1,4 @@
-//! Validate, analyze, explain commands for canonical `apxm.air.v1`.
+//! Validate, analyze, explain commands for canonical `apxm.air.v2`.
 
 use std::path::PathBuf;
 
@@ -93,7 +93,7 @@ fn load_air_module_for_analysis(input: &PathBuf) -> Result<AirModule> {
         .with_context(|| format!("failed to read canonical AIR from {}", input.display()))?;
     serde_json::from_str(&text).with_context(|| {
         format!(
-            "{} must contain canonical apxm.air.v1 JSON",
+            "{} must contain canonical apxm.air.v2 JSON",
             input.display()
         )
     })
@@ -196,7 +196,7 @@ pub fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
     let max_parallelism = ga.max_parallelism();
     let speedup = ga.speedup();
     let suggestions = vec![
-        "Canonical apxm.air.v1 analysis is derived from semantic_operations and structural_ir; legacy ExecutionDag analysis is not used."
+        "Canonical apxm.air.v2 analysis is derived from semantic_operations and structural_ir; legacy ExecutionDag analysis is not used."
             .to_string(),
     ];
 
@@ -228,7 +228,7 @@ pub fn analyze_command(input: PathBuf, json_output: bool) -> Result<()> {
 
         let result = serde_json::json!({
             "file": input.display().to_string(),
-            "schema_version": "apxm.air.v1",
+            "schema_version": "apxm.air.v2",
             "semantic_operation_count": ga.graph.semantic_operations.len(),
             "structural_ir_count": ga.graph.structural_ir.len(),
             "depth": ga.phases.len(),
@@ -344,7 +344,7 @@ pub fn explain_command(target: &str, json_output: bool) -> Result<()> {
             .collect();
         let result = serde_json::json!({
             "file": file.display().to_string(),
-            "schema_version": "apxm.air.v1",
+            "schema_version": "apxm.air.v2",
             "semantic_operations": operations,
             "structural_ir": structural_ir,
             "summary": {
@@ -356,7 +356,7 @@ pub fn explain_command(target: &str, json_output: bool) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&result).unwrap());
     } else {
         println!();
-        println!("  {} {}", "AIR:".bold().cyan(), "apxm.air.v1".bold());
+        println!("  {} {}", "AIR:".bold().cyan(), "apxm.air.v2".bold());
         println!(
             "  Semantic operations: {} | Structural regions: {}",
             graph.semantic_operations.len(),

@@ -26,7 +26,7 @@
       "$ref": "apxm.contract-common.v1#/$defs/Digest"
     },
     "air": {
-      "$ref": "apxm.air.v1"
+      "$ref": "apxm.air.v2"
     },
     "source_bundle_digest": {
       "$ref": "apxm.contract-common.v1#/$defs/Digest"

@@ -2246,7 +2246,7 @@ mod tests {
         let air =
             super::super::compile_service_canonical::emit_canonical_air_from_agent(&root, None)
                 .expect("canonical compile-service must compile the package-level program entry");
-        assert!(air.contains("\"schema_version\":\"apxm.air.v1\""));
+        assert!(air.contains("\"schema_version\":\"apxm.air.v2\""));
         assert!(air.contains("\"op\":\"model.call\""));
     }
 

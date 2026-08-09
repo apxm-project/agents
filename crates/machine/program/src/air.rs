@@ -1,4 +1,4 @@
-//! `apxm.air.v1` — closed consumer types and the AIR verifier.
+//! `apxm.air.v2` — closed consumer types and the AIR verifier.
 //!
 //! AIR exposes exactly five public semantic operations. Branch, loop, task,
 //! try, yield, and return are compiler-owned structural IR; a NOP is transient
@@ -23,8 +23,8 @@ pub use apxm_ais::{SemanticOpKind, StructuralOpKind};
 /// The single accepted `schema_version` for AIR.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AirVersion {
-    #[serde(rename = "apxm.air.v1")]
-    V1,
+    #[serde(rename = "apxm.air.v2")]
+    V2,
 }
 
 /// One typed SSA operand: a named input slot bound to a produced value id and its
@@ -298,10 +298,11 @@ struct AirSsaLocation {
     entry: bool,
 }
 
-/// Validate authored Tool arguments against AIR def-use order as a second
-/// closed boundary after FrontendGraph verification. This prevents a decoded
-/// AIR payload from smuggling a future or sibling-branch SSA value into a
-/// capability request, even when the value id is globally declared.
+/// Validate authored executable-invocation operands against AIR def-use order
+/// as a second closed boundary after FrontendGraph verification. This prevents
+/// a decoded AIR payload from smuggling a future or sibling-branch SSA value
+/// into a model, capability, or program request, even when the value id is
+/// globally declared.
 fn validate_air_ssa_dominance(verdict: &mut Verdict, air: &AirModule) {
     let regions: std::collections::HashMap<&str, &StructuralNode> = air
         .structural_ir
@@ -345,42 +346,71 @@ fn validate_air_ssa_dominance(verdict: &mut Verdict, air: &AirModule) {
         .iter()
         .map(|assembly| (assembly.value_id.as_str(), &assembly.expression))
         .collect();
+    let resume_values: HashSet<&str> = air
+        .structural_ir
+        .iter()
+        .filter(|region| region.kind == StructuralOpKind::Yield)
+        .flat_map(|region| {
+            region
+                .block_arguments
+                .iter()
+                .map(|value| value.value_id.as_str())
+        })
+        .collect();
 
     for operation in &air.semantic_operations {
-        if operation.op != SemanticOpKind::CapabilityInvoke {
-            continue;
-        }
-        let Some(arguments) = operation
-            .operands
-            .iter()
-            .find(|operand| operand.slot == "arguments")
-        else {
-            continue;
-        };
         let use_location = AirSsaLocation {
             region_id: operation.parent_region_id.clone(),
             execution_order: operation.execution_order,
             entry: false,
         };
-        let mut visiting = HashSet::new();
-        if !air_value_dominates(
-            &arguments.value_id,
-            &use_location,
-            &results,
-            &blocks,
-            &assemblies,
-            &regions,
-            &mut visiting,
-        ) {
-            verdict.push(Diagnostic::new(
-                DiagnosticCode::SchemaViolation,
-                operation.node_id.clone(),
-                format!(
-                    "authored capability argument '{}' does not dominate its effect site",
-                    arguments.value_id
-                ),
-            ));
+        for operand in operation
+            .operands
+            .iter()
+            .filter(|operand| is_authored_invocation_operand(operation.op, operand))
+        {
+            if operation.op == SemanticOpKind::CapabilityInvoke
+                && resume_values.contains(operand.value_id.as_str())
+            {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    operation.node_id.clone(),
+                    format!(
+                        "resume input '{}' cannot become an authored capability argument",
+                        operand.value_id
+                    ),
+                ));
+                continue;
+            }
+            let mut visiting = HashSet::new();
+            if !air_value_dominates(
+                &operand.value_id,
+                &use_location,
+                &results,
+                &blocks,
+                &assemblies,
+                &regions,
+                &mut visiting,
+            ) {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    operation.node_id.clone(),
+                    format!(
+                        "authored invocation operand '{}' does not dominate its effect site",
+                        operand.value_id
+                    ),
+                ));
+            }
         }
+    }
+}
+
+fn is_authored_invocation_operand(op: SemanticOpKind, operand: &Operand) -> bool {
+    match op {
+        SemanticOpKind::ModelCall => operand.slot == "request",
+        SemanticOpKind::CapabilityInvoke => operand.slot == "arguments",
+        SemanticOpKind::ProgramInvoke => operand.slot != "receiver",
+        SemanticOpKind::ProgramNew | SemanticOpKind::AwaitEvent => false,
     }
 }
 
@@ -397,9 +427,14 @@ fn air_value_dominates(
         return false;
     }
     let location = results.get(value_id).or_else(|| blocks.get(value_id));
+    // AIR operands may be supplied as invocation-entry values by the runtime
+    // host when no AIR definition or authored assembly claims the id. Those
+    // external values are entry-dominating by construction; any value that is
+    // declared as a result or block argument still goes through the strict
+    // lexical dominance check above.
     let base_ok = match location {
         Some(definition) => air_dominates_location(definition, use_location, regions),
-        None => assemblies.contains_key(value_id),
+        None => assemblies.contains_key(value_id) || !results.contains_key(value_id),
     };
     if !base_ok {
         return false;
@@ -431,15 +466,47 @@ fn air_dominates_location(
     if definition.region_id == use_location.region_id {
         return definition.entry || definition.execution_order < use_location.execution_order;
     }
-    let mut child = use_location.region_id.as_str();
-    while let Some(region) = regions.get(child) {
-        let Some(parent) = region.parent_region_id.as_deref() else {
-            break;
-        };
-        if parent == definition.region_id {
-            return definition.entry || definition.execution_order < region.execution_order;
+    if is_air_ancestor(&definition.region_id, &use_location.region_id, regions) {
+        let mut child = use_location.region_id.as_str();
+        while let Some(region) = regions.get(child) {
+            let Some(parent) = region.parent_region_id.as_deref() else {
+                break;
+            };
+            if parent == definition.region_id {
+                return definition.entry || definition.execution_order < region.execution_order;
+            }
+            child = parent;
         }
-        child = parent;
+        return definition.entry;
+    }
+    if is_air_ancestor(&use_location.region_id, &definition.region_id, regions) {
+        let mut child = definition.region_id.as_str();
+        while let Some(region) = regions.get(child) {
+            let Some(parent) = region.parent_region_id.as_deref() else {
+                break;
+            };
+            if parent == use_location.region_id {
+                return region.execution_order < use_location.execution_order;
+            }
+            child = parent;
+        }
+    }
+    false
+}
+
+fn is_air_ancestor(
+    ancestor: &str,
+    descendant: &str,
+    regions: &std::collections::HashMap<&str, &StructuralNode>,
+) -> bool {
+    let mut cursor = Some(descendant);
+    while let Some(region_id) = cursor {
+        if region_id == ancestor {
+            return true;
+        }
+        cursor = regions
+            .get(region_id)
+            .and_then(|region| region.parent_region_id.as_deref());
     }
     false
 }

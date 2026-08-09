@@ -4,9 +4,9 @@
     "input": {
       "schema_version": "apxm.executable-artifact.v1",
       "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-      "air_digest": "sha256:f3755ae0ba0b4e73d5d058291ba830e4668ab6b83b48d7413688c58befe57383",
+      "air_digest": "sha256:917027d56e0e9941b39309e0c1120655b52edbd0bd37a54ced0187e5d954245b",
       "air": {
-        "schema_version": "apxm.air.v1",
+        "schema_version": "apxm.air.v2",
         "semantic_operations": [],
         "structural_ir": [],
         "context_flow": [],
@@ -59,9 +59,9 @@
     "input": {
       "schema_version": "apxm.executable-artifact.v1",
       "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-      "air_digest": "sha256:f3755ae0ba0b4e73d5d058291ba830e4668ab6b83b48d7413688c58befe57383",
+      "air_digest": "sha256:917027d56e0e9941b39309e0c1120655b52edbd0bd37a54ced0187e5d954245b",
       "air": {
-        "schema_version": "apxm.air.v1",
+        "schema_version": "apxm.air.v2",
         "semantic_operations": [],
         "structural_ir": [],
         "context_flow": [],
@@ -112,9 +112,9 @@
     "input": {
       "schema_version": "apxm.executable-artifact.v1",
       "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-      "air_digest": "sha256:f3755ae0ba0b4e73d5d058291ba830e4668ab6b83b48d7413688c58befe57383",
+      "air_digest": "sha256:917027d56e0e9941b39309e0c1120655b52edbd0bd37a54ced0187e5d954245b",
       "air": {
-        "schema_version": "apxm.air.v1",
+        "schema_version": "apxm.air.v2",
         "semantic_operations": [],
         "structural_ir": [],
         "context_flow": [],
@@ -165,9 +165,9 @@
     "input": {
       "schema_version": "apxm.executable-artifact.v1",
       "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-      "air_digest": "sha256:f3755ae0ba0b4e73d5d058291ba830e4668ab6b83b48d7413688c58befe57383",
+      "air_digest": "sha256:917027d56e0e9941b39309e0c1120655b52edbd0bd37a54ced0187e5d954245b",
       "air": {
-        "schema_version": "apxm.air.v1",
+        "schema_version": "apxm.air.v2",
         "semantic_operations": [],
         "structural_ir": [],
         "context_flow": [],
@@ -206,9 +206,9 @@
     "input": {
       "schema_version": "apxm.executable-artifact.v1",
       "artifact_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-      "air_digest": "sha256:f3755ae0ba0b4e73d5d058291ba830e4668ab6b83b48d7413688c58befe57383",
+      "air_digest": "sha256:917027d56e0e9941b39309e0c1120655b52edbd0bd37a54ced0187e5d954245b",
       "air": {
-        "schema_version": "apxm.air.v1",
+        "schema_version": "apxm.air.v2",
         "semantic_operations": [],
         "structural_ir": [],
         "context_flow": [],

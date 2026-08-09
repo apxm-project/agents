@@ -10,7 +10,7 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 VALIDATOR_PATH = REPOSITORY_ROOT / "contracts" / "tools" / "validate_owner_descriptor.py"
-AIR_VECTORS_PATH = REPOSITORY_ROOT / "contracts" / "vectors" / "apxm.air.v1.json"
+AIR_VECTORS_PATH = REPOSITORY_ROOT / "contracts" / "vectors" / "apxm.air.v2.json"
 
 
 def load_validator_module():
@@ -32,7 +32,7 @@ class OwnerDescriptorSchemaResolutionTests(unittest.TestCase):
         self.assertIn("apxm.contract-common.v1", self.schema_ids)
 
     def test_air_vector_resolves_contract_common_identifier_refs(self) -> None:
-        schema = self.schema_ids["apxm.air.v1"]
+        schema = self.schema_ids["apxm.air.v2"]
         cases = json.loads(AIR_VECTORS_PATH.read_text(encoding="utf-8"))
         case = next(
             item
@@ -50,7 +50,7 @@ class OwnerDescriptorSchemaResolutionTests(unittest.TestCase):
         self.assertEqual(errors, [])
 
     def test_unknown_external_ref_stays_fail_closed(self) -> None:
-        schema = self.schema_ids["apxm.air.v1"]
+        schema = self.schema_ids["apxm.air.v2"]
         errors = self.validator.schema_instance_errors(
             {"$ref": "apxm.contract-common.v1#/$defs/DoesNotExist"},
             "node_0",

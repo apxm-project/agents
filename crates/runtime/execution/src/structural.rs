@@ -339,7 +339,7 @@ mod tests {
     #[test]
     fn non_loop_yield_is_not_scheduled_as_a_committed_back_edge() {
         let air: AirModule = serde_json::from_value(json!({
-            "schema_version": "apxm.air.v1",
+            "schema_version": "apxm.air.v2",
             "semantic_operations": [],
             "structural_ir": [
                 {
@@ -372,7 +372,7 @@ mod tests {
     #[test]
     fn sibling_and_nested_loops_have_independent_ordered_back_edges() {
         let air: AirModule = serde_json::from_value(json!({
-            "schema_version": "apxm.air.v1",
+            "schema_version": "apxm.air.v2",
             "semantic_operations": [
                 {
                     "node_id": "node.outer.before",
@@ -408,7 +408,16 @@ mod tests {
                 }
             ],
             "structural_ir": [
-                {"region_id": "region.root", "kind": "region", "execution_order": 0},
+                {
+                    "region_id": "region.root",
+                    "kind": "region",
+                    "execution_order": 0,
+                    "block_arguments": [
+                        {"value_id": "value.outer.before.request", "type_ref": "ModelRequest"},
+                        {"value_id": "value.outer.after.request", "type_ref": "ModelRequest"},
+                        {"value_id": "value.sibling.request", "type_ref": "ModelRequest"}
+                    ]
+                },
                 {
                     "region_id": "loop.outer",
                     "kind": "ais.loop",

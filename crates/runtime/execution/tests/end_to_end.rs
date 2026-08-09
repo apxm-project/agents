@@ -55,7 +55,7 @@ fn write_set() -> AtomicWriteSet {
 
 fn air() -> AirModule {
     let air: AirModule = serde_json::from_value(json!({
-        "schema_version": "apxm.air.v1",
+        "schema_version": "apxm.air.v2",
         "value_assemblies": [
             {"value_id": "value.model.request", "expression": {"kind": "object", "fields": [{"name": "prompt", "value": {"kind": "string", "value": "test"}}]}},
             {"value_id": "value.cap.arguments", "expression": {"kind": "object", "fields": [{"name": "query", "value": {"kind": "string", "value": "release checklist"}}]}},
@@ -658,7 +658,7 @@ fn ports_with_model_composition_capability_external_and_hooks(
 
 fn typed_tool_loop_air() -> AirModule {
     let air: AirModule = serde_json::from_value(json!({
-        "schema_version": "apxm.air.v1",
+        "schema_version": "apxm.air.v2",
         "value_assemblies": [
             {"value_id": "value.request.initial", "expression": {"kind": "object", "fields": [{"name": "messages", "value": {"kind": "array", "items": []}}]}},
             {"value_id": "value.search.arguments", "expression": {"kind": "projection", "root": {"kind": "ssa", "value_id": "value.response.current"}, "property_path": ["tool_request", "arguments"]}},
@@ -1023,6 +1023,80 @@ fn request() -> ExecutionRequest {
         commit_id: "c1".into(),
         write_set: write_set(),
     }
+}
+
+fn assembled_control_predicate_air() -> AirModule {
+    serde_json::from_value(json!({
+        "schema_version": "apxm.air.v2",
+        "value_assemblies": [{
+            "value_id": "value.control",
+            "expression": {
+                "kind": "object",
+                "fields": [{
+                    "name": "enabled",
+                    "value": {"kind": "boolean", "value": true}
+                }]
+            }
+        }],
+        "semantic_operations": [],
+        "structural_ir": [
+            {"region_id": "r.fn", "kind": "function", "execution_order": 0},
+            {"region_id": "r.branch", "kind": "branch", "parent_region_id": "r.fn", "execution_order": 0,
+             "predicate": {"root_value_id": "value.control", "property_path": ["enabled"], "comparator": "truthy"}},
+            {"region_id": "r.then", "kind": "region", "parent_region_id": "r.branch", "execution_order": 0},
+            {"region_id": "r.else", "kind": "region", "parent_region_id": "r.branch", "execution_order": 1}
+        ],
+        "context_flow": [],
+        "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
+    }))
+    .expect("assembled control predicate AIR")
+}
+
+#[tokio::test]
+async fn control_predicate_materializes_permitted_value_assembly_root() {
+    let mut execution = request();
+    execution.air = assembled_control_predicate_air();
+    execution.hook_bindings.clear();
+    execution.capability_invocations.clear();
+    let report = execute(&ports(Arc::new(FakeCommit::new())), execution, Value::Null)
+        .await
+        .expect("assembled predicate root executes");
+    assert!(report.node_outcomes.is_empty());
+}
+
+#[tokio::test]
+async fn control_predicate_refuses_unmaterialized_future_value() {
+    let mut execution = request();
+    execution.air = serde_json::from_value(json!({
+        "schema_version": "apxm.air.v2",
+        "value_assemblies": [{"value_id": "value.request", "expression": {"kind": "object", "fields": []}}],
+        "semantic_operations": [{
+            "node_id": "n.future", "op": "model.call", "parent_region_id": "r.fn", "execution_order": 1,
+            "operands": [
+                {"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"},
+                {"slot": "request", "value_id": "value.request", "type_ref": "ModelRequest"}
+            ],
+            "result": {"value_id": "value.future", "type_ref": "ModelResponse"}
+        }],
+        "structural_ir": [
+            {"region_id": "r.fn", "kind": "function", "execution_order": 0},
+            {"region_id": "r.branch", "kind": "branch", "parent_region_id": "r.fn", "execution_order": 0,
+             "predicate": {"root_value_id": "value.future", "property_path": [], "comparator": "truthy"}},
+            {"region_id": "r.then", "kind": "region", "parent_region_id": "r.branch", "execution_order": 0},
+            {"region_id": "r.else", "kind": "region", "parent_region_id": "r.branch", "execution_order": 1}
+        ],
+        "context_flow": [],
+        "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
+    }))
+    .expect("future predicate AIR");
+    execution.hook_bindings.clear();
+    execution.capability_invocations.clear();
+    let error = execute(&ports(Arc::new(FakeCommit::new())), execution, Value::Null)
+        .await
+        .expect_err("future predicate root must refuse before model execution");
+    assert!(
+        matches!(error, ExecutionError::MissingControlValue { value_id, .. } if value_id == "value.future")
+    );
 }
 
 #[tokio::test]
@@ -1640,7 +1714,7 @@ async fn each_native_model_call_publishes_its_commit_bound_lineage() {
     let usage = Arc::new(RecordingOperationalUsage::default());
     let ports = ports(commit).with_committed_native_model_usage_port(usage.clone());
     let two_models: AirModule = serde_json::from_value(json!({
-        "schema_version": "apxm.air.v1",
+        "schema_version": "apxm.air.v2",
         "semantic_operations": [
             {"node_id": "n.model.first", "op": "model.call", "parent_region_id": "r.fn", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.model.first.request", "type_ref": "ModelRequest"}], "result": {"value_id": "value.model.first.output", "type_ref": "ModelOutput"}},
             {"node_id": "n.model.second", "op": "model.call", "parent_region_id": "r.fn", "execution_order": 1, "operands": [{"slot": "model_ref", "value_id": "model.target.v2", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.model.second.request", "type_ref": "ModelRequest"}], "result": {"value_id": "value.model.second.output", "type_ref": "ModelOutput"}}
@@ -1756,7 +1830,7 @@ async fn raw_attempt_usage_publication_is_rejected_before_exporter_delivery() {
 async fn zero_native_usage_and_uncommitted_execution_emit_nothing() {
     let usage = Arc::new(RecordingOperationalUsage::default());
     let no_model_air: AirModule = serde_json::from_value(json!({
-        "schema_version": "apxm.air.v1",
+        "schema_version": "apxm.air.v2",
         "value_assemblies": [
             {"value_id": "value.cap.arguments", "expression": {"kind": "object", "fields": [{"name": "query", "value": {"kind": "string", "value": "release checklist"}}]}}
         ],
@@ -1897,7 +1971,7 @@ async fn program_invoke_dispatches_to_the_created_instance_receiver() {
     let commit = Arc::new(FakeCommit::new());
     let receivers = Arc::new(Mutex::new(Vec::new()));
     let air: AirModule = serde_json::from_value(json!({
-        "schema_version": "apxm.air.v1",
+        "schema_version": "apxm.air.v2",
         "semantic_operations": [
             {"node_id": "n.new", "op": "program.new", "parent_region_id": "r.fn", "execution_order": 0, "operands": [{"slot": "program_ref", "value_id": "Specialist", "type_ref": "ProgramRef"}], "result": {"value_id": "value.program.instance", "type_ref": "ProgramInstanceRef"}},
             {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.fn", "execution_order": 1, "operands": [{"slot": "receiver", "value_id": "value.program.instance", "type_ref": "ProgramInstanceRef"}, {"slot": "input", "value_id": "value.program.input", "type_ref": "ProgramInput"}], "result": {"value_id": "value.program.output", "type_ref": "ProgramOutput"}}
@@ -1945,7 +2019,7 @@ async fn program_invoke_dispatches_to_the_created_instance_receiver() {
 async fn program_invoke_without_a_receiver_fails_closed() {
     let commit = Arc::new(FakeCommit::new());
     let air: AirModule = serde_json::from_value(json!({
-        "schema_version": "apxm.air.v1",
+        "schema_version": "apxm.air.v2",
         "semantic_operations": [
             {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.fn", "execution_order": 0}
         ],
@@ -1971,7 +2045,7 @@ async fn program_invoke_without_a_receiver_fails_closed() {
 async fn unbound_model_target_fails_closed() {
     let commit = Arc::new(FakeCommit::new());
     let bad_air: AirModule = serde_json::from_value(json!({
-        "schema_version": "apxm.air.v1",
+        "schema_version": "apxm.air.v2",
         "semantic_operations": [
             {"node_id": "n.model", "op": "model.call", "parent_region_id": "r.fn", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.unbound", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.model.request", "type_ref": "ModelRequest"}], "result": {"value_id": "value.model.output", "type_ref": "ModelOutput"}}
         ],
