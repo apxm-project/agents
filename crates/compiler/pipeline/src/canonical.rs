@@ -85,7 +85,7 @@ pub fn lower_and_verify(air: &AirModule) -> std::result::Result<String, Lowering
 fn emit_module(air: &AirModule) -> String {
     let values = MlirValues::from_air(air);
     let mut out = String::new();
-    out.push_str("module attributes {apxm.air = \"apxm.air.v1\", apxm.source_language = \"");
+    out.push_str("module attributes {apxm.air = \"apxm.air.v2\", apxm.source_language = \"");
     out.push_str(air.source_map.source_language.wire());
     out.push_str("\"} {\n");
     out.push_str("  func.func @program(");
@@ -395,7 +395,7 @@ mod tests {
 
     fn sample_air() -> serde_json::Value {
         json!({
-            "schema_version": "apxm.air.v1",
+            "schema_version": "apxm.air.v2",
             "semantic_operations": [
                 {"node_id": "node.model.1", "op": "model.call", "parent_region_id": "region.loop.1", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.loop.input", "type_ref": "ModelRequest"}], "result": {"value_id": "value.model.out", "type_ref": "ModelOutput"}},
                 {"node_id": "node.cap.1", "op": "capability.invoke", "parent_region_id": "region.loop.1", "execution_order": 1, "operands": [{"slot": "capability_ref", "value_id": "cap.search", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "value.args", "type_ref": "SearchRequest"}], "result": {"value_id": "value.cap.out", "type_ref": "SearchResult"}},
@@ -456,7 +456,7 @@ mod tests {
         // A structural op posing as a public op is rejected by the verifier and
         // must not reach MLIR.
         let bad = json!({
-            "schema_version": "apxm.air.v1",
+            "schema_version": "apxm.air.v2",
             "semantic_operations": [
                 {"node_id": "node.dup", "op": "model.call", "parent_region_id": "region.root", "execution_order": 0},
                 {"node_id": "node.dup", "op": "model.call", "parent_region_id": "region.root", "execution_order": 1}

@@ -1,6 +1,6 @@
 {
   "schema_version": "apxm.frontend-surface.v1",
-  "surface_version": "apxm.frontend-graph.v1",
+  "surface_version": "apxm.frontend-graph.v2",
   "everyday": ["Agent", "agent", "Context", "Tool", "Model"],
   "advanced": ["Capability", "Event", "Hook", "TaskGroup"],
   "non_public": [

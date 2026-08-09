@@ -98,8 +98,8 @@ Turn, outcome-commit, conversation, memory-tier, or autonomous-loop operation.
 
 ### FrontendGraph and artifact ownership
 
-The full replacement introduces canonical `apxm.frontend-graph.v1`,
-`apxm.air.v1`, and `apxm.executable-artifact.v1`. They replace the
+The full replacement introduces canonical `apxm.frontend-graph.v2`,
+`apxm.air.v2`, and `apxm.executable-artifact.v1`. They replace the
 pre-canonical implementation contracts; those prototypes are not a supported
 version line.
 

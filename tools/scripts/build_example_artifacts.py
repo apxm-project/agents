@@ -13,8 +13,8 @@ from typing import Any
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_ROOT = REPOSITORY_ROOT / "crates/machine/program/tests/fixtures/example-artifacts"
-CONVERSATIONAL_PYTHON_OUTPUT = FIXTURE_ROOT / "conversational-python.v1.json"
-CONVERSATIONAL_TYPESCRIPT_OUTPUT = FIXTURE_ROOT / "conversational-typescript.v1.json"
+CONVERSATIONAL_PYTHON_OUTPUT = FIXTURE_ROOT / "conversational-python.v2.json"
+CONVERSATIONAL_TYPESCRIPT_OUTPUT = FIXTURE_ROOT / "conversational-typescript.v2.json"
 
 
 def run_json(command: list[str], *, cwd: Path, env: dict[str, str]) -> dict[str, Any]:

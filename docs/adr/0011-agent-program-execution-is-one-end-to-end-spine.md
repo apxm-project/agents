@@ -29,9 +29,9 @@ APXM v1 has one execution spine:
 ```text
 Python or TypeScript Agent Program source
   -> APXM Authoring Frontend
-  -> apxm.frontend-graph.v1
+  -> apxm.frontend-graph.v2
   -> Rust compiler and verifier
-  -> apxm.air.v1 and MLIR lowering
+  -> apxm.air.v2 and MLIR lowering
   -> apxm.executable-artifact.v1
   -> Server root admission and managed occurrence/delivery/application/activation durability
   -> Agents ActivationRunner, dependency readiness, and local execution

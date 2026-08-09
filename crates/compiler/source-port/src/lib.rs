@@ -267,7 +267,7 @@ fn compile_captured_graph(
             vec![SourceDiagnostic::new(
                 SourceDiagnosticCode::FrontendOutputInvalid,
                 format!(
-                    "the {} authoring frontend recorded a value outside apxm.frontend-graph.v1: {error}",
+                    "the {} authoring frontend recorded a value outside apxm.frontend-graph.v2: {error}",
                     frontend.wire()
                 ),
             )]
@@ -342,7 +342,7 @@ mod tests {
     fn frontend_graph_vector(name: &str) -> FrontendGraphVector {
         let vectors: Vec<FrontendGraphVector> = serde_json::from_str(
             &fs::read_to_string(
-                repository_root().join("contracts/vectors/apxm.frontend-graph.v1.json"),
+                repository_root().join("contracts/vectors/apxm.frontend-graph.v2.json"),
             )
             .expect("read checked-in frontend-graph vectors"),
         )

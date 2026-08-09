@@ -15,7 +15,7 @@ from ._native import compile_frontend_graph_artifact as _compile_frontend_graph_
 from ._native import lower_frontend_graph as _lower_frontend_graph
 from ._native import verify_frontend_graph as _verify_frontend_graph
 
-FRONTEND_GRAPH_VERSION = "apxm.frontend-graph.v1"
+FRONTEND_GRAPH_VERSION = "apxm.frontend-graph.v2"
 SOURCE_MAP_VERSION = "apxm.source-map.v1"
 
 

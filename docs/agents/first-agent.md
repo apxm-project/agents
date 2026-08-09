@@ -1,7 +1,7 @@
 # Create Your First APXM Agent
 
 An Agent Program is ordinary Python or TypeScript source. The frontend reads
-that source statically into `apxm.frontend-graph.v1`; Rust alone validates it,
+that source statically into `apxm.frontend-graph.v2`; Rust alone validates it,
 constructs CFG/SSA and AIR, and produces the artifact admitted by Server.
 
 The public authoring vocabulary is `Agent`, `Context`, `Tool`, `Model`, and

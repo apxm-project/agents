@@ -2,7 +2,7 @@
   {
     "name": "valid-air-five-semantic-ops-and-structural-ir",
     "input": {
-      "schema_version": "apxm.air.v1",
+      "schema_version": "apxm.air.v2",
       "semantic_operations": [
         {
           "node_id": "node.model.1",
@@ -108,7 +108,7 @@
   {
     "name": "structural-op-as-public-semantic-op-rejected",
     "input": {
-      "schema_version": "apxm.air.v1",
+      "schema_version": "apxm.air.v2",
       "semantic_operations": [
         {
           "node_id": "node.loop.1",
@@ -128,7 +128,7 @@
   {
     "name": "yield-as-public-semantic-op-rejected",
     "input": {
-      "schema_version": "apxm.air.v1",
+      "schema_version": "apxm.air.v2",
       "semantic_operations": [
         {
           "node_id": "node.yield.1",
@@ -148,7 +148,7 @@
   {
     "name": "serialized-nop-structural-node-rejected",
     "input": {
-      "schema_version": "apxm.air.v1",
+      "schema_version": "apxm.air.v2",
       "semantic_operations": [],
       "structural_ir": [
         {

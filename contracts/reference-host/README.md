@@ -52,7 +52,7 @@ launch requires an input generated with
 binding an endpoint.
 
 For `invoke`, send one `apxm.runtime.host-request.v1` JSONL record containing
-canonical `apxm.air.v1` plus an already-materialized
+canonical `apxm.air.v2` plus an already-materialized
 `apxm.invocation-admission.v1`. The reference host verifies both against its
 startup inputs; it does not compile source or mint authority.
 

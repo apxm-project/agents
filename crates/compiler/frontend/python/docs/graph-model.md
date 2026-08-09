@@ -9,11 +9,11 @@
 The former `ApxmGraph`/`GraphRecorder` model used a plain
 `name`/`nodes`/`edges`/`parameters`/`metadata` DTO with arbitrary operation
 strings. Its cited Python and TypeScript implementation files are no longer
-present in this package. That shape is not `apxm.frontend-graph.v1` and must not
+present in this package. That shape is not `apxm.frontend-graph.v2` and must not
 be revived as a frontend, Studio, compiler, or compatibility path.
 
 The current executable `apxm_program` scaffold records the shallow
-`apxm.frontend-graph.v1` schema through
+`apxm.frontend-graph.v2` schema through
 [`apxm_program`](../apxm_program/__init__.py). The target replacement records a
 complete typed language-neutral graph containing Agent/Context/Model/Tool/
 Capability/Event/Hook declarations, typed values, functions, blocks, regions,

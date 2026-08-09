@@ -67,7 +67,7 @@
   "host_request_schema": {
     "schema_id": "apxm.runtime.host-request.v1",
     "path": "reference-host/schemas/apxm.runtime.host-request.v1.json",
-    "digest": "sha256:12ca6c600fc50f150c02ebfad48b33a0f6e04b5367c9c9e5c89b995283be0458",
+    "digest": "sha256:abcd9707efe46826d858318bf0ae4e4e40d3839cde66c302d8805e4c6bc6577f",
     "semantic_owner": "agents",
     "canonical_source_path": "schemas/apxm.runtime.host-request.v1.json"
   },
@@ -87,7 +87,7 @@
   "host_request_vector": {
     "schema_id": "apxm.runtime.host-request.v1",
     "path": "reference-host/vectors/apxm.runtime.host-request.v1.json",
-    "digest": "sha256:50fafaf0e3509f21e0b764d6ad295f8ad7109d967e6113b7cd78f98b739fb920",
+    "digest": "sha256:a4090d3f131a5b43b90eb32d5b1a37643eab14bf369c2edda7f7182cbb3100ee",
     "canonical_source_path": "vectors/apxm.runtime.host-request.v1.json"
   },
   "host_response_vector": {

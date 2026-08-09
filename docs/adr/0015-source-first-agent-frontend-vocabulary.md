@@ -10,7 +10,7 @@ amends: ADR-0006, ADR-0010, ADR-0014
 
 ## Context
 
-ADR-0006 fixed `apxm.frontend-graph.v1` as the versioned interchange contract
+ADR-0006 fixed `apxm.frontend-graph.v2` as the versioned interchange contract
 and made Python/TypeScript pure authoring libraries over explicit compiler
 bridges. ADR-0010 and ADR-0014 assigned loop, Hook, Context, and composition
 behavior to source, made `ConversationalAgent`/Gao examples, and split AIS into
@@ -20,7 +20,7 @@ Those decisions still leave the public authoring surface as an imperative
 recorder. At the baseline, authors construct `AgentProgram`, hand-record
 node/region identities, import raw operation constants (`OP_MODEL_CALL`,
 `SEMANTIC_*`, `STRUCTURAL_*`, literal `"ais.loop"`), and the frontend copies
-those records field-for-field into `apxm.frontend-graph.v1`, whose `operands`
+those records field-for-field into `apxm.frontend-graph.v2`, whose `operands`
 are an untyped object bag and whose structural `kind` enum admits the raw AIR
 spelling `ais.loop`. Rust then copies FrontendGraph to AIR field-for-field, and
 the MLIR emitter writes unregistered `apxm.*` operations as `() -> ()` under an
@@ -129,7 +129,7 @@ native Python/TypeScript AST + symbols/types   (language-owned, parser evidence)
         -> bind, type/effect check
 BoundAgentTree                                  (frontend-internal, immutable, typed, lexical, source-mapped)
         -> one deterministic traversal
-apxm.frontend-graph.v1                          (only cross-language serialized IR; typed source intents)
+apxm.frontend-graph.v2                          (only cross-language serialized IR; typed source intents)
         -> Rust verification, CFG/SSA, AIS selection
 AIR + registered ais.* / MLIR                   (Rust-owned closed semantics)
         -> verified, digest-bound
@@ -157,7 +157,7 @@ construction and preserved through traversal.
 
 ### 6. FrontendGraph owns typed source intents; Rust alone owns AIS selection
 
-`apxm.frontend-graph.v1` is replaced (not extended with a second IR) by a typed
+`apxm.frontend-graph.v2` is replaced (not extended with a second IR) by a typed
 shape containing: typed Agent/Context/Model/Tool/Capability/imported-Agent/Event/
 Hook declarations and bindings; typed functions, parameters, values, blocks,
 regions, results, data edges, and explicit context/state edges; discriminated

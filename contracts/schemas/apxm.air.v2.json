@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "apxm.air.v1",
+  "$id": "apxm.air.v2",
   "title": "AgentIR",
   "description": "Canonical Agent IR with exactly five public semantic operations (model.call, capability.invoke, program.new, program.invoke, await.event) and the closed AIS-owned compiler-emitted structural family. ais.loop is structural, never a sixth public semantic operation; a transient NOP is compiler machinery that is never serialized.",
   "type": "object",
@@ -13,7 +13,7 @@
   ],
   "properties": {
     "schema_version": {
-      "const": "apxm.air.v1"
+      "const": "apxm.air.v2"
     },
     "semantic_operations": {
       "type": "array",
@@ -49,7 +49,7 @@
       "required": ["value_id", "expression"],
       "properties": {
         "value_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
-        "expression": { "$ref": "apxm.frontend-graph.v1#/$defs/ValueExpression" }
+        "expression": { "$ref": "apxm.frontend-graph.v2#/$defs/ValueExpression" }
       },
       "additionalProperties": false
     },

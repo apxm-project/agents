@@ -1,4 +1,4 @@
-//! `apxm.air.v1` — closed consumer types and the AIR verifier.
+//! `apxm.air.v2` — closed consumer types and the AIR verifier.
 //!
 //! AIR exposes exactly five public semantic operations. Branch, loop, task,
 //! try, yield, and return are compiler-owned structural IR; a NOP is transient
@@ -23,8 +23,8 @@ pub use apxm_ais::{SemanticOpKind, StructuralOpKind};
 /// The single accepted `schema_version` for AIR.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AirVersion {
-    #[serde(rename = "apxm.air.v1")]
-    V1,
+    #[serde(rename = "apxm.air.v2")]
+    V2,
 }
 
 /// One typed SSA operand: a named input slot bound to a produced value id and its
@@ -298,6 +298,14 @@ struct AirSsaLocation {
     entry: bool,
 }
 
+struct AirSsaValidationContext<'a> {
+    results: &'a std::collections::HashMap<&'a str, AirSsaLocation>,
+    blocks: &'a std::collections::HashMap<&'a str, AirSsaLocation>,
+    assemblies: &'a std::collections::HashMap<&'a str, &'a ValueExpression>,
+    regions: &'a std::collections::HashMap<&'a str, &'a StructuralNode>,
+    resume_values: &'a HashSet<&'a str>,
+}
+
 /// Validate authored Tool arguments against AIR def-use order as a second
 /// closed boundary after FrontendGraph verification. This prevents a decoded
 /// AIR payload from smuggling a future or sibling-branch SSA value into a
@@ -345,41 +353,54 @@ fn validate_air_ssa_dominance(verdict: &mut Verdict, air: &AirModule) {
         .iter()
         .map(|assembly| (assembly.value_id.as_str(), &assembly.expression))
         .collect();
+    let resume_values: HashSet<&str> = air
+        .structural_ir
+        .iter()
+        .filter(|region| region.kind == StructuralOpKind::Yield)
+        .flat_map(|region| {
+            region
+                .block_arguments
+                .iter()
+                .map(|value| value.value_id.as_str())
+        })
+        .collect();
+    let context = AirSsaValidationContext {
+        results: &results,
+        blocks: &blocks,
+        assemblies: &assemblies,
+        regions: &regions,
+        resume_values: &resume_values,
+    };
 
     for operation in &air.semantic_operations {
-        if operation.op != SemanticOpKind::CapabilityInvoke {
-            continue;
-        }
-        let Some(arguments) = operation
-            .operands
-            .iter()
-            .find(|operand| operand.slot == "arguments")
-        else {
-            continue;
-        };
         let use_location = AirSsaLocation {
             region_id: operation.parent_region_id.clone(),
             execution_order: operation.execution_order,
             entry: false,
         };
-        let mut visiting = HashSet::new();
-        if !air_value_dominates(
-            &arguments.value_id,
-            &use_location,
-            &results,
-            &blocks,
-            &assemblies,
-            &regions,
-            &mut visiting,
-        ) {
-            verdict.push(Diagnostic::new(
-                DiagnosticCode::SchemaViolation,
-                operation.node_id.clone(),
-                format!(
-                    "authored capability argument '{}' does not dominate its effect site",
-                    arguments.value_id
-                ),
-            ));
+        let allow_resume_value = operation.op == SemanticOpKind::ModelCall;
+        for operand in &operation.operands {
+            let mut visiting = HashSet::new();
+            if (context.results.contains_key(operand.value_id.as_str())
+                || context.blocks.contains_key(operand.value_id.as_str())
+                || context.assemblies.contains_key(operand.value_id.as_str()))
+                && !air_value_dominates(
+                    &operand.value_id,
+                    &use_location,
+                    allow_resume_value,
+                    &context,
+                    &mut visiting,
+                )
+            {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    operation.node_id.clone(),
+                    format!(
+                        "operand '{}' value '{}' does not dominate its effect site",
+                        operand.slot, operand.value_id
+                    ),
+                ));
+            }
         }
     }
 }
@@ -387,34 +408,37 @@ fn validate_air_ssa_dominance(verdict: &mut Verdict, air: &AirModule) {
 fn air_value_dominates(
     value_id: &str,
     use_location: &AirSsaLocation,
-    results: &std::collections::HashMap<&str, AirSsaLocation>,
-    blocks: &std::collections::HashMap<&str, AirSsaLocation>,
-    assemblies: &std::collections::HashMap<&str, &ValueExpression>,
-    regions: &std::collections::HashMap<&str, &StructuralNode>,
+    allow_resume_value: bool,
+    context: &AirSsaValidationContext<'_>,
     visiting: &mut HashSet<String>,
 ) -> bool {
     if !visiting.insert(value_id.to_string()) {
         return false;
     }
-    let location = results.get(value_id).or_else(|| blocks.get(value_id));
-    let base_ok = match location {
-        Some(definition) => air_dominates_location(definition, use_location, regions),
-        None => assemblies.contains_key(value_id),
+    let base_ok = if context.resume_values.contains(value_id) {
+        allow_resume_value
+    } else {
+        match context
+            .results
+            .get(value_id)
+            .or_else(|| context.blocks.get(value_id))
+        {
+            Some(definition) => air_dominates_location(definition, use_location, context.regions),
+            None => context.assemblies.contains_key(value_id),
+        }
     };
     if !base_ok {
         return false;
     }
-    let expression_ok = assemblies.get(value_id).is_none_or(|expression| {
+    let expression_ok = context.assemblies.get(value_id).is_none_or(|expression| {
         let mut references = Vec::new();
         collect_expression_references(expression, &mut references);
         references.into_iter().all(|dependency| {
             air_value_dominates(
                 &dependency,
                 use_location,
-                results,
-                blocks,
-                assemblies,
-                regions,
+                allow_resume_value,
+                context,
                 visiting,
             )
         })
@@ -431,6 +455,25 @@ fn air_dominates_location(
     if definition.region_id == use_location.region_id {
         return definition.entry || definition.execution_order < use_location.execution_order;
     }
+    if !air_region_is_ancestor(&definition.region_id, &use_location.region_id, regions) {
+        let mut definition_child = definition.region_id.as_str();
+        while definition_child != use_location.region_id {
+            let Some(region) = regions.get(definition_child) else {
+                return false;
+            };
+            if region.execution_order >= use_location.execution_order {
+                return false;
+            }
+            let Some(parent) = region.parent_region_id.as_deref() else {
+                break;
+            };
+            definition_child = parent;
+        }
+        if definition_child == use_location.region_id {
+            return true;
+        }
+    }
+
     let mut child = use_location.region_id.as_str();
     while let Some(region) = regions.get(child) {
         let Some(parent) = region.parent_region_id.as_deref() else {
@@ -438,6 +481,24 @@ fn air_dominates_location(
         };
         if parent == definition.region_id {
             return definition.entry || definition.execution_order < region.execution_order;
+        }
+        child = parent;
+    }
+    false
+}
+
+fn air_region_is_ancestor(
+    ancestor: &str,
+    descendant: &str,
+    regions: &std::collections::HashMap<&str, &StructuralNode>,
+) -> bool {
+    let mut child = descendant;
+    while let Some(region) = regions.get(child) {
+        let Some(parent) = region.parent_region_id.as_deref() else {
+            return false;
+        };
+        if parent == ancestor {
+            return true;
         }
         child = parent;
     }

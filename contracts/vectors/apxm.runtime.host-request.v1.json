@@ -23,7 +23,7 @@
         "provenance_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
       },
       "air": {
-        "schema_version": "apxm.air.v1",
+        "schema_version": "apxm.air.v2",
         "semantic_operations": [],
         "structural_ir": [],
         "context_flow": [],
@@ -51,7 +51,7 @@
       "schema_version": "apxm.runtime.host-request.v1",
       "operation": "invoke",
       "air": {
-        "schema_version": "apxm.air.v1",
+        "schema_version": "apxm.air.v2",
         "semantic_operations": [],
         "structural_ir": [],
         "context_flow": [],

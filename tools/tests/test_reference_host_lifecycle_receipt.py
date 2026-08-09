@@ -60,7 +60,7 @@ class ReferenceHostLifecycleReceiptTests(unittest.TestCase):
 
     def test_serialized_air_digest_matches_owner_field_order(self) -> None:
         air = {
-            "schema_version": "apxm.air.v1",
+            "schema_version": "apxm.air.v2",
             "semantic_operations": [],
             "structural_ir": [],
             "context_flow": [],

@@ -28,19 +28,29 @@ fn check(file: &str, verify: impl Fn(&Value) -> bool) {
 
 #[test]
 fn air_vectors_match_verifier() {
-    check("apxm.air.v1.json", |v| verify_air_json(v).is_accepted());
+    check("apxm.air.v2.json", |v| verify_air_json(v).is_accepted());
 }
 
 #[test]
 fn frontend_graph_vectors_match_verifier() {
-    check("apxm.frontend-graph.v1.json", |v| {
+    check("apxm.frontend-graph.v2.json", |v| {
+        verify_frontend_graph_json(v).is_accepted()
+    });
+}
+
+#[test]
+fn retired_v1_vectors_are_rejected_without_migration() {
+    check("apxm.air.v1-rejection.json", |v| {
+        verify_air_json(v).is_accepted()
+    });
+    check("apxm.frontend-graph.v1-rejection.json", |v| {
         verify_frontend_graph_json(v).is_accepted()
     });
 }
 
 #[test]
 fn tool_argument_must_be_defined_before_its_effect_site() {
-    let mut input = load_vectors("apxm.frontend-graph.v1.json")
+    let mut input = load_vectors("apxm.frontend-graph.v2.json")
         .into_iter()
         .find(|vector| vector.name == "valid-frontend-graph-typed-intents")
         .expect("typed frontend graph vector")
@@ -58,6 +68,36 @@ fn tool_argument_must_be_defined_before_its_effect_site() {
         }
     }
     assert!(!verify_frontend_graph_json(&input).is_accepted());
+}
+
+#[test]
+fn every_authored_model_operand_requires_dominance() {
+    let valid = load_vectors("apxm.frontend-graph.v2.json")
+        .into_iter()
+        .find(|vector| vector.name == "valid-frontend-graph-typed-intents")
+        .expect("typed frontend graph vector")
+        .input;
+    assert!(verify_frontend_graph_json(&valid).is_accepted());
+
+    let mut future_request = valid.clone();
+    future_request["call_intents"][0]["operand_values"] = json!(["value.search.out"]);
+    future_request["data_edges"][0]["from_value"] = json!("value.search.out");
+    assert!(!verify_frontend_graph_json(&future_request).is_accepted());
+
+    let mut sibling_request = valid.clone();
+    sibling_request["regions"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "region_id": "region.sibling",
+            "region_role": "task_scope",
+            "parent_region_id": "region.body",
+            "execution_order": 3
+        }));
+    sibling_request["call_intents"][0]["parent_region_id"] = json!("region.sibling");
+    sibling_request["call_intents"][0]["operand_values"] = json!(["value.search.out"]);
+    sibling_request["data_edges"][0]["from_value"] = json!("value.search.out");
+    assert!(!verify_frontend_graph_json(&sibling_request).is_accepted());
 }
 
 #[test]
@@ -85,7 +125,7 @@ fn wire_members<T: serde::Serialize>(variants: &[T]) -> Vec<String> {
 
 #[test]
 fn air_semantic_op_enum_does_not_drift() {
-    let schema = load_contract("schemas/apxm.air.v1.json");
+    let schema = load_contract("schemas/apxm.air.v2.json");
     let expected = schema_enum(&schema, "SemanticOp", "op");
     let actual = wire_members(&[
         SemanticOpKind::ModelCall,
@@ -107,7 +147,7 @@ fn air_semantic_op_enum_does_not_drift() {
 
 #[test]
 fn air_structural_kind_enum_does_not_drift() {
-    let schema = load_contract("schemas/apxm.air.v1.json");
+    let schema = load_contract("schemas/apxm.air.v2.json");
     let expected = schema_enum(&schema, "StructuralNode", "kind");
     let actual = wire_members(&[
         StructuralOpKind::Function,
@@ -164,7 +204,7 @@ fn source_map_enums_do_not_drift() {
 
 #[test]
 fn verifier_is_deterministic() {
-    let doc = load_vectors("apxm.air.v1.json")
+    let doc = load_vectors("apxm.air.v2.json")
         .into_iter()
         .find(|v| v.name == "valid-air-five-semantic-ops-and-structural-ir")
         .expect("named vector present");
@@ -175,7 +215,7 @@ fn verifier_is_deterministic() {
 
 fn predicate_air() -> Value {
     json!({
-        "schema_version": "apxm.air.v1",
+        "schema_version": "apxm.air.v2",
         "semantic_operations": [{
             "node_id": "node.model",
             "op": "model.call",

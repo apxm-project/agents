@@ -1,4 +1,4 @@
-//! `apxm.frontend-graph.v1` — closed consumer types and verification.
+//! `apxm.frontend-graph.v2` — closed consumer types and verification.
 //!
 //! The FrontendGraph is the language-neutral typed source graph recorded
 //! equivalently by the Python and TypeScript source-first frontends. It records
@@ -23,8 +23,8 @@ use crate::source_map::{SourceLanguage, SourceMap};
 /// The single accepted `schema_version` for a FrontendGraph.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FrontendGraphVersion {
-    #[serde(rename = "apxm.frontend-graph.v1")]
-    V1,
+    #[serde(rename = "apxm.frontend-graph.v2")]
+    V2,
 }
 
 /// The closed Hook scope set.
@@ -875,6 +875,7 @@ struct SsaValidationContext<'a> {
     values: &'a HashMap<&'a str, &'a Value>,
     blocks: &'a HashMap<&'a str, &'a Block>,
     calls: &'a HashMap<&'a str, &'a CallIntent>,
+    controls: &'a HashMap<&'a str, &'a ControlIntent>,
     functions: &'a HashMap<&'a str, &'a str>,
     region_parent: &'a HashMap<&'a str, Option<&'a str>>,
     region_order: &'a HashMap<&'a str, u32>,
@@ -932,6 +933,7 @@ fn validate_ssa_dominance(
         values,
         blocks: &blocks,
         calls: &calls,
+        controls: &controls,
         functions: &functions,
         region_parent: &region_parent,
         region_order: &region_order,
@@ -953,16 +955,20 @@ fn validate_ssa_dominance(
 
     let mut resume_input_edges = Vec::new();
     for edge in &graph.data_edges {
-        // Control-flow/result plumbing may be a loop-carried edge rather than
-        // a forward SSA use. Effect operands, however, must be dominated at
-        // the exact call site because they become authored Model/Tool data.
-        if calls.get(edge.to_consumer.as_str()).is_some_and(|intent| {
-            matches!(
-                intent.intent_kind,
-                IntentKind::ToolInvocation | IntentKind::CapabilityInvocation
-            )
-        }) {
-            if value_reaches_resume_input(&edge.from_value, values, &mut HashSet::new()) {
+        // Every executable operand is an SSA use. Model requests, capability
+        // arguments, program inputs, event operands, and structural operands
+        // must all be dominated at their exact consumer location; a globally
+        // declared value is not sufficient.
+        if calls.contains_key(edge.to_consumer.as_str()) {
+            let rejects_resume_input = calls.get(edge.to_consumer.as_str()).is_some_and(|intent| {
+                matches!(
+                    intent.intent_kind,
+                    IntentKind::ToolInvocation | IntentKind::CapabilityInvocation
+                )
+            });
+            if rejects_resume_input
+                && value_reaches_resume_input(&edge.from_value, values, &mut HashSet::new())
+            {
                 resume_input_edges.push((edge.from_value.clone(), edge.to_consumer.clone()));
                 continue;
             }
@@ -1048,8 +1054,7 @@ fn value_dominates_use(
                         entry: false,
                     },
                     use_location.clone(),
-                    context.region_parent,
-                    context.region_order,
+                    context,
                 )
             }),
         ValueOrigin::BlockArgument => value
@@ -1064,8 +1069,7 @@ fn value_dominates_use(
                         entry: true,
                     },
                     use_location.clone(),
-                    context.region_parent,
-                    context.region_order,
+                    context,
                 )
             }),
         ValueOrigin::Parameter => value
@@ -1080,8 +1084,7 @@ fn value_dominates_use(
                         entry: true,
                     },
                     use_location.clone(),
-                    context.region_parent,
-                    context.region_order,
+                    context,
                 )
             }),
         // Resume values are produced by the structural yield and consumed by
@@ -1131,8 +1134,7 @@ fn collect_expression_references(expression: &ValueExpression, out: &mut Vec<Str
 fn dominates_location(
     definition: SsaLocation,
     use_location: SsaLocation,
-    region_parent: &HashMap<&str, Option<&str>>,
-    region_order: &HashMap<&str, u32>,
+    context: &SsaValidationContext<'_>,
 ) -> bool {
     if definition.region_id == use_location.region_id {
         return definition.entry || definition.execution_order < use_location.execution_order;
@@ -1140,15 +1142,41 @@ fn dominates_location(
     if !is_ancestor(
         &definition.region_id,
         &use_location.region_id,
-        region_parent,
+        context.region_parent,
     ) {
-        return false;
+        if !is_ancestor(
+            &use_location.region_id,
+            &definition.region_id,
+            context.region_parent,
+        ) {
+            return false;
+        }
+        let mut child = definition.region_id.as_str();
+        while child != use_location.region_id {
+            let Some(parent) = context.region_parent.get(child).copied().flatten() else {
+                return false;
+            };
+            let completed_before_use = context.controls.values().any(|control| {
+                control.parent_region_id == parent
+                    && control
+                        .body_region_ids
+                        .iter()
+                        .any(|region_id| region_id == child)
+                    && control.execution_order < use_location.execution_order
+            });
+            if !completed_before_use {
+                return false;
+            }
+            child = parent;
+        }
+        return true;
     }
     let mut child = use_location.region_id.as_str();
-    while let Some(parent) = region_parent.get(child).copied().flatten() {
+    while let Some(parent) = context.region_parent.get(child).copied().flatten() {
         if parent == definition.region_id {
             return definition.entry
-                || region_order
+                || context
+                    .region_order
                     .get(child)
                     .is_some_and(|child_order| definition.execution_order < *child_order);
         }

@@ -267,7 +267,7 @@ impl ExecutableArtifact {
     }
 
     /// Derive the canonical `apxm.executable-artifact.v1` for a compiled
-    /// `apxm.air.v1` module when no FrontendGraph is available.
+    /// `apxm.air.v2` module when no FrontendGraph is available.
     ///
     /// Requirements are inferred only from embedded `model.call` operands. Prefer
     /// [`Self::from_frontend_graph`] for complete source-bundle and requirement
@@ -420,7 +420,7 @@ impl ExecutableArtifact {
     }
 }
 
-/// Compile serialized `apxm.frontend-graph.v1` into one complete executable
+/// Compile serialized `apxm.frontend-graph.v2` into one complete executable
 /// artifact containing the exact structural AIR the artifact digest binds.
 pub fn compile_frontend_graph_artifact_json(graph_json: &str) -> Result<String, String> {
     let graph: FrontendGraph =
@@ -567,7 +567,7 @@ mod from_air_tests {
             })))
             .collect();
         serde_json::from_value(serde_json::json!({
-            "schema_version": "apxm.air.v1",
+            "schema_version": "apxm.air.v2",
             "semantic_operations": ops,
             "structural_ir": [
                 { "region_id": "region.body", "kind": "region", "execution_order": 0 },
@@ -654,7 +654,7 @@ mod from_graph_tests {
 
     fn specialist_graph() -> FrontendGraph {
         serde_json::from_value(serde_json::json!({
-            "schema_version": "apxm.frontend-graph.v1",
+            "schema_version": "apxm.frontend-graph.v2",
             "source_language": "python",
             "program_definitions": [{
                 "program_id": "Specialist",

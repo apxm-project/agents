@@ -97,8 +97,8 @@ Surfaces:
   `runtime_evidence.rs`.
 - `crates/runtime/execution/src/ports.rs` — the `EventRef` newtype and its
   public string constructor.
-- `contracts/schemas/apxm.frontend-graph.v1.json`,
-  `apxm.frontend-surface.v1.json`, `apxm.air.v1.json`,
+- `contracts/schemas/apxm.frontend-graph.v2.json`,
+  `apxm.frontend-surface.v1.json`, `apxm.air.v2.json`,
   `apxm.executable-artifact.v1.json`, `apxm.runtime-evidence.v1.json` and their
   `contracts/vectors/` counterparts.
 - `examples/agents/conversational/src/parity-agent.ts`, which currently

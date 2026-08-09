@@ -71,7 +71,7 @@ mod tests {
 
     #[test]
     fn schema_id_grammar() {
-        assert!(is_schema_id("apxm.air.v1"));
+        assert!(is_schema_id("apxm.air.v2"));
         assert!(is_schema_id("apxm.model-context-envelope.v1"));
         assert!(!is_schema_id("apxm.Air.v1"));
         assert!(!is_schema_id("apxm.a.b.v1"));
