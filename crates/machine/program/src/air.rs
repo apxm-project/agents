@@ -403,6 +403,92 @@ fn validate_air_ssa_dominance(verdict: &mut Verdict, air: &AirModule) {
             }
         }
     }
+
+    for region in &air.structural_ir {
+        let operand_location = if region.kind == StructuralOpKind::Loop {
+            AirSsaLocation {
+                region_id: region.region_id.clone(),
+                execution_order: 0,
+                entry: true,
+            }
+        } else {
+            AirSsaLocation {
+                region_id: region
+                    .parent_region_id
+                    .clone()
+                    .unwrap_or_else(|| region.region_id.clone()),
+                execution_order: region.execution_order,
+                entry: false,
+            }
+        };
+        for operand in &region.operands {
+            let use_location = if region.kind == StructuralOpKind::Loop && operand.slot == "carried"
+            {
+                AirSsaLocation {
+                    region_id: region.region_id.clone(),
+                    execution_order: u32::MAX,
+                    entry: false,
+                }
+            } else {
+                operand_location.clone()
+            };
+            let mut visiting = HashSet::new();
+            if (context.results.contains_key(operand.value_id.as_str())
+                || context.blocks.contains_key(operand.value_id.as_str())
+                || context.assemblies.contains_key(operand.value_id.as_str()))
+                && !air_value_dominates(
+                    &operand.value_id,
+                    &use_location,
+                    true,
+                    &context,
+                    &mut visiting,
+                )
+            {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    region.region_id.clone(),
+                    format!(
+                        "structural operand '{}' value '{}' does not dominate its consumer",
+                        operand.slot, operand.value_id
+                    ),
+                ));
+            }
+        }
+        if let Some(predicate) = &region.predicate {
+            let predicate_location = AirSsaLocation {
+                region_id: region.region_id.clone(),
+                execution_order: 0,
+                entry: true,
+            };
+            let mut visiting = HashSet::new();
+            if (context
+                .results
+                .contains_key(predicate.root_value_id.as_str())
+                || context
+                    .blocks
+                    .contains_key(predicate.root_value_id.as_str())
+                || context
+                    .assemblies
+                    .contains_key(predicate.root_value_id.as_str()))
+                && !air_value_dominates(
+                    &predicate.root_value_id,
+                    &predicate_location,
+                    true,
+                    &context,
+                    &mut visiting,
+                )
+            {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    region.region_id.clone(),
+                    format!(
+                        "predicate root '{}' does not dominate its structural consumer",
+                        predicate.root_value_id
+                    ),
+                ));
+            }
+        }
+    }
 }
 
 fn air_value_dominates(
@@ -456,6 +542,9 @@ fn air_dominates_location(
         return definition.entry || definition.execution_order < use_location.execution_order;
     }
     if !air_region_is_ancestor(&definition.region_id, &use_location.region_id, regions) {
+        if air_loop_scope_precedes(&definition.region_id, &use_location.region_id, regions) {
+            return true;
+        }
         let mut definition_child = definition.region_id.as_str();
         while definition_child != use_location.region_id {
             let Some(region) = regions.get(definition_child) else {
@@ -503,6 +592,53 @@ fn air_region_is_ancestor(
         child = parent;
     }
     false
+}
+
+fn air_loop_scope_precedes(
+    definition_region: &str,
+    use_region: &str,
+    regions: &std::collections::HashMap<&str, &StructuralNode>,
+) -> bool {
+    let mut common = regions
+        .get(use_region)
+        .and_then(|region| region.parent_region_id.as_deref());
+    while let Some(common_region) = common {
+        let Some(definition_child) =
+            air_first_child_under(definition_region, common_region, regions)
+        else {
+            common = regions
+                .get(common_region)
+                .and_then(|region| region.parent_region_id.as_deref());
+            continue;
+        };
+        let Some(use_child) = air_first_child_under(use_region, common_region, regions) else {
+            return false;
+        };
+        if definition_child.region_id != use_child.region_id {
+            return definition_child.kind == StructuralOpKind::Loop
+                && definition_child.execution_order < use_child.execution_order;
+        }
+        common = regions
+            .get(common_region)
+            .and_then(|region| region.parent_region_id.as_deref());
+    }
+    false
+}
+
+fn air_first_child_under<'a>(
+    descendant: &str,
+    ancestor: &str,
+    regions: &std::collections::HashMap<&'a str, &'a StructuralNode>,
+) -> Option<&'a StructuralNode> {
+    let mut child = descendant;
+    loop {
+        let region = regions.get(child)?;
+        let parent = region.parent_region_id.as_deref()?;
+        if parent == ancestor {
+            return Some(region);
+        }
+        child = parent;
+    }
 }
 
 fn valid_property_path(path: &[String]) -> bool {

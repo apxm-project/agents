@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 RETIRED_COORDINATES = ("apxm.air.v1", "apxm.frontend-graph.v1")
 ACTIVE_ROOTS = (
+    ".dekk.toml",
     "contracts/schemas",
     "contracts/vectors",
     "contracts/reference-host",
