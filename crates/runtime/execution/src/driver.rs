@@ -2039,20 +2039,23 @@ fn validate_execution_request(
         else {
             continue;
         };
+        if initial_values.contains_key(arguments.value_id.as_str()) {
+            return Err(ExecutionError::InvalidAir {
+                message: format!(
+                    "node {}: initial_values may not supply a capability argument ({})",
+                    operation.node_id, arguments.value_id
+                ),
+            });
+        }
         if assembled.contains(arguments.value_id.as_str())
             || defined.contains(arguments.value_id.as_str())
         {
             continue;
         }
-        let source = if initial_values.contains_key(arguments.value_id.as_str()) {
-            "initial_values may not supply an authored capability argument"
-        } else {
-            "capability argument is not an authored assembly or defined SSA value"
-        };
         return Err(ExecutionError::InvalidAir {
             message: format!(
-                "node {}: {} ({})",
-                operation.node_id, source, arguments.value_id
+                "node {}: capability argument is not an authored assembly or defined SSA value ({})",
+                operation.node_id, arguments.value_id
             ),
         });
     }
