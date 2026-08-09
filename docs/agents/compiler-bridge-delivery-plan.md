@@ -35,7 +35,7 @@ this plan.
 
 ## Cross-cutting invariants
 
-1. Every mode accepts the same canonical `apxm.frontend-graph.v1` value and
+1. Every mode accepts the same canonical `apxm.frontend-graph.v2` value and
    produces the same compiler result or typed diagnostic for the same
    Compatibility Set.
 2. Frontend source is the sole source of Agent Program behavior. A Source
@@ -67,7 +67,7 @@ Deliverables:
 Gate B0: every current path has one target disposition and every conformance
 fixture names its expected semantic graph rather than unstable formatting.
 
-### B1 — Own `apxm.frontend-graph.v1`
+### B1 — Own `apxm.frontend-graph.v2`
 
 Dependencies: APXM master A0 owner descriptor and C0b contract-development
 bundle.

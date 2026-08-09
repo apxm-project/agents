@@ -19,8 +19,8 @@ tools/           the validation and digest gate
 
 | `$id` | Responsibility |
 | --- | --- |
-| `apxm.frontend-graph.v1` | Language-neutral graph recorded equivalently by Python, TypeScript, and generated source |
-| `apxm.air.v1` | Five public semantic operations plus compiler-owned structural IR |
+| `apxm.frontend-graph.v2` | Language-neutral graph recorded equivalently by Python, TypeScript, and generated source |
+| `apxm.air.v2` | Five public semantic operations plus compiler-owned structural IR |
 | `apxm.executable-artifact.v1` | Digest-bound artifact emitting only `artifact_semantic` Port Requirements |
 | `apxm.runtime-evidence.v1` | Append-only monotonic Program Instance/Invocation/effect facts |
 | `apxm.source-map.v1` | Non-executable mapping from operations and regions back to source spans |

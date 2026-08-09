@@ -2,7 +2,7 @@
   {
     "name": "valid-air-five-semantic-ops-and-structural-ir",
     "input": {
-      "schema_version": "apxm.air.v1",
+      "schema_version": "apxm.air.v2",
       "semantic_operations": [
         {
           "node_id": "node.model.1",
@@ -62,7 +62,11 @@
         {
           "region_id": "region.root",
           "kind": "region",
-          "execution_order": 0
+          "execution_order": 0,
+          "block_arguments": [
+            { "value_id": "value.request", "type_ref": "ModelRequest" },
+            { "value_id": "value.child.input", "type_ref": "ChildInput" }
+          ]
         },
         {
           "region_id": "region.loop.1",
@@ -108,7 +112,7 @@
   {
     "name": "structural-op-as-public-semantic-op-rejected",
     "input": {
-      "schema_version": "apxm.air.v1",
+      "schema_version": "apxm.air.v2",
       "semantic_operations": [
         {
           "node_id": "node.loop.1",
@@ -128,7 +132,7 @@
   {
     "name": "yield-as-public-semantic-op-rejected",
     "input": {
-      "schema_version": "apxm.air.v1",
+      "schema_version": "apxm.air.v2",
       "semantic_operations": [
         {
           "node_id": "node.yield.1",
@@ -148,7 +152,7 @@
   {
     "name": "serialized-nop-structural-node-rejected",
     "input": {
-      "schema_version": "apxm.air.v1",
+      "schema_version": "apxm.air.v2",
       "semantic_operations": [],
       "structural_ir": [
         {
@@ -156,6 +160,22 @@
           "kind": "nop"
         }
       ],
+      "source_map": {
+        "schema_version": "apxm.source-map.v1",
+        "source_language": "python",
+        "node_spans": [],
+        "region_annotations": []
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "incompatible-air-v1-schema-version-rejected",
+    "input": {
+      "schema_version": "apxm.air.v1",
+      "semantic_operations": [],
+      "structural_ir": [],
+      "context_flow": [],
       "source_map": {
         "schema_version": "apxm.source-map.v1",
         "source_language": "python",

@@ -64,7 +64,7 @@ class StepReport:
 
 
 def acceptance_steps() -> tuple[AcceptanceStep, ...]:
-    """The exact gates that prove the issue-35 source/compiler acceptance."""
+    """The exact gates that prove the issue-82 source/compiler acceptance."""
 
     return (
         AcceptanceStep(
@@ -109,7 +109,7 @@ def acceptance_steps() -> tuple[AcceptanceStep, ...]:
         ),
         AcceptanceStep(
             "compile-service-canonical",
-            "the canonical CLI compile path emits apxm.air.v1 from repository-owned source",
+            "the canonical CLI compile path emits apxm.air.v2 from repository-owned source",
             ("dekk", "agents", "compile-service-canonical"),
         ),
     )
@@ -237,7 +237,7 @@ def run_acceptance(
         "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
         "source_revision": revision,
         "issue_scope": {
-            "issue": 35,
+            "issue": 82,
             "plan_tags": ["P-002", "P-003", "P-004", "G1", "G2"],
         },
         "overall_status": overall_status,

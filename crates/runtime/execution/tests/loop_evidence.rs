@@ -194,7 +194,7 @@ fn source_map(loop_ids: &[&str]) -> Value {
 
 fn nested_sibling_air() -> AirModule {
     decode_air(json!({
-        "schema_version": "apxm.air.v1",
+        "schema_version": "apxm.air.v2",
         "semantic_operations": [
             {
                 "node_id": "node.outer.before",
@@ -257,7 +257,7 @@ fn nested_sibling_air() -> AirModule {
 
 fn two_node_loop_air() -> AirModule {
     decode_air(json!({
-        "schema_version": "apxm.air.v1",
+        "schema_version": "apxm.air.v2",
         "semantic_operations": [
             {
                 "node_id": "node.first",
@@ -323,7 +323,7 @@ fn interrupted_loop_air(interrupt_kind: &str) -> AirModule {
         })
     };
     decode_air(json!({
-        "schema_version": "apxm.air.v1",
+        "schema_version": "apxm.air.v2",
         "semantic_operations": [
             {
                 "node_id": "node.before",

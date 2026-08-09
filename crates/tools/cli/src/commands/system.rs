@@ -14,7 +14,7 @@ use super::implementations::{
 };
 
 const DOCTOR_FRONTEND_GRAPH_PROBE: &str = r#"{
-  "schema_version": "apxm.frontend-graph.v1",
+  "schema_version": "apxm.frontend-graph.v2",
   "source_language": "python",
   "program_definitions": [
     {

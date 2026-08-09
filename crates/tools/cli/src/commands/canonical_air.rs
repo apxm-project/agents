@@ -1,7 +1,7 @@
 //! Emit canonical AIR from a canonical FrontendGraph through the native bridge.
 //!
-//! This reads a `apxm.frontend-graph.v1` document and lowers it in-process to
-//! canonical `apxm.air.v1` JSON: no CLI subprocess and no network compile.
+//! This reads a `apxm.frontend-graph.v2` document and lowers it in-process to
+//! canonical `apxm.air.v2` JSON: no CLI subprocess and no network compile.
 
 use std::io::Read;
 use std::path::PathBuf;

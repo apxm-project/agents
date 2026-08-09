@@ -445,7 +445,7 @@ _Avoid_: Python runtime, TypeScript runtime, AIR printer
 **FrontendGraph**:
 The canonical versioned, language-neutral value recorded by every APXM
 Authoring Frontend and consumed by the Rust compiler. The target replacement is
-`apxm.frontend-graph.v1`. The implementations that predate this contract are
+`apxm.frontend-graph.v2`. The implementations that predate this contract are
 prototype evidence, not another supported version.
 _Avoid_: Python graph, TypeScript IR, handwritten AIR
 

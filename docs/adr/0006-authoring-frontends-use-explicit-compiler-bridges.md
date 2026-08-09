@@ -23,7 +23,7 @@ reach private APXM services directly.
 
 ## Decision
 
-APXM adopts `apxm.frontend-graph.v1` as the canonical, versioned interchange
+APXM adopts `apxm.frontend-graph.v2` as the canonical, versioned interchange
 contract between authoring frontends and the compiler.
 
 - Python and TypeScript frontend packages are pure authoring libraries. They

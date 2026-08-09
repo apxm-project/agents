@@ -1,7 +1,7 @@
 //! Canonical Agent Program semantic surface.
 //!
 //! This crate is the first-party consumer of the closed Agent Program semantic
-//! schemas — `apxm.frontend-graph.v1`, `apxm.air.v1`, `apxm.source-map.v1`,
+//! schemas — `apxm.frontend-graph.v2`, `apxm.air.v2`, `apxm.source-map.v1`,
 //! `apxm.executable-artifact.v1`, and `apxm.port-requirement.v1`. It provides
 //! closed Rust types that mirror those schemas exactly, a canonical artifact
 //! codec, and deterministic verifiers that fail closed on any value outside the

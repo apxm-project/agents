@@ -122,7 +122,7 @@ describe("source-first TypeScript authoring", () => {
 
   it("binds a minimal one-shot Model agent", () => {
     const graph = Summarizer.frontendGraph() as unknown as Graph;
-    expect(graph.schema_version).toBe("apxm.frontend-graph.v1");
+    expect(graph.schema_version).toBe("apxm.frontend-graph.v2");
     expect(graph.declarations.map((d) => d.decl_kind)).toEqual(["model_binding"]);
     expect(graph.call_intents.map((c) => c.intent_kind)).toEqual(["model_invocation"]);
     expect(Summarizer.diagnostics()).toBeNull();

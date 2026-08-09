@@ -41,7 +41,7 @@
     "owned_schemas": [
       {
         "digest": "sha256:b830d0ecda3ddcb847fdb077b9fcf9d7f880b47baa48eaaf5913c0672ffa4059",
-        "schema_id": "apxm.frontend-graph.v1"
+        "schema_id": "apxm.frontend-graph.v2"
       },
       {
         "digest": "sha256:18d7fe956568922cde04ced008c33ab9ddec8487e12e87867a857d833468ef4c",
@@ -49,7 +49,7 @@
       },
       {
         "digest": "sha256:bd9d4b748d1025dc21bb6bcd68517ad552b41348e9eabe43a1aa9b6c527067b1",
-        "schema_id": "apxm.air.v1"
+        "schema_id": "apxm.air.v2"
       },
       {
         "digest": "sha256:14ae660b948b301ad388aab673b93e6eb1cd1f9984938e2558330a67437ac0f9",

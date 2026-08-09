@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "apxm.frontend-graph.v1",
+  "$id": "apxm.frontend-graph.v2",
   "title": "FrontendGraph",
   "description": "Language-neutral typed source graph emitted equivalently by the Python and TypeScript source-first frontends. It records typed declarations and bindings, typed values, blocks, regions, data edges, explicit context/state edges, discriminated typed source intents for the model/capability/program/event effects, language-neutral structural control-flow intents, static Hook bindings, exact requirements, digests, and a source map. It carries typed source intent only: it never contains an AIR/AIS operation string, an ais.* kind, an untyped operand bag, runtime placement, credentials, grants, or dynamic registration. Rust alone selects AIS operations from these intents.",
   "type": "object",
@@ -25,7 +25,7 @@
   ],
   "properties": {
     "schema_version": {
-      "const": "apxm.frontend-graph.v1"
+      "const": "apxm.frontend-graph.v2"
     },
     "source_language": {
       "type": "string",

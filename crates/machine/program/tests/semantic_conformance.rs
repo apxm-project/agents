@@ -28,19 +28,19 @@ fn check(file: &str, verify: impl Fn(&Value) -> bool) {
 
 #[test]
 fn air_vectors_match_verifier() {
-    check("apxm.air.v1.json", |v| verify_air_json(v).is_accepted());
+    check("apxm.air.v2.json", |v| verify_air_json(v).is_accepted());
 }
 
 #[test]
 fn frontend_graph_vectors_match_verifier() {
-    check("apxm.frontend-graph.v1.json", |v| {
+    check("apxm.frontend-graph.v2.json", |v| {
         verify_frontend_graph_json(v).is_accepted()
     });
 }
 
 #[test]
 fn tool_argument_must_be_defined_before_its_effect_site() {
-    let mut input = load_vectors("apxm.frontend-graph.v1.json")
+    let mut input = load_vectors("apxm.frontend-graph.v2.json")
         .into_iter()
         .find(|vector| vector.name == "valid-frontend-graph-typed-intents")
         .expect("typed frontend graph vector")
@@ -58,6 +58,101 @@ fn tool_argument_must_be_defined_before_its_effect_site() {
         }
     }
     assert!(!verify_frontend_graph_json(&input).is_accepted());
+}
+
+#[test]
+fn every_executable_invocation_operand_must_be_dominated() {
+    let base = load_vectors("apxm.frontend-graph.v2.json")
+        .into_iter()
+        .find(|vector| vector.name == "valid-frontend-graph-typed-intents")
+        .expect("typed frontend graph vector")
+        .input;
+
+    let mut future_model = base.clone();
+    future_model["call_intents"]
+        .as_array_mut()
+        .expect("call intents")
+        .iter_mut()
+        .for_each(|call| {
+            if call["node_id"] == json!("node.model.1") {
+                call["operand_values"] = json!(["value.search.out"]);
+            }
+        });
+    future_model["data_edges"][0]["from_value"] = json!("value.search.out");
+    assert!(!verify_frontend_graph_json(&future_model).is_accepted());
+
+    let mut sibling = base.clone();
+    sibling["regions"].as_array_mut().expect("regions").extend([
+        json!({
+            "region_id": "region.sibling.a",
+            "region_role": "conditional_arm",
+            "parent_region_id": "region.body",
+            "execution_order": 0
+        }),
+        json!({
+            "region_id": "region.sibling.b",
+            "region_role": "conditional_arm",
+            "parent_region_id": "region.body",
+            "execution_order": 1
+        }),
+    ]);
+    sibling["call_intents"]
+        .as_array_mut()
+        .expect("call intents")
+        .iter_mut()
+        .for_each(|call| match call["node_id"].as_str() {
+            Some("node.model.1") => {
+                call["parent_region_id"] = json!("region.sibling.a");
+                call["execution_order"] = json!(3);
+            }
+            Some("node.cap.1") => {
+                call["parent_region_id"] = json!("region.sibling.b");
+                call["execution_order"] = json!(4);
+            }
+            _ => {}
+        });
+    assert!(!verify_frontend_graph_json(&sibling).is_accepted());
+
+    let mut completed_nested = base;
+    completed_nested["call_intents"]
+        .as_array_mut()
+        .expect("call intents")
+        .iter_mut()
+        .for_each(|call| {
+            if call["node_id"] == json!("node.cap.1") {
+                call["parent_region_id"] = json!("region.body");
+                call["execution_order"] = json!(3);
+            }
+        });
+    let nested_verdict = verify_frontend_graph_json(&completed_nested);
+    assert!(
+        nested_verdict.is_accepted(),
+        "{:?}",
+        nested_verdict.into_diagnostics()
+    );
+}
+
+#[test]
+fn air_invocation_operands_cover_model_and_nested_completion() {
+    let mut future = load_vectors("apxm.air.v2.json")
+        .into_iter()
+        .find(|vector| vector.name == "valid-air-five-semantic-ops-and-structural-ir")
+        .expect("valid AIR vector")
+        .input;
+    future["semantic_operations"][0]["operands"][1]["value_id"] = json!("value.cap.out");
+    assert!(!verify_air_json(&future).is_accepted());
+
+    let mut nested = future.clone();
+    nested["semantic_operations"][0]["operands"][1]["value_id"] = json!("value.request");
+    nested["semantic_operations"][0]["parent_region_id"] = json!("region.loop.1");
+    nested["semantic_operations"][1]["parent_region_id"] = json!("region.root");
+    nested["semantic_operations"][1]["execution_order"] = json!(3);
+    let nested_verdict = verify_air_json(&nested);
+    assert!(
+        nested_verdict.is_accepted(),
+        "{:?}",
+        nested_verdict.into_diagnostics()
+    );
 }
 
 #[test]
@@ -85,7 +180,7 @@ fn wire_members<T: serde::Serialize>(variants: &[T]) -> Vec<String> {
 
 #[test]
 fn air_semantic_op_enum_does_not_drift() {
-    let schema = load_contract("schemas/apxm.air.v1.json");
+    let schema = load_contract("schemas/apxm.air.v2.json");
     let expected = schema_enum(&schema, "SemanticOp", "op");
     let actual = wire_members(&[
         SemanticOpKind::ModelCall,
@@ -107,7 +202,7 @@ fn air_semantic_op_enum_does_not_drift() {
 
 #[test]
 fn air_structural_kind_enum_does_not_drift() {
-    let schema = load_contract("schemas/apxm.air.v1.json");
+    let schema = load_contract("schemas/apxm.air.v2.json");
     let expected = schema_enum(&schema, "StructuralNode", "kind");
     let actual = wire_members(&[
         StructuralOpKind::Function,
@@ -164,7 +259,7 @@ fn source_map_enums_do_not_drift() {
 
 #[test]
 fn verifier_is_deterministic() {
-    let doc = load_vectors("apxm.air.v1.json")
+    let doc = load_vectors("apxm.air.v2.json")
         .into_iter()
         .find(|v| v.name == "valid-air-five-semantic-ops-and-structural-ir")
         .expect("named vector present");
@@ -175,7 +270,7 @@ fn verifier_is_deterministic() {
 
 fn predicate_air() -> Value {
     json!({
-        "schema_version": "apxm.air.v1",
+        "schema_version": "apxm.air.v2",
         "semantic_operations": [{
             "node_id": "node.model",
             "op": "model.call",
@@ -188,7 +283,8 @@ fn predicate_air() -> Value {
             "result": {"value_id": "value.response", "type_ref": "ModelResponse"}
         }],
         "structural_ir": [
-            {"region_id": "region.fn", "kind": "function", "execution_order": 0},
+            {"region_id": "region.fn", "kind": "function", "execution_order": 0,
+             "block_arguments": [{"value_id": "value.request", "type_ref": "ModelRequest"}]},
             {
                 "region_id": "region.branch",
                 "kind": "branch",

@@ -882,16 +882,23 @@ fn evaluate_value_expression(
 }
 
 fn evaluate_predicate(
+    air: &AirModule,
     state: &DriveState,
     region_id: &str,
     predicate: &ControlPredicate,
 ) -> Result<bool, ExecutionError> {
-    let mut value = state.values.get(&predicate.root_value_id).ok_or_else(|| {
-        ExecutionError::MissingControlValue {
-            region_id: region_id.to_string(),
-            value_id: predicate.root_value_id.clone(),
-        }
-    })?;
+    // Predicate roots may be permitted pure value assemblies rather than
+    // state entries. Materialize them at the control boundary so runtime
+    // evaluation observes the same SSA value shape that invocation operands
+    // receive.
+    let materialized = materialize_ssa_value(
+        air,
+        state,
+        region_id,
+        &predicate.root_value_id,
+        &mut BTreeSet::new(),
+    )?;
+    let mut value = &materialized;
     for segment in &predicate.property_path {
         value = value
             .get(segment)
@@ -1178,7 +1185,7 @@ async fn drive_from(
                     }
                 }
                 if let Some(predicate) = predicate
-                    && !evaluate_predicate(&state, static_loop_id, predicate)?
+                    && !evaluate_predicate(air, &state, static_loop_id, predicate)?
                 {
                     state.exit_loop(static_loop_id);
                     schedule_position =
@@ -1198,8 +1205,12 @@ async fn drive_from(
                             region_id: static_branch_id.clone(),
                             message: "branch is missing its typed predicate".into(),
                         })?;
-                let selected =
-                    usize::from(!evaluate_predicate(&state, static_branch_id, predicate)?);
+                let selected = usize::from(!evaluate_predicate(
+                    air,
+                    &state,
+                    static_branch_id,
+                    predicate,
+                )?);
                 state
                     .branch_decisions
                     .insert(static_branch_id.clone(), selected);
@@ -2688,7 +2699,7 @@ mod loop_evidence_tests {
 
     fn loop_air() -> AirModule {
         serde_json::from_value(json!({
-            "schema_version": "apxm.air.v1",
+            "schema_version": "apxm.air.v2",
             "semantic_operations": [],
             "structural_ir": [
                 {
@@ -2782,7 +2793,7 @@ mod loop_evidence_tests {
     #[test]
     fn resume_input_dependency_is_rejected_before_capability_dispatch() {
         let air: AirModule = serde_json::from_value(json!({
-            "schema_version": "apxm.air.v1",
+            "schema_version": "apxm.air.v2",
             "semantic_operations": [{
                 "node_id": "node.capability",
                 "op": "capability.invoke",

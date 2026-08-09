@@ -1,5 +1,5 @@
 {
-  "schema_version": "apxm.air.v1",
+  "schema_version": "apxm.air.v2",
   "semantic_operations": [
     {
       "node_id": "fixture.new",

@@ -14,6 +14,8 @@ use crate::common::{TypedErrorEnvelope, TypedRef};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Verdict, schema_violation};
 use crate::grammar::{is_digest, is_identifier};
 
+type SeenNodeExecutions<'a> = HashMap<&'a str, (&'a str, &'a str, HashSet<(&'a str, &'a str)>)>;
+
 /// The single accepted `schema_version`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RuntimeEvidenceVersion {
@@ -661,8 +663,7 @@ impl RuntimeEvidence {
 
         let mut previous: Option<u64> = None;
         let mut seen_fact_ids = HashSet::new();
-        let mut seen_node_executions: HashMap<&str, (&str, &str, HashSet<(&str, &str)>)> =
-            HashMap::new();
+        let mut seen_node_executions: SeenNodeExecutions<'_> = HashMap::new();
         let mut seen_model_attempt_ids = HashSet::new();
         let mut seen_model_attempt_indexes = HashSet::new();
         let mut completed_iterations = HashSet::new();

@@ -1,4 +1,4 @@
-//! `apxm.frontend-graph.v1` — closed consumer types and verification.
+//! `apxm.frontend-graph.v2` — closed consumer types and verification.
 //!
 //! The FrontendGraph is the language-neutral typed source graph recorded
 //! equivalently by the Python and TypeScript source-first frontends. It records
@@ -23,8 +23,8 @@ use crate::source_map::{SourceLanguage, SourceMap};
 /// The single accepted `schema_version` for a FrontendGraph.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FrontendGraphVersion {
-    #[serde(rename = "apxm.frontend-graph.v1")]
-    V1,
+    #[serde(rename = "apxm.frontend-graph.v2")]
+    V2,
 }
 
 /// The closed Hook scope set.
@@ -882,7 +882,9 @@ struct SsaValidationContext<'a> {
 
 /// Ensure every authored SSA dependency is available at every consumer. A
 /// declaration existing somewhere in the graph is insufficient: future
-/// results and sibling-branch values must never become Tool/Model operands.
+/// results and sibling-branch values must never become executable invocation
+/// operands. A completed nested region may export its result to a later use in
+/// the containing region.
 fn validate_ssa_dominance(
     verdict: &mut Verdict,
     graph: &FrontendGraph,
@@ -954,14 +956,12 @@ fn validate_ssa_dominance(
     let mut resume_input_edges = Vec::new();
     for edge in &graph.data_edges {
         // Control-flow/result plumbing may be a loop-carried edge rather than
-        // a forward SSA use. Effect operands, however, must be dominated at
-        // the exact call site because they become authored Model/Tool data.
-        if calls.get(edge.to_consumer.as_str()).is_some_and(|intent| {
-            matches!(
-                intent.intent_kind,
-                IntentKind::ToolInvocation | IntentKind::CapabilityInvocation
-            )
-        }) {
+        // a forward SSA use. Executable invocation operands, however, must be
+        // dominated at the exact call site because they become authored data.
+        if calls
+            .get(edge.to_consumer.as_str())
+            .is_some_and(|intent| is_executable_invocation(intent.intent_kind))
+        {
             if value_reaches_resume_input(&edge.from_value, values, &mut HashSet::new()) {
                 resume_input_edges.push((edge.from_value.clone(), edge.to_consumer.clone()));
                 continue;
@@ -979,6 +979,16 @@ fn validate_ssa_dominance(
             ),
         ));
     }
+}
+
+fn is_executable_invocation(kind: IntentKind) -> bool {
+    matches!(
+        kind,
+        IntentKind::ModelInvocation
+            | IntentKind::ToolInvocation
+            | IntentKind::CapabilityInvocation
+            | IntentKind::AgentInvocation
+    )
 }
 
 fn value_reaches_resume_input(
@@ -1137,24 +1147,43 @@ fn dominates_location(
     if definition.region_id == use_location.region_id {
         return definition.entry || definition.execution_order < use_location.execution_order;
     }
-    if !is_ancestor(
+    if is_ancestor(
         &definition.region_id,
         &use_location.region_id,
         region_parent,
     ) {
-        return false;
-    }
-    let mut child = use_location.region_id.as_str();
-    while let Some(parent) = region_parent.get(child).copied().flatten() {
-        if parent == definition.region_id {
-            return definition.entry
-                || region_order
-                    .get(child)
-                    .is_some_and(|child_order| definition.execution_order < *child_order);
+        let mut child = use_location.region_id.as_str();
+        while let Some(parent) = region_parent.get(child).copied().flatten() {
+            if parent == definition.region_id {
+                return definition.entry
+                    || region_order
+                        .get(child)
+                        .is_some_and(|child_order| definition.execution_order < *child_order);
+            }
+            child = parent;
         }
-        child = parent;
+        return definition.entry;
     }
-    definition.entry
+
+    // A nested invocation result is available after its containing structural
+    // region completes. This is the only descendant-to-ancestor case allowed:
+    // sibling regions remain incomparable and therefore fail closed.
+    if is_ancestor(
+        &use_location.region_id,
+        &definition.region_id,
+        region_parent,
+    ) {
+        let mut child = definition.region_id.as_str();
+        while let Some(parent) = region_parent.get(child).copied().flatten() {
+            if parent == use_location.region_id {
+                return region_order
+                    .get(child)
+                    .is_some_and(|child_order| *child_order < use_location.execution_order);
+            }
+            child = parent;
+        }
+    }
+    false
 }
 
 fn is_ancestor(

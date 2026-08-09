@@ -23,8 +23,8 @@ Command-line interface for the APXM workflow compiler and runtime toolchain.
 | Command | Description |
 |---------|-------------|
 | `init` | Scaffold project directories and `apxm.toml` |
-| `compile-service-canonical` | Compile a canonical source package to `apxm.air.v1` JSON |
-| `execute-canonical` | Execute canonical `apxm.air.v1` JSON through the canonical runtime |
+| `compile-service-canonical` | Compile a canonical source package to `apxm.air.v2` JSON |
+| `execute-canonical` | Execute canonical `apxm.air.v2` JSON through the canonical runtime |
 | `doctor` | Diagnose MLIR/LLVM/conda dependencies |
 | `backend` | Manage registered inference backend endpoints |
 | `tool` | Register/list/remove external tools |
@@ -37,7 +37,7 @@ Command-line interface for the APXM workflow compiler and runtime toolchain.
 | `template` | List/show workflow templates |
 | `explain` | Human-readable summary of a workflow |
 | `codegen` | Generate frontend (Python) and TypeScript code from AIS definitions |
-| `canonical-air` | Lower `apxm.frontend-graph.v1` JSON through the native compiler bridge |
+| `canonical-air` | Lower `apxm.frontend-graph.v2` JSON through the native compiler bridge |
 | `session` | Session management |
 | `process` | List or stop canonical APXM job processes (`canonical-air`, `compile-service-canonical`, `execute-canonical`) |
 | `cache` | Cache management |

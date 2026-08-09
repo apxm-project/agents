@@ -17,7 +17,7 @@ unversioned Hook payload, broad decision union, implicit context behavior,
 direct Gao loop, and any superseded artifact schema are implementation evidence
 only. They are not supported compatibility contracts for the target release.
 
-`apxm.frontend-graph.v1`, `apxm.air.v1`, `apxm.executable-artifact.v1`,
+`apxm.frontend-graph.v2`, `apxm.air.v2`, `apxm.executable-artifact.v1`,
 `apxm.runtime-evidence.v1`, the generic installable Python/TypeScript
 `AgentProgram` surfaces, the two closed AIS operation families, and generic
 `LoopIterationCompleted` evidence will replace every prior semantic path. All

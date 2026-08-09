@@ -26,7 +26,7 @@
           "$ref": "apxm.invocation-admission.v1"
         },
         "air": {
-          "$ref": "apxm.air.v1"
+          "$ref": "apxm.air.v2"
         }
       },
       "additionalProperties": false

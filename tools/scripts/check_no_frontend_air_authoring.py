@@ -2,7 +2,7 @@
 """Guard against a second frontend AIR text emitter.
 
 The canonical AIR contract requires frontend packages to lower
-`apxm.frontend-graph.v1` through the Rust-owned native bridge. This script fails
+`apxm.frontend-graph.v2` through the Rust-owned native bridge. This script fails
 if any Python/TypeScript source under the frontend packages *constructs* AIR
 text (an MLIR `module { ... }` / `func.func @...` block, or a bare `ais.<op>`
 dialect string) via string literals/formatting instead of using canonical

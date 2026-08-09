@@ -61,7 +61,7 @@ names rather than infer behavior from text.
 
 The frontend parses the complete source, binds and type-checks it into an
 immutable semantic tree, and deterministically traverses that tree into
-`apxm.frontend-graph.v1`. It does not execute the Agent to trace one path, and
+`apxm.frontend-graph.v2`. It does not execute the Agent to trace one path, and
 authors do not construct graph nodes.
 
 ```text

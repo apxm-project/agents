@@ -404,7 +404,7 @@ impl Host {
             return Err(rejection);
         }
         let Some(air_value) = air else {
-            return Err(self.reject("missing_air", "canonical apxm.air.v1 is required"));
+            return Err(self.reject("missing_air", "canonical apxm.air.v2 is required"));
         };
         let air: AirModule = match serde_json::from_value(air_value) {
             Ok(air) => air,
@@ -498,7 +498,7 @@ impl Host {
     async fn probe_in_flight_drain(&mut self) -> Result<Value> {
         let probe_invocation_id = "probe.invocation.1";
         let probe_air = json!({
-            "schema_version": "apxm.air.v1",
+            "schema_version": "apxm.air.v2",
             "semantic_operations": [],
             "structural_ir": [],
             "context_flow": [],
@@ -1039,7 +1039,7 @@ mod tests {
 
     fn minimal_air() -> Value {
         json!({
-            "schema_version": "apxm.air.v1",
+            "schema_version": "apxm.air.v2",
             "semantic_operations": [],
             "structural_ir": [],
             "context_flow": [],
