@@ -564,6 +564,49 @@ async fn branch_decision_survives_an_await_inside_the_selected_arm() {
 }
 
 #[tokio::test]
+async fn resumed_input_cannot_become_a_capability_argument() {
+    let commit = Arc::new(Commit::default());
+    let mut yielded = request("instance.resume-capability-input");
+    yielded.air = serde_json::from_value(json!({
+        "schema_version": "apxm.air.v1",
+        "semantic_operations": [{
+            "node_id": "node.capability",
+            "op": "capability.invoke",
+            "parent_region_id": "region.root",
+            "execution_order": 1,
+            "operands": [
+                {"slot": "capability_ref", "value_id": "cap.finish", "type_ref": "CapabilityRef"},
+                {"slot": "arguments", "value_id": "value.resume.input", "type_ref": "CapabilityArguments"}
+            ],
+            "result": {"value_id": "value.capability.output", "type_ref": "CapabilityOutput"}
+        }],
+        "structural_ir": [
+            {"region_id": "region.root", "kind": "function", "execution_order": 0},
+            {"region_id": "yield.input", "kind": "yield", "parent_region_id": "region.root", "execution_order": 0, "block_arguments": [{"value_id": "value.resume.input", "type_ref": "ConversationInput"}]},
+            {"region_id": "return.done", "kind": "return", "parent_region_id": "region.root", "execution_order": 2}
+        ],
+        "context_flow": [],
+        "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
+    }))
+    .expect("resume capability AIR");
+    yielded.initial_values.clear();
+    let verdict = yielded.air.verify();
+    assert!(!verdict.is_accepted(), "{verdict:?}");
+
+    let error = execute_resumable(
+        &ports(commit.clone()),
+        yielded,
+        json!({"persistent": "context"}),
+    )
+    .await
+    .expect_err("resume input must be rejected before any park or dispatch");
+    assert!(matches!(
+        error,
+        apxm_execution::ExecutionError::InvalidAir { .. }
+    ));
+}
+
+#[tokio::test]
 async fn final_await_resumes_directly_to_one_committed_back_edge() {
     let commit = Arc::new(Commit::default());
     let mut final_await = request("instance.final-await");
