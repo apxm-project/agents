@@ -1242,12 +1242,12 @@ def _diagnostic_correlation_digest(instance: dict[str, Any]) -> str:
 def vllm_conformance_join_errors(instance: dict[str, Any]) -> list[str]:
     # Mirror of crates/runtime/inference/src/backend_join.rs.
     if instance.get("vllm_port_contract_digest") != (
-        "sha256:361aaf5fd82ae1dd8279726769088c2711a55d964a8376faf4646a149fee9f3c"
+        "sha256:118ad96d04eea06b729f8ad1ab898b072f7fab7b561f04427dd1c808e39f268c"
     ):
         return ["vllm_port_contract_digest must match the pinned backend contract"]
     pinned_vectors = [
         "sha256:7add76f8f7df341785ef45ff51b38e979a309299509b32e76b311268cc93ea32",
-        "sha256:a60b2364bbbe1304e96defcf55a8600d501933e0fbae97c140f2bc4377d5e822",
+        "sha256:00a8657980dfd3f49859d05f62955e430d15dd50125c91605d676830abf08bfa",
         "sha256:96914ff1d56cc2d1e74fda3a063287615392cb0197bcc1c853cb1a18a5e7e8c3",
         "sha256:5e7abcccf5c7f7276b9398ccd2c255671f23a6914eb23287b44518b30b8c7723",
         "sha256:1e9a389b24f08411738594ca3646bbcbeb18a77c398c6b07933d04903bd9be39",
@@ -1263,11 +1263,11 @@ def vllm_conformance_join_errors(instance: dict[str, Any]) -> list[str]:
         attestation = instance.get("release_attestation")
         if not isinstance(attestation, dict):
             return ["join_status requires exact external vLLM release evidence"]
-        if attestation.get("release_id") != "apxm-vllm-5d825f6c1896":
+        if attestation.get("release_id") != "apxm-vllm-af61246fef5d":
             return ["release_attestation.release_id must match the pinned release"]
-        if attestation.get("owner_revision") != "5d825f6c18961c2b38edb15834acbd794fc549eb":
+        if attestation.get("owner_revision") != "af61246fef5da8cf682ea80debce458e052a63ba":
             return ["release_attestation.owner_revision must match the pinned release"]
-        if attestation.get("manifest_digest") != "sha256:b489043b6f723b3e7bf9b4a054f55383dde90f8cf25290275a813c0970bcaeb4":
+        if attestation.get("manifest_digest") != "sha256:91ffad02a82a7dfe478515aa2402d5e0691b81a63fa813190686d0b6eacb7f2d":
             return ["release_attestation.manifest_digest must match the pinned release"]
         if attestation.get("port_contract_digest") != instance.get("vllm_port_contract_digest"):
             return ["release_attestation.port_contract_digest must match the joined port contract"]
