@@ -62,9 +62,9 @@ the issue conversation with the pushed commit identity.
 - `crates/runtime/commit-local/tests/p018_owner_local_conformance.rs` — `sha256:4a6912d93b57a14b2b384e3b1336049480e711f14ada6da2cdf851854733683c`
 - `docs/plans/p018-hosted-durable-decision.md` — `sha256:19fec55ab36f6f52d0afae64a15d63a32e78bc2d87924308a9fea19db07572c9`
 - `docs/plans/g3-admission-runtime-checklist.md` — `sha256:49f91fe539d53ecb538e9284360fbd7b5e178447967b0c124737cdf5d467f7c0`
-- `tools/scripts/verify_p018_no_hosted_durable.py` — `sha256:9a59e3b5a982d756a597395f819b18e48821a3d570945835525c5a5600a916eb`
-- `tools/tests/test_p018_no_hosted_durable.py` — `sha256:963021b6930c1a38f627158aa60ee126f75c1dafea1badfb0c93e4737b9d83b3`
-- `tools/tests/test_p018_no_hosted_durable_verifier.py` — `sha256:f23f9b5860713bb6c3d24c736c60740fcbdf17b539b39185692413174eeb3507`
+- `tools/scripts/verify_p018_no_hosted_durable.py` — `sha256:9bcd944c6ad1ce3e34dc168cc585b78f3674c89b8cf1bcc2f0dfa7754bf144b6`
+- `tools/tests/test_p018_no_hosted_durable.py` — `sha256:d7fb8e3ba6f2a07696a139886b08958877b5179f10a02e086e915a7e7736e8dd`
+- `tools/tests/test_p018_no_hosted_durable_verifier.py` — `sha256:24cf3b3998beb21f980ecf0f6dd7ab7c928d129ea7dd16ed867e8e9f3c358179`
 
 ## Repository gate notes
 

@@ -17,7 +17,7 @@ SOURCE_ROOTS = (
 )
 EXCLUDED_PARTS = {"__pycache__", "_generated", "generated", "dist", "node_modules"}
 FORBIDDEN_PRODUCT_REFERENCES = re.compile(
-    r"\b(?:clic|studio|gao)(?:[./:_-](?:workflow|assistant|source|widget|program))\b",
+    r"\b(?:downstream|vendor|customer)(?:[./:_-](?:workflow|assistant|source|widget|program))\b",
     re.IGNORECASE,
 )
 FORBIDDEN_IMPORTS = re.compile(

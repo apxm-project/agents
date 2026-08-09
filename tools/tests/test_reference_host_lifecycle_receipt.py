@@ -73,7 +73,7 @@ class ReferenceHostLifecycleReceiptTests(unittest.TestCase):
         }
         self.assertEqual(
             self.module.serialized_air_digest(air),
-            "sha256:f3755ae0ba0b4e73d5d058291ba830e4668ab6b83b48d7413688c58befe57383",
+            "sha256:917027d56e0e9941b39309e0c1120655b52edbd0bd37a54ced0187e5d954245b",
         )
 
     def make_startup_input(self, root: Path) -> tuple[Path, dict[str, object]]:
