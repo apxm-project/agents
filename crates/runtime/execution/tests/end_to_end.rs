@@ -1100,6 +1100,44 @@ async fn control_predicate_refuses_unmaterialized_future_value() {
 }
 
 #[tokio::test]
+async fn control_predicate_refuses_future_result_in_initial_values() {
+    let mut execution = request();
+    execution.air = serde_json::from_value(json!({
+        "schema_version": "apxm.air.v2",
+        "value_assemblies": [],
+        "semantic_operations": [{
+            "node_id": "n.future", "op": "model.call", "parent_region_id": "r.fn", "execution_order": 1,
+            "operands": [
+                {"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"},
+                {"slot": "request", "value_id": "value.request", "type_ref": "ModelRequest"}
+            ],
+            "result": {"value_id": "value.future", "type_ref": "ModelResponse"}
+        }],
+        "structural_ir": [
+            {"region_id": "r.fn", "kind": "function", "execution_order": 0},
+            {"region_id": "r.branch", "kind": "branch", "parent_region_id": "r.fn", "execution_order": 0,
+             "predicate": {"root_value_id": "value.future", "property_path": [], "comparator": "truthy"}},
+            {"region_id": "r.then", "kind": "region", "parent_region_id": "r.branch", "execution_order": 0},
+            {"region_id": "r.else", "kind": "region", "parent_region_id": "r.branch", "execution_order": 1}
+        ],
+        "context_flow": [],
+        "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
+    }))
+    .expect("future predicate injection AIR");
+    execution
+        .initial_values
+        .insert("value.future".into(), json!(true));
+    execution.hook_bindings.clear();
+    execution.capability_invocations.clear();
+    let error = execute(&ports(Arc::new(FakeCommit::new())), execution, Value::Null)
+        .await
+        .expect_err("initial values must not seed a future predicate result");
+    assert!(
+        matches!(error, ExecutionError::InvalidAir { message } if message.contains("value.future"))
+    );
+}
+
+#[tokio::test]
 async fn executes_all_five_ops_and_commits_atomically() {
     let commit = Arc::new(FakeCommit::new());
 
