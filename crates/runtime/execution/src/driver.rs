@@ -2070,6 +2070,87 @@ fn validate_execution_request(
     Ok(())
 }
 
+fn validate_resume_capability_arguments(
+    air: &AirModule,
+    resume_value_id: &str,
+) -> Result<(), ExecutionError> {
+    for operation in &air.semantic_operations {
+        if operation.op != SemanticOpKind::CapabilityInvoke {
+            continue;
+        }
+        let Some(arguments) = operation
+            .operands
+            .iter()
+            .find(|operand| operand.slot == "arguments")
+        else {
+            continue;
+        };
+        let mut visiting = BTreeSet::new();
+        if arguments.value_id == resume_value_id
+            || authored_value_reaches_resume(
+                air,
+                &arguments.value_id,
+                resume_value_id,
+                &mut visiting,
+            )
+        {
+            return Err(ExecutionError::InvalidAir {
+                message: format!(
+                    "node {}: delivered resume input cannot become a capability argument ({})",
+                    operation.node_id, resume_value_id
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn authored_value_reaches_resume(
+    air: &AirModule,
+    value_id: &str,
+    resume_value_id: &str,
+    visiting: &mut BTreeSet<String>,
+) -> bool {
+    if value_id == resume_value_id || !visiting.insert(value_id.to_string()) {
+        return value_id == resume_value_id;
+    }
+    let Some(assembly) = air
+        .value_assemblies
+        .iter()
+        .find(|assembly| assembly.value_id == value_id)
+    else {
+        return false;
+    };
+    let mut references = Vec::new();
+    collect_runtime_expression_references(&assembly.expression, &mut references);
+    references.into_iter().any(|dependency| {
+        authored_value_reaches_resume(air, &dependency, resume_value_id, visiting)
+    })
+}
+
+fn collect_runtime_expression_references(
+    expression: &ValueExpression,
+    references: &mut Vec<String>,
+) {
+    match expression {
+        ValueExpression::Ssa { value_id } => references.push(value_id.clone()),
+        ValueExpression::Projection { root, .. } => {
+            collect_runtime_expression_references(root, references)
+        }
+        ValueExpression::Object { fields } => fields
+            .iter()
+            .for_each(|field| collect_runtime_expression_references(&field.value, references)),
+        ValueExpression::Array { items } => items
+            .iter()
+            .for_each(|item| collect_runtime_expression_references(item, references)),
+        ValueExpression::Context { .. }
+        | ValueExpression::String { .. }
+        | ValueExpression::Integer { .. }
+        | ValueExpression::Boolean { .. }
+        | ValueExpression::Null => {}
+    }
+}
+
 /// Assemble the one authoritative execution tuple for a completion or yield.
 fn commit_tuple(
     state: &DriveState,
@@ -2440,6 +2521,7 @@ async fn resume_from_continuation(
             message: "continuation is missing its exact resume SSA destination".into(),
         })
     })?;
+    validate_resume_capability_arguments(&air, &resume_value_id)?;
     state.values.insert(resume_value_id, delivered);
 
     let end = drive_from(
@@ -2659,5 +2741,35 @@ mod loop_evidence_tests {
                 .iter()
                 .all(|fact| fact.loop_iteration_completed().is_none())
         );
+    }
+
+    #[test]
+    fn resume_input_dependency_is_rejected_before_capability_dispatch() {
+        let air: AirModule = serde_json::from_value(json!({
+            "schema_version": "apxm.air.v1",
+            "semantic_operations": [{
+                "node_id": "node.capability",
+                "op": "capability.invoke",
+                "parent_region_id": "region.root",
+                "execution_order": 1,
+                "operands": [
+                    {"slot": "capability_ref", "value_id": "cap.finish", "type_ref": "CapabilityRef"},
+                    {"slot": "arguments", "value_id": "value.cap.arguments", "type_ref": "CapabilityArguments"}
+                ],
+                "result": {"value_id": "value.capability.output", "type_ref": "CapabilityOutput"}
+            }],
+            "value_assemblies": [{
+                "value_id": "value.cap.arguments",
+                "expression": {"kind": "projection", "root": {"kind": "ssa", "value_id": "value.resume.input"}, "property_path": ["arguments"]}
+            }],
+            "structural_ir": [],
+            "context_flow": [],
+            "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
+        }))
+        .expect("resume dependency AIR");
+
+        let error = validate_resume_capability_arguments(&air, "value.resume.input")
+            .expect_err("resume-derived capability argument must fail closed");
+        assert!(matches!(error, ExecutionError::InvalidAir { .. }));
     }
 }

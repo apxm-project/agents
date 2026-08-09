@@ -944,6 +944,7 @@ fn validate_ssa_dominance(
         }
     };
 
+    let mut resume_input_edges = Vec::new();
     for edge in &graph.data_edges {
         // Control-flow/result plumbing may be a loop-carried edge rather than
         // a forward SSA use. Effect operands, however, must be dominated at
@@ -954,9 +955,44 @@ fn validate_ssa_dominance(
                 IntentKind::ToolInvocation | IntentKind::CapabilityInvocation
             )
         }) {
+            if value_reaches_resume_input(&edge.from_value, values, &mut HashSet::new()) {
+                resume_input_edges.push((edge.from_value.clone(), edge.to_consumer.clone()));
+                continue;
+            }
             check_use(&edge.from_value, &edge.to_consumer);
         }
     }
+    for (value_id, consumer) in resume_input_edges {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::SchemaViolation,
+            consumer,
+            format!(
+                "resume input '{}' cannot become an authored capability argument",
+                value_id
+            ),
+        ));
+    }
+}
+
+fn value_reaches_resume_input(
+    value_id: &str,
+    values: &HashMap<&str, &Value>,
+    visiting: &mut HashSet<String>,
+) -> bool {
+    if !visiting.insert(value_id.to_string()) {
+        return false;
+    }
+    let Some(value) = values.get(value_id) else {
+        return false;
+    };
+    if value.origin == ValueOrigin::ResumeInput {
+        return true;
+    }
+    value.expression.as_ref().is_some_and(|expression| {
+        expression_references(expression)
+            .into_iter()
+            .any(|dependency| value_reaches_resume_input(&dependency, values, visiting))
+    })
 }
 
 fn consumer_location(
