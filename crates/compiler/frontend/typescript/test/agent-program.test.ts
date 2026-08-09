@@ -322,6 +322,31 @@ describe("source-first TypeScript authoring", () => {
     );
   });
 
+  it("rejects predicate integers outside the shared safe domain", () => {
+    expect(() => captureProgram({
+      programId: "UnsafeIntegerPredicate",
+      entrypoint: "run",
+      inputTypeRef: "Input",
+      outputTypeRef: "Output",
+      hasDefaultContext: false,
+      bindings: new Map(),
+      bindingDeclIds: new Map(),
+      source: {
+        fileName: "unsafe-integer-agent.ts",
+        text: `
+          import { Agent } from "@apxm/frontend";
+          const UnsafeIntegerPredicate = Agent({
+            name: "UnsafeIntegerPredicate",
+            async run(agent, input) {
+              if (input.count === 9007199254740992) return input;
+              return input;
+            },
+          });
+        `,
+      },
+    })).toThrow(/safe-integer/);
+  });
+
   it("lowers a Tool call to capability.invoke inside ais.loop", () => {
     const air = JSON.parse(Support.canonicalAir()) as {
       semantic_operations: Array<{ op: string }>;

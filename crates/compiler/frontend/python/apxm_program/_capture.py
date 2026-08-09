@@ -512,12 +512,20 @@ class _Capture:
         if isinstance(expression, ast.Name) and expression.id in self._values_by_name:
             return self._values_by_name[expression.id]
         self._reject_unbound_calls(expression)
+        dependencies = tuple(
+            dict.fromkeys(
+                self._values_by_name[node.id]
+                for node in ast.walk(expression)
+                if isinstance(node, ast.Name) and node.id in self._values_by_name
+            )
+        )
         value_id = self._next("value")
         self.values.append(
             BoundValue(
                 value_id=value_id,
                 type_ref="ArgumentValue",
                 origin="literal",
+                dependencies=dependencies,
             )
         )
         return value_id
@@ -684,6 +692,7 @@ class _Capture:
                     BoundOperand(value_id=initial_value, slot="initial"),
                     BoundOperand(value_id=carried_value, slot="carried"),
                 )
+            self._values_by_name[source_name] = result_value
         self.controls[control_index] = BoundControl(
             node_id=node_id,
             control_kind="loop",
@@ -715,14 +724,20 @@ class _Capture:
         )
 
     def _predicate_literal(self, expression: ast.AST) -> dict[str, object]:
-        if not isinstance(expression, ast.Constant):
+        try:
+            value = ast.literal_eval(expression)
+        except (ValueError, TypeError, SyntaxError):
             raise CaptureError("predicate equality compares with a scalar literal", expression)
-        value = expression.value
         if isinstance(value, bool):
             return {"scalar_type": "boolean", "value": value}
         if isinstance(value, str):
             return {"scalar_type": "string", "value": value}
         if isinstance(value, int):
+            if abs(value) > 9_007_199_254_740_991:
+                raise CaptureError(
+                    "predicate integer literal is within the shared safe-integer domain",
+                    expression,
+                )
             return {"scalar_type": "integer", "value": value}
         if value is None:
             return {"scalar_type": "null"}

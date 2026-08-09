@@ -57,6 +57,7 @@ fn request_for(target: &str) -> ModelCallRequest {
             "node-execution.1",
             "sha256:1111111111111111111111111111111111111111111111111111111111111111",
             "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+            serde_json::json!({"prompt": "test"}),
             &ModelTargetRef(target.to_string()),
             &admission,
         )
@@ -233,6 +234,7 @@ fn vllm_binding_reaches_model_inference_port_without_rebinding() {
             "node-execution.vllm.1",
             "sha256:1111111111111111111111111111111111111111111111111111111111111111",
             "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+            serde_json::json!({"prompt": "test"}),
             &authored_target,
             &ModelBindingAdmission::new(resolved_binding.clone()),
         )

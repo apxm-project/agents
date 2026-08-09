@@ -201,7 +201,7 @@ fn hook_wrapper_is_a_non_colliding_sibling_of_its_call_target() {
 }
 
 #[test]
-fn yield_resume_value_is_owned_once_by_its_lexical_block() {
+fn yield_resume_value_is_owned_once_by_the_exact_yield_node() {
     let mut value = generic_graph_value();
     value["values"]
         .as_array_mut()
@@ -241,6 +241,6 @@ fn yield_resume_value_is_owned_once_by_its_lexical_block() {
         })
         .map(|node| node.region_id.as_str())
         .collect();
-    assert_eq!(owners, ["loop.main"]);
+    assert_eq!(owners, ["node.yield"]);
     assert!(air.verify().is_accepted());
 }

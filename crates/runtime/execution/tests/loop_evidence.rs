@@ -141,6 +141,31 @@ fn request(air: AirModule, commit_id: &str) -> ExecutionRequest {
         })
         .collect::<BTreeMap<_, _>>();
     ExecutionRequest {
+        initial_values: air
+            .semantic_operations
+            .iter()
+            .filter(|operation| operation.op == apxm_program::SemanticOpKind::ModelCall)
+            .filter_map(|operation| {
+                let value_id = operation
+                    .operands
+                    .iter()
+                    .find(|operand| operand.slot == "request")?
+                    .value_id
+                    .clone();
+                (!air
+                    .value_assemblies
+                    .iter()
+                    .any(|assembly| assembly.value_id == value_id))
+                .then(|| (value_id, json!({"prompt": "test"})))
+            })
+            .chain(air.structural_ir.iter().flat_map(|region| {
+                region
+                    .block_arguments
+                    .iter()
+                    .filter(|argument| argument.type_ref == "ConversationInput")
+                    .map(|argument| (argument.value_id.clone(), json!({"message": "hello"})))
+            }))
+            .collect(),
         air,
         hook_bindings: Vec::new(),
         model_admission: admission(),

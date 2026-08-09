@@ -294,14 +294,27 @@ impl CapabilityPort for FakeCapability {
     }
 }
 
-#[derive(Default)]
 struct RecordingCapability {
     requests: Mutex<Vec<CapabilityRequest>>,
+    results: Mutex<VecDeque<String>>,
 }
 
 impl RecordingCapability {
+    fn with_results(results: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self {
+            requests: Mutex::new(Vec::new()),
+            results: Mutex::new(results.into_iter().map(Into::into).collect()),
+        }
+    }
+
     fn requests(&self) -> Vec<CapabilityRequest> {
         self.requests.lock().unwrap().clone()
+    }
+}
+
+impl Default for RecordingCapability {
+    fn default() -> Self {
+        Self::with_results(["ok"])
     }
 }
 
@@ -310,7 +323,12 @@ impl CapabilityPort for RecordingCapability {
     async fn invoke(&self, request: CapabilityRequest) -> CapabilityOutcome {
         self.requests.lock().unwrap().push(request);
         CapabilityOutcome::Completed {
-            result: "ok".into(),
+            result: self
+                .results
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| "ok".into()),
         }
     }
 }
@@ -636,6 +654,10 @@ fn ports_with_model_composition_capability_external_and_hooks(
 fn typed_tool_loop_air() -> AirModule {
     let air: AirModule = serde_json::from_value(json!({
         "schema_version": "apxm.air.v1",
+        "value_assemblies": [
+            {"value_id": "value.request.initial"},
+            {"value_id": "value.request.next", "dependencies": ["value.search.result"]}
+        ],
         "semantic_operations": [
             {"node_id": "n.model.initial", "op": "model.call", "parent_region_id": "r.fn", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.request.initial", "type_ref": "ModelRequest"}], "result": {"value_id": "value.response.initial", "type_ref": "ModelResponse"}},
             {"node_id": "n.search", "op": "capability.invoke", "parent_region_id": "r.branch.then", "execution_order": 0, "operands": [{"slot": "capability_ref", "value_id": "cap.search", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "value.search.arguments", "type_ref": "SearchRequest"}], "result": {"value_id": "value.search.result", "type_ref": "SearchResult"}},
@@ -648,7 +670,10 @@ fn typed_tool_loop_air() -> AirModule {
             {"region_id": "r.branch.then", "kind": "region", "parent_region_id": "r.branch", "execution_order": 0},
             {"region_id": "r.branch.else", "kind": "region", "parent_region_id": "r.branch", "execution_order": 1},
             {"region_id": "r.unknown.throw", "kind": "throw", "parent_region_id": "r.branch.else", "execution_order": 0},
-            {"region_id": "r.return", "kind": "return", "parent_region_id": "r.fn", "execution_order": 2}
+            {"region_id": "r.response.branch", "kind": "branch", "parent_region_id": "r.fn", "execution_order": 2, "predicate": {"root_value_id": "value.response.current", "property_path": ["kind"], "comparator": "not_equals", "literal": {"scalar_type": "string", "value": "final"}}},
+            {"region_id": "r.response.unknown", "kind": "region", "parent_region_id": "r.response.branch", "execution_order": 0},
+            {"region_id": "r.response.throw", "kind": "throw", "parent_region_id": "r.response.unknown", "execution_order": 0},
+            {"region_id": "r.return", "kind": "return", "parent_region_id": "r.fn", "execution_order": 3}
         ],
         "context_flow": [],
         "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": [{"region_id": "r.loop", "annotation": "structural_loop"}]}
@@ -662,6 +687,7 @@ struct TypedResponses {
     outputs: Mutex<VecDeque<Value>>,
     request_digests: Mutex<Vec<String>>,
     context_digests: Mutex<Vec<String>>,
+    authored_requests: Mutex<Vec<Value>>,
 }
 
 impl TypedResponses {
@@ -670,6 +696,7 @@ impl TypedResponses {
             outputs: Mutex::new(outputs.into_iter().collect()),
             request_digests: Mutex::new(Vec::new()),
             context_digests: Mutex::new(Vec::new()),
+            authored_requests: Mutex::new(Vec::new()),
         }
     }
 }
@@ -684,6 +711,10 @@ impl ModelInferencePort for TypedResponses {
             .lock()
             .unwrap()
             .push(request.context_digest().to_string());
+        self.authored_requests
+            .lock()
+            .unwrap()
+            .push(request.authored_request().clone());
         AttemptDisposition::Success {
             usage: Usage::default(),
             output: self
@@ -706,16 +737,13 @@ impl StaticHookHandlerPort for OrderedToolHooks {
     async fn execute(
         &self,
         binding: &HookBinding,
-        context: &Value,
-        result: &Value,
+        _context: &Value,
+        _result: &Value,
     ) -> StaticHookResult {
         self.calls.lock().unwrap().push(binding.hook_id.clone());
         if binding.phase == HookPhase::After {
             StaticHookResult::Keep {
-                assigned_context: Some(json!({
-                    "prior": context,
-                    "tool_result": result,
-                })),
+                assigned_context: None,
             }
         } else {
             StaticHookResult::Keep {
@@ -728,6 +756,7 @@ impl StaticHookHandlerPort for OrderedToolHooks {
 fn typed_tool_request(air: AirModule, hook_bindings: Vec<HookBinding>) -> ExecutionRequest {
     ExecutionRequest {
         air,
+        initial_values: BTreeMap::new(),
         hook_bindings,
         model_admission: admission(),
         capability_invocations: BTreeMap::from([(
@@ -788,7 +817,7 @@ async fn run_typed_tool_loop(
     ExecutionError,
 > {
     let model = Arc::new(TypedResponses::new(outputs));
-    let capability = Arc::new(RecordingCapability::default());
+    let capability = Arc::new(RecordingCapability::with_results(["first", "second"]));
     let hooks = Arc::new(OrderedToolHooks::default());
     execute(
         &ports_with_model_composition_capability_external_and_hooks(
@@ -816,7 +845,7 @@ async fn typed_final_response_skips_the_declared_tool() {
 }
 
 #[tokio::test]
-async fn typed_tool_loop_reenters_until_final_and_threads_hook_context() {
+async fn typed_tool_loop_reenters_and_binds_tool_results_without_hook_masking() {
     let (model, capability, hooks) = run_typed_tool_loop([
         json!({"kind": "tool_request", "tool_request": {"kind": "search_web"}}),
         json!({"kind": "tool_request", "tool_request": {"kind": "search_web"}}),
@@ -834,20 +863,24 @@ async fn typed_tool_loop_reenters_until_final_and_threads_hook_context() {
     assert_ne!(request_digests[0], request_digests[1]);
     assert_ne!(request_digests[1], request_digests[2]);
     let context_digests = model.context_digests.lock().unwrap();
-    let first_tool_context = json!({
-        "prior": {"messages": []},
-        "tool_result": "ok",
-    });
-    let expected_context_digest = format!(
-        "sha256:{:x}",
-        Sha256::digest(serde_json::to_vec(&first_tool_context).unwrap())
-    );
+    let initial_context_digest = format!("sha256:{:x}", Sha256::digest(b"{\"messages\":[]}"));
+    assert_eq!(context_digests[0], initial_context_digest);
+    assert_eq!(context_digests[1], initial_context_digest);
+    assert_eq!(context_digests[2], initial_context_digest);
     assert_eq!(
-        context_digests[0],
-        format!("sha256:{:x}", Sha256::digest(b"{\"messages\":[]}"))
+        *model.authored_requests.lock().unwrap(),
+        [
+            json!({"value_id": "value.request.initial", "dependencies": []}),
+            json!({
+                "value_id": "value.request.next",
+                "dependencies": [{"value_id": "value.search.result", "value": "first"}],
+            }),
+            json!({
+                "value_id": "value.request.next",
+                "dependencies": [{"value_id": "value.search.result", "value": "second"}],
+            }),
+        ]
     );
-    assert_eq!(context_digests[1], expected_context_digest);
-    assert_ne!(context_digests[1], context_digests[2]);
 }
 
 #[tokio::test]
@@ -861,6 +894,48 @@ async fn undeclared_typed_tool_request_fails_closed_before_dispatch() {
         Err(error) => error,
     };
     assert!(matches!(error, ExecutionError::ProgramThrew { .. }));
+}
+
+#[tokio::test]
+async fn undeclared_typed_model_response_kind_fails_closed() {
+    let error = match run_typed_tool_loop([json!({"kind": "undeclared"})]).await {
+        Ok(_) => panic!("unknown typed Model discriminant must fail closed"),
+        Err(error) => error,
+    };
+    assert!(matches!(error, ExecutionError::ProgramThrew { .. }));
+}
+
+#[tokio::test]
+async fn malformed_loop_phi_fails_before_runtime_can_truncate_it() {
+    let mut air = typed_tool_loop_air();
+    air.structural_ir
+        .iter_mut()
+        .find(|region| region.region_id == "r.loop")
+        .unwrap()
+        .operands
+        .retain(|operand| operand.slot != "carried");
+    assert!(!air.verify().is_accepted());
+    let model = Arc::new(TypedResponses::new([json!({"kind": "final"})]));
+    let capability = Arc::new(RecordingCapability::default());
+    let error = execute(
+        &ports_with_model_composition_capability_external_and_hooks(
+            Arc::new(FakeCommit::new()),
+            model,
+            Arc::new(FakeComposition),
+            capability.clone(),
+            Arc::new(FakeAcpPeer),
+            Arc::new(OrderedToolHooks::default()),
+        ),
+        typed_tool_request(air, tool_hooks()),
+        json!({"messages": []}),
+    )
+    .await
+    .expect_err("runtime rejects malformed phi even without prior AIR verification");
+    assert!(matches!(
+        error,
+        ExecutionError::InvalidControlPredicate { .. }
+    ));
+    assert!(capability.requests().is_empty());
 }
 
 fn ports_with_capability(
@@ -878,6 +953,7 @@ fn ports_with_capability(
 fn request() -> ExecutionRequest {
     ExecutionRequest {
         air: air(),
+        initial_values: BTreeMap::from([("value.model.request".into(), json!({"prompt": "test"}))]),
         hook_bindings: vec![HookBinding {
             hook_id: "hook.after.model".into(),
             scope: HookScope::Model,
@@ -1481,6 +1557,16 @@ async fn each_native_model_call_publishes_its_commit_bound_lineage() {
     assert!(two_models.verify().is_accepted());
     let mut req = request();
     req.air = two_models;
+    req.initial_values = BTreeMap::from([
+        (
+            "value.model.first.request".into(),
+            json!({"prompt": "first"}),
+        ),
+        (
+            "value.model.second.request".into(),
+            json!({"prompt": "second"}),
+        ),
+    ]);
     req.hook_bindings = Vec::new();
     req.model_admission = ModelBindingAdmission::for_invocation(vec![
         admission()
@@ -1806,6 +1892,7 @@ async fn unbound_model_target_fails_closed() {
     assert!(bad_air.verify().is_accepted());
     let request = ExecutionRequest {
         air: bad_air,
+        initial_values: BTreeMap::from([("value.model.request".into(), json!({"prompt": "test"}))]),
         hook_bindings: Vec::new(),
         model_admission: admission(),
         capability_invocations: BTreeMap::new(),

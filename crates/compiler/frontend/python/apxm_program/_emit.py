@@ -192,6 +192,8 @@ def _value(value: Any) -> dict[str, Any]:
     }
     if value.origin_id is not None:
         record["origin_id"] = value.origin_id
+    if value.dependencies:
+        record["dependencies"] = list(value.dependencies)
     return record
 
 

@@ -94,6 +94,7 @@ fn request_binds_only_its_authored_target() {
             "node-execution.1",
             "sha256:1111111111111111111111111111111111111111111111111111111111111111",
             "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+            serde_json::json!({"prompt": "test"}),
             &ModelTargetRef("model.beta".to_string()),
             &admission,
         )
@@ -110,6 +111,7 @@ fn request_binds_only_its_authored_target() {
             "node-execution.2",
             "sha256:2222222222222222222222222222222222222222222222222222222222222222",
             "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+            serde_json::json!({"prompt": "test"}),
             &ModelTargetRef("model.substitute".to_string()),
             &admission,
         )
@@ -152,6 +154,7 @@ fn missing_or_invalid_host_metadata_fails_before_dispatch() {
         "node-execution.1",
         "sha256:1111111111111111111111111111111111111111111111111111111111111111",
         "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        serde_json::json!({"prompt": "test"}),
         &ModelTargetRef("model.alpha".to_string()),
         &admission(),
     )
@@ -288,6 +291,7 @@ fn request() -> ModelCallRequest {
             "node-execution.1",
             "sha256:1111111111111111111111111111111111111111111111111111111111111111",
             "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+            serde_json::json!({"prompt": "test"}),
             &ModelTargetRef("model.alpha".to_string()),
             &admission(),
         )

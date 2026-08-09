@@ -85,6 +85,7 @@ pub struct ModelCallPreparation {
     node_execution_id: NodeExecutionId,
     request_digest: String,
     context_digest: String,
+    authored_request: Value,
     resolved_binding: ResolvedModelBinding,
 }
 
@@ -101,6 +102,7 @@ impl ModelCallPreparation {
         node_execution_id: impl Into<String>,
         request_digest: impl Into<String>,
         context_digest: impl Into<String>,
+        authored_request: Value,
         authored_target: &ModelTargetRef,
         admission: &ModelBindingAdmission,
     ) -> Result<Self, BindingError> {
@@ -109,6 +111,7 @@ impl ModelCallPreparation {
             node_execution_id: NodeExecutionId(node_execution_id.into()),
             request_digest: request_digest.into(),
             context_digest: context_digest.into(),
+            authored_request,
             resolved_binding: admission.validate(authored_target)?,
         })
     }
@@ -136,6 +139,12 @@ impl ModelCallPreparation {
     #[must_use]
     pub fn context_digest(&self) -> &str {
         &self.context_digest
+    }
+
+    /// The exact authored request SSA value materialized by execution.
+    #[must_use]
+    pub fn authored_request(&self) -> &Value {
+        &self.authored_request
     }
 
     /// The admission-validated model target, deployment, binding, and
@@ -220,6 +229,7 @@ pub struct ModelCallRequest {
     node_execution_id: NodeExecutionId,
     request_digest: String,
     context_digest: String,
+    authored_request: Value,
     resolved_binding: ResolvedModelBinding,
     model_context_envelope_ref: ModelContextEnvelopeRef,
     idempotency: IdempotencyKey,
@@ -295,6 +305,7 @@ impl ModelCallRequest {
             node_execution_id: preparation.node_execution_id,
             request_digest: preparation.request_digest,
             context_digest: preparation.context_digest,
+            authored_request: preparation.authored_request,
             resolved_binding: preparation.resolved_binding,
             model_context_envelope_ref: metadata.model_context_envelope_ref,
             idempotency: metadata.idempotency,
@@ -324,6 +335,12 @@ impl ModelCallRequest {
     #[must_use]
     pub fn context_digest(&self) -> &str {
         &self.context_digest
+    }
+
+    /// The exact authored request value delivered to the inference adapter.
+    #[must_use]
+    pub fn authored_request(&self) -> &Value {
+        &self.authored_request
     }
 
     /// The exact target/deployment/Port Binding admitted for this effect.

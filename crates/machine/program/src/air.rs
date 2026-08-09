@@ -8,6 +8,8 @@
 
 use std::collections::HashSet;
 
+const MAX_SAFE_PREDICATE_INTEGER: i64 = 9_007_199_254_740_991;
+
 use apxm_ais::get_operation_spec;
 use serde::{Deserialize, Serialize};
 
@@ -72,6 +74,15 @@ pub struct ControlPredicate {
     pub literal: Option<PredicateLiteral>,
 }
 
+/// A pure authored request/argument value assembled from prior SSA values.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ValueAssembly {
+    pub value_id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<String>,
+}
+
 /// One public semantic operation with typed SSA operands and an optional result.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -117,6 +128,8 @@ pub struct ContextEdge {
 #[serde(deny_unknown_fields)]
 pub struct AirModule {
     pub schema_version: AirVersion,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub value_assemblies: Vec<ValueAssembly>,
     pub semantic_operations: Vec<SemanticOp>,
     pub structural_ir: Vec<StructuralNode>,
     pub context_flow: Vec<ContextEdge>,
@@ -133,6 +146,29 @@ impl AirModule {
 
         let mut seen_nodes: HashSet<&str> = HashSet::new();
         let mut seen_value_definitions: HashSet<&str> = HashSet::new();
+        for assembly in &self.value_assemblies {
+            if !is_identifier(&assembly.value_id)
+                || !seen_value_definitions.insert(assembly.value_id.as_str())
+            {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    assembly.value_id.clone(),
+                    "value assembly value_id must be a unique contract identifier",
+                ));
+            }
+            let mut dependencies = HashSet::new();
+            if assembly.dependencies.iter().any(|dependency| {
+                dependency == &assembly.value_id
+                    || !is_identifier(dependency)
+                    || !dependencies.insert(dependency.as_str())
+            }) {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    assembly.value_id.clone(),
+                    "value assembly dependencies must be unique contract identifiers",
+                ));
+            }
+        }
         for op in &self.semantic_operations {
             if !is_identifier(&op.node_id) {
                 verdict.push(Diagnostic::new(
@@ -204,6 +240,18 @@ impl AirModule {
                 check_operand(&mut verdict, operand, &region.region_id);
             }
             validate_control_predicate(&mut verdict, region);
+            validate_loop_signature(&mut verdict, region);
+        }
+        for assembly in &self.value_assemblies {
+            for dependency in &assembly.dependencies {
+                if !seen_value_definitions.contains(dependency.as_str()) {
+                    verdict.push(Diagnostic::new(
+                        DiagnosticCode::SchemaViolation,
+                        assembly.value_id.clone(),
+                        "value assembly dependency does not reference a defined SSA value",
+                    ));
+                }
+            }
         }
         for region in &self.structural_ir {
             if let Some(predicate) = &region.predicate
@@ -225,6 +273,43 @@ impl AirModule {
         );
         self.source_map.collect(&mut verdict);
         verdict.finish()
+    }
+}
+
+fn validate_loop_signature(verdict: &mut Verdict, region: &StructuralNode) {
+    if region.kind != StructuralOpKind::Loop {
+        return;
+    }
+    let initial: Vec<_> = region
+        .operands
+        .iter()
+        .filter(|operand| operand.slot == "initial")
+        .collect();
+    let carried: Vec<_> = region
+        .operands
+        .iter()
+        .filter(|operand| operand.slot == "carried")
+        .collect();
+    let only_phi_slots = region
+        .operands
+        .iter()
+        .all(|operand| operand.slot == "initial" || operand.slot == "carried");
+    let signature_matches = only_phi_slots
+        && initial.len() == region.block_arguments.len()
+        && carried.len() == region.block_arguments.len()
+        && region
+            .block_arguments
+            .iter()
+            .zip(initial.iter().zip(carried.iter()))
+            .all(|(argument, (initial, carried))| {
+                argument.type_ref == initial.type_ref && argument.type_ref == carried.type_ref
+            });
+    if !signature_matches {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::SchemaViolation,
+            region.region_id.clone(),
+            "loop block arguments require exact type-matched initial/carried operand pairs",
+        ));
     }
 }
 
@@ -289,6 +374,15 @@ fn validate_control_predicate(verdict: &mut Verdict, region: &StructuralNode) {
                 "equals predicate requires a typed scalar literal",
             ))
         }
+    }
+    if let Some(PredicateLiteral::Integer(value)) = predicate.literal
+        && !(-MAX_SAFE_PREDICATE_INTEGER..=MAX_SAFE_PREDICATE_INTEGER).contains(&value)
+    {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::SchemaViolation,
+            region.region_id.clone(),
+            "integer predicate literal exceeds the shared safe-integer domain",
+        ));
     }
 }
 
