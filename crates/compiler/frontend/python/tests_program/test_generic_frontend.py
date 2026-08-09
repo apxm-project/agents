@@ -127,6 +127,9 @@ def test_initial_context_assignment_is_bound_to_the_region_entry() -> None:
     ]
     assert InitialContextAgent.diagnostics() is None
 
+    air = json.loads(InitialContextAgent.canonical_air())
+    assert air["context_flow"][0]["from_node"] == "InitialContextAgent.body"
+
 
 def test_static_bindings_reject_display_names_callables_and_bare_event_factories() -> None:
     for marker in (Model, Tool, Capability, Event):

@@ -428,6 +428,7 @@ mod tests {
                     "execution_order": 1
                 }
             ],
+            "value_assemblies": [{"value_id": "value.inner.arguments", "expression": {"kind": "object", "fields": [{"name": "query", "value": {"kind": "string", "value": "nested"}}]}}],
             "context_flow": [],
             "source_map": {
                 "schema_version": "apxm.source-map.v1",

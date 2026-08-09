@@ -791,18 +791,21 @@ fn validate_lowering(graph: &FrontendGraph, verdict: &mut Verdict) {
         .collect();
 
     for edge in &graph.context_flow {
-        if !node_ids.contains(edge.from_node.as_str()) {
+        if !node_ids.contains(edge.from_node.as_str())
+            && !region_ids.contains(edge.from_node.as_str())
+        {
             verdict.push(Diagnostic::new(
                 DiagnosticCode::SchemaViolation,
                 edge.from_node.clone(),
-                "context flow from_node is not a recorded intent",
+                "context flow from_node is not a recorded intent or region",
             ));
         }
-        if !node_ids.contains(edge.to_node.as_str()) {
+        if !node_ids.contains(edge.to_node.as_str()) && !region_ids.contains(edge.to_node.as_str())
+        {
             verdict.push(Diagnostic::new(
                 DiagnosticCode::SchemaViolation,
                 edge.to_node.clone(),
-                "context flow to_node is not a recorded intent",
+                "context flow to_node is not a recorded intent or region",
             ));
         }
     }

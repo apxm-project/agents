@@ -45,6 +45,7 @@ fn request(scope: &str) -> ExecutionRequest {
             {"region_id": "region.root", "kind": "function", "execution_order": 0},
             {"region_id": "loop.main", "kind": "ais.loop", "parent_region_id": "region.root", "execution_order": 0}
         ],
+        "value_assemblies": [{"value_id": "value.capability.arguments", "expression": {"kind": "object", "fields": [{"name": "status", "value": {"kind": "string", "value": "completed"}}]}}],
         "context_flow": [],
         "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": [{"region_id": "loop.main", "annotation": "structural_loop"}]}
     }))
@@ -73,9 +74,7 @@ fn request(scope: &str) -> ExecutionRequest {
                     .iter()
                     .filter_map(|operand| match operand.slot.as_str() {
                         "request" => Some((operand.value_id.clone(), json!({"prompt": "test"}))),
-                        "arguments" => {
-                            Some((operand.value_id.clone(), json!({"status": "completed"})))
-                        }
+                        "arguments" => None,
                         _ => None,
                     })
             })
@@ -626,6 +625,7 @@ async fn nested_loop_park_restores_exact_stack_without_duplicate_work() {
             {"region_id": "loop.outer", "kind": "ais.loop", "parent_region_id": "region.root", "execution_order": 0},
             {"region_id": "loop.inner", "kind": "ais.loop", "parent_region_id": "loop.outer", "execution_order": 1}
         ],
+        "value_assemblies": [{"value_id": "value.capability.arguments", "expression": {"kind": "object", "fields": [{"name": "status", "value": {"kind": "string", "value": "completed"}}]}}],
         "context_flow": [],
         "source_map": {
             "schema_version": "apxm.source-map.v1",
@@ -639,13 +639,8 @@ async fn nested_loop_park_restores_exact_stack_without_duplicate_work() {
     }))
     .expect("nested AIR");
     assert!(nested.air.verify().is_accepted());
-    nested.initial_values = BTreeMap::from([
-        ("value.outer.request".into(), json!({"prompt": "nested"})),
-        (
-            "value.capability.arguments".into(),
-            json!({"status": "completed"}),
-        ),
-    ]);
+    nested.initial_values =
+        BTreeMap::from([("value.outer.request".into(), json!({"prompt": "nested"}))]);
     nested.capability_invocations = BTreeMap::from([(
         "node.outer.after".to_string(),
         CapabilityInvocationAdmission {

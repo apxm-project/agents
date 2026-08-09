@@ -56,6 +56,11 @@ fn write_set() -> AtomicWriteSet {
 fn air() -> AirModule {
     let air: AirModule = serde_json::from_value(json!({
         "schema_version": "apxm.air.v1",
+        "value_assemblies": [
+            {"value_id": "value.model.request", "expression": {"kind": "object", "fields": [{"name": "prompt", "value": {"kind": "string", "value": "test"}}]}},
+            {"value_id": "value.cap.arguments", "expression": {"kind": "object", "fields": [{"name": "query", "value": {"kind": "string", "value": "release checklist"}}]}},
+            {"value_id": "session.1", "expression": {"kind": "string", "value": "session.1"}}
+        ],
         "semantic_operations": [
             {"node_id": "n.model", "op": "model.call", "parent_region_id": "r.fn", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.model.request", "type_ref": "ModelRequest"}], "result": {"value_id": "value.model.output", "type_ref": "ModelOutput"}},
             {"node_id": "n.cap", "op": "capability.invoke", "parent_region_id": "r.fn", "execution_order": 1, "operands": [{"slot": "capability_ref", "value_id": "cap.search", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "value.cap.arguments", "type_ref": "CapabilityArguments"}], "result": {"value_id": "value.cap.output", "type_ref": "CapabilityOutput"}},
@@ -952,10 +957,7 @@ async fn malformed_loop_phi_fails_before_runtime_can_truncate_it() {
     )
     .await
     .expect_err("runtime rejects malformed phi even without prior AIR verification");
-    assert!(matches!(
-        error,
-        ExecutionError::InvalidControlPredicate { .. }
-    ));
+    assert!(matches!(error, ExecutionError::InvalidAir { .. }));
     assert!(capability.requests().is_empty());
 }
 
@@ -974,13 +976,7 @@ fn ports_with_capability(
 fn request() -> ExecutionRequest {
     ExecutionRequest {
         air: air(),
-        initial_values: BTreeMap::from([
-            ("value.model.request".into(), json!({"prompt": "test"})),
-            (
-                "value.cap.arguments".into(),
-                json!({"query": "release checklist"}),
-            ),
-        ]),
+        initial_values: BTreeMap::from([]),
         hook_bindings: vec![HookBinding {
             hook_id: "hook.after.model".into(),
             scope: HookScope::Model,
@@ -1046,7 +1042,7 @@ async fn executes_all_five_ops_and_commits_atomically() {
     ));
     assert!(matches!(
         report.node_outcomes[2],
-        NodeOutcome::ExternalAgent { .. }
+        NodeOutcome::Capability { .. }
     ));
     assert!(matches!(
         report.node_outcomes[3],
@@ -1092,16 +1088,12 @@ async fn executes_all_five_ops_and_commits_atomically() {
     }
     assert_eq!(report.final_context, json!({"iterations": 1}));
 
-    // Peer usage is isolated in External Agent evidence, never in native usage.
-    assert_eq!(report.external_agent_evidence.len(), 1);
-    assert_eq!(report.external_agent_evidence[0].session_ref, "session.1");
-    assert_eq!(
-        report.external_agent_evidence[0].peer_usage[0].reported_value,
-        "555"
-    );
+    // Every capability invocation uses the generic capability contract; no
+    // identity-specific evidence path is synthesized by the runtime.
+    assert!(report.external_agent_evidence.is_empty());
     assert_eq!(
         report.native_usage.input_tokens, 10,
-        "peer 555 never enters native usage"
+        "capability usage never enters native usage"
     );
 
     // The committed evidence records one NodeExecution per node, the successful
@@ -1153,8 +1145,11 @@ async fn capability_port_receives_arguments_authority_identity_and_stable_effect
     .expect("canonical execution");
 
     let requests = capability.requests();
-    assert_eq!(requests.len(), 1);
-    let request = &requests[0];
+    assert_eq!(requests.len(), 2);
+    let request = requests
+        .iter()
+        .find(|request| request.capability_ref() == "cap.search")
+        .expect("search capability request");
     assert_eq!(request.capability_ref(), "cap.search");
     assert_eq!(request.arguments().type_ref(), "CapabilityArguments");
     assert_eq!(
@@ -1232,7 +1227,32 @@ async fn capability_dispatch_fails_closed_without_exact_invocation_admission() {
 }
 
 #[tokio::test]
-async fn external_agent_dispatch_requires_exact_invocation_admission() {
+async fn capability_arguments_cannot_be_preloaded_from_a_future_ssa_definition() {
+    let mut bypass = request();
+    let capability = bypass
+        .air
+        .semantic_operations
+        .iter_mut()
+        .find(|operation| operation.node_id == "n.cap")
+        .expect("capability operation");
+    capability
+        .operands
+        .iter_mut()
+        .find(|operand| operand.slot == "arguments")
+        .expect("capability arguments")
+        .value_id = "value.acp.output".into();
+    bypass
+        .initial_values
+        .insert("value.acp.output".into(), json!({"preloaded": true}));
+
+    let error = execute(&ports(Arc::new(FakeCommit::new())), bypass, Value::Null)
+        .await
+        .expect_err("future SSA value must not be an executable input");
+    assert!(matches!(error, ExecutionError::InvalidAir { .. }));
+}
+
+#[tokio::test]
+async fn capability_dispatch_requires_exact_invocation_admission_for_every_ref() {
     let mut missing = request();
     missing.capability_invocations.remove("n.acp");
     let error = execute(
@@ -1353,13 +1373,9 @@ async fn committed_native_model_usage_publishes_commit_bound_lineage_evidence() 
     assert_eq!(usage.calls()[0].attempt.target_generation, 0);
     assert_eq!(committed_attempt.native_input_tokens, 10);
     assert_eq!(committed_attempt.native_output_tokens, 20);
-    assert_eq!(
-        report.external_agent_evidence[0].peer_usage[0].reported_value,
-        "555"
-    );
-    assert_ne!(
-        committed_attempt.native_input_tokens, 555,
-        "ACP peer usage never becomes native operational usage"
+    assert!(
+        report.external_agent_evidence.is_empty(),
+        "all capability invocations use the generic capability contract"
     );
 }
 
@@ -1686,6 +1702,9 @@ async fn zero_native_usage_and_uncommitted_execution_emit_nothing() {
     let usage = Arc::new(RecordingOperationalUsage::default());
     let no_model_air: AirModule = serde_json::from_value(json!({
         "schema_version": "apxm.air.v1",
+        "value_assemblies": [
+            {"value_id": "value.cap.arguments", "expression": {"kind": "object", "fields": [{"name": "query", "value": {"kind": "string", "value": "release checklist"}}]}}
+        ],
         "semantic_operations": [{
             "node_id": "n.cap", "op": "capability.invoke", "parent_region_id": "r.fn", "execution_order": 0,
             "operands": [
@@ -1888,13 +1907,7 @@ async fn program_invoke_without_a_receiver_fails_closed() {
     req.hook_bindings = Vec::new();
     let result = execute(&ports(commit.clone()), req, json!({})).await;
     assert!(
-        matches!(
-            result,
-            Err(ExecutionError::MissingOperand {
-                operand: "receiver",
-                ..
-            })
-        ),
+        matches!(result, Err(ExecutionError::InvalidAir { .. })),
         "a program.invoke with no receiver must fail closed, not fall back"
     );
 }
