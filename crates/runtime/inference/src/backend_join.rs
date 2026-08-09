@@ -21,10 +21,10 @@ pub const PINNED_VLLM_PORT_CONTRACT_DIGEST: &str =
 
 /// Exact external vLLM release identity independently verified by the release
 /// owner. These values are admission pins, not caller-provided claims.
-pub const PINNED_VLLM_RELEASE_ID: &str = "apxm-vllm-af61246fef5d";
-pub const PINNED_VLLM_OWNER_REVISION: &str = "af61246fef5da8cf682ea80debce458e052a63ba";
+pub const PINNED_VLLM_RELEASE_ID: &str = "apxm-vllm-353c9ebd75ff";
+pub const PINNED_VLLM_OWNER_REVISION: &str = "353c9ebd75ffd3804c4f977877a3fb71d5108d66";
 pub const PINNED_VLLM_RELEASE_MANIFEST_DIGEST: &str =
-    "sha256:91ffad02a82a7dfe478515aa2402d5e0691b81a63fa813190686d0b6eacb7f2d";
+    "sha256:ea8fa2239b4b5d079b0057460379e887a3d64d454d244f086d33f808cccd8ef0";
 
 /// Pinned conformance vector digests from the vLLM owner vectors directory.
 pub const PINNED_VLLM_VECTOR_DIGESTS: &[&str] = &[

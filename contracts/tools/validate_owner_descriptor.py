@@ -1263,11 +1263,11 @@ def vllm_conformance_join_errors(instance: dict[str, Any]) -> list[str]:
         attestation = instance.get("release_attestation")
         if not isinstance(attestation, dict):
             return ["join_status requires exact external vLLM release evidence"]
-        if attestation.get("release_id") != "apxm-vllm-af61246fef5d":
+        if attestation.get("release_id") != "apxm-vllm-353c9ebd75ff":
             return ["release_attestation.release_id must match the pinned release"]
-        if attestation.get("owner_revision") != "af61246fef5da8cf682ea80debce458e052a63ba":
+        if attestation.get("owner_revision") != "353c9ebd75ffd3804c4f977877a3fb71d5108d66":
             return ["release_attestation.owner_revision must match the pinned release"]
-        if attestation.get("manifest_digest") != "sha256:91ffad02a82a7dfe478515aa2402d5e0691b81a63fa813190686d0b6eacb7f2d":
+        if attestation.get("manifest_digest") != "sha256:ea8fa2239b4b5d079b0057460379e887a3d64d454d244f086d33f808cccd8ef0":
             return ["release_attestation.manifest_digest must match the pinned release"]
         if attestation.get("port_contract_digest") != instance.get("vllm_port_contract_digest"):
             return ["release_attestation.port_contract_digest must match the joined port contract"]
