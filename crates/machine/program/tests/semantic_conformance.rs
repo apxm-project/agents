@@ -142,6 +142,21 @@ fn air_invocation_operands_cover_model_and_nested_completion() {
     future["semantic_operations"][0]["operands"][1]["value_id"] = json!("value.cap.out");
     assert!(!verify_air_json(&future).is_accepted());
 
+    let mut future_options = load_vectors("apxm.air.v2.json")
+        .into_iter()
+        .find(|vector| vector.name == "valid-air-five-semantic-ops-and-structural-ir")
+        .expect("valid AIR vector")
+        .input;
+    future_options["semantic_operations"][0]["operands"]
+        .as_array_mut()
+        .expect("model operands")
+        .push(json!({
+            "slot": "options",
+            "value_id": "value.cap.out",
+            "type_ref": "ModelCallOptions"
+        }));
+    assert!(!verify_air_json(&future_options).is_accepted());
+
     let mut nested = future.clone();
     nested["semantic_operations"][0]["operands"][1]["value_id"] = json!("value.request");
     nested["semantic_operations"][0]["parent_region_id"] = json!("region.loop.1");

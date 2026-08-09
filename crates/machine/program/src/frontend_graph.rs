@@ -939,45 +939,45 @@ fn validate_ssa_dominance(
         region_order: &region_order,
     };
 
-    let mut check_use = |value_id: &str, consumer: &str| {
+    let check_use = |value_id: &str, consumer: &str| {
         let Some(location) = consumer_location(consumer, &calls, &controls) else {
-            return;
+            return true;
         };
         let mut visiting = HashSet::new();
-        if !value_dominates_use(value_id, location, &context, &mut visiting) {
-            verdict.push(Diagnostic::new(
-                DiagnosticCode::SchemaViolation,
-                consumer.to_string(),
-                format!("SSA value '{value_id}' does not dominate its consumer"),
-            ));
-        }
+        value_dominates_use(value_id, location, &context, &mut visiting)
     };
 
-    let mut resume_input_edges = Vec::new();
-    for edge in &graph.data_edges {
-        // Control-flow/result plumbing may be a loop-carried edge rather than
-        // a forward SSA use. Executable invocation operands, however, must be
-        // dominated at the exact call site because they become authored data.
-        if calls
-            .get(edge.to_consumer.as_str())
-            .is_some_and(|intent| is_executable_invocation(intent.intent_kind))
-        {
-            if value_reaches_resume_input(&edge.from_value, values, &mut HashSet::new()) {
-                resume_input_edges.push((edge.from_value.clone(), edge.to_consumer.clone()));
+    for intent in graph
+        .call_intents
+        .iter()
+        .filter(|intent| is_executable_invocation(intent.intent_kind))
+    {
+        // Check the authored operand list itself. Data edges still provide
+        // typed slots for lowering, but dominance must not disappear merely
+        // because a malformed graph omitted one of those edges.
+        for value_id in &intent.operand_values {
+            if matches!(
+                intent.intent_kind,
+                IntentKind::ToolInvocation | IntentKind::CapabilityInvocation
+            ) && value_reaches_resume_input(value_id, values, &mut HashSet::new())
+            {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    intent.node_id.clone(),
+                    format!(
+                        "resume input '{value_id}' cannot become an authored capability argument"
+                    ),
+                ));
                 continue;
             }
-            check_use(&edge.from_value, &edge.to_consumer);
+            if !check_use(value_id, &intent.node_id) {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    intent.node_id.clone(),
+                    format!("SSA value '{value_id}' does not dominate its consumer"),
+                ));
+            }
         }
-    }
-    for (value_id, consumer) in resume_input_edges {
-        verdict.push(Diagnostic::new(
-            DiagnosticCode::SchemaViolation,
-            consumer,
-            format!(
-                "resume input '{}' cannot become an authored capability argument",
-                value_id
-            ),
-        ));
     }
 }
 
@@ -988,6 +988,8 @@ fn is_executable_invocation(kind: IntentKind) -> bool {
             | IntentKind::ToolInvocation
             | IntentKind::CapabilityInvocation
             | IntentKind::AgentInvocation
+            | IntentKind::AgentCreation
+            | IntentKind::EventWait
     )
 }
 

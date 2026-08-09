@@ -2090,6 +2090,18 @@ fn validate_execution_request(
                 message: format!("initial_values cannot override authored assembly {value_id}"),
             });
         }
+        if air.semantic_operations.iter().any(|operation| {
+            operation
+                .result
+                .as_ref()
+                .is_some_and(|result| result.value_id == *value_id)
+        }) {
+            return Err(ExecutionError::InvalidAir {
+                message: format!(
+                    "initial_values cannot supply a semantic result before its invocation ({value_id})"
+                ),
+            });
+        }
     }
     Ok(())
 }

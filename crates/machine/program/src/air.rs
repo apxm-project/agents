@@ -407,10 +407,11 @@ fn validate_air_ssa_dominance(verdict: &mut Verdict, air: &AirModule) {
 
 fn is_authored_invocation_operand(op: SemanticOpKind, operand: &Operand) -> bool {
     match op {
-        SemanticOpKind::ModelCall => operand.slot == "request",
-        SemanticOpKind::CapabilityInvoke => operand.slot == "arguments",
+        SemanticOpKind::ModelCall => operand.slot != "model_ref",
+        SemanticOpKind::CapabilityInvoke => operand.slot != "capability_ref",
+        SemanticOpKind::ProgramNew => operand.slot != "program_ref",
         SemanticOpKind::ProgramInvoke => operand.slot != "receiver",
-        SemanticOpKind::ProgramNew | SemanticOpKind::AwaitEvent => false,
+        SemanticOpKind::AwaitEvent => operand.slot != "event_ref",
     }
 }
 
