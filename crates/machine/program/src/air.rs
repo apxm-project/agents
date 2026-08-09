@@ -253,17 +253,58 @@ impl AirModule {
                 }
             }
         }
+        let context_endpoint_locations = self
+            .semantic_operations
+            .iter()
+            .map(|operation| {
+                (
+                    operation.node_id.as_str(),
+                    AirSsaLocation {
+                        region_id: operation.parent_region_id.clone(),
+                        execution_order: operation.execution_order,
+                        entry: false,
+                    },
+                )
+            })
+            .chain(self.structural_ir.iter().map(|region| {
+                (
+                    region.region_id.as_str(),
+                    AirSsaLocation {
+                        region_id: region
+                            .parent_region_id
+                            .clone()
+                            .unwrap_or_else(|| region.region_id.clone()),
+                        execution_order: region.execution_order,
+                        entry: region.parent_region_id.is_none(),
+                    },
+                )
+            }))
+            .collect::<std::collections::HashMap<_, _>>();
+        let context_regions = self
+            .structural_ir
+            .iter()
+            .map(|region| (region.region_id.as_str(), region))
+            .collect::<std::collections::HashMap<_, _>>();
         for edge in &self.context_flow {
+            let ordered = context_endpoint_locations
+                .get(edge.from_node.as_str())
+                .zip(context_endpoint_locations.get(edge.to_node.as_str()))
+                .is_some_and(|(from, to)| {
+                    (from.region_id != to.region_id || from.execution_order != to.execution_order)
+                        && air_dominates_location(from, to, &context_regions)
+                });
             if !(seen_nodes.contains(edge.from_node.as_str())
                 || seen_regions.contains(edge.from_node.as_str()))
                 || !(seen_nodes.contains(edge.to_node.as_str())
                     || seen_regions.contains(edge.to_node.as_str()))
                 || !seen_value_definitions.contains(edge.value_id.as_str())
+                || !is_identifier(&edge.context_type_ref)
+                || !ordered
             {
                 verdict.push(Diagnostic::new(
                     DiagnosticCode::SchemaViolation,
                     edge.to_node.clone(),
-                    "Context edge requires declared endpoints and an exact assembled value",
+                    "Context edge requires a typed context coordinate, declared endpoints, and source-before-destination ordering",
                 ));
             }
         }

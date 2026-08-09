@@ -535,6 +535,11 @@ fn collect_typed_link_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph) 
         .iter()
         .map(|region| region.region_id.as_str())
         .collect();
+    let region_definitions: HashMap<&str, &Region> = graph
+        .regions
+        .iter()
+        .map(|region| (region.region_id.as_str(), region))
+        .collect();
     let call_intents: HashMap<&str, &CallIntent> = graph
         .call_intents
         .iter()
@@ -846,18 +851,69 @@ fn collect_typed_link_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph) 
         .copied()
         .chain(graph.regions.iter().map(|region| region.region_id.as_str()))
         .collect::<HashSet<_>>();
+    let region_parent: HashMap<&str, Option<&str>> = graph
+        .regions
+        .iter()
+        .map(|region| {
+            (
+                region.region_id.as_str(),
+                region.parent_region_id.as_deref(),
+            )
+        })
+        .collect();
+    let region_order: HashMap<&str, u32> = graph
+        .regions
+        .iter()
+        .map(|region| (region.region_id.as_str(), region.execution_order))
+        .collect();
+    let function_bodies: HashMap<&str, &str> = graph
+        .functions
+        .iter()
+        .map(|function| {
+            (
+                function.function_id.as_str(),
+                function.body_region_id.as_str(),
+            )
+        })
+        .collect();
+    let ssa_context = SsaValidationContext {
+        values: &values,
+        blocks: &blocks,
+        calls: &call_intents,
+        controls: &control_intents,
+        functions: &function_bodies,
+        region_parent: &region_parent,
+        region_order: &region_order,
+    };
     for edge in &graph.context_flow {
-        let valid_value = values
-            .get(edge.value_id.as_str())
-            .is_some_and(|value| value.origin == ValueOrigin::ContextValue);
+        let valid_value = values.get(edge.value_id.as_str()).is_some_and(|value| {
+            value.origin == ValueOrigin::ContextValue && value.type_ref == edge.context_type_ref
+        });
+        let ordered = context_endpoint_location(
+            &edge.from_node,
+            &call_intents,
+            &control_intents,
+            &region_definitions,
+        )
+        .zip(context_endpoint_location(
+            &edge.to_node,
+            &call_intents,
+            &control_intents,
+            &region_definitions,
+        ))
+        .is_some_and(|(from, to)| {
+            (from.region_id != to.region_id || from.execution_order != to.execution_order)
+                && dominates_location(from, to, &ssa_context)
+        });
         if !endpoints.contains(edge.from_node.as_str())
             || !endpoints.contains(edge.to_node.as_str())
             || !valid_value
+            || !ordered
         {
             verdict.push(Diagnostic::new(
                 DiagnosticCode::SchemaViolation,
                 edge.to_node.clone(),
-                "Context edge requires declared endpoints and an exact context-value SSA",
+                "Context edge requires a typed context value, valid context coordinate, and source-before-destination endpoints",
             ));
         }
     }
@@ -940,21 +996,18 @@ fn validate_ssa_dominance(
     };
 
     let mut check_use = |value_id: &str, consumer: &str, consumer_slot: &str| {
-        let Some(mut location) = consumer_location(consumer, &calls, &controls) else {
+        let Some(location) = consumer_location(consumer, &calls, &controls) else {
             return;
         };
-        // A loop-carried operand is read by the loop-back edge after the body
-        // has completed, not by the loop header's initial entry.  This is the
-        // FrontendGraph counterpart of AIR's `u32::MAX` loop-back location and
-        // admits valid loop phis while retaining ordinary forward dominance for
-        // initial operands and every other structural consumer.
-        if controls.get(consumer).is_some_and(|control| {
+        let mut visiting = HashSet::new();
+        let dominates = if let Some(control) = controls.get(consumer).filter(|control| {
             control.control_kind == ControlKind::Loop && consumer_slot == "carried"
         }) {
-            location.execution_order = u32::MAX;
-        }
-        let mut visiting = HashSet::new();
-        if !value_dominates_use(value_id, location, &context, &mut visiting) {
+            loop_carried_value_dominates(value_id, control, &context, &mut visiting)
+        } else {
+            value_dominates_use(value_id, location, &context, &mut visiting)
+        };
+        if !dominates {
             verdict.push(Diagnostic::new(
                 DiagnosticCode::SchemaViolation,
                 consumer.to_string(),
@@ -1074,6 +1127,169 @@ fn consumer_location(
                 entry: false,
             })
         })
+}
+
+fn context_endpoint_location(
+    endpoint: &str,
+    calls: &HashMap<&str, &CallIntent>,
+    controls: &HashMap<&str, &ControlIntent>,
+    regions: &HashMap<&str, &Region>,
+) -> Option<SsaLocation> {
+    consumer_location(endpoint, calls, controls).or_else(|| {
+        regions.get(endpoint).map(|region| SsaLocation {
+            region_id: region.region_id.clone(),
+            execution_order: 0,
+            entry: true,
+        })
+    })
+}
+
+fn loop_carried_value_dominates(
+    value_id: &str,
+    loop_control: &ControlIntent,
+    context: &SsaValidationContext<'_>,
+    visiting: &mut HashSet<String>,
+) -> bool {
+    if !visiting.insert(value_id.to_string()) {
+        return false;
+    }
+    let Some(value) = context.values.get(value_id) else {
+        return false;
+    };
+    let Some(body_region) = loop_control.body_region_ids.first() else {
+        visiting.remove(value_id);
+        return false;
+    };
+
+    let producer = match value.origin {
+        ValueOrigin::CallResult => value
+            .origin_id
+            .as_deref()
+            .and_then(|node_id| context.calls.get(node_id))
+            .map(|intent| {
+                (
+                    intent.parent_region_id.as_str(),
+                    SsaLocation {
+                        region_id: intent.parent_region_id.clone(),
+                        execution_order: intent.execution_order,
+                        entry: false,
+                    },
+                )
+            }),
+        ValueOrigin::BlockArgument => value
+            .origin_id
+            .as_deref()
+            .and_then(|block_id| context.blocks.get(block_id))
+            .map(|block| {
+                (
+                    block.region_id.as_str(),
+                    SsaLocation {
+                        region_id: block.region_id.clone(),
+                        execution_order: 0,
+                        entry: true,
+                    },
+                )
+            }),
+        ValueOrigin::ResumeInput => value
+            .origin_id
+            .as_deref()
+            .and_then(|node_id| context.controls.get(node_id))
+            .map(|control| {
+                (
+                    control.parent_region_id.as_str(),
+                    SsaLocation {
+                        region_id: control.parent_region_id.clone(),
+                        execution_order: control.execution_order,
+                        entry: false,
+                    },
+                )
+            }),
+        ValueOrigin::Parameter | ValueOrigin::ContextValue | ValueOrigin::Literal => None,
+    };
+
+    let Some((producer_region, producer_location)) = producer else {
+        let result = matches!(
+            value.origin,
+            ValueOrigin::Parameter | ValueOrigin::ContextValue | ValueOrigin::Literal
+        ) && value.expression.as_ref().is_none_or(|expression| {
+            expression_references(expression)
+                .into_iter()
+                .all(|dependency| {
+                    value_dominates_use(
+                        &dependency,
+                        SsaLocation {
+                            region_id: body_region.clone(),
+                            execution_order: u32::MAX,
+                            entry: false,
+                        },
+                        context,
+                        visiting,
+                    )
+                })
+        });
+        visiting.remove(value_id);
+        return result;
+    };
+
+    let in_body = producer_region == body_region
+        || is_ancestor(body_region, producer_region, context.region_parent);
+    let reachable_back_edge =
+        in_body && loop_body_path_reaches_back_edge(producer_region, body_region, context);
+    let expression_ok = value.expression.as_ref().is_none_or(|expression| {
+        expression_references(expression)
+            .into_iter()
+            .all(|dependency| {
+                value_dominates_use(&dependency, producer_location.clone(), context, visiting)
+            })
+    });
+    visiting.remove(value_id);
+    reachable_back_edge && expression_ok
+}
+
+fn loop_body_path_reaches_back_edge(
+    producer_region: &str,
+    body_region: &str,
+    context: &SsaValidationContext<'_>,
+) -> bool {
+    let mut child = producer_region;
+    while child != body_region {
+        let Some(parent) = context.region_parent.get(child).copied().flatten() else {
+            return false;
+        };
+        let Some(owner) = context.controls.values().find(|control| {
+            control.parent_region_id == parent
+                && control
+                    .body_region_ids
+                    .iter()
+                    .any(|region_id| region_id == child)
+        }) else {
+            return false;
+        };
+        if owner.control_kind == ControlKind::Loop {
+            return false;
+        }
+        if owner.body_region_ids.len() > 1
+            && owner
+                .body_region_ids
+                .iter()
+                .filter(|region_id| region_id.as_str() != child)
+                .any(|region_id| !region_is_terminal(region_id, context))
+        {
+            return false;
+        }
+        child = parent;
+    }
+    true
+}
+
+fn region_is_terminal(region_id: &str, context: &SsaValidationContext<'_>) -> bool {
+    context.controls.values().any(|control| {
+        control.parent_region_id == region_id
+            && matches!(
+                control.control_kind,
+                ControlKind::Throw | ControlKind::Return | ControlKind::Yield
+            )
+    })
 }
 
 fn value_dominates_use(
