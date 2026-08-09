@@ -397,8 +397,10 @@ fn air_value_dominates(
         return false;
     }
     let location = results.get(value_id).or_else(|| blocks.get(value_id));
-    let base_ok =
-        location.is_none_or(|definition| air_dominates_location(definition, use_location, regions));
+    let base_ok = match location {
+        Some(definition) => air_dominates_location(definition, use_location, regions),
+        None => assemblies.contains_key(value_id),
+    };
     if !base_ok {
         return false;
     }

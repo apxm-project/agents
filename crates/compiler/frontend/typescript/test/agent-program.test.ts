@@ -150,6 +150,11 @@ describe("source-first TypeScript authoring", () => {
     expect(graph.context_flow[0]?.from_node).toBe("InitialContextAgent.body");
     expect(graph.context_flow[0]?.to_node).toMatch(/^InitialContextAgent\.model_invocation\./);
     expect(InitialContextAgent.diagnostics()).toBeNull();
+
+    const air = JSON.parse(InitialContextAgent.canonicalAir()) as {
+      context_flow: Array<{ from_node: string }>;
+    };
+    expect(air.context_flow[0]?.from_node).toBe("InitialContextAgent.body");
   });
 
   it("rejects display aliases and handler objects while preserving constructed event refs", () => {

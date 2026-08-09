@@ -5,7 +5,7 @@
 //! interleaving compiled Hook callsites and explicit Context commits around the
 //! authored semantic operation order. It dispatches each semantic operation to
 //! its exact injected port — `model.call` to the model inference port,
-//! `capability.invoke` to the External Agent port or the Capability port,
+//! `capability.invoke` to the generic Capability port,
 //! `program.new`/`program.invoke` to the composition port, `await.event` to the
 //! event port — threading explicit Context through typed Hooks. It builds the
 //! runtime-evidence batch from the real effects and commits the whole write set
@@ -37,9 +37,8 @@ use apxm_inference::{
     TargetCommitmentError, TypedError, Usage, dispatch_committed_inference,
 };
 use apxm_kernel::{
-    AcpPromptRequest, AtomicWriteSet, ExecutionCommitPort, ExecutionCommitRequest,
-    ExecutionCommitResult, ExecutionCommitTuple, ExternalAgentCapabilityPort, PortSlot,
-    ProgramInstanceRef, ProgramInvocationRef, assemble_evidence,
+    AtomicWriteSet, ExecutionCommitPort, ExecutionCommitRequest, ExecutionCommitResult,
+    ExecutionCommitTuple, PortSlot, ProgramInstanceRef, ProgramInvocationRef,
 };
 use apxm_program::air::{
     AirModule, ControlPredicate, PredicateComparator, PredicateLiteral, SemanticOp, SemanticOpKind,
@@ -74,7 +73,6 @@ pub struct ExecutionPorts {
     model_inference: Arc<dyn ModelInferencePort + Send + Sync>,
     model_call_request_metadata: Arc<dyn ModelCallRequestMetadataPort>,
     capability: Arc<dyn CapabilityPort>,
-    external_agent: Arc<dyn ExternalAgentCapabilityPort>,
     events: Arc<dyn EventPort>,
     composition: Arc<dyn CompositionPort>,
     execution_commit: Arc<dyn ExecutionCommitPort>,
@@ -99,8 +97,8 @@ impl std::error::Error for ExecutionPortsError {}
 impl ExecutionPorts {
     /// Construct the driver ports from one complete admitted execution bundle.
     ///
-    /// Ordinary capability, model, external-agent, and commit effects are
-    /// copied only from their exact admitted slots. Durable event and Program
+    /// Ordinary capability, model, and commit effects are copied only from
+    /// their exact admitted slots. Durable event and Program
     /// composition ports have already been joined to their exact bindings by
     /// [`ExecutionPortBundle::construct`].
     pub fn from_admitted_bundle(
@@ -123,15 +121,10 @@ impl ExecutionPorts {
                 .ok_or(ExecutionPortsError::MissingAdmittedPort(
                     PortSlot::Capability,
                 ))?;
-        let external_agent = kernel.external_agent_capability().cloned().ok_or(
-            ExecutionPortsError::MissingAdmittedPort(PortSlot::ExternalAgentCapability),
-        )?;
-
         Ok(Self {
             model_inference,
             model_call_request_metadata,
             capability,
-            external_agent,
             events: bundle.events().clone(),
             composition: bundle.composition().clone(),
             execution_commit: kernel.execution_commit().clone(),
@@ -278,6 +271,9 @@ pub struct RunReport {
 /// Why a canonical run could not be driven.
 #[derive(Debug)]
 pub enum ExecutionError {
+    InvalidAir {
+        message: String,
+    },
     MissingOperand {
         node_id: String,
         operand: &'static str,
@@ -336,6 +332,7 @@ pub enum ExecutionError {
 impl std::fmt::Display for ExecutionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::InvalidAir { message } => write!(f, "AIR rejected before execution: {message}"),
             Self::MissingOperand { node_id, operand } => {
                 write!(f, "node {node_id} is missing operand {operand}")
             }
@@ -1451,48 +1448,7 @@ async fn drive_from(
                                     operand: "capability_ref",
                                 }
                             })?;
-                        if let Some(profile) = capability_ref.strip_prefix("external-agent:") {
-                            let admission =
-                                capability_invocations.get(&op.node_id).ok_or_else(|| {
-                                    ExecutionError::MissingCapabilityInvocationAdmission {
-                                        node_id: op.node_id.clone(),
-                                    }
-                                })?;
-                            if admission.capability_ref != capability_ref {
-                                return Err(
-                                    ExecutionError::CapabilityInvocationAdmissionMismatch {
-                                        node_id: op.node_id.clone(),
-                                        authored: capability_ref,
-                                        admitted: admission.capability_ref.clone(),
-                                    },
-                                );
-                            }
-                            let session_ref = operand_str(op, "arguments").ok_or_else(|| {
-                                ExecutionError::MissingOperand {
-                                    node_id: op.node_id.clone(),
-                                    operand: "arguments",
-                                }
-                            })?;
-                            let outcome = ports
-                                .external_agent
-                                .prompt(AcpPromptRequest {
-                                    effect_ref: op.node_id.clone(),
-                                    session_ref,
-                                    profile_ref: profile.to_string(),
-                                    prompt: String::new(),
-                                })
-                                .await;
-                            let evidence = assemble_evidence(op.node_id.clone(), &outcome);
-                            state.last_operation_succeeded = matches!(
-                                &outcome.state,
-                                apxm_kernel::PromptEffectState::Completed { .. }
-                            );
-                            state.external_agent_evidence.push(evidence.clone());
-                            state.node_outcomes.push(NodeOutcome::ExternalAgent {
-                                node_id: op.node_id.clone(),
-                                evidence,
-                            });
-                        } else {
+                        {
                             let arguments_type_ref = op
                                 .operands
                                 .iter()
@@ -2035,6 +1991,82 @@ fn validate_commit_inputs(
         })
 }
 
+fn validate_execution_request(
+    air: &AirModule,
+    initial_values: &BTreeMap<String, Value>,
+) -> Result<(), ExecutionError> {
+    let verdict = air.verify();
+    if !verdict.is_accepted() {
+        let message = verdict
+            .into_diagnostics()
+            .into_iter()
+            .map(|diagnostic| format!("{}:{}", diagnostic.location, diagnostic.message))
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(ExecutionError::InvalidAir { message });
+    }
+
+    let assembled = air
+        .value_assemblies
+        .iter()
+        .map(|assembly| assembly.value_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let defined = air
+        .semantic_operations
+        .iter()
+        .filter_map(|operation| {
+            operation
+                .result
+                .as_ref()
+                .map(|result| result.value_id.as_str())
+        })
+        .chain(air.structural_ir.iter().flat_map(|region| {
+            region
+                .block_arguments
+                .iter()
+                .map(|argument| argument.value_id.as_str())
+        }))
+        .collect::<BTreeSet<_>>();
+
+    for operation in &air.semantic_operations {
+        if operation.op != SemanticOpKind::CapabilityInvoke {
+            continue;
+        }
+        let Some(arguments) = operation
+            .operands
+            .iter()
+            .find(|operand| operand.slot == "arguments")
+        else {
+            continue;
+        };
+        if assembled.contains(arguments.value_id.as_str())
+            || defined.contains(arguments.value_id.as_str())
+        {
+            continue;
+        }
+        let source = if initial_values.contains_key(arguments.value_id.as_str()) {
+            "initial_values may not supply an authored capability argument"
+        } else {
+            "capability argument is not an authored assembly or defined SSA value"
+        };
+        return Err(ExecutionError::InvalidAir {
+            message: format!(
+                "node {}: {} ({})",
+                operation.node_id, source, arguments.value_id
+            ),
+        });
+    }
+
+    for value_id in initial_values.keys() {
+        if assembled.contains(value_id.as_str()) {
+            return Err(ExecutionError::InvalidAir {
+                message: format!("initial_values cannot override authored assembly {value_id}"),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Assemble the one authoritative execution tuple for a completion or yield.
 fn commit_tuple(
     state: &DriveState,
@@ -2139,6 +2171,7 @@ pub async fn execute(
     request: ExecutionRequest,
     initial_context: Value,
 ) -> Result<RunReport, ExecutionError> {
+    validate_execution_request(&request.air, &request.initial_values)?;
     validate_commit_inputs(
         &request.program_instance_ref,
         &request.program_invocation_ref,
@@ -2194,6 +2227,7 @@ pub async fn execute_resumable(
     request: ExecutionRequest,
     initial_context: Value,
 ) -> Result<RunOutcome, ExecutionError> {
+    validate_execution_request(&request.air, &request.initial_values)?;
     validate_commit_inputs(
         &request.program_instance_ref,
         &request.program_invocation_ref,
