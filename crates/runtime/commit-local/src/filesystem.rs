@@ -142,6 +142,7 @@ fn lock_path(root: &Path) -> PathBuf {
 fn acquire_lock(root: &Path) -> Result<File, CommitLocalError> {
     let lock_file = OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(lock_path(root))

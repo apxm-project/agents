@@ -257,7 +257,7 @@ impl LLMRegistry {
         request: &LLMRequest,
     ) -> Result<Option<CorrelatedBatchRoute>> {
         let backend_name = self.resolve_backend(request)?;
-        let model = self.require_model_reference(request)?.to_string();
+        let model = Self::require_model_reference(request)?.to_string();
         let backend = self
             .backends
             .read()
@@ -435,7 +435,7 @@ impl LLMRegistry {
 
             let mut request = request;
             let backend_name = self.resolve_backend(&request)?;
-            let model = self.require_model_reference(&request)?.to_string();
+            let model = Self::require_model_reference(&request)?.to_string();
             request.backend = Some(backend_name.clone());
 
             match (&resolved_backend, &resolved_model) {
@@ -840,7 +840,7 @@ impl LLMRegistry {
     /// default, ambient, or inferred model. The reference is used verbatim:
     /// normalizing it would make several spellings name one binding, which is
     /// aliasing by another name.
-    fn require_model_reference<'a>(&self, request: &'a LLMRequest) -> Result<&'a str> {
+    fn require_model_reference(request: &LLMRequest) -> Result<&str> {
         let model = request
             .model
             .as_deref()
@@ -854,7 +854,7 @@ impl LLMRegistry {
     /// reference either has a binding or the request is rejected. A request
     /// that also names a backend must name the bound one.
     pub fn resolve_backend(&self, request: &LLMRequest) -> Result<String> {
-        let model = self.require_model_reference(request)?;
+        let model = Self::require_model_reference(request)?;
         let bound_backend = self
             .model_backends
             .get(model)

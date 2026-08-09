@@ -690,8 +690,8 @@ pub struct RuntimeAdmission {
 }
 
 enum RuntimeAuthority {
-    Signed(VerifiedExecutionAdmission),
-    Invocation(VerifiedInvocationAdmission),
+    Signed(Box<VerifiedExecutionAdmission>),
+    Invocation(Box<VerifiedInvocationAdmission>),
 }
 
 /// Why an exact runtime admission could not be constructed. Every variant fails
@@ -761,7 +761,7 @@ impl RuntimeAdmission {
     ) -> Result<Self, RuntimeAdmissionError> {
         let resource_ceilings = verified.admission.resource_ceilings.clone();
         Self::admit_authority(
-            RuntimeAuthority::Signed(verified),
+            RuntimeAuthority::Signed(Box::new(verified)),
             resource_ceilings,
             entries,
             host_id,
@@ -781,7 +781,7 @@ impl RuntimeAdmission {
     ) -> Result<Self, RuntimeAdmissionError> {
         let resource_ceilings = verified.resource_ceilings.clone();
         Self::admit_authority(
-            RuntimeAuthority::Invocation(verified),
+            RuntimeAuthority::Invocation(Box::new(verified)),
             resource_ceilings,
             entries,
             host_id,

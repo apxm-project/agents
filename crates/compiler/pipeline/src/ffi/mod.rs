@@ -1,6 +1,5 @@
 //! FFI bindings for the Apxm compiler.
 
-pub mod conversions;
 pub mod error;
 pub mod raw;
 pub mod utils;

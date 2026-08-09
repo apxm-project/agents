@@ -6,7 +6,7 @@
 //! - Provider implementations: OpenAI, Anthropic, Google, Ollama
 //! - Factory: Create backends from configuration
 
-#![allow(clippy::unused_async, clippy::unused_async_trait_impl)]
+#![allow(clippy::unused_async)]
 
 pub mod request;
 pub mod response;
