@@ -150,6 +150,7 @@ def emit_frontend_graph(program: BoundProgram, source_language: str = "python") 
                 "from_node": edge.from_node,
                 "to_node": edge.to_node,
                 "context_type_ref": edge.context_type_ref,
+                "value_id": edge.value_id,
             }
             for edge in program.context_edges
         ],
@@ -192,8 +193,8 @@ def _value(value: Any) -> dict[str, Any]:
     }
     if value.origin_id is not None:
         record["origin_id"] = value.origin_id
-    if value.dependencies:
-        record["dependencies"] = list(value.dependencies)
+    if value.expression is not None:
+        record["expression"] = value.expression
     return record
 
 

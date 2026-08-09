@@ -12,7 +12,8 @@ type ConversationMessage = {
 };
 type ConversationState = {
   messages: readonly ConversationMessage[];
-  toolCalls: number;
+  tool_calls: number;
+  last_reply: string;
 };
 type SearchWebRequest = { query: string };
 type SearchWebResult = { content: string };
@@ -38,7 +39,7 @@ type ConversationalProgram = ReturnType<
 const SearchWeb = Tool<SearchWebRequest, SearchWebResult>("cap.search");
 const SupportModel = Model<ModelRequest, ModelResponse>("model.target.v1");
 const ConversationContext = Context<ConversationState>(
-  { messages: [], toolCalls: 0 },
+  { messages: [], tool_calls: 0, last_reply: "" },
   "ConversationContext",
 );
 const source = staticSource(import.meta.url);
@@ -55,29 +56,17 @@ export const ConversationalExample: ConversationalProgram = Agent<
   context: ConversationContext,
   use: { SearchWeb, SupportModel },
   async run(agent, incoming) {
-    while (true) {
-      let turnMessages: readonly ConversationMessage[] = [
-        { role: "user", content: incoming.message },
-      ];
-      let workingMessages: readonly ConversationMessage[] = [
-        ...agent.context.messages,
-        ...turnMessages,
-      ];
+    while (incoming.message !== "") {
       let response = await SupportModel({
-        messages: workingMessages,
+        messages: agent.context.messages,
         incoming,
       });
 
       while (response.kind === "tool_request") {
         if (response.tool_request.kind === "search_web") {
           const toolResult = await SearchWeb(response.tool_request.arguments);
-          turnMessages = [
-            ...turnMessages,
-            { role: "tool", content: toolResult.content },
-          ];
-          workingMessages = [...agent.context.messages, ...turnMessages];
           response = await SupportModel({
-            messages: workingMessages,
+            messages: agent.context.messages,
             incoming,
             tool_result: toolResult,
           });
@@ -90,16 +79,14 @@ export const ConversationalExample: ConversationalProgram = Agent<
         throw new Error("undeclared model response");
       }
 
-      const finalReply = response.reply;
       agent.context = {
-        messages: [
-          ...workingMessages,
-          { role: "assistant", content: finalReply.message },
-        ],
-        toolCalls: agent.context.toolCalls,
+        messages: agent.context.messages,
+        tool_calls: agent.context.tool_calls,
+        last_reply: response.reply.message,
       };
-      incoming = await agent.yield_(finalReply);
+      incoming = await agent.yield_(response.reply);
     }
+    throw new Error("missing conversation input");
   },
 });
 
@@ -111,7 +98,8 @@ const PrepareSearchContext = Hook.before({
     const context = agent.context as ConversationState;
     agent.context = {
       messages: context.messages.slice(-24),
-      toolCalls: context.toolCalls,
+      tool_calls: context.tool_calls,
+      last_reply: context.last_reply,
     };
   },
 });
@@ -124,7 +112,8 @@ const RecordSearchContext = Hook.after({
     const context = agent.context as ConversationState;
     agent.context = {
       messages: context.messages,
-      toolCalls: context.toolCalls + 1,
+      tool_calls: context.tool_calls + 1,
+      last_reply: context.last_reply,
     };
   },
 });

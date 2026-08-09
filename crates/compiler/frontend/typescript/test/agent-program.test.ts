@@ -347,6 +347,58 @@ describe("source-first TypeScript authoring", () => {
     })).toThrow(/safe-integer/);
   });
 
+  it("preserves negative authored integer expressions at the safe boundary", () => {
+    const graph = captureProgram({
+      programId: "NegativeIntegerValue",
+      entrypoint: "run",
+      inputTypeRef: "Input",
+      outputTypeRef: "Output",
+      hasDefaultContext: false,
+      bindings: new Map([["BoundModel", Model("negative.value.model.v1")]]),
+      bindingDeclIds: new Map([["BoundModel", "decl.model.BoundModel"]]),
+      source: {
+        fileName: "negative-value-agent.ts",
+        text: `
+          import { Agent, Model } from "@apxm/frontend";
+          const BoundModel = Model("negative.value.model.v1");
+          const NegativeIntegerValue = Agent({
+            name: "NegativeIntegerValue",
+            async run(agent, input) {
+              return await BoundModel(-9007199254740991);
+            },
+          });
+        `,
+      },
+    }) as unknown as Graph;
+    const value = graph.values.find((candidate) => candidate.origin === "literal");
+    expect(value?.expression).toEqual({ kind: "integer", value: -9007199254740991 });
+  });
+
+  it("rejects effect calls that would silently discard authored operands", () => {
+    expect(() => captureProgram({
+      programId: "MultipleOperands",
+      entrypoint: "run",
+      inputTypeRef: "Input",
+      outputTypeRef: "Output",
+      hasDefaultContext: false,
+      bindings: new Map([["BoundModel", Model("multiple.operands.model.v1")]]),
+      bindingDeclIds: new Map([["BoundModel", "decl.model.BoundModel"]]),
+      source: {
+        fileName: "multiple-operands-agent.ts",
+        text: `
+          import { Agent, Model } from "@apxm/frontend";
+          const BoundModel = Model("multiple.operands.model.v1");
+          const MultipleOperands = Agent({
+            name: "MultipleOperands",
+            async run(agent, input) {
+              return await BoundModel(input, input);
+            },
+          });
+        `,
+      },
+    })).toThrow(/exactly one authored operand/);
+  });
+
   it("lowers a Tool call to capability.invoke inside ais.loop", () => {
     const air = JSON.parse(Support.canonicalAir()) as {
       semantic_operations: Array<{ op: string }>;

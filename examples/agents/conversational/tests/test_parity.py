@@ -475,14 +475,14 @@ def test_conversational_source_passes_history_and_tool_results_to_the_model() ->
 
     assert 'while response["kind"] == "tool_request":' in python
     assert 'while (response.kind === "tool_request")' in typescript
-    assert '*agent.context.messages' in python
-    assert '...agent.context.messages' in typescript
-    assert '"messages": working_messages' in python
-    assert 'messages: workingMessages' in typescript
+    assert '"messages": agent.context.messages' in python
+    assert 'messages: agent.context.messages' in typescript
     assert '"incoming": incoming' in python
     assert 'incoming,' in typescript
     assert '"tool_result": tool_result' in python
     assert 'tool_result: toolResult' in typescript
+    assert 'last_reply=response["reply"]["message"]' in python
+    assert 'last_reply: response.reply.message' in typescript
 
     for source in (python, typescript):
         assert "ResearchSpecialist" not in source
@@ -539,6 +539,17 @@ def test_conversational_context_update_precedes_yield_and_resume() -> None:
         context_edge = graph["context_flow"][0]
         assert context_edge["to_node"] == yield_control["node_id"]
         assert context_edge["context_type_ref"] == "ConversationContext"
+        context_value = next(
+            value
+            for value in graph["values"]
+            if value["value_id"] == context_edge["value_id"]
+        )
+        assert context_value["origin"] == "context_value"
+        assert next(
+            field
+            for field in context_value["expression"]["fields"]
+            if field["name"] == "last_reply"
+        )["value"]["property_path"] == ["reply", "message"]
         resume_value = yield_control["result_value"]
         assert next(
             value for value in graph["values"] if value["value_id"] == resume_value
@@ -546,6 +557,29 @@ def test_conversational_context_update_precedes_yield_and_resume() -> None:
         assert any(
             resume_value in block["block_arguments"] for block in graph["blocks"]
         )
+
+        tool_call = next(
+            call for call in graph["call_intents"] if call["intent_kind"] == "tool_invocation"
+        )
+        tool_arguments = next(
+            value
+            for value in graph["values"]
+            if value["value_id"] == tool_call["operand_values"][0]
+        )["expression"]
+        assert tool_arguments["kind"] == "projection"
+        assert tool_arguments["property_path"] == ["tool_request", "arguments"]
+
+        model_calls = [
+            call for call in graph["call_intents"] if call["intent_kind"] == "model_invocation"
+        ]
+        reentry_request = next(
+            value
+            for value in graph["values"]
+            if value["value_id"] == model_calls[1]["operand_values"][0]
+        )["expression"]
+        assert next(
+            field for field in reentry_request["fields"] if field["name"] == "tool_result"
+        )["value"] == {"kind": "ssa", "value_id": tool_call["result_value"]}
 
 
 def test_paired_corpus_records_equivalent_complete_frontend_intent() -> None:

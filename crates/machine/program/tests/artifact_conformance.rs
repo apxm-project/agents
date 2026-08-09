@@ -182,12 +182,15 @@ fn conversational_example_artifacts_pin_typed_tool_control_and_hooks() {
             .iter()
             .find(|assembly| assembly["value_id"] == reentry_request_id)
             .expect("re-entry request assembly");
-        assert!(
-            reentry_assembly["dependencies"]
-                .as_array()
-                .expect("re-entry request dependencies")
-                .iter()
-                .any(|dependency| dependency == tool_result_id),
+        let tool_result_field = reentry_assembly["expression"]["fields"]
+            .as_array()
+            .expect("authored re-entry object fields")
+            .iter()
+            .find(|field| field["name"] == "tool_result")
+            .expect("authored tool_result field");
+        assert_eq!(
+            tool_result_field["value"],
+            serde_json::json!({"kind": "ssa", "value_id": tool_result_id}),
             "{fixture}: Hooks must not mask the authored Tool-result -> Model-request SSA edge",
         );
 

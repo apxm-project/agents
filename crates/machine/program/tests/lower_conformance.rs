@@ -47,6 +47,7 @@ fn generic_graph_value() -> Value {
         }],
         "values": [
             {"value_id": "value.input", "type_ref": "Input", "origin": "parameter", "origin_id": "run"},
+            {"value_id": "value.context", "type_ref": "Context", "origin": "context_value", "expression": {"kind": "object", "fields": [{"name": "input", "value": {"kind": "ssa", "value_id": "value.input"}}]}},
             {"value_id": "value.model.out", "type_ref": "ModelResponse", "origin": "call_result", "origin_id": "node.model"},
             {"value_id": "value.cap.out", "type_ref": "SearchResult", "origin": "call_result", "origin_id": "node.capability"}
         ],
@@ -94,7 +95,8 @@ fn generic_graph_value() -> Value {
         "context_flow": [{
             "from_node": "node.model",
             "to_node": "node.capability",
-            "context_type_ref": "Context"
+            "context_type_ref": "Context",
+            "value_id": "value.context"
         }],
         "hook_bindings": [],
         "capability_requirements": [{"capability_ref": "cap.search"}],

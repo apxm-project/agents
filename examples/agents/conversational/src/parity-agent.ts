@@ -69,7 +69,7 @@ export const ParityCorpus: ParityProgram = Agent<unknown, unknown, ParityContext
       const childResult = await child.invoke(request);
       const eventResult = await ParityEvent.wait();
       const response = await ParityModel(request);
-      agent.context = { iterations: agent.context.iterations + 1 };
+      agent.context = { iterations: agent.context.iterations };
       request = await agent.yield_(response);
     }
   },

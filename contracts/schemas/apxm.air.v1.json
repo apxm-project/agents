@@ -23,6 +23,7 @@
     },
     "value_assemblies": {
       "type": "array",
+      "maxItems": 4096,
       "items": { "$ref": "#/$defs/ValueAssembly" }
     },
     "structural_ir": {
@@ -45,14 +46,10 @@
   "$defs": {
     "ValueAssembly": {
       "type": "object",
-      "required": ["value_id"],
+      "required": ["value_id", "expression"],
       "properties": {
         "value_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
-        "dependencies": {
-          "type": "array",
-          "items": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
-          "uniqueItems": true
-        }
+        "expression": { "$ref": "apxm.frontend-graph.v1#/$defs/ValueExpression" }
       },
       "additionalProperties": false
     },
@@ -251,7 +248,8 @@
       "required": [
         "from_node",
         "to_node",
-        "context_type_ref"
+        "context_type_ref",
+        "value_id"
       ],
       "properties": {
         "from_node": {
@@ -261,6 +259,9 @@
           "$ref": "apxm.contract-common.v1#/$defs/Identifier"
         },
         "context_type_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "value_id": {
           "$ref": "apxm.contract-common.v1#/$defs/Identifier"
         }
       },

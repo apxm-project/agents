@@ -10,7 +10,7 @@ use apxm_execution::{
     CapabilityInvocationAdmission, CapabilityOutcome, CapabilityPort, CapabilityRequest,
     CompositionOutcome, CompositionPort, CompositionRequest, EventAwait, EventOutcome, EventPort,
     ExecutionPortBundle, ExecutionPorts, ExecutionRequest, NoopStaticHookHandler, RunOutcome,
-    execute, execute_resumable,
+    StaticHookHandlerPort, StaticHookResult, execute, execute_resumable, resume,
 };
 use apxm_inference::{
     AttemptDisposition, IdempotencyKey, InferenceTargetCommitment, ModelBindingAdmission,
@@ -27,6 +27,7 @@ use apxm_kernel::{
 use apxm_program::air::{AirModule, PredicateLiteral};
 use apxm_program::artifact::SchemaDigestRef;
 use apxm_program::capability::CapabilityInvocationAuthority;
+use apxm_program::frontend_graph::HookBinding;
 use apxm_program::runtime_evidence::{
     Fact, LoopIterationCompletedFact, ProgramIdentity, RuntimeEvidence, RuntimeEvidenceVersion,
 };
@@ -88,23 +89,26 @@ fn decode_air(value: Value) -> AirModule {
     air
 }
 
-fn example_artifact_air(artifact: &str) -> AirModule {
+fn example_artifact(artifact: &str) -> (AirModule, Vec<HookBinding>) {
     let value: Value = serde_json::from_str(artifact).expect("example-built executable artifact");
     assert_eq!(
         value["schema_version"], "apxm.executable-artifact.v1",
         "runtime proof consumes the immutable artifact, not handwritten AIR",
     );
-    decode_air(value["air"].clone())
+    (
+        decode_air(value["air"].clone()),
+        serde_json::from_value(value["hook_bindings"].clone()).expect("artifact Hook bindings"),
+    )
 }
 
-fn conversational_python_example_air() -> AirModule {
-    example_artifact_air(include_str!(
+fn conversational_python_example() -> (AirModule, Vec<HookBinding>) {
+    example_artifact(include_str!(
         "../../../machine/program/tests/fixtures/example-artifacts/conversational-python.v1.json"
     ))
 }
 
-fn conversational_typescript_example_air() -> AirModule {
-    example_artifact_air(include_str!(
+fn conversational_typescript_example() -> (AirModule, Vec<HookBinding>) {
+    example_artifact(include_str!(
         "../../../machine/program/tests/fixtures/example-artifacts/conversational-typescript.v1.json"
     ))
 }
@@ -128,7 +132,6 @@ fn request(air: AirModule, commit_id: &str) -> ExecutionRequest {
                 operation.node_id.clone(),
                 CapabilityInvocationAdmission {
                     capability_ref,
-                    arguments: Value::Null,
                     authority: CapabilityInvocationAuthority::new(
                         "principal.test",
                         "agent.test",
@@ -340,24 +343,35 @@ fn interrupted_loop_air(interrupt_kind: &str) -> AirModule {
 
 struct SequencedModel {
     outcomes: Mutex<VecDeque<AttemptDisposition>>,
+    requests: Mutex<Vec<Value>>,
 }
 
 impl SequencedModel {
     fn successful() -> Self {
         Self {
             outcomes: Mutex::new(VecDeque::new()),
+            requests: Mutex::new(Vec::new()),
         }
     }
 
     fn with(outcomes: impl IntoIterator<Item = AttemptDisposition>) -> Self {
         Self {
             outcomes: Mutex::new(outcomes.into_iter().collect()),
+            requests: Mutex::new(Vec::new()),
         }
+    }
+
+    fn requests(&self) -> Vec<Value> {
+        self.requests.lock().unwrap().clone()
     }
 }
 
 impl ModelInferencePort for SequencedModel {
-    fn attempt(&self, _request: &ModelCallRequest, _attempt: u32) -> AttemptDisposition {
+    fn attempt(&self, request: &ModelCallRequest, _attempt: u32) -> AttemptDisposition {
+        self.requests
+            .lock()
+            .unwrap()
+            .push(request.authored_request().clone());
         self.outcomes
             .lock()
             .unwrap()
@@ -366,6 +380,26 @@ impl ModelInferencePort for SequencedModel {
                 usage: Usage::default(),
                 output: serde_json::Value::Null,
             })
+    }
+}
+
+#[derive(Default)]
+struct ArtifactHooks {
+    calls: Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl StaticHookHandlerPort for ArtifactHooks {
+    async fn execute(
+        &self,
+        binding: &HookBinding,
+        _context: &Value,
+        _result: &Value,
+    ) -> Result<StaticHookResult, apxm_execution::StaticHookExecutionError> {
+        self.calls.lock().unwrap().push(binding.hook_id.clone());
+        Ok(StaticHookResult::Keep {
+            assigned_context: None,
+        })
     }
 }
 
@@ -429,6 +463,7 @@ struct RecordingCommit {
     version: Mutex<u64>,
     durable_evidence: Mutex<Vec<Fact>>,
     conflict: bool,
+    continuation: Mutex<Option<Value>>,
 }
 
 impl RecordingCommit {
@@ -437,6 +472,7 @@ impl RecordingCommit {
             version: Mutex::new(0),
             durable_evidence: Mutex::new(Vec::new()),
             conflict,
+            continuation: Mutex::new(None),
         }
     }
 
@@ -478,6 +514,7 @@ impl ExecutionCommitPort for RecordingCommit {
             .lock()
             .unwrap()
             .extend(request.evidence_batch);
+        *self.continuation.lock().unwrap() = request.tuple.continuation;
         ExecutionCommitResult::Committed {
             new_program_state_version: *version,
             evidence_position_ref: format!("evidence:{}", *version),
@@ -488,9 +525,8 @@ impl ExecutionCommitPort for RecordingCommit {
         *self.version.lock().unwrap()
     }
 
-    /// The loop-evidence fixture runs to completion, so it parks no continuation.
     async fn load_continuation(&self, _program_instance_ref: &ProgramInstanceRef) -> Option<Value> {
-        None
+        self.continuation.lock().unwrap().clone()
     }
 }
 
@@ -498,6 +534,15 @@ fn ports(
     model: Arc<SequencedModel>,
     commit: Arc<RecordingCommit>,
     park_event: bool,
+) -> ExecutionPorts {
+    ports_with_hooks(model, commit, park_event, Arc::new(NoopStaticHookHandler))
+}
+
+fn ports_with_hooks(
+    model: Arc<SequencedModel>,
+    commit: Arc<RecordingCommit>,
+    park_event: bool,
+    hooks: Arc<dyn StaticHookHandlerPort>,
 ) -> ExecutionPorts {
     let contract = |schema_id: &str| SchemaDigestRef {
         schema_id: schema_id.into(),
@@ -559,24 +604,20 @@ fn ports(
         Arc::new(Composition),
     )
     .expect("driver ports satisfy their exact admitted bindings");
-    ExecutionPorts::from_admitted_bundle(
-        &bundle,
-        Arc::new(TestModelRequestMetadata),
-        Arc::new(NoopStaticHookHandler),
-    )
-    .expect("bundle contains every runtime effect port")
+    ExecutionPorts::from_admitted_bundle(&bundle, Arc::new(TestModelRequestMetadata), hooks)
+        .expect("bundle contains every runtime effect port")
 }
 
 #[tokio::test]
 async fn repository_example_artifacts_execute_only_generic_structural_semantics() {
-    for (commit_id, air) in [
+    for (commit_id, (air, hook_bindings)) in [
         (
             "example.conversational.python",
-            conversational_python_example_air(),
+            conversational_python_example(),
         ),
         (
             "example.conversational.typescript",
-            conversational_typescript_example_air(),
+            conversational_typescript_example(),
         ),
     ] {
         assert!(
@@ -610,17 +651,17 @@ async fn repository_example_artifacts_execute_only_generic_structural_semantics(
         assert!(!encoded.contains("conversational_loop"));
 
         let commit = Arc::new(RecordingCommit::new(false));
+        let model = Arc::new(SequencedModel::with([AttemptDisposition::Success {
+            usage: Usage::default(),
+            output: json!({"kind": "final", "reply": {"message": "done"}}),
+        }]));
+        let hooks = Arc::new(ArtifactHooks::default());
+        let mut execution_request = request(air, commit_id);
+        execution_request.hook_bindings = hook_bindings;
         let report = execute(
-            &ports(
-                Arc::new(SequencedModel::with([AttemptDisposition::Success {
-                    usage: Usage::default(),
-                    output: json!({"kind": "final", "content": "done"}),
-                }])),
-                commit.clone(),
-                false,
-            ),
-            request(air, commit_id),
-            Value::Null,
+            &ports_with_hooks(model, commit.clone(), false, hooks.clone()),
+            execution_request,
+            json!({"messages": [], "tool_calls": 0, "last_reply": ""}),
         )
         .await
         .expect("execute example-built artifact");
@@ -648,7 +689,141 @@ async fn repository_example_artifacts_execute_only_generic_structural_semantics(
         );
         assert!(commit.completions().is_empty());
         assert!(commit.evidence().verify().is_accepted());
+        assert!(hooks.calls.lock().unwrap().is_empty());
     }
+}
+
+#[tokio::test]
+async fn repository_example_artifacts_execute_authored_tool_flow_and_real_hooks() {
+    for (commit_id, (air, hook_bindings)) in [
+        ("example.tool.python", conversational_python_example()),
+        (
+            "example.tool.typescript",
+            conversational_typescript_example(),
+        ),
+    ] {
+        let commit = Arc::new(RecordingCommit::new(false));
+        let model = Arc::new(SequencedModel::with([
+            AttemptDisposition::Success {
+                usage: Usage::default(),
+                output: json!({
+                    "kind": "tool_request",
+                    "tool_request": {"kind": "search_web", "arguments": {"query": "APXM"}}
+                }),
+            },
+            AttemptDisposition::Success {
+                usage: Usage::default(),
+                output: json!({"kind": "final", "reply": {"message": "done"}}),
+            },
+        ]));
+        let hooks = Arc::new(ArtifactHooks::default());
+        let mut execution_request = request(air, commit_id);
+        execution_request.hook_bindings = hook_bindings;
+        let report = execute(
+            &ports_with_hooks(model.clone(), commit, false, hooks.clone()),
+            execution_request,
+            json!({"messages": [], "tool_calls": 0, "last_reply": ""}),
+        )
+        .await
+        .expect("real artifact Tool branch executes");
+
+        assert_eq!(
+            model.requests(),
+            [
+                json!({"messages": [], "incoming": {"message": "hello"}}),
+                json!({
+                    "messages": [],
+                    "incoming": {"message": "hello"},
+                    "tool_result": "ok"
+                }),
+            ],
+            "the Tool result reaches the next authored Model request directly",
+        );
+        assert_eq!(
+            *hooks.calls.lock().unwrap(),
+            ["hook.PrepareSearchContext", "hook.RecordSearchContext"],
+        );
+        assert_eq!(
+            report.final_context,
+            json!({"messages": [], "tool_calls": 0, "last_reply": "done"}),
+            "authored Context assignment executes independently of Hook results",
+        );
+    }
+}
+
+#[tokio::test]
+async fn repository_example_resume_carries_exact_input_and_context_into_next_turn() {
+    let (air, hook_bindings) = conversational_python_example();
+    let commit = Arc::new(RecordingCommit::new(false));
+    let model = Arc::new(SequencedModel::with([
+        AttemptDisposition::Success {
+            usage: Usage::default(),
+            output: json!({"kind": "final", "reply": {"message": "first reply"}}),
+        },
+        AttemptDisposition::Success {
+            usage: Usage::default(),
+            output: json!({"kind": "final", "reply": {"message": "second reply"}}),
+        },
+    ]));
+    let hooks = Arc::new(ArtifactHooks::default());
+    let mut execution_request = request(air, "example.resume");
+    execution_request.hook_bindings = hook_bindings;
+    let runtime_ports = ports_with_hooks(model.clone(), commit.clone(), false, hooks);
+
+    assert!(matches!(
+        execute_resumable(
+            &runtime_ports,
+            execution_request,
+            json!({"messages": [], "tool_calls": 0, "last_reply": ""}),
+        )
+        .await
+        .expect("first turn parks at authored yield"),
+        RunOutcome::Suspended { .. }
+    ));
+    let first_continuation: apxm_execution::Continuation = serde_json::from_value(
+        commit
+            .continuation
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("first continuation"),
+    )
+    .expect("typed first continuation");
+    assert_eq!(
+        first_continuation.context,
+        json!({"messages": [], "tool_calls": 0, "last_reply": "first reply"})
+    );
+
+    assert!(matches!(
+        resume(
+            &runtime_ports,
+            &ProgramInstanceRef::new("instance.1"),
+            json!({"message": "second turn"}),
+        )
+        .await
+        .expect("resume reaches the next authored yield"),
+        RunOutcome::Suspended { .. }
+    ));
+    assert_eq!(
+        model.requests(),
+        [
+            json!({"messages": [], "incoming": {"message": "hello"}}),
+            json!({"messages": [], "incoming": {"message": "second turn"}}),
+        ]
+    );
+    let second_continuation: apxm_execution::Continuation = serde_json::from_value(
+        commit
+            .continuation
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("second continuation"),
+    )
+    .expect("typed second continuation");
+    assert_eq!(
+        second_continuation.context,
+        json!({"messages": [], "tool_calls": 0, "last_reply": "second reply"})
+    );
 }
 
 #[tokio::test]

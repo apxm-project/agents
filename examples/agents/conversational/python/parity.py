@@ -40,11 +40,11 @@ async def ParityCorpus(agent, request):
                 tool_result = await ParityCapability(request)
         except Exception:
             tool_result = await ParityCapability(request)
-        child = ParityChild.new(context=ParityContext())
+        child = ParityChild.new(context=ParityContext(iterations=0))
         child_result = await child.invoke(request)
         event_result = await ParityEvent.wait()
         response = await ParityModel(request)
-        agent.context = ParityContext(iterations=agent.context.iterations + 1)
+        agent.context = ParityContext(iterations=agent.context.iterations)
         request = await agent.yield_(response)
 
 

@@ -65,6 +65,7 @@ SupportModel = Model[ModelRequest, ModelResponse]("model.target.v1")
 class ConversationContext:
     messages: tuple[ConversationMessage, ...] = ()
     tool_calls: int = 0
+    last_reply: str = ""
 
 
 @Hook.before(target="SearchWeb", scope="capability")
@@ -89,30 +90,17 @@ async def RecordSearchContext(agent) -> None:
     context=ConversationContext,
 )
 async def ConversationalExample(agent, incoming):
-    while True:
-        turn_messages = ({"role": "user", "content": incoming["message"]},)
-        working_messages = (
-            *agent.context.messages,
-            *turn_messages,
-        )
+    while incoming["message"] != "":
         response = await SupportModel(
-            {"messages": working_messages, "incoming": incoming}
+            {"messages": agent.context.messages, "incoming": incoming}
         )
 
         while response["kind"] == "tool_request":
             if response["tool_request"]["kind"] == "search_web":
                 tool_result = await SearchWeb(response["tool_request"]["arguments"])
-                turn_messages = (
-                    *turn_messages,
-                    {"role": "tool", "content": tool_result["content"]},
-                )
-                working_messages = (
-                    *agent.context.messages,
-                    *turn_messages,
-                )
                 response = await SupportModel(
                     {
-                        "messages": working_messages,
+                        "messages": agent.context.messages,
                         "incoming": incoming,
                         "tool_result": tool_result,
                     }
@@ -123,15 +111,13 @@ async def ConversationalExample(agent, incoming):
         if response["kind"] != "final":
             raise ValueError("undeclared model response")
 
-        final_reply = response["reply"]
         agent.context = ConversationContext(
-            messages=(
-                *working_messages,
-                {"role": "assistant", "content": final_reply["message"]},
-            ),
+            messages=agent.context.messages,
             tool_calls=agent.context.tool_calls,
+            last_reply=response["reply"]["message"],
         )
-        incoming = await agent.yield_(final_reply)
+        incoming = await agent.yield_(response["reply"])
+    raise ValueError("missing conversation input")
 
 
 def main() -> None:

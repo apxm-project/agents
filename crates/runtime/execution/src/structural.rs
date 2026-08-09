@@ -20,6 +20,7 @@ pub enum ScheduleStep {
     ContextEdge {
         from_node: String,
         to_node: String,
+        value_id: String,
     },
     /// Dispatch semantic operation at `index` in `air.semantic_operations`.
     Semantic {
@@ -63,10 +64,15 @@ pub enum ScheduleStep {
 /// Build the deterministic execution schedule for `air`.
 #[must_use]
 pub fn build_schedule(air: &AirModule, hook_bindings: &[HookBinding]) -> Vec<ScheduleStep> {
-    let context_edges: BTreeMap<&str, &str> = air
+    let context_edges: BTreeMap<&str, (&str, &str)> = air
         .context_flow
         .iter()
-        .map(|edge| (edge.from_node.as_str(), edge.to_node.as_str()))
+        .map(|edge| {
+            (
+                edge.to_node.as_str(),
+                (edge.from_node.as_str(), edge.value_id.as_str()),
+            )
+        })
         .collect();
     let mut schedule = Vec::new();
 
@@ -93,7 +99,7 @@ pub fn build_schedule(air: &AirModule, hook_bindings: &[HookBinding]) -> Vec<Sch
 fn emit_children(
     air: &AirModule,
     hook_bindings: &[HookBinding],
-    context_edges: &BTreeMap<&str, &str>,
+    context_edges: &BTreeMap<&str, (&str, &str)>,
     parent_region_id: Option<&str>,
     loop_path: &[String],
     schedule: &mut Vec<ScheduleStep>,
@@ -132,6 +138,7 @@ fn emit_children(
             }
             Child::Structural(index) => {
                 let region = &air.structural_ir[index];
+                emit_context_before(context_edges, &region.region_id, schedule);
                 match region.kind {
                     StructuralOpKind::Loop => {
                         schedule.push(ScheduleStep::EnterLoop {
@@ -239,12 +246,13 @@ fn emit_children(
 fn emit_semantic(
     air: &AirModule,
     hook_bindings: &[HookBinding],
-    context_edges: &BTreeMap<&str, &str>,
+    context_edges: &BTreeMap<&str, (&str, &str)>,
     index: usize,
     loop_path: &[String],
     schedule: &mut Vec<ScheduleStep>,
 ) {
     let operation = &air.semantic_operations[index];
+    emit_context_before(context_edges, &operation.node_id, schedule);
     for binding in ordered_hooks(hook_bindings, HookPhase::Before, |hook| {
         hook_targets_operation(hook, &operation.node_id, operation.op)
     }) {
@@ -256,17 +264,25 @@ fn emit_semantic(
         index,
         loop_path: loop_path.to_vec(),
     });
-    if let Some(to_node) = context_edges.get(operation.node_id.as_str()) {
-        schedule.push(ScheduleStep::ContextEdge {
-            from_node: operation.node_id.clone(),
-            to_node: (*to_node).to_string(),
-        });
-    }
     for binding in ordered_hooks(hook_bindings, HookPhase::After, |hook| {
         hook_targets_operation(hook, &operation.node_id, operation.op)
     }) {
         schedule.push(ScheduleStep::HookAfter {
             binding: binding.clone(),
+        });
+    }
+}
+
+fn emit_context_before(
+    context_edges: &BTreeMap<&str, (&str, &str)>,
+    to_node: &str,
+    schedule: &mut Vec<ScheduleStep>,
+) {
+    if let Some((from_node, value_id)) = context_edges.get(to_node) {
+        schedule.push(ScheduleStep::ContextEdge {
+            from_node: (*from_node).to_string(),
+            to_node: to_node.to_string(),
+            value_id: (*value_id).to_string(),
         });
     }
 }

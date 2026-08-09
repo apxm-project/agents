@@ -35,6 +35,7 @@ use crate::air::{
     PredicateLiteral as AirPredicateLiteral, SemanticOp, SsaValue, StructuralNode, ValueAssembly,
 };
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Verdict};
+use crate::frontend_graph::ValueExpression;
 use crate::frontend_graph::{
     CallIntent, ControlIntent, ControlKind, ControlPredicate, FrontendGraph, HookBinding,
     HookPhase, IntentKind, PredicateComparator, PredicateLiteral, Region, RegionRole, Value,
@@ -125,10 +126,19 @@ pub fn frontend_graph_to_air(graph: &FrontendGraph) -> Result<AirModule, Verdict
         value_assemblies: graph
             .values
             .iter()
-            .filter(|value| value.origin == crate::frontend_graph::ValueOrigin::Literal)
+            .filter(|value| {
+                matches!(
+                    value.origin,
+                    crate::frontend_graph::ValueOrigin::Literal
+                        | crate::frontend_graph::ValueOrigin::ContextValue
+                )
+            })
             .map(|value| ValueAssembly {
                 value_id: value.value_id.clone(),
-                dependencies: value.dependencies.clone(),
+                expression: value
+                    .expression
+                    .clone()
+                    .expect("verified assembled values carry expressions"),
             })
             .collect(),
         semantic_operations,
@@ -140,6 +150,7 @@ pub fn frontend_graph_to_air(graph: &FrontendGraph) -> Result<AirModule, Verdict
                 from_node: edge.from_node.clone(),
                 to_node: edge.to_node.clone(),
                 context_type_ref: edge.context_type_ref.clone(),
+                value_id: edge.value_id.clone(),
             })
             .collect(),
         source_map: graph.source_map.clone(),
@@ -275,7 +286,13 @@ fn add_entry_block_arguments(
     definitions.extend(
         values
             .iter()
-            .filter(|value| value.origin == crate::frontend_graph::ValueOrigin::Literal)
+            .filter(|value| {
+                matches!(
+                    value.origin,
+                    crate::frontend_graph::ValueOrigin::Literal
+                        | crate::frontend_graph::ValueOrigin::ContextValue
+                )
+            })
             .map(|value| value.value_id.as_str()),
     );
     for node in structural_ir.iter() {
@@ -294,25 +311,45 @@ fn add_entry_block_arguments(
             }
         }
     }
-    for assembly in values
-        .iter()
-        .filter(|value| value.origin == crate::frontend_graph::ValueOrigin::Literal)
-    {
-        for dependency_id in &assembly.dependencies {
+    for node in structural_ir.iter() {
+        for operand in &node.operands {
+            if !definitions.contains(operand.value_id.as_str()) {
+                entry_values
+                    .entry(operand.value_id.clone())
+                    .or_insert_with(|| operand.type_ref.clone());
+            }
+        }
+    }
+    for assembly in values.iter().filter(|value| {
+        matches!(
+            value.origin,
+            crate::frontend_graph::ValueOrigin::Literal
+                | crate::frontend_graph::ValueOrigin::ContextValue
+        )
+    }) {
+        let mut references = Vec::new();
+        collect_expression_references(
+            assembly
+                .expression
+                .as_ref()
+                .expect("verified assembled value carries expression"),
+            &mut references,
+        );
+        for dependency_id in references {
             if definitions.contains(dependency_id.as_str()) {
                 continue;
             }
-            let Some(dependency) = values.iter().find(|value| value.value_id == *dependency_id)
+            let Some(dependency) = values.iter().find(|value| value.value_id == dependency_id)
             else {
                 verdict.push(Diagnostic::new(
                     DiagnosticCode::SchemaViolation,
-                    dependency_id,
+                    dependency_id.clone(),
                     "value assembly dependency is not declared by the frontend graph",
                 ));
                 continue;
             };
             entry_values
-                .entry(dependency_id.clone())
+                .entry(dependency_id)
                 .or_insert_with(|| dependency.type_ref.clone());
         }
     }
@@ -333,6 +370,24 @@ fn add_entry_block_arguments(
     entry
         .block_arguments
         .sort_by(|left, right| left.value_id.cmp(&right.value_id));
+}
+
+fn collect_expression_references(expression: &ValueExpression, references: &mut Vec<String>) {
+    match expression {
+        ValueExpression::Ssa { value_id } => references.push(value_id.clone()),
+        ValueExpression::Projection { root, .. } => collect_expression_references(root, references),
+        ValueExpression::Object { fields } => fields
+            .iter()
+            .for_each(|field| collect_expression_references(&field.value, references)),
+        ValueExpression::Array { items } => items
+            .iter()
+            .for_each(|item| collect_expression_references(item, references)),
+        ValueExpression::Context { .. }
+        | ValueExpression::String { .. }
+        | ValueExpression::Integer { .. }
+        | ValueExpression::Boolean { .. }
+        | ValueExpression::Null => {}
+    }
 }
 
 /// Resolve a program binding reference to its imported program reference string.

@@ -14,6 +14,8 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+const MAX_SAFE_PREDICATE_INTEGER: u64 = 9_007_199_254_740_991;
+
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Verdict, schema_violation};
 use crate::grammar::{is_digest, is_identifier};
 use crate::source_map::{SourceLanguage, SourceMap};
@@ -238,9 +240,49 @@ pub struct Value {
     pub origin: ValueOrigin,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin_id: Option<String>,
-    /// Prior SSA values captured inside this pure authored value expression.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub dependencies: Vec<String>,
+    /// Closed, lossless representation of an authored pure value expression.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expression: Option<ValueExpression>,
+}
+
+/// One field in an authored object expression.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ValueField {
+    pub name: String,
+    pub value: ValueExpression,
+}
+
+/// Closed pure expression grammar used to assemble effect operands and Context.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ValueExpression {
+    Ssa {
+        value_id: String,
+    },
+    Context {
+        property_path: Vec<String>,
+    },
+    Projection {
+        root: Box<ValueExpression>,
+        property_path: Vec<String>,
+    },
+    Object {
+        fields: Vec<ValueField>,
+    },
+    Array {
+        items: Vec<ValueExpression>,
+    },
+    String {
+        value: String,
+    },
+    Integer {
+        value: i64,
+    },
+    Boolean {
+        value: bool,
+    },
+    Null,
 }
 
 /// One basic block with typed block arguments, contained in a region.
@@ -318,6 +360,7 @@ pub struct ContextEdge {
     pub from_node: String,
     pub to_node: String,
     pub context_type_ref: String,
+    pub value_id: String,
 }
 
 /// One statically compiled Hook binding.
@@ -617,24 +660,34 @@ fn collect_typed_link_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph) 
     }
 
     for value in &graph.values {
-        if value.origin != ValueOrigin::Literal && !value.dependencies.is_empty() {
+        let assembled = matches!(
+            value.origin,
+            ValueOrigin::Literal | ValueOrigin::ContextValue
+        );
+        if assembled != value.expression.is_some() {
             verdict.push(Diagnostic::new(
                 DiagnosticCode::SchemaViolation,
                 value.value_id.clone(),
-                "only literal value assemblies carry SSA dependencies",
+                "literal and context values carry exactly one authored expression",
             ));
         }
-        let mut seen_dependencies = HashSet::new();
-        for dependency in &value.dependencies {
-            if dependency == &value.value_id
-                || !seen_dependencies.insert(dependency.as_str())
-                || !values.contains_key(dependency.as_str())
-            {
+        if let Some(expression) = &value.expression {
+            let mut references = Vec::new();
+            if !validate_value_expression(expression, &value.value_id, 0, &mut references) {
                 verdict.push(Diagnostic::new(
                     DiagnosticCode::SchemaViolation,
                     value.value_id.clone(),
-                    "value assembly dependencies must be unique declared prior SSA values",
+                    "authored value expression is malformed, unsafe, or exceeds bounds",
                 ));
+            }
+            for dependency in references {
+                if !values.contains_key(dependency.as_str()) {
+                    verdict.push(Diagnostic::new(
+                        DiagnosticCode::SchemaViolation,
+                        value.value_id.clone(),
+                        "authored value expression references an undeclared SSA value",
+                    ));
+                }
             }
         }
         match value.origin {
@@ -777,6 +830,32 @@ fn collect_typed_link_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph) 
         }
         validate_control_predicate(verdict, intent, &values);
     }
+    let nodes = graph
+        .call_intents
+        .iter()
+        .map(|intent| intent.node_id.as_str())
+        .chain(
+            graph
+                .control_intents
+                .iter()
+                .map(|intent| intent.node_id.as_str()),
+        )
+        .collect::<HashSet<_>>();
+    for edge in &graph.context_flow {
+        let valid_value = values
+            .get(edge.value_id.as_str())
+            .is_some_and(|value| value.origin == ValueOrigin::ContextValue);
+        if !nodes.contains(edge.from_node.as_str())
+            || !nodes.contains(edge.to_node.as_str())
+            || !valid_value
+        {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                edge.to_node.clone(),
+                "Context edge requires declared endpoints and an exact context-value SSA",
+            ));
+        }
+    }
 }
 
 fn validate_control_predicate(
@@ -844,6 +923,77 @@ fn validate_control_predicate(
                 "equals predicate requires a typed scalar literal",
             ))
         }
+    }
+    if matches!(predicate.literal, Some(PredicateLiteral::Integer(value)) if value.unsigned_abs() > MAX_SAFE_PREDICATE_INTEGER)
+    {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::SchemaViolation,
+            intent.node_id.clone(),
+            "predicate integer literal exceeds the shared safe integer domain",
+        ));
+    }
+}
+
+fn valid_expression_path(path: &[String], empty_allowed: bool) -> bool {
+    (empty_allowed || !path.is_empty())
+        && path.len() <= 16
+        && path.iter().all(|segment| {
+            !segment.is_empty()
+                && segment.len() <= 128
+                && segment
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        })
+}
+
+fn validate_value_expression(
+    expression: &ValueExpression,
+    owner: &str,
+    depth: usize,
+    references: &mut Vec<String>,
+) -> bool {
+    if depth > 64 {
+        return false;
+    }
+    match expression {
+        ValueExpression::Ssa { value_id } => {
+            if !is_identifier(value_id) || value_id == owner {
+                return false;
+            }
+            references.push(value_id.clone());
+            true
+        }
+        ValueExpression::Context { property_path } => valid_expression_path(property_path, true),
+        ValueExpression::Projection {
+            root,
+            property_path,
+        } => {
+            valid_expression_path(property_path, false)
+                && validate_value_expression(root, owner, depth + 1, references)
+        }
+        ValueExpression::Object { fields } => {
+            let mut names = HashSet::new();
+            fields.len() <= 64
+                && fields.iter().all(|field| {
+                    !field.name.is_empty()
+                        && field.name.len() <= 128
+                        && field
+                            .name
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+                        && names.insert(field.name.as_str())
+                        && validate_value_expression(&field.value, owner, depth + 1, references)
+                })
+        }
+        ValueExpression::Array { items } => {
+            items.len() <= 256
+                && items
+                    .iter()
+                    .all(|item| validate_value_expression(item, owner, depth + 1, references))
+        }
+        ValueExpression::String { value } => value.len() <= 1_048_576,
+        ValueExpression::Integer { value } => value.unsigned_abs() <= MAX_SAFE_PREDICATE_INTEGER,
+        ValueExpression::Boolean { .. } | ValueExpression::Null => true,
     }
 }
 
