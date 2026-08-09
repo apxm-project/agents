@@ -396,8 +396,10 @@ fn resolve_program_ref(binding_ref: &str, graph: &FrontendGraph) -> String {
         .imported_program_refs
         .iter()
         .find(|import| import.program_ref == binding_ref)
-        .map(|import| import.program_ref.clone())
-        .unwrap_or_else(|| binding_ref.to_string())
+        .map_or_else(
+            || binding_ref.to_string(),
+            |import| import.program_ref.clone(),
+        )
 }
 
 /// Resolve an ordered list of value ids into typed SSA operands, taking each

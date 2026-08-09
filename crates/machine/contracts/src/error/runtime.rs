@@ -241,9 +241,9 @@ impl RuntimeError {
                 format!("Operation {:?} exceeded timeout {:?}", op_id, timeout),
                 serde_json::json!({ "timeout_ms": timeout.as_millis() as u64 }),
             ),
-            RuntimeError::Serialization(msg) => (msg.clone(), serde_json::Value::Null),
-            RuntimeError::Executor(msg) => (msg.clone(), serde_json::Value::Null),
-            RuntimeError::State(msg) => (msg.clone(), serde_json::Value::Null),
+            RuntimeError::Serialization(msg)
+            | RuntimeError::Executor(msg)
+            | RuntimeError::State(msg) => (msg.clone(), serde_json::Value::Null),
             RuntimeError::InvalidTask { reason } => (reason.clone(), serde_json::Value::Null),
         };
         serde_json::json!({
