@@ -209,6 +209,7 @@ impl std::fmt::Debug for PortBundle {
             )
             .field("durable_event", &self.durable_event.is_some())
             .field("program_composition", &self.program_composition.is_some())
+            .field("bindings", &self.bindings)
             .finish()
     }
 }

@@ -44,6 +44,15 @@ pub enum Commands {
     ExecuteCanonical {
         /// Canonical AIR JSON file.
         input: PathBuf,
+        /// Exact product-neutral Invocation Admission JSON supplied by the host.
+        #[arg(long, value_name = "PATH")]
+        invocation_admission: PathBuf,
+        /// Exact release bytes named by the Invocation Admission.
+        #[arg(long, value_name = "PATH")]
+        release: PathBuf,
+        /// Exact provenance bytes named by the Invocation Admission.
+        #[arg(long, value_name = "PATH")]
+        provenance: PathBuf,
     },
     /// Diagnose compiler/runtime dependencies
     Doctor,
@@ -664,15 +673,45 @@ mod tests {
     }
 
     #[test]
-    fn execute_canonical_accepts_air_path() {
-        let cli = Cli::try_parse_from(["apxm", "execute-canonical", "/tmp/program.air"])
-            .expect("execute-canonical parses");
+    fn execute_canonical_accepts_exact_admission_inputs() {
+        let cli = Cli::try_parse_from([
+            "apxm",
+            "execute-canonical",
+            "/tmp/program.air",
+            "--invocation-admission",
+            "/tmp/admission.json",
+            "--release",
+            "/tmp/release.json",
+            "--provenance",
+            "/tmp/provenance.json",
+        ])
+        .expect("execute-canonical parses");
 
         match cli.command {
-            Commands::ExecuteCanonical { input } => {
+            Commands::ExecuteCanonical {
+                input,
+                invocation_admission,
+                release,
+                provenance,
+            } => {
                 assert_eq!(input, PathBuf::from("/tmp/program.air"));
+                assert_eq!(invocation_admission, PathBuf::from("/tmp/admission.json"));
+                assert_eq!(release, PathBuf::from("/tmp/release.json"));
+                assert_eq!(provenance, PathBuf::from("/tmp/provenance.json"));
             }
             _ => panic!("expected execute-canonical command"),
         }
+    }
+
+    #[test]
+    fn execute_canonical_rejects_missing_invocation_admission() {
+        let error = match Cli::try_parse_from(["apxm", "execute-canonical", "/tmp/program.air"]) {
+            Ok(_) => panic!("execute-canonical must require exact host authority"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
     }
 }

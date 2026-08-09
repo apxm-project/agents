@@ -78,6 +78,16 @@ pub struct RuntimeProfile {
     resource_ceilings: ResourceCeilings,
 }
 
+/// Exact external driver bindings supplied alongside an admitted kernel.
+pub struct RuntimeDriverBindings {
+    pub expected_event_contract: SchemaDigestRef,
+    pub event_binding: ExactPortBinding,
+    pub events: Arc<dyn EventPort>,
+    pub expected_composition_contract: SchemaDigestRef,
+    pub composition_binding: ExactPortBinding,
+    pub composition: Arc<dyn CompositionPort>,
+}
+
 impl RuntimeProfile {
     /// Construct a profile from one already-admitted kernel runtime and two
     /// exact driver bindings. No implementation is selected here: the outer
@@ -85,15 +95,18 @@ impl RuntimeProfile {
     /// already verified its descriptor and confinement attestation.
     pub fn from_admission(
         admission: RuntimeAdmission,
-        expected_event_contract: SchemaDigestRef,
-        event_binding: ExactPortBinding,
-        events: Arc<dyn EventPort>,
-        expected_composition_contract: SchemaDigestRef,
-        composition_binding: ExactPortBinding,
-        composition: Arc<dyn CompositionPort>,
+        bindings: RuntimeDriverBindings,
         model_call_request_metadata: Arc<dyn ModelCallRequestMetadataPort>,
         hook_handlers: Arc<dyn StaticHookHandlerPort>,
     ) -> Result<Self, RuntimeProfileError> {
+        let RuntimeDriverBindings {
+            expected_event_contract,
+            event_binding,
+            events,
+            expected_composition_contract,
+            composition_binding,
+            composition,
+        } = bindings;
         for (slot, supplied) in [
             (apxm_kernel::PortSlot::DurableEvent, &event_binding),
             (
@@ -190,22 +203,12 @@ impl RuntimeProfile {
     /// implementation or weaken admission.
     pub fn from_admission_without_hooks(
         admission: RuntimeAdmission,
-        expected_event_contract: SchemaDigestRef,
-        event_binding: ExactPortBinding,
-        events: Arc<dyn EventPort>,
-        expected_composition_contract: SchemaDigestRef,
-        composition_binding: ExactPortBinding,
-        composition: Arc<dyn CompositionPort>,
+        bindings: RuntimeDriverBindings,
         model_call_request_metadata: Arc<dyn ModelCallRequestMetadataPort>,
     ) -> Result<Self, RuntimeProfileError> {
         Self::from_admission(
             admission,
-            expected_event_contract,
-            event_binding,
-            events,
-            expected_composition_contract,
-            composition_binding,
-            composition,
+            bindings,
             model_call_request_metadata,
             Arc::new(NoopStaticHookHandler),
         )

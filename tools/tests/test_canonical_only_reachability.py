@@ -173,6 +173,9 @@ class CanonicalOnlyReachabilityTests(unittest.TestCase):
         self.assertEqual(command["group"], "Compilation")
         self.assertIn("build -p apxm-cli --bin apxm", run)
         self.assertIn('debug/apxm\" execute-canonical', run)
+        self.assertIn("--invocation-admission", run)
+        self.assertIn("--release", run)
+        self.assertIn("--provenance", run)
         self.assertNotIn("apxm_cli.py", run)
         self.assertNotIn("--features driver", run)
 

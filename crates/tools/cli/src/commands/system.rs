@@ -104,9 +104,8 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
         .as_ref()
         .map(|p| p.display().to_string());
     let mlir_version = report.llvm_version.clone();
-    let compiler_probe = apxm_program::lower_frontend_graph_json(DOCTOR_FRONTEND_GRAPH_PROBE)
-        .map(|_| ())
-        .map_err(|err| err.to_string());
+    let compiler_probe =
+        apxm_program::lower_frontend_graph_json(DOCTOR_FRONTEND_GRAPH_PROBE).map(|_| ());
     let compiler_ready = compiler_probe.is_ok();
     let compiler_error = compiler_probe.err();
 
