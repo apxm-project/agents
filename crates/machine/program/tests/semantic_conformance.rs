@@ -92,12 +92,75 @@ fn every_authored_model_operand_requires_dominance() {
             "region_id": "region.sibling",
             "region_role": "task_scope",
             "parent_region_id": "region.body",
-            "execution_order": 3
+            "execution_order": 0
         }));
     sibling_request["call_intents"][0]["parent_region_id"] = json!("region.sibling");
     sibling_request["call_intents"][0]["operand_values"] = json!(["value.search.out"]);
     sibling_request["data_edges"][0]["from_value"] = json!("value.search.out");
     assert!(!verify_frontend_graph_json(&sibling_request).is_accepted());
+}
+
+#[test]
+fn every_structural_operand_and_predicate_requires_dominance() {
+    let valid = load_vectors("apxm.frontend-graph.v2.json")
+        .into_iter()
+        .find(|vector| vector.name == "valid-frontend-graph-typed-intents")
+        .expect("typed frontend graph vector")
+        .input;
+
+    let mut future_structural_operand = valid.clone();
+    future_structural_operand["regions"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "region_id": "region.sibling",
+            "region_role": "task_scope",
+            "parent_region_id": "region.body",
+            "execution_order": 0
+        }));
+    future_structural_operand["regions"][1]["execution_order"] = json!(1);
+    future_structural_operand["control_intents"][1]["parent_region_id"] = json!("region.sibling");
+    future_structural_operand["control_intents"][1]["operand_values"] =
+        json!(["value.event.output"]);
+    future_structural_operand["data_edges"][3]["from_value"] = json!("value.event.output");
+    assert!(!verify_frontend_graph_json(&future_structural_operand).is_accepted());
+
+    let mut valid_predicate = valid.clone();
+    valid_predicate["control_intents"][0]["predicate"] = json!({
+        "root_value_id": "value.input",
+        "property_path": ["state"],
+        "comparator": "equals",
+        "literal": {"scalar_type": "string", "value": "ready"}
+    });
+    assert!(verify_frontend_graph_json(&valid_predicate).is_accepted());
+
+    let mut future_predicate = valid_predicate;
+    future_predicate["control_intents"][0]["predicate"]["root_value_id"] =
+        json!("value.event.output");
+    assert!(!verify_frontend_graph_json(&future_predicate).is_accepted());
+}
+
+#[test]
+fn every_authored_air_structural_use_requires_dominance() {
+    let valid = load_vectors("apxm.air.v2.json")
+        .into_iter()
+        .find(|vector| vector.name == "valid-air-five-semantic-ops-and-structural-ir")
+        .expect("typed AIR vector")
+        .input;
+    assert!(verify_air_json(&valid).is_accepted());
+
+    let mut future_operand = valid.clone();
+    future_operand["structural_ir"][1]["operands"][0]["value_id"] = json!("value.event.output");
+    assert!(!verify_air_json(&future_operand).is_accepted());
+
+    let mut future_predicate = valid;
+    future_predicate["structural_ir"][1]["predicate"] = json!({
+        "root_value_id": "value.event.output",
+        "property_path": ["kind"],
+        "comparator": "equals",
+        "literal": {"scalar_type": "string", "value": "ready"}
+    });
+    assert!(!verify_air_json(&future_predicate).is_accepted());
 }
 
 #[test]

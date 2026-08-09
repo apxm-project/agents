@@ -959,7 +959,9 @@ fn validate_ssa_dominance(
         // arguments, program inputs, event operands, and structural operands
         // must all be dominated at their exact consumer location; a globally
         // declared value is not sufficient.
-        if calls.contains_key(edge.to_consumer.as_str()) {
+        if calls.contains_key(edge.to_consumer.as_str())
+            || controls.contains_key(edge.to_consumer.as_str())
+        {
             let rejects_resume_input = calls.get(edge.to_consumer.as_str()).is_some_and(|intent| {
                 matches!(
                     intent.intent_kind,
@@ -973,6 +975,41 @@ fn validate_ssa_dominance(
                 continue;
             }
             check_use(&edge.from_value, &edge.to_consumer);
+        }
+    }
+
+    for control in &graph.control_intents {
+        let predicate_location = control
+            .body_region_ids
+            .first()
+            .and_then(|region_id| {
+                graph
+                    .regions
+                    .iter()
+                    .find(|region| &region.region_id == region_id)
+            })
+            .map(|region| SsaLocation {
+                region_id: region.region_id.clone(),
+                execution_order: 0,
+                entry: true,
+            })
+            .or_else(|| consumer_location(&control.node_id, &calls, &controls));
+        let Some(predicate) = &control.predicate else {
+            continue;
+        };
+        let Some(location) = predicate_location else {
+            continue;
+        };
+        let mut visiting = HashSet::new();
+        if !value_dominates_use(&predicate.root_value_id, location, &context, &mut visiting) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                control.node_id.clone(),
+                format!(
+                    "SSA predicate root '{}' does not dominate its structural consumer",
+                    predicate.root_value_id
+                ),
+            ));
         }
     }
     for (value_id, consumer) in resume_input_edges {
@@ -1144,6 +1181,9 @@ fn dominates_location(
         &use_location.region_id,
         context.region_parent,
     ) {
+        if loop_scope_precedes(&definition.region_id, &use_location.region_id, context) {
+            return true;
+        }
         if !is_ancestor(
             &use_location.region_id,
             &definition.region_id,
@@ -1183,6 +1223,58 @@ fn dominates_location(
         child = parent;
     }
     definition.entry
+}
+
+fn loop_scope_precedes(
+    definition_region: &str,
+    use_region: &str,
+    context: &SsaValidationContext<'_>,
+) -> bool {
+    let mut common = context.region_parent.get(use_region).copied().flatten();
+    while let Some(common_region) = common {
+        let Some(definition_child) =
+            first_child_under(definition_region, common_region, context.region_parent)
+        else {
+            common = context.region_parent.get(common_region).copied().flatten();
+            continue;
+        };
+        let Some(use_child) = first_child_under(use_region, common_region, context.region_parent)
+        else {
+            return false;
+        };
+        if definition_child != use_child {
+            let definition_is_loop = context.controls.values().any(|control| {
+                control.control_kind == ControlKind::Loop
+                    && control
+                        .body_region_ids
+                        .iter()
+                        .any(|region_id| region_id == definition_child)
+            });
+            return definition_is_loop
+                && context
+                    .region_order
+                    .get(definition_child)
+                    .zip(context.region_order.get(use_child))
+                    .is_some_and(|(definition_order, use_order)| definition_order < use_order);
+        }
+        common = context.region_parent.get(common_region).copied().flatten();
+    }
+    false
+}
+
+fn first_child_under<'a>(
+    descendant: &'a str,
+    ancestor: &str,
+    region_parent: &'a HashMap<&'a str, Option<&'a str>>,
+) -> Option<&'a str> {
+    let mut child = descendant;
+    loop {
+        let parent = region_parent.get(child).copied().flatten()?;
+        if parent == ancestor {
+            return Some(child);
+        }
+        child = parent;
+    }
 }
 
 fn is_ancestor(
