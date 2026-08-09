@@ -165,6 +165,7 @@ impl AirModule {
                 ));
             }
         }
+        validate_assembly_cycles(&mut verdict, &self.value_assemblies);
         for op in &self.semantic_operations {
             if !is_identifier(&op.node_id) {
                 verdict.push(Diagnostic::new(
@@ -424,16 +425,20 @@ fn validate_air_ssa_dominance(verdict: &mut Verdict, air: &AirModule) {
         let allow_resume_value = operation.op == SemanticOpKind::ModelCall;
         for operand in &operation.operands {
             let mut visiting = HashSet::new();
-            if (context.results.contains_key(operand.value_id.as_str())
+            let known = context.results.contains_key(operand.value_id.as_str())
                 || context.blocks.contains_key(operand.value_id.as_str())
-                || context.assemblies.contains_key(operand.value_id.as_str()))
-                && !air_value_dominates(
-                    &operand.value_id,
-                    &use_location,
-                    allow_resume_value,
-                    &context,
-                    &mut visiting,
-                )
+                || context.assemblies.contains_key(operand.value_id.as_str());
+            let requires_authored_ssa =
+                operation.op == SemanticOpKind::CapabilityInvoke && operand.slot == "arguments";
+            if (requires_authored_ssa && !known)
+                || (known
+                    && !air_value_dominates(
+                        &operand.value_id,
+                        &use_location,
+                        allow_resume_value,
+                        &context,
+                        &mut visiting,
+                    ))
             {
                 verdict.push(Diagnostic::new(
                     DiagnosticCode::SchemaViolation,
@@ -476,10 +481,11 @@ fn validate_air_ssa_dominance(verdict: &mut Verdict, air: &AirModule) {
                 operand_location.clone()
             };
             let mut visiting = HashSet::new();
-            if (context.results.contains_key(operand.value_id.as_str())
+            let known = context.results.contains_key(operand.value_id.as_str())
                 || context.blocks.contains_key(operand.value_id.as_str())
-                || context.assemblies.contains_key(operand.value_id.as_str()))
-                && !air_value_dominates(
+                || context.assemblies.contains_key(operand.value_id.as_str());
+            if !known
+                || !air_value_dominates(
                     &operand.value_id,
                     &use_location,
                     true,
@@ -504,7 +510,7 @@ fn validate_air_ssa_dominance(verdict: &mut Verdict, air: &AirModule) {
                 entry: true,
             };
             let mut visiting = HashSet::new();
-            if (context
+            let known = context
                 .results
                 .contains_key(predicate.root_value_id.as_str())
                 || context
@@ -512,8 +518,9 @@ fn validate_air_ssa_dominance(verdict: &mut Verdict, air: &AirModule) {
                     .contains_key(predicate.root_value_id.as_str())
                 || context
                     .assemblies
-                    .contains_key(predicate.root_value_id.as_str()))
-                && !air_value_dominates(
+                    .contains_key(predicate.root_value_id.as_str());
+            if !known
+                || !air_value_dominates(
                     &predicate.root_value_id,
                     &predicate_location,
                     true,
@@ -596,6 +603,18 @@ fn air_dominates_location(
             if region.execution_order >= use_location.execution_order {
                 return false;
             }
+            if let Some(owner) = regions.get(region.parent_region_id.as_deref().unwrap_or_default())
+                && owner.kind == StructuralOpKind::Branch
+                && regions
+                    .values()
+                    .filter(|sibling| {
+                        sibling.parent_region_id.as_deref() == Some(owner.region_id.as_str())
+                            && sibling.region_id != region.region_id
+                    })
+                    .any(|sibling| !air_region_is_terminal(sibling, regions))
+            {
+                return false;
+            }
             let Some(parent) = region.parent_region_id.as_deref() else {
                 break;
             };
@@ -617,6 +636,65 @@ fn air_dominates_location(
         child = parent;
     }
     false
+}
+
+fn air_region_is_terminal(
+    region: &StructuralNode,
+    regions: &std::collections::HashMap<&str, &StructuralNode>,
+) -> bool {
+    region.kind == StructuralOpKind::Throw
+        || region.kind == StructuralOpKind::Return
+        || region.kind == StructuralOpKind::Yield
+        || regions.values().any(|child| {
+            child.parent_region_id.as_deref() == Some(region.region_id.as_str())
+                && matches!(
+                    child.kind,
+                    StructuralOpKind::Throw | StructuralOpKind::Return | StructuralOpKind::Yield
+                )
+        })
+}
+
+fn validate_assembly_cycles(verdict: &mut Verdict, assemblies: &[ValueAssembly]) {
+    let by_id = assemblies
+        .iter()
+        .map(|assembly| (assembly.value_id.as_str(), &assembly.expression))
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut state = std::collections::HashMap::<&str, u8>::new();
+    for value_id in by_id.keys().copied() {
+        if assembly_cycle(value_id, &by_id, &mut state) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                value_id.to_string(),
+                "value assembly expressions contain a cycle",
+            ));
+        }
+    }
+}
+
+fn assembly_cycle<'a>(
+    value_id: &'a str,
+    by_id: &std::collections::HashMap<&'a str, &'a ValueExpression>,
+    state: &mut std::collections::HashMap<&'a str, u8>,
+) -> bool {
+    match state.get(value_id).copied() {
+        Some(1) => return true,
+        Some(2) => return false,
+        _ => {}
+    }
+    state.insert(value_id, 1);
+    let cycle = by_id.get(value_id).is_some_and(|expression| {
+        let mut references = Vec::new();
+        collect_expression_references(expression, &mut references);
+        references.into_iter().any(|reference| {
+            by_id
+                .keys()
+                .copied()
+                .find(|key| *key == reference)
+                .is_some_and(|key| assembly_cycle(key, by_id, state))
+        })
+    });
+    state.insert(value_id, 2);
+    cycle
 }
 
 fn air_region_is_ancestor(

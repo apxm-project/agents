@@ -497,6 +497,7 @@ impl FrontendGraph {
 
         for hook in &self.hook_bindings {
             check_identifier(&mut verdict, &hook.hook_id, "hook_id");
+            check_identifier(&mut verdict, &hook.handler_ref, "hook handler_ref");
             check_digest(&mut verdict, &hook.handler_digest, &hook.hook_id);
         }
 
@@ -754,7 +755,11 @@ fn collect_typed_link_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph) 
                 if value
                     .origin_id
                     .as_deref()
-                    .is_none_or(|node_id| !control_intents.contains_key(node_id))
+                    .and_then(|node_id| control_intents.get(node_id))
+                    .is_none_or(|control| {
+                        control.control_kind != ControlKind::Yield
+                            || control.result_value.as_deref() != Some(value.value_id.as_str())
+                    })
                 {
                     verdict.push(Diagnostic::new(
                         DiagnosticCode::SchemaViolation,
@@ -947,6 +952,7 @@ fn validate_ssa_dominance(
     graph: &FrontendGraph,
     values: &HashMap<&str, &Value>,
 ) {
+    validate_value_expression_cycles(verdict, values);
     let region_parent: HashMap<&str, Option<&str>> = graph
         .regions
         .iter()
@@ -1087,6 +1093,48 @@ fn validate_ssa_dominance(
             ),
         ));
     }
+}
+
+fn validate_value_expression_cycles(verdict: &mut Verdict, values: &HashMap<&str, &Value>) {
+    let mut state = HashMap::<&str, u8>::new();
+    for value_id in values.keys().copied() {
+        if value_expression_cycle(value_id, values, &mut state) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                value_id.to_string(),
+                "authored value expressions contain a cycle",
+            ));
+        }
+    }
+}
+
+fn value_expression_cycle<'a>(
+    value_id: &'a str,
+    values: &HashMap<&'a str, &'a Value>,
+    state: &mut HashMap<&'a str, u8>,
+) -> bool {
+    match state.get(value_id).copied() {
+        Some(1) => return true,
+        Some(2) => return false,
+        _ => {}
+    }
+    state.insert(value_id, 1);
+    let cycle = values
+        .get(value_id)
+        .and_then(|value| value.expression.as_ref())
+        .is_some_and(|expression| {
+            let mut references = Vec::new();
+            collect_expression_references(expression, &mut references);
+            references.into_iter().any(|reference| {
+                values
+                    .keys()
+                    .copied()
+                    .find(|key| *key == reference)
+                    .is_some_and(|key| value_expression_cycle(key, values, state))
+            })
+        });
+    state.insert(value_id, 2);
+    cycle
 }
 
 fn value_reaches_resume_input(
@@ -1435,6 +1483,21 @@ fn dominates_location(
             if !completed_before_use {
                 return false;
             }
+            if context.controls.values().any(|control| {
+                control.parent_region_id == parent
+                    && control
+                        .body_region_ids
+                        .iter()
+                        .any(|region_id| region_id == child)
+                    && control.body_region_ids.len() > 1
+                    && control
+                        .body_region_ids
+                        .iter()
+                        .filter(|region_id| region_id.as_str() != child)
+                        .any(|region_id| !region_is_terminal(region_id, context))
+            }) {
+                return false;
+            }
             child = parent;
         }
         return true;
@@ -1690,17 +1753,43 @@ fn validate_call_intent(
         intent.intent_kind,
         IntentKind::ModelInvocation | IntentKind::ToolInvocation | IntentKind::CapabilityInvocation
     ) {
-        match intent
+        let declaration = intent
             .binding_ref
             .as_deref()
-            .and_then(|id| declarations.get(id))
-        {
+            .and_then(|id| declarations.get(id));
+        match declaration {
             Some(declaration) if declaration_matches(declaration.decl_kind) => {}
-            _ => verdict.push(Diagnostic::new(
+            _ => {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    intent.node_id.clone(),
+                    "call intent binding_ref does not resolve to the required typed declaration",
+                ));
+            }
+        }
+        let target_ref = declaration.and_then(|declaration| declaration.target_ref.as_deref());
+        let requirement_present = match intent.intent_kind {
+            IntentKind::ModelInvocation => target_ref.is_some_and(|target| {
+                graph
+                    .model_requirements
+                    .iter()
+                    .any(|requirement| requirement.model_target_ref == target)
+            }),
+            IntentKind::ToolInvocation | IntentKind::CapabilityInvocation => target_ref
+                .is_some_and(|target| {
+                    graph
+                        .capability_requirements
+                        .iter()
+                        .any(|requirement| requirement.capability_ref == target)
+                }),
+            _ => true,
+        };
+        if !requirement_present {
+            verdict.push(Diagnostic::new(
                 DiagnosticCode::SchemaViolation,
                 intent.node_id.clone(),
-                "call intent binding_ref does not resolve to the required typed declaration",
-            )),
+                "authored effect binding is missing its exact declared requirement",
+            ));
         }
     } else if intent.intent_kind == IntentKind::EventWait {
         if let Some(binding_ref) = intent.binding_ref.as_deref()
