@@ -9,10 +9,11 @@
     "crates/tools/cli/src/bin/reference_host.rs",
     "docs/agents/runtime-profile-parity.md"
   ],
-  "forbidden_references": [
-    "downstream_product",
-    "downstream-sdk",
-    "vendor_client"
+  "forbidden_patterns": [
+    "\\bdownstream[-_](?:product|sdk|client|service)\\b",
+    "@[a-z][a-z0-9._-]*/[a-z][a-z0-9._-]+",
+    "\\b(?!(?:apxm|host|reference-host|downstream)(?:[-_]|$))[a-z][a-z0-9]*(?:[-_](?:sdk|client|service|product))\\b",
+    "\\b(?!(?:apxm_server|downstream)[-_]dependency\\b)[a-z][a-z0-9]*(?:[-_]dependency)\\b"
   ],
   "negative_cases": [
     {
@@ -29,6 +30,26 @@
       "name": "vendor_client_coordinate",
       "input": "vendor_client",
       "expected_match": true
+    },
+    {
+      "name": "scoped_package_coordinate",
+      "input": "@acme/host-sdk",
+      "expected_match": true
+    },
+    {
+      "name": "generic_client_coordinate",
+      "input": "customer-service",
+      "expected_match": true
+    },
+    {
+      "name": "generic_dependency_coordinate",
+      "input": "acme_dependency",
+      "expected_match": true
+    },
+    {
+      "name": "owner_dependency_invariant",
+      "input": "downstream_dependency",
+      "expected_match": false
     }
   ]
 }

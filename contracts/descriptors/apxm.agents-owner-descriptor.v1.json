@@ -24,7 +24,7 @@
       "release_manifest": {
         "schema_version": "apxm.reference-host-release-manifest.v1",
         "path": "reference-host/manifests/apxm.reference-host-release-manifest.v1.json",
-        "digest": "sha256:34598777bf1bc2bbefb8059f0d4a4070f66dbfcef7e3566a1c7ad966810a0226"
+        "digest": "sha256:7abe675da862256ec0c51b0e5d708ef1c538954e767596f7b3c8f29eb9a29eed"
       },
       "execution_manifest": {
         "schema_version": "apxm.reference-host-execution-manifest.v1",
@@ -1071,5 +1071,5 @@
       ]
     }
   ],
-  "descriptor_digest": "sha256:ce1458598e90b7718634559a533f38b6640c143893bc00d5ab7ad4505eaa281f"
+  "descriptor_digest": "sha256:595341e2e9b579039080db98b552bfce5ee6ce79f0167a079831d89817c02354"
 }

@@ -39,7 +39,21 @@ class ReferenceHostNeutralityTests(unittest.TestCase):
         pattern = self.module._forbidden_pattern(self.vector)
         for case in self.vector["negative_cases"]:
             with self.subTest(case=case["name"]):
-                self.assertTrue(self.module.scan_text(case["input"], pattern))
+                self.assertEqual(
+                    bool(self.module.scan_text(case["input"], pattern)),
+                    case["expected_match"],
+                )
+
+    def test_scan_targets_are_exact_and_confined(self) -> None:
+        mutated = dict(self.vector, scan_targets=["../../outside.txt"])
+        with self.assertRaisesRegex(self.module.NeutralityError, "scan_targets drifted"):
+            self.module.validate_vector(mutated)
+
+    def test_generic_coordinate_shapes_are_rejected(self) -> None:
+        pattern = self.module._forbidden_pattern(self.vector)
+        for coordinate in ("acme-sdk", "@acme/host-sdk", "customer-service", "foo_client"):
+            with self.subTest(coordinate=coordinate):
+                self.assertTrue(self.module.scan_text(coordinate, pattern))
 
     def test_mutated_publication_is_rejected(self) -> None:
         target = REPOSITORY_ROOT / "contracts" / "reference-host" / "manifests" / "apxm.reference-host-release-manifest.v1.json"
