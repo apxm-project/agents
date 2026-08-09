@@ -1252,6 +1252,26 @@ async fn capability_arguments_cannot_be_preloaded_from_a_future_ssa_definition()
 }
 
 #[tokio::test]
+async fn capability_arguments_cannot_be_initialized_through_an_entry_block_argument() {
+    let mut bypass = request();
+    let mut air = serde_json::to_value(&bypass.air).expect("AIR encodes");
+    air["semantic_operations"][1]["operands"][1]["value_id"] = json!("value.cap.entry_argument");
+    air["structural_ir"][0]["block_arguments"] = json!([{
+        "value_id": "value.cap.entry_argument",
+        "type_ref": "CapabilityArguments"
+    }]);
+    bypass.air = serde_json::from_value(air).expect("entry argument AIR");
+    bypass.initial_values =
+        BTreeMap::from([("value.cap.entry_argument".into(), json!({"attacker": true}))]);
+
+    assert!(bypass.air.verify().is_accepted());
+    let error = execute(&ports(Arc::new(FakeCommit::new())), bypass, Value::Null)
+        .await
+        .expect_err("entry block argument must not become an external Tool input");
+    assert!(matches!(error, ExecutionError::InvalidAir { .. }));
+}
+
+#[tokio::test]
 async fn capability_dispatch_requires_exact_invocation_admission_for_every_ref() {
     let mut missing = request();
     missing.capability_invocations.remove("n.acp");
