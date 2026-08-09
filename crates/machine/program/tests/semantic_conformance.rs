@@ -81,6 +81,22 @@ fn every_executable_invocation_operand_must_be_dominated() {
     future_model["data_edges"][0]["from_value"] = json!("value.search.out");
     assert!(!verify_frontend_graph_json(&future_model).is_accepted());
 
+    let mut missing_data_edges = base.clone();
+    missing_data_edges
+        .as_object_mut()
+        .expect("frontend graph object")
+        .remove("data_edges");
+    missing_data_edges["call_intents"]
+        .as_array_mut()
+        .expect("call intents")
+        .iter_mut()
+        .for_each(|call| {
+            if call["node_id"] == json!("node.model.1") {
+                call["operand_values"] = json!(["value.search.out"]);
+            }
+        });
+    assert!(!verify_frontend_graph_json(&missing_data_edges).is_accepted());
+
     let mut sibling = base.clone();
     sibling["regions"].as_array_mut().expect("regions").extend([
         json!({
