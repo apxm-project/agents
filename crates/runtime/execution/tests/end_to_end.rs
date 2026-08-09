@@ -1272,6 +1272,41 @@ async fn capability_arguments_cannot_be_initialized_through_an_entry_block_argum
 }
 
 #[tokio::test]
+async fn capability_argument_assemblies_cannot_read_initial_values() {
+    let mut bypass = request();
+    let mut air = serde_json::to_value(&bypass.air).expect("AIR encodes");
+    air["value_assemblies"] = json!([
+        {
+            "value_id": "value.cap.arguments",
+            "expression": {
+                "kind": "object",
+                "fields": [{
+                    "name": "query",
+                    "value": {"kind": "ssa", "value_id": "value.cap.entry_argument"}
+                }]
+            }
+        },
+        {
+            "value_id": "session.1",
+            "expression": {"kind": "string", "value": "session.1"}
+        }
+    ]);
+    air["structural_ir"][0]["block_arguments"] = json!([{
+        "value_id": "value.cap.entry_argument",
+        "type_ref": "String"
+    }]);
+    bypass.air = serde_json::from_value(air).expect("assembly dependency AIR");
+    bypass.initial_values =
+        BTreeMap::from([("value.cap.entry_argument".into(), json!("attacker-query"))]);
+
+    assert!(bypass.air.verify().is_accepted());
+    let error = execute(&ports(Arc::new(FakeCommit::new())), bypass, Value::Null)
+        .await
+        .expect_err("assembly must not read an externally initialized value");
+    assert!(matches!(error, ExecutionError::InvalidAir { .. }));
+}
+
+#[tokio::test]
 async fn capability_dispatch_requires_exact_invocation_admission_for_every_ref() {
     let mut missing = request();
     missing.capability_invocations.remove("n.acp");

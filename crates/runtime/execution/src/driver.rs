@@ -2039,11 +2039,16 @@ fn validate_execution_request(
         else {
             continue;
         };
-        if initial_values.contains_key(arguments.value_id.as_str()) {
+        if let Some(supplied_value_id) = authored_value_reaches_initial_value(
+            air,
+            &arguments.value_id,
+            initial_values,
+            &mut BTreeSet::new(),
+        ) {
             return Err(ExecutionError::InvalidAir {
                 message: format!(
-                    "node {}: initial_values may not supply a capability argument ({})",
-                    operation.node_id, arguments.value_id
+                    "node {}: initial_values may not supply a capability argument dependency ({})",
+                    operation.node_id, supplied_value_id
                 ),
             });
         }
@@ -2068,6 +2073,29 @@ fn validate_execution_request(
         }
     }
     Ok(())
+}
+
+fn authored_value_reaches_initial_value(
+    air: &AirModule,
+    value_id: &str,
+    initial_values: &BTreeMap<String, Value>,
+    visiting: &mut BTreeSet<String>,
+) -> Option<String> {
+    if initial_values.contains_key(value_id) {
+        return Some(value_id.to_string());
+    }
+    if !visiting.insert(value_id.to_string()) {
+        return None;
+    }
+    let assembly = air
+        .value_assemblies
+        .iter()
+        .find(|assembly| assembly.value_id == value_id)?;
+    let mut references = Vec::new();
+    collect_runtime_expression_references(&assembly.expression, &mut references);
+    references.into_iter().find_map(|dependency| {
+        authored_value_reaches_initial_value(air, &dependency, initial_values, visiting)
+    })
 }
 
 fn validate_resume_capability_arguments(
