@@ -25,12 +25,12 @@ type InitialModelRequest = {
   incoming: ConversationInput;
 };
 type ToolResultModelRequest = InitialModelRequest & {
-  toolResult: SearchWebResult;
+  tool_result: SearchWebResult;
 };
 type ModelRequest = InitialModelRequest | ToolResultModelRequest;
 type ModelResponse =
   | { kind: "final"; reply: ConversationOutput }
-  | { kind: "tool_request"; toolRequest: SearchWebToolRequest };
+  | { kind: "tool_request"; tool_request: SearchWebToolRequest };
 type ConversationalProgram = ReturnType<
   typeof Agent<ConversationInput, ConversationOutput, ConversationState>
 >;
@@ -69,17 +69,21 @@ export const ConversationalExample: ConversationalProgram = Agent<
       });
 
       while (response.kind === "tool_request") {
-        const toolResult = await SearchWeb(response.toolRequest.arguments);
-        turnMessages = [
-          ...turnMessages,
-          { role: "tool", content: toolResult.content },
-        ];
-        workingMessages = [...agent.context.messages, ...turnMessages];
-        response = await SupportModel({
-          messages: workingMessages,
-          incoming,
-          toolResult,
-        });
+        if (response.tool_request.kind === "search_web") {
+          const toolResult = await SearchWeb(response.tool_request.arguments);
+          turnMessages = [
+            ...turnMessages,
+            { role: "tool", content: toolResult.content },
+          ];
+          workingMessages = [...agent.context.messages, ...turnMessages];
+          response = await SupportModel({
+            messages: workingMessages,
+            incoming,
+            tool_result: toolResult,
+          });
+        } else {
+          throw new Error("undeclared tool request");
+        }
       }
 
       const finalReply = response.reply;

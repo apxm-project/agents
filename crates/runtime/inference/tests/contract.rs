@@ -10,7 +10,8 @@ use apxm_inference::{
     InferenceTargetCommitment, ModelBindingAdmission, ModelCallPreparation, ModelCallRequest,
     ModelCallRequestMetadata, ModelContentRef, ModelContextEnvelopeRef, ModelInferencePort,
     ModelOutcome, ModelStreamEvent, ModelStreamMode, ModelStreamPort, ModelStreamStep,
-    ModelTargetRef, ResolvedModelBinding, RetryPolicy, TypedError, Usage, execute, stream,
+    ModelTargetRef, ResolvedModelBinding, RetryPolicy, TypedError, Usage, execute,
+    execute_with_attempt, stream,
 };
 
 const DIGEST_A: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -92,6 +93,7 @@ fn request_binds_only_its_authored_target() {
             "effect.1",
             "node-execution.1",
             "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "sha256:3333333333333333333333333333333333333333333333333333333333333333",
             &ModelTargetRef("model.beta".to_string()),
             &admission,
         )
@@ -107,6 +109,7 @@ fn request_binds_only_its_authored_target() {
             "effect.2",
             "node-execution.2",
             "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "sha256:3333333333333333333333333333333333333333333333333333333333333333",
             &ModelTargetRef("model.substitute".to_string()),
             &admission,
         )
@@ -148,6 +151,7 @@ fn missing_or_invalid_host_metadata_fails_before_dispatch() {
         "effect.1",
         "node-execution.1",
         "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "sha256:3333333333333333333333333333333333333333333333333333333333333333",
         &ModelTargetRef("model.alpha".to_string()),
         &admission(),
     )
@@ -263,7 +267,7 @@ impl ModelInferencePort for ScriptedBackend {
         let disposition = self.dispositions[attempt as usize].clone();
         if matches!(
             disposition,
-            AttemptDisposition::Success(_)
+            AttemptDisposition::Success { .. }
                 | AttemptDisposition::DeliveredTypedFailure(_)
                 | AttemptDisposition::FailedAfterSend(_)
         ) {
@@ -283,6 +287,7 @@ fn request() -> ModelCallRequest {
             "effect.1",
             "node-execution.1",
             "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "sha256:3333333333333333333333333333333333333333333333333333333333333333",
             &ModelTargetRef("model.alpha".to_string()),
             &admission(),
         )
@@ -300,9 +305,19 @@ fn success_commits_typed_usage() {
         input_tokens: 12,
         output_tokens: 34,
     };
-    let backend = ScriptedBackend::new(vec![AttemptDisposition::Success(usage)], false);
-    let outcome = execute(&backend, &request(), RetryPolicy::default());
-    assert_eq!(outcome, ModelOutcome::CommittedSuccess { usage });
+    let backend = ScriptedBackend::new(
+        vec![AttemptDisposition::Success {
+            usage,
+            output: serde_json::json!({"kind": "final", "content": "done"}),
+        }],
+        false,
+    );
+    let execution = execute_with_attempt(&backend, &request(), RetryPolicy::default());
+    assert_eq!(execution.outcome, ModelOutcome::CommittedSuccess { usage });
+    assert_eq!(
+        execution.output,
+        Some(serde_json::json!({"kind": "final", "content": "done"}))
+    );
     assert_eq!(backend.sends.get(), 1);
 }
 
@@ -316,7 +331,10 @@ fn pre_send_failure_retries_then_succeeds() {
         vec![
             AttemptDisposition::FailedBeforeSend(error()),
             AttemptDisposition::FailedBeforeSend(error()),
-            AttemptDisposition::Success(usage),
+            AttemptDisposition::Success {
+                usage,
+                output: serde_json::json!({"kind": "final", "content": "done"}),
+            },
         ],
         false,
     );
@@ -335,7 +353,10 @@ fn post_send_non_idempotent_failure_is_outcome_unknown_without_duplicate() {
         vec![
             AttemptDisposition::FailedAfterSend(error()),
             // A second scripted disposition exists but must never be consumed.
-            AttemptDisposition::Success(Usage::default()),
+            AttemptDisposition::Success {
+                usage: Usage::default(),
+                output: serde_json::Value::Null,
+            },
         ],
         false,
     );
@@ -364,7 +385,10 @@ fn delivered_typed_failure_is_terminal_without_retry_or_outcome_unknown() {
     let backend = ScriptedBackend::new(
         vec![
             AttemptDisposition::DeliveredTypedFailure(delivered.clone()),
-            AttemptDisposition::Success(Usage::default()),
+            AttemptDisposition::Success {
+                usage: Usage::default(),
+                output: serde_json::Value::Null,
+            },
         ],
         true,
     );
@@ -385,7 +409,10 @@ fn post_send_idempotent_failure_may_retry() {
     let backend = ScriptedBackend::new(
         vec![
             AttemptDisposition::FailedAfterSend(error()),
-            AttemptDisposition::Success(usage),
+            AttemptDisposition::Success {
+                usage,
+                output: serde_json::json!({"kind": "final", "content": "done"}),
+            },
         ],
         true,
     );

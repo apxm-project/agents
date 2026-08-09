@@ -428,9 +428,35 @@ def test_conversational_tool_dispatch_is_model_directed_and_closed() -> None:
         initial_model, reentry_model = model_calls
         tool_call = tool_calls[0]
         assert initial_model["parent_region_id"] == outer_region
-        assert tool_call["parent_region_id"] == tool_region
-        assert reentry_model["parent_region_id"] == tool_region
+        assert tool_loop["predicate"]["comparator"] == "equals"
+        assert tool_loop["predicate"]["property_path"] == ["kind"]
+        assert tool_loop["predicate"]["literal"] == {
+            "scalar_type": "string",
+            "value": "tool_request",
+        }
+        assert len(tool_loop["operand_values"]) == 2
+
+        dispatch = next(
+            control
+            for control in graph["control_intents"]
+            if control["control_kind"] == "conditional"
+            and control["parent_region_id"] == tool_region
+        )
+        assert dispatch["predicate"]["comparator"] == "equals"
+        assert dispatch["predicate"]["property_path"] == ["tool_request", "kind"]
+        assert dispatch["predicate"]["literal"] == {
+            "scalar_type": "string",
+            "value": "search_web",
+        }
+        declared_arm, rejected_arm = dispatch["body_region_ids"]
+        assert tool_call["parent_region_id"] == declared_arm
+        assert reentry_model["parent_region_id"] == declared_arm
         assert tool_call["execution_order"] < reentry_model["execution_order"]
+        assert any(
+            control["control_kind"] == "throw"
+            and control["parent_region_id"] == rejected_arm
+            for control in graph["control_intents"]
+        )
 
         hooks = graph["hook_bindings"]
         assert [hook["phase"] for hook in hooks] == ["before", "after"]
@@ -456,7 +482,7 @@ def test_conversational_source_passes_history_and_tool_results_to_the_model() ->
     assert '"incoming": incoming' in python
     assert 'incoming,' in typescript
     assert '"tool_result": tool_result' in python
-    assert 'toolResult,' in typescript
+    assert 'tool_result: toolResult' in typescript
 
     for source in (python, typescript):
         assert "ResearchSpecialist" not in source

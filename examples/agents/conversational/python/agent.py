@@ -101,22 +101,25 @@ async def ConversationalExample(agent, incoming):
 
         while response["kind"] == "tool_request":
             tool_request = response["tool_request"]
-            tool_result = await SearchWeb(tool_request["arguments"])
-            turn_messages = (
-                *turn_messages,
-                {"role": "tool", "content": tool_result["content"]},
-            )
-            working_messages = (
-                *agent.context.messages,
-                *turn_messages,
-            )
-            response = await SupportModel(
-                {
-                    "messages": working_messages,
-                    "incoming": incoming,
-                    "tool_result": tool_result,
-                }
-            )
+            if response["tool_request"]["kind"] == "search_web":
+                tool_result = await SearchWeb(tool_request["arguments"])
+                turn_messages = (
+                    *turn_messages,
+                    {"role": "tool", "content": tool_result["content"]},
+                )
+                working_messages = (
+                    *agent.context.messages,
+                    *turn_messages,
+                )
+                response = await SupportModel(
+                    {
+                        "messages": working_messages,
+                        "incoming": incoming,
+                        "tool_result": tool_result,
+                    }
+                )
+            else:
+                raise ValueError("undeclared tool request")
 
         final_reply = response["reply"]
         agent.context = ConversationContext(

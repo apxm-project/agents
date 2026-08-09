@@ -56,6 +56,7 @@ fn request_for(target: &str) -> ModelCallRequest {
             "effect.1",
             "node-execution.1",
             "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "sha256:3333333333333333333333333333333333333333333333333333333333333333",
             &ModelTargetRef(target.to_string()),
             &admission,
         )
@@ -191,7 +192,10 @@ impl LeasedInferenceBackend for ExactBackend {
     ) -> AttemptDisposition {
         assert_eq!(lease_material, self.expected_material);
         assert_eq!(request.target().0, "model.alpha");
-        AttemptDisposition::Success(self.usage)
+        AttemptDisposition::Success {
+            usage: self.usage,
+            output: serde_json::Value::Null,
+        }
     }
 }
 
@@ -228,6 +232,7 @@ fn vllm_binding_reaches_model_inference_port_without_rebinding() {
             "effect.vllm.1",
             "node-execution.vllm.1",
             "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "sha256:3333333333333333333333333333333333333333333333333333333333333333",
             &authored_target,
             &ModelBindingAdmission::new(resolved_binding.clone()),
         )
@@ -251,7 +256,10 @@ fn vllm_binding_reaches_model_inference_port_without_rebinding() {
     };
     let port = BindingRecordingPort {
         seen_binding: RefCell::new(None),
-        outcome: AttemptDisposition::Success(usage),
+        outcome: AttemptDisposition::Success {
+            usage,
+            output: serde_json::Value::Null,
+        },
     };
 
     let result = dispatch_committed_inference(CommittedInferenceDispatch {
@@ -687,10 +695,13 @@ fn dispatch_retries_only_a_proven_pre_send_failure_and_preserves_identity() {
             code: "before_send".into(),
             message: "transport unavailable before send".into(),
         }),
-        second: AttemptDisposition::Success(Usage {
-            input_tokens: 4,
-            output_tokens: 7,
-        }),
+        second: AttemptDisposition::Success {
+            usage: Usage {
+                input_tokens: 4,
+                output_tokens: 7,
+            },
+            output: serde_json::Value::Null,
+        },
         idempotent: false,
     };
     let result = dispatch_exact_inference(ExactInferenceDispatch {
@@ -724,7 +735,10 @@ fn dispatch_records_unknown_after_possible_send_without_retry() {
             code: "lost_reply".into(),
             message: "reply was lost after send".into(),
         }),
-        second: AttemptDisposition::Success(Usage::default()),
+        second: AttemptDisposition::Success {
+            usage: Usage::default(),
+            output: serde_json::Value::Null,
+        },
         idempotent: false,
     };
     let result = dispatch_exact_inference(ExactInferenceDispatch {
@@ -767,10 +781,13 @@ fn dispatch_recovers_after_send_only_when_binding_proves_idempotency() {
             code: "reconcile".into(),
             message: "reconciliation required".into(),
         }),
-        second: AttemptDisposition::Success(Usage {
-            input_tokens: 6,
-            output_tokens: 2,
-        }),
+        second: AttemptDisposition::Success {
+            usage: Usage {
+                input_tokens: 6,
+                output_tokens: 2,
+            },
+            output: serde_json::Value::Null,
+        },
         idempotent: true,
     };
     let result = dispatch_exact_inference(ExactInferenceDispatch {

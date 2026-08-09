@@ -30,13 +30,14 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use apxm_ais::{SemanticOpKind, StructuralOpKind};
 
 use crate::air::{
-    AirModule, AirVersion, ContextEdge as AirContextEdge, Operand, SemanticOp, SsaValue,
-    StructuralNode,
+    AirModule, AirVersion, ContextEdge as AirContextEdge, ControlPredicate as AirControlPredicate,
+    Operand, PredicateComparator as AirPredicateComparator,
+    PredicateLiteral as AirPredicateLiteral, SemanticOp, SsaValue, StructuralNode,
 };
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Verdict};
 use crate::frontend_graph::{
-    CallIntent, ControlIntent, ControlKind, FrontendGraph, HookBinding, HookPhase, IntentKind,
-    Region, RegionRole, Value,
+    CallIntent, ControlIntent, ControlKind, ControlPredicate, FrontendGraph, HookBinding,
+    HookPhase, IntentKind, PredicateComparator, PredicateLiteral, Region, RegionRole, Value,
 };
 
 const EXECUTION_ORDER_STRIDE: u32 = 1_000_000;
@@ -351,6 +352,24 @@ fn select_structural_op(kind: ControlKind) -> StructuralOpKind {
     }
 }
 
+fn lower_predicate(predicate: &ControlPredicate) -> AirControlPredicate {
+    AirControlPredicate {
+        root_value_id: predicate.root_value_id.clone(),
+        property_path: predicate.property_path.clone(),
+        comparator: match predicate.comparator {
+            PredicateComparator::Truthy => AirPredicateComparator::Truthy,
+            PredicateComparator::Equals => AirPredicateComparator::Equals,
+            PredicateComparator::NotEquals => AirPredicateComparator::NotEquals,
+        },
+        literal: predicate.literal.as_ref().map(|literal| match literal {
+            PredicateLiteral::Boolean(value) => AirPredicateLiteral::Boolean(*value),
+            PredicateLiteral::String(value) => AirPredicateLiteral::String(value.clone()),
+            PredicateLiteral::Integer(value) => AirPredicateLiteral::Integer(*value),
+            PredicateLiteral::Null => AirPredicateLiteral::Null,
+        }),
+    }
+}
+
 /// Build structural AIR: one enclosing function region, one node per lexical
 /// region, and one node per control intent, each carrying typed block arguments
 /// and operands. Hooks expand into ordered wrapper regions around their target.
@@ -376,6 +395,19 @@ fn lower_structural_ir(
                 .map(|body| (body.as_str(), intent))
         })
         .collect();
+    let owned_control_regions: HashMap<&str, (&crate::frontend_graph::ControlIntent, usize)> =
+        graph
+            .control_intents
+            .iter()
+            .filter(|intent| intent.control_kind != ControlKind::Loop)
+            .flat_map(|intent| {
+                intent
+                    .body_region_ids
+                    .iter()
+                    .enumerate()
+                    .map(move |(index, region_id)| (region_id.as_str(), (intent, index)))
+            })
+            .collect();
 
     // Lexical regions become structural region/function nodes preserving the
     // containment tree. The entrypoint body region is a function region; a loop
@@ -408,20 +440,33 @@ fn lower_structural_ir(
                 ),
                 block_arguments,
                 operands,
+                predicate: intent.predicate.as_ref().map(lower_predicate),
             });
             continue;
         }
         let kind = region_structural_kind(region, entry_body);
+        let (parent_region_id, execution_order) = owned_control_regions
+            .get(region.region_id.as_str())
+            .map(|(intent, arm_index)| {
+                (
+                    Some(intent.node_id.clone()),
+                    canonical_execution_order(*arm_index as u32, STRUCTURAL_ORDER_OFFSET),
+                )
+            })
+            .unwrap_or_else(|| {
+                (
+                    region.parent_region_id.clone(),
+                    canonical_execution_order(region.execution_order, STRUCTURAL_ORDER_OFFSET),
+                )
+            });
         nodes.push(StructuralNode {
             region_id: region.region_id.clone(),
             kind,
-            parent_region_id: region.parent_region_id.clone(),
-            execution_order: canonical_execution_order(
-                region.execution_order,
-                STRUCTURAL_ORDER_OFFSET,
-            ),
+            parent_region_id,
+            execution_order,
             block_arguments,
             operands: Vec::new(),
+            predicate: None,
         });
     }
 
@@ -450,6 +495,7 @@ fn lower_structural_ir(
             ),
             block_arguments,
             operands,
+            predicate: intent.predicate.as_ref().map(lower_predicate),
         });
     }
 
@@ -477,6 +523,7 @@ fn lower_structural_ir(
             ),
             block_arguments: Vec::new(),
             operands: Vec::new(),
+            predicate: None,
         });
     }
 

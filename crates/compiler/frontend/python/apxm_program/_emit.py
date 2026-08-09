@@ -81,6 +81,15 @@ def emit_frontend_graph(program: BoundProgram, source_language: str = "python") 
         }
         if control.body_region_ids:
             record["body_region_ids"] = list(control.body_region_ids)
+        if control.predicate is not None:
+            predicate = {
+                "root_value_id": control.predicate.root_value_id,
+                "property_path": list(control.predicate.property_path),
+                "comparator": control.predicate.comparator,
+            }
+            if control.predicate.literal is not None:
+                predicate["literal"] = control.predicate.literal
+            record["predicate"] = predicate
         if control.operands:
             record["operand_values"] = [o.value_id for o in control.operands]
             for operand in control.operands:
@@ -210,11 +219,14 @@ def _blocks(program: BoundProgram) -> list[dict[str, Any]]:
         region.region_id: [] for region in program.regions
     }
     for value in program.values:
-        if value.origin != "resume_input" or value.origin_id is None:
-            continue
-        control = controls.get(value.origin_id)
-        if control is not None:
-            arguments_by_region[control.parent_region_id].append(value.value_id)
+        if value.origin == "resume_input" and value.origin_id is not None:
+            control = controls.get(value.origin_id)
+            if control is not None:
+                arguments_by_region[control.parent_region_id].append(value.value_id)
+        elif value.origin == "block_argument" and value.origin_id is not None:
+            region_id = value.origin_id.removesuffix(".block.0")
+            if region_id in arguments_by_region:
+                arguments_by_region[region_id].append(value.value_id)
 
     return [
         {

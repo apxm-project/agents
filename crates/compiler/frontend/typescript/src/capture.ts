@@ -57,6 +57,12 @@ type ControlRecord = {
   parent_region_id: string;
   execution_order: number;
   body_region_ids?: string[];
+  predicate?: {
+    root_value_id: string;
+    property_path: string[];
+    comparator: "truthy" | "equals" | "not_equals";
+    literal?: { scalar_type: "boolean" | "string" | "integer" | "null"; value?: boolean | string | number };
+  };
   operand_values?: string[];
   result_value?: string;
 };
@@ -405,6 +411,8 @@ class Capture {
       this.visitConditional(stmt, regionId, source);
     } else if (ts.isReturnStatement(stmt)) {
       this.visitReturn(stmt, regionId, source);
+    } else if (ts.isThrowStatement(stmt)) {
+      this.visitThrow(stmt, regionId);
     } else if (ts.isTryStatement(stmt)) {
       this.visitTry(stmt, regionId, source);
     } else if (ts.isBlock(stmt)) {
@@ -916,17 +924,67 @@ class Capture {
   ): void {
     const nodeId = this.next("loop");
     const bodyRegion = `${nodeId}.body`;
+    let predicate = ts.isWhileStatement(stmt)
+      ? this.predicateForExpression(stmt.expression)
+      : undefined;
+    const sourceSymbol = predicate === undefined
+      ? undefined
+      : [...this.valuesBySymbol.entries()].find(([, valueId]) =>
+          valueId === predicate?.root_value_id
+        )?.[0];
+    const controlIndex = this.controls.length;
     this.controls.push({
       node_id: nodeId,
       control_kind: "loop",
       parent_region_id: regionId,
       execution_order: this.orderIn(regionId),
       body_region_ids: [bodyRegion],
+      ...(predicate === undefined ? {} : { predicate }),
     });
+    this.recordNode(regionId, nodeId);
     this.addRegion(bodyRegion, "loop_body", regionId, this.orderIn(regionId));
+    const operandValues: string[] = [];
+    let resultValue: string | undefined;
+    let initialValue: string | undefined;
+    if (predicate !== undefined && sourceSymbol !== undefined) {
+      initialValue = predicate.root_value_id;
+      resultValue = this.next("value");
+      const initialRecord = this.values.find((value) =>
+        typeof value === "object" && value !== null && value.value_id === initialValue
+      ) as { type_ref?: string } | undefined;
+      this.values.push({
+        value_id: resultValue,
+        type_ref: initialRecord?.type_ref ?? "ArgumentValue",
+        origin: "block_argument",
+        origin_id: `${bodyRegion}.block.0`,
+      });
+      this.addBlockArgument(bodyRegion, resultValue);
+      this.valuesBySymbol.set(sourceSymbol, resultValue);
+      predicate = { ...predicate, root_value_id: resultValue };
+    }
     if (stmt.statement !== undefined) {
       this.visitBodyStatement(stmt.statement, bodyRegion, source);
     }
+    if (resultValue !== undefined && initialValue !== undefined && sourceSymbol !== undefined) {
+      const carriedValue = this.valuesBySymbol.get(sourceSymbol);
+      if (carriedValue !== undefined) {
+        operandValues.push(initialValue, carriedValue);
+        this.dataEdges.push(
+          { from_value: initialValue, to_consumer: nodeId, consumer_slot: "initial" },
+          { from_value: carriedValue, to_consumer: nodeId, consumer_slot: "carried" },
+        );
+      }
+    }
+    this.controls[controlIndex] = {
+      node_id: nodeId,
+      control_kind: "loop",
+      parent_region_id: regionId,
+      execution_order: this.orderIn(regionId),
+      body_region_ids: [bodyRegion],
+      ...(predicate === undefined ? {} : { predicate }),
+      ...(operandValues.length === 0 ? {} : { operand_values: operandValues }),
+      ...(resultValue === undefined ? {} : { result_value: resultValue }),
+    };
   }
 
   private visitConditional(
@@ -940,13 +998,16 @@ class Capture {
     if (stmt.elseStatement !== undefined) {
       bodyRegions.push(`${nodeId}.else`);
     }
+    const predicate = this.predicateForExpression(stmt.expression);
     this.controls.push({
       node_id: nodeId,
       control_kind: "conditional",
       parent_region_id: regionId,
       execution_order: this.orderIn(regionId),
       body_region_ids: bodyRegions,
+      predicate,
     });
+    this.recordNode(regionId, nodeId);
     this.addRegion(thenRegion, "conditional_arm", regionId, this.orderIn(regionId));
     this.visitBodyStatement(stmt.thenStatement, thenRegion, source);
     if (stmt.elseStatement !== undefined) {
@@ -954,6 +1015,85 @@ class Capture {
       this.addRegion(elseRegion, "conditional_arm", regionId, this.orderIn(regionId));
       this.visitBodyStatement(stmt.elseStatement, elseRegion, source);
     }
+  }
+
+  private predicateProjection(expression: ts.Expression): {
+    root_value_id: string;
+    property_path: string[];
+  } {
+    if (ts.isIdentifier(expression)) {
+      const symbol = this.symbolAt(expression);
+      const root = symbol === undefined ? undefined : this.valuesBySymbol.get(symbol);
+      if (root !== undefined) {
+        return { root_value_id: root, property_path: [] };
+      }
+    }
+    if (ts.isPropertyAccessExpression(expression)) {
+      const projection = this.predicateProjection(expression.expression);
+      projection.property_path.push(expression.name.text);
+      return projection;
+    }
+    if (
+      ts.isElementAccessExpression(expression) &&
+      expression.argumentExpression !== undefined &&
+      ts.isStringLiteral(expression.argumentExpression)
+    ) {
+      const projection = this.predicateProjection(expression.expression);
+      projection.property_path.push(expression.argumentExpression.text);
+      return projection;
+    }
+    throw new CaptureError(
+      "control predicate reads a prior typed value through static properties",
+    );
+  }
+
+  private predicateLiteral(expression: ts.Expression): {
+    scalar_type: "boolean" | "string" | "integer" | "null";
+    value?: boolean | string | number;
+  } {
+    if (expression.kind === ts.SyntaxKind.TrueKeyword) {
+      return { scalar_type: "boolean", value: true };
+    }
+    if (expression.kind === ts.SyntaxKind.FalseKeyword) {
+      return { scalar_type: "boolean", value: false };
+    }
+    if (expression.kind === ts.SyntaxKind.NullKeyword) {
+      return { scalar_type: "null" };
+    }
+    if (ts.isStringLiteral(expression)) {
+      return { scalar_type: "string", value: expression.text };
+    }
+    if (ts.isNumericLiteral(expression) && Number.isSafeInteger(Number(expression.text))) {
+      return { scalar_type: "integer", value: Number(expression.text) };
+    }
+    throw new CaptureError("predicate equality compares with a scalar literal");
+  }
+
+  private predicateForExpression(expression: ts.Expression): NonNullable<ControlRecord["predicate"]> | undefined {
+    if (expression.kind === ts.SyntaxKind.TrueKeyword) {
+      return undefined;
+    }
+    if (
+      ts.isBinaryExpression(expression) &&
+      (expression.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+        expression.operatorToken.kind === ts.SyntaxKind.EqualsEqualsToken ||
+        expression.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+        expression.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsToken)
+    ) {
+      return {
+        ...this.predicateProjection(expression.left),
+        comparator:
+          expression.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+          expression.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsToken
+            ? "not_equals"
+            : "equals",
+        literal: this.predicateLiteral(expression.right),
+      };
+    }
+    return {
+      ...this.predicateProjection(expression),
+      comparator: "truthy",
+    };
   }
 
   private visitTry(
@@ -999,6 +1139,18 @@ class Capture {
     this.controls.push({
       node_id: nodeId,
       control_kind: "return",
+      parent_region_id: regionId,
+      execution_order: this.orderIn(regionId),
+    });
+    this.recordNode(regionId, nodeId);
+  }
+
+  private visitThrow(stmt: ts.ThrowStatement, regionId: string): void {
+    this.rejectUnboundCalls(stmt.expression);
+    const nodeId = this.next("throw");
+    this.controls.push({
+      node_id: nodeId,
+      control_kind: "throw",
       parent_region_id: regionId,
       execution_order: this.orderIn(regionId),
     });

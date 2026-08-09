@@ -149,9 +149,85 @@
           "type": "array",
           "description": "Typed SSA operands consumed by this structural node (branch condition, switch scrutinee, carried inputs, yielded/returned value).",
           "items": { "$ref": "#/$defs/Operand" }
+        },
+        "predicate": {
+          "$ref": "#/$defs/ControlPredicate",
+          "description": "Closed typed predicate evaluated from a prior SSA result."
         }
       },
       "additionalProperties": false
+    },
+    "ControlPredicate": {
+      "oneOf": [
+        { "$ref": "#/$defs/TruthyPredicate" },
+        { "$ref": "#/$defs/EqualsPredicate" },
+        { "$ref": "#/$defs/NotEqualsPredicate" }
+      ]
+    },
+    "TruthyPredicate": {
+      "type": "object",
+      "required": ["root_value_id", "property_path", "comparator"],
+      "properties": {
+        "root_value_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "property_path": { "$ref": "#/$defs/PropertyPath" },
+        "comparator": { "const": "truthy" }
+      },
+      "additionalProperties": false
+    },
+    "EqualsPredicate": {
+      "type": "object",
+      "required": ["root_value_id", "property_path", "comparator", "literal"],
+      "properties": {
+        "root_value_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "property_path": { "$ref": "#/$defs/PropertyPath" },
+        "comparator": { "const": "equals" },
+        "literal": { "$ref": "#/$defs/PredicateLiteral" }
+      },
+      "additionalProperties": false
+    },
+    "NotEqualsPredicate": {
+      "type": "object",
+      "required": ["root_value_id", "property_path", "comparator", "literal"],
+      "properties": {
+        "root_value_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "property_path": { "$ref": "#/$defs/PropertyPath" },
+        "comparator": { "const": "not_equals" },
+        "literal": { "$ref": "#/$defs/PredicateLiteral" }
+      },
+      "additionalProperties": false
+    },
+    "PropertyPath": {
+      "type": "array",
+      "maxItems": 16,
+      "items": { "type": "string", "pattern": "^[A-Za-z0-9_]{1,128}$" }
+    },
+    "PredicateLiteral": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["scalar_type", "value"],
+          "properties": { "scalar_type": { "const": "boolean" }, "value": { "type": "boolean" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["scalar_type", "value"],
+          "properties": { "scalar_type": { "const": "string" }, "value": { "type": "string" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["scalar_type", "value"],
+          "properties": { "scalar_type": { "const": "integer" }, "value": { "type": "integer" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["scalar_type"],
+          "properties": { "scalar_type": { "const": "null" } },
+          "additionalProperties": false
+        }
+      ]
     },
     "ContextEdge": {
       "type": "object",

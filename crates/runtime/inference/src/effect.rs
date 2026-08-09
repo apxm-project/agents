@@ -7,6 +7,7 @@
 //! different target — there is no substitution.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::identity::{BindingError, ModelBindingAdmission, ModelTargetRef, ResolvedModelBinding};
 
@@ -66,6 +67,10 @@ pub enum ModelOutcome {
 pub struct ModelExecution {
     pub outcome: ModelOutcome,
     pub committed_attempt: Option<u32>,
+    /// The typed application value returned by the committing attempt. A
+    /// successful attempt always supplies this value; non-success outcomes do
+    /// not manufacture one.
+    pub output: Option<Value>,
 }
 
 /// Runtime-generated identity and exact admission facts for one model effect.
@@ -79,6 +84,7 @@ pub struct ModelCallPreparation {
     effect_id: String,
     node_execution_id: NodeExecutionId,
     request_digest: String,
+    context_digest: String,
     resolved_binding: ResolvedModelBinding,
 }
 
@@ -94,6 +100,7 @@ impl ModelCallPreparation {
         effect_id: impl Into<String>,
         node_execution_id: impl Into<String>,
         request_digest: impl Into<String>,
+        context_digest: impl Into<String>,
         authored_target: &ModelTargetRef,
         admission: &ModelBindingAdmission,
     ) -> Result<Self, BindingError> {
@@ -101,6 +108,7 @@ impl ModelCallPreparation {
             effect_id: effect_id.into(),
             node_execution_id: NodeExecutionId(node_execution_id.into()),
             request_digest: request_digest.into(),
+            context_digest: context_digest.into(),
             resolved_binding: admission.validate(authored_target)?,
         })
     }
@@ -121,6 +129,13 @@ impl ModelCallPreparation {
     #[must_use]
     pub fn request_digest(&self) -> &str {
         &self.request_digest
+    }
+
+    /// Digest of the exact persistent application Context incorporated into
+    /// this request identity.
+    #[must_use]
+    pub fn context_digest(&self) -> &str {
+        &self.context_digest
     }
 
     /// The admission-validated model target, deployment, binding, and
@@ -204,6 +219,7 @@ pub struct ModelCallRequest {
     effect_id: String,
     node_execution_id: NodeExecutionId,
     request_digest: String,
+    context_digest: String,
     resolved_binding: ResolvedModelBinding,
     model_context_envelope_ref: ModelContextEnvelopeRef,
     idempotency: IdempotencyKey,
@@ -263,6 +279,7 @@ impl ModelCallRequest {
         }
         for (field, digest) in [
             ("request_digest", preparation.request_digest.as_str()),
+            ("context_digest", preparation.context_digest.as_str()),
             (
                 "model_context_envelope_ref.sealed_digest",
                 metadata.model_context_envelope_ref.sealed_digest.as_str(),
@@ -277,6 +294,7 @@ impl ModelCallRequest {
             effect_id: preparation.effect_id,
             node_execution_id: preparation.node_execution_id,
             request_digest: preparation.request_digest,
+            context_digest: preparation.context_digest,
             resolved_binding: preparation.resolved_binding,
             model_context_envelope_ref: metadata.model_context_envelope_ref,
             idempotency: metadata.idempotency,
@@ -300,6 +318,12 @@ impl ModelCallRequest {
     #[must_use]
     pub fn request_digest(&self) -> &str {
         &self.request_digest
+    }
+
+    /// Digest of the persistent application Context used for this exact call.
+    #[must_use]
+    pub fn context_digest(&self) -> &str {
+        &self.context_digest
     }
 
     /// The exact target/deployment/Port Binding admitted for this effect.
@@ -336,8 +360,10 @@ impl ModelCallRequest {
 /// The disposition of one send attempt as reported by an inference backend.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AttemptDisposition {
-    /// The request committed successfully with typed usage.
-    Success(Usage),
+    /// The request committed successfully with typed usage and application
+    /// output. Output is mandatory at this boundary so downstream typed control
+    /// flow never substitutes a sentinel value for a missing model response.
+    Success { usage: Usage, output: Value },
     /// The backend delivered a reconciled terminal typed failure. The request
     /// was sent, but its terminal outcome is known and must not be retried or
     /// degraded to outcome-unknown.
@@ -405,22 +431,25 @@ pub fn execute_with_attempt<P: ModelInferencePort + ?Sized>(
     for attempt in 0..max {
         let last = attempt + 1 == max;
         match port.attempt(request, attempt) {
-            AttemptDisposition::Success(usage) => {
+            AttemptDisposition::Success { usage, output } => {
                 return ModelExecution {
                     outcome: ModelOutcome::CommittedSuccess { usage },
                     committed_attempt: Some(attempt),
+                    output: Some(output),
                 };
             }
             AttemptDisposition::DeliveredTypedFailure(error) => {
                 return ModelExecution {
                     outcome: ModelOutcome::TypedFailure { error },
                     committed_attempt: None,
+                    output: None,
                 };
             }
             AttemptDisposition::Cancelled => {
                 return ModelExecution {
                     outcome: ModelOutcome::Cancelled,
                     committed_attempt: None,
+                    output: None,
                 };
             }
             AttemptDisposition::FailedBeforeSend(error) => {
@@ -428,6 +457,7 @@ pub fn execute_with_attempt<P: ModelInferencePort + ?Sized>(
                     return ModelExecution {
                         outcome: ModelOutcome::TypedFailure { error },
                         committed_attempt: None,
+                        output: None,
                     };
                 }
                 // Safe to retry: nothing was sent.
@@ -438,6 +468,7 @@ pub fn execute_with_attempt<P: ModelInferencePort + ?Sized>(
                         return ModelExecution {
                             outcome: ModelOutcome::TypedFailure { error },
                             committed_attempt: None,
+                            output: None,
                         };
                     }
                     // Reconcilable: retry the same identity.
@@ -448,6 +479,7 @@ pub fn execute_with_attempt<P: ModelInferencePort + ?Sized>(
                             uncertain_usage: None,
                         },
                         committed_attempt: None,
+                        output: None,
                     };
                 }
             }
@@ -459,5 +491,6 @@ pub fn execute_with_attempt<P: ModelInferencePort + ?Sized>(
             uncertain_usage: None,
         },
         committed_attempt: None,
+        output: None,
     }
 }

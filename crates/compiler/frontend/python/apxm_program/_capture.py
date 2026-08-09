@@ -24,6 +24,7 @@ from ._bound_tree import (
     BoundHook,
     BoundOperand,
     BoundParameter,
+    BoundPredicate,
     BoundProgram,
     BoundRegion,
     BoundValue,
@@ -298,6 +299,8 @@ class _Capture:
             self._visit_conditional(stmt, region_id)
         elif isinstance(stmt, ast.Return):
             self._visit_return(stmt, region_id)
+        elif isinstance(stmt, ast.Raise):
+            self._visit_throw(stmt, region_id)
         elif isinstance(stmt, ast.Try):
             self._visit_try(stmt, region_id)
         elif isinstance(stmt, (ast.Import, ast.ImportFrom, ast.Pass)):
@@ -557,6 +560,7 @@ class _Capture:
                 parent_region_id=region_id,
                 execution_order=self._order_in(region_id),
                 body_region_ids=(),
+                predicate=None,
                 operands=tuple(self._call_operands(call, node_id, "output", None)),
                 result_value=resume_value,
                 span=self._span(call),
@@ -609,17 +613,37 @@ class _Capture:
     def _visit_loop(self, stmt: ast.stmt, region_id: str) -> None:
         node_id = self._next("loop")
         body_region = f"{node_id}.body"
-        control = BoundControl(
-            node_id=node_id,
-            control_kind="loop",
-            parent_region_id=region_id,
-            execution_order=self._order_in(region_id),
-            body_region_ids=(body_region,),
-            operands=(),
-            result_value=None,
-            span=self._span(stmt),
+        predicate = (
+            self._predicate_for_expression(stmt.test, node_id)
+            if isinstance(stmt, ast.While)
+            else None
         )
-        self.controls.append(control)
+        source_name = (
+            next(
+                (
+                    name
+                    for name, value_id in self._values_by_name.items()
+                    if predicate is not None and value_id == predicate.root_value_id
+                ),
+                None,
+            )
+            if predicate is not None
+            else None
+        )
+        control_index = len(self.controls)
+        self.controls.append(
+            BoundControl(
+                node_id=node_id,
+                control_kind="loop",
+                parent_region_id=region_id,
+                execution_order=self._order_in(region_id),
+                body_region_ids=(body_region,),
+                predicate=predicate,
+                operands=(),
+                result_value=None,
+                span=self._span(stmt),
+            )
+        )
         self._record_node(region_id, node_id)
         self.regions.append(
             BoundRegion(
@@ -629,7 +653,107 @@ class _Capture:
                 execution_order=self._order_in(region_id),
             )
         )
+        operands: tuple[BoundOperand, ...] = ()
+        result_value = None
+        if predicate is not None and source_name is not None:
+            initial_value = predicate.root_value_id
+            result_value = self._next("value")
+            carried_type = next(
+                value.type_ref for value in self.values if value.value_id == initial_value
+            )
+            self.values.append(
+                BoundValue(
+                    value_id=result_value,
+                    type_ref=carried_type,
+                    origin="block_argument",
+                    origin_id=f"{body_region}.block.0",
+                )
+            )
+            self._values_by_name[source_name] = result_value
+            predicate = BoundPredicate(
+                root_value_id=result_value,
+                property_path=predicate.property_path,
+                comparator=predicate.comparator,
+                literal=predicate.literal,
+            )
         self._visit_block(stmt.body, body_region)
+        if result_value is not None and source_name is not None:
+            carried_value = self._values_by_name.get(source_name)
+            if carried_value is not None:
+                operands = (
+                    BoundOperand(value_id=initial_value, slot="initial"),
+                    BoundOperand(value_id=carried_value, slot="carried"),
+                )
+        self.controls[control_index] = BoundControl(
+            node_id=node_id,
+            control_kind="loop",
+            parent_region_id=region_id,
+            execution_order=self._order_in(region_id),
+            body_region_ids=(body_region,),
+            predicate=predicate,
+            operands=operands,
+            result_value=result_value,
+            span=self._span(stmt),
+        )
+
+    def _predicate_projection(self, expression: ast.AST) -> tuple[str, tuple[str, ...]]:
+        if isinstance(expression, ast.Name) and expression.id in self._values_by_name:
+            return self._values_by_name[expression.id], ()
+        if isinstance(expression, ast.Attribute):
+            root, path = self._predicate_projection(expression.value)
+            return root, (*path, expression.attr)
+        if (
+            isinstance(expression, ast.Subscript)
+            and isinstance(expression.slice, ast.Constant)
+            and isinstance(expression.slice.value, str)
+        ):
+            root, path = self._predicate_projection(expression.value)
+            return root, (*path, expression.slice.value)
+        raise CaptureError(
+            "control predicate reads a prior typed value through static properties",
+            expression,
+        )
+
+    def _predicate_literal(self, expression: ast.AST) -> dict[str, object]:
+        if not isinstance(expression, ast.Constant):
+            raise CaptureError("predicate equality compares with a scalar literal", expression)
+        value = expression.value
+        if isinstance(value, bool):
+            return {"scalar_type": "boolean", "value": value}
+        if isinstance(value, str):
+            return {"scalar_type": "string", "value": value}
+        if isinstance(value, int):
+            return {"scalar_type": "integer", "value": value}
+        if value is None:
+            return {"scalar_type": "null"}
+        raise CaptureError("predicate literal is boolean, string, integer, or null", expression)
+
+    def _predicate_for_expression(
+        self, expression: ast.AST, node_id: str
+    ) -> Optional[BoundPredicate]:
+        if isinstance(expression, ast.Constant) and expression.value is True:
+            return None
+        if (
+            isinstance(expression, ast.Compare)
+            and len(expression.ops) == 1
+            and isinstance(expression.ops[0], (ast.Eq, ast.NotEq, ast.Is, ast.IsNot))
+            and len(expression.comparators) == 1
+        ):
+            root_value_id, property_path = self._predicate_projection(expression.left)
+            return BoundPredicate(
+                root_value_id=root_value_id,
+                property_path=property_path,
+                comparator="not_equals"
+                if isinstance(expression.ops[0], (ast.NotEq, ast.IsNot))
+                else "equals",
+                literal=self._predicate_literal(expression.comparators[0]),
+            )
+        root_value_id, property_path = self._predicate_projection(expression)
+        return BoundPredicate(
+            root_value_id=root_value_id,
+            property_path=property_path,
+            comparator="truthy",
+        )
 
     def _visit_task_group(self, stmt: ast.AsyncWith, region_id: str) -> None:
         """Capture one lexical TaskGroup scope whose exit joins all child work."""
@@ -654,6 +778,7 @@ class _Capture:
                 parent_region_id=region_id,
                 execution_order=self._order_in(region_id),
                 body_region_ids=(scope_region,),
+                predicate=None,
                 operands=(),
                 result_value=None,
                 span=self._span(stmt),
@@ -681,6 +806,7 @@ class _Capture:
                 body_region_ids=(f"{node_id}.then", f"{node_id}.else")
                 if stmt.orelse
                 else (f"{node_id}.then",),
+                predicate=self._predicate_for_expression(stmt.test, node_id),
                 operands=(),
                 result_value=None,
                 span=self._span(stmt),
@@ -722,6 +848,7 @@ class _Capture:
                 parent_region_id=region_id,
                 execution_order=self._order_in(region_id),
                 body_region_ids=tuple(body_regions),
+                predicate=None,
                 operands=(),
                 result_value=None,
                 span=self._span(stmt),
@@ -769,7 +896,25 @@ class _Capture:
                 parent_region_id=region_id,
                 execution_order=self._order_in(region_id),
                 body_region_ids=(),
+                predicate=None,
                 operands=tuple(operands),
+                result_value=None,
+                span=self._span(stmt),
+            )
+        )
+        self._record_node(region_id, node_id)
+
+    def _visit_throw(self, stmt: ast.Raise, region_id: str) -> None:
+        node_id = self._next("throw")
+        self.controls.append(
+            BoundControl(
+                node_id=node_id,
+                control_kind="throw",
+                parent_region_id=region_id,
+                execution_order=self._order_in(region_id),
+                body_region_ids=(),
+                predicate=None,
+                operands=(),
                 result_value=None,
                 span=self._span(stmt),
             )

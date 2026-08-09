@@ -77,22 +77,25 @@ async def ConversationalExample(agent, incoming):
 
         while response["kind"] == "tool_request":
             tool_request = response["tool_request"]
-            tool_result = await SearchWeb(tool_request["arguments"])
-            turn_messages = (
-                *turn_messages,
-                {"role": "tool", "content": tool_result["content"]},
-            )
-            working_messages = (
-                *agent.context.messages,
-                *turn_messages,
-            )
-            response = await SupportModel(
-                {
-                    "messages": working_messages,
-                    "incoming": incoming,
-                    "tool_result": tool_result,
-                }
-            )
+            if response["tool_request"]["kind"] == "search_web":
+                tool_result = await SearchWeb(tool_request["arguments"])
+                turn_messages = (
+                    *turn_messages,
+                    {"role": "tool", "content": tool_result["content"]},
+                )
+                working_messages = (
+                    *agent.context.messages,
+                    *turn_messages,
+                )
+                response = await SupportModel(
+                    {
+                        "messages": working_messages,
+                        "incoming": incoming,
+                        "tool_result": tool_result,
+                    }
+                )
+            else:
+                raise ValueError("undeclared tool request")
 
         final_reply = response["reply"]
         agent.context = ConversationContext(
@@ -141,17 +144,21 @@ export const ConversationalExample = Agent<
       });
 
       while (response.kind === "tool_request") {
-        const toolResult = await SearchWeb(response.toolRequest.arguments);
-        turnMessages = [
-          ...turnMessages,
-          { role: "tool", content: toolResult.content },
-        ];
-        workingMessages = [...agent.context.messages, ...turnMessages];
-        response = await SupportModel({
-          messages: workingMessages,
-          incoming,
-          toolResult,
-        });
+        if (response.tool_request.kind === "search_web") {
+          const toolResult = await SearchWeb(response.tool_request.arguments);
+          turnMessages = [
+            ...turnMessages,
+            { role: "tool", content: toolResult.content },
+          ];
+          workingMessages = [...agent.context.messages, ...turnMessages];
+          response = await SupportModel({
+            messages: workingMessages,
+            incoming,
+            tool_result: toolResult,
+          });
+        } else {
+          throw new Error("undeclared tool request");
+        }
       }
 
       const finalReply = response.reply;
@@ -191,6 +198,11 @@ Each iteration explicitly decides:
 Context carries information, never grants. Associating Skills with an Agent,
 Company, Area/Department, or Group makes them discoverable; it does not inject
 their bodies. Tool calls still require complete Auth-owned Capability Grants.
+
+At execution, every Model request carries the sealed Context-envelope reference
+and the digest of the exact persistent Context used for that call. The digest
+is part of request identity, so a Context update performed by an authored Hook
+before Model re-entry cannot be replaced with the previous turn's Context.
 
 ## 5. Why there is no `AgentLoop`
 
@@ -278,9 +290,9 @@ export const AddCurrentPolicy = Hook.before({
 });
 ```
 
-The binding is static, order is deterministic, Context changes are explicit
-values, and a Hook effect uses the same admitted Model/Capability path as
-ordinary source.
+The binding is static, order is deterministic, and Context changes are explicit
+values. Runtime invokes each selected handler before or after its exact target;
+the handler cannot redirect dispatch to a different Model or Capability.
 
 Hooks cannot grant authority, hide evidence, mutate undeclared global state,
 select a fallback model, bulk-load Skills, or perform an unrecorded effect.

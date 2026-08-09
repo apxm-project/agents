@@ -100,7 +100,7 @@ fn example_artifacts_carry_no_field_the_schema_rejects() {
 }
 
 #[test]
-fn conversational_example_artifacts_pin_tool_loop_and_hooks() {
+fn conversational_example_artifacts_pin_typed_tool_control_and_hooks() {
     for fixture in [
         "../crates/machine/program/tests/fixtures/example-artifacts/conversational-python.v1.json",
         "../crates/machine/program/tests/fixtures/example-artifacts/conversational-typescript.v1.json",
@@ -122,19 +122,32 @@ fn conversational_example_artifacts_pin_tool_loop_and_hooks() {
         let operations = artifact["air"]["semantic_operations"]
             .as_array()
             .expect("example semantic operations");
-        let operation_kinds = operations
-            .iter()
-            .map(|operation| operation["op"].as_str().expect("operation kind"))
-            .collect::<Vec<_>>();
         assert_eq!(
-            operation_kinds,
-            ["model.call", "capability.invoke", "model.call"],
+            operations
+                .iter()
+                .filter(|operation| operation["op"] == "model.call")
+                .count(),
+            2,
             "{fixture}",
         );
-
-        let initial_model = &operations[0];
-        let tool = &operations[1];
-        let reentry_model = &operations[2];
+        let tool = operations
+            .iter()
+            .find(|operation| operation["op"] == "capability.invoke")
+            .expect("declared Tool operation");
+        let reentry_model = operations
+            .iter()
+            .find(|operation| {
+                operation["op"] == "model.call"
+                    && operation["parent_region_id"] == tool["parent_region_id"]
+            })
+            .expect("model re-entry in the selected Tool arm");
+        let initial_model = operations
+            .iter()
+            .find(|operation| {
+                operation["op"] == "model.call"
+                    && operation["parent_region_id"] != tool["parent_region_id"]
+            })
+            .expect("initial model call outside the Tool arm");
         assert_ne!(
             initial_model["parent_region_id"], tool["parent_region_id"],
             "{fixture}",
@@ -167,6 +180,49 @@ fn conversational_example_artifacts_pin_tool_loop_and_hooks() {
         assert!(
             structural.iter().any(|node| node["kind"] == "yield"),
             "{fixture}",
+        );
+        let tool_loop = structural
+            .iter()
+            .find(|node| {
+                node["kind"] == "ais.loop"
+                    && node["predicate"]["property_path"] == serde_json::json!(["kind"])
+            })
+            .expect("typed Tool loop");
+        assert_eq!(
+            tool_loop["predicate"]["literal"]["value"], "tool_request",
+            "{fixture}",
+        );
+        assert_eq!(
+            tool_loop["block_arguments"]
+                .as_array()
+                .expect("loop block arguments")
+                .len(),
+            1,
+            "{fixture}",
+        );
+        assert_eq!(
+            tool_loop["operands"]
+                .as_array()
+                .expect("loop-carried operands")
+                .len(),
+            2,
+            "{fixture}",
+        );
+        let declared_tool_branch = structural
+            .iter()
+            .find(|node| {
+                node["kind"] == "branch"
+                    && node["predicate"]["property_path"]
+                        == serde_json::json!(["tool_request", "kind"])
+            })
+            .expect("closed declared-Tool branch");
+        assert_eq!(
+            declared_tool_branch["predicate"]["literal"]["value"], "search_web",
+            "{fixture}",
+        );
+        assert!(
+            structural.iter().any(|node| node["kind"] == "throw"),
+            "{fixture} must fail closed for undeclared Tool requests",
         );
     }
 }
