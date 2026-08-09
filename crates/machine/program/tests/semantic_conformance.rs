@@ -101,6 +101,52 @@ fn every_authored_model_operand_requires_dominance() {
 }
 
 #[test]
+fn loop_carried_values_are_back_edge_scoped() {
+    let valid = load_vectors("apxm.frontend-graph.v2.json")
+        .into_iter()
+        .find(|vector| vector.name == "valid-frontend-graph-typed-intents")
+        .expect("typed frontend graph vector")
+        .input;
+
+    let mut valid_phi = valid.clone();
+    valid_phi["control_intents"][0]["operand_values"] = json!(["value.model.out"]);
+    valid_phi["data_edges"].as_array_mut().unwrap().push(json!({
+        "from_value": "value.model.out",
+        "to_consumer": "node.loop.1",
+        "consumer_slot": "carried"
+    }));
+    assert!(verify_frontend_graph_json(&valid_phi).is_accepted());
+
+    let mut future_phi = valid_phi.clone();
+    future_phi["regions"].as_array_mut().unwrap().push(json!({
+        "region_id": "region.future",
+        "region_role": "task_scope",
+        "parent_region_id": "region.body",
+        "execution_order": 3
+    }));
+    future_phi["call_intents"][0]["parent_region_id"] = json!("region.future");
+    assert!(!verify_frontend_graph_json(&future_phi).is_accepted());
+}
+
+#[test]
+fn context_edges_bind_the_exact_type_and_forward_coordinate() {
+    let valid = load_vectors("apxm.frontend-graph.v2.json")
+        .into_iter()
+        .find(|vector| vector.name == "valid-frontend-graph-typed-intents")
+        .expect("typed frontend graph vector")
+        .input;
+    assert!(verify_frontend_graph_json(&valid).is_accepted());
+
+    let mut wrong_type = valid.clone();
+    wrong_type["context_flow"][0]["context_type_ref"] = json!("OtherContext");
+    assert!(!verify_frontend_graph_json(&wrong_type).is_accepted());
+
+    let mut reversed = valid;
+    reversed["context_flow"][0]["from_node"] = json!("node.cap.1");
+    assert!(!verify_frontend_graph_json(&reversed).is_accepted());
+}
+
+#[test]
 fn every_structural_operand_and_predicate_requires_dominance() {
     let valid = load_vectors("apxm.frontend-graph.v2.json")
         .into_iter()
