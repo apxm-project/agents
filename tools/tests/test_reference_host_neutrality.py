@@ -51,9 +51,30 @@ class ReferenceHostNeutralityTests(unittest.TestCase):
 
     def test_generic_coordinate_shapes_are_rejected(self) -> None:
         pattern = self.module._forbidden_pattern(self.vector)
-        for coordinate in ("acme-sdk", "@acme/host-sdk", "customer-service", "foo_client"):
+        for coordinate in (
+            "acme-sdk",
+            "@acme/host-sdk",
+            "customer-service",
+            "foo_client",
+            "acme_client_service",
+            "acme_sdk_dependency",
+            "use AcmeClient::Port;",
+            "use acme::client;",
+            '{"dependency":"Acme"}',
+            "Acme",
+            "acme",
+        ):
             with self.subTest(coordinate=coordinate):
                 self.assertTrue(self.module.scan_text(coordinate, pattern))
+
+    def test_product_neutral_contexts_are_not_scanned_as_prose(self) -> None:
+        pattern = self.module._forbidden_pattern(self.vector)
+        self.assertFalse(
+            self.module.scan_text("Acme is mentioned in release prose.", pattern)
+        )
+        self.assertFalse(
+            self.module.scan_text("use apxm_program::air::AirModule;", pattern)
+        )
 
     def test_mutated_publication_is_rejected(self) -> None:
         target = REPOSITORY_ROOT / "contracts" / "reference-host" / "manifests" / "apxm.reference-host-release-manifest.v1.json"
