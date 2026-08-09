@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-09T19:17:57+00:00",
+  "generated_at": "2026-08-09T19:45:33+00:00",
   "issue_scope": {
     "issue": 82,
     "plan_tags": [
@@ -12,7 +12,7 @@
   },
   "overall_status": "passed",
   "schema_version": "apxm.source-compiler-acceptance.v1",
-  "source_revision": "c0780f6c3eeabe5df14890741f4b8e7e42604b91",
+  "source_revision": "86ab55a78a06c2c2b7d8205ea34e9930efc8a022",
   "steps": [
     {
       "block_reason": null,
@@ -22,10 +22,10 @@
         "check-frontend-codegen"
       ],
       "description": "AIS and frontend generated metadata stay byte-identical to the owner definitions",
-      "duration_seconds": 3.946,
+      "duration_seconds": 4.977,
       "error": null,
       "gate_id": "check-frontend-codegen",
-      "log_digest": "sha256:823abf655784e49ba11c20abbe42be368c21777d97470dff15a988c163aeff06",
+      "log_digest": "sha256:c494bc846134aa8d3cba93bce4f59efbd580a3ed7c4dbed4a9a5d878ef1f86f3",
       "log_path": ".apxm/compiler/source-compiler-acceptance/logs/check-frontend-codegen.log",
       "returncode": 0,
       "status": "passed"
@@ -38,7 +38,7 @@
         "check-frontend-surface"
       ],
       "description": "Python and TypeScript export only the declared source-first frontend surface",
-      "duration_seconds": 0.256,
+      "duration_seconds": 0.191,
       "error": null,
       "gate_id": "check-frontend-surface",
       "log_digest": "sha256:3b730e71ae73a6e5004920b648b47afac23d3cbf415969d75a5cbc66e79e8bcb",
@@ -54,10 +54,10 @@
         "test-source-port"
       ],
       "description": "the submitted-source compile port stays fail-closed across positive, negative, and boundary cases",
-      "duration_seconds": 2.781,
+      "duration_seconds": 3.135,
       "error": null,
       "gate_id": "test-source-port",
-      "log_digest": "sha256:a2da12330a21740384eadddad7212b382a47e98555a54e7364f6090395ca7637",
+      "log_digest": "sha256:ec3beeb758ea1d7b66073589859f59ced902307918806a1f4e7f6d89d2d83467",
       "log_path": ".apxm/compiler/source-compiler-acceptance/logs/test-source-port.log",
       "returncode": 0,
       "status": "passed"
@@ -70,10 +70,10 @@
         "test-program-source"
       ],
       "description": "FrontendGraph, AIR, artifact, and source-map lowering stay closed and deterministic",
-      "duration_seconds": 0.496,
+      "duration_seconds": 0.515,
       "error": null,
       "gate_id": "test-program-source",
-      "log_digest": "sha256:fffa1f190a90751694702aaeaf50bd8c7256a3a84d198e1dddd70f3436b779ea",
+      "log_digest": "sha256:ca8237e736e7f78bfb847bd0487df9764ded4a0183e16e0618037b73d0819e74",
       "log_path": ".apxm/compiler/source-compiler-acceptance/logs/test-program-source.log",
       "returncode": 0,
       "status": "passed"
@@ -86,10 +86,10 @@
         "test-compiler"
       ],
       "description": "the compiler pipeline preserves the canonical source-to-artifact contract",
-      "duration_seconds": 6.183,
+      "duration_seconds": 0.785,
       "error": null,
       "gate_id": "test-compiler",
-      "log_digest": "sha256:e829c42eb6944a624d3005818699d77b7353170dc99ea598774a02b5b1c880f0",
+      "log_digest": "sha256:7f8074d2b366ed2f489206564ea1f2881c4c3e120c1e385c63788503d40c9038",
       "log_path": ".apxm/compiler/source-compiler-acceptance/logs/test-compiler.log",
       "returncode": 0,
       "status": "passed"
@@ -102,10 +102,10 @@
         "check-frontend-parity"
       ],
       "description": "Python and TypeScript authoring compile to closed-semantics-equivalent AIR",
-      "duration_seconds": 27.04,
+      "duration_seconds": 30.869,
       "error": null,
       "gate_id": "check-frontend-parity",
-      "log_digest": "sha256:5c8ebb5fc92e31a92af5f661b36daeca37fc4236d35c1c18a23e8c855b054849",
+      "log_digest": "sha256:3dc1c2838ca64e4bf17f2a44ccd61ca3ef9d7f547e9de1377bdcea2fdb44396d",
       "log_path": ".apxm/compiler/source-compiler-acceptance/logs/check-frontend-parity.log",
       "returncode": 0,
       "status": "passed"
@@ -118,10 +118,10 @@
         "test-typescript-frontend"
       ],
       "description": "the public TypeScript frontend package stays closed, typed, and deterministic",
-      "duration_seconds": 12.358,
+      "duration_seconds": 10.942,
       "error": null,
       "gate_id": "test-typescript-frontend",
-      "log_digest": "sha256:7831f3c0d355b6edd5f95e54274347dd4dba246305c81118945ac5b81f4eae23",
+      "log_digest": "sha256:4b164954bf2e2009bc24d01689b6efa13573e8d23b2c3bff561e972618d4ca27",
       "log_path": ".apxm/compiler/source-compiler-acceptance/logs/test-typescript-frontend.log",
       "returncode": 0,
       "status": "passed"
@@ -134,7 +134,7 @@
         "check-source-compiler-boundary"
       ],
       "description": "source and compiler paths contain no downstream dependency or rejected alternate AIR path",
-      "duration_seconds": 0.522,
+      "duration_seconds": 0.192,
       "error": null,
       "gate_id": "check-source-compiler-boundary",
       "log_digest": "sha256:e07ce4b8c0916744e916396217ee8ee95cea1fa3995fc1e5300279a36b9d6c04",
@@ -150,10 +150,10 @@
         "compile-service-canonical"
       ],
       "description": "the canonical CLI compile path emits apxm.air.v2 from repository-owned source",
-      "duration_seconds": 3.911,
+      "duration_seconds": 2.695,
       "error": null,
       "gate_id": "compile-service-canonical",
-      "log_digest": "sha256:1156969aabbde96fc5959678eb33ca0b875b2e077cfc016da8cea39a75d44317",
+      "log_digest": "sha256:0d2adb055ca230aef614b81fd3cd3c67d391bac4a79e39c8be3b17aa14d76dbe",
       "log_path": ".apxm/compiler/source-compiler-acceptance/logs/compile-service-canonical.log",
       "returncode": 0,
       "status": "passed"
