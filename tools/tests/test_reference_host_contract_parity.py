@@ -60,7 +60,13 @@ class ReferenceHostContractParityTests(unittest.TestCase):
         def mutate(root: Path) -> None:
             path = root / "contracts" / "reference-host" / "manifests" / "apxm.reference-host-execution-manifest.v1.json"
             text = path.read_text(encoding="utf-8")
-            path.write_text(text.replace("sha256:12ca6c600fc50f150c02ebfad48b33a0f6e04b5367c9c9e5c89b995283be0458", "sha256:" + "0" * 64), encoding="utf-8")
+            path.write_text(
+                text.replace(
+                    "sha256:abcd9707efe46826d858318bf0ae4e4e40d3839cde66c302d8805e4c6bc6577f",
+                    "sha256:" + "0" * 64,
+                ),
+                encoding="utf-8",
+            )
 
         result = self.run_gate_in_copy(mutate)
         self.assertNotEqual(result.returncode, 0)

@@ -2102,6 +2102,19 @@ fn validate_execution_request(
                 ),
             });
         }
+        if air.structural_ir.iter().any(|region| {
+            region.kind != apxm_program::StructuralOpKind::Function
+                && region
+                    .block_arguments
+                    .iter()
+                    .any(|argument| argument.value_id == *value_id)
+        }) {
+            return Err(ExecutionError::InvalidAir {
+                message: format!(
+                    "initial_values cannot supply a nested structural block argument ({value_id})"
+                ),
+            });
+        }
     }
     Ok(())
 }
