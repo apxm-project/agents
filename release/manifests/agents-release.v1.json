@@ -2,7 +2,7 @@
   "artifacts": [
     {
       "build_decision": "built",
-      "digest": "sha256:1ea7d44ab24f2595646e1dda973c96cc037600e31d342b49ace45bca9b54b4a9",
+      "digest": "sha256:f20de2af47c4bac2f8dd54409a6f03b3c6e4a4de2da24cb5fcec1dfa01ef1782",
       "kind": "source-archive",
       "provenance": "git archive of the pinned owner revision"
     }
@@ -216,7 +216,7 @@
     ]
   },
   "owner_descriptor": {
-    "exact_bytes_digest": "sha256:ea60b706aaeb8909d79becf2a166e33d4f621052c4f3c8f013eb16ca9fef1298",
+    "exact_bytes_digest": "sha256:42770f230ea7f01c22a55025a879e693169b6bf827149fb08a4f5fe888e91cf6",
     "path": "contracts/descriptors/apxm.agents-owner-descriptor.v1.json"
   },
   "provenance": {
@@ -263,7 +263,7 @@
       "path": "crates/tools/cli/tests/reference_host_jsonl.rs"
     },
     "neutrality_vector": {
-      "exact_bytes_digest": "sha256:c507ac9c2a2a446dc717e457dca812b55def7b3fbbf03c634bbb46d656d40c3e",
+      "exact_bytes_digest": "sha256:bc6e3c9e8b98650b7c182e279a01838cb6abe4871244dd9041a527474905840b",
       "path": "contracts/reference-host/vectors/apxm.reference-host.neutrality.v1.json",
       "profiles": [
         "embedded",
@@ -364,18 +364,18 @@
       ]
     },
     "release_manifest": {
-      "exact_bytes_digest": "sha256:7abe675da862256ec0c51b0e5d708ef1c538954e767596f7b3c8f29eb9a29eed",
+      "exact_bytes_digest": "sha256:9c6dca7a1cb8c63e5d038966fd4d0ffa9b87f4f537df3149873fc68fcce41724",
       "path": "contracts/reference-host/manifests/apxm.reference-host-release-manifest.v1.json"
     }
   },
-  "release_id": "apxm-agents-798ba718c103",
+  "release_id": "apxm-agents-4bb7908c21ff",
   "release_kind": "source-provenance",
   "schema_version": "apxm.owner-release-manifest.v1",
   "semantic_owner": "agents",
   "source": {
-    "archive_digest": "sha256:1ea7d44ab24f2595646e1dda973c96cc037600e31d342b49ace45bca9b54b4a9",
+    "archive_digest": "sha256:f20de2af47c4bac2f8dd54409a6f03b3c6e4a4de2da24cb5fcec1dfa01ef1782",
     "repository": "https://github.com/apxm-project/agents.git",
-    "revision": "798ba718c103faa892002447040aeea2b78bf1a4",
-    "tree_digest": "sha256:e1e122c862b9ae35d5e33cff641b60c75dc993b866c06ab08a7d6a12af11fc8f"
+    "revision": "4bb7908c21ff63f1148d41b624c2484f81562329",
+    "tree_digest": "sha256:b14bf1b4715e5ca897ea04fcaffbe4521b07779f8991d07e75ceb629c90f2f42"
   }
 }
