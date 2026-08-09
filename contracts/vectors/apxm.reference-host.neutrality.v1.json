@@ -1,0 +1,34 @@
+{
+  "schema_version": "apxm.reference-host.neutrality.v1",
+  "semantic_owner": "agents",
+  "profiles": ["embedded", "reference-host"],
+  "scan_targets": [
+    "contracts/descriptors/apxm.agents-owner-descriptor.v1.json",
+    "contracts/reference-host/manifests/apxm.reference-host-release-manifest.v1.json",
+    "contracts/reference-host/manifests/apxm.reference-host-execution-manifest.v1.json",
+    "crates/tools/cli/src/bin/reference_host.rs",
+    "docs/agents/runtime-profile-parity.md"
+  ],
+  "forbidden_references": [
+    "downstream_product",
+    "downstream-sdk",
+    "vendor_client"
+  ],
+  "negative_cases": [
+    {
+      "name": "downstream_product_coordinate",
+      "input": "downstream_product",
+      "expected_match": true
+    },
+    {
+      "name": "downstream_sdk_coordinate",
+      "input": "downstream-sdk",
+      "expected_match": true
+    },
+    {
+      "name": "vendor_client_coordinate",
+      "input": "vendor_client",
+      "expected_match": true
+    }
+  ]
+}

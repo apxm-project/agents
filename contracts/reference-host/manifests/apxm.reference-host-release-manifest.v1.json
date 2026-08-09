@@ -175,12 +175,18 @@
     ],
     "unavailable_required_cases": []
   },
+  "neutrality_vector": {
+    "vector_id": "apxm.reference-host.neutrality.v1",
+    "path": "reference-host/vectors/apxm.reference-host.neutrality.v1.json",
+    "digest": "sha256:3563a186d6f4478b788b863d5f9809aa1098751b1e17b6d69a9cfe40e39f4431",
+    "profiles": ["embedded", "reference-host"]
+  },
   "constraints": {
     "http_surface": "absent",
     "apxm_server_dependency": "absent",
     "source_checkout_fallback": "absent",
     "schema_aliases": "absent",
     "mixed_generation": "absent",
-    "clic_dependency": "absent"
+    "downstream_dependency": "absent"
   }
 }

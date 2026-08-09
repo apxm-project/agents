@@ -97,12 +97,11 @@ README_REFERENCE_HOST = re.compile(
 )
 FORBIDDEN_BOUNDARY_TOKENS = (
     "apxm.coordinator-owner-descriptor.v1",
-    "apxm.clic-owner-descriptor.v1",
     "apxm.host-owner-descriptor.v1",
     "apxm.hostsdk-owner-descriptor.v1",
     "apxm.host_sdk-owner-descriptor.v1",
     '"semantic_owner": "coordinator"',
-    '"semantic_owner": "clic"',
+    '"semantic_owner": "downstream"',
 )
 
 
@@ -201,8 +200,6 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
         for path in (DESCRIPTOR_PATH, CONTRACTS_README, CARGO_TOML):
             text = path.read_text(encoding="utf-8")
             matches = [token for token in FORBIDDEN_BOUNDARY_TOKENS if token in text]
-            if re.search(r"\bCLIC\b", text):
-                matches.append("CLIC")
             if matches:
                 offenders.append(
                     f"{path.relative_to(REPOSITORY_ROOT)}: {', '.join(sorted(set(matches)))}"

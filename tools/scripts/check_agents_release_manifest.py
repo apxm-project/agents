@@ -197,6 +197,18 @@ def reference_host_cohort(revision: str) -> dict[str, Any]:
             }
         )
 
+    neutrality = release.get("neutrality_vector")
+    require(isinstance(neutrality, dict), "reference-host neutrality vector is missing")
+    require(
+        neutrality.get("vector_id") == "apxm.reference-host.neutrality.v1",
+        "reference-host neutrality vector id drifted",
+    )
+    neutrality_path = neutrality.get("path")
+    require(
+        neutrality_path == "reference-host/vectors/apxm.reference-host.neutrality.v1.json",
+        "reference-host neutrality vector path drifted",
+    )
+
     return {
         "profile_cohort": profile_cohort,
         "release_manifest": {
@@ -209,6 +221,14 @@ def reference_host_cohort(revision: str) -> dict[str, Any]:
         },
         "publication_cohort": publication_cohort,
         "golden_vectors": golden_vectors,
+        "neutrality_vector": {
+            "vector_id": neutrality["vector_id"],
+            "path": f"contracts/{neutrality_path}",
+            "exact_bytes_digest": digest_bytes(
+                git_file(REPO_ROOT, revision, f"contracts/{neutrality_path}")
+            ),
+            "profiles": neutrality["profiles"],
+        },
         "harness": {
             "path": REFERENCE_HOST_HARNESS_PATH,
             "exact_bytes_digest": digest_bytes(
@@ -221,7 +241,7 @@ def reference_host_cohort(revision: str) -> dict[str, Any]:
             "source_checkout_fallback": release["constraints"]["source_checkout_fallback"],
             "schema_aliases": release["constraints"]["schema_aliases"],
             "mixed_generation": release["constraints"]["mixed_generation"],
-            "downstream_dependency": "absent",
+            "downstream_dependency": release["constraints"]["downstream_dependency"],
         },
         "evidence_scope": "committed manifests, schemas, vectors, and harness bytes only",
     }

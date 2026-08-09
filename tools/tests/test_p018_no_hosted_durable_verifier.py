@@ -50,7 +50,7 @@ class P018NoHostedDurableVerifierTests(unittest.TestCase):
             ("hosted-or-service", "pub struct HostedService;", ""),
             ("network-or-remote", "pub fn open() { tokio::net::TcpListener::bind(\"127.0.0.1:1\"); }", ""),
             ("multi-tenant", "pub const TENANT_ID: &str = \"tenant\";", ""),
-            ("downstream-or-product", "", 'clic-sdk = { workspace = true }'),
+            ("downstream-or-product", "", 'downstream-binding = { workspace = true }'),
             ("alias", "use crate::store as legacy_store;", ""),
             ("fallback-or-speculative", "pub fn choose() { let fallback = true; }", ""),
             ("feature-flag", "#[cfg(feature = \"hosted\")] pub fn hosted() {}", ""),
