@@ -1,6 +1,6 @@
 {
   "owner_descriptor": {
-    "exact_bytes_digest": "sha256:071939e096805637293aba429bb6bf11f89e59bf95986729a5fec7060f45b51b",
+    "exact_bytes_digest": "sha256:ea60b706aaeb8909d79becf2a166e33d4f621052c4f3c8f013eb16ca9fef1298",
     "path": "contracts/descriptors/apxm.agents-owner-descriptor.v1.json"
   },
   "provenance": {
@@ -47,7 +47,7 @@
       "path": "crates/tools/cli/tests/reference_host_jsonl.rs"
     },
     "neutrality_vector": {
-      "exact_bytes_digest": "sha256:3563a186d6f4478b788b863d5f9809aa1098751b1e17b6d69a9cfe40e39f4431",
+      "exact_bytes_digest": "sha256:c507ac9c2a2a446dc717e457dca812b55def7b3fbbf03c634bbb46d656d40c3e",
       "path": "contracts/reference-host/vectors/apxm.reference-host.neutrality.v1.json",
       "profiles": [
         "embedded",
@@ -148,23 +148,23 @@
       ]
     },
     "release_manifest": {
-      "exact_bytes_digest": "sha256:34598777bf1bc2bbefb8059f0d4a4070f66dbfcef7e3566a1c7ad966810a0226",
+      "exact_bytes_digest": "sha256:7abe675da862256ec0c51b0e5d708ef1c538954e767596f7b3c8f29eb9a29eed",
       "path": "contracts/reference-host/manifests/apxm.reference-host-release-manifest.v1.json"
     }
   },
-  "release_id": "apxm-agents-f857250b56a7",
+  "release_id": "apxm-agents-798ba718c103",
   "release_kind": "source-provenance",
   "release_manifest": {
-    "exact_bytes_digest": "sha256:da5c85379cfcba65893c848554234d1a5b2bb7a206e411af27dd5fca4d784f8e",
+    "exact_bytes_digest": "sha256:99c6137525c66f4a1d0206944bf9ef7102eebcaa9b98d8c4940ddd2dddd2e874",
     "path": "release/manifests/agents-release.v1.json"
   },
   "schema_version": "apxm.agents-release-evidence.v1",
   "semantic_owner": "agents",
   "source": {
-    "archive_digest": "sha256:354adf26b9711c0f2d0472ad3a13b40f415502791aa732ba5ea7e633597aa6b8",
+    "archive_digest": "sha256:1ea7d44ab24f2595646e1dda973c96cc037600e31d342b49ace45bca9b54b4a9",
     "repository": "https://github.com/apxm-project/agents.git",
-    "revision": "f857250b56a76a70f35b424f55dc5e75448e9bd7",
-    "tree_digest": "sha256:ef4937e06f7a5c282d1032d2374c8c4f74bf74793c515b3edffa6db1ce876b8d"
+    "revision": "798ba718c103faa892002447040aeea2b78bf1a4",
+    "tree_digest": "sha256:e1e122c862b9ae35d5e33cff641b60c75dc993b866c06ab08a7d6a12af11fc8f"
   },
   "verification": {
     "gate": "tools/scripts/check_agents_release_manifest.py",
