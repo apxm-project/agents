@@ -34,10 +34,9 @@ class AgentsReleaseManifestTests(unittest.TestCase):
         result = self.checker.validate_manifest(require_clean=False)
         self.assertEqual(result["status"], "pass")
         self.assertEqual(self.manifest["semantic_owner"], "agents")
-        self.assertEqual(
-            self.manifest["source"]["revision"],
-            "e8a03e1951678e7024275fc72238485b9aaef1d7",
-        )
+        revision = self.manifest["source"]["revision"]
+        self.assertRegex(revision, r"[0-9a-f]{40}")
+        self.assertEqual(self.manifest["release_id"], f"apxm-agents-{revision[:12]}")
         self.assertEqual(
             self.manifest["reference_host_release"]["profile_cohort"],
             ["embedded", "reference-host"],
