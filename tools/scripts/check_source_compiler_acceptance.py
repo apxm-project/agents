@@ -20,6 +20,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_REPORT = (
     REPO_ROOT / ".apxm" / "compiler" / "source-compiler-acceptance" / "report.json"
 )
+TRACKED_REPORT = (
+    REPO_ROOT / "docs" / "evidence" / "issue-82" / "source-compiler-acceptance" / "report.json"
+)
 TOOLCHAIN_BLOCK_MARKERS = (
     "error: apxm native toolchain readiness failed",
     "error: apxm linux target readiness failed",
@@ -275,6 +278,8 @@ def main() -> int:
 
     report = run_acceptance(report_path.parent / "logs")
     write_report(report, report_path)
+    if report_path.resolve() != TRACKED_REPORT.resolve():
+        write_report(report, TRACKED_REPORT)
 
     print(f"\nWrote report to {render_path(report_path)}", flush=True)
     if report["overall_status"] != "passed":
