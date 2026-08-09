@@ -2039,6 +2039,14 @@ fn validate_execution_request(
         else {
             continue;
         };
+        if initial_values.contains_key(arguments.value_id.as_str()) {
+            return Err(ExecutionError::InvalidAir {
+                message: format!(
+                    "node {}: initial_values may not supply a capability argument ({})",
+                    operation.node_id, arguments.value_id
+                ),
+            });
+        }
         if let Some(supplied_value_id) = authored_value_reaches_initial_value(
             air,
             &arguments.value_id,
