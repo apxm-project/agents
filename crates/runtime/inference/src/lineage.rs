@@ -83,26 +83,50 @@ impl std::fmt::Display for LineageError {
 
 impl std::error::Error for LineageError {}
 
+/// Target identity facts captured in a legacy usage lineage record.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InferenceLineageTarget {
+    pub model_target_ref: String,
+    pub model_target_digest: String,
+    pub model_deployment_ref: String,
+    pub exact_port_binding_digest: String,
+}
+
+impl InferenceLineageTarget {
+    pub fn new(
+        model_target_ref: impl Into<String>,
+        model_target_digest: impl Into<String>,
+        model_deployment_ref: impl Into<String>,
+        exact_port_binding_digest: impl Into<String>,
+    ) -> Self {
+        Self {
+            model_target_ref: model_target_ref.into(),
+            model_target_digest: model_target_digest.into(),
+            model_deployment_ref: model_deployment_ref.into(),
+            exact_port_binding_digest: exact_port_binding_digest.into(),
+        }
+    }
+}
+
 impl InferenceUsageLineage {
     /// Mint and seal one immutable lineage record from owner-observed facts.
     pub fn seal(
         effect_id: impl Into<String>,
         attempt_index: u32,
         request_digest: impl Into<String>,
-        model_target_ref: impl Into<String>,
-        model_target_digest: impl Into<String>,
-        model_deployment_ref: impl Into<String>,
-        exact_port_binding_digest: impl Into<String>,
+        target: InferenceLineageTarget,
         usage: Usage,
         duration_ms: u64,
         typed_error: Option<TypedError>,
     ) -> Result<Self, LineageError> {
         let effect_id = effect_id.into();
         let request_digest = request_digest.into();
-        let model_target_ref = model_target_ref.into();
-        let model_target_digest = model_target_digest.into();
-        let model_deployment_ref = model_deployment_ref.into();
-        let exact_port_binding_digest = exact_port_binding_digest.into();
+        let InferenceLineageTarget {
+            model_target_ref,
+            model_target_digest,
+            model_deployment_ref,
+            exact_port_binding_digest,
+        } = target;
         if effect_id.trim().is_empty() {
             return Err(LineageError::EmptyField("effect_id"));
         }

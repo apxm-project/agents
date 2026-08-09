@@ -60,7 +60,8 @@ pub use lease::{
     LeaseError, LeasePurpose, redact_diagnostic_value,
 };
 pub use lineage::{
-    INFERENCE_USAGE_LINEAGE_SCHEMA, InferenceUsageLineage, LineageError, lineage_error_category,
+    INFERENCE_USAGE_LINEAGE_SCHEMA, InferenceLineageTarget, InferenceUsageLineage, LineageError,
+    lineage_error_category,
 };
 pub use stream::{
     CancelToken, ModelContentRef, ModelStreamEvent, ModelStreamPort, ModelStreamStep, StreamResult,

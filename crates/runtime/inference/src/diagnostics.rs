@@ -263,7 +263,7 @@ pub fn correlate_diagnostics(
             .lineage
             .evidence_fact_id
             .as_ref()
-            .map_or(true, |fact_id| {
+            .is_none_or(|fact_id| {
                 !request
                     .evidence_fact_ids
                     .iter()
