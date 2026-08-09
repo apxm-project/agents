@@ -27,6 +27,19 @@ const Summarizer = Agent({
 const ConversationCtx = Context({ messages: [] as string[] });
 const SearchWeb = Tool("search.web.capability.v1");
 const SupportModel = Model("support.model.v1");
+const InitialCtx = Context({ messages: [] as string[] });
+const InitialModel = Model("initial.model.v1");
+
+const InitialContextAgent = Agent({
+  name: "InitialContextAgent",
+  source,
+  context: InitialCtx,
+  use: { InitialModel },
+  async run(agent, incoming) {
+    agent.context = { messages: [] };
+    return await InitialModel(incoming);
+  },
+});
 
 const Specialist = Agent({
   name: "Specialist",
@@ -129,6 +142,14 @@ describe("source-first TypeScript authoring", () => {
       value_id: "summarizer.model.v1",
       type_ref: "ModelTargetRef",
     });
+  });
+
+  it("binds an initial Context assignment to the lexical region entry", () => {
+    const graph = InitialContextAgent.frontendGraph() as unknown as Graph;
+    expect(graph.context_flow).toHaveLength(1);
+    expect(graph.context_flow[0]?.from_node).toBe("InitialContextAgent.body");
+    expect(graph.context_flow[0]?.to_node).toMatch(/^InitialContextAgent\.model_invocation\./);
+    expect(InitialContextAgent.diagnostics()).toBeNull();
   });
 
   it("rejects display aliases and handler objects while preserving constructed event refs", () => {

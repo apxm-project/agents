@@ -39,6 +39,28 @@ fn frontend_graph_vectors_match_verifier() {
 }
 
 #[test]
+fn tool_argument_must_be_defined_before_its_effect_site() {
+    let mut input = load_vectors("apxm.frontend-graph.v1.json")
+        .into_iter()
+        .find(|vector| vector.name == "valid-frontend-graph-typed-intents")
+        .expect("typed frontend graph vector")
+        .input;
+    let calls = input
+        .get_mut("call_intents")
+        .and_then(Value::as_array_mut)
+        .expect("call intents array");
+    for call in calls {
+        if call.get("node_id") == Some(&json!("node.model.1")) {
+            call["execution_order"] = json!(2);
+        }
+        if call.get("node_id") == Some(&json!("node.cap.1")) {
+            call["execution_order"] = json!(1);
+        }
+    }
+    assert!(!verify_frontend_graph_json(&input).is_accepted());
+}
+
+#[test]
 fn source_map_vectors_match_verifier() {
     check("apxm.source-map.v1.json", |v| {
         verify_source_map_json(v).is_accepted()
