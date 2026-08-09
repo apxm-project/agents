@@ -9,6 +9,8 @@ from pathlib import Path
 
 EXAMPLE_DIR = Path(__file__).resolve().parents[1]
 FRONTEND_PACKAGE_DIR = EXAMPLE_DIR.parents[2] / ".apxm" / "frontend-example-python"
+PYTHON_SOURCE = EXAMPLE_DIR / "python" / "agent.py"
+TYPESCRIPT_SOURCE = EXAMPLE_DIR / "src" / "conversational-agent.ts"
 
 
 def _python_environment() -> dict[str, str]:
@@ -111,6 +113,41 @@ def typescript_diagnostics() -> object:
     return json.loads(result.stdout)
 
 
+def python_artifact() -> dict:
+    result = subprocess.run(
+        [
+            "python",
+            "-c",
+            "import json; from agent import ConversationalExample; "
+            "print(json.dumps(ConversationalExample.artifact()))",
+        ],
+        cwd=EXAMPLE_DIR / "python",
+        env=_python_environment(),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+def typescript_artifact() -> dict:
+    result = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            "import { buildConversational } from './dist/index.js';"
+            "console.log(JSON.stringify(buildConversational().artifact()));",
+        ],
+        cwd=EXAMPLE_DIR,
+        env=_python_environment(),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
 def _python_parity(mode: str = "") -> object:
     command = ["python", "python/parity.py"]
     if mode:
@@ -171,6 +208,18 @@ def _closed_semantics(air: dict) -> dict:
         for key, value in air.items()
         if key != "source_map"
     }
+
+
+def _conversational_semantics(air: dict) -> dict:
+    semantics = _closed_semantics(air)
+    semantics["context_flow"] = [
+        {
+            "context_type_ref": edge["context_type_ref"],
+            "to_node": edge["to_node"],
+        }
+        for edge in semantics["context_flow"]
+    ]
+    return semantics
 
 
 def _frontend_intent(graph: dict) -> dict:
@@ -326,8 +375,11 @@ def test_conversational_examples_lower_equivalently() -> None:
     assert python["schema_version"] == "apxm.air.v1"
     assert typescript["schema_version"] == "apxm.air.v1"
     assert _canonical_shape(python) == _canonical_shape(typescript)
-    assert _closed_semantics(python) == _closed_semantics(typescript), json.dumps(
-        {"python": _closed_semantics(python), "typescript": _closed_semantics(typescript)},
+    assert _conversational_semantics(python) == _conversational_semantics(typescript), json.dumps(
+        {
+            "python": _conversational_semantics(python),
+            "typescript": _conversational_semantics(typescript),
+        },
         indent=2,
         sort_keys=True,
     )
@@ -342,10 +394,132 @@ def test_conversational_examples_record_equivalent_frontend_graph_intent_and_dia
 def test_conversational_example_uses_only_generic_operations() -> None:
     air = python_air()
     ops = {op["op"] for op in air["semantic_operations"]}
-    assert ops == {"program.new", "program.invoke", "model.call"}
-    structural = {node["kind"] for node in air["structural_ir"]}
-    assert "ais.loop" in structural
+    assert ops == {"model.call", "capability.invoke"}
+    structural = [node["kind"] for node in air["structural_ir"]]
+    assert structural.count("ais.loop") == 2
     assert "yield" in structural
+
+
+def test_conversational_tool_dispatch_is_model_directed_and_closed() -> None:
+    for graph in (python_graph(), typescript_graph()):
+        loops = [
+            control
+            for control in graph["control_intents"]
+            if control["control_kind"] == "loop"
+        ]
+        assert len(loops) == 2
+        outer_loop, tool_loop = loops
+        outer_region = outer_loop["body_region_ids"][0]
+        tool_region = tool_loop["body_region_ids"][0]
+        assert tool_loop["parent_region_id"] == outer_region
+
+        model_calls = [
+            call
+            for call in graph["call_intents"]
+            if call["intent_kind"] == "model_invocation"
+        ]
+        tool_calls = [
+            call
+            for call in graph["call_intents"]
+            if call["intent_kind"] == "tool_invocation"
+        ]
+        assert len(model_calls) == 2
+        assert len(tool_calls) == 1
+        initial_model, reentry_model = model_calls
+        tool_call = tool_calls[0]
+        assert initial_model["parent_region_id"] == outer_region
+        assert tool_call["parent_region_id"] == tool_region
+        assert reentry_model["parent_region_id"] == tool_region
+        assert tool_call["execution_order"] < reentry_model["execution_order"]
+
+        hooks = graph["hook_bindings"]
+        assert [hook["phase"] for hook in hooks] == ["before", "after"]
+        assert {hook["scope"] for hook in hooks} == {"capability"}
+        assert {hook["target_selector"] for hook in hooks} == {
+            tool_call["node_id"]
+        }
+        assert graph["capability_requirements"] == [
+            {"capability_ref": "cap.search", "tool_schema_present": True}
+        ]
+
+
+def test_conversational_source_passes_history_and_tool_results_to_the_model() -> None:
+    python = PYTHON_SOURCE.read_text()
+    typescript = TYPESCRIPT_SOURCE.read_text()
+
+    assert 'while response["kind"] == "tool_request":' in python
+    assert 'while (response.kind === "tool_request")' in typescript
+    assert '*agent.context.messages' in python
+    assert '...agent.context.messages' in typescript
+    assert '"messages": working_messages' in python
+    assert 'messages: workingMessages' in typescript
+    assert '"incoming": incoming' in python
+    assert 'incoming,' in typescript
+    assert '"tool_result": tool_result' in python
+    assert 'toolResult,' in typescript
+
+    for source in (python, typescript):
+        assert "ResearchSpecialist" not in source
+        assert ".new(" not in source
+        assert ".invoke(" not in source
+
+
+def test_conversational_artifacts_bind_and_schedule_hooks_deterministically() -> None:
+    for artifact in (python_artifact(), typescript_artifact()):
+        hooks = artifact["hook_bindings"]
+        assert [hook["phase"] for hook in hooks] == ["before", "after"]
+        assert [hook["handler_ref"] for hook in hooks] == [
+            "PrepareSearchContext",
+            "RecordSearchContext",
+        ]
+        assert {hook["scope"] for hook in hooks} == {"capability"}
+        assert all(hook["handler_digest"].startswith("sha256:") for hook in hooks)
+
+        air = artifact["air"]
+        tool_call = next(
+            operation
+            for operation in air["semantic_operations"]
+            if operation["op"] == "capability.invoke"
+        )
+        wrappers = {
+            node["region_id"]: node
+            for node in air["structural_ir"]
+            if node["region_id"]
+            in {"hook.PrepareSearchContext", "hook.RecordSearchContext"}
+        }
+        assert wrappers.keys() == {
+            "hook.PrepareSearchContext",
+            "hook.RecordSearchContext",
+        }
+        assert (
+            wrappers["hook.PrepareSearchContext"]["execution_order"]
+            < tool_call["execution_order"]
+            < wrappers["hook.RecordSearchContext"]["execution_order"]
+        )
+        assert {
+            wrappers["hook.PrepareSearchContext"]["parent_region_id"],
+            wrappers["hook.RecordSearchContext"]["parent_region_id"],
+        } == {tool_call["parent_region_id"]}
+
+
+def test_conversational_context_update_precedes_yield_and_resume() -> None:
+    for graph in (python_graph(), typescript_graph()):
+        yield_control = next(
+            control
+            for control in graph["control_intents"]
+            if control["control_kind"] == "yield"
+        )
+        assert len(graph["context_flow"]) == 1
+        context_edge = graph["context_flow"][0]
+        assert context_edge["to_node"] == yield_control["node_id"]
+        assert context_edge["context_type_ref"] == "ConversationContext"
+        resume_value = yield_control["result_value"]
+        assert next(
+            value for value in graph["values"] if value["value_id"] == resume_value
+        )["origin"] == "resume_input"
+        assert any(
+            resume_value in block["block_arguments"] for block in graph["blocks"]
+        )
 
 
 def test_paired_corpus_records_equivalent_complete_frontend_intent() -> None:

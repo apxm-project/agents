@@ -563,6 +563,24 @@ async fn repository_example_artifacts_execute_only_generic_structural_semantics(
                 .any(|region| region.kind.wire() == "yield"),
             "{commit_id} must include compiler-emitted yield",
         );
+        let loop_ids = air
+            .structural_ir
+            .iter()
+            .filter(|region| region.kind.wire() == "ais.loop")
+            .map(|region| region.region_id.as_str())
+            .collect::<Vec<_>>();
+        let tool_loop_id = air
+            .structural_ir
+            .iter()
+            .find(|region| {
+                region.kind.wire() == "ais.loop"
+                    && region
+                        .parent_region_id
+                        .as_deref()
+                        .is_some_and(|parent| loop_ids.contains(&parent))
+            })
+            .map(|region| region.region_id.clone())
+            .expect("the authored Tool-request loop is nested in the conversation loop");
         let encoded = serde_json::to_string(&air).expect("AIR JSON");
         assert!(!encoded.contains("conversational_loop"));
 
@@ -593,9 +611,14 @@ async fn repository_example_artifacts_execute_only_generic_structural_semantics(
                 .all(|outcome| !matches!(outcome, apxm_execution::NodeOutcome::AwaitEvent { .. })),
             "{commit_id} uses structural yield rather than an await.event stand-in",
         );
-        assert!(
-            commit.completions().is_empty(),
-            "{commit_id} uses one-shot execution, so structural yield does not commit a resumable loop completion",
+        assert_eq!(
+            commit
+                .completions()
+                .iter()
+                .map(|completion| completion.static_loop_id.as_str())
+                .collect::<Vec<_>>(),
+            [tool_loop_id.as_str()],
+            "{commit_id} commits the inner Tool loop while outer yield remains resumable",
         );
         assert!(commit.evidence().verify().is_accepted());
     }

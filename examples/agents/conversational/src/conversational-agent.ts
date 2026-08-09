@@ -1,45 +1,47 @@
-// A conversational Agent authored on the installed typed frontend.
-//
-// A conversational Agent is an ordinary Agent: a typed input, an authored loop
-// that calls a Model and an optional Tool, an explicit Context replacement, and a
-// reply yielded before the next input. No conversation-specific runtime type
-// or hidden loop is involved.
+// The TypeScript conversational reference over generic Agent Program APIs.
 
-import { Agent, Context, Model, Tool } from "@apxm/frontend";
+import { Agent, Context, Hook, Model, Tool } from "@apxm/frontend";
 import "@apxm/frontend/node";
 import { staticSource } from "./static-source.js";
 
-type ConversationInput = { message: string; query: string };
+type ConversationInput = { message: string };
 type ConversationOutput = { message: string };
-type ResearchContext = { requests: number };
-type ConversationState = { messages: readonly string[] };
+type ConversationMessage = {
+  role: "user" | "assistant" | "tool";
+  content: string;
+};
+type ConversationState = {
+  messages: readonly ConversationMessage[];
+  toolCalls: number;
+};
+type SearchWebRequest = { query: string };
+type SearchWebResult = { content: string };
+type SearchWebToolRequest = {
+  kind: "search_web";
+  arguments: SearchWebRequest;
+};
+type InitialModelRequest = {
+  messages: readonly ConversationMessage[];
+  incoming: ConversationInput;
+};
+type ToolResultModelRequest = InitialModelRequest & {
+  toolResult: SearchWebResult;
+};
+type ModelRequest = InitialModelRequest | ToolResultModelRequest;
+type ModelResponse =
+  | { kind: "final"; reply: ConversationOutput }
+  | { kind: "tool_request"; toolRequest: SearchWebToolRequest };
 type ConversationalProgram = ReturnType<
   typeof Agent<ConversationInput, ConversationOutput, ConversationState>
 >;
 
-const SearchWeb = Tool<ConversationInput, string>("cap.search");
-const SupportModel = Model<
-  { incoming: ConversationInput; research: string },
-  ConversationOutput
->("model.target.v1");
-const ResearchContext = Context<ResearchContext>({ requests: 0 }, "ResearchContext");
+const SearchWeb = Tool<SearchWebRequest, SearchWebResult>("cap.search");
+const SupportModel = Model<ModelRequest, ModelResponse>("model.target.v1");
+const ConversationContext = Context<ConversationState>(
+  { messages: [], toolCalls: 0 },
+  "ConversationContext",
+);
 const source = staticSource(import.meta.url);
-
-const ResearchSpecialist = Agent<ConversationInput, string, ResearchContext>({
-  name: "ResearchSpecialist",
-  input: "ConversationInput",
-  output: "ResearchOutput",
-  source,
-  context: ResearchContext,
-  use: { SearchWeb },
-  async run(agent, incoming) {
-    const research = await SearchWeb(incoming);
-    agent.context = { requests: agent.context.requests + 1 };
-    return research;
-  },
-});
-
-const ConversationContext = Context<ConversationState>({ messages: [] }, "ConversationContext");
 
 export const ConversationalExample: ConversationalProgram = Agent<
   ConversationInput,
@@ -51,19 +53,75 @@ export const ConversationalExample: ConversationalProgram = Agent<
   output: "ConversationOutput",
   source,
   context: ConversationContext,
-  use: { ResearchSpecialist, ResearchContext, SupportModel },
+  use: { SearchWeb, SupportModel },
   async run(agent, incoming) {
     while (true) {
-      const specialist = ResearchSpecialist.new({ context: { requests: 0 } });
-      const research = await specialist.invoke(incoming);
-      const response = await SupportModel({ incoming, research });
+      let turnMessages: readonly ConversationMessage[] = [
+        { role: "user", content: incoming.message },
+      ];
+      let workingMessages: readonly ConversationMessage[] = [
+        ...agent.context.messages,
+        ...turnMessages,
+      ];
+      let response = await SupportModel({
+        messages: workingMessages,
+        incoming,
+      });
+
+      while (response.kind === "tool_request") {
+        const toolResult = await SearchWeb(response.toolRequest.arguments);
+        turnMessages = [
+          ...turnMessages,
+          { role: "tool", content: toolResult.content },
+        ];
+        workingMessages = [...agent.context.messages, ...turnMessages];
+        response = await SupportModel({
+          messages: workingMessages,
+          incoming,
+          toolResult,
+        });
+      }
+
+      const finalReply = response.reply;
       agent.context = {
-        messages: [...agent.context.messages, incoming.message, response.message],
+        messages: [
+          ...workingMessages,
+          { role: "assistant", content: finalReply.message },
+        ],
+        toolCalls: agent.context.toolCalls,
       };
-      incoming = await agent.yield_(response);
+      incoming = await agent.yield_(finalReply);
     }
   },
 });
+
+const PrepareSearchContext = Hook.before({
+  agent: ConversationalExample,
+  target: SearchWeb,
+  scope: "capability",
+  async run(agent) {
+    const context = agent.context as ConversationState;
+    agent.context = {
+      messages: context.messages.slice(-24),
+      toolCalls: context.toolCalls,
+    };
+  },
+});
+
+const RecordSearchContext = Hook.after({
+  agent: ConversationalExample,
+  target: SearchWeb,
+  scope: "capability",
+  async run(agent) {
+    const context = agent.context as ConversationState;
+    agent.context = {
+      messages: context.messages,
+      toolCalls: context.toolCalls + 1,
+    };
+  },
+});
+void PrepareSearchContext;
+void RecordSearchContext;
 
 export function buildConversational(): ConversationalProgram {
   return ConversationalExample;
