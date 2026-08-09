@@ -290,7 +290,9 @@ impl AirModule {
                 .get(edge.from_node.as_str())
                 .zip(context_endpoint_locations.get(edge.to_node.as_str()))
                 .is_some_and(|(from, to)| {
-                    (from.region_id != to.region_id || from.execution_order != to.execution_order)
+                    (from.region_id != to.region_id
+                        || from.execution_order != to.execution_order
+                        || from.entry != to.entry)
                         && air_dominates_location(from, to, &context_regions)
                 });
             if !(seen_nodes.contains(edge.from_node.as_str())

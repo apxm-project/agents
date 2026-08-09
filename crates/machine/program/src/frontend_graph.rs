@@ -902,7 +902,9 @@ fn collect_typed_link_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph) 
             &region_definitions,
         ))
         .is_some_and(|(from, to)| {
-            (from.region_id != to.region_id || from.execution_order != to.execution_order)
+            (from.region_id != to.region_id
+                || from.execution_order != to.execution_order
+                || from.entry != to.entry)
                 && dominates_location(from, to, &ssa_context)
         });
         if !endpoints.contains(edge.from_node.as_str())
