@@ -24,7 +24,7 @@ use apxm_kernel::{
     PortBundleSpec, PortImplementation, PortSlot, ProgramInstanceRef, ProgramInvocationRef,
     PromptEffectState,
 };
-use apxm_program::air::AirModule;
+use apxm_program::air::{AirModule, PredicateLiteral};
 use apxm_program::artifact::SchemaDigestRef;
 use apxm_program::capability::CapabilityInvocationAuthority;
 use apxm_program::runtime_evidence::{
@@ -337,7 +337,10 @@ impl ModelInferencePort for SequencedModel {
             .lock()
             .unwrap()
             .pop_front()
-            .unwrap_or_else(|| AttemptDisposition::Success(Usage::default()))
+            .unwrap_or_else(|| AttemptDisposition::Success {
+                usage: Usage::default(),
+                output: serde_json::Value::Null,
+            })
     }
 }
 
@@ -563,31 +566,31 @@ async fn repository_example_artifacts_execute_only_generic_structural_semantics(
                 .any(|region| region.kind.wire() == "yield"),
             "{commit_id} must include compiler-emitted yield",
         );
-        let loop_ids = air
-            .structural_ir
-            .iter()
-            .filter(|region| region.kind.wire() == "ais.loop")
-            .map(|region| region.region_id.as_str())
-            .collect::<Vec<_>>();
-        let tool_loop_id = air
+        let tool_loop = air
             .structural_ir
             .iter()
             .find(|region| {
                 region.kind.wire() == "ais.loop"
-                    && region
-                        .parent_region_id
-                        .as_deref()
-                        .is_some_and(|parent| loop_ids.contains(&parent))
+                    && region.predicate.as_ref().is_some_and(|predicate| {
+                        predicate.property_path == ["kind"]
+                            && predicate.literal.as_ref().is_some_and(|literal| {
+                                literal == &PredicateLiteral::String("tool_request".into())
+                            })
+                    })
             })
-            .map(|region| region.region_id.clone())
-            .expect("the authored Tool-request loop is nested in the conversation loop");
+            .expect("the artifact carries the authored typed Tool-request loop");
+        assert_eq!(tool_loop.block_arguments.len(), 1);
+        assert_eq!(tool_loop.operands.len(), 2);
         let encoded = serde_json::to_string(&air).expect("AIR JSON");
         assert!(!encoded.contains("conversational_loop"));
 
         let commit = Arc::new(RecordingCommit::new(false));
         let report = execute(
             &ports(
-                Arc::new(SequencedModel::successful()),
+                Arc::new(SequencedModel::with([AttemptDisposition::Success {
+                    usage: Usage::default(),
+                    output: json!({"kind": "final", "content": "done"}),
+                }])),
                 commit.clone(),
                 false,
             ),
@@ -611,15 +614,14 @@ async fn repository_example_artifacts_execute_only_generic_structural_semantics(
                 .all(|outcome| !matches!(outcome, apxm_execution::NodeOutcome::AwaitEvent { .. })),
             "{commit_id} uses structural yield rather than an await.event stand-in",
         );
-        assert_eq!(
-            commit
-                .completions()
+        assert!(
+            report
+                .node_outcomes
                 .iter()
-                .map(|completion| completion.static_loop_id.as_str())
-                .collect::<Vec<_>>(),
-            [tool_loop_id.as_str()],
-            "{commit_id} commits the inner Tool loop while outer yield remains resumable",
+                .all(|outcome| !matches!(outcome, apxm_execution::NodeOutcome::Capability { .. })),
+            "{commit_id} must skip Tool dispatch for an initial final response",
         );
+        assert!(commit.completions().is_empty());
         assert!(commit.evidence().verify().is_accepted());
     }
 }
@@ -659,7 +661,10 @@ async fn earlier_body_failure_is_not_erased_by_later_success() {
     let commit = Arc::new(RecordingCommit::new(false));
     let model = Arc::new(SequencedModel::with([
         AttemptDisposition::Cancelled,
-        AttemptDisposition::Success(Usage::default()),
+        AttemptDisposition::Success {
+            usage: Usage::default(),
+            output: serde_json::Value::Null,
+        },
     ]));
     execute(
         &ports(model, commit.clone(), false),

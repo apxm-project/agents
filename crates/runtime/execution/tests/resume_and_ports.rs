@@ -118,10 +118,13 @@ impl ModelCallRequestMetadataPort for TestModelRequestMetadata {
 struct Model;
 impl ModelInferencePort for Model {
     fn attempt(&self, _request: &ModelCallRequest, _attempt: u32) -> AttemptDisposition {
-        AttemptDisposition::Success(Usage {
-            input_tokens: 3,
-            output_tokens: 5,
-        })
+        AttemptDisposition::Success {
+            usage: Usage {
+                input_tokens: 3,
+                output_tokens: 5,
+            },
+            output: serde_json::Value::Null,
+        }
     }
 }
 

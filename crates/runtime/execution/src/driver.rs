@@ -41,7 +41,9 @@ use apxm_kernel::{
     ExecutionCommitResult, ExecutionCommitTuple, ExternalAgentCapabilityPort, PortSlot,
     ProgramInstanceRef, ProgramInvocationRef, assemble_evidence,
 };
-use apxm_program::air::{AirModule, SemanticOp, SemanticOpKind};
+use apxm_program::air::{
+    AirModule, ControlPredicate, PredicateComparator, PredicateLiteral, SemanticOp, SemanticOpKind,
+};
 use apxm_program::capability::{CapabilityInvocationAuthority, CapabilityRequestError};
 use apxm_program::common::TypedRef;
 use apxm_program::external_agent::ExternalAgentEvidence;
@@ -275,6 +277,20 @@ pub enum ExecutionError {
         node_id: String,
         operand: &'static str,
     },
+    MissingControlValue {
+        region_id: String,
+        value_id: String,
+    },
+    InvalidControlPredicate {
+        region_id: String,
+        message: String,
+    },
+    ProgramThrew {
+        region_id: String,
+    },
+    MissingModelOutput {
+        node_id: String,
+    },
     MissingCapabilityInvocationAdmission {
         node_id: String,
     },
@@ -312,6 +328,31 @@ impl std::fmt::Display for ExecutionError {
         match self {
             Self::MissingOperand { node_id, operand } => {
                 write!(f, "node {node_id} is missing operand {operand}")
+            }
+            Self::MissingControlValue {
+                region_id,
+                value_id,
+            } => write!(
+                f,
+                "structural region {region_id} reads unavailable typed value {value_id}"
+            ),
+            Self::InvalidControlPredicate { region_id, message } => {
+                write!(
+                    f,
+                    "structural region {region_id} has invalid predicate: {message}"
+                )
+            }
+            Self::ProgramThrew { region_id } => {
+                write!(
+                    f,
+                    "program exited through authored throw region {region_id}"
+                )
+            }
+            Self::MissingModelOutput { node_id } => {
+                write!(
+                    f,
+                    "successful model node {node_id} returned no typed output"
+                )
             }
             Self::MissingCapabilityInvocationAdmission { node_id } => {
                 write!(f, "node {node_id} has no admitted Capability invocation")
@@ -404,13 +445,6 @@ fn composition_receiver(op: &SemanticOp) -> Result<CompositionReceiver, Executio
     }
 }
 
-fn model_result_value(outcome: &ModelOutcome) -> Value {
-    match outcome {
-        ModelOutcome::CommittedSuccess { .. } => Value::String("model.result".to_string()),
-        _ => Value::Null,
-    }
-}
-
 fn fact(
     program_invocation_id: &str,
     seq: u64,
@@ -466,6 +500,8 @@ struct DriveState {
     external_agent_evidence: Vec<ExternalAgentEvidence>,
     context: Value,
     last_result: Value,
+    values: BTreeMap<String, Value>,
+    last_result_value_id: Option<String>,
     last_operation_succeeded: bool,
     batch: Vec<Fact>,
     seq: u64,
@@ -499,20 +535,24 @@ fn model_request_digest(
     program_invocation_id: &str,
     node_execution_id: &str,
     operation: &SemanticOp,
-    context: &Value,
+    context_digest: &str,
 ) -> String {
-    let context_bytes = serde_json::to_vec(context)
-        .expect("canonical runtime Context serializes deterministically");
     let envelope = CanonicalModelRequestEnvelope {
         schema_version: "apxm.model-request-identity.v1",
         program_invocation_id,
         node_execution_id,
         operation,
-        context_digest: format!("sha256:{:x}", Sha256::digest(context_bytes)),
+        context_digest: context_digest.to_string(),
     };
     let request_bytes = serde_json::to_vec(&envelope)
         .expect("canonical model request envelope serializes deterministically");
     format!("sha256:{:x}", Sha256::digest(request_bytes))
+}
+
+fn model_context_digest(context: &Value) -> String {
+    let context_bytes = serde_json::to_vec(context)
+        .expect("canonical runtime Context serializes deterministically");
+    format!("sha256:{:x}", Sha256::digest(context_bytes))
 }
 
 impl DriveState {
@@ -549,6 +589,8 @@ impl DriveState {
             external_agent_evidence: Vec::new(),
             context: initial_context,
             last_result: Value::Null,
+            values: BTreeMap::new(),
+            last_result_value_id: None,
             last_operation_succeeded: true,
             batch,
             seq,
@@ -627,6 +669,11 @@ impl DriveState {
         }
     }
 
+    fn exit_loop(&mut self, static_loop_id: &str) {
+        self.active_loops
+            .retain(|frame| frame.static_loop_id != static_loop_id);
+    }
+
     fn complete_loop_iteration(&mut self, static_loop_id: &str) -> bool {
         let Some(position) = self
             .active_loops
@@ -635,12 +682,19 @@ impl DriveState {
         else {
             return false;
         };
-        let active = self.active_loops.remove(position);
-        if active.failed || active.causal_node_execution_ids.is_empty() {
+        if self.active_loops[position].failed
+            || self.active_loops[position]
+                .causal_node_execution_ids
+                .is_empty()
+        {
+            self.active_loops.remove(position);
             return false;
         }
-        let loop_occurrence_id = active.dynamic_occurrence_id;
+        let active = &mut self.active_loops[position];
+        let loop_occurrence_id = active.dynamic_occurrence_id.clone();
         let iteration_index = active.iteration_index;
+        let causal_node_execution_ids = std::mem::take(&mut active.causal_node_execution_ids);
+        active.iteration_index += 1;
         self.seq += 1;
         let completed = Fact::LoopIterationCompleted(LoopIterationCompletedFact::new(
             format!("loop-iteration.{loop_occurrence_id}.{iteration_index}"),
@@ -649,7 +703,7 @@ impl DriveState {
             loop_occurrence_id,
             iteration_index,
             self.program_invocation_id.clone(),
-            active.causal_node_execution_ids,
+            causal_node_execution_ids,
         ));
         self.batch.push(completed);
         true
@@ -682,6 +736,113 @@ fn context_ref(id: String) -> TypedRef {
         target: id,
         digest: None,
     }
+}
+
+fn evaluate_predicate(
+    state: &DriveState,
+    region_id: &str,
+    predicate: &ControlPredicate,
+) -> Result<bool, ExecutionError> {
+    let mut value = state.values.get(&predicate.root_value_id).ok_or_else(|| {
+        ExecutionError::MissingControlValue {
+            region_id: region_id.to_string(),
+            value_id: predicate.root_value_id.clone(),
+        }
+    })?;
+    for segment in &predicate.property_path {
+        value = value
+            .get(segment)
+            .ok_or_else(|| ExecutionError::InvalidControlPredicate {
+                region_id: region_id.to_string(),
+                message: format!("property path segment '{segment}' is absent"),
+            })?;
+    }
+    match predicate.comparator {
+        PredicateComparator::Truthy => {
+            value
+                .as_bool()
+                .ok_or_else(|| ExecutionError::InvalidControlPredicate {
+                    region_id: region_id.to_string(),
+                    message: "truthy comparator requires a boolean value".to_string(),
+                })
+        }
+        PredicateComparator::Equals | PredicateComparator::NotEquals => {
+            let literal = predicate.literal.as_ref().ok_or_else(|| {
+                ExecutionError::InvalidControlPredicate {
+                    region_id: region_id.to_string(),
+                    message: "equals comparator is missing its typed scalar literal".to_string(),
+                }
+            })?;
+            let expected = match literal {
+                PredicateLiteral::Boolean(value) => Value::Bool(*value),
+                PredicateLiteral::String(value) => Value::String(value.clone()),
+                PredicateLiteral::Integer(value) => Value::Number((*value).into()),
+                PredicateLiteral::Null => Value::Null,
+            };
+            if !value.is_null()
+                && !value.is_boolean()
+                && !value.is_string()
+                && !value.is_i64()
+                && !value.is_u64()
+            {
+                return Err(ExecutionError::InvalidControlPredicate {
+                    region_id: region_id.to_string(),
+                    message: "equals comparator requires a scalar runtime value".to_string(),
+                });
+            }
+            Ok(if predicate.comparator == PredicateComparator::Equals {
+                value == &expected
+            } else {
+                value != &expected
+            })
+        }
+    }
+}
+
+fn matching_loop_back_edge(
+    schedule: &[ScheduleStep],
+    start: usize,
+    static_loop_id: &str,
+) -> Result<usize, ExecutionError> {
+    schedule
+        .iter()
+        .enumerate()
+        .skip(start + 1)
+        .find_map(|(index, step)| match step {
+            ScheduleStep::LoopBackEdge {
+                static_loop_id: candidate,
+            } if candidate == static_loop_id => Some(index),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            ExecutionError::Continuation(ContinuationError::InvalidCommittedState {
+                message: format!("loop {static_loop_id} has no schedule back edge"),
+            })
+        })
+}
+
+fn matching_branch_arm_end(
+    schedule: &[ScheduleStep],
+    start: usize,
+    static_branch_id: &str,
+    arm_index: usize,
+) -> Result<usize, ExecutionError> {
+    schedule
+        .iter()
+        .enumerate()
+        .skip(start + 1)
+        .find_map(|(index, step)| match step {
+            ScheduleStep::BranchArmEnd {
+                static_branch_id: candidate,
+                arm_index: candidate_index,
+            } if candidate == static_branch_id && *candidate_index == arm_index => Some(index),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            ExecutionError::Continuation(ContinuationError::InvalidCommittedState {
+                message: format!("branch {static_branch_id} arm {arm_index} has no schedule end"),
+            })
+        })
 }
 
 /// The result of driving the op loop from a start index: either it reached the
@@ -731,7 +892,10 @@ async fn drive_from(
         ));
     }
 
-    for (schedule_position, step) in schedule.iter().enumerate().skip(start_schedule_position) {
+    let mut schedule_position = start_schedule_position;
+    let mut selected_branch_arms: BTreeMap<String, usize> = BTreeMap::new();
+    while schedule_position < schedule.len() {
+        let step = &schedule[schedule_position];
         match step {
             ScheduleStep::HookBefore { binding } => {
                 let (before, after) = apply_static_hook(&mut state, ports, binding).await;
@@ -805,8 +969,87 @@ async fn drive_from(
                 runtime.parent_node_execution_id = Some(from_node.clone());
                 state.batch.push(fact);
             }
-            ScheduleStep::EnterLoop { static_loop_id } => {
+            ScheduleStep::EnterLoop {
+                static_loop_id,
+                predicate,
+            } => {
+                let region = air
+                    .structural_ir
+                    .iter()
+                    .find(|region| region.region_id == *static_loop_id)
+                    .expect("schedule loop references its AIR structural node");
+                let already_active = state
+                    .active_loops
+                    .iter()
+                    .any(|frame| frame.static_loop_id == *static_loop_id);
+                if !already_active {
+                    for (argument, initial) in region.block_arguments.iter().zip(
+                        region
+                            .operands
+                            .iter()
+                            .filter(|operand| operand.slot == "initial"),
+                    ) {
+                        let value =
+                            state
+                                .values
+                                .get(&initial.value_id)
+                                .cloned()
+                                .ok_or_else(|| ExecutionError::MissingControlValue {
+                                    region_id: static_loop_id.clone(),
+                                    value_id: initial.value_id.clone(),
+                                })?;
+                        state.values.insert(argument.value_id.clone(), value);
+                    }
+                }
+                if let Some(predicate) = predicate
+                    && !evaluate_predicate(&state, static_loop_id, predicate)?
+                {
+                    state.exit_loop(static_loop_id);
+                    schedule_position =
+                        matching_loop_back_edge(&schedule, schedule_position, static_loop_id)? + 1;
+                    continue;
+                }
                 state.enter_loop(static_loop_id);
+            }
+            ScheduleStep::BranchDecision {
+                static_branch_id,
+                predicate,
+            } => {
+                let predicate =
+                    predicate
+                        .as_ref()
+                        .ok_or_else(|| ExecutionError::InvalidControlPredicate {
+                            region_id: static_branch_id.clone(),
+                            message: "branch is missing its typed predicate".into(),
+                        })?;
+                let selected =
+                    usize::from(!evaluate_predicate(&state, static_branch_id, predicate)?);
+                selected_branch_arms.insert(static_branch_id.clone(), selected);
+            }
+            ScheduleStep::BranchArm {
+                static_branch_id,
+                arm_index,
+            } => {
+                let selected = selected_branch_arms.get(static_branch_id).ok_or_else(|| {
+                    ExecutionError::Continuation(ContinuationError::InvalidCommittedState {
+                        message: format!(
+                            "branch {static_branch_id} arm encountered without a decision"
+                        ),
+                    })
+                })?;
+                if selected != arm_index {
+                    schedule_position = matching_branch_arm_end(
+                        &schedule,
+                        schedule_position,
+                        static_branch_id,
+                        *arm_index,
+                    )? + 1;
+                    continue;
+                }
+            }
+            ScheduleStep::BranchArmEnd { .. } => {}
+            ScheduleStep::BranchEnd { static_branch_id } => {
+                selected_branch_arms.remove(static_branch_id);
             }
             ScheduleStep::Semantic { index, loop_path } => {
                 let op = &air.semantic_operations[*index];
@@ -873,16 +1116,18 @@ async fn drive_from(
                         let authored_target = ModelTargetRef(target);
                         let effect_id =
                             model_effect_identity(&state.program_invocation_id, &node_execution_id);
+                        let context_digest = model_context_digest(&state.context);
                         let request_digest = model_request_digest(
                             &state.program_invocation_id,
                             &node_execution_id,
                             op,
-                            &state.context,
+                            &context_digest,
                         );
                         let preparation = ModelCallPreparation::authorize(
                             effect_id,
                             node_execution_id.clone(),
                             request_digest,
+                            context_digest,
                             &authored_target,
                             model_admission,
                         )
@@ -928,6 +1173,15 @@ async fn drive_from(
                         let outcome = execution.outcome;
                         state.last_operation_succeeded =
                             matches!(&outcome, ModelOutcome::CommittedSuccess { .. });
+                        let result = match (state.last_operation_succeeded, execution.output) {
+                            (true, Some(output)) => output,
+                            (true, None) => {
+                                return Err(ExecutionError::MissingModelOutput {
+                                    node_id: op.node_id.clone(),
+                                });
+                            }
+                            (false, _) => Value::Null,
+                        };
                         if let (ModelOutcome::CommittedSuccess { usage }, Some(attempt_index)) =
                             (&outcome, execution.committed_attempt)
                         {
@@ -981,7 +1235,6 @@ async fn drive_from(
                                 .committed_model_lineages
                                 .push(committed_dispatch.lineage);
                         }
-                        let result = model_result_value(&outcome);
                         state.last_result = result.clone();
                         state.node_outcomes.push(NodeOutcome::Model {
                             node_id: op.node_id.clone(),
@@ -1260,6 +1513,12 @@ async fn drive_from(
                         });
                     }
                 }
+                if let Some(result) = &op.result {
+                    state
+                        .values
+                        .insert(result.value_id.clone(), state.last_result.clone());
+                    state.last_result_value_id = Some(result.value_id.clone());
+                }
                 state.record_node_outcome(
                     loop_path,
                     &node_execution_id,
@@ -1267,27 +1526,97 @@ async fn drive_from(
                 );
             }
             ScheduleStep::LoopBackEdge { static_loop_id } => {
+                let region = air
+                    .structural_ir
+                    .iter()
+                    .find(|region| region.region_id == *static_loop_id)
+                    .expect("schedule loop references its AIR structural node");
+                for (argument, carried) in region.block_arguments.iter().zip(
+                    region
+                        .operands
+                        .iter()
+                        .filter(|operand| operand.slot == "carried"),
+                ) {
+                    let value = state
+                        .values
+                        .get(&carried.value_id)
+                        .cloned()
+                        .ok_or_else(|| ExecutionError::MissingControlValue {
+                            region_id: static_loop_id.clone(),
+                            value_id: carried.value_id.clone(),
+                        })?;
+                    state.values.insert(argument.value_id.clone(), value);
+                }
                 state.complete_loop_iteration(static_loop_id);
+                let loop_entry = schedule[..schedule_position]
+                    .iter()
+                    .rposition(|step| {
+                        matches!(
+                            step,
+                            ScheduleStep::EnterLoop {
+                                static_loop_id: candidate,
+                                ..
+                            } if candidate == static_loop_id
+                        )
+                    })
+                    .ok_or_else(|| {
+                        ExecutionError::Continuation(ContinuationError::InvalidCommittedState {
+                            message: format!(
+                                "loop {static_loop_id} back edge has no schedule entry"
+                            ),
+                        })
+                    })?;
+                let repeats = matches!(
+                    &schedule[loop_entry],
+                    ScheduleStep::EnterLoop {
+                        predicate: Some(_),
+                        ..
+                    }
+                );
+                if repeats {
+                    schedule_position = loop_entry;
+                    continue;
+                }
             }
             ScheduleStep::ProgramYield { region_id } => {
+                let resumable_loop_entry = state.active_loops.last().and_then(|active| {
+                    schedule[..schedule_position].iter().rposition(|step| {
+                        matches!(
+                            step,
+                            ScheduleStep::EnterLoop {
+                                static_loop_id,
+                                ..
+                            } if static_loop_id == &active.static_loop_id
+                        )
+                    })
+                });
                 state.fail_active_loops();
                 if options.suspend_on_park && options.yield_at_loop {
+                    state.active_loops.clear();
                     return Ok(DriveEnd::Parked {
                         state,
                         continuation_id: region_id.clone(),
                         event_ref: None,
-                        next_schedule_position: schedule_position + 1,
+                        next_schedule_position: resumable_loop_entry
+                            .unwrap_or(schedule_position + 1),
                         parked_node_execution_id: None,
                         parked_loop_path: Vec::new(),
                     });
                 }
                 return Ok(DriveEnd::RanToEnd(state));
             }
-            ScheduleStep::ProgramReturn { .. } | ScheduleStep::ProgramExit { .. } => {
+            ScheduleStep::ProgramReturn { .. } => {
                 state.fail_active_loops();
                 return Ok(DriveEnd::RanToEnd(state));
             }
+            ScheduleStep::ProgramExit { region_id } => {
+                state.fail_active_loops();
+                return Err(ExecutionError::ProgramThrew {
+                    region_id: region_id.clone(),
+                });
+            }
         }
+        schedule_position += 1;
     }
     Ok(DriveEnd::RanToEnd(state))
 }
@@ -1344,6 +1673,9 @@ async fn apply_static_hook(
                 state.context = context;
             }
             state.last_result = result.clone();
+            if let Some(value_id) = &state.last_result_value_id {
+                state.values.insert(value_id.clone(), result.clone());
+            }
             if let Some(NodeOutcome::Model {
                 result: model_result,
                 replaced,
@@ -1749,6 +2081,9 @@ async fn resume_from_continuation(
         parked_node_execution_id,
         parked_loop_path,
         context,
+        values,
+        last_result,
+        last_result_value_id,
         native_usage,
         external_agent_evidence,
         evidence_batch: _,
@@ -1807,7 +2142,9 @@ async fn resume_from_continuation(
         committed_model_lineages: Vec::new(),
         external_agent_evidence,
         context,
-        last_result: Value::Null,
+        last_result,
+        values,
+        last_result_value_id,
         last_operation_succeeded: true,
         batch: Vec::new(),
         seq: event_sequence,
@@ -1948,6 +2285,9 @@ async fn finish(
                 parked_node_execution_id,
                 parked_loop_path,
                 context: state.context.clone(),
+                values: state.values.clone(),
+                last_result: state.last_result.clone(),
+                last_result_value_id: state.last_result_value_id.clone(),
                 native_usage: state.native_usage,
                 external_agent_evidence: state.external_agent_evidence.clone(),
                 evidence_batch: state.batch.clone(),

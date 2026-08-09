@@ -64,6 +64,16 @@ class BoundOperand:
 
 
 @dataclass(frozen=True, slots=True)
+class BoundPredicate:
+    """A closed structural predicate over one prior typed value."""
+
+    root_value_id: str
+    property_path: tuple[str, ...]
+    comparator: str  # truthy | equals | not_equals
+    literal: Optional[dict[str, object]] = None
+
+
+@dataclass(frozen=True, slots=True)
 class BoundCall:
     """A resolved effectful call: model, tool, capability, agent, or event."""
 
@@ -87,6 +97,7 @@ class BoundControl:
     parent_region_id: str
     execution_order: int
     body_region_ids: tuple[str, ...]
+    predicate: Optional[BoundPredicate]
     operands: tuple[BoundOperand, ...]
     result_value: Optional[str]
     span: Optional[Span]

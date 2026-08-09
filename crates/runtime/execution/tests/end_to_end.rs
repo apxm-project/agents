@@ -2,7 +2,7 @@
 //! the injected kernel ports and commit atomically. Deterministic in-crate fakes
 //! stand in for the admitted ports (test doubles, non-admissible).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -229,10 +229,13 @@ impl ModelCallRequestMetadataPort for TestModelRequestMetadata {
 struct FakeModel;
 impl ModelInferencePort for FakeModel {
     fn attempt(&self, _request: &ModelCallRequest, _attempt: u32) -> AttemptDisposition {
-        AttemptDisposition::Success(Usage {
-            input_tokens: 10,
-            output_tokens: 20,
-        })
+        AttemptDisposition::Success {
+            usage: Usage {
+                input_tokens: 10,
+                output_tokens: 20,
+            },
+            output: serde_json::Value::Null,
+        }
     }
 }
 
@@ -260,10 +263,13 @@ impl ModelInferencePort for RetryingModel {
                 message: "retry".into(),
             })
         } else {
-            AttemptDisposition::Success(Usage {
-                input_tokens: 7,
-                output_tokens: 11,
-            })
+            AttemptDisposition::Success {
+                usage: Usage {
+                    input_tokens: 7,
+                    output_tokens: 11,
+                },
+                output: serde_json::Value::Null,
+            }
         }
     }
 }
@@ -271,7 +277,10 @@ impl ModelInferencePort for RetryingModel {
 struct ZeroUsageModel;
 impl ModelInferencePort for ZeroUsageModel {
     fn attempt(&self, _request: &ModelCallRequest, _attempt: u32) -> AttemptDisposition {
-        AttemptDisposition::Success(Usage::default())
+        AttemptDisposition::Success {
+            usage: Usage::default(),
+            output: serde_json::Value::Null,
+        }
     }
 }
 
@@ -542,6 +551,24 @@ fn ports_with_model_composition_capability_and_external(
     capability: Arc<dyn CapabilityPort>,
     external_agent: Arc<dyn ExternalAgentCapabilityPort>,
 ) -> ExecutionPorts {
+    ports_with_model_composition_capability_external_and_hooks(
+        commit,
+        model,
+        composition,
+        capability,
+        external_agent,
+        Arc::new(StaticHooks),
+    )
+}
+
+fn ports_with_model_composition_capability_external_and_hooks(
+    commit: Arc<FakeCommit>,
+    model: Arc<dyn ModelInferencePort + Send + Sync>,
+    composition: Arc<dyn CompositionPort>,
+    capability: Arc<dyn CapabilityPort>,
+    external_agent: Arc<dyn ExternalAgentCapabilityPort>,
+    hooks: Arc<dyn StaticHookHandlerPort>,
+) -> ExecutionPorts {
     let contract = |schema_id: &str| SchemaDigestRef {
         schema_id: schema_id.into(),
         digest: digest('e'),
@@ -602,12 +629,238 @@ fn ports_with_model_composition_capability_and_external(
         composition,
     )
     .expect("driver ports satisfy their exact admitted bindings");
-    ExecutionPorts::from_admitted_bundle(
-        &bundle,
-        Arc::new(TestModelRequestMetadata),
-        Arc::new(StaticHooks),
+    ExecutionPorts::from_admitted_bundle(&bundle, Arc::new(TestModelRequestMetadata), hooks)
+        .expect("bundle contains every runtime effect port")
+}
+
+fn typed_tool_loop_air() -> AirModule {
+    let air: AirModule = serde_json::from_value(json!({
+        "schema_version": "apxm.air.v1",
+        "semantic_operations": [
+            {"node_id": "n.model.initial", "op": "model.call", "parent_region_id": "r.fn", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.request.initial", "type_ref": "ModelRequest"}], "result": {"value_id": "value.response.initial", "type_ref": "ModelResponse"}},
+            {"node_id": "n.search", "op": "capability.invoke", "parent_region_id": "r.branch.then", "execution_order": 0, "operands": [{"slot": "capability_ref", "value_id": "cap.search", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "value.search.arguments", "type_ref": "SearchRequest"}], "result": {"value_id": "value.search.result", "type_ref": "SearchResult"}},
+            {"node_id": "n.model.next", "op": "model.call", "parent_region_id": "r.branch.then", "execution_order": 1, "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.request.next", "type_ref": "ModelRequest"}], "result": {"value_id": "value.response.next", "type_ref": "ModelResponse"}}
+        ],
+        "structural_ir": [
+            {"region_id": "r.fn", "kind": "function", "execution_order": 0},
+            {"region_id": "r.loop", "kind": "ais.loop", "parent_region_id": "r.fn", "execution_order": 1, "block_arguments": [{"value_id": "value.response.current", "type_ref": "ModelResponse"}], "operands": [{"slot": "initial", "value_id": "value.response.initial", "type_ref": "ModelResponse"}, {"slot": "carried", "value_id": "value.response.next", "type_ref": "ModelResponse"}], "predicate": {"root_value_id": "value.response.current", "property_path": ["kind"], "comparator": "equals", "literal": {"scalar_type": "string", "value": "tool_request"}}},
+            {"region_id": "r.branch", "kind": "branch", "parent_region_id": "r.loop", "execution_order": 0, "predicate": {"root_value_id": "value.response.current", "property_path": ["tool_request", "kind"], "comparator": "equals", "literal": {"scalar_type": "string", "value": "search_web"}}},
+            {"region_id": "r.branch.then", "kind": "region", "parent_region_id": "r.branch", "execution_order": 0},
+            {"region_id": "r.branch.else", "kind": "region", "parent_region_id": "r.branch", "execution_order": 1},
+            {"region_id": "r.unknown.throw", "kind": "throw", "parent_region_id": "r.branch.else", "execution_order": 0},
+            {"region_id": "r.return", "kind": "return", "parent_region_id": "r.fn", "execution_order": 2}
+        ],
+        "context_flow": [],
+        "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": [{"region_id": "r.loop", "annotation": "structural_loop"}]}
+    }))
+    .expect("typed conditional Tool-loop AIR");
+    assert!(air.verify().is_accepted());
+    air
+}
+
+struct TypedResponses {
+    outputs: Mutex<VecDeque<Value>>,
+    request_digests: Mutex<Vec<String>>,
+    context_digests: Mutex<Vec<String>>,
+}
+
+impl TypedResponses {
+    fn new(outputs: impl IntoIterator<Item = Value>) -> Self {
+        Self {
+            outputs: Mutex::new(outputs.into_iter().collect()),
+            request_digests: Mutex::new(Vec::new()),
+            context_digests: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl ModelInferencePort for TypedResponses {
+    fn attempt(&self, request: &ModelCallRequest, _attempt: u32) -> AttemptDisposition {
+        self.request_digests
+            .lock()
+            .unwrap()
+            .push(request.request_digest().to_string());
+        self.context_digests
+            .lock()
+            .unwrap()
+            .push(request.context_digest().to_string());
+        AttemptDisposition::Success {
+            usage: Usage::default(),
+            output: self
+                .outputs
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("test supplies every typed Model response"),
+        }
+    }
+}
+
+#[derive(Default)]
+struct OrderedToolHooks {
+    calls: Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl StaticHookHandlerPort for OrderedToolHooks {
+    async fn execute(
+        &self,
+        binding: &HookBinding,
+        context: &Value,
+        result: &Value,
+    ) -> StaticHookResult {
+        self.calls.lock().unwrap().push(binding.hook_id.clone());
+        if binding.phase == HookPhase::After {
+            StaticHookResult::Keep {
+                assigned_context: Some(json!({
+                    "prior": context,
+                    "tool_result": result,
+                })),
+            }
+        } else {
+            StaticHookResult::Keep {
+                assigned_context: None,
+            }
+        }
+    }
+}
+
+fn typed_tool_request(air: AirModule, hook_bindings: Vec<HookBinding>) -> ExecutionRequest {
+    ExecutionRequest {
+        air,
+        hook_bindings,
+        model_admission: admission(),
+        capability_invocations: BTreeMap::from([(
+            "n.search".to_string(),
+            CapabilityInvocationAdmission {
+                capability_ref: "cap.search".into(),
+                arguments: json!({"query": "typed request"}),
+                authority: CapabilityInvocationAuthority::new(
+                    "principal.user.1",
+                    "agent.gao.1",
+                    "grant.search.1",
+                    Vec::new(),
+                )
+                .expect("valid test authority"),
+            },
+        )]),
+        program_instance_ref: ProgramInstanceRef::new("instance.typed-loop"),
+        program_invocation_ref: ProgramInvocationRef::new("invocation.typed-loop"),
+        commit_id: "typed-loop".into(),
+        write_set: write_set(),
+    }
+}
+
+fn tool_hooks() -> Vec<HookBinding> {
+    [HookPhase::Before, HookPhase::After]
+        .into_iter()
+        .enumerate()
+        .map(|(order, phase)| HookBinding {
+            hook_id: format!(
+                "hook.{}",
+                if phase == HookPhase::Before {
+                    "before"
+                } else {
+                    "after"
+                }
+            ),
+            scope: HookScope::Capability,
+            phase,
+            target_selector: "n.search".into(),
+            declaration_order: order as u32,
+            handler_ref: format!("handlers.{order}"),
+            handler_digest: digest(if order == 0 { 'a' } else { 'b' }),
+            input_type_ref: "SearchResult".into(),
+            output_type_ref: "Unit".into(),
+            return_mode: HookReturnMode::Observe,
+        })
+        .collect()
+}
+
+async fn run_typed_tool_loop(
+    outputs: impl IntoIterator<Item = Value>,
+) -> Result<
+    (
+        Arc<TypedResponses>,
+        Arc<RecordingCapability>,
+        Arc<OrderedToolHooks>,
+    ),
+    ExecutionError,
+> {
+    let model = Arc::new(TypedResponses::new(outputs));
+    let capability = Arc::new(RecordingCapability::default());
+    let hooks = Arc::new(OrderedToolHooks::default());
+    execute(
+        &ports_with_model_composition_capability_external_and_hooks(
+            Arc::new(FakeCommit::new()),
+            model.clone(),
+            Arc::new(FakeComposition),
+            capability.clone(),
+            Arc::new(FakeAcpPeer),
+            hooks.clone(),
+        ),
+        typed_tool_request(typed_tool_loop_air(), tool_hooks()),
+        json!({"messages": []}),
     )
-    .expect("bundle contains every runtime effect port")
+    .await?;
+    Ok((model, capability, hooks))
+}
+
+#[tokio::test]
+async fn typed_final_response_skips_the_declared_tool() {
+    let (_, capability, hooks) = run_typed_tool_loop([json!({"kind": "final", "content": "done"})])
+        .await
+        .expect("final response exits the loop");
+    assert!(capability.requests().is_empty());
+    assert!(hooks.calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn typed_tool_loop_reenters_until_final_and_threads_hook_context() {
+    let (model, capability, hooks) = run_typed_tool_loop([
+        json!({"kind": "tool_request", "tool_request": {"kind": "search_web"}}),
+        json!({"kind": "tool_request", "tool_request": {"kind": "search_web"}}),
+        json!({"kind": "final", "content": "done"}),
+    ])
+    .await
+    .expect("declared Tool responses re-enter until final");
+    assert_eq!(capability.requests().len(), 2);
+    assert_eq!(
+        *hooks.calls.lock().unwrap(),
+        ["hook.before", "hook.after", "hook.before", "hook.after"]
+    );
+    let request_digests = model.request_digests.lock().unwrap();
+    assert_eq!(request_digests.len(), 3);
+    assert_ne!(request_digests[0], request_digests[1]);
+    assert_ne!(request_digests[1], request_digests[2]);
+    let context_digests = model.context_digests.lock().unwrap();
+    let first_tool_context = json!({
+        "prior": {"messages": []},
+        "tool_result": "ok",
+    });
+    let expected_context_digest = format!(
+        "sha256:{:x}",
+        Sha256::digest(serde_json::to_vec(&first_tool_context).unwrap())
+    );
+    assert_eq!(
+        context_digests[0],
+        format!("sha256:{:x}", Sha256::digest(b"{\"messages\":[]}"))
+    );
+    assert_eq!(context_digests[1], expected_context_digest);
+    assert_ne!(context_digests[1], context_digests[2]);
+}
+
+#[tokio::test]
+async fn undeclared_typed_tool_request_fails_closed_before_dispatch() {
+    let error = match run_typed_tool_loop([
+        json!({"kind": "tool_request", "tool_request": {"kind": "undeclared"}}),
+    ])
+    .await
+    {
+        Ok(_) => panic!("unknown typed Tool discriminant must fail closed"),
+        Err(error) => error,
+    };
+    assert!(matches!(error, ExecutionError::ProgramThrew { .. }));
 }
 
 fn ports_with_capability(

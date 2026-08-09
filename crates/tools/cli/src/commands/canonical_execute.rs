@@ -349,10 +349,13 @@ fn digest(c: char) -> String {
 struct DevModel;
 impl ModelInferencePort for DevModel {
     fn attempt(&self, _request: &ModelCallRequest, _attempt: u32) -> AttemptDisposition {
-        AttemptDisposition::Success(Usage {
-            input_tokens: 1,
-            output_tokens: 1,
-        })
+        AttemptDisposition::Success {
+            usage: Usage {
+                input_tokens: 1,
+                output_tokens: 1,
+            },
+            output: serde_json::Value::Null,
+        }
     }
 }
 

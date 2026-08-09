@@ -42,6 +42,36 @@ pub struct SsaValue {
     pub type_ref: String,
 }
 
+/// Closed typed comparison for runtime structural control.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PredicateComparator {
+    Truthy,
+    Equals,
+    NotEquals,
+}
+
+/// Closed scalar literal for runtime structural comparison.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "scalar_type", content = "value", rename_all = "snake_case")]
+pub enum PredicateLiteral {
+    Boolean(bool),
+    String(String),
+    Integer(i64),
+    Null,
+}
+
+/// Typed runtime predicate over an SSA result and a bounded property path.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ControlPredicate {
+    pub root_value_id: String,
+    pub property_path: Vec<String>,
+    pub comparator: PredicateComparator,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub literal: Option<PredicateLiteral>,
+}
+
 /// One public semantic operation with typed SSA operands and an optional result.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -69,6 +99,8 @@ pub struct StructuralNode {
     pub block_arguments: Vec<SsaValue>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub operands: Vec<Operand>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub predicate: Option<ControlPredicate>,
 }
 
 /// One explicit typed Context edge retained in AIR.
@@ -171,6 +203,18 @@ impl AirModule {
             for operand in &region.operands {
                 check_operand(&mut verdict, operand, &region.region_id);
             }
+            validate_control_predicate(&mut verdict, region);
+        }
+        for region in &self.structural_ir {
+            if let Some(predicate) = &region.predicate
+                && !seen_value_definitions.contains(predicate.root_value_id.as_str())
+            {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    region.region_id.clone(),
+                    "predicate root_value_id does not reference a defined SSA value",
+                ));
+            }
         }
 
         collect_containment_diagnostics(
@@ -181,6 +225,70 @@ impl AirModule {
         );
         self.source_map.collect(&mut verdict);
         verdict.finish()
+    }
+}
+
+fn validate_control_predicate(verdict: &mut Verdict, region: &StructuralNode) {
+    let Some(predicate) = &region.predicate else {
+        if matches!(
+            region.kind,
+            StructuralOpKind::Branch | StructuralOpKind::Switch
+        ) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                region.region_id.clone(),
+                "branch and switch nodes require a typed predicate",
+            ));
+        }
+        return;
+    };
+    if !matches!(
+        region.kind,
+        StructuralOpKind::Branch | StructuralOpKind::Switch | StructuralOpKind::Loop
+    ) {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::SchemaViolation,
+            region.region_id.clone(),
+            "only branch, switch, and loop nodes carry predicates",
+        ));
+    }
+    if !is_identifier(&predicate.root_value_id) {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::InvalidIdentifier,
+            region.region_id.clone(),
+            "predicate root_value_id is not a contract identifier",
+        ));
+    }
+    if predicate.property_path.len() > 16
+        || predicate.property_path.iter().any(|segment| {
+            segment.is_empty()
+                || segment.len() > 128
+                || !segment
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        })
+    {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::SchemaViolation,
+            region.region_id.clone(),
+            "predicate property_path has an empty, hostile, or overlong segment",
+        ));
+    }
+    match (predicate.comparator, predicate.literal.as_ref()) {
+        (PredicateComparator::Truthy, None)
+        | (PredicateComparator::Equals | PredicateComparator::NotEquals, Some(_)) => {}
+        (PredicateComparator::Truthy, Some(_)) => verdict.push(Diagnostic::new(
+            DiagnosticCode::SchemaViolation,
+            region.region_id.clone(),
+            "truthy predicate does not accept a literal",
+        )),
+        (PredicateComparator::Equals | PredicateComparator::NotEquals, None) => {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                region.region_id.clone(),
+                "equals predicate requires a typed scalar literal",
+            ))
+        }
     }
 }
 

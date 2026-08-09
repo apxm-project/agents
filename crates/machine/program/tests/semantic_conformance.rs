@@ -9,6 +9,7 @@ use apxm_program::source_map::{RegionAnnotationKind, SourceLanguage};
 use apxm_program::{verify_air_json, verify_frontend_graph_json, verify_source_map_json};
 use common::{Vector, load_contract, load_vectors, schema_enum};
 use serde_json::Value;
+use serde_json::json;
 
 fn check(file: &str, verify: impl Fn(&Value) -> bool) {
     for Vector {
@@ -148,4 +149,73 @@ fn verifier_is_deterministic() {
     let first = verify_air_json(&doc.input).into_diagnostics();
     let second = verify_air_json(&doc.input).into_diagnostics();
     assert_eq!(first, second, "verifier output is not deterministic");
+}
+
+fn predicate_air() -> Value {
+    json!({
+        "schema_version": "apxm.air.v1",
+        "semantic_operations": [{
+            "node_id": "node.model",
+            "op": "model.call",
+            "parent_region_id": "region.fn",
+            "execution_order": 0,
+            "operands": [
+                {"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"},
+                {"slot": "request", "value_id": "value.request", "type_ref": "ModelRequest"}
+            ],
+            "result": {"value_id": "value.response", "type_ref": "ModelResponse"}
+        }],
+        "structural_ir": [
+            {"region_id": "region.fn", "kind": "function", "execution_order": 0},
+            {
+                "region_id": "region.branch",
+                "kind": "branch",
+                "parent_region_id": "region.fn",
+                "execution_order": 1,
+                "predicate": {
+                    "root_value_id": "value.response",
+                    "property_path": ["kind"],
+                    "comparator": "equals",
+                    "literal": {"scalar_type": "string", "value": "final"}
+                }
+            },
+            {"region_id": "region.then", "kind": "region", "parent_region_id": "region.branch", "execution_order": 0}
+        ],
+        "context_flow": [],
+        "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
+    })
+}
+
+#[test]
+fn control_predicate_negative_vectors_fail_closed() {
+    let valid = predicate_air();
+    assert!(verify_air_json(&valid).is_accepted());
+
+    let mut missing_root = valid.clone();
+    missing_root["structural_ir"][1]["predicate"]["root_value_id"] = json!("value.missing");
+    assert!(!verify_air_json(&missing_root).is_accepted());
+
+    let mut empty_segment = valid.clone();
+    empty_segment["structural_ir"][1]["predicate"]["property_path"] = json!([""]);
+    assert!(!verify_air_json(&empty_segment).is_accepted());
+
+    let mut hostile_segment = valid.clone();
+    hostile_segment["structural_ir"][1]["predicate"]["property_path"] = json!(["../kind"]);
+    assert!(!verify_air_json(&hostile_segment).is_accepted());
+
+    let mut missing_literal = valid.clone();
+    missing_literal["structural_ir"][1]["predicate"]
+        .as_object_mut()
+        .unwrap()
+        .remove("literal");
+    assert!(!verify_air_json(&missing_literal).is_accepted());
+
+    let mut literal_mismatch = valid.clone();
+    literal_mismatch["structural_ir"][1]["predicate"]["literal"] =
+        json!({"scalar_type": "boolean", "value": "true"});
+    assert!(!verify_air_json(&literal_mismatch).is_accepted());
+
+    let mut unknown_field = valid;
+    unknown_field["structural_ir"][1]["predicate"]["source_expression"] = json!("hidden");
+    assert!(!verify_air_json(&unknown_field).is_accepted());
 }

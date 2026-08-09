@@ -50,6 +50,10 @@ pub struct Continuation {
     pub parked_node_execution_id: Option<String>,
     pub parked_loop_path: Vec<String>,
     pub context: Value,
+    /// Runtime SSA application values needed by predicates after resume.
+    pub values: BTreeMap<String, Value>,
+    pub last_result: Value,
+    pub last_result_value_id: Option<String>,
     pub native_usage: Usage,
     pub external_agent_evidence: Vec<ExternalAgentEvidence>,
     pub evidence_batch: Vec<Fact>,

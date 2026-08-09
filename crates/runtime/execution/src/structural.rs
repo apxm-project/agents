@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use apxm_program::air::{AirModule, SemanticOpKind, StructuralOpKind};
+use apxm_program::air::{AirModule, ControlPredicate, SemanticOpKind, StructuralOpKind};
 use apxm_program::frontend_graph::{HookBinding, HookPhase, HookScope};
 
 /// One runtime step derived from structural AIR plus the flat semantic op list.
@@ -28,9 +28,25 @@ pub enum ScheduleStep {
     },
     EnterLoop {
         static_loop_id: String,
+        predicate: Option<ControlPredicate>,
     },
     LoopBackEdge {
         static_loop_id: String,
+    },
+    BranchDecision {
+        static_branch_id: String,
+        predicate: Option<ControlPredicate>,
+    },
+    BranchArm {
+        static_branch_id: String,
+        arm_index: usize,
+    },
+    BranchArmEnd {
+        static_branch_id: String,
+        arm_index: usize,
+    },
+    BranchEnd {
+        static_branch_id: String,
     },
     ProgramYield {
         region_id: String,
@@ -119,6 +135,7 @@ fn emit_children(
                     StructuralOpKind::Loop => {
                         schedule.push(ScheduleStep::EnterLoop {
                             static_loop_id: region.region_id.clone(),
+                            predicate: region.predicate.clone(),
                         });
                         for binding in ordered_hooks(hook_bindings, HookPhase::Before, |hook| {
                             hook.scope == HookScope::Loop
@@ -159,11 +176,44 @@ fn emit_children(
                     StructuralOpKind::Throw => schedule.push(ScheduleStep::ProgramExit {
                         region_id: region.region_id.clone(),
                     }),
+                    StructuralOpKind::Branch | StructuralOpKind::Switch => {
+                        schedule.push(ScheduleStep::BranchDecision {
+                            static_branch_id: region.region_id.clone(),
+                            predicate: region.predicate.clone(),
+                        });
+                        let mut arms: Vec<_> = air
+                            .structural_ir
+                            .iter()
+                            .filter(|child| {
+                                child.parent_region_id.as_deref() == Some(region.region_id.as_str())
+                            })
+                            .collect();
+                        arms.sort_by_key(|arm| arm.execution_order);
+                        for (arm_index, arm) in arms.iter().enumerate() {
+                            schedule.push(ScheduleStep::BranchArm {
+                                static_branch_id: region.region_id.clone(),
+                                arm_index,
+                            });
+                            emit_children(
+                                air,
+                                hook_bindings,
+                                context_edges,
+                                Some(&arm.region_id),
+                                loop_path,
+                                schedule,
+                            );
+                            schedule.push(ScheduleStep::BranchArmEnd {
+                                static_branch_id: region.region_id.clone(),
+                                arm_index,
+                            });
+                        }
+                        schedule.push(ScheduleStep::BranchEnd {
+                            static_branch_id: region.region_id.clone(),
+                        });
+                    }
                     StructuralOpKind::Function
                     | StructuralOpKind::Region
                     | StructuralOpKind::Block
-                    | StructuralOpKind::Branch
-                    | StructuralOpKind::Switch
                     | StructuralOpKind::ParallelJoin
                     | StructuralOpKind::Try
                     | StructuralOpKind::Catch => emit_children(
@@ -376,7 +426,7 @@ mod tests {
         let control: Vec<String> = schedule
             .iter()
             .filter_map(|step| match step {
-                ScheduleStep::EnterLoop { static_loop_id } => {
+                ScheduleStep::EnterLoop { static_loop_id, .. } => {
                     Some(format!("enter:{static_loop_id}"))
                 }
                 ScheduleStep::Semantic { index, loop_path } => Some(format!(

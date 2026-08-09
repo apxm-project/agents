@@ -139,6 +139,38 @@ pub enum ControlKind {
     Return,
 }
 
+/// The closed comparison family supported by authored structural control.
+/// Frontends lower source predicates into this identity-neutral form instead of
+/// preserving language AST or asking the runtime to interpret source code.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PredicateComparator {
+    Truthy,
+    Equals,
+    NotEquals,
+}
+
+/// A closed typed scalar literal used by structural predicate comparison.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "scalar_type", content = "value", rename_all = "snake_case")]
+pub enum PredicateLiteral {
+    Boolean(bool),
+    String(String),
+    Integer(i64),
+    Null,
+}
+
+/// A language-neutral typed predicate over one produced SSA value.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ControlPredicate {
+    pub root_value_id: String,
+    pub property_path: Vec<String>,
+    pub comparator: PredicateComparator,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub literal: Option<PredicateLiteral>,
+}
+
 /// A program authored in this graph.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -268,6 +300,8 @@ pub struct ControlIntent {
     pub execution_order: u32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub body_region_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub predicate: Option<ControlPredicate>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub operand_values: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -717,6 +751,75 @@ fn collect_typed_link_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph) 
                 intent.node_id.clone(),
                 "a loop intent owns exactly one body region",
             ));
+        }
+        validate_control_predicate(verdict, intent, &values);
+    }
+}
+
+fn validate_control_predicate(
+    verdict: &mut Verdict,
+    intent: &ControlIntent,
+    values: &HashMap<&str, &Value>,
+) {
+    let Some(predicate) = &intent.predicate else {
+        if matches!(
+            intent.control_kind,
+            ControlKind::Conditional | ControlKind::Switch
+        ) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                intent.node_id.clone(),
+                "conditional and switch intents require a typed predicate",
+            ));
+        }
+        return;
+    };
+    if !matches!(
+        intent.control_kind,
+        ControlKind::Conditional | ControlKind::Switch | ControlKind::Loop
+    ) {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::SchemaViolation,
+            intent.node_id.clone(),
+            "only conditional, switch, and loop intents carry predicates",
+        ));
+    }
+    if !values.contains_key(predicate.root_value_id.as_str()) {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::SchemaViolation,
+            intent.node_id.clone(),
+            "predicate root_value_id does not reference a declared value",
+        ));
+    }
+    if predicate.property_path.len() > 16
+        || predicate.property_path.iter().any(|segment| {
+            segment.is_empty()
+                || segment.len() > 128
+                || !segment
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        })
+    {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::SchemaViolation,
+            intent.node_id.clone(),
+            "predicate property_path has an empty, hostile, or overlong segment",
+        ));
+    }
+    match (predicate.comparator, predicate.literal.as_ref()) {
+        (PredicateComparator::Truthy, None)
+        | (PredicateComparator::Equals | PredicateComparator::NotEquals, Some(_)) => {}
+        (PredicateComparator::Truthy, Some(_)) => verdict.push(Diagnostic::new(
+            DiagnosticCode::SchemaViolation,
+            intent.node_id.clone(),
+            "truthy predicate does not accept a literal",
+        )),
+        (PredicateComparator::Equals | PredicateComparator::NotEquals, None) => {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                intent.node_id.clone(),
+                "equals predicate requires a typed scalar literal",
+            ))
         }
     }
 }
