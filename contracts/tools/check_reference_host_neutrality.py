@@ -21,6 +21,13 @@ RELEASE_MANIFEST_RELATIVE_PATH = (
     "reference-host/manifests/apxm.reference-host-release-manifest.v1.json"
 )
 VECTOR_ID = "apxm.reference-host.neutrality.v1"
+EXPECTED_SCAN_TARGETS = (
+    "contracts/descriptors/apxm.agents-owner-descriptor.v1.json",
+    "contracts/reference-host/manifests/apxm.reference-host-release-manifest.v1.json",
+    "contracts/reference-host/manifests/apxm.reference-host-execution-manifest.v1.json",
+    "crates/tools/cli/src/bin/reference_host.rs",
+    "docs/agents/runtime-profile-parity.md",
+)
 
 
 class NeutralityError(ValueError):
@@ -45,12 +52,15 @@ def _vector_paths(root: Path) -> tuple[Path, Path]:
 
 
 def _forbidden_pattern(vector: dict[str, Any]) -> re.Pattern[str]:
-    references = vector.get("forbidden_references")
-    if not isinstance(references, list) or not references or not all(
-        isinstance(reference, str) and reference for reference in references
+    patterns = vector.get("forbidden_patterns")
+    if not isinstance(patterns, list) or not patterns or not all(
+        isinstance(pattern, str) and pattern for pattern in patterns
     ):
-        raise NeutralityError("neutrality vector forbidden_references must be non-empty strings")
-    return re.compile("|".join(re.escape(reference) for reference in references), re.IGNORECASE)
+        raise NeutralityError("neutrality vector forbidden_patterns must be non-empty strings")
+    try:
+        return re.compile("|".join(f"(?:{pattern})" for pattern in patterns), re.IGNORECASE)
+    except re.error as error:
+        raise NeutralityError(f"neutrality vector contains an invalid forbidden pattern: {error}") from error
 
 
 def scan_text(text: str, pattern: re.Pattern[str]) -> list[str]:
@@ -65,7 +75,9 @@ def validate_vector(vector: dict[str, Any]) -> re.Pattern[str]:
     if vector.get("profiles") != ["embedded", "reference-host"]:
         raise NeutralityError("neutrality vector profiles drifted")
     targets = vector.get("scan_targets")
-    if not isinstance(targets, list) or not targets or not all(
+    if targets != list(EXPECTED_SCAN_TARGETS):
+        raise NeutralityError("neutrality vector scan_targets drifted")
+    if not all(
         isinstance(target, str) and target for target in targets
     ):
         raise NeutralityError("neutrality vector scan_targets must be non-empty strings")
@@ -112,7 +124,11 @@ def find_violations(root: Path = REPOSITORY_ROOT) -> list[str]:
 
     violations: list[str] = []
     for relative in canonical["scan_targets"]:
-        path = root / relative
+        path = (root / relative).resolve(strict=False)
+        try:
+            path.relative_to(root.resolve(strict=False))
+        except ValueError as error:
+            raise NeutralityError(f"{relative}: scan target escapes repository root") from error
         if not path.is_file():
             violations.append(f"{relative}: scan target is missing")
             continue

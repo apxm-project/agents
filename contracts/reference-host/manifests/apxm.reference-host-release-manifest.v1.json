@@ -178,7 +178,7 @@
   "neutrality_vector": {
     "vector_id": "apxm.reference-host.neutrality.v1",
     "path": "reference-host/vectors/apxm.reference-host.neutrality.v1.json",
-    "digest": "sha256:3563a186d6f4478b788b863d5f9809aa1098751b1e17b6d69a9cfe40e39f4431",
+    "digest": "sha256:c507ac9c2a2a446dc717e457dca812b55def7b3fbbf03c634bbb46d656d40c3e",
     "profiles": ["embedded", "reference-host"]
   },
   "constraints": {
