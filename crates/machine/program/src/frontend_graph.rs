@@ -871,6 +871,15 @@ struct SsaLocation {
     entry: bool,
 }
 
+struct SsaValidationContext<'a> {
+    values: &'a HashMap<&'a str, &'a Value>,
+    blocks: &'a HashMap<&'a str, &'a Block>,
+    calls: &'a HashMap<&'a str, &'a CallIntent>,
+    functions: &'a HashMap<&'a str, &'a str>,
+    region_parent: &'a HashMap<&'a str, Option<&'a str>>,
+    region_order: &'a HashMap<&'a str, u32>,
+}
+
 /// Ensure every authored SSA dependency is available at every consumer. A
 /// declaration existing somewhere in the graph is insufficient: future
 /// results and sibling-branch values must never become Tool/Model operands.
@@ -919,23 +928,21 @@ fn validate_ssa_dominance(
         .iter()
         .map(|intent| (intent.node_id.as_str(), intent))
         .collect();
+    let context = SsaValidationContext {
+        values,
+        blocks: &blocks,
+        calls: &calls,
+        functions: &functions,
+        region_parent: &region_parent,
+        region_order: &region_order,
+    };
 
     let mut check_use = |value_id: &str, consumer: &str| {
         let Some(location) = consumer_location(consumer, &calls, &controls) else {
             return;
         };
         let mut visiting = HashSet::new();
-        if !value_dominates_use(
-            value_id,
-            location,
-            values,
-            &blocks,
-            &calls,
-            &functions,
-            &region_parent,
-            &region_order,
-            &mut visiting,
-        ) {
+        if !value_dominates_use(value_id, location, &context, &mut visiting) {
             verdict.push(Diagnostic::new(
                 DiagnosticCode::SchemaViolation,
                 consumer.to_string(),
@@ -1019,25 +1026,20 @@ fn consumer_location(
 fn value_dominates_use(
     value_id: &str,
     use_location: SsaLocation,
-    values: &HashMap<&str, &Value>,
-    blocks: &HashMap<&str, &Block>,
-    calls: &HashMap<&str, &CallIntent>,
-    functions: &HashMap<&str, &str>,
-    region_parent: &HashMap<&str, Option<&str>>,
-    region_order: &HashMap<&str, u32>,
+    context: &SsaValidationContext<'_>,
     visiting: &mut HashSet<String>,
 ) -> bool {
     if !visiting.insert(value_id.to_string()) {
         return false;
     }
-    let Some(value) = values.get(value_id) else {
+    let Some(value) = context.values.get(value_id) else {
         return false;
     };
     let dominates = match value.origin {
         ValueOrigin::CallResult => value
             .origin_id
             .as_deref()
-            .and_then(|node_id| calls.get(node_id))
+            .and_then(|node_id| context.calls.get(node_id))
             .is_some_and(|intent| {
                 dominates_location(
                     SsaLocation {
@@ -1046,14 +1048,14 @@ fn value_dominates_use(
                         entry: false,
                     },
                     use_location.clone(),
-                    region_parent,
-                    region_order,
+                    context.region_parent,
+                    context.region_order,
                 )
             }),
         ValueOrigin::BlockArgument => value
             .origin_id
             .as_deref()
-            .and_then(|block_id| blocks.get(block_id))
+            .and_then(|block_id| context.blocks.get(block_id))
             .is_some_and(|block| {
                 dominates_location(
                     SsaLocation {
@@ -1062,14 +1064,14 @@ fn value_dominates_use(
                         entry: true,
                     },
                     use_location.clone(),
-                    region_parent,
-                    region_order,
+                    context.region_parent,
+                    context.region_order,
                 )
             }),
         ValueOrigin::Parameter => value
             .origin_id
             .as_deref()
-            .and_then(|function_id| functions.get(function_id))
+            .and_then(|function_id| context.functions.get(function_id))
             .is_some_and(|region_id| {
                 dominates_location(
                     SsaLocation {
@@ -1078,14 +1080,13 @@ fn value_dominates_use(
                         entry: true,
                     },
                     use_location.clone(),
-                    region_parent,
-                    region_order,
+                    context.region_parent,
+                    context.region_order,
                 )
             }),
         // Resume values are produced by the structural yield and consumed by
         // its loop-back edge, which is not an ordinary forward SSA use.
-        ValueOrigin::ResumeInput => true,
-        ValueOrigin::ContextValue | ValueOrigin::Literal => true,
+        ValueOrigin::ResumeInput | ValueOrigin::ContextValue | ValueOrigin::Literal => true,
     };
     if !dominates {
         return false;
@@ -1095,17 +1096,7 @@ fn value_dominates_use(
         Some(expression) => expression_references(expression)
             .into_iter()
             .all(|dependency| {
-                value_dominates_use(
-                    &dependency,
-                    use_location.clone(),
-                    values,
-                    blocks,
-                    calls,
-                    functions,
-                    region_parent,
-                    region_order,
-                    visiting,
-                )
+                value_dominates_use(&dependency, use_location.clone(), context, visiting)
             }),
         None => true,
     };
@@ -1244,7 +1235,7 @@ fn validate_control_predicate(
                 DiagnosticCode::SchemaViolation,
                 intent.node_id.clone(),
                 "equals predicate requires a typed scalar literal",
-            ))
+            ));
         }
     }
     if matches!(predicate.literal, Some(PredicateLiteral::Integer(value)) if value.unsigned_abs() > MAX_SAFE_PREDICATE_INTEGER)

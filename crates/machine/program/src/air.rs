@@ -616,7 +616,7 @@ fn validate_control_predicate(verdict: &mut Verdict, region: &StructuralNode) {
                 DiagnosticCode::SchemaViolation,
                 region.region_id.clone(),
                 "equals predicate requires a typed scalar literal",
-            ))
+            ));
         }
     }
     if let Some(PredicateLiteral::Integer(value)) = predicate.literal
