@@ -2,7 +2,7 @@
   "artifacts": [
     {
       "build_decision": "built",
-      "digest": "sha256:2c4a32ba3b155b9cae4b46f9e3878ff119f5cdd37cfcf30d403c6e14c5c9d832",
+      "digest": "sha256:97ef5531f8a025957295393ec58c1c5f36e8f66470f5b18069847cd6521ff2b3",
       "kind": "source-archive",
       "provenance": "git archive of the pinned owner revision"
     }
@@ -40,19 +40,19 @@
     ],
     "owned_schemas": [
       {
-        "digest": "sha256:b830d0ecda3ddcb847fdb077b9fcf9d7f880b47baa48eaaf5913c0672ffa4059",
+        "digest": "sha256:a28f8c4cd214c7d579e8ecafd28c1e1bb9322833ff74e273500dd2bd60113151",
         "schema_id": "apxm.frontend-graph.v2"
       },
       {
-        "digest": "sha256:18d7fe956568922cde04ced008c33ab9ddec8487e12e87867a857d833468ef4c",
+        "digest": "sha256:9cbeeec6492b54ea56803b38dd0574d4ac3438d8b8146a5c7a74abb8672bf7b4",
         "schema_id": "apxm.frontend-surface.v1"
       },
       {
-        "digest": "sha256:bd9d4b748d1025dc21bb6bcd68517ad552b41348e9eabe43a1aa9b6c527067b1",
+        "digest": "sha256:1448679c09f74b4a05c0609309ec4c8a323fd9eb9f42778b1f6abf69207f69ff",
         "schema_id": "apxm.air.v2"
       },
       {
-        "digest": "sha256:14ae660b948b301ad388aab673b93e6eb1cd1f9984938e2558330a67437ac0f9",
+        "digest": "sha256:6285d85ec2a7b9b7acd11857c22a38f11dd65686dd1dc5342ba078de6e36ccd6",
         "schema_id": "apxm.executable-artifact.v1"
       },
       {
@@ -176,7 +176,7 @@
         "schema_id": "apxm.invocation-admission.v1"
       },
       {
-        "digest": "sha256:12ca6c600fc50f150c02ebfad48b33a0f6e04b5367c9c9e5c89b995283be0458",
+        "digest": "sha256:abcd9707efe46826d858318bf0ae4e4e40d3839cde66c302d8805e4c6bc6577f",
         "schema_id": "apxm.runtime.host-request.v1"
       },
       {
@@ -216,7 +216,7 @@
     ]
   },
   "owner_descriptor": {
-    "exact_bytes_digest": "sha256:a8e071f61495147cee99aeaaabb841e8166fa3f059fceac9dc5385471d0f112b",
+    "exact_bytes_digest": "sha256:1b87978dd3ac2b276cdfe3d458deac838e3c21fc12efe8ba98d3ea33f592681c",
     "path": "contracts/descriptors/apxm.agents-owner-descriptor.v1.json"
   },
   "provenance": {
@@ -235,12 +235,12 @@
     },
     "evidence_scope": "committed manifests, schemas, vectors, and harness bytes only",
     "execution_manifest": {
-      "exact_bytes_digest": "sha256:a0f10dd3b237c7897a26347bed7b41f7494ef13d3e010eb9e284216ef440ec0e",
+      "exact_bytes_digest": "sha256:8059b741dc39e17a204bec72e63b40734fdc40de47410978ed623cfbc55edbe7",
       "path": "contracts/reference-host/manifests/apxm.reference-host-execution-manifest.v1.json"
     },
     "golden_vectors": [
       {
-        "exact_bytes_digest": "sha256:5e0c704199f433279095338f49263535ebaaa702efd05d20b998a64c3b972372",
+        "exact_bytes_digest": "sha256:d5aea4603b9535f8b6dfea583059dd88fbfb8722230ae9d7dee4f91d89b1709e",
         "path": "contracts/reference-host/vectors/apxm.reference-host.invoke-parity.v1.json",
         "profiles": [
           "embedded",
@@ -269,7 +269,7 @@
     "publication_cohort": {
       "manifests": [
         {
-          "exact_bytes_digest": "sha256:a0f10dd3b237c7897a26347bed7b41f7494ef13d3e010eb9e284216ef440ec0e",
+          "exact_bytes_digest": "sha256:8059b741dc39e17a204bec72e63b40734fdc40de47410978ed623cfbc55edbe7",
           "path": "contracts/reference-host/manifests/apxm.reference-host-execution-manifest.v1.json",
           "schema_version": "apxm.reference-host-execution-manifest.v1"
         }
@@ -301,7 +301,7 @@
           "schema_id": "apxm.invocation-admission.v1"
         },
         {
-          "exact_bytes_digest": "sha256:12ca6c600fc50f150c02ebfad48b33a0f6e04b5367c9c9e5c89b995283be0458",
+          "exact_bytes_digest": "sha256:abcd9707efe46826d858318bf0ae4e4e40d3839cde66c302d8805e4c6bc6577f",
           "path": "contracts/reference-host/schemas/apxm.runtime.host-request.v1.json",
           "schema_id": "apxm.runtime.host-request.v1"
         },
@@ -338,7 +338,7 @@
           "schema_id": "apxm.invocation-admission.v1"
         },
         {
-          "exact_bytes_digest": "sha256:50fafaf0e3509f21e0b764d6ad295f8ad7109d967e6113b7cd78f98b739fb920",
+          "exact_bytes_digest": "sha256:a4090d3f131a5b43b90eb32d5b1a37643eab14bf369c2edda7f7182cbb3100ee",
           "path": "contracts/reference-host/vectors/apxm.runtime.host-request.v1.json",
           "schema_id": "apxm.runtime.host-request.v1"
         },
@@ -355,18 +355,18 @@
       ]
     },
     "release_manifest": {
-      "exact_bytes_digest": "sha256:a97888d4af7abcbe19c1c1c6073a9d8de0d1ca26323a7977b96f86e2822c41e6",
+      "exact_bytes_digest": "sha256:47a6ec05c6b33ce0f603e7160280ce5e0edb3d59449fedcc5153b76718eec581",
       "path": "contracts/reference-host/manifests/apxm.reference-host-release-manifest.v1.json"
     }
   },
-  "release_id": "apxm-agents-2332c9279e4c",
+  "release_id": "apxm-agents-4950a6156a77",
   "release_kind": "source-provenance",
   "schema_version": "apxm.owner-release-manifest.v1",
   "semantic_owner": "agents",
   "source": {
-    "archive_digest": "sha256:2c4a32ba3b155b9cae4b46f9e3878ff119f5cdd37cfcf30d403c6e14c5c9d832",
+    "archive_digest": "sha256:97ef5531f8a025957295393ec58c1c5f36e8f66470f5b18069847cd6521ff2b3",
     "repository": "https://github.com/apxm-project/agents.git",
-    "revision": "2332c9279e4cfb1c29e001d080bd1ad6eb3a4671",
-    "tree_digest": "sha256:69c71ccbbdd4f6872933fa38c090b7c3c35b072df299347f0b2f166eecd922d6"
+    "revision": "4950a6156a775c485b088275c91217b24db134ac",
+    "tree_digest": "sha256:99e3f5ccd73a97087c483dbddda25fffc4690eb68e08209136a315a02efb23a6"
   }
 }
