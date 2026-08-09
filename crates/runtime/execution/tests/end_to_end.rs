@@ -413,12 +413,12 @@ impl StaticHookHandlerPort for StaticHooks {
         binding: &HookBinding,
         _context: &Value,
         _result: &Value,
-    ) -> StaticHookResult {
+    ) -> Result<StaticHookResult, apxm_execution::StaticHookExecutionError> {
         assert_eq!(binding.handler_ref, "hooks.after_model");
-        StaticHookResult::Replace {
+        Ok(StaticHookResult::Replace {
             assigned_context: Some(json!({"iterations": 1})),
             result: json!("hooked"),
-        }
+        })
     }
 }
 
@@ -655,8 +655,9 @@ fn typed_tool_loop_air() -> AirModule {
     let air: AirModule = serde_json::from_value(json!({
         "schema_version": "apxm.air.v1",
         "value_assemblies": [
-            {"value_id": "value.request.initial"},
-            {"value_id": "value.request.next", "dependencies": ["value.search.result"]}
+            {"value_id": "value.request.initial", "expression": {"kind": "object", "fields": [{"name": "messages", "value": {"kind": "array", "items": []}}]}},
+            {"value_id": "value.search.arguments", "expression": {"kind": "projection", "root": {"kind": "ssa", "value_id": "value.response.current"}, "property_path": ["tool_request", "arguments"]}},
+            {"value_id": "value.request.next", "expression": {"kind": "object", "fields": [{"name": "tool_result", "value": {"kind": "ssa", "value_id": "value.search.result"}}]}}
         ],
         "semantic_operations": [
             {"node_id": "n.model.initial", "op": "model.call", "parent_region_id": "r.fn", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.request.initial", "type_ref": "ModelRequest"}], "result": {"value_id": "value.response.initial", "type_ref": "ModelResponse"}},
@@ -739,16 +740,16 @@ impl StaticHookHandlerPort for OrderedToolHooks {
         binding: &HookBinding,
         _context: &Value,
         _result: &Value,
-    ) -> StaticHookResult {
+    ) -> Result<StaticHookResult, apxm_execution::StaticHookExecutionError> {
         self.calls.lock().unwrap().push(binding.hook_id.clone());
         if binding.phase == HookPhase::After {
-            StaticHookResult::Keep {
+            Ok(StaticHookResult::Keep {
                 assigned_context: None,
-            }
+            })
         } else {
-            StaticHookResult::Keep {
+            Ok(StaticHookResult::Keep {
                 assigned_context: None,
-            }
+            })
         }
     }
 }
@@ -763,7 +764,6 @@ fn typed_tool_request(air: AirModule, hook_bindings: Vec<HookBinding>) -> Execut
             "n.search".to_string(),
             CapabilityInvocationAdmission {
                 capability_ref: "cap.search".into(),
-                arguments: json!({"query": "typed request"}),
                 authority: CapabilityInvocationAuthority::new(
                     "principal.user.1",
                     "agent.gao.1",
@@ -845,15 +845,42 @@ async fn typed_final_response_skips_the_declared_tool() {
 }
 
 #[tokio::test]
+async fn declared_hook_without_an_executor_fails_closed() {
+    let error = execute(
+        &ports_with_model_composition_capability_external_and_hooks(
+            Arc::new(FakeCommit::new()),
+            Arc::new(FakeModel),
+            Arc::new(FakeComposition),
+            Arc::new(FakeCapability),
+            Arc::new(FakeAcpPeer),
+            Arc::new(apxm_execution::NoopStaticHookHandler),
+        ),
+        request(),
+        json!({"iterations": 0}),
+    )
+    .await
+    .expect_err("compiled Hook bindings require a real executor");
+    assert!(matches!(error, ExecutionError::StaticHook(_)));
+}
+
+#[tokio::test]
 async fn typed_tool_loop_reenters_and_binds_tool_results_without_hook_masking() {
     let (model, capability, hooks) = run_typed_tool_loop([
-        json!({"kind": "tool_request", "tool_request": {"kind": "search_web"}}),
-        json!({"kind": "tool_request", "tool_request": {"kind": "search_web"}}),
+        json!({"kind": "tool_request", "tool_request": {"kind": "search_web", "arguments": {"query": "first query"}}}),
+        json!({"kind": "tool_request", "tool_request": {"kind": "search_web", "arguments": {"query": "second query"}}}),
         json!({"kind": "final", "content": "done"}),
     ])
     .await
     .expect("declared Tool responses re-enter until final");
     assert_eq!(capability.requests().len(), 2);
+    assert_eq!(
+        capability.requests()[0].arguments().value().unwrap(),
+        json!({"query": "first query"})
+    );
+    assert_eq!(
+        capability.requests()[1].arguments().value().unwrap(),
+        json!({"query": "second query"})
+    );
     assert_eq!(
         *hooks.calls.lock().unwrap(),
         ["hook.before", "hook.after", "hook.before", "hook.after"]
@@ -870,15 +897,9 @@ async fn typed_tool_loop_reenters_and_binds_tool_results_without_hook_masking() 
     assert_eq!(
         *model.authored_requests.lock().unwrap(),
         [
-            json!({"value_id": "value.request.initial", "dependencies": []}),
-            json!({
-                "value_id": "value.request.next",
-                "dependencies": [{"value_id": "value.search.result", "value": "first"}],
-            }),
-            json!({
-                "value_id": "value.request.next",
-                "dependencies": [{"value_id": "value.search.result", "value": "second"}],
-            }),
+            json!({"messages": []}),
+            json!({"tool_result": "first"}),
+            json!({"tool_result": "second"}),
         ]
     );
 }
@@ -953,7 +974,13 @@ fn ports_with_capability(
 fn request() -> ExecutionRequest {
     ExecutionRequest {
         air: air(),
-        initial_values: BTreeMap::from([("value.model.request".into(), json!({"prompt": "test"}))]),
+        initial_values: BTreeMap::from([
+            ("value.model.request".into(), json!({"prompt": "test"})),
+            (
+                "value.cap.arguments".into(),
+                json!({"query": "release checklist"}),
+            ),
+        ]),
         hook_bindings: vec![HookBinding {
             hook_id: "hook.after.model".into(),
             scope: HookScope::Model,
@@ -972,7 +999,6 @@ fn request() -> ExecutionRequest {
                 "n.cap".to_string(),
                 CapabilityInvocationAdmission {
                     capability_ref: "cap.search".into(),
-                    arguments: json!({"query": "release checklist"}),
                     authority: CapabilityInvocationAuthority::new(
                         "principal.user.1",
                         "agent.gao.1",
@@ -986,7 +1012,6 @@ fn request() -> ExecutionRequest {
                 "n.acp".to_string(),
                 CapabilityInvocationAdmission {
                     capability_ref: "external-agent:acp:claude-code".into(),
-                    arguments: json!({"session_ref": "session.1"}),
                     authority: CapabilityInvocationAuthority::new(
                         "principal.user.1",
                         "agent.gao.1",

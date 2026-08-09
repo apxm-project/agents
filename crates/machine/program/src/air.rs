@@ -14,6 +14,7 @@ use apxm_ais::get_operation_spec;
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Verdict, schema_violation};
+use crate::frontend_graph::ValueExpression;
 use crate::grammar::is_identifier;
 use crate::source_map::{RegionAnnotationKind, SourceMap};
 
@@ -79,8 +80,7 @@ pub struct ControlPredicate {
 #[serde(deny_unknown_fields)]
 pub struct ValueAssembly {
     pub value_id: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub dependencies: Vec<String>,
+    pub expression: ValueExpression,
 }
 
 /// One public semantic operation with typed SSA operands and an optional result.
@@ -121,6 +121,7 @@ pub struct ContextEdge {
     pub from_node: String,
     pub to_node: String,
     pub context_type_ref: String,
+    pub value_id: String,
 }
 
 /// A decoded canonical AIR module.
@@ -156,16 +157,11 @@ impl AirModule {
                     "value assembly value_id must be a unique contract identifier",
                 ));
             }
-            let mut dependencies = HashSet::new();
-            if assembly.dependencies.iter().any(|dependency| {
-                dependency == &assembly.value_id
-                    || !is_identifier(dependency)
-                    || !dependencies.insert(dependency.as_str())
-            }) {
+            if !validate_value_expression(&assembly.expression, &assembly.value_id, 0) {
                 verdict.push(Diagnostic::new(
                     DiagnosticCode::SchemaViolation,
                     assembly.value_id.clone(),
-                    "value assembly dependencies must be unique contract identifiers",
+                    "value assembly expression is malformed, unsafe, or exceeds bounds",
                 ));
             }
         }
@@ -243,14 +239,32 @@ impl AirModule {
             validate_loop_signature(&mut verdict, region);
         }
         for assembly in &self.value_assemblies {
-            for dependency in &assembly.dependencies {
-                if !seen_value_definitions.contains(dependency.as_str()) {
+            let mut references = Vec::new();
+            collect_expression_references(&assembly.expression, &mut references);
+            for dependency in references {
+                if dependency == assembly.value_id
+                    || !seen_value_definitions.contains(dependency.as_str())
+                {
                     verdict.push(Diagnostic::new(
                         DiagnosticCode::SchemaViolation,
                         assembly.value_id.clone(),
-                        "value assembly dependency does not reference a defined SSA value",
+                        "value assembly expression does not reference a distinct defined SSA value",
                     ));
                 }
+            }
+        }
+        for edge in &self.context_flow {
+            if !(seen_nodes.contains(edge.from_node.as_str())
+                || seen_regions.contains(edge.from_node.as_str()))
+                || !(seen_nodes.contains(edge.to_node.as_str())
+                    || seen_regions.contains(edge.to_node.as_str()))
+                || !seen_value_definitions.contains(edge.value_id.as_str())
+            {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    edge.to_node.clone(),
+                    "Context edge requires declared endpoints and an exact assembled value",
+                ));
             }
         }
         for region in &self.structural_ir {
@@ -273,6 +287,82 @@ impl AirModule {
         );
         self.source_map.collect(&mut verdict);
         verdict.finish()
+    }
+}
+
+fn valid_property_path(path: &[String]) -> bool {
+    path.len() <= 16
+        && path.iter().all(|segment| {
+            !segment.is_empty()
+                && segment.len() <= 128
+                && segment
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        })
+}
+
+fn validate_value_expression(expression: &ValueExpression, owner: &str, depth: usize) -> bool {
+    if depth > 64 {
+        return false;
+    }
+    match expression {
+        ValueExpression::Ssa { value_id } => is_identifier(value_id) && value_id != owner,
+        ValueExpression::Context { property_path } => valid_property_path(property_path),
+        ValueExpression::Projection {
+            root,
+            property_path,
+        } => {
+            !property_path.is_empty()
+                && valid_property_path(property_path)
+                && validate_value_expression(root, owner, depth + 1)
+        }
+        ValueExpression::Object { fields } => {
+            fields.len() <= 64
+                && fields
+                    .iter()
+                    .map(|field| field.name.as_str())
+                    .collect::<HashSet<_>>()
+                    .len()
+                    == fields.len()
+                && fields.iter().all(|field| {
+                    !field.name.is_empty()
+                        && field.name.len() <= 128
+                        && field
+                            .name
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+                        && validate_value_expression(&field.value, owner, depth + 1)
+                })
+        }
+        ValueExpression::Array { items } => {
+            items.len() <= 256
+                && items
+                    .iter()
+                    .all(|item| validate_value_expression(item, owner, depth + 1))
+        }
+        ValueExpression::Integer { value } => {
+            value.unsigned_abs() <= MAX_SAFE_PREDICATE_INTEGER as u64
+        }
+        ValueExpression::String { value } => value.len() <= 1_048_576,
+        ValueExpression::Boolean { .. } | ValueExpression::Null => true,
+    }
+}
+
+fn collect_expression_references(expression: &ValueExpression, out: &mut Vec<String>) {
+    match expression {
+        ValueExpression::Ssa { value_id } => out.push(value_id.clone()),
+        ValueExpression::Projection { root, .. } => collect_expression_references(root, out),
+        ValueExpression::Object { fields } => fields
+            .iter()
+            .for_each(|field| collect_expression_references(&field.value, out)),
+        ValueExpression::Array { items } => items
+            .iter()
+            .for_each(|item| collect_expression_references(item, out)),
+        ValueExpression::Context { .. }
+        | ValueExpression::String { .. }
+        | ValueExpression::Integer { .. }
+        | ValueExpression::Boolean { .. }
+        | ValueExpression::Null => {}
     }
 }
 

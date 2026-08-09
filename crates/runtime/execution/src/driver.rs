@@ -48,6 +48,7 @@ use apxm_program::capability::{CapabilityInvocationAuthority, CapabilityRequestE
 use apxm_program::common::TypedRef;
 use apxm_program::external_agent::ExternalAgentEvidence;
 use apxm_program::frontend_graph::HookBinding;
+use apxm_program::frontend_graph::ValueExpression;
 use apxm_program::runtime_evidence::{
     Fact, FactKind, HookPhase as EvidenceHookPhase, HookScope as EvidenceHookScope, InstanceState,
     InvocationState, LoopIterationCompletedFact, LoopMembership, ModelAttemptRecordedFact,
@@ -163,6 +164,13 @@ pub enum StaticHookResult {
     },
 }
 
+/// A compiled Hook binding could not be executed by the injected handler port.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StaticHookExecutionError {
+    pub hook_id: String,
+    pub message: String,
+}
+
 /// Execute the exact digest-pinned handler named by a compiled Hook binding.
 ///
 /// The execution port receives the artifact binding directly. It cannot discover
@@ -174,7 +182,7 @@ pub trait StaticHookHandlerPort: Send + Sync {
         binding: &HookBinding,
         context: &Value,
         result: &Value,
-    ) -> StaticHookResult;
+    ) -> Result<StaticHookResult, StaticHookExecutionError>;
 }
 
 /// A no-op handler implementation for programs with no static Hook bindings.
@@ -187,10 +195,11 @@ impl StaticHookHandlerPort for NoopStaticHookHandler {
         _binding: &HookBinding,
         _context: &Value,
         _result: &Value,
-    ) -> StaticHookResult {
-        StaticHookResult::Keep {
-            assigned_context: None,
-        }
+    ) -> Result<StaticHookResult, StaticHookExecutionError> {
+        Err(StaticHookExecutionError {
+            hook_id: _binding.hook_id.clone(),
+            message: "no static Hook executor is installed".to_string(),
+        })
     }
 }
 
@@ -210,18 +219,12 @@ pub struct ExecutionRequest {
     pub write_set: AtomicWriteSet,
 }
 
-/// Application data and admitted Auth/Server references for one exact
-/// `capability.invoke` AIR node.
-///
-/// Arguments remain application data. The authority references are carried in
-/// a separate typed member and cannot be inferred from or replaced by argument
-/// fields. `capability_ref` is repeated so the driver can reject an admission
-/// prepared for a different authored Capability before dispatch.
+/// Admitted Auth/Server references for one exact `capability.invoke` AIR node.
+/// Application arguments come exclusively from the authored SSA operand.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CapabilityInvocationAdmission {
     pub capability_ref: String,
-    pub arguments: Value,
     pub authority: CapabilityInvocationAuthority,
 }
 
@@ -287,6 +290,10 @@ pub enum ExecutionError {
         region_id: String,
         message: String,
     },
+    InvalidValueExpression {
+        value_id: String,
+        message: String,
+    },
     ProgramThrew {
         region_id: String,
     },
@@ -307,6 +314,7 @@ pub enum ExecutionError {
     Lineage(apxm_inference::LineageError),
     ModelRequest(ModelCallRequestError),
     ModelRequestMetadata(TypedError),
+    StaticHook(StaticHookExecutionError),
     Continuation(ContinuationError),
     InvalidEventRef {
         node_id: String,
@@ -344,6 +352,12 @@ impl std::fmt::Display for ExecutionError {
                     "structural region {region_id} has invalid predicate: {message}"
                 )
             }
+            Self::InvalidValueExpression { value_id, message } => {
+                write!(
+                    f,
+                    "value {value_id} has invalid authored expression: {message}"
+                )
+            }
             Self::ProgramThrew { region_id } => {
                 write!(
                     f,
@@ -374,6 +388,13 @@ impl std::fmt::Display for ExecutionError {
             Self::ModelRequest(error) => write!(f, "model request error: {error}"),
             Self::ModelRequestMetadata(error) => {
                 write!(f, "model request metadata error: {}", error.message)
+            }
+            Self::StaticHook(error) => {
+                write!(
+                    f,
+                    "Hook {} execution failed: {}",
+                    error.hook_id, error.message
+                )
             }
             Self::Continuation(error) => write!(f, "continuation error: {error}"),
             Self::InvalidEventRef { node_id, source } => {
@@ -774,21 +795,93 @@ fn materialize_ssa_value(
             region_id: region_id.to_string(),
             value_id: value_id.to_string(),
         })?;
-    let dependencies = assembly
-        .dependencies
-        .iter()
-        .map(|dependency| {
-            Ok(serde_json::json!({
-                "value_id": dependency,
-                "value": materialize_ssa_value(air, state, region_id, dependency, visiting)?,
-            }))
-        })
-        .collect::<Result<Vec<_>, ExecutionError>>()?;
+    let value = evaluate_value_expression(
+        air,
+        state,
+        region_id,
+        value_id,
+        &assembly.expression,
+        visiting,
+        0,
+    )?;
     visiting.remove(value_id);
-    Ok(serde_json::json!({
-        "value_id": value_id,
-        "dependencies": dependencies,
-    }))
+    Ok(value)
+}
+
+fn evaluate_value_expression(
+    air: &AirModule,
+    state: &DriveState,
+    region_id: &str,
+    owner: &str,
+    expression: &ValueExpression,
+    visiting: &mut BTreeSet<String>,
+    depth: usize,
+) -> Result<Value, ExecutionError> {
+    if depth > 64 {
+        return Err(ExecutionError::InvalidValueExpression {
+            value_id: owner.to_string(),
+            message: "expression depth exceeds 64".to_string(),
+        });
+    }
+    let project = |mut value: Value, path: &[String]| -> Result<Value, ExecutionError> {
+        for segment in path {
+            value = value.get(segment).cloned().ok_or_else(|| {
+                ExecutionError::InvalidValueExpression {
+                    value_id: owner.to_string(),
+                    message: format!("property path segment '{segment}' is absent"),
+                }
+            })?;
+        }
+        Ok(value)
+    };
+    match expression {
+        ValueExpression::Ssa { value_id } => {
+            materialize_ssa_value(air, state, region_id, value_id, visiting)
+        }
+        ValueExpression::Context { property_path } => project(state.context.clone(), property_path),
+        ValueExpression::Projection {
+            root,
+            property_path,
+        } => project(
+            evaluate_value_expression(air, state, region_id, owner, root, visiting, depth + 1)?,
+            property_path,
+        ),
+        ValueExpression::Object { fields } => {
+            let mut object = serde_json::Map::new();
+            for field in fields {
+                if object.contains_key(&field.name) {
+                    return Err(ExecutionError::InvalidValueExpression {
+                        value_id: owner.to_string(),
+                        message: format!("duplicate object field '{}'", field.name),
+                    });
+                }
+                object.insert(
+                    field.name.clone(),
+                    evaluate_value_expression(
+                        air,
+                        state,
+                        region_id,
+                        owner,
+                        &field.value,
+                        visiting,
+                        depth + 1,
+                    )?,
+                );
+            }
+            Ok(Value::Object(object))
+        }
+        ValueExpression::Array { items } => items
+            .iter()
+            .map(|item| {
+                evaluate_value_expression(air, state, region_id, owner, item, visiting, depth + 1)
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Value::Array),
+        ValueExpression::String { value } => Ok(Value::String(value.clone())),
+        ValueExpression::Integer { value } => Ok(Value::Number((*value).into())),
+        ValueExpression::Boolean { value } => Ok(Value::Bool(*value)),
+        ValueExpression::Null => Ok(Value::Null),
+    }
 }
 
 fn evaluate_predicate(
@@ -981,7 +1074,7 @@ async fn drive_from(
         let step = &schedule[schedule_position];
         match step {
             ScheduleStep::HookBefore { binding } => {
-                let (before, after) = apply_static_hook(&mut state, ports, binding).await;
+                let (before, after) = apply_static_hook(&mut state, ports, binding).await?;
                 state.seq += 1;
                 let mut fact = fact(
                     &state.program_invocation_id,
@@ -1013,7 +1106,7 @@ async fn drive_from(
             }
             ScheduleStep::HookAfter { binding } => {
                 if state.last_operation_succeeded {
-                    let (before, after) = apply_static_hook(&mut state, ports, binding).await;
+                    let (before, after) = apply_static_hook(&mut state, ports, binding).await?;
                     state.seq += 1;
                     let mut fact = fact(
                         &state.program_invocation_id,
@@ -1044,7 +1137,13 @@ async fn drive_from(
                     }
                 }
             }
-            ScheduleStep::ContextEdge { from_node, to_node } => {
+            ScheduleStep::ContextEdge {
+                from_node,
+                to_node,
+                value_id,
+            } => {
+                state.context =
+                    materialize_ssa_value(air, &state, to_node, value_id, &mut BTreeSet::new())?;
                 state.seq += 1;
                 let mut fact = context_transition_fact(&state.program_invocation_id, state.seq);
                 let runtime = runtime_fact_mut(&mut fact);
@@ -1419,13 +1518,27 @@ async fn drive_from(
                                     },
                                 );
                             }
+                            let arguments_value_id =
+                                operand_str(op, "arguments").ok_or_else(|| {
+                                    ExecutionError::MissingOperand {
+                                        node_id: op.node_id.clone(),
+                                        operand: "arguments",
+                                    }
+                                })?;
+                            let authored_arguments = materialize_ssa_value(
+                                air,
+                                &state,
+                                &op.node_id,
+                                &arguments_value_id,
+                                &mut BTreeSet::new(),
+                            )?;
                             let outcome = ports
                                 .capability
                                 .invoke(
                                     CapabilityRequest::prepare(
                                         capability_ref,
                                         arguments_type_ref,
-                                        admission.arguments.clone(),
+                                        authored_arguments,
                                         &state.program_invocation_id,
                                         &node_execution_id,
                                         admission.authority.clone(),
@@ -1681,26 +1794,12 @@ async fn drive_from(
                 region_id,
                 resume_value_id,
             } => {
-                let resumable_loop_entry = state.active_loops.last().and_then(|active| {
-                    schedule[..schedule_position].iter().rposition(|step| {
-                        matches!(
-                            step,
-                            ScheduleStep::EnterLoop {
-                                static_loop_id,
-                                ..
-                            } if static_loop_id == &active.static_loop_id
-                        )
-                    })
-                });
-                state.fail_active_loops();
                 if options.suspend_on_park && options.yield_at_loop {
-                    state.active_loops.clear();
                     return Ok(DriveEnd::Parked {
                         state,
                         continuation_id: region_id.clone(),
                         event_ref: None,
-                        next_schedule_position: resumable_loop_entry
-                            .unwrap_or(schedule_position + 1),
+                        next_schedule_position: schedule_position + 1,
                         parked_node_execution_id: None,
                         parked_loop_path: Vec::new(),
                         resume_value_id: resume_value_id.clone(),
@@ -1756,12 +1855,13 @@ async fn apply_static_hook(
     state: &mut DriveState,
     ports: &ExecutionPorts,
     binding: &HookBinding,
-) -> (Value, Value) {
+) -> Result<(Value, Value), ExecutionError> {
     let before = state.context.clone();
     let outcome = ports
         .hook_handlers
         .execute(binding, &state.context, &state.last_result)
-        .await;
+        .await
+        .map_err(ExecutionError::StaticHook)?;
     match outcome {
         StaticHookResult::Keep { assigned_context } => {
             if let Some(context) = assigned_context {
@@ -1790,7 +1890,7 @@ async fn apply_static_hook(
             }
         }
     }
-    (before, state.context.clone())
+    Ok((before, state.context.clone()))
 }
 
 /// Perform the one atomic commit for a completed run and build its report. The
@@ -2305,7 +2405,6 @@ async fn resume_from_continuation(
     })?;
     state.values.insert(resume_value_id, delivered);
 
-    let yield_at_loop = event_ref.is_some();
     let end = drive_from(
         ports,
         &air,
@@ -2316,7 +2415,7 @@ async fn resume_from_continuation(
         state,
         DriveOptions {
             suspend_on_park: true,
-            yield_at_loop,
+            yield_at_loop: true,
         },
     )
     .await?;

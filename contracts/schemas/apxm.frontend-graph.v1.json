@@ -257,13 +257,71 @@
           "$ref": "apxm.contract-common.v1#/$defs/Identifier",
           "description": "The id of the producing parameter, call_intent, block, or context edge."
         },
-        "dependencies": {
-          "type": "array",
-          "items": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
-          "uniqueItems": true,
-          "description": "Prior SSA values captured by a pure literal value assembly."
-        }
+        "expression": { "$ref": "#/$defs/ValueExpression" }
       },
+      "additionalProperties": false
+    },
+    "ValueExpression": {
+      "oneOf": [
+        { "$ref": "#/$defs/SsaExpression" },
+        { "$ref": "#/$defs/ContextExpression" },
+        { "$ref": "#/$defs/ProjectionExpression" },
+        { "$ref": "#/$defs/ObjectExpression" },
+        { "$ref": "#/$defs/ArrayExpression" },
+        { "$ref": "#/$defs/StringExpression" },
+        { "$ref": "#/$defs/IntegerExpression" },
+        { "$ref": "#/$defs/BooleanExpression" },
+        { "$ref": "#/$defs/NullExpression" }
+      ]
+    },
+    "SsaExpression": {
+      "type": "object", "required": ["kind", "value_id"],
+      "properties": { "kind": { "const": "ssa" }, "value_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" } },
+      "additionalProperties": false
+    },
+    "ContextExpression": {
+      "type": "object", "required": ["kind", "property_path"],
+      "properties": { "kind": { "const": "context" }, "property_path": { "$ref": "#/$defs/PropertyPath" } },
+      "additionalProperties": false
+    },
+    "ProjectionExpression": {
+      "type": "object", "required": ["kind", "root", "property_path"],
+      "properties": { "kind": { "const": "projection" }, "root": { "$ref": "#/$defs/ValueExpression" }, "property_path": { "$ref": "#/$defs/NonEmptyPropertyPath" } },
+      "additionalProperties": false
+    },
+    "ObjectExpression": {
+      "type": "object", "required": ["kind", "fields"],
+      "properties": { "kind": { "const": "object" }, "fields": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/ValueField" } } },
+      "additionalProperties": false
+    },
+    "ValueField": {
+      "type": "object", "required": ["name", "value"],
+      "properties": { "name": { "type": "string", "pattern": "^[A-Za-z0-9_]{1,128}$" }, "value": { "$ref": "#/$defs/ValueExpression" } },
+      "additionalProperties": false
+    },
+    "ArrayExpression": {
+      "type": "object", "required": ["kind", "items"],
+      "properties": { "kind": { "const": "array" }, "items": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/ValueExpression" } } },
+      "additionalProperties": false
+    },
+    "StringExpression": {
+      "type": "object", "required": ["kind", "value"],
+      "properties": { "kind": { "const": "string" }, "value": { "type": "string", "maxLength": 1048576 } },
+      "additionalProperties": false
+    },
+    "IntegerExpression": {
+      "type": "object", "required": ["kind", "value"],
+      "properties": { "kind": { "const": "integer" }, "value": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 } },
+      "additionalProperties": false
+    },
+    "BooleanExpression": {
+      "type": "object", "required": ["kind", "value"],
+      "properties": { "kind": { "const": "boolean" }, "value": { "type": "boolean" } },
+      "additionalProperties": false
+    },
+    "NullExpression": {
+      "type": "object", "required": ["kind"],
+      "properties": { "kind": { "const": "null" } },
       "additionalProperties": false
     },
     "Block": {
@@ -446,6 +504,12 @@
       "maxItems": 16,
       "items": { "type": "string", "pattern": "^[A-Za-z0-9_]{1,128}$" }
     },
+    "NonEmptyPropertyPath": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": { "type": "string", "pattern": "^[A-Za-z0-9_]{1,128}$" }
+    },
     "PredicateLiteral": {
       "oneOf": [
         {
@@ -476,11 +540,12 @@
     },
     "ContextEdge": {
       "type": "object",
-      "required": ["from_node", "to_node", "context_type_ref"],
+      "required": ["from_node", "to_node", "context_type_ref", "value_id"],
       "properties": {
         "from_node": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
         "to_node": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
-        "context_type_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" }
+        "context_type_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "value_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" }
       },
       "additionalProperties": false
     },

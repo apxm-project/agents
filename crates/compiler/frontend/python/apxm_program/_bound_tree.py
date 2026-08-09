@@ -53,7 +53,7 @@ class BoundValue:
     type_ref: str
     origin: str  # parameter | call_result | block_argument | context_value | literal | resume_input
     origin_id: Optional[str] = None
-    dependencies: tuple[str, ...] = ()
+    expression: Optional[dict[str, object]] = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +137,7 @@ class BoundContextEdge:
     from_node: str
     to_node: str
     context_type_ref: str
+    value_id: str
 
 
 @dataclass(frozen=True, slots=True)

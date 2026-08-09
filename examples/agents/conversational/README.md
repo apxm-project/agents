@@ -8,13 +8,13 @@ control flow, and `agent.yield_()`.
 
 Each turn makes the complete conversational state machine visible in source:
 
-1. append the resumed input to persistent working messages;
-2. call the Model with those messages and the current input;
+1. bind the resumed input into the next loop iteration;
+2. call the Model with persistent messages and the current input;
 3. if the typed Model response requests the one declared `search_web` Tool,
    invoke it through an authored closed dispatch loop;
-4. append the typed Tool result and call the Model again;
+4. bind the typed Tool result directly into the next Model request;
 5. reject every undeclared Tool or Model-response discriminant;
-6. append the final assistant reply to explicit Context; and
+6. persist the final assistant reply in explicit Context; and
 7. yield the reply, binding the resume value as the next input without
    replacing committed Context.
 

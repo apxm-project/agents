@@ -72,12 +72,26 @@
           "origin": "parameter",
           "origin_id": "run"
         },
-        {
-          "value_id": "value.input",
-          "type_ref": "SpecialistInput",
-          "origin": "parameter",
-          "origin_id": "run"
-        },
+      {
+        "value_id": "value.input",
+        "type_ref": "SpecialistInput",
+        "origin": "parameter",
+        "origin_id": "run"
+      },
+      {
+        "value_id": "value.context.next",
+        "type_ref": "SpecialistContext",
+        "origin": "context_value",
+        "expression": {
+          "kind": "object",
+          "fields": [
+            {
+              "name": "input",
+              "value": { "kind": "ssa", "value_id": "value.input" }
+            }
+          ]
+        }
+      },
         {
           "value_id": "value.model.out",
           "type_ref": "ModelResponse",
@@ -216,9 +230,10 @@
       ],
       "context_flow": [
         {
-          "from_node": "node.model.1",
-          "to_node": "node.cap.1",
-          "context_type_ref": "SpecialistContext"
+        "from_node": "node.model.1",
+        "to_node": "node.cap.1",
+        "context_type_ref": "SpecialistContext",
+        "value_id": "value.context.next"
         }
       ],
       "hook_bindings": [

@@ -54,7 +54,6 @@ fn request(scope: &str) -> ExecutionRequest {
         "node.capability".to_string(),
         CapabilityInvocationAdmission {
             capability_ref: "cap.finish".into(),
-            arguments: json!({"status": "completed"}),
             authority: CapabilityInvocationAuthority::new(
                 "principal.test",
                 "agent.test",
@@ -68,12 +67,17 @@ fn request(scope: &str) -> ExecutionRequest {
         initial_values: air
             .semantic_operations
             .iter()
-            .filter_map(|operation| {
+            .flat_map(|operation| {
                 operation
                     .operands
                     .iter()
-                    .find(|operand| operand.slot == "request")
-                    .map(|operand| (operand.value_id.clone(), json!({"prompt": "test"})))
+                    .filter_map(|operand| match operand.slot.as_str() {
+                        "request" => Some((operand.value_id.clone(), json!({"prompt": "test"}))),
+                        "arguments" => {
+                            Some((operand.value_id.clone(), json!({"status": "completed"})))
+                        }
+                        _ => None,
+                    })
             })
             .collect(),
         air,
@@ -635,13 +639,17 @@ async fn nested_loop_park_restores_exact_stack_without_duplicate_work() {
     }))
     .expect("nested AIR");
     assert!(nested.air.verify().is_accepted());
-    nested.initial_values =
-        BTreeMap::from([("value.outer.request".into(), json!({"prompt": "nested"}))]);
+    nested.initial_values = BTreeMap::from([
+        ("value.outer.request".into(), json!({"prompt": "nested"})),
+        (
+            "value.capability.arguments".into(),
+            json!({"status": "completed"}),
+        ),
+    ]);
     nested.capability_invocations = BTreeMap::from([(
         "node.outer.after".to_string(),
         CapabilityInvocationAdmission {
             capability_ref: "cap.finish".into(),
-            arguments: json!({"status": "completed"}),
             authority: CapabilityInvocationAuthority::new(
                 "principal.test",
                 "agent.test",

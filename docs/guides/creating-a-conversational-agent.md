@@ -57,6 +57,7 @@ SupportModel = Model[ModelRequest, ModelResponse]("model.target.v1")
 class ConversationContext:
     messages: tuple[ConversationMessage, ...] = ()
     tool_calls: int = 0
+    last_reply: str = ""
 
 
 @Agent(
@@ -65,30 +66,17 @@ class ConversationContext:
     context=ConversationContext,
 )
 async def ConversationalExample(agent, incoming):
-    while True:
-        turn_messages = ({"role": "user", "content": incoming["message"]},)
-        working_messages = (
-            *agent.context.messages,
-            *turn_messages,
-        )
+    while incoming["message"] != "":
         response = await SupportModel(
-            {"messages": working_messages, "incoming": incoming}
+            {"messages": agent.context.messages, "incoming": incoming}
         )
 
         while response["kind"] == "tool_request":
             if response["tool_request"]["kind"] == "search_web":
                 tool_result = await SearchWeb(response["tool_request"]["arguments"])
-                turn_messages = (
-                    *turn_messages,
-                    {"role": "tool", "content": tool_result["content"]},
-                )
-                working_messages = (
-                    *agent.context.messages,
-                    *turn_messages,
-                )
                 response = await SupportModel(
                     {
-                        "messages": working_messages,
+                        "messages": agent.context.messages,
                         "incoming": incoming,
                         "tool_result": tool_result,
                     }
@@ -99,20 +87,17 @@ async def ConversationalExample(agent, incoming):
         if response["kind"] != "final":
             raise ValueError("undeclared model response")
 
-        final_reply = response["reply"]
         agent.context = ConversationContext(
-            messages=(
-                *working_messages,
-                {"role": "assistant", "content": final_reply["message"]},
-            ),
+            messages=agent.context.messages,
             tool_calls=agent.context.tool_calls,
+            last_reply=response["reply"]["message"],
         )
-        incoming = await agent.yield_(final_reply)
+        incoming = await agent.yield_(response["reply"])
 ```
 
 If the first response is final, the inner loop performs zero iterations and
-`SearchWeb` is not invoked. A Tool response is appended to `working_messages`
-and included, together with the current input, in the next Model request.
+`SearchWeb` is not invoked. A Tool response is bound directly into the next
+authored Model request together with the current input and persistent Context.
 
 ## 3. TypeScript
 
@@ -134,27 +119,17 @@ export const ConversationalExample = Agent<
   context: ConversationContext,
   use: { SearchWeb, SupportModel },
   async run(agent, incoming) {
-    while (true) {
-      let turnMessages = [{ role: "user", content: incoming.message }];
-      let workingMessages = [
-        ...agent.context.messages,
-        ...turnMessages,
-      ];
+    while (incoming.message !== "") {
       let response = await SupportModel({
-        messages: workingMessages,
+        messages: agent.context.messages,
         incoming,
       });
 
       while (response.kind === "tool_request") {
         if (response.tool_request.kind === "search_web") {
           const toolResult = await SearchWeb(response.tool_request.arguments);
-          turnMessages = [
-            ...turnMessages,
-            { role: "tool", content: toolResult.content },
-          ];
-          workingMessages = [...agent.context.messages, ...turnMessages];
           response = await SupportModel({
-            messages: workingMessages,
+            messages: agent.context.messages,
             incoming,
             tool_result: toolResult,
           });
@@ -167,23 +142,21 @@ export const ConversationalExample = Agent<
         throw new Error("undeclared model response");
       }
 
-      const finalReply = response.reply;
       agent.context = {
-        messages: [
-          ...workingMessages,
-          { role: "assistant", content: finalReply.message },
-        ],
-        toolCalls: agent.context.toolCalls,
+        messages: agent.context.messages,
+        tool_calls: agent.context.tool_calls,
+        last_reply: response.reply.message,
       };
-      incoming = await agent.yield_(finalReply);
+      incoming = await agent.yield_(response.reply);
     }
   },
 });
 ```
 
 Python and TypeScript goldens must capture equivalent typed loop intent, Tool
-dispatch, Model-request SSA dependencies, context flow, and yield/resume
-bindings. The re-entry request directly depends on the Tool-result SSA value;
+dispatch, lossless Model-request value expressions, context flow, and
+yield/resume bindings. The re-entry request directly projects and embeds the
+Tool-result SSA value;
 Hooks cannot supply or mask that authored data edge. Rust must then select the
 same structural `ais.loop` and closed effect/composition operations for both.
 The paired executable sources also bind deterministic before/after Hooks around
@@ -209,9 +182,9 @@ their bodies. Tool calls still require complete Auth-owned Capability Grants.
 
 At execution, every Model request carries the sealed Context-envelope reference
 and the digest of the exact persistent Context used for that call, plus a
-materialization of the exact authored request SSA and its dependencies. Both
+lossless materialization of the exact authored request expression. Both
 are part of request identity. Context does not substitute for request data: a
-Tool result reaches Model re-entry through its authored SSA dependency even
+Tool result reaches Model re-entry through its authored SSA expression even
 when before/after Hooks leave Context unchanged.
 
 ## 5. Why there is no `AgentLoop`

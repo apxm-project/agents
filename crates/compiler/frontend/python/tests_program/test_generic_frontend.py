@@ -229,6 +229,11 @@ def test_advanced_constructs_bind_without_executing_the_agent_body() -> None:
             "from_node": task_group["node_id"],
             "to_node": yield_control["node_id"],
             "context_type_ref": "ReviewContext",
+            "value_id": next(
+                value["value_id"]
+                for value in graph["values"]
+                if value["origin"] == "context_value"
+            ),
         }
     ]
     assert {block["region_id"] for block in graph["blocks"]} == {
@@ -325,6 +330,35 @@ def test_predicate_integer_rejects_values_outside_shared_safe_domain() -> None:
         assert "shared safe-integer domain" in str(error)
     else:
         raise AssertionError("Python accepted an integer TypeScript cannot represent exactly")
+
+
+def test_value_integer_accepts_the_negative_shared_safe_boundary() -> None:
+    NegativeValueModel = Model[object, object]("negative.value.model.v1")
+
+    @Agent(input="Input", output="Output")
+    async def NegativeValue(agent, request):
+        return await NegativeValueModel(-9_007_199_254_740_991)
+
+    value = next(value for value in NegativeValue.frontend_graph()["values"] if value["origin"] == "literal")
+    assert value["expression"] == {
+        "kind": "integer",
+        "value": -9_007_199_254_740_991,
+    }
+
+
+def test_effect_call_rejects_extra_authored_operands() -> None:
+    ExtraOperandModel = Model[object, object]("extra.operand.model.v1")
+
+    try:
+
+        @Agent(input="Input", output="Output")
+        async def ExtraOperands(agent, request):
+            return await ExtraOperandModel(request, request)
+
+    except ValueError as error:
+        assert "exactly one authored operand" in str(error)
+    else:
+        raise AssertionError("extra authored operands must fail closed")
 
 
 def _value(graph: dict, value_id: str) -> dict:

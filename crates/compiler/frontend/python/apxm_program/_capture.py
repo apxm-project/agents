@@ -94,7 +94,7 @@ class _Capture:
         self._values_by_name: dict[str, str] = {}
         self._instance_programs: dict[str, str] = {}
         self._last_node_by_region: dict[str, str] = {}
-        self._pending_context_by_region: dict[str, str] = {}
+        self._pending_context_by_region: dict[str, tuple[str, str]] = {}
         self._referenced_names: set[str] = set()
 
     def _next(self, prefix: str) -> str:
@@ -323,16 +323,18 @@ class _Capture:
             and target.attr == "context"
         ):
             value_id = self._next("context")
+            expression = self._expression_for_value(stmt.value)
             self.values.append(
                 BoundValue(
                     value_id=value_id,
                     type_ref=self.context_type_ref or "Context",
                     origin="context_value",
+                    expression=expression,
                 )
             )
             last_node = self._last_node_by_region.get(region_id)
             if last_node is not None:
-                self._pending_context_by_region[region_id] = last_node
+                self._pending_context_by_region[region_id] = (last_node, value_id)
             return
         # name = await <call>  binds the call result to a named value.
         if isinstance(stmt.value, ast.Await) and isinstance(target, ast.Name):
@@ -461,13 +463,15 @@ class _Capture:
 
     def _record_node(self, region_id: str, node_id: str) -> None:
         """Connect a pending Context replacement to its next static boundary."""
-        source = self._pending_context_by_region.pop(region_id, None)
-        if source is not None and source != node_id:
+        pending = self._pending_context_by_region.pop(region_id, None)
+        if pending is not None and pending[0] != node_id:
+            source, value_id = pending
             self.context_edges.append(
                 BoundContextEdge(
                     from_node=source,
                     to_node=node_id,
                     context_type_ref=self.context_type_ref or "Context",
+                    value_id=value_id,
                 )
             )
         self._last_node_by_region[region_id] = node_id
@@ -511,24 +515,112 @@ class _Capture:
         """Resolve one source expression to a prior value or a typed literal."""
         if isinstance(expression, ast.Name) and expression.id in self._values_by_name:
             return self._values_by_name[expression.id]
-        self._reject_unbound_calls(expression)
-        dependencies = tuple(
-            dict.fromkeys(
-                self._values_by_name[node.id]
-                for node in ast.walk(expression)
-                if isinstance(node, ast.Name) and node.id in self._values_by_name
-            )
-        )
+        assembled = self._expression_for_value(expression)
         value_id = self._next("value")
         self.values.append(
             BoundValue(
                 value_id=value_id,
                 type_ref="ArgumentValue",
                 origin="literal",
-                dependencies=dependencies,
+                expression=assembled,
             )
         )
         return value_id
+
+    def _expression_for_value(self, expression: ast.AST) -> dict[str, object]:
+        """Capture one pure authored value without executing or flattening it."""
+        self._reject_unbound_calls(expression)
+        if isinstance(expression, ast.Name) and expression.id in self._values_by_name:
+            return {"kind": "ssa", "value_id": self._values_by_name[expression.id]}
+        if isinstance(expression, ast.Constant):
+            if expression.value is None:
+                return {"kind": "null"}
+            if isinstance(expression.value, bool):
+                return {"kind": "boolean", "value": expression.value}
+            if isinstance(expression.value, int):
+                if abs(expression.value) > 9_007_199_254_740_991:
+                    raise CaptureError("integer exceeds the shared safe integer domain", expression)
+                return {"kind": "integer", "value": expression.value}
+            if isinstance(expression.value, str):
+                return {"kind": "string", "value": expression.value}
+            raise CaptureError("value expression admits only JSON scalar literals", expression)
+        if (
+            isinstance(expression, ast.UnaryOp)
+            and isinstance(expression.op, ast.USub)
+            and isinstance(expression.operand, ast.Constant)
+            and isinstance(expression.operand.value, int)
+            and not isinstance(expression.operand.value, bool)
+        ):
+            value = -expression.operand.value
+            if abs(value) > 9_007_199_254_740_991:
+                raise CaptureError("integer exceeds the shared safe integer domain", expression)
+            return {"kind": "integer", "value": value}
+        if isinstance(expression, (ast.Dict,)):
+            fields: list[dict[str, object]] = []
+            for key, value in zip(expression.keys, expression.values, strict=True):
+                if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
+                    raise CaptureError("object expression keys are static strings", expression)
+                fields.append({"name": key.value, "value": self._expression_for_value(value)})
+            return {"kind": "object", "fields": fields}
+        if isinstance(expression, (ast.List, ast.Tuple)):
+            if any(isinstance(item, ast.Starred) for item in expression.elts):
+                raise CaptureError("array expression does not admit spreads", expression)
+            return {
+                "kind": "array",
+                "items": [self._expression_for_value(item) for item in expression.elts],
+            }
+        if isinstance(expression, ast.Call) and isinstance(expression.func, ast.Name):
+            binding = self.bindings.get(expression.func.id)
+            if isinstance(binding, ContextSchema):
+                if expression.args:
+                    raise CaptureError("Context values use named fields", expression)
+                fields = []
+                for keyword in expression.keywords:
+                    if keyword.arg is None:
+                        raise CaptureError("Context values do not admit spreads", expression)
+                    fields.append(
+                        {"name": keyword.arg, "value": self._expression_for_value(keyword.value)}
+                    )
+                return {"kind": "object", "fields": fields}
+        projection = self._projection_parts(expression)
+        if projection is not None:
+            root, path = projection
+            if root == "context":
+                return {"kind": "context", "property_path": path}
+            return {
+                "kind": "projection",
+                "root": {"kind": "ssa", "value_id": root},
+                "property_path": path,
+            }
+        raise CaptureError("unsupported pure value expression", expression)
+
+    def _projection_parts(self, expression: ast.AST) -> Optional[tuple[str, list[str]]]:
+        path: list[str] = []
+        node = expression
+        while True:
+            if (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == self._facade_name
+                and node.attr == "context"
+            ):
+                return ("context", path)
+            if isinstance(node, ast.Attribute):
+                path.insert(0, node.attr)
+                node = node.value
+                continue
+            if (
+                isinstance(node, ast.Subscript)
+                and isinstance(node.slice, ast.Constant)
+                and isinstance(node.slice.value, str)
+            ):
+                path.insert(0, node.slice.value)
+                node = node.value
+                continue
+            break
+        if isinstance(node, ast.Name) and node.id in self._values_by_name and path:
+            return (self._values_by_name[node.id], path)
+        return None
 
     def _call_operands(
         self,
@@ -538,8 +630,16 @@ class _Capture:
         receiver_kind: Optional[str],
     ) -> list[BoundOperand]:
         operands: list[BoundOperand] = []
-        if not call.args and not call.keywords:
+        argument_count = len(call.args) + len(call.keywords)
+        if argument_count == 0:
             return operands
+        if argument_count != 1:
+            raise CaptureError(
+                "typed effect calls accept exactly one authored operand",
+                call,
+            )
+        if call.keywords and call.keywords[0].arg is None:
+            raise CaptureError("typed effect operands do not admit spreads", call)
         expression = call.args[0] if call.args else call.keywords[0].value
         value_id = self._value_for_expression(expression, node_id)
         operands.append(BoundOperand(value_id=value_id, slot=slot))
@@ -979,7 +1079,9 @@ class _Capture:
         if declaration.scope == "loop" and target in {"loop", self.entrypoint}:
             for control in self.controls:
                 if control.control_kind == "loop":
-                    return control.node_id
+                    if control.body_region_ids:
+                        return control.body_region_ids[0]
+                    raise CaptureError(f"Hook target '{target}' has no loop body region")
         binding_ref = self._declared.get(target)
         if binding_ref is not None:
             matches = [call.node_id for call in self.calls if call.binding_ref == binding_ref]

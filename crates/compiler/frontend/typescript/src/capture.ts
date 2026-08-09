@@ -67,6 +67,17 @@ type ControlRecord = {
   result_value?: string;
 };
 
+type ValueExpression =
+  | { kind: "ssa"; value_id: string }
+  | { kind: "context"; property_path: string[] }
+  | { kind: "projection"; root: ValueExpression; property_path: string[] }
+  | { kind: "object"; fields: Array<{ name: string; value: ValueExpression }> }
+  | { kind: "array"; items: ValueExpression[] }
+  | { kind: "string"; value: string }
+  | { kind: "integer"; value: number }
+  | { kind: "boolean"; value: boolean }
+  | { kind: "null" };
+
 /** Source text registered by the host compiler bridge before Agent capture. */
 export type StaticSource = {
   readonly fileName: string;
@@ -110,7 +121,7 @@ class Capture {
   private readonly valuesBySymbol = new Map<ts.Symbol, string>();
   private readonly bindingSymbols = new Map<ts.Symbol, string>();
   private readonly lastNodeByRegion = new Map<string, string>();
-  private readonly pendingContextByRegion = new Map<string, string>();
+  private readonly pendingContextByRegion = new Map<string, { source: string; valueId: string }>();
   private readonly capabilityRequirements = new Map<string, boolean>();
   private readonly modelRequirements: string[] = [];
   private readonly nodeSpans: Json[] = [];
@@ -447,14 +458,16 @@ class Capture {
         expr.left.name.text === "context"
       ) {
         const contextNode = this.next("context");
+        const expression = this.valueExpressionFor(expr.right);
         this.values.push({
           value_id: contextNode,
           type_ref: this.input.contextTypeRef ?? "Context",
           origin: "context_value",
+          expression,
         });
         const lastNode = this.lastNodeByRegion.get(regionId);
         if (lastNode !== undefined) {
-          this.pendingContextByRegion.set(regionId, lastNode);
+          this.pendingContextByRegion.set(regionId, { source: lastNode, valueId: contextNode });
         }
       } else if (ts.isAwaitExpression(expr.right)) {
         const valueId = this.visitAwait(expr.right, regionId, source);
@@ -697,29 +710,133 @@ class Capture {
         }
       }
     }
-    this.rejectUnboundCalls(expression);
-    const dependencies: string[] = [];
-    const seen = new Set<string>();
-    const collect = (node: ts.Node): void => {
-      if (ts.isIdentifier(node)) {
-        const symbol = this.valueSymbolAt(node);
-        const valueId = symbol === undefined ? undefined : this.valuesBySymbol.get(symbol);
-        if (valueId !== undefined && !seen.has(valueId)) {
-          seen.add(valueId);
-          dependencies.push(valueId);
-        }
-      }
-      ts.forEachChild(node, collect);
-    };
-    collect(expression);
+    const assembled = this.valueExpressionFor(expression);
     const valueId = this.next("value");
     this.values.push({
       value_id: valueId,
       type_ref: "ArgumentValue",
       origin: "literal",
-      ...(dependencies.length === 0 ? {} : { dependencies }),
+      expression: assembled,
     });
     return valueId;
+  }
+
+  private valueExpressionFor(expression: ts.Expression): ValueExpression {
+    this.rejectUnboundCalls(expression);
+    if (ts.isIdentifier(expression)) {
+      const symbol = this.valueSymbolAt(expression);
+      const valueId = symbol === undefined ? undefined : this.valuesBySymbol.get(symbol);
+      if (valueId !== undefined) {
+        return { kind: "ssa", value_id: valueId };
+      }
+    }
+    if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) {
+      return { kind: "string", value: expression.text };
+    }
+    if (ts.isNumericLiteral(expression)) {
+      const value = Number(expression.text);
+      if (!Number.isSafeInteger(value)) {
+        throw new CaptureError("integer exceeds the shared safe integer domain");
+      }
+      return { kind: "integer", value };
+    }
+    if (
+      ts.isPrefixUnaryExpression(expression) &&
+      expression.operator === ts.SyntaxKind.MinusToken &&
+      ts.isNumericLiteral(expression.operand)
+    ) {
+      const value = -Number(expression.operand.text);
+      if (!Number.isSafeInteger(value)) {
+        throw new CaptureError("integer exceeds the shared safe integer domain");
+      }
+      return { kind: "integer", value };
+    }
+    if (expression.kind === ts.SyntaxKind.TrueKeyword) {
+      return { kind: "boolean", value: true };
+    }
+    if (expression.kind === ts.SyntaxKind.FalseKeyword) {
+      return { kind: "boolean", value: false };
+    }
+    if (expression.kind === ts.SyntaxKind.NullKeyword) {
+      return { kind: "null" };
+    }
+    if (ts.isObjectLiteralExpression(expression)) {
+      const fields = expression.properties.map((property) => {
+        if (ts.isPropertyAssignment(property)) {
+          const name = this.staticPropertyName(property.name);
+          return { name, value: this.valueExpressionFor(property.initializer) };
+        }
+        if (ts.isShorthandPropertyAssignment(property)) {
+          return { name: property.name.text, value: this.valueExpressionFor(property.name) };
+        }
+        throw new CaptureError("object expressions admit only static fields");
+      });
+      return { kind: "object", fields };
+    }
+    if (ts.isArrayLiteralExpression(expression)) {
+      if (expression.elements.some(ts.isSpreadElement)) {
+        throw new CaptureError("array expressions do not admit spreads");
+      }
+      return {
+        kind: "array",
+        items: expression.elements.map((item) => this.valueExpressionFor(item)),
+      };
+    }
+    const projection = this.projectionParts(expression);
+    if (projection !== undefined) {
+      if (projection.root === "context") {
+        return { kind: "context", property_path: projection.path };
+      }
+      return {
+        kind: "projection",
+        root: { kind: "ssa", value_id: projection.root },
+        property_path: projection.path,
+      };
+    }
+    throw new CaptureError("unsupported pure value expression");
+  }
+
+  private staticPropertyName(name: ts.PropertyName): string {
+    if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) {
+      return name.text;
+    }
+    throw new CaptureError("object expression keys are static strings");
+  }
+
+  private projectionParts(
+    expression: ts.Expression,
+  ): { root: string; path: string[] } | undefined {
+    const path: string[] = [];
+    let node: ts.Expression = expression;
+    while (true) {
+      if (
+        ts.isPropertyAccessExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        this.isFacadeIdentifier(node.expression) &&
+        node.name.text === "context"
+      ) {
+        return { root: "context", path };
+      }
+      if (ts.isPropertyAccessExpression(node)) {
+        path.unshift(node.name.text);
+        node = node.expression;
+        continue;
+      }
+      if (ts.isElementAccessExpression(node) && ts.isStringLiteral(node.argumentExpression)) {
+        path.unshift(node.argumentExpression.text);
+        node = node.expression;
+        continue;
+      }
+      break;
+    }
+    if (ts.isIdentifier(node) && path.length > 0) {
+      const symbol = this.valueSymbolAt(node);
+      const valueId = symbol === undefined ? undefined : this.valuesBySymbol.get(symbol);
+      if (valueId !== undefined) {
+        return { root: valueId, path };
+      }
+    }
+    return undefined;
   }
 
   private callOperands(
@@ -730,14 +847,31 @@ class Capture {
     if (call.arguments.length === 0) {
       return [];
     }
+    if (call.arguments.length !== 1) {
+      throw new CaptureError("typed effect calls accept exactly one authored operand");
+    }
     for (const argument of call.arguments) {
+      if (ts.isSpreadElement(argument)) {
+        throw new CaptureError("typed effect operands do not admit spreads");
+      }
       // Every non-identifier argument still fails closed on unbound or
       // effectful calls before it is recorded as a literal value.
       if (!ts.isIdentifier(argument)) {
         this.rejectUnboundCalls(argument);
       }
     }
-    const valueId = this.valueForExpression(call.arguments[0]);
+    let operandExpression = call.arguments[0];
+    if (slot === "initial_context" && ts.isObjectLiteralExpression(operandExpression)) {
+      const contextProperty = operandExpression.properties.find(
+        (property): property is ts.PropertyAssignment =>
+          ts.isPropertyAssignment(property) &&
+          this.staticPropertyName(property.name) === "context",
+      );
+      if (contextProperty !== undefined) {
+        operandExpression = contextProperty.initializer;
+      }
+    }
+    const valueId = this.valueForExpression(operandExpression);
     this.dataEdges.push({
       from_value: valueId,
       to_consumer: nodeId,
@@ -891,12 +1025,13 @@ class Capture {
   }
 
   private recordNode(regionId: string, nodeId: string): void {
-    const contextSource = this.pendingContextByRegion.get(regionId);
-    if (contextSource !== undefined && contextSource !== nodeId) {
+    const pending = this.pendingContextByRegion.get(regionId);
+    if (pending !== undefined && pending.source !== nodeId) {
       this.contextFlow.push({
-        from_node: contextSource,
+        from_node: pending.source,
         to_node: nodeId,
         context_type_ref: this.input.contextTypeRef ?? "Context",
+        value_id: pending.valueId,
       });
       this.pendingContextByRegion.delete(regionId);
     }
@@ -1275,11 +1410,14 @@ class Capture {
       return region;
     }
     const bindingRef = this.bindingRefOfBinding(this.bindingNameFor(target));
-    const call = this.calls.find((candidate) => candidate.binding_ref === bindingRef);
-    if (call === undefined) {
+    const calls = this.calls.filter((candidate) => candidate.binding_ref === bindingRef);
+    if (calls.length === 0) {
       throw new CaptureError(`Hook target '${target.text}' has no static invocation`);
     }
-    return call.node_id;
+    if (calls.length !== 1) {
+      throw new CaptureError(`Hook target '${target.text}' is ambiguous across invocations`);
+    }
+    return calls[0].node_id;
   }
 
   private visitBodyStatement(
