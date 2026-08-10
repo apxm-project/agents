@@ -34,6 +34,22 @@ Build the canonical executable and record its exact receipt with:
 dekk agents reference-host-receipt
 ```
 
+The Agents-owned reproducible container recipe builds and tests that same
+executable for Linux/arm64 from digest-pinned build and runtime images:
+
+```bash
+docker build --platform=linux/arm64 \
+  --file deploy/reference-host/Dockerfile \
+  --tag apxm-reference-host:local .
+docker run --rm --platform=linux/arm64 apxm-reference-host:local --help
+```
+
+`deploy/reference-host/image-manifest.v1.json` binds the Dockerfile,
+`.dockerignore`, exact Cargo lock, reviewed source/carrier revisions, reference
+host release manifest, lifecycle harness, and lifecycle vector. Validate it
+with `dekk agents check-reference-host-image`. The image contains only the
+owner executable, runs as uid/gid 65532, and carries no source checkout.
+
 Run the executable only with an explicit startup-input document:
 
 ```bash
