@@ -117,11 +117,13 @@ def build_manifest() -> dict[str, Any]:
     )
     rendered = dockerfile.decode("utf-8")
     for marker in (
-        "--platform=$BUILDPLATFORM",
+        "# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e",
+        "FROM --platform=linux/arm64",
         'test "$TARGETPLATFORM" = "linux/arm64"',
         "cargo test --locked -p apxm-cli --test reference_host_jsonl --release",
         "cargo build --locked -p apxm-cli --bin apxm-reference-host --release",
-        "7f454c460201010000000000000000000200b700",
+        "SOURCE_DATE_EPOCH=1786322092",
+        "7f454c460201010000000000000000000300b700",
         f"org.opencontainers.image.revision=\"$APXM_SOURCE_REVISION\"",
         f'io.apxm.reviewed-carrier-revision="$APXM_REVIEWED_CARRIER_REVISION"',
     ):

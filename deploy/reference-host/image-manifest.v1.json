@@ -4,7 +4,7 @@
     "cargo_lock_digest": "sha256:f8da9139628b04b5de3d8f89aac1602c2ff6e61a874d6545fa4c25f4d7b49c5f",
     "cargo_lock_path": "Cargo.lock",
     "command": "docker build --platform=linux/arm64 --file deploy/reference-host/Dockerfile --tag apxm-reference-host:<carrier> .",
-    "dockerfile_digest": "sha256:0ae1037a6da99f095c27ce23e974c36c4b6fcd38563be4b18cd7e5d9faf06d58",
+    "dockerfile_digest": "sha256:46c8aca73b7015e99ac381750c889b6fe846adec4aabd6774442684c1acfc2f4",
     "dockerfile_path": "deploy/reference-host/Dockerfile",
     "dockerignore_digest": "sha256:29ab04d50d632f71062fa85af5819064816395a467814616b79e8b1426d5f116",
     "dockerignore_path": ".dockerignore",
@@ -18,7 +18,7 @@
     "vector_digest": "sha256:82ee99ff605a232d848bc33047f06dd22c668c99e7f9e1a348b160b256bc2dcd",
     "vector_path": "contracts/reference-host/vectors/apxm.reference-host.lifecycle-parity.v1.json"
   },
-  "manifest_digest": "sha256:0b546e8fe4580c674d713e583145b7f5ceb4fda54fcef2f669629f73521d8d5e",
+  "manifest_digest": "sha256:e7b27077936f933d55717e48ea58440ff13c6814de5ff8be180b32628465e5ad",
   "platform": {
     "architecture": "arm64",
     "elf_machine": "AArch64",
