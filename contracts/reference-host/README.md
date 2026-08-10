@@ -38,10 +38,10 @@ The Agents-owned reproducible container recipe builds and tests that same
 executable for Linux/arm64 from digest-pinned build and runtime images:
 
 ```bash
-docker build --platform=linux/arm64 \
+docker build --platform=linux/arm64 --provenance=false \
   --file deploy/reference-host/Dockerfile \
   --tag apxm-reference-host:local .
-docker run --rm --platform=linux/arm64 apxm-reference-host:local --help
+docker image inspect apxm-reference-host:local --format '{{.Id}} {{.Os}}/{{.Architecture}}'
 ```
 
 `deploy/reference-host/image-manifest.v1.json` binds the Dockerfile,
