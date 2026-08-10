@@ -5,6 +5,13 @@
       "digest": "sha256:b2281934db5c08921d0d8ccd7482ba9d48eba648e341198559c58490863fc180",
       "kind": "source-archive",
       "provenance": "git archive of the pinned owner revision"
+    },
+    {
+      "build_decision": "built",
+      "digest": "sha256:ef5a523b3ee96667008acb9cbf1d1493acda9a0d0b3759bd1b5c0e2ab5df009d",
+      "kind": "oci-image",
+      "platform": "linux/arm64",
+      "provenance": "pinned Agents-owned Docker recipe and extracted executable digest"
     }
   ],
   "contracts": {
@@ -222,7 +229,56 @@
   "provenance": {
     "serving_time_dependency_discovery": false,
     "source_mounts_in_reference_profile": false,
-    "source_of_truth": "committed owner descriptor and git object bytes"
+    "source_of_truth": "committed owner descriptor, image recipe, and git object bytes"
+  },
+  "reference_host_image": {
+    "artifact_revision": "887692df1ba13e84e214b6d8128a8a7c2c80e836",
+    "build_recipe": {
+      "build_image": "rust:1.89-bookworm@sha256:948f9b08a66e7fe01b03a98ef1c7568292e07ec2e4fe90d88c07bb14563c84ff",
+      "cargo_lock_digest": "sha256:f8da9139628b04b5de3d8f89aac1602c2ff6e61a874d6545fa4c25f4d7b49c5f",
+      "cargo_lock_path": "Cargo.lock",
+      "command": "docker build --platform=linux/arm64 --provenance=false --file deploy/reference-host/Dockerfile --tag apxm-reference-host:<carrier> .",
+      "dockerfile_digest": "sha256:46c8aca73b7015e99ac381750c889b6fe846adec4aabd6774442684c1acfc2f4",
+      "dockerfile_path": "deploy/reference-host/Dockerfile",
+      "dockerignore_digest": "sha256:29ab04d50d632f71062fa85af5819064816395a467814616b79e8b1426d5f116",
+      "dockerignore_path": ".dockerignore",
+      "runtime_image": "debian:bookworm-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241"
+    },
+    "built_artifact": {
+      "binary_exact_bytes_digest": "sha256:c883bfaf556a9ca6158a36a33fba474f16f2f0f8a3a5e1596b8e334ab7984524",
+      "elf_machine": "AArch64",
+      "elf_type": "ELF64 PIE",
+      "image_id": "sha256:ef5a523b3ee96667008acb9cbf1d1493acda9a0d0b3759bd1b5c0e2ab5df009d"
+    },
+    "lifecycle_gate": {
+      "command": "cargo test --locked -p apxm-cli --test reference_host_jsonl --release",
+      "harness_digest": "sha256:95b62bf5ee1293cc04248bcc0d7de085160ace9cecea0e440600ebd20a47c4de",
+      "harness_path": "crates/tools/cli/tests/reference_host_jsonl.rs",
+      "vector_digest": "sha256:82ee99ff605a232d848bc33047f06dd22c668c99e7f9e1a348b160b256bc2dcd",
+      "vector_path": "contracts/reference-host/vectors/apxm.reference-host.lifecycle-parity.v1.json"
+    },
+    "manifest": {
+      "exact_bytes_digest": "sha256:0a94916df0ddd5e460330e82e5ddf651b5b5e1b5ba4054f41313beaebffe9d12",
+      "path": "deploy/reference-host/image-manifest.v1.json",
+      "semantic_digest": "sha256:c2e61a12b27e0b861ee5ca060ad39c4a3e69d8df079ea925d463a08369a16761"
+    },
+    "platform": {
+      "architecture": "arm64",
+      "elf_machine": "AArch64",
+      "os": "linux",
+      "rust_target": "aarch64-unknown-linux-gnu"
+    },
+    "runtime": {
+      "entrypoint": [
+        "/usr/local/bin/apxm-reference-host"
+      ],
+      "source_mount": "absent",
+      "user": "65532:65532"
+    },
+    "sidecar": {
+      "exact_bytes_digest": "sha256:52442217b7c244697b0d38efe927778f58f6580ee936a14adee5851bc2dc4a26",
+      "path": "deploy/reference-host/image-manifest.v1.sha256"
+    }
   },
   "reference_host_release": {
     "constraints": {
@@ -359,8 +415,8 @@
       "path": "contracts/reference-host/manifests/apxm.reference-host-release-manifest.v1.json"
     }
   },
-  "release_id": "apxm-agents-140ce5b16b4b",
-  "release_kind": "source-provenance",
+  "release_id": "apxm-agents-140ce5b16b4b-arm64-887692df1ba1",
+  "release_kind": "source-and-linux-arm64-image-provenance",
   "schema_version": "apxm.owner-release-manifest.v1",
   "semantic_owner": "agents",
   "source": {
