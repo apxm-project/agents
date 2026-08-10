@@ -130,6 +130,7 @@ def build_manifest() -> dict[str, Any]:
         "cargo test --locked -p apxm-cli --test reference_host_jsonl --release",
         "cargo build --locked -p apxm-cli --bin apxm-reference-host --release",
         "SOURCE_DATE_EPOCH=1786322092",
+        'touch --date="@$SOURCE_DATE_EPOCH" target/release/apxm-reference-host',
         "7f454c460201010000000000000000000300b700",
         f"org.opencontainers.image.revision=\"$APXM_SOURCE_REVISION\"",
         f'io.apxm.reviewed-carrier-revision="$APXM_REVIEWED_CARRIER_REVISION"',
@@ -156,6 +157,7 @@ def build_manifest() -> dict[str, Any]:
             "runtime_image": RUNTIME_IMAGE,
             "command": (
                 "docker build --platform=linux/arm64 --provenance=false "
+                "--build-arg SOURCE_DATE_EPOCH=1786322092 "
                 "--file deploy/reference-host/Dockerfile "
                 "--tag apxm-reference-host:<carrier> ."
             ),

@@ -28,7 +28,6 @@ RELEASE_MANIFEST_PATH = (
 OWNER_DESCRIPTOR_PATH = ROOT / "contracts/descriptors/apxm.agents-owner-descriptor.v1.json"
 SOURCE_REVISION = "140ce5b16b4bc4a078800b52fffbfc8004169ee1"
 REVIEWED_CARRIER_REVISION = "8f767541413d0905d638b288a797c5825ceb1c76"
-RECIPE_REVISION = "887692df1ba13e84e214b6d8128a8a7c2c80e836"
 PORT_BINDINGS_DIGEST = "sha256:9cfeb1dee6cfb05086c170fdf9e8e8092c10f2d9410c2e48fd2377351b1a3df4"
 RESOURCE_CEILING_DIGEST = "sha256:32fe0355dd58906703ee8731a407b77831954e255a40cc9df3f6e704f8579485"
 GATE_FILES = (
@@ -37,6 +36,9 @@ GATE_FILES = (
     "tools/scripts/check_reference_host_image.py",
     "tools/scripts/reference_host_lifecycle_receipt.py",
     "tools/tests/test_reference_host_image_gate.py",
+    "deploy/reference-host/Dockerfile",
+    "deploy/reference-host/image-manifest.v1.json",
+    "deploy/reference-host/image-manifest.v1.sha256",
 )
 
 
@@ -130,7 +132,7 @@ def exact_gate_files(gate_revision: str) -> list[dict[str, str]]:
     return result
 
 
-def materialize_build_context(destination: Path) -> None:
+def materialize_build_context(destination: Path, recipe_revision: str) -> None:
     archive_path = destination / "source.tar"
     archive_path.write_bytes(git("archive", "--format=tar", SOURCE_REVISION))
     context = destination / "context"
@@ -140,7 +142,7 @@ def materialize_build_context(destination: Path) -> None:
     for path in (".dockerignore", "deploy/reference-host/Dockerfile"):
         target = context / path
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(git_file(RECIPE_REVISION, path))
+        target.write_bytes(git_file(recipe_revision, path))
 
 
 def build_image(context: Path, tag: str) -> str:
@@ -151,6 +153,8 @@ def build_image(context: Path, tag: str) -> str:
             "--no-cache",
             "--platform=linux/arm64",
             "--provenance=false",
+            "--build-arg",
+            "SOURCE_DATE_EPOCH=1786322092",
             "--file",
             str(context / "deploy/reference-host/Dockerfile"),
             "--tag",
@@ -394,7 +398,7 @@ def build_receipt(gate_revision: str) -> dict[str, Any]:
     gate_files = exact_gate_files(gate_revision)
     with tempfile.TemporaryDirectory(prefix="image-gate-", dir=ROOT / ".apxm") as temp_name:
         temporary_root = Path(temp_name)
-        materialize_build_context(temporary_root)
+        materialize_build_context(temporary_root, gate_revision)
         context = temporary_root / "context"
         tag_one = f"apxm-reference-host:gate-{gate_revision[:12]}-one"
         tag_two = f"apxm-reference-host:gate-{gate_revision[:12]}-two"
@@ -413,7 +417,7 @@ def build_receipt(gate_revision: str) -> dict[str, Any]:
         "status": "complete",
         "source_revision": SOURCE_REVISION,
         "reviewed_carrier_revision": REVIEWED_CARRIER_REVISION,
-        "recipe_revision": RECIPE_REVISION,
+        "recipe_revision": gate_revision,
         "gate_revision": gate_revision,
         "gate_files": gate_files,
         "image_manifest": {
@@ -441,9 +445,9 @@ def validate_receipt_payload(receipt: dict[str, Any]) -> None:
     require(receipt.get("status") == "complete", "receipt is not complete")
     require(receipt.get("source_revision") == SOURCE_REVISION, "receipt source revision drifted")
     require(receipt.get("reviewed_carrier_revision") == REVIEWED_CARRIER_REVISION, "receipt reviewed carrier drifted")
-    require(receipt.get("recipe_revision") == RECIPE_REVISION, "receipt recipe revision drifted")
     gate_revision = receipt.get("gate_revision")
     require(isinstance(gate_revision, str) and len(gate_revision) == 40, "receipt gate revision is invalid")
+    require(receipt.get("recipe_revision") == gate_revision, "receipt recipe revision drifted")
     require(receipt.get("gate_files") == exact_gate_files(gate_revision), "receipt gate files drifted")
     image_ids = receipt.get("build", {}).get("image_ids")
     require(isinstance(image_ids, list) and len(image_ids) == 2, "receipt lacks two build image IDs")

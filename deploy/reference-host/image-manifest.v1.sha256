@@ -1,2 +1,2 @@
-sha256:0a94916df0ddd5e460330e82e5ddf651b5b5e1b5ba4054f41313beaebffe9d12  deploy/reference-host/image-manifest.v1.json
+sha256:ff6ec382026232d77170ada45643e31851f34097d2506642e019185caa04835d  deploy/reference-host/image-manifest.v1.json
 digest_scope: exact repository bytes

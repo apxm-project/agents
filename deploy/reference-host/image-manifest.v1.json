@@ -3,8 +3,8 @@
     "build_image": "rust:1.89-bookworm@sha256:948f9b08a66e7fe01b03a98ef1c7568292e07ec2e4fe90d88c07bb14563c84ff",
     "cargo_lock_digest": "sha256:f8da9139628b04b5de3d8f89aac1602c2ff6e61a874d6545fa4c25f4d7b49c5f",
     "cargo_lock_path": "Cargo.lock",
-    "command": "docker build --platform=linux/arm64 --provenance=false --file deploy/reference-host/Dockerfile --tag apxm-reference-host:<carrier> .",
-    "dockerfile_digest": "sha256:46c8aca73b7015e99ac381750c889b6fe846adec4aabd6774442684c1acfc2f4",
+    "command": "docker build --platform=linux/arm64 --provenance=false --build-arg SOURCE_DATE_EPOCH=1786322092 --file deploy/reference-host/Dockerfile --tag apxm-reference-host:<carrier> .",
+    "dockerfile_digest": "sha256:2bec1f4aea08725e6f386e72234bcc372204443612677e182bacdc16aa419fdb",
     "dockerfile_path": "deploy/reference-host/Dockerfile",
     "dockerignore_digest": "sha256:29ab04d50d632f71062fa85af5819064816395a467814616b79e8b1426d5f116",
     "dockerignore_path": ".dockerignore",
@@ -18,7 +18,7 @@
     "vector_digest": "sha256:82ee99ff605a232d848bc33047f06dd22c668c99e7f9e1a348b160b256bc2dcd",
     "vector_path": "contracts/reference-host/vectors/apxm.reference-host.lifecycle-parity.v1.json"
   },
-  "manifest_digest": "sha256:c2e61a12b27e0b861ee5ca060ad39c4a3e69d8df079ea925d463a08369a16761",
+  "manifest_digest": "sha256:2f6b2ec4a54991428b24e7911f7b3845d4eaa7bb2c8b9b4688c37909fdb3ac64",
   "platform": {
     "architecture": "arm64",
     "elf_machine": "AArch64",

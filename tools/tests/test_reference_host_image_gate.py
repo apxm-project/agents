@@ -45,7 +45,7 @@ class ReferenceHostImageGateTests(unittest.TestCase):
             "status": "complete",
             "source_revision": self.gate.SOURCE_REVISION,
             "reviewed_carrier_revision": self.gate.REVIEWED_CARRIER_REVISION,
-            "recipe_revision": self.gate.RECIPE_REVISION,
+            "recipe_revision": "4" * 40,
             "gate_revision": "4" * 40,
             "gate_files": [{"path": "gate", "digest": "sha256:" + "2" * 64}],
             "image_manifest": {
