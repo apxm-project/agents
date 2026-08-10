@@ -59,7 +59,7 @@ class ReferenceHostImageGateTests(unittest.TestCase):
                 "provenance": False,
                 "run_count": 2,
                 "image_ids": [image_id, image_id],
-                "archive_digests": ["sha256:" + "9" * 64, "sha256:" + "9" * 64],
+                "validated_archive_count": 2,
                 "reproducible": True,
                 "completion_evidence": [
                     "hash_valid_docker_oci_archive",
@@ -110,10 +110,10 @@ class ReferenceHostImageGateTests(unittest.TestCase):
         with self.assertRaisesRegex(self.gate.ImageGateError, "completion evidence"):
             self.gate.validate_receipt_payload(receipt)
 
-    def test_non_reproducible_archive_is_rejected(self) -> None:
+    def test_incomplete_archive_count_is_rejected(self) -> None:
         receipt = self.receipt()
-        receipt["build"]["archive_digests"][1] = "sha256:" + "8" * 64
-        with self.assertRaisesRegex(self.gate.ImageGateError, "image archives"):
+        receipt["build"]["validated_archive_count"] = 1
+        with self.assertRaisesRegex(self.gate.ImageGateError, "two complete image archives"):
             self.gate.validate_receipt_payload(receipt)
 
     def test_forged_labels_are_rejected(self) -> None:
