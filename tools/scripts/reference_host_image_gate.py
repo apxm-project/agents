@@ -161,28 +161,41 @@ def stop_build_client(process: subprocess.Popen[bytes]) -> None:
         process.wait(timeout=10)
 
 
-def build_image(context: Path, tag: str, iid_path: Path, log_path: Path) -> str:
-    """Build until BuildKit publishes an IID and Docker can inspect that exact image.
+def validate_image_archive(archive_path: Path) -> str:
+    """Validate every OCI blob and return the archive's exact byte digest."""
+    with tarfile.open(archive_path, "r:") as archive:
+        members = {member.name: member for member in archive.getmembers() if member.isfile()}
+        require("index.json" in members and "oci-layout" in members, "image archive lacks OCI metadata")
+        blobs = [name for name in members if name.startswith("blobs/sha256/")]
+        require(blobs, "image archive lacks OCI blobs")
+        for name in blobs:
+            expected = name.rsplit("/", 1)[-1]
+            extracted = archive.extractfile(members[name])
+            require(extracted is not None, f"cannot read image archive blob: {name}")
+            require(hashlib.sha256(extracted.read()).hexdigest() == expected, f"image archive blob drifted: {name}")
+    return digest_bytes(archive_path.read_bytes())
+
+
+def build_image(context: Path, tag: str, archive_path: Path, log_path: Path) -> dict[str, str]:
+    """Build a complete validated archive, load it, and inspect the exact image.
 
     Some Docker/Colima client combinations retain the Buildx session after the
-    exporter has loaded the image. An exit code alone therefore is not the
-    completion oracle. The owner gate requires both BuildKit's machine IID file
-    and a matching Engine image inspection before it may stop that disposable
-    client session and admit the build.
+    exporter has completed. An exit code alone therefore is not the completion
+    oracle. The owner gate requires a stable, hash-valid Docker/OCI archive,
+    then loads and inspects that exact archive before admitting the build.
     """
     command = [
         "docker",
         "buildx",
         "build",
-        "--load",
         "--no-cache",
         "--platform=linux/arm64",
         "--provenance=false",
         "--build-arg",
         "SOURCE_DATE_EPOCH=1786322092",
-        "--iidfile",
-        str(iid_path),
         "--progress=plain",
+        "--output",
+        f"type=docker,dest={archive_path}",
         "--file",
         str(context / "deploy/reference-host/Dockerfile"),
         "--tag",
@@ -190,6 +203,9 @@ def build_image(context: Path, tag: str, iid_path: Path, log_path: Path) -> str:
         str(context),
     ]
     deadline = time.monotonic() + 600
+    last_size = -1
+    stable_since = time.monotonic()
+    archive_digest: str | None = None
     with log_path.open("wb") as build_log:
         process = subprocess.Popen(
             command,
@@ -201,30 +217,43 @@ def build_image(context: Path, tag: str, iid_path: Path, log_path: Path) -> str:
         try:
             while time.monotonic() < deadline:
                 return_code = process.poll()
-                if iid_path.is_file():
-                    image_id = iid_path.read_text(encoding="utf-8").strip()
-                    require(EXACT_DIGEST.fullmatch(image_id) is not None, "BuildKit IID is not exact")
-                    inspected = docker_json("image", "inspect", tag)
-                    require(
-                        isinstance(inspected, list) and len(inspected) == 1,
-                        "image inspect must return one image",
-                    )
-                    require(
-                        inspected[0].get("Id") == image_id,
-                        "BuildKit IID differs from the loaded Engine image",
-                    )
-                    stop_build_client(process)
-                    return image_id
+                size = archive_path.stat().st_size if archive_path.is_file() else -1
+                if size != last_size:
+                    last_size = size
+                    stable_since = time.monotonic()
+                elif size > 0 and (
+                    time.monotonic() - stable_since >= 1 or return_code == 0
+                ):
+                    try:
+                        archive_digest = validate_image_archive(archive_path)
+                    except (ImageGateError, OSError, tarfile.TarError):
+                        archive_digest = None
+                    if archive_digest is not None:
+                        stop_build_client(process)
+                        break
                 if return_code is not None:
                     break
                 time.sleep(0.25)
         finally:
             if process.poll() is None:
                 stop_build_client(process)
+    if archive_digest is not None:
+        run(["docker", "load", "--input", str(archive_path)])
+        inspected = docker_json("image", "inspect", tag)
+        require(
+            isinstance(inspected, list) and len(inspected) == 1,
+            "loaded archive image inspect must return one image",
+        )
+        image_id = inspected[0].get("Id")
+        require(
+            isinstance(image_id, str) and EXACT_DIGEST.fullmatch(image_id) is not None,
+            "loaded archive image ID is not exact",
+        )
+        return {"image_id": image_id, "archive_digest": archive_digest}
     detail = log_path.read_text(encoding="utf-8", errors="replace").strip()
     if time.monotonic() >= deadline:
-        raise ImageGateError(f"image build timed out before IID publication: {detail}")
-    raise ImageGateError(f"image build exited before IID publication: {detail}")
+        raise ImageGateError(f"image build timed out before archive completion: {detail}")
+    raise ImageGateError(f"image build exited before archive completion: {detail}")
 
 
 def expected_labels() -> dict[str, str]:
@@ -460,19 +489,25 @@ def build_receipt(gate_revision: str) -> dict[str, Any]:
         context = temporary_root / "context"
         tag_one = f"apxm-reference-host:gate-{gate_revision[:12]}-one"
         tag_two = f"apxm-reference-host:gate-{gate_revision[:12]}-two"
-        first_id = build_image(
+        first = build_image(
             context,
             tag_one,
-            temporary_root / "build-one.iid",
+            temporary_root / "build-one.tar",
             temporary_root / "build-one.log",
         )
-        second_id = build_image(
+        second = build_image(
             context,
             tag_two,
-            temporary_root / "build-two.iid",
+            temporary_root / "build-two.tar",
             temporary_root / "build-two.log",
         )
+        first_id = first["image_id"]
+        second_id = second["image_id"]
         require(first_id == second_id, "two no-cache builds produced different OCI image IDs")
+        require(
+            first["archive_digest"] == second["archive_digest"],
+            "two no-cache builds produced different image archives",
+        )
         inspection = inspect_image(tag_two)
         require(inspection["image_id"] == first_id, "inspected image differs from reproducible build")
         binary = extract_binary(tag_two, temporary_root / "apxm-reference-host")
@@ -499,8 +534,13 @@ def build_receipt(gate_revision: str) -> dict[str, Any]:
             "provenance": False,
             "run_count": 2,
             "image_ids": [first_id, second_id],
+            "archive_digests": [first["archive_digest"], second["archive_digest"]],
             "reproducible": True,
-            "completion_evidence": ["buildkit_iid_file", "loaded_engine_image_inspection"],
+            "completion_evidence": [
+                "hash_valid_docker_oci_archive",
+                "docker_archive_load",
+                "loaded_engine_image_inspection",
+            ],
         },
         "inspection": inspection,
         "binary": binary,
@@ -521,12 +561,25 @@ def validate_receipt_payload(receipt: dict[str, Any]) -> None:
     image_ids = receipt.get("build", {}).get("image_ids")
     require(isinstance(image_ids, list) and len(image_ids) == 2, "receipt lacks two build image IDs")
     require(image_ids[0] == image_ids[1], "receipt does not prove reproducible image IDs")
+    archive_digests = receipt.get("build", {}).get("archive_digests")
+    require(
+        isinstance(archive_digests, list)
+        and len(archive_digests) == 2
+        and archive_digests[0] == archive_digests[1]
+        and isinstance(archive_digests[0], str)
+        and EXACT_DIGEST.fullmatch(archive_digests[0]) is not None,
+        "receipt does not prove reproducible image archives",
+    )
     require(receipt.get("build", {}).get("run_count") == 2, "receipt build count drifted")
     require(receipt.get("build", {}).get("no_cache") is True, "receipt did not use no-cache builds")
     require(receipt.get("build", {}).get("provenance") is False, "receipt did not disable variable provenance")
     require(
         receipt.get("build", {}).get("completion_evidence")
-        == ["buildkit_iid_file", "loaded_engine_image_inspection"],
+        == [
+            "hash_valid_docker_oci_archive",
+            "docker_archive_load",
+            "loaded_engine_image_inspection",
+        ],
         "receipt build completion evidence drifted",
     )
     inspection = receipt.get("inspection", {})
