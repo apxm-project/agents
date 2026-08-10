@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -58,8 +59,14 @@ def require(condition: bool, message: str) -> None:
 
 
 def git(*args: str) -> bytes:
+    environment = os.environ.copy()
+    environment.pop("DYLD_LIBRARY_PATH", None)
+    environment.pop("DYLD_FALLBACK_LIBRARY_PATH", None)
     result = subprocess.run(
-        ["git", "-C", str(ROOT), *args], capture_output=True, check=False
+        ["git", "-C", str(ROOT), *args],
+        capture_output=True,
+        check=False,
+        env=environment,
     )
     if result.returncode:
         detail = result.stderr.decode("utf-8", errors="replace").strip()
