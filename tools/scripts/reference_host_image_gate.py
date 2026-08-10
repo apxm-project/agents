@@ -9,9 +9,12 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
+import signal
 import subprocess
 import tarfile
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +43,7 @@ GATE_FILES = (
     "deploy/reference-host/image-manifest.v1.json",
     "deploy/reference-host/image-manifest.v1.sha256",
 )
+EXACT_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 
 class ImageGateError(RuntimeError):
@@ -145,28 +149,82 @@ def materialize_build_context(destination: Path, recipe_revision: str) -> None:
         target.write_bytes(git_file(recipe_revision, path))
 
 
-def build_image(context: Path, tag: str) -> str:
-    run(
-        [
-            "docker",
-            "build",
-            "--no-cache",
-            "--platform=linux/arm64",
-            "--provenance=false",
-            "--build-arg",
-            "SOURCE_DATE_EPOCH=1786322092",
-            "--file",
-            str(context / "deploy/reference-host/Dockerfile"),
-            "--tag",
-            tag,
-            str(context),
-        ]
-    )
-    inspected = docker_json("image", "inspect", tag)
-    require(isinstance(inspected, list) and len(inspected) == 1, "image inspect must return one image")
-    image_id = inspected[0].get("Id")
-    require(isinstance(image_id, str), "image inspect omitted Id")
-    return image_id
+def stop_build_client(process: subprocess.Popen[bytes]) -> None:
+    """Stop only the disposable Buildx client session after a completed export."""
+    if process.poll() is not None:
+        return
+    os.killpg(process.pid, signal.SIGTERM)
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait(timeout=10)
+
+
+def build_image(context: Path, tag: str, iid_path: Path, log_path: Path) -> str:
+    """Build until BuildKit publishes an IID and Docker can inspect that exact image.
+
+    Some Docker/Colima client combinations retain the Buildx session after the
+    exporter has loaded the image. An exit code alone therefore is not the
+    completion oracle. The owner gate requires both BuildKit's machine IID file
+    and a matching Engine image inspection before it may stop that disposable
+    client session and admit the build.
+    """
+    command = [
+        "docker",
+        "buildx",
+        "build",
+        "--load",
+        "--no-cache",
+        "--platform=linux/arm64",
+        "--provenance=false",
+        "--build-arg",
+        "SOURCE_DATE_EPOCH=1786322092",
+        "--iidfile",
+        str(iid_path),
+        "--progress=plain",
+        "--file",
+        str(context / "deploy/reference-host/Dockerfile"),
+        "--tag",
+        tag,
+        str(context),
+    ]
+    deadline = time.monotonic() + 600
+    with log_path.open("wb") as build_log:
+        process = subprocess.Popen(
+            command,
+            cwd=ROOT,
+            stdout=build_log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        try:
+            while time.monotonic() < deadline:
+                return_code = process.poll()
+                if iid_path.is_file():
+                    image_id = iid_path.read_text(encoding="utf-8").strip()
+                    require(EXACT_DIGEST.fullmatch(image_id) is not None, "BuildKit IID is not exact")
+                    inspected = docker_json("image", "inspect", tag)
+                    require(
+                        isinstance(inspected, list) and len(inspected) == 1,
+                        "image inspect must return one image",
+                    )
+                    require(
+                        inspected[0].get("Id") == image_id,
+                        "BuildKit IID differs from the loaded Engine image",
+                    )
+                    stop_build_client(process)
+                    return image_id
+                if return_code is not None:
+                    break
+                time.sleep(0.25)
+        finally:
+            if process.poll() is None:
+                stop_build_client(process)
+    detail = log_path.read_text(encoding="utf-8", errors="replace").strip()
+    if time.monotonic() >= deadline:
+        raise ImageGateError(f"image build timed out before IID publication: {detail}")
+    raise ImageGateError(f"image build exited before IID publication: {detail}")
 
 
 def expected_labels() -> dict[str, str]:
@@ -402,8 +460,18 @@ def build_receipt(gate_revision: str) -> dict[str, Any]:
         context = temporary_root / "context"
         tag_one = f"apxm-reference-host:gate-{gate_revision[:12]}-one"
         tag_two = f"apxm-reference-host:gate-{gate_revision[:12]}-two"
-        first_id = build_image(context, tag_one)
-        second_id = build_image(context, tag_two)
+        first_id = build_image(
+            context,
+            tag_one,
+            temporary_root / "build-one.iid",
+            temporary_root / "build-one.log",
+        )
+        second_id = build_image(
+            context,
+            tag_two,
+            temporary_root / "build-two.iid",
+            temporary_root / "build-two.log",
+        )
         require(first_id == second_id, "two no-cache builds produced different OCI image IDs")
         inspection = inspect_image(tag_two)
         require(inspection["image_id"] == first_id, "inspected image differs from reproducible build")
@@ -432,6 +500,7 @@ def build_receipt(gate_revision: str) -> dict[str, Any]:
             "run_count": 2,
             "image_ids": [first_id, second_id],
             "reproducible": True,
+            "completion_evidence": ["buildkit_iid_file", "loaded_engine_image_inspection"],
         },
         "inspection": inspection,
         "binary": binary,
@@ -455,6 +524,11 @@ def validate_receipt_payload(receipt: dict[str, Any]) -> None:
     require(receipt.get("build", {}).get("run_count") == 2, "receipt build count drifted")
     require(receipt.get("build", {}).get("no_cache") is True, "receipt did not use no-cache builds")
     require(receipt.get("build", {}).get("provenance") is False, "receipt did not disable variable provenance")
+    require(
+        receipt.get("build", {}).get("completion_evidence")
+        == ["buildkit_iid_file", "loaded_engine_image_inspection"],
+        "receipt build completion evidence drifted",
+    )
     inspection = receipt.get("inspection", {})
     require(inspection.get("image_id") == image_ids[0], "receipt inspected a different image")
     require(inspection.get("os") == "linux" and inspection.get("architecture") == "arm64", "receipt platform drifted")
