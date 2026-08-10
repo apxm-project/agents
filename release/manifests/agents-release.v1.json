@@ -2,7 +2,7 @@
   "artifacts": [
     {
       "build_decision": "built",
-      "digest": "sha256:5056fe961f163979450bcb16d46db80dbdf5152acf01811bae29e1feeea6d952",
+      "digest": "sha256:b2281934db5c08921d0d8ccd7482ba9d48eba648e341198559c58490863fc180",
       "kind": "source-archive",
       "provenance": "git archive of the pinned owner revision"
     }
@@ -359,14 +359,14 @@
       "path": "contracts/reference-host/manifests/apxm.reference-host-release-manifest.v1.json"
     }
   },
-  "release_id": "apxm-agents-fd9311a357ec",
+  "release_id": "apxm-agents-140ce5b16b4b",
   "release_kind": "source-provenance",
   "schema_version": "apxm.owner-release-manifest.v1",
   "semantic_owner": "agents",
   "source": {
-    "archive_digest": "sha256:5056fe961f163979450bcb16d46db80dbdf5152acf01811bae29e1feeea6d952",
+    "archive_digest": "sha256:b2281934db5c08921d0d8ccd7482ba9d48eba648e341198559c58490863fc180",
     "repository": "https://github.com/apxm-project/agents.git",
-    "revision": "fd9311a357ec62661586163070f65ce0d0cf9ecd",
-    "tree_digest": "sha256:a9883af108f7795ad58479b642b1befb7cfab660f5272b16e00cedbc2367b6ea"
+    "revision": "140ce5b16b4bc4a078800b52fffbfc8004169ee1",
+    "tree_digest": "sha256:955353a62021223be1ab24901841a3779ebbe6341489eb354624b0dba5bf3437"
   }
 }
