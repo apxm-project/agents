@@ -21,7 +21,7 @@
 
 Replace the current overlapping Agent Program, operation, loop, context, Hook,
 and coordination semantics with one canonical Python/TypeScript →
-FrontendGraph v1 → AIR v1 → artifact v1 → runtime → inference-backend path built around
+FrontendGraph v2 → AIR v2 → artifact v1 → runtime → inference-backend path built around
 `program.new`, `program.invoke`, `instance.invoke`, a closed five-operation
 effect/composition family, and a separate closed structural AIS family.
 
@@ -133,8 +133,8 @@ deletion lane and blocks cutover until classified and closed.
 1. Rust-owned Agents schema sources generate the target op and graph contracts;
    Contracts indexes the exact owner publication without acquiring semantics.
 2. Python and TypeScript expose equivalent `new`/`invoke`/Agent Facade APIs.
-3. The compiler accepts only FrontendGraph v1 and prints only AIR v1.
-4. AIR v1 exposes the five operations fixed by ADR-0009 plus internal
+3. The compiler accepts only FrontendGraph v2 and prints only AIR v2.
+4. AIR v2 exposes the five operations fixed by ADR-0009 plus internal
    structured IR.
 5. Artifact v1 statically binds programs, Hooks, models, Capabilities,
    handlers, source maps, and compatibility evidence.
@@ -194,11 +194,11 @@ Gate P0:
   descriptor, schema, generated client, or consumer; and
 - Python/TypeScript/runtime teams can implement without inventing a contract.
 
-### P1 — FrontendGraph v1 and generated authoring contracts
+### P1 — FrontendGraph v2 and generated authoring contracts
 
 Deliverables:
 
-- build the Rust-owned FrontendGraph v1 schema and generator inputs;
+- build the Rust-owned FrontendGraph v2 schema and generator inputs;
 - model typed program imports, instances, invocations, functions, regions,
   loop-carried values, resumable yield arguments, structured task scopes,
   callbacks, source annotations, Agent Identity requirements, and event refs;
@@ -257,7 +257,7 @@ Deliverables:
 - lower yield continuation/resume input distinctly from completing return and
   lower task scopes to joined parallel regions;
 - compile static Hook bindings around their target regions;
-- emit one canonical AIR v1 and source map; and
+- emit one canonical AIR v2 and source map; and
 - reject every pre-canonical/retired operation before artifact production.
 
 Gate P3:
@@ -554,7 +554,7 @@ Gate P9:
 ```mermaid
 flowchart LR
     C["APXM v1 baseline + contract freeze"] --> P0["P0 vectors + ownership"]
-    P0 --> P1["P1 FrontendGraph v1"]
+    P0 --> P1["P1 FrontendGraph v2"]
     P0 --> P4["P4 Artifact v1"]
     P1 --> P2["P2 Python + TypeScript"]
     P1 --> P3["P3 Compiler + AIR"]

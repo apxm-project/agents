@@ -80,7 +80,7 @@ typed FrontendGraph intent
 Rust validation, CFG/SSA construction, and AIS selection
         |
         v
-AIR v1 -> registered AIS verification -> executable artifact
+AIR v2 -> registered AIS verification -> executable artifact
         -> admission -> generic runtime
 ```
 

@@ -33,6 +33,16 @@ RETIRED_PATHS = (
     Path("crates/compiler/frontend/native/typescript/js/conversational.ts"),
     Path("crates/compiler/frontend/native/typescript/js/gao.ts"),
 )
+RETIRED_GENERATION_REFERENCES = re.compile(
+    r"(?:apxm\.)?(?:frontend-graph|air)\.v1|FrontendGraph v1|AIR v1",
+    re.IGNORECASE,
+)
+HISTORICAL_GENERATION_DOCS = {
+    Path("docs/telegram-coding-bot-flow.md"),
+    Path("docs/compiler/pipeline.md"),
+    Path("docs/agents/gao-conversational-agent-implementation-plan.md"),
+    Path("docs/adr/0002-gao-specializes-the-conversational-agent-construct.md"),
+}
 
 
 def _iter_source_files(roots):
@@ -78,9 +88,53 @@ def retired_path_violations(root: Path = REPO_ROOT, retired_paths=RETIRED_PATHS)
     return violations
 
 
+def retired_generation_reference_violations(
+    paths, *, root: Path = REPO_ROOT
+) -> list[str]:
+    """Reject retired FrontendGraph/AIR generations outside history and negatives."""
+    violations: list[str] = []
+    for path in paths:
+        try:
+            relative = path.relative_to(root)
+        except ValueError:
+            relative = path
+        if relative in HISTORICAL_GENERATION_DOCS or relative.parts[:2] == (
+            "docs",
+            "evidence",
+        ):
+            continue
+        for lineno, line in enumerate(
+            path.read_text(encoding="utf-8", errors="replace").splitlines(),
+            start=1,
+        ):
+            if RETIRED_GENERATION_REFERENCES.search(line):
+                violations.append(
+                    f"{relative}:{lineno}: retired FrontendGraph/AIR generation reference"
+                )
+    return violations
+
+
+def _active_generation_reference_files():
+    yield from (path for path in (REPO_ROOT / "docs").rglob("*.md") if path.is_file())
+    for root in (
+        REPO_ROOT / "crates" / "compiler" / "frontend",
+        REPO_ROOT / "crates" / "compiler" / "pipeline",
+    ):
+        yield from (
+            path
+            for path in root.rglob("*")
+            if path.is_file()
+            and path.suffix in {".md", ".py", ".rs", ".ts", ".mjs"}
+            and not EXCLUDED_PARTS.intersection(path.parts)
+        )
+
+
 def find_violations() -> list[str]:
     violations = scan_files(_iter_source_files(SOURCE_ROOTS))
     violations.extend(retired_path_violations())
+    violations.extend(
+        retired_generation_reference_violations(_active_generation_reference_files())
+    )
 
     violations.extend(
         f"{relative}: hand-authored AIR path" for relative in _air_guard_violations()
