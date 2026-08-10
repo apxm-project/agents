@@ -60,6 +60,10 @@ class ReferenceHostImageGateTests(unittest.TestCase):
                 "run_count": 2,
                 "image_ids": [image_id, image_id],
                 "reproducible": True,
+                "completion_evidence": [
+                    "buildkit_iid_file",
+                    "loaded_engine_image_inspection",
+                ],
             },
             "inspection": {
                 "image_id": image_id,
@@ -96,6 +100,12 @@ class ReferenceHostImageGateTests(unittest.TestCase):
         receipt = self.receipt()
         receipt["build"]["image_ids"][1] = "sha256:" + "8" * 64
         with self.assertRaisesRegex(self.gate.ImageGateError, "reproducible"):
+            self.gate.validate_receipt_payload(receipt)
+
+    def test_missing_machine_build_completion_is_rejected(self) -> None:
+        receipt = self.receipt()
+        receipt["build"]["completion_evidence"] = ["buildkit_iid_file"]
+        with self.assertRaisesRegex(self.gate.ImageGateError, "completion evidence"):
             self.gate.validate_receipt_payload(receipt)
 
     def test_forged_labels_are_rejected(self) -> None:
