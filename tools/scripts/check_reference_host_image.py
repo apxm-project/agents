@@ -156,8 +156,9 @@ def build_manifest() -> dict[str, Any]:
             "build_image": BUILD_IMAGE,
             "runtime_image": RUNTIME_IMAGE,
             "command": (
-                "docker buildx build --load --no-cache --platform=linux/arm64 "
-                "--provenance=false --iidfile <iidfile> --progress=plain "
+                "docker buildx build --no-cache --platform=linux/arm64 "
+                "--provenance=false --progress=plain "
+                "--output type=docker,dest=<image-archive> "
                 "--build-arg SOURCE_DATE_EPOCH=1786322092 "
                 "--file deploy/reference-host/Dockerfile "
                 "--tag apxm-reference-host:<carrier> ."
