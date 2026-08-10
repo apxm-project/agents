@@ -25,7 +25,7 @@ without introducing named Agents execution semantics.
 | --- | --- | --- | --- |
 | [Agent Program composition and AIR full replacement](agent-program-composition-and-air-full-replacement-plan.md) | APXM contracts, frontends, AIS, compiler, artifact, runtime, examples, cross-plane consumers | `program.new`/`program.invoke`, two closed AIS families, Agent Facade, explicit context, structured loops, generic iteration evidence, Program Instances, deletion | P0-P9 |
 | [Rust embedding library hardening](rust-embedding-library-hardening-plan.md) | APXM contracts, AIS, artifact, compiler, runtime, adapter owners | Public role vectors, acyclic dependencies, injected runtime interfaces, adapters, profiles, clean consumers | RLIB-1-RLIB-9 |
-| [Compiler bridge delivery](compiler-bridge-delivery-plan.md) | APXM graph contracts, compiler, Python/Node bridges, compile service/client | FrontendGraph v1 vectors, pure frontends, native bridges, remote boundary, build tools | B1-B9; B1 consumes P0-P1 and B2 consumes RLIB-1-RLIB-4 |
+| [Compiler bridge delivery](compiler-bridge-delivery-plan.md) | APXM graph contracts, compiler, Python/Node bridges, compile service/client | FrontendGraph v2 vectors, pure frontends, native bridges, remote boundary, build tools | B1-B9; B1 consumes P0-P1 and B2 consumes RLIB-1-RLIB-4 |
 
 Coordinator ADR-0001 owns the canonical v1 release family, shared version line,
 private coordinates, Compatibility Set, platform matrix, and promotion. The
