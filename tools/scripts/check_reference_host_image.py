@@ -148,7 +148,7 @@ def build_manifest() -> dict[str, Any]:
             "build_image": BUILD_IMAGE,
             "runtime_image": RUNTIME_IMAGE,
             "command": (
-                "docker build --platform=linux/arm64 "
+                "docker build --platform=linux/arm64 --provenance=false "
                 "--file deploy/reference-host/Dockerfile "
                 "--tag apxm-reference-host:<carrier> ."
             ),

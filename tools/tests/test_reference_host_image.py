@@ -34,6 +34,10 @@ class ReferenceHostImageTests(unittest.TestCase):
         self.assertRegex(result["manifest_digest"], r"sha256:[0-9a-f]{64}")
         self.assertEqual(self.manifest["semantic_owner"], "agents")
         self.assertEqual(self.manifest["platform"]["architecture"], "arm64")
+        self.assertEqual(self.manifest["platform"]["elf_machine"], "AArch64")
+        self.assertIn(
+            "--provenance=false", self.manifest["build_recipe"]["command"]
+        )
         self.assertEqual(self.manifest["runtime"]["source_mount"], "absent")
 
     def test_dockerfile_substitution_fails_closed(self) -> None:
