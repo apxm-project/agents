@@ -165,6 +165,7 @@ impl AirModule {
                 ));
             }
         }
+        validate_assembly_cycles(&mut verdict, &self.value_assemblies);
         for op in &self.semantic_operations {
             if !is_identifier(&op.node_id) {
                 verdict.push(Diagnostic::new(
@@ -253,17 +254,60 @@ impl AirModule {
                 }
             }
         }
+        let context_endpoint_locations = self
+            .semantic_operations
+            .iter()
+            .map(|operation| {
+                (
+                    operation.node_id.as_str(),
+                    AirSsaLocation {
+                        region_id: operation.parent_region_id.clone(),
+                        execution_order: operation.execution_order,
+                        entry: false,
+                    },
+                )
+            })
+            .chain(self.structural_ir.iter().map(|region| {
+                (
+                    region.region_id.as_str(),
+                    AirSsaLocation {
+                        region_id: region
+                            .parent_region_id
+                            .clone()
+                            .unwrap_or_else(|| region.region_id.clone()),
+                        execution_order: region.execution_order,
+                        entry: region.parent_region_id.is_none(),
+                    },
+                )
+            }))
+            .collect::<std::collections::HashMap<_, _>>();
+        let context_regions = self
+            .structural_ir
+            .iter()
+            .map(|region| (region.region_id.as_str(), region))
+            .collect::<std::collections::HashMap<_, _>>();
         for edge in &self.context_flow {
+            let ordered = context_endpoint_locations
+                .get(edge.from_node.as_str())
+                .zip(context_endpoint_locations.get(edge.to_node.as_str()))
+                .is_some_and(|(from, to)| {
+                    (from.region_id != to.region_id
+                        || from.execution_order != to.execution_order
+                        || from.entry != to.entry)
+                        && air_dominates_location(from, to, &context_regions)
+                });
             if !(seen_nodes.contains(edge.from_node.as_str())
                 || seen_regions.contains(edge.from_node.as_str()))
                 || !(seen_nodes.contains(edge.to_node.as_str())
                     || seen_regions.contains(edge.to_node.as_str()))
                 || !seen_value_definitions.contains(edge.value_id.as_str())
+                || !is_identifier(&edge.context_type_ref)
+                || !ordered
             {
                 verdict.push(Diagnostic::new(
                     DiagnosticCode::SchemaViolation,
                     edge.to_node.clone(),
-                    "Context edge requires declared endpoints and an exact assembled value",
+                    "Context edge requires a typed context coordinate, declared endpoints, and source-before-destination ordering",
                 ));
             }
         }
@@ -506,6 +550,65 @@ fn is_air_ancestor(
             .and_then(|region| region.parent_region_id.as_deref());
     }
     false
+}
+
+fn air_region_is_terminal(
+    region: &StructuralNode,
+    regions: &std::collections::HashMap<&str, &StructuralNode>,
+) -> bool {
+    region.kind == StructuralOpKind::Throw
+        || region.kind == StructuralOpKind::Return
+        || region.kind == StructuralOpKind::Yield
+        || regions.values().any(|child| {
+            child.parent_region_id.as_deref() == Some(region.region_id.as_str())
+                && matches!(
+                    child.kind,
+                    StructuralOpKind::Throw | StructuralOpKind::Return | StructuralOpKind::Yield
+                )
+        })
+}
+
+fn validate_assembly_cycles(verdict: &mut Verdict, assemblies: &[ValueAssembly]) {
+    let by_id = assemblies
+        .iter()
+        .map(|assembly| (assembly.value_id.as_str(), &assembly.expression))
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut state = std::collections::HashMap::<&str, u8>::new();
+    for value_id in by_id.keys().copied() {
+        if assembly_cycle(value_id, &by_id, &mut state) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                value_id.to_string(),
+                "value assembly expressions contain a cycle",
+            ));
+        }
+    }
+}
+
+fn assembly_cycle<'a>(
+    value_id: &'a str,
+    by_id: &std::collections::HashMap<&'a str, &'a ValueExpression>,
+    state: &mut std::collections::HashMap<&'a str, u8>,
+) -> bool {
+    match state.get(value_id).copied() {
+        Some(1) => return true,
+        Some(2) => return false,
+        _ => {}
+    }
+    state.insert(value_id, 1);
+    let cycle = by_id.get(value_id).is_some_and(|expression| {
+        let mut references = Vec::new();
+        collect_expression_references(expression, &mut references);
+        references.into_iter().any(|reference| {
+            by_id
+                .keys()
+                .copied()
+                .find(|key| *key == reference)
+                .is_some_and(|key| assembly_cycle(key, by_id, state))
+        })
+    });
+    state.insert(value_id, 2);
+    cycle
 }
 
 fn air_region_is_ancestor(
