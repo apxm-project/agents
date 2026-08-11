@@ -18,14 +18,14 @@ The shipped short frontend spelling is documented in the
 `Capability`, `Event`, `Hook`, and `TaskGroup` extensions. The generic
 execution semantics below remain the governing boundary.
 
-## Canonical v1 pipeline
+## Canonical pipeline
 
 ```mermaid
 flowchart LR
-    PY["Python Agent Program"] --> FG["FrontendGraph v1"]
+    PY["Python Agent Program"] --> FG["FrontendGraph v2"]
     TS["TypeScript Agent Program"] --> FG
     FG --> C["Rust compiler"]
-    C --> AIR["AIR v1"]
+    C --> AIR["AIR v2"]
     AIR --> A["Executable artifact v1"]
     A --> ADM["Exact admission and port bindings"]
     ADM --> R["Generic APXM runtime"]
@@ -46,7 +46,7 @@ failures. Backend telemetry—including APXM-vLLM cache/scheduler metrics—may
 enrich that view but cannot override authoritative execution evidence.
 
 Agent Programs compose only through `program.new`, one-shot
-`program.invoke`, and stateful `instance.invoke`. AIR v1 has a closed
+`program.invoke`, and stateful `instance.invoke`. AIR v2 has a closed
 five-operation effect/composition family:
 
 1. `model.call`
@@ -140,7 +140,7 @@ five focused Rust roles:
 | contracts/types | Versioned values, schemas, ids, errors, and compatibility |
 | AIS specification/authoring | Deterministic operation/IR schema and code generation |
 | artifact encoding/admission | Canonical encoding, digests, limits, and admission |
-| compiler embedding | FrontendGraph v1 to admitted artifact and diagnostics |
+| compiler embedding | FrontendGraph v2 to admitted artifact and diagnostics |
 | runtime embedding | Generic execution kernel over explicitly injected adapters |
 
 Python and TypeScript packages author Agent Programs. Generated SDKs call

@@ -27,7 +27,7 @@ The target replaces those assumptions:
 | spawn/communicate/handoff/delegate/flow/workflow ops | `program.new` and `program.invoke` |
 | host/runtime session re-arm loop | Frontend-authored loop and generic program yield/resume |
 | runtime Turn | Studio projection of a generic loop-region occurrence |
-| direct/raw AIR authoring | Python/TypeScript FrontendGraph v1 through Rust compiler |
+| direct/raw AIR authoring | Python/TypeScript FrontendGraph v2 through Rust compiler |
 
 Historical pages:
 

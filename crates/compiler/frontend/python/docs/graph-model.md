@@ -2,7 +2,7 @@
 
 - Status: historical implementation note; not an authoring or compiler contract
 - Target contract:
-  [FrontendGraph v1](../../../../../docs/agents/agent-program-composition-and-air-contract.md#7-frontendgraph-v1)
+  [FrontendGraph v2](../../../../../docs/agents/agent-program-composition-and-air-contract.md#7-frontendgraph-v2)
 - Replacement plan:
   [Source-first Agent frontend master plan](../../../../../docs/agents/simple-agent-authoring-frontend-plan.md)
 

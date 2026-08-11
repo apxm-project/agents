@@ -375,7 +375,7 @@ author any desired recursion, whose admitted depth limits still apply.
 - Agent, Node, Model, and Capability scopes MAY all have Hooks; a Capability
   Hook cannot bypass Capability admission.
 
-## 7. FrontendGraph v1
+## 7. FrontendGraph v2
 
 `apxm.frontend-graph.v2` is a language-neutral typed value. At minimum it
 contains:

@@ -48,6 +48,24 @@ class SourceCompilerBoundaryTests(unittest.TestCase):
 
         self.assertEqual(violations, ["retired/compiler: retired source/compiler path remains"])
 
+    def test_retired_frontend_generation_reference_is_rejected(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "docs" / "active.md"
+            path.parent.mkdir(parents=True)
+            path.write_text("The compiler accepts AIR v1.\n", encoding="utf-8")
+
+            violations = (
+                check_source_compiler_boundary.retired_generation_reference_violations(
+                    (path,), root=root
+                )
+            )
+
+        self.assertEqual(
+            violations,
+            ["docs/active.md:1: retired FrontendGraph/AIR generation reference"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

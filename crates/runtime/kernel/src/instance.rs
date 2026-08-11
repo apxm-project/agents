@@ -89,7 +89,7 @@ struct Inner {
 /// A running Program Instance.
 pub struct ProgramInstance {
     identity: ProgramIdentity,
-    program_instance_ref: ProgramInstanceRef,
+    instance_ref: ProgramInstanceRef,
     bundle: PortBundle,
     busy: AtomicBool,
     inner: Mutex<Inner>,
@@ -125,7 +125,7 @@ impl ProgramInstance {
         }
         Ok(Self {
             identity,
-            program_instance_ref,
+            instance_ref: program_instance_ref,
             bundle,
             busy: AtomicBool::new(false),
             inner: Mutex::new(Inner {
@@ -184,7 +184,7 @@ impl ProgramInstance {
         let expected = self
             .bundle
             .execution_commit()
-            .current_version(&self.program_instance_ref)
+            .current_version(&self.instance_ref)
             .await;
 
         // Build the full evidence batch this atomic commit will publish,
@@ -235,7 +235,7 @@ impl ProgramInstance {
 
         let request = ExecutionCommitRequest {
             commit_id: invocation.commit_id.clone(),
-            program_instance_ref: self.program_instance_ref.clone(),
+            program_instance_ref: self.instance_ref.clone(),
             program_invocation_ref: invocation.program_invocation_ref,
             idempotency_key: format!("idem.{}", invocation.commit_id),
             expected_program_state_version: expected,
@@ -296,7 +296,7 @@ impl ProgramInstance {
         let expected = self
             .bundle
             .execution_commit()
-            .current_version(&self.program_instance_ref)
+            .current_version(&self.instance_ref)
             .await;
 
         let mut seq = { self.inner.lock().expect("instance inner").durable_seq };
@@ -312,7 +312,7 @@ impl ProgramInstance {
 
         let request = ExecutionCommitRequest {
             commit_id: commit_id.clone(),
-            program_instance_ref: self.program_instance_ref.clone(),
+            program_instance_ref: self.instance_ref.clone(),
             program_invocation_ref,
             idempotency_key: format!("idem.{commit_id}"),
             expected_program_state_version: expected,
@@ -394,7 +394,7 @@ impl ProgramInstance {
         // assembled, so an adapter never sees a malformed atomic boundary.
         let preflight = ExecutionCommitRequest {
             commit_id: invocation.commit_id.clone(),
-            program_instance_ref: self.program_instance_ref.clone(),
+            program_instance_ref: self.instance_ref.clone(),
             program_invocation_ref: invocation.program_invocation_ref.clone(),
             idempotency_key: format!("idem.{}", invocation.commit_id),
             expected_program_state_version: 0,
@@ -415,7 +415,7 @@ impl ProgramInstance {
         let expected = self
             .bundle
             .execution_commit()
-            .current_version(&self.program_instance_ref)
+            .current_version(&self.instance_ref)
             .await;
         let target_version = expected + 1;
 
@@ -455,7 +455,7 @@ impl ProgramInstance {
 
         let request = ExecutionCommitRequest {
             commit_id: invocation.commit_id.clone(),
-            program_instance_ref: self.program_instance_ref.clone(),
+            program_instance_ref: self.instance_ref.clone(),
             program_invocation_ref: invocation.program_invocation_ref,
             idempotency_key: format!("idem.{}", invocation.commit_id),
             expected_program_state_version: expected,
