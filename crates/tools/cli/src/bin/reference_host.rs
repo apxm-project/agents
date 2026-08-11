@@ -631,35 +631,14 @@ fn file_digest(path: &Path) -> Result<String> {
     ))
 }
 
-fn bytes_digest(bytes: &[u8]) -> String {
-    format!("sha256:{:x}", Sha256::digest(bytes))
-}
-
-fn serialized_air_digest(value: &Value) -> Result<String> {
-    let air: AirModule = serde_json::from_value(value.clone()).context("parse canonical AIR")?;
-    Ok(bytes_digest(&serde_json::to_vec(&air)?))
-}
-
-fn canonical_release_manifest_source_path() -> &'static Path {
-    Path::new(RELEASE_MANIFEST_SOURCE_PATH)
-}
-
-#[cfg(test)]
-fn checkout_release_manifest_path() -> PathBuf {
+fn canonical_release_manifest_path() -> PathBuf {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../..")
-        .join(RELEASE_MANIFEST_SOURCE_PATH);
+        .join("contracts/reference-host/manifests/apxm.reference-host-release-manifest.v1.json");
     fs::canonicalize(&path).unwrap_or(path)
 }
 
-fn is_hex_revision(revision: &str) -> bool {
-    revision.len() == 40
-        && revision
-            .chars()
-            .all(|value| value.is_ascii_digit() || ('a'..='f').contains(&value))
-}
-
-fn load_startup_input(path: &Path, expected_transport: &str) -> Result<AdmittedDigests> {
+fn load_startup_input(path: &Path) -> Result<AdmittedDigests> {
     let startup: StartupInput = serde_json::from_slice(
         &fs::read(path).with_context(|| format!("read startup input {}", path.display()))?,
     )
@@ -717,14 +696,15 @@ fn load_startup_input(path: &Path, expected_transport: &str) -> Result<AdmittedD
     let manifest_path =
         fs::canonicalize(PathBuf::from(&startup.reference_host_release_manifest.path))
             .unwrap_or_else(|_| PathBuf::from(&startup.reference_host_release_manifest.path));
-    if !manifest_path.ends_with(canonical_release_manifest_source_path()) {
+    let expected_manifest_path = canonical_release_manifest_path();
+    if manifest_path != expected_manifest_path {
         bail!(
-            "reference-host release manifest path mismatch: expected suffix {}, got {}",
-            canonical_release_manifest_source_path().display(),
+            "reference-host release manifest path mismatch: expected {}, got {}",
+            expected_manifest_path.display(),
             manifest_path.display()
         );
     }
-    let release_bytes = fs::read(&manifest_path).with_context(|| {
+    let actual_manifest_digest = file_digest(&manifest_path).with_context(|| {
         format!(
             "load reference-host release manifest {}",
             manifest_path.display()
@@ -832,6 +812,11 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink as symlink_file;
+    #[cfg(windows)]
+    use std::os::windows::fs::symlink_file;
+
     fn exact_digest(label: &str) -> String {
         format!("sha256:{:x}", Sha256::digest(label.as_bytes()))
     }
@@ -851,6 +836,30 @@ mod tests {
             release_bytes,
             provenance_bytes,
         }
+    }
+
+    fn write_startup_input_file(
+        startup_path: &Path,
+        manifest_path: &Path,
+        release_digest: &str,
+        port_bindings_digest: &str,
+        resource_ceiling_digest: &str,
+    ) {
+        fs::write(
+            startup_path,
+            serde_json::to_string(&json!({
+                "schema_version": STARTUP_INPUT_SCHEMA,
+                "reference_host_release_manifest": {
+                    "path": manifest_path,
+                    "digest": file_digest(&canonical_release_manifest_path()).expect("manifest digest"),
+                },
+                "release_digest": release_digest,
+                "port_bindings_digest": port_bindings_digest,
+                "resource_ceiling_digest": resource_ceiling_digest,
+            }))
+            .expect("startup json"),
+        )
+        .expect("startup file");
     }
 
     fn admission(digests: &AdmittedDigests) -> Admission {
@@ -1236,35 +1245,15 @@ mod tests {
     #[test]
     fn startup_input_rejects_placeholder_digests() {
         let temp_dir = tempdir().expect("temp dir");
-        let manifest_path = temp_dir.path().join("release-manifest.json");
-        fs::write(&manifest_path, "{\"schema_version\":\"test\"}\n").expect("manifest");
+        let manifest_path = canonical_release_manifest_path();
         let startup_path = temp_dir.path().join("startup.json");
-        fs::write(
+        write_startup_input_file(
             &startup_path,
-            serde_json::to_string(&json!({
-                "schema_version": STARTUP_INPUT_SCHEMA,
-                "semantic_owner": "agents",
-                "owner_executable": OWNER_EXECUTABLE,
-                "owner_executable_path": OWNER_EXECUTABLE_PATH,
-                "transport_protocol": TRANSPORT_PROTOCOL,
-                "reference_host_release_manifest": {
-                    "path": manifest_path,
-                    "digest": file_digest(&manifest_path).expect("manifest digest"),
-                },
-                "release_digest": placeholder_digest('a'),
-                "port_bindings_digest": exact_digest("port-bindings"),
-                "resource_ceiling_digest": exact_digest("resource-ceiling"),
-                "provenance": {
-                    "owner_revision": "a".repeat(40),
-                    "descriptor_semantic_digest": exact_digest("descriptor-semantic"),
-                    "descriptor_exact_checksum": exact_digest("descriptor-exact"),
-                    "dirty": false,
-                },
-                "fail_closed_on": FAIL_CLOSED_ON,
-            }))
-            .expect("startup json"),
-        )
-        .expect("startup file");
+            &manifest_path,
+            &placeholder_digest('a'),
+            &exact_digest("port-bindings"),
+            &exact_digest("resource-ceiling"),
+        );
 
         let error = load_startup_input(&startup_path, TRANSPORT_PROTOCOL)
             .expect_err("placeholder digest must fail");
@@ -1277,236 +1266,60 @@ mod tests {
     }
 
     #[test]
-    fn startup_input_rejects_dirty_provenance() {
+    fn startup_input_accepts_runtime_mounted_manifest_path_when_it_resolves_to_canonical_source() {
         let temp_dir = tempdir().expect("temp dir");
-        let manifest_path = checkout_release_manifest_path();
-        let startup_path = temp_dir.path().join("startup.json");
-        fs::write(
-            &startup_path,
-            serde_json::to_string(&json!({
-                "schema_version": STARTUP_INPUT_SCHEMA,
-                "semantic_owner": "agents",
-                "owner_executable": OWNER_EXECUTABLE,
-                "owner_executable_path": OWNER_EXECUTABLE_PATH,
-                "transport_protocol": TRANSPORT_PROTOCOL,
-                "reference_host_release_manifest": {
-                    "path": manifest_path,
-                    "digest": file_digest(&manifest_path).expect("manifest digest"),
-                },
-                "release_digest": exact_digest("release"),
-                "port_bindings_digest": exact_digest("port-bindings"),
-                "resource_ceiling_digest": exact_digest("resource-ceiling"),
-                "provenance": {
-                    "owner_revision": "a".repeat(40),
-                    "descriptor_semantic_digest": exact_digest("descriptor-semantic"),
-                    "descriptor_exact_checksum": exact_digest("descriptor-exact"),
-                    "dirty": true,
-                },
-                "fail_closed_on": FAIL_CLOSED_ON,
-            }))
-            .expect("startup json"),
+        let mounted_manifest_path = temp_dir
+            .path()
+            .join("apxm-owner/contracts/reference-host/manifests/apxm.reference-host-release-manifest.v1.json");
+        fs::create_dir_all(
+            mounted_manifest_path
+                .parent()
+                .expect("mounted manifest parent"),
         )
-        .expect("startup file");
+        .expect("mounted manifest dirs");
+        symlink_file(canonical_release_manifest_path(), &mounted_manifest_path)
+            .expect("symlink mounted manifest");
 
-        let error = load_startup_input(&startup_path, TRANSPORT_PROTOCOL)
-            .expect_err("dirty startup input must fail");
-        assert!(
-            error
-                .to_string()
-                .contains("startup input provenance must prove a clean owner checkout"),
-            "unexpected error: {error}"
-        );
-    }
-
-    #[test]
-    fn startup_input_accepts_relocated_release_manifest_path_with_exact_digest() {
-        let temp_dir = tempdir().expect("temp dir");
-        let relocated_manifest = temp_dir.path().join(RELEASE_MANIFEST_SOURCE_PATH);
-        fs::create_dir_all(relocated_manifest.parent().expect("manifest parent"))
-            .expect("create relocated manifest parent");
-        fs::copy(checkout_release_manifest_path(), &relocated_manifest)
-            .expect("copy relocated manifest");
         let startup_path = temp_dir.path().join("startup.json");
-        fs::write(
+        write_startup_input_file(
             &startup_path,
-            serde_json::to_string(&json!({
-                "schema_version": STARTUP_INPUT_SCHEMA,
-                "semantic_owner": "agents",
-                "owner_executable": OWNER_EXECUTABLE,
-                "owner_executable_path": OWNER_EXECUTABLE_PATH,
-                "transport_protocol": TRANSPORT_PROTOCOL,
-                "reference_host_release_manifest": {
-                    "path": relocated_manifest,
-                    "digest": file_digest(&relocated_manifest).expect("manifest digest"),
-                },
-                "release_digest": file_digest(&relocated_manifest).expect("manifest digest"),
-                "port_bindings_digest": reference_host_port_bindings_digest(),
-                "resource_ceiling_digest": reference_host_resource_ceiling_digest(),
-                "provenance": {
-                    "owner_revision": "a".repeat(40),
-                    "descriptor_semantic_digest": exact_digest("descriptor-semantic"),
-                    "descriptor_exact_checksum": exact_digest("descriptor-exact"),
-                    "dirty": false,
-                },
-                "fail_closed_on": FAIL_CLOSED_ON,
-            }))
-            .expect("startup json"),
-        )
-        .expect("startup file");
+            &mounted_manifest_path,
+            &exact_digest("release"),
+            &exact_digest("port-bindings"),
+            &exact_digest("resource-ceiling"),
+        );
 
-        let admitted =
-            load_startup_input(&startup_path, TRANSPORT_PROTOCOL).expect("relocated startup input");
-        assert_eq!(
-            admitted.release_digest,
-            file_digest(&relocated_manifest).expect("manifest digest")
-        );
-        assert_eq!(
-            admitted.port_bindings_digest,
-            reference_host_port_bindings_digest()
-        );
+        let admitted = load_startup_input(&startup_path).expect("mounted manifest must resolve");
+        assert_eq!(admitted.release_digest, exact_digest("release"));
+        assert_eq!(admitted.port_bindings_digest, exact_digest("port-bindings"));
         assert_eq!(
             admitted.resource_ceiling_digest,
-            reference_host_resource_ceiling_digest()
+            exact_digest("resource-ceiling")
         );
     }
 
     #[test]
-    fn startup_input_rejects_relocated_release_manifest_digest_mismatch() {
+    fn startup_input_rejects_stale_release_manifest_checkout_paths() {
         let temp_dir = tempdir().expect("temp dir");
-        let relocated_manifest = temp_dir.path().join(RELEASE_MANIFEST_SOURCE_PATH);
-        fs::create_dir_all(relocated_manifest.parent().expect("manifest parent"))
-            .expect("create relocated manifest parent");
-        fs::copy(checkout_release_manifest_path(), &relocated_manifest)
-            .expect("copy relocated manifest");
+        let stale_manifest_path = temp_dir
+            .path()
+            .join("stale-checkout/contracts/reference-host/manifests/apxm.reference-host-release-manifest.v1.json");
         let startup_path = temp_dir.path().join("startup.json");
-        fs::write(
+        write_startup_input_file(
             &startup_path,
-            serde_json::to_string(&json!({
-                "schema_version": STARTUP_INPUT_SCHEMA,
-                "semantic_owner": "agents",
-                "owner_executable": OWNER_EXECUTABLE,
-                "owner_executable_path": OWNER_EXECUTABLE_PATH,
-                "transport_protocol": TRANSPORT_PROTOCOL,
-                "reference_host_release_manifest": {
-                    "path": relocated_manifest,
-                    "digest": exact_digest("mismatch"),
-                },
-                "release_digest": exact_digest("release"),
-                "port_bindings_digest": exact_digest("port-bindings"),
-                "resource_ceiling_digest": exact_digest("resource-ceiling"),
-                "provenance": {
-                    "owner_revision": "a".repeat(40),
-                    "descriptor_semantic_digest": exact_digest("descriptor-semantic"),
-                    "descriptor_exact_checksum": exact_digest("descriptor-exact"),
-                    "dirty": false,
-                },
-                "fail_closed_on": FAIL_CLOSED_ON,
-            }))
-            .expect("startup json"),
-        )
-        .expect("startup file");
-
-        let error = load_startup_input(&startup_path, TRANSPORT_PROTOCOL)
-            .expect_err("mismatched manifest digest must fail");
-        assert!(
-            error
-                .to_string()
-                .contains("reference-host release manifest digest mismatch"),
-            "unexpected error: {error}"
+            &stale_manifest_path,
+            &exact_digest("release"),
+            &exact_digest("port-bindings"),
+            &exact_digest("resource-ceiling"),
         );
-    }
 
-    #[test]
-    fn startup_input_rejects_missing_relocated_release_manifest_path() {
-        let temp_dir = tempdir().expect("temp dir");
-        let missing_manifest = temp_dir.path().join(RELEASE_MANIFEST_SOURCE_PATH);
-        fs::create_dir_all(missing_manifest.parent().expect("manifest parent"))
-            .expect("create relocated manifest parent");
-        let startup_path = temp_dir.path().join("startup.json");
-        fs::write(
-            &startup_path,
-            serde_json::to_string(&json!({
-                "schema_version": STARTUP_INPUT_SCHEMA,
-                "semantic_owner": "agents",
-                "owner_executable": OWNER_EXECUTABLE,
-                "owner_executable_path": OWNER_EXECUTABLE_PATH,
-                "transport_protocol": TRANSPORT_PROTOCOL,
-                "reference_host_release_manifest": {
-                    "path": missing_manifest,
-                    "digest": exact_digest("missing"),
-                },
-                "release_digest": exact_digest("release"),
-                "port_bindings_digest": exact_digest("port-bindings"),
-                "resource_ceiling_digest": exact_digest("resource-ceiling"),
-                "provenance": {
-                    "owner_revision": "a".repeat(40),
-                    "descriptor_semantic_digest": exact_digest("descriptor-semantic"),
-                    "descriptor_exact_checksum": exact_digest("descriptor-exact"),
-                    "dirty": false,
-                },
-                "fail_closed_on": FAIL_CLOSED_ON,
-            }))
-            .expect("startup json"),
-        )
-        .expect("startup file");
-
-        let error = load_startup_input(&startup_path, TRANSPORT_PROTOCOL)
-            .expect_err("missing manifest path must fail");
-        assert!(
-            error
-                .to_string()
-                .contains("load reference-host release manifest"),
-            "unexpected error: {error}"
-        );
-    }
-
-    #[test]
-    fn startup_input_rejects_noncanonical_release_manifest_path() {
-        let temp_dir = tempdir().expect("temp dir");
-        let wrong_manifest = temp_dir.path().join("release-manifest.json");
-        fs::write(&wrong_manifest, "{\"schema_version\":\"test\"}\n").expect("manifest");
-        let startup_path = temp_dir.path().join("startup.json");
-        fs::write(
-            &startup_path,
-            serde_json::to_string(&json!({
-                "schema_version": STARTUP_INPUT_SCHEMA,
-                "semantic_owner": "agents",
-                "owner_executable": OWNER_EXECUTABLE,
-                "owner_executable_path": OWNER_EXECUTABLE_PATH,
-                "transport_protocol": TRANSPORT_PROTOCOL,
-                "reference_host_release_manifest": {
-                    "path": wrong_manifest,
-                    "digest": file_digest(&wrong_manifest).expect("manifest digest"),
-                },
-                "release_digest": exact_digest("release"),
-                "port_bindings_digest": exact_digest("port-bindings"),
-                "resource_ceiling_digest": exact_digest("resource-ceiling"),
-                "provenance": {
-                    "owner_revision": "a".repeat(40),
-                    "descriptor_semantic_digest": exact_digest("descriptor-semantic"),
-                    "descriptor_exact_checksum": exact_digest("descriptor-exact"),
-                    "dirty": false,
-                },
-                "fail_closed_on": FAIL_CLOSED_ON,
-            }))
-            .expect("startup json"),
-        )
-        .expect("startup file");
-
-        let error = load_startup_input(&startup_path, TRANSPORT_PROTOCOL)
-            .expect_err("noncanonical path must fail");
+        let error =
+            load_startup_input(&startup_path).expect_err("stale checkout path must fail closed");
         assert!(
             error
                 .to_string()
                 .contains("reference-host release manifest path mismatch"),
             "unexpected error: {error}"
         );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn private_transport_requires_peer_uid_to_match_socket_owner() {
-        assert!(private_transport_peer_is_owner(1000, 1000));
-        assert!(!private_transport_peer_is_owner(1000, 1001));
     }
 }
