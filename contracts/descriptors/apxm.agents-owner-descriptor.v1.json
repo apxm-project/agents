@@ -24,12 +24,12 @@
       "release_manifest": {
         "schema_version": "apxm.reference-host-release-manifest.v1",
         "path": "reference-host/manifests/apxm.reference-host-release-manifest.v1.json",
-        "digest": "sha256:5090a2a00585c70f850e5dd409b2a9f9afbad8e567cfe08b363ee5df32bca23a"
+        "digest": "sha256:8e1c0f16e1c228f7c9ba953687c8d5952d71cfecbe97063f1c503d31de3335c3"
       },
       "execution_manifest": {
         "schema_version": "apxm.reference-host-execution-manifest.v1",
         "path": "reference-host/manifests/apxm.reference-host-execution-manifest.v1.json",
-        "digest": "sha256:cb9704ceffb1709d8e807c9fcb52bf34015560e7cb1551e9b79cca575e676bc6"
+        "digest": "sha256:e64ee19a68e379b69b82fc6e131dee150834ea650a81815d239a950948a85cb8"
       },
       "lifecycle_vector": {
         "vector_id": "apxm.reference-host.lifecycle-parity.v1",
@@ -233,6 +233,11 @@
       "schema_id": "apxm.host-execution-manifest.v1",
       "path": "schemas/apxm.host-execution-manifest.v1.json",
       "digest": "sha256:54f1a76367a34f105fd019aef2d34ca18416a6843e50bd84203139bfccabd428"
+    },
+    {
+      "schema_id": "apxm.reference-host-startup-input.v1",
+      "path": "schemas/apxm.reference-host-startup-input.v1.json",
+      "digest": "sha256:a5773b1560e5cc9c91ef35ec2bbeef67d55a8b2607329c2a00eaff72e293feed"
     },
     {
       "schema_id": "apxm.runtime-readiness.v1",
@@ -1005,6 +1010,17 @@
       ]
     },
     {
+      "schema_id": "apxm.reference-host-startup-input.v1",
+      "path": "vectors/apxm.reference-host-startup-input.v1.json",
+      "digest": "sha256:e959d8d513ab11633e92ea64a75e7455cb884aff2b1884062226a97a9051c35c",
+      "coverage": [
+        "positive",
+        "placeholder_rejection",
+        "dirty_provenance_rejection",
+        "fail_closed_reason_drift"
+      ]
+    },
+    {
       "schema_id": "apxm.execution-admission.v1",
       "path": "vectors/apxm.execution-admission.v1.json",
       "digest": "sha256:7083d2ae70f5054dff3d90babfacb5952cb22fdfb751663cbc369fe71e1fe558",
@@ -1025,5 +1041,5 @@
       ]
     }
   ],
-  "descriptor_digest": "sha256:fdef0358050fea1ab56f6103cf124ba77f1cdb040468ae3f1bc156855110650a"
+  "descriptor_digest": "sha256:4cbfa51a7a3e5de26009122d2c78037d9753411b10cc6db85a6960b5bd3f1bf4"
 }

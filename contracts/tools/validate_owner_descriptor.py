@@ -276,6 +276,7 @@ RETIRED_REFERENCE_HOST_ADMISSION_ALIAS = "apxm.execution-admission.v1"
 REFERENCE_HOST_EXECUTION_SCHEMA_KEYS = (
     "startup_input_schema",
     "host_execution_manifest_schema",
+    "runtime_startup_input_schema",
     "runtime_readiness_schema",
     "runtime_drain_quiescence_schema",
     "invocation_admission_schema",
@@ -284,7 +285,7 @@ REFERENCE_HOST_EXECUTION_SCHEMA_KEYS = (
     "host_transport_schema",
 )
 REFERENCE_HOST_EXECUTION_VECTOR_KEYS = (
-    "startup_input_vector",
+    "runtime_startup_input_vector",
     "runtime_readiness_vector",
     "runtime_drain_quiescence_vector",
     "invocation_admission_vector",
@@ -676,12 +677,13 @@ def reference_host_published_lifecycle_profile(
     execution_manifest: dict[str, Any],
     lifecycle_vector: dict[str, Any],
 ) -> dict[str, Any]:
+    startup_input_schema = execution_manifest["runtime_startup_input_schema"]["schema_id"]
     return {
         "profile_id": "reference-host",
         "owner_executable": release_manifest["owner_executable"],
         "transport_protocol": release_manifest["transport_protocol"],
         "profile_cohort": list(REFERENCE_HOST_PROFILE_COHORT),
-        "startup_input_schema": "apxm.reference-host-startup-input.v1",
+        "startup_input_schema": startup_input_schema,
         "release_manifest": reference_host_release_manifest_ref(),
         "execution_manifest": reference_host_execution_manifest_ref(),
         "lifecycle_vector": reference_host_lifecycle_vector_ref(lifecycle_vector),
@@ -925,6 +927,13 @@ def schema_instance_errors(
         if len(matching) != 1:
             return [f"expected exactly one oneOf branch, matched {len(matching)}"]
         return []
+    if "not" in schema:
+        negated = schema["not"]
+        if not isinstance(negated, dict):
+            return ["not must be an object"]
+        if not schema_instance_errors(negated, instance, schema_ids, root_schema):
+            return ["instance matches forbidden negated schema"]
+        schema = {key: value for key, value in schema.items() if key != "not"}
 
     errors: list[str] = []
     if "const" in schema and instance != schema["const"]:
@@ -964,9 +973,27 @@ def schema_instance_errors(
             canonical_items = [canonical(value) for value in instance]
             if len(set(canonical_items)) != len(canonical_items):
                 errors.append("array items must be unique")
+        prefix_items = schema.get("prefixItems")
+        prefix_count = 0
+        if isinstance(prefix_items, list):
+            prefix_count = len(prefix_items)
+            for index, item_schema in enumerate(prefix_items):
+                if index >= len(instance):
+                    break
+                if isinstance(item_schema, dict):
+                    errors.extend(
+                        f"[{index}]: {error}"
+                        for error in schema_instance_errors(
+                            item_schema, instance[index], schema_ids, root_schema
+                        )
+                    )
+                else:
+                    errors.append(f"prefixItems[{index}] must be an object")
         item_schema = schema.get("items")
-        if isinstance(item_schema, dict):
-            for index, item in enumerate(instance):
+        if item_schema is False and len(instance) > prefix_count:
+            errors.append("array has items beyond prefixItems")
+        elif isinstance(item_schema, dict):
+            for index, item in enumerate(instance[prefix_count:], start=prefix_count):
                 errors.extend(
                     f"[{index}]: {error}"
                     for error in schema_instance_errors(item_schema, item, schema_ids, root_schema)
@@ -2052,6 +2079,7 @@ def check_reference_host_release_evidence(descriptor: dict[str, Any]) -> None:
             raise ValidationError(
                 f"reference-host execution manifest {key} must match the release manifest"
             )
+    check_reference_host_runtime_startup_input_contract(execution_manifest)
     check_reference_host_startup_input_preflight(execution_manifest)
     check_reference_host_execution_publications(execution_manifest)
     expected_publication_cohort = reference_host_publication_cohort(execution_manifest)
@@ -2127,27 +2155,56 @@ def check_reference_host_release_evidence(descriptor: dict[str, Any]) -> None:
         )
 
 
-def check_reference_host_release_manifest_contract(
-    release_manifest: dict[str, Any],
+def check_reference_host_runtime_startup_input_contract(
+    execution_manifest: dict[str, Any],
 ) -> None:
-    if release_manifest.get("owner_executable") != "apxm-reference-host":
+    expected_schema = {
+        "schema_id": "apxm.reference-host-startup-input.v1",
+        "path": "reference-host/schemas/apxm.reference-host-startup-input.v1.json",
+        "semantic_owner": "agents",
+        "canonical_source_path": "schemas/apxm.reference-host-startup-input.v1.json",
+    }
+    expected_vector = {
+        "schema_id": "apxm.reference-host-startup-input.v1",
+        "path": "reference-host/vectors/apxm.reference-host-startup-input.v1.json",
+        "canonical_source_path": "vectors/apxm.reference-host-startup-input.v1.json",
+    }
+    schema_entry = execution_manifest.get("runtime_startup_input_schema")
+    if not isinstance(schema_entry, dict):
         raise ValidationError(
-            "reference-host release manifest owner_executable must stay apxm-reference-host"
+            "reference-host execution manifest must declare runtime_startup_input_schema"
         )
-    if release_manifest.get("transport_protocol") != REFERENCE_HOST_TRANSPORT_PROTOCOL:
+    vector_entry = execution_manifest.get("runtime_startup_input_vector")
+    if not isinstance(vector_entry, dict):
         raise ValidationError(
-            "reference-host release manifest transport_protocol must stay product-neutral jsonl-stdin-stdout"
+            "reference-host execution manifest must declare runtime_startup_input_vector"
         )
-    if release_manifest.get("canonical_driver") != (
-        "apxm_execution::RuntimeProfile::from_fully_admitted"
-    ):
-        raise ValidationError(
-            "reference-host release manifest canonical_driver must use the shared fully admitted RuntimeProfile"
-        )
-    if release_manifest.get("constraints") != REFERENCE_HOST_RELEASE_CONSTRAINTS:
-        raise ValidationError(
-            "reference-host release manifest fail-closed constraints drifted"
-        )
+    for key, value in expected_schema.items():
+        if schema_entry.get(key) != value:
+            raise ValidationError(
+                f"reference-host runtime startup-input schema {key} drifted"
+            )
+    for key, value in expected_vector.items():
+        if vector_entry.get(key) != value:
+            raise ValidationError(
+                f"reference-host runtime startup-input vector {key} drifted"
+            )
+    source_schema = SCHEMAS_DIR / "apxm.reference-host-startup-input.v1.json"
+    source_vector = VECTORS_DIR / "apxm.reference-host-startup-input.v1.json"
+    published_schema = CONTRACTS_DIR / schema_entry["path"]
+    published_vector = CONTRACTS_DIR / vector_entry["path"]
+    if not published_schema.is_file():
+        raise ValidationError("reference-host runtime startup-input schema copy is missing")
+    if not published_vector.is_file():
+        raise ValidationError("reference-host runtime startup-input vector copy is missing")
+    if schema_entry.get("digest") != file_digest(published_schema):
+        raise ValidationError("reference-host runtime startup-input schema digest mismatched")
+    if vector_entry.get("digest") != file_digest(published_vector):
+        raise ValidationError("reference-host runtime startup-input vector digest mismatched")
+    if published_schema.read_bytes() != source_schema.read_bytes():
+        raise ValidationError("reference-host runtime startup-input schema drifted from canonical source")
+    if published_vector.read_bytes() != source_vector.read_bytes():
+        raise ValidationError("reference-host runtime startup-input vector drifted from canonical source")
 
 
 def check_reference_host_startup_input_preflight(
