@@ -121,7 +121,7 @@ async def ConversationalExample(agent, incoming):
 
 
 def main() -> None:
-    """Print the example graph, or canonical AIR with ``--air``."""
+    """Print the example graph, canonical AIR, or compiler diagnostics."""
     if "--air" in sys.argv[1:]:
         print(ConversationalExample.canonical_air())
     elif "--diagnostics" in sys.argv[1:]:
