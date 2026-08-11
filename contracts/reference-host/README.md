@@ -8,11 +8,10 @@ publication copies are pinned to those bytes by the manifest.
 - `manifests/` contains the executable publication manifest plus the
   product-neutral release manifest that wraps the full APXM-owned cohort.
 - `schemas/` contains byte-for-byte copies of the canonical host execution,
-  startup-input, JSONL host-request, host-response, private host-transport,
-  invocation admission, runtime readiness, and runtime drain/quiescence schemas.
-- `vectors/` contains the canonical startup-input, admission, readiness,
-  host-response, private host-transport, and drain/quiescence conformance
-  vectors plus deterministic
+  startup-input, invocation admission, runtime readiness, and runtime
+  drain/quiescence schemas.
+- `vectors/` contains the canonical startup-input, admission, readiness, and
+  drain/quiescence conformance vectors plus deterministic
   embedded/reference-host parity goldens for positive commit, negative
   admission/provenance rejection, invalid AIR failure, cancellation,
   drain/shutdown, restart recovery, revocation, and boundary behavior.
