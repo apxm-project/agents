@@ -85,8 +85,8 @@ fn example_artifacts_carry_no_field_the_schema_rejects() {
         .collect();
 
     for fixture in [
-        "../crates/machine/program/tests/fixtures/example-artifacts/conversational-python.v1.json",
-        "../crates/machine/program/tests/fixtures/example-artifacts/conversational-typescript.v1.json",
+        "../crates/machine/program/tests/fixtures/example-artifacts/conversational-python.v2.json",
+        "../crates/machine/program/tests/fixtures/example-artifacts/conversational-typescript.v2.json",
     ] {
         let artifact = load_contract(fixture);
         for key in artifact.as_object().expect("artifact object").keys() {
@@ -102,8 +102,8 @@ fn example_artifacts_carry_no_field_the_schema_rejects() {
 #[test]
 fn conversational_example_artifacts_pin_typed_tool_control_and_hooks() {
     for fixture in [
-        "../crates/machine/program/tests/fixtures/example-artifacts/conversational-python.v1.json",
-        "../crates/machine/program/tests/fixtures/example-artifacts/conversational-typescript.v1.json",
+        "../crates/machine/program/tests/fixtures/example-artifacts/conversational-python.v2.json",
+        "../crates/machine/program/tests/fixtures/example-artifacts/conversational-typescript.v2.json",
     ] {
         let artifact = load_contract(fixture);
         let hooks = artifact["hook_bindings"]

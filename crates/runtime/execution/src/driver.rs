@@ -910,12 +910,14 @@ fn evaluate_predicate(
     )?;
     let mut value = &materialized;
     for segment in &predicate.property_path {
-        value = value
-            .get(segment)
-            .ok_or_else(|| ExecutionError::InvalidControlPredicate {
-                region_id: region_id.to_string(),
-                message: format!("property path segment '{segment}' is absent"),
-            })?;
+        value =
+            value
+                .get(segment)
+                .cloned()
+                .ok_or_else(|| ExecutionError::InvalidControlPredicate {
+                    region_id: region_id.to_string(),
+                    message: format!("property path segment '{segment}' is absent"),
+                })?;
     }
     match predicate.comparator {
         PredicateComparator::Truthy => {
@@ -951,9 +953,9 @@ fn evaluate_predicate(
                 });
             }
             Ok(if predicate.comparator == PredicateComparator::Equals {
-                value == &expected
+                value == expected
             } else {
-                value != &expected
+                value != expected
             })
         }
     }
@@ -2733,6 +2735,34 @@ mod loop_evidence_tests {
     use super::*;
     use serde_json::json;
 
+    fn predicate_air(expression: ValueExpression) -> AirModule {
+        AirModule {
+            schema_version: apxm_program::air::AirVersion::V2,
+            value_assemblies: vec![apxm_program::air::ValueAssembly {
+                value_id: "value.predicate".into(),
+                expression,
+            }],
+            semantic_operations: Vec::new(),
+            structural_ir: Vec::new(),
+            context_flow: Vec::new(),
+            source_map: apxm_program::source_map::SourceMap {
+                schema_version: apxm_program::source_map::SourceMapVersion::V1,
+                source_language: apxm_program::source_map::SourceLanguage::Python,
+                node_spans: Vec::new(),
+                region_annotations: Vec::new(),
+            },
+        }
+    }
+
+    fn assembled_predicate() -> ControlPredicate {
+        ControlPredicate {
+            root_value_id: "value.predicate".into(),
+            property_path: vec!["kind".into()],
+            comparator: PredicateComparator::Equals,
+            literal: Some(PredicateLiteral::String("final".into())),
+        }
+    }
+
     fn loop_air() -> AirModule {
         serde_json::from_value(json!({
             "schema_version": "apxm.air.v2",
@@ -2854,5 +2884,86 @@ mod loop_evidence_tests {
         let error = validate_resume_capability_arguments(&air, "value.resume.input")
             .expect_err("resume-derived capability argument must fail closed");
         assert!(matches!(error, ExecutionError::InvalidAir { .. }));
+    }
+
+    #[test]
+    fn predicate_materializes_value_assemblies_and_resume_values_deterministically() {
+        let air = predicate_air(ValueExpression::Object {
+            fields: vec![apxm_program::frontend_graph::ValueField {
+                name: "kind".into(),
+                value: ValueExpression::String {
+                    value: "final".into(),
+                },
+            }],
+        });
+        let state = DriveState::new(Value::Null, BTreeMap::new(), &air, "invocation.1");
+        let predicate = assembled_predicate();
+        assert!(evaluate_predicate(&air, &state, "region.branch", &predicate).unwrap());
+        assert!(evaluate_predicate(&air, &state, "region.branch", &predicate).unwrap());
+
+        let resume_air = predicate_air(ValueExpression::Projection {
+            root: Box::new(ValueExpression::Ssa {
+                value_id: "value.resume".into(),
+            }),
+            property_path: vec!["payload".into()],
+        });
+        let mut resumed =
+            DriveState::new(Value::Null, BTreeMap::new(), &resume_air, "invocation.1");
+        resumed
+            .values
+            .insert("value.resume".into(), json!({"payload": {"kind": "final"}}));
+        assert!(
+            evaluate_predicate(
+                &resume_air,
+                &resumed,
+                "region.branch",
+                &assembled_predicate()
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn predicate_assembly_failures_are_closed() {
+        let missing = predicate_air(ValueExpression::Ssa {
+            value_id: "value.missing".into(),
+        });
+        let state = DriveState::new(Value::Null, BTreeMap::new(), &missing, "invocation.1");
+        assert!(matches!(
+            evaluate_predicate(&missing, &state, "region.branch", &assembled_predicate()),
+            Err(ExecutionError::MissingControlValue { .. })
+        ));
+
+        let cycle = predicate_air(ValueExpression::Ssa {
+            value_id: "value.predicate".into(),
+        });
+        assert!(matches!(
+            evaluate_predicate(&cycle, &state, "region.branch", &assembled_predicate()),
+            Err(ExecutionError::InvalidControlPredicate { .. })
+        ));
+
+        let mut nested = ValueExpression::Boolean { value: true };
+        for _ in 0..65 {
+            nested = ValueExpression::Projection {
+                root: Box::new(nested),
+                property_path: vec!["kind".into()],
+            };
+        }
+        let too_deep = predicate_air(nested);
+        assert!(matches!(
+            evaluate_predicate(&too_deep, &state, "region.branch", &assembled_predicate()),
+            Err(ExecutionError::InvalidValueExpression { .. })
+        ));
+
+        let wrong_type = predicate_air(ValueExpression::Object {
+            fields: vec![apxm_program::frontend_graph::ValueField {
+                name: "kind".into(),
+                value: ValueExpression::Object { fields: Vec::new() },
+            }],
+        });
+        assert!(matches!(
+            evaluate_predicate(&wrong_type, &state, "region.branch", &assembled_predicate()),
+            Err(ExecutionError::InvalidControlPredicate { .. })
+        ));
     }
 }

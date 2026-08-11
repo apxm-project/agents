@@ -875,6 +875,7 @@ struct SsaValidationContext<'a> {
     values: &'a HashMap<&'a str, &'a Value>,
     blocks: &'a HashMap<&'a str, &'a Block>,
     calls: &'a HashMap<&'a str, &'a CallIntent>,
+    controls: &'a HashMap<&'a str, &'a ControlIntent>,
     functions: &'a HashMap<&'a str, &'a str>,
     region_parent: &'a HashMap<&'a str, Option<&'a str>>,
     region_order: &'a HashMap<&'a str, u32>,
@@ -934,6 +935,7 @@ fn validate_ssa_dominance(
         values,
         blocks: &blocks,
         calls: &calls,
+        controls: &controls,
         functions: &functions,
         region_parent: &region_parent,
         region_order: &region_order,
@@ -1060,8 +1062,7 @@ fn value_dominates_use(
                         entry: false,
                     },
                     use_location.clone(),
-                    context.region_parent,
-                    context.region_order,
+                    context,
                 )
             }),
         ValueOrigin::BlockArgument => value
@@ -1076,8 +1077,7 @@ fn value_dominates_use(
                         entry: true,
                     },
                     use_location.clone(),
-                    context.region_parent,
-                    context.region_order,
+                    context,
                 )
             }),
         ValueOrigin::Parameter => value
@@ -1092,8 +1092,7 @@ fn value_dominates_use(
                         entry: true,
                     },
                     use_location.clone(),
-                    context.region_parent,
-                    context.region_order,
+                    context,
                 )
             }),
         // Resume values are produced by the structural yield and consumed by
@@ -1143,8 +1142,7 @@ fn collect_expression_references(expression: &ValueExpression, out: &mut Vec<Str
 fn dominates_location(
     definition: SsaLocation,
     use_location: SsaLocation,
-    region_parent: &HashMap<&str, Option<&str>>,
-    region_order: &HashMap<&str, u32>,
+    context: &SsaValidationContext<'_>,
 ) -> bool {
     if definition.region_id == use_location.region_id {
         return definition.entry || definition.execution_order < use_location.execution_order;
@@ -1152,7 +1150,7 @@ fn dominates_location(
     if is_ancestor(
         &definition.region_id,
         &use_location.region_id,
-        region_parent,
+        context.region_parent,
     ) {
         let mut child = use_location.region_id.as_str();
         while let Some(parent) = region_parent.get(child).copied().flatten() {
@@ -1186,6 +1184,58 @@ fn dominates_location(
         }
     }
     false
+}
+
+fn loop_scope_precedes(
+    definition_region: &str,
+    use_region: &str,
+    context: &SsaValidationContext<'_>,
+) -> bool {
+    let mut common = context.region_parent.get(use_region).copied().flatten();
+    while let Some(common_region) = common {
+        let Some(definition_child) =
+            first_child_under(definition_region, common_region, context.region_parent)
+        else {
+            common = context.region_parent.get(common_region).copied().flatten();
+            continue;
+        };
+        let Some(use_child) = first_child_under(use_region, common_region, context.region_parent)
+        else {
+            return false;
+        };
+        if definition_child != use_child {
+            let definition_is_loop = context.controls.values().any(|control| {
+                control.control_kind == ControlKind::Loop
+                    && control
+                        .body_region_ids
+                        .iter()
+                        .any(|region_id| region_id == definition_child)
+            });
+            return definition_is_loop
+                && context
+                    .region_order
+                    .get(definition_child)
+                    .zip(context.region_order.get(use_child))
+                    .is_some_and(|(definition_order, use_order)| definition_order < use_order);
+        }
+        common = context.region_parent.get(common_region).copied().flatten();
+    }
+    false
+}
+
+fn first_child_under<'a>(
+    descendant: &'a str,
+    ancestor: &str,
+    region_parent: &'a HashMap<&'a str, Option<&'a str>>,
+) -> Option<&'a str> {
+    let mut child = descendant;
+    loop {
+        let parent = region_parent.get(child).copied().flatten()?;
+        if parent == ancestor {
+            return Some(child);
+        }
+        child = parent;
+    }
 }
 
 fn is_ancestor(

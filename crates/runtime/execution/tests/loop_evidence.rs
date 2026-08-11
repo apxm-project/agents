@@ -103,13 +103,13 @@ fn example_artifact(artifact: &str) -> (AirModule, Vec<HookBinding>) {
 
 fn conversational_python_example() -> (AirModule, Vec<HookBinding>) {
     example_artifact(include_str!(
-        "../../../machine/program/tests/fixtures/example-artifacts/conversational-python.v1.json"
+        "../../../machine/program/tests/fixtures/example-artifacts/conversational-python.v2.json"
     ))
 }
 
 fn conversational_typescript_example() -> (AirModule, Vec<HookBinding>) {
     example_artifact(include_str!(
-        "../../../machine/program/tests/fixtures/example-artifacts/conversational-typescript.v1.json"
+        "../../../machine/program/tests/fixtures/example-artifacts/conversational-typescript.v2.json"
     ))
 }
 

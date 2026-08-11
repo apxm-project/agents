@@ -51,8 +51,8 @@ FORBIDDEN_NAMED_SEMANTICS = (
     "conversational_loop",
 )
 EXAMPLE_RUNTIME_PROOF_FIXTURES = (
-    Path("crates/machine/program/tests/fixtures/example-artifacts/conversational-python.v1.json"),
-    Path("crates/machine/program/tests/fixtures/example-artifacts/conversational-typescript.v1.json"),
+    Path("crates/machine/program/tests/fixtures/example-artifacts/conversational-python.v2.json"),
+    Path("crates/machine/program/tests/fixtures/example-artifacts/conversational-typescript.v2.json"),
 )
 RETIRED_OPERATION_MARKERS = (
     "prototype_retired",
