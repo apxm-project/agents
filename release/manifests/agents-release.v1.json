@@ -324,6 +324,15 @@
       "exact_bytes_digest": "sha256:95b62bf5ee1293cc04248bcc0d7de085160ace9cecea0e440600ebd20a47c4de",
       "path": "crates/tools/cli/tests/reference_host_jsonl.rs"
     },
+    "neutrality_vector": {
+      "exact_bytes_digest": "sha256:bc6e3c9e8b98650b7c182e279a01838cb6abe4871244dd9041a527474905840b",
+      "path": "contracts/reference-host/vectors/apxm.reference-host.neutrality.v1.json",
+      "profiles": [
+        "embedded",
+        "reference-host"
+      ],
+      "vector_id": "apxm.reference-host.neutrality.v1"
+    },
     "profile_cohort": [
       "embedded",
       "reference-host"
@@ -417,7 +426,7 @@
       ]
     },
     "release_manifest": {
-      "exact_bytes_digest": "sha256:47a6ec05c6b33ce0f603e7160280ce5e0edb3d59449fedcc5153b76718eec581",
+      "exact_bytes_digest": "sha256:9c6dca7a1cb8c63e5d038966fd4d0ffa9b87f4f537df3149873fc68fcce41724",
       "path": "contracts/reference-host/manifests/apxm.reference-host-release-manifest.v1.json"
     }
   },

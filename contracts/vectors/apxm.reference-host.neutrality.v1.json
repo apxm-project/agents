@@ -1,0 +1,111 @@
+{
+  "schema_version": "apxm.reference-host.neutrality.v1",
+  "semantic_owner": "agents",
+  "profiles": ["embedded", "reference-host"],
+  "coordinate_contexts": ["crate", "dependencies", "dependency", "import", "module", "package"],
+  "allowed_import_roots": [
+    "alloc",
+    "anyhow",
+    "apxm_cli",
+    "apxm_kernel",
+    "apxm_program",
+    "core",
+    "serde",
+    "serde_json",
+    "sha2",
+    "std",
+    "super",
+    "tempfile",
+    "tokio"
+  ],
+  "scan_targets": [
+    "contracts/descriptors/apxm.agents-owner-descriptor.v1.json",
+    "contracts/reference-host/manifests/apxm.reference-host-release-manifest.v1.json",
+    "contracts/reference-host/manifests/apxm.reference-host-execution-manifest.v1.json",
+    "crates/tools/cli/src/bin/reference_host.rs",
+    "docs/agents/runtime-profile-parity.md"
+  ],
+  "forbidden_patterns": [
+    "\\bdownstream[-_](?:product|sdk|client|service)\\b",
+    "@[a-z][a-z0-9._-]*/[a-z][a-z0-9._-]+",
+    "\\b(?!(?:apxm|host|reference-host|downstream)(?:[-_.]|$))[a-z][a-z0-9]*(?:[-_.][a-z0-9]+)*[-_](?:sdk|client|service|product)\\b",
+    "\\b(?!(?:apxm_server|downstream)[-_]dependency\\b)[a-z][a-z0-9]*(?:[-_.][a-z0-9]+)*[-_]dependency\\b"
+  ],
+  "negative_cases": [
+    {
+      "name": "downstream_product_coordinate",
+      "input": "downstream_product",
+      "expected_match": true
+    },
+    {
+      "name": "downstream_sdk_coordinate",
+      "input": "downstream-sdk",
+      "expected_match": true
+    },
+    {
+      "name": "vendor_client_coordinate",
+      "input": "vendor_client",
+      "expected_match": true
+    },
+    {
+      "name": "scoped_package_coordinate",
+      "input": "@acme/host-sdk",
+      "expected_match": true
+    },
+    {
+      "name": "generic_client_coordinate",
+      "input": "customer-service",
+      "expected_match": true
+    },
+    {
+      "name": "generic_dependency_coordinate",
+      "input": "acme_dependency",
+      "expected_match": true
+    },
+    {
+      "name": "owner_dependency_invariant",
+      "input": "downstream_dependency",
+      "expected_match": false
+    },
+    {
+      "name": "bare_uppercase_import",
+      "input": "use AcmeClient::Port;",
+      "expected_match": true
+    },
+    {
+      "name": "bare_lowercase_import",
+      "input": "use acme::client;",
+      "expected_match": true
+    },
+    {
+      "name": "multi_segment_coordinate",
+      "input": "acme_client_service",
+      "expected_match": true
+    },
+    {
+      "name": "multi_segment_dependency",
+      "input": "acme_sdk_dependency",
+      "expected_match": true
+    },
+    {
+      "name": "structured_dependency_coordinate",
+      "input": "{\"dependency\":\"Acme\"}",
+      "expected_match": true
+    },
+    {
+      "name": "normal_release_prose",
+      "input": "Acme is mentioned in release prose.",
+      "expected_match": false
+    },
+    {
+      "name": "allowed_apxm_import",
+      "input": "use apxm_program::air::AirModule;",
+      "expected_match": false
+    },
+    {
+      "name": "bare_downstream_name",
+      "input": "Acme",
+      "expected_match": true
+    }
+  ]
+}

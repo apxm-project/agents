@@ -21,11 +21,14 @@ SHA-256 file digests, schema and vector identity, closed publication paths,
 release-cohort membership, required parity coverage, and rejection of the
 retired `apxm.execution-admission.v1` alias.
 
+The neutrality vector and scanner separately cover generic downstream
+coordinate negatives across the owner descriptor, reference-host manifests,
+host source, and current parity documentation.
+
 The owner-descriptor gate (`python contracts/tools/validate_owner_descriptor.py`)
 also validates this subtree directly. It fails closed on stale cohort digests,
-publication drift from canonical APXM sources, and forbidden standalone
-reverse-dependency names such as `clic` or `coordinator` in machine-readable
-publication data.
+publication drift from canonical APXM sources, and product-specific downstream
+dependency coordinates in machine-readable publication data.
 
 Build the canonical executable and record its exact receipt with:
 

@@ -51,9 +51,14 @@ ALLOWED_OWNER_DEPENDENCIES = {
     "tokio",
 }
 ALLOWED_WORKSPACE_DEPENDENCY_KEYS = {"workspace", "features", "default-features", "optional"}
-EVIDENCE_PRODUCT_PATTERN = re.compile(r"\b(?:CLIC|Studio|Auth|Widget|Host\s+SDK)\b", re.I)
+EVIDENCE_PRODUCT_PATTERN = re.compile(
+    r"\b(?:downstream[-_](?:product|sdk|dependency)|"
+    r"(?:product|vendor|customer)[-_](?:sdk|client|service|dependency))\b",
+    re.I,
+)
 DOWNSTREAM_DEPENDENCY_PATTERN = re.compile(
-    r"(?:clic|studio|auth|widget|host|downstream)", re.I
+    r"\b(?:downstream|vendor|customer)[-_][a-z0-9_-]+\b",
+    re.I,
 )
 
 # These patterns are evaluated against production Rust after comments are removed.
@@ -75,8 +80,7 @@ OWNER_FORBIDDEN_PATTERNS = {
         r"\b(?:multi[-_ ]tenant|tenant(?:[-_ ]id)?)\b|MultiTenant", re.I
     ),
     "downstream-or-product": re.compile(
-        r"\b(?:CLIC|Studio|Auth|Widget|Host\s+SDK|downstream)\b|"
-        r"(?:Clic|Studio|Auth|Widget)(?:Client|Sdk|Dependency)?",
+        r"\b(?:downstream|vendor|customer)[-_][a-z0-9_-]+\b",
         re.I,
     ),
     "alias": re.compile(
