@@ -239,7 +239,10 @@ fn lineage_backed_usage() -> CommittedNativeModelUsage {
     let mut lineage = InferenceUsageLineage::seal(
         attempt.model_effect_id.clone(),
         attempt.attempt_index,
+        attempt.request_digest.clone(),
         attempt.model_target_ref.clone(),
+        digest('9'),
+        attempt.model_deployment_ref.clone(),
         attempt.exact_port_binding_digest.clone(),
         Usage {
             input_tokens: attempt.native_input_tokens,
