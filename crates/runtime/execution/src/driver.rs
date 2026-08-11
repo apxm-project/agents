@@ -1961,7 +1961,7 @@ async fn publish_committed_native_model_usage(
     if attempts.is_empty() {
         return CommittedNativeModelUsageOutcome::NotApplicable;
     }
-    let Some(port) = &ports.operational_usage else {
+    let Some(_port) = &ports.operational_usage else {
         return CommittedNativeModelUsageOutcome::NotConfigured;
     };
     if attempts.len() != lineages.len() {

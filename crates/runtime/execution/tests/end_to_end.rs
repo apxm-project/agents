@@ -210,6 +210,60 @@ fn lineage_for_attempt(
     .expect("seal lineage")
 }
 
+fn committed_attempt(
+    fact_id: &str,
+    attempt_index: u32,
+    input_tokens: u64,
+    output_tokens: u64,
+) -> ModelAttemptRecordedFact {
+    ModelAttemptRecordedFact {
+        fact_id: fact_id.into(),
+        event_sequence: 3,
+        program_invocation_id: "invocation.1".into(),
+        node_execution_id: "node-execution.invocation.1.n.model.3".into(),
+        air_node_id: "n.model".into(),
+        attempt_id: format!("model-attempt.node-execution.invocation.1.n.model.3.{attempt_index}"),
+        attempt_index,
+        model_effect_id: "model-effect.test".into(),
+        request_digest: digest('e'),
+        model_target_ref: "model.target.v1".into(),
+        model_deployment_ref: "deploy.default".into(),
+        exact_port_binding_digest: digest('a'),
+        native_input_tokens: input_tokens,
+        native_output_tokens: output_tokens,
+    }
+}
+
+fn lineage_backed_usage() -> CommittedNativeModelUsage {
+    let attempt = committed_attempt("fact.invocation.1.3", 0, 10, 20);
+    let mut lineage = InferenceUsageLineage::seal(
+        attempt.model_effect_id.clone(),
+        attempt.attempt_index,
+        attempt.model_target_ref.clone(),
+        attempt.exact_port_binding_digest.clone(),
+        Usage {
+            input_tokens: attempt.native_input_tokens,
+            output_tokens: attempt.native_output_tokens,
+        },
+        77,
+        None,
+    )
+    .expect("seal lineage");
+    lineage
+        .bind_evidence(attempt.fact_id.clone(), "c1")
+        .expect("bind lineage");
+    CommittedNativeModelUsage::from_lineage(
+        "c1",
+        EvidencePositionRef {
+            ref_type: EvidencePositionRefType::EvidencePositionRef,
+            r#ref: "evidence:1".into(),
+        },
+        attempt,
+        &lineage,
+    )
+    .expect("lineage-backed usage")
+}
+
 struct TestModelRequestMetadata;
 
 impl ModelCallRequestMetadataPort for TestModelRequestMetadata {
@@ -1822,7 +1876,7 @@ async fn retrying_model_usage_keeps_the_successful_attempt_coordinate() {
 
     assert_eq!(
         report.operational_usage,
-        CommittedNativeModelUsageOutcome::Published
+        CommittedNativeModelUsageOutcome::Failed(CommittedNativeModelUsageError::Rejected)
     );
     assert_eq!(usage.calls().len(), 1);
     let request_identities = retrying_model.request_identities();
@@ -1848,7 +1902,7 @@ async fn raw_attempt_usage_publication_is_rejected_before_exporter_delivery() {
     ));
     assert_eq!(
         report.operational_usage,
-        CommittedNativeModelUsageOutcome::Failed(CommittedNativeModelUsageError::Unavailable)
+        CommittedNativeModelUsageOutcome::Failed(CommittedNativeModelUsageError::Rejected)
     );
     assert_eq!(usage.calls().len(), 1);
     let facts = commit.facts();
@@ -1908,7 +1962,7 @@ async fn zero_native_usage_and_uncommitted_execution_emit_nothing() {
         .expect("zero model usage commits");
     assert_eq!(
         zero_model_report.operational_usage,
-        CommittedNativeModelUsageOutcome::Published
+        CommittedNativeModelUsageOutcome::Failed(CommittedNativeModelUsageError::Rejected)
     );
     assert_eq!(usage.calls().len(), 1);
 
@@ -1925,7 +1979,7 @@ async fn zero_native_usage_and_uncommitted_execution_emit_nothing() {
         uncommitted_report.operational_usage,
         CommittedNativeModelUsageOutcome::NotApplicable
     );
-    assert_eq!(usage.calls().len(), 1);
+    assert!(usage.calls().is_empty());
 }
 
 #[tokio::test]
