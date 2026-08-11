@@ -1071,6 +1071,128 @@ def executed_case_runners() -> list[tuple[str, Callable[..., dict[str, Any]]]]:
         ("boundary_fail_closed", run_case_boundary_fail_closed),
     ]
 
+
+def lifecycle_outcomes_summary(cases: list[dict[str, Any]]) -> dict[str, Any]:
+    cases_by_name = {case["name"]: case for case in cases if case.get("status") == "passed"}
+
+    def case_named(name: str) -> dict[str, Any]:
+        case = cases_by_name.get(name)
+        expect(
+            isinstance(case, dict),
+            "case_failed",
+            f"lifecycle summary requires the passed case {name}",
+        )
+        return case
+
+    def response(name: str, index: int = 0) -> dict[str, Any]:
+        case = case_named(name)
+        responses = case.get("responses")
+        expect(
+            isinstance(responses, list)
+            and len(responses) > index
+            and isinstance(responses[index], dict),
+            "case_failed",
+            f"lifecycle summary requires response[{index}] for case {name}",
+        )
+        return responses[index]
+
+    def readiness(name: str, index: int = 0) -> dict[str, Any]:
+        snapshot = response(name, index).get("readiness")
+        expect(
+            isinstance(snapshot, dict),
+            "case_failed",
+            f"lifecycle summary requires readiness for case {name}",
+        )
+        return snapshot
+
+    boundary_case = case_named("boundary_fail_closed")
+    boundary_responses = boundary_case.get("responses")
+    expect(
+        isinstance(boundary_responses, list) and all(isinstance(entry, dict) for entry in boundary_responses),
+        "case_failed",
+        "lifecycle summary requires boundary_fail_closed responses",
+    )
+    drain_probe = case_named(IN_FLIGHT_DRAIN_PROBE).get("probe")
+    expect(
+        isinstance(drain_probe, dict),
+        "case_failed",
+        "lifecycle summary requires the in-flight drain probe payload",
+    )
+    restart_response = response("restart_recovery_from_runtime_evidence", 2)
+    restart_recovery = restart_response.get("recovery")
+    expect(
+        isinstance(restart_recovery, dict),
+        "case_failed",
+        "lifecycle summary requires restart recovery details",
+    )
+
+    return {
+        "readiness": {
+            "initial_ready": response("readiness"),
+            "draining_before_dispatch": response("drain_rejection_before_dispatch"),
+            "draining_with_in_flight": drain_probe["drain_response"],
+            "terminal_after_in_flight_drain": drain_probe["terminal_readiness"],
+            "terminal_after_cancellation_before_admission": readiness(
+                "cancellation_before_admission"
+            ),
+            "terminal_after_shutdown": readiness("explicit_shutdown_terminal_state"),
+            "ready_after_restart_recovery": readiness(
+                "restart_recovery_from_runtime_evidence", 2
+            ),
+            "terminal_after_revocation": readiness("revocation_before_dispatch", 1),
+        },
+        "admission": {
+            "positive_commit": {
+                "status": response("positive_commit_minimal_air").get("status"),
+                "runtime_evidence_terminal_kind": case_named("positive_commit_minimal_air").get(
+                    "runtime_evidence_terminal_kind"
+                ),
+            },
+            "negative_provenance_rejection": {
+                "status": response("negative_admission_provenance_rejection").get("status"),
+                "error_code": response_error_code(
+                    response("negative_admission_provenance_rejection")
+                ),
+            },
+            "invalid_air_rejection": {
+                "status": response("invalid_air_failure").get("status"),
+                "error_code": response_error_code(response("invalid_air_failure")),
+            },
+            "rejection_while_draining": {
+                "status": response("drain_rejection_before_dispatch", 1).get("status"),
+                "error_code": response_error_code(response("drain_rejection_before_dispatch", 1)),
+            },
+            "revocation_before_dispatch": {
+                "status": response("revocation_before_dispatch").get("status"),
+                "reason": response("revocation_before_dispatch").get("reason"),
+            },
+            "rejection_after_revocation": {
+                "status": response("revocation_before_dispatch", 1).get("status"),
+                "error_code": response_error_code(response("revocation_before_dispatch", 1)),
+            },
+            "boundary_fail_closed": {
+                "error_codes": [
+                    response_error_code(entry) for entry in boundary_responses  # type: ignore[arg-type]
+                ],
+            },
+        },
+        "terminal": {
+            "cancellation_before_admission": {
+                "status": response("cancellation_before_admission").get("status"),
+                "reason": response("cancellation_before_admission").get("reason"),
+            },
+            "explicit_shutdown": {
+                "status": response("explicit_shutdown_terminal_state").get("status"),
+                "reason": response("explicit_shutdown_terminal_state").get("reason"),
+            },
+            "restart_recovery": {
+                "status": restart_response.get("status"),
+                "contract": restart_recovery.get("contract"),
+                "status_detail": restart_recovery.get("status"),
+            },
+        },
+    }
+
 def write_reference_host_lifecycle_receipt(
     *,
     receipt_path: Path = DEFAULT_LIFECYCLE_RECEIPT_PATH,
