@@ -341,8 +341,10 @@ mod tests {
 
     fn frontend_graph_vector(name: &str) -> FrontendGraphVector {
         let vectors: Vec<FrontendGraphVector> = serde_json::from_str(
-            &fs::read_to_string(repository_root().join("contracts/vectors/apxm.frontend-graph.v1.json"))
-                .expect("read checked-in frontend-graph vectors"),
+            &fs::read_to_string(
+                repository_root().join("contracts/vectors/apxm.frontend-graph.v1.json"),
+            )
+            .expect("read checked-in frontend-graph vectors"),
         )
         .expect("decode checked-in frontend-graph vectors");
         vectors
@@ -365,7 +367,10 @@ mod tests {
     #[test]
     fn valid_frontend_graph_vector_compiles_through_the_source_port_boundary() {
         let vector = frontend_graph_vector("valid-frontend-graph-typed-intents");
-        assert!(vector.expected_valid, "the checked-in positive vector stays positive");
+        assert!(
+            vector.expected_valid,
+            "the checked-in positive vector stays positive"
+        );
         let frontend = requested_frontend(&vector);
 
         let compiled = compile_captured_graph(frontend, vector.input)
@@ -377,8 +382,7 @@ mod tests {
             "the compiled graph preserves the requested source language"
         );
         assert_eq!(
-            compiled.source_map,
-            compiled.air.source_map,
+            compiled.source_map, compiled.air.source_map,
             "the source port returns the AIR source map it lowered"
         );
         assert!(
@@ -390,7 +394,10 @@ mod tests {
     #[test]
     fn incompatible_frontend_graph_schema_version_is_invalid_frontend_output() {
         let vector = frontend_graph_vector("incompatible-frontend-graph-schema-version-rejected");
-        assert!(!vector.expected_valid, "the checked-in negative vector stays negative");
+        assert!(
+            !vector.expected_valid,
+            "the checked-in negative vector stays negative"
+        );
         let diagnostics = compile_captured_graph(requested_frontend(&vector), vector.input)
             .expect_err("an incompatible frontend-graph version is rejected");
 
@@ -406,7 +413,10 @@ mod tests {
     #[test]
     fn unknown_frontend_graph_field_is_invalid_frontend_output() {
         let vector = frontend_graph_vector("unknown-frontend-graph-field-rejected");
-        assert!(!vector.expected_valid, "the checked-in negative vector stays negative");
+        assert!(
+            !vector.expected_valid,
+            "the checked-in negative vector stays negative"
+        );
         let diagnostics = compile_captured_graph(requested_frontend(&vector), vector.input)
             .expect_err("a captured graph with an unknown field is rejected");
 
@@ -422,7 +432,10 @@ mod tests {
     #[test]
     fn unknown_semantic_discriminant_is_invalid_frontend_output() {
         let vector = frontend_graph_vector("ais-kind-in-graph-intent-rejected");
-        assert!(!vector.expected_valid, "the checked-in negative vector stays negative");
+        assert!(
+            !vector.expected_valid,
+            "the checked-in negative vector stays negative"
+        );
         let diagnostics = compile_captured_graph(requested_frontend(&vector), vector.input)
             .expect_err("a captured graph with an AIS discriminant in source intent is rejected");
 
