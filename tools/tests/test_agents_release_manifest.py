@@ -36,7 +36,11 @@ class AgentsReleaseManifestTests(unittest.TestCase):
         self.assertEqual(self.manifest["semantic_owner"], "agents")
         revision = self.manifest["source"]["revision"]
         self.assertRegex(revision, r"[0-9a-f]{40}")
-        self.assertEqual(self.manifest["release_id"], f"apxm-agents-{revision[:12]}")
+        artifact_revision = self.manifest["reference_host_image"]["artifact_revision"]
+        self.assertEqual(
+            self.manifest["release_id"],
+            f"apxm-agents-{revision[:12]}-arm64-{artifact_revision[:12]}",
+        )
         self.assertEqual(
             self.manifest["reference_host_release"]["profile_cohort"],
             ["embedded", "reference-host"],
@@ -58,17 +62,79 @@ class AgentsReleaseManifestTests(unittest.TestCase):
         ):
             self.checker.validate_manifest_payload(mutated, manifest_path=MANIFEST_PATH)
 
-    def test_runtime_or_distribution_claims_are_not_in_cohort(self) -> None:
+    def test_linux_arm64_image_is_exactly_bound(self) -> None:
+        image = self.manifest["reference_host_image"]
+        self.assertEqual(
+            image["platform"],
+            {
+                "os": "linux",
+                "architecture": "arm64",
+                "elf_machine": "AArch64",
+                "rust_target": "aarch64-unknown-linux-gnu",
+            },
+        )
+        self.assertEqual(image["built_artifact"]["elf_machine"], "AArch64")
+
+    def test_mutated_image_manifest_digest_fails_closed(self) -> None:
+        mutated = copy.deepcopy(self.manifest)
+        mutated["reference_host_image"]["manifest"]["exact_bytes_digest"] = (
+            "sha256:" + "0" * 64
+        )
+        with self.assertRaisesRegex(
+            self.checker.ReleaseManifestError, "differs from committed source"
+        ):
+            self.checker.validate_manifest_payload(mutated, manifest_path=MANIFEST_PATH)
+
+    def test_mutated_image_id_fails_closed(self) -> None:
+        mutated = copy.deepcopy(self.manifest)
+        mutated["artifacts"][1]["digest"] = "sha256:" + "0" * 64
+        with self.assertRaisesRegex(
+            self.checker.ReleaseManifestError, "differs from committed source"
+        ):
+            self.checker.validate_manifest_payload(mutated, manifest_path=MANIFEST_PATH)
+
+    def test_mutated_machine_receipt_digest_fails_closed(self) -> None:
+        mutated = copy.deepcopy(self.manifest)
+        mutated["reference_host_image"]["machine_receipt"]["exact_bytes_digest"] = (
+            "sha256:" + "0" * 64
+        )
+        with self.assertRaisesRegex(
+            self.checker.ReleaseManifestError, "differs from committed source"
+        ):
+            self.checker.validate_manifest_payload(mutated, manifest_path=MANIFEST_PATH)
+
+    def test_image_and_elf_are_derived_from_committed_machine_receipt(self) -> None:
+        image = self.manifest["reference_host_image"]
+        receipt_ref = image["machine_receipt"]
+        receipt = json.loads(
+            self.checker.git_file(
+                ROOT,
+                receipt_ref["revision"],
+                receipt_ref["path"],
+            )
+        )
+        self.assertEqual(image["built_artifact"]["image_id"], receipt["inspection"]["image_id"])
+        self.assertEqual(
+            image["built_artifact"]["binary_exact_bytes_digest"],
+            receipt["binary"]["exact_bytes_digest"],
+        )
+        checker_source = CHECKER_PATH.read_text(encoding="utf-8")
+        self.assertNotIn("--image-id", checker_source)
+        self.assertNotIn("--binary-digest", checker_source)
+
+    def test_unattested_trust_claims_are_not_in_cohort(self) -> None:
         encoded = json.dumps(self.manifest, sort_keys=True).lower()
-        for term in ("image", "live", "signature", "trust root", "pki"):
+        for term in ("signature", "trust root", "pki"):
             self.assertNotIn(term, encoded)
 
     def test_evidence_is_derived_from_the_manifest(self) -> None:
         evidence = json.loads(EVIDENCE_PATH.read_text(encoding="utf-8"))
         self.assertEqual(evidence["release_id"], self.manifest["release_id"])
         self.assertEqual(evidence["reference_host_release"], self.manifest["reference_host_release"])
+        self.assertEqual(evidence["reference_host_image"], self.manifest["reference_host_image"])
         self.assertEqual(
-            evidence["verification"]["runtime_execution"], "not_attested"
+            evidence["verification"]["runtime_execution"],
+            "linux_arm64_lifecycle_vectors_passed",
         )
 
     def test_clean_tree_is_required_by_default(self) -> None:

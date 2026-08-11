@@ -1,0 +1,255 @@
+{
+  "binary": {
+    "elf_class": "ELF64",
+    "elf_machine": "AArch64",
+    "elf_type": "PIE",
+    "exact_bytes_digest": "sha256:c883bfaf556a9ca6158a36a33fba474f16f2f0f8a3a5e1596b8e334ab7984524",
+    "path": "/usr/local/bin/apxm-reference-host"
+  },
+  "build": {
+    "completion_evidence": [
+      "hash_valid_docker_oci_archive",
+      "docker_archive_load",
+      "loaded_engine_image_inspection"
+    ],
+    "image_ids": [
+      "sha256:1a95acbb3b9488b190f145e75a08f79e40ddca5dc693946338dee3c8187a4842",
+      "sha256:1a95acbb3b9488b190f145e75a08f79e40ddca5dc693946338dee3c8187a4842"
+    ],
+    "no_cache": true,
+    "platform": "linux/arm64",
+    "provenance": false,
+    "reproducible": true,
+    "run_count": 2,
+    "validated_archive_count": 2
+  },
+  "gate_files": [
+    {
+      "digest": "sha256:c92bcdfbaaec314fbddafc306039d24351774e3d69c900871e80231c3244caf5",
+      "path": ".dekk.toml"
+    },
+    {
+      "digest": "sha256:49c885a3b37867b67b0a552a9df5a7728e901e7f1439173f3c768ba90073c7df",
+      "path": "tools/scripts/reference_host_image_gate.py"
+    },
+    {
+      "digest": "sha256:81c3b1f61388f486b158512b8b7ce333f3eefdaad37c1e9b3b5fe7791fb5d448",
+      "path": "tools/scripts/check_reference_host_image.py"
+    },
+    {
+      "digest": "sha256:67c62433619203d3550bf7296acad6757ff016e5e8f21b70826430093082cbee",
+      "path": "tools/scripts/reference_host_lifecycle_receipt.py"
+    },
+    {
+      "digest": "sha256:3982d68be20094655c8ce6287286c718766990fcbd052f38f6eb1f4a0a445ff3",
+      "path": "tools/tests/test_reference_host_image_gate.py"
+    },
+    {
+      "digest": "sha256:2bec1f4aea08725e6f386e72234bcc372204443612677e182bacdc16aa419fdb",
+      "path": "deploy/reference-host/Dockerfile"
+    },
+    {
+      "digest": "sha256:282b783c2bf57d79247502fb0f3e646a6b8787af0185aae716578647caa9c29d",
+      "path": "deploy/reference-host/image-manifest.v1.json"
+    },
+    {
+      "digest": "sha256:e264940078cff04712d204b7d5a32f5e0a04031c2a9498aadd661f912d1d2cda",
+      "path": "deploy/reference-host/image-manifest.v1.sha256"
+    }
+  ],
+  "gate_revision": "2f0a37ce2d9286c86f2ce015574b49b6064ad5c3",
+  "image_manifest": {
+    "exact_bytes_digest": "sha256:282b783c2bf57d79247502fb0f3e646a6b8787af0185aae716578647caa9c29d",
+    "path": "deploy/reference-host/image-manifest.v1.json",
+    "semantic_digest": "sha256:0f127241161967f8734d602799e851be767a7585fa6fffeec101ed9b9c95e9de"
+  },
+  "inspection": {
+    "architecture": "arm64",
+    "entrypoint": [
+      "/usr/local/bin/apxm-reference-host"
+    ],
+    "image_id": "sha256:1a95acbb3b9488b190f145e75a08f79e40ddca5dc693946338dee3c8187a4842",
+    "labels": {
+      "io.apxm.reference-host-release-manifest-digest": "sha256:47a6ec05c6b33ce0f603e7160280ce5e0edb3d59449fedcc5153b76718eec581",
+      "io.apxm.reviewed-carrier-revision": "8f767541413d0905d638b288a797c5825ceb1c76",
+      "org.opencontainers.image.revision": "140ce5b16b4bc4a078800b52fffbfc8004169ee1",
+      "org.opencontainers.image.source": "https://github.com/apxm-project/agents.git",
+      "org.opencontainers.image.title": "APXM reference host"
+    },
+    "os": "linux",
+    "user": "65532:65532"
+  },
+  "lifecycle": {
+    "executed_cases": [
+      "readiness",
+      "positive_commit_minimal_air",
+      "negative_admission_provenance_rejection",
+      "invalid_air_failure",
+      "drain_rejection_before_dispatch",
+      "drain_shutdown_after_in_flight_completion",
+      "cancellation_before_admission",
+      "explicit_shutdown_terminal_state",
+      "restart_recovery_from_runtime_evidence",
+      "revocation_before_dispatch",
+      "boundary_fail_closed"
+    ],
+    "harness_digest": "sha256:95b62bf5ee1293cc04248bcc0d7de085160ace9cecea0e440600ebd20a47c4de",
+    "harness_path": "crates/tools/cli/tests/reference_host_jsonl.rs",
+    "invoke_vector_digest": "sha256:d5aea4603b9535f8b6dfea583059dd88fbfb8722230ae9d7dee4f91d89b1709e",
+    "lifecycle_vector_digest": "sha256:82ee99ff605a232d848bc33047f06dd22c668c99e7f9e1a348b160b256bc2dcd",
+    "outcomes": {
+      "admission": {
+        "boundary_fail_closed": {
+          "error_codes": [
+            "invalid_request_schema",
+            "unknown_operation",
+            "missing_admission"
+          ]
+        },
+        "invalid_air_rejection": {
+          "error_code": "invalid_air",
+          "status": "rejected"
+        },
+        "negative_provenance_rejection": {
+          "error_code": "provenance_mismatch",
+          "status": "rejected"
+        },
+        "positive_commit": {
+          "runtime_evidence_terminal_kind": "invocation.committed",
+          "status": "committed"
+        },
+        "rejection_after_revocation": {
+          "error_code": "admission_revoked",
+          "status": "rejected"
+        },
+        "rejection_while_draining": {
+          "error_code": "host_not_accepting",
+          "status": "rejected"
+        },
+        "revocation_before_dispatch": {
+          "reason": "admission_revoked",
+          "status": "revoked"
+        }
+      },
+      "readiness": {
+        "draining_before_dispatch": {
+          "readiness": {
+            "contract_id": "apxm.runtime.host.v1",
+            "in_flight": 0,
+            "port_bindings_digest": "sha256:9cfeb1dee6cfb05086c170fdf9e8e8092c10f2d9410c2e48fd2377351b1a3df4",
+            "release_digest": "sha256:47a6ec05c6b33ce0f603e7160280ce5e0edb3d59449fedcc5153b76718eec581",
+            "resource_ceiling_digest": "sha256:32fe0355dd58906703ee8731a407b77831954e255a40cc9df3f6e704f8579485",
+            "schema_version": "apxm.runtime.host.v1",
+            "state": "draining"
+          },
+          "schema_version": "apxm.runtime.host-response.v1",
+          "status": "readiness"
+        },
+        "draining_with_in_flight": {
+          "readiness": {
+            "contract_id": "apxm.runtime.host.v1",
+            "in_flight": 1,
+            "port_bindings_digest": "sha256:9cfeb1dee6cfb05086c170fdf9e8e8092c10f2d9410c2e48fd2377351b1a3df4",
+            "release_digest": "sha256:47a6ec05c6b33ce0f603e7160280ce5e0edb3d59449fedcc5153b76718eec581",
+            "resource_ceiling_digest": "sha256:32fe0355dd58906703ee8731a407b77831954e255a40cc9df3f6e704f8579485",
+            "schema_version": "apxm.runtime.host.v1",
+            "state": "draining"
+          },
+          "schema_version": "apxm.runtime.host-response.v1",
+          "status": "readiness"
+        },
+        "initial_ready": {
+          "readiness": {
+            "contract_id": "apxm.runtime.host.v1",
+            "in_flight": 0,
+            "port_bindings_digest": "sha256:9cfeb1dee6cfb05086c170fdf9e8e8092c10f2d9410c2e48fd2377351b1a3df4",
+            "release_digest": "sha256:47a6ec05c6b33ce0f603e7160280ce5e0edb3d59449fedcc5153b76718eec581",
+            "resource_ceiling_digest": "sha256:32fe0355dd58906703ee8731a407b77831954e255a40cc9df3f6e704f8579485",
+            "schema_version": "apxm.runtime.host.v1",
+            "state": "ready"
+          },
+          "schema_version": "apxm.runtime.host-response.v1",
+          "status": "readiness"
+        },
+        "ready_after_restart_recovery": {
+          "contract_id": "apxm.runtime.host.v1",
+          "in_flight": 0,
+          "port_bindings_digest": "sha256:9cfeb1dee6cfb05086c170fdf9e8e8092c10f2d9410c2e48fd2377351b1a3df4",
+          "release_digest": "sha256:47a6ec05c6b33ce0f603e7160280ce5e0edb3d59449fedcc5153b76718eec581",
+          "resource_ceiling_digest": "sha256:32fe0355dd58906703ee8731a407b77831954e255a40cc9df3f6e704f8579485",
+          "schema_version": "apxm.runtime.host.v1",
+          "state": "ready"
+        },
+        "terminal_after_cancellation_before_admission": {
+          "contract_id": "apxm.runtime.host.v1",
+          "in_flight": 0,
+          "port_bindings_digest": "sha256:9cfeb1dee6cfb05086c170fdf9e8e8092c10f2d9410c2e48fd2377351b1a3df4",
+          "release_digest": "sha256:47a6ec05c6b33ce0f603e7160280ce5e0edb3d59449fedcc5153b76718eec581",
+          "resource_ceiling_digest": "sha256:32fe0355dd58906703ee8731a407b77831954e255a40cc9df3f6e704f8579485",
+          "schema_version": "apxm.runtime.host.v1",
+          "state": "stopped"
+        },
+        "terminal_after_in_flight_drain": {
+          "contract_id": "apxm.runtime.host.v1",
+          "in_flight": 0,
+          "port_bindings_digest": "sha256:9cfeb1dee6cfb05086c170fdf9e8e8092c10f2d9410c2e48fd2377351b1a3df4",
+          "release_digest": "sha256:47a6ec05c6b33ce0f603e7160280ce5e0edb3d59449fedcc5153b76718eec581",
+          "resource_ceiling_digest": "sha256:32fe0355dd58906703ee8731a407b77831954e255a40cc9df3f6e704f8579485",
+          "schema_version": "apxm.runtime.host.v1",
+          "state": "stopped"
+        },
+        "terminal_after_revocation": {
+          "contract_id": "apxm.runtime.host.v1",
+          "in_flight": 0,
+          "port_bindings_digest": "sha256:9cfeb1dee6cfb05086c170fdf9e8e8092c10f2d9410c2e48fd2377351b1a3df4",
+          "release_digest": "sha256:47a6ec05c6b33ce0f603e7160280ce5e0edb3d59449fedcc5153b76718eec581",
+          "resource_ceiling_digest": "sha256:32fe0355dd58906703ee8731a407b77831954e255a40cc9df3f6e704f8579485",
+          "schema_version": "apxm.runtime.host.v1",
+          "state": "stopped"
+        },
+        "terminal_after_shutdown": {
+          "contract_id": "apxm.runtime.host.v1",
+          "in_flight": 0,
+          "port_bindings_digest": "sha256:9cfeb1dee6cfb05086c170fdf9e8e8092c10f2d9410c2e48fd2377351b1a3df4",
+          "release_digest": "sha256:47a6ec05c6b33ce0f603e7160280ce5e0edb3d59449fedcc5153b76718eec581",
+          "resource_ceiling_digest": "sha256:32fe0355dd58906703ee8731a407b77831954e255a40cc9df3f6e704f8579485",
+          "schema_version": "apxm.runtime.host.v1",
+          "state": "stopped"
+        }
+      },
+      "terminal": {
+        "cancellation_before_admission": {
+          "reason": "cancelled_before_admission",
+          "status": "cancelled"
+        },
+        "explicit_shutdown": {
+          "reason": "shutdown_terminal",
+          "status": "shutdown"
+        },
+        "restart_recovery": {
+          "contract": "reconcile_from_runtime_evidence",
+          "status": "restarted",
+          "status_detail": "reconciled"
+        }
+      }
+    },
+    "passed_case_count": 11,
+    "required_cases": [
+      "positive_commit_minimal_air",
+      "negative_admission_provenance_rejection",
+      "invalid_air_failure",
+      "cancellation_before_admission",
+      "drain_shutdown_after_in_flight_completion",
+      "explicit_shutdown_terminal_state",
+      "restart_recovery_from_runtime_evidence",
+      "revocation_before_dispatch",
+      "boundary_fail_closed"
+    ]
+  },
+  "recipe_revision": "2f0a37ce2d9286c86f2ce015574b49b6064ad5c3",
+  "reviewed_carrier_revision": "8f767541413d0905d638b288a797c5825ceb1c76",
+  "schema_version": "apxm.reference-host-image-build-receipt.v1",
+  "semantic_owner": "agents",
+  "source_revision": "140ce5b16b4bc4a078800b52fffbfc8004169ee1",
+  "status": "complete"
+}
