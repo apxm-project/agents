@@ -13,6 +13,8 @@
 !rust-toolchain.toml
 !crates/
 !crates/**
+!contracts/
+!contracts/**
 !tools/
 !tools/**
 
