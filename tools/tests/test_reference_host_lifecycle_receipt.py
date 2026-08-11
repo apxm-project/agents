@@ -172,7 +172,7 @@ class ReferenceHostLifecycleReceiptTests(unittest.TestCase):
             "case": self.module.IN_FLIGHT_DRAIN_PROBE,
             "transition": "stop_admission_then_finish_in_flight",
             "in_flight_before_drain": self.module.host_readiness(startup_input, "ready", 1),
-            "drain_response": self.module.host_readiness_response(startup_input, "draining", 1),
+            "drain_response": self.module.host_readiness(startup_input, "draining", 1),
             "completion_response": {
                 "schema_version": self.module.HOST_SCHEMA,
                 "status": "committed",

@@ -2273,7 +2273,6 @@ async fn commit_suspension(
         })
     });
     let attempts = state.committed_model_attempts.clone();
-    let lineages = state.committed_model_lineages.clone();
     let request = ExecutionCommitRequest {
         commit_id: format!("{}.yield", continuation.commit_id),
         program_instance_ref: continuation.program_instance_ref.clone(),

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "apxm.reference-host-startup-input.v1",
   "title": "APXM Reference Host Startup Input",
-  "description": "Exact startup artifact for one reference-host executable over one committed release manifest and explicit admitted digests.",
+  "description": "Exact startup contract for the canonical APXM reference-host executable.",
   "type": "object",
   "required": [
     "schema_version",
@@ -31,10 +31,7 @@
       "const": "crates/tools/cli/src/bin/reference_host.rs"
     },
     "transport_protocol": {
-      "enum": [
-        "jsonl-stdin-stdout",
-        "jsonl-unix-stream"
-      ]
+      "const": "jsonl-stdin-stdout"
     },
     "reference_host_release_manifest": {
       "type": "object",
@@ -45,23 +42,22 @@
       "properties": {
         "path": {
           "type": "string",
-          "minLength": 1,
-          "maxLength": 4096
+          "minLength": 1
         },
         "digest": {
-          "$ref": "#/$defs/Digest"
+          "$ref": "#/$defs/ExactDigest"
         }
       },
       "additionalProperties": false
     },
     "release_digest": {
-      "$ref": "#/$defs/Digest"
+      "$ref": "#/$defs/NonPlaceholderDigest"
     },
     "port_bindings_digest": {
-      "$ref": "#/$defs/Digest"
+      "$ref": "#/$defs/NonPlaceholderDigest"
     },
     "resource_ceiling_digest": {
-      "$ref": "#/$defs/Digest"
+      "$ref": "#/$defs/NonPlaceholderDigest"
     },
     "provenance": {
       "type": "object",
@@ -77,10 +73,10 @@
           "pattern": "^[0-9a-f]{40}$"
         },
         "descriptor_semantic_digest": {
-          "$ref": "#/$defs/Digest"
+          "$ref": "#/$defs/ExactDigest"
         },
         "descriptor_exact_checksum": {
-          "$ref": "#/$defs/Digest"
+          "$ref": "#/$defs/ExactDigest"
         },
         "dirty": {
           "const": false
@@ -89,20 +85,46 @@
       "additionalProperties": false
     },
     "fail_closed_on": {
-      "const": [
-        "missing",
-        "placeholder",
-        "dirty",
-        "mismatched",
-        "implicit-default"
-      ]
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "prefixItems": [
+        {
+          "const": "missing"
+        },
+        {
+          "const": "placeholder"
+        },
+        {
+          "const": "dirty"
+        },
+        {
+          "const": "mismatched"
+        },
+        {
+          "const": "implicit-default"
+        }
+      ],
+      "items": false
     }
   },
   "additionalProperties": false,
   "$defs": {
-    "Digest": {
+    "ExactDigest": {
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "NonPlaceholderDigest": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ExactDigest"
+        },
+        {
+          "not": {
+            "pattern": "^sha256:([0-9a-f])\\1{63}$"
+          }
+        }
+      ]
     }
   }
 }
