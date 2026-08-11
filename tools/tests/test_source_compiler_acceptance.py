@@ -281,7 +281,7 @@ class SourceCompilerAcceptanceTests(unittest.TestCase):
         report = {
             "schema_version": "apxm.source-compiler-acceptance.v1",
             "generated_at": "2026-08-04T00:00:00+00:00",
-            "issue_scope": {"issue": 35, "plan_tags": ["P-002", "G1"]},
+            "issue_scope": {"issue": 82, "plan_tags": ["P-002", "G1"]},
             "overall_status": "failed",
             "steps": [],
         }
@@ -303,7 +303,7 @@ class SourceCompilerAcceptanceTests(unittest.TestCase):
         report = {
             "schema_version": "apxm.source-compiler-acceptance.v1",
             "generated_at": "2026-08-04T00:00:00+00:00",
-            "issue_scope": {"issue": 35, "plan_tags": ["P-002", "G2"]},
+            "issue_scope": {"issue": 82, "plan_tags": ["P-002", "G2"]},
             "overall_status": "blocked",
             "steps": [],
         }

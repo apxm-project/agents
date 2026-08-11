@@ -1,0 +1,9 @@
+[
+  {
+    "name": "retired-frontend-graph-v1-is-rejected-exactly",
+    "input": {
+      "schema_version": "apxm.frontend-graph.v1"
+    },
+    "expected_valid": false
+  }
+]

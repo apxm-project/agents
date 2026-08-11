@@ -418,10 +418,8 @@ fn is_authored_invocation_operand(op: SemanticOpKind, operand: &Operand) -> bool
 fn air_value_dominates(
     value_id: &str,
     use_location: &AirSsaLocation,
-    results: &std::collections::HashMap<&str, AirSsaLocation>,
-    blocks: &std::collections::HashMap<&str, AirSsaLocation>,
-    assemblies: &std::collections::HashMap<&str, &ValueExpression>,
-    regions: &std::collections::HashMap<&str, &StructuralNode>,
+    allow_resume_value: bool,
+    context: &AirSsaValidationContext<'_>,
     visiting: &mut HashSet<String>,
 ) -> bool {
     if !visiting.insert(value_id.to_string()) {
@@ -440,17 +438,15 @@ fn air_value_dominates(
     if !base_ok {
         return false;
     }
-    let expression_ok = assemblies.get(value_id).is_none_or(|expression| {
+    let expression_ok = context.assemblies.get(value_id).is_none_or(|expression| {
         let mut references = Vec::new();
         collect_expression_references(expression, &mut references);
         references.into_iter().all(|dependency| {
             air_value_dominates(
                 &dependency,
                 use_location,
-                results,
-                blocks,
-                assemblies,
-                regions,
+                allow_resume_value,
+                context,
                 visiting,
             )
         })
@@ -510,6 +506,71 @@ fn is_air_ancestor(
             .and_then(|region| region.parent_region_id.as_deref());
     }
     false
+}
+
+fn air_region_is_ancestor(
+    ancestor: &str,
+    descendant: &str,
+    regions: &std::collections::HashMap<&str, &StructuralNode>,
+) -> bool {
+    let mut child = descendant;
+    while let Some(region) = regions.get(child) {
+        let Some(parent) = region.parent_region_id.as_deref() else {
+            return false;
+        };
+        if parent == ancestor {
+            return true;
+        }
+        child = parent;
+    }
+    false
+}
+
+fn air_loop_scope_precedes(
+    definition_region: &str,
+    use_region: &str,
+    regions: &std::collections::HashMap<&str, &StructuralNode>,
+) -> bool {
+    let mut common = regions
+        .get(use_region)
+        .and_then(|region| region.parent_region_id.as_deref());
+    while let Some(common_region) = common {
+        let Some(definition_child) =
+            air_first_child_under(definition_region, common_region, regions)
+        else {
+            common = regions
+                .get(common_region)
+                .and_then(|region| region.parent_region_id.as_deref());
+            continue;
+        };
+        let Some(use_child) = air_first_child_under(use_region, common_region, regions) else {
+            return false;
+        };
+        if definition_child.region_id != use_child.region_id {
+            return definition_child.kind == StructuralOpKind::Loop
+                && definition_child.execution_order < use_child.execution_order;
+        }
+        common = regions
+            .get(common_region)
+            .and_then(|region| region.parent_region_id.as_deref());
+    }
+    false
+}
+
+fn air_first_child_under<'a>(
+    descendant: &str,
+    ancestor: &str,
+    regions: &std::collections::HashMap<&'a str, &'a StructuralNode>,
+) -> Option<&'a StructuralNode> {
+    let mut child = descendant;
+    loop {
+        let region = regions.get(child)?;
+        let parent = region.parent_region_id.as_deref()?;
+        if parent == ancestor {
+            return Some(region);
+        }
+        child = parent;
+    }
 }
 
 fn valid_property_path(path: &[String]) -> bool {

@@ -64,16 +64,16 @@ pub enum ScheduleStep {
 /// Build the deterministic execution schedule for `air`.
 #[must_use]
 pub fn build_schedule(air: &AirModule, hook_bindings: &[HookBinding]) -> Vec<ScheduleStep> {
-    let context_edges: BTreeMap<&str, (&str, &str)> = air
-        .context_flow
-        .iter()
-        .map(|edge| {
-            (
-                edge.to_node.as_str(),
-                (edge.from_node.as_str(), edge.value_id.as_str()),
-            )
-        })
-        .collect();
+    let context_edges: BTreeMap<&str, Vec<(&str, &str)>> =
+        air.context_flow
+            .iter()
+            .fold(BTreeMap::new(), |mut edges, edge| {
+                edges
+                    .entry(edge.to_node.as_str())
+                    .or_default()
+                    .push((edge.from_node.as_str(), edge.value_id.as_str()));
+                edges
+            });
     let mut schedule = Vec::new();
 
     for binding in ordered_hooks(hook_bindings, HookPhase::Before, |hook| {
@@ -99,7 +99,7 @@ pub fn build_schedule(air: &AirModule, hook_bindings: &[HookBinding]) -> Vec<Sch
 fn emit_children(
     air: &AirModule,
     hook_bindings: &[HookBinding],
-    context_edges: &BTreeMap<&str, (&str, &str)>,
+    context_edges: &BTreeMap<&str, Vec<(&str, &str)>>,
     parent_region_id: Option<&str>,
     loop_path: &[String],
     schedule: &mut Vec<ScheduleStep>,
@@ -246,7 +246,7 @@ fn emit_children(
 fn emit_semantic(
     air: &AirModule,
     hook_bindings: &[HookBinding],
-    context_edges: &BTreeMap<&str, (&str, &str)>,
+    context_edges: &BTreeMap<&str, Vec<(&str, &str)>>,
     index: usize,
     loop_path: &[String],
     schedule: &mut Vec<ScheduleStep>,
@@ -274,16 +274,18 @@ fn emit_semantic(
 }
 
 fn emit_context_before(
-    context_edges: &BTreeMap<&str, (&str, &str)>,
+    context_edges: &BTreeMap<&str, Vec<(&str, &str)>>,
     to_node: &str,
     schedule: &mut Vec<ScheduleStep>,
 ) {
-    if let Some((from_node, value_id)) = context_edges.get(to_node) {
-        schedule.push(ScheduleStep::ContextEdge {
-            from_node: (*from_node).to_string(),
-            to_node: to_node.to_string(),
-            value_id: (*value_id).to_string(),
-        });
+    if let Some(edges) = context_edges.get(to_node) {
+        for (from_node, value_id) in edges {
+            schedule.push(ScheduleStep::ContextEdge {
+                from_node: (*from_node).to_string(),
+                to_node: to_node.to_string(),
+                value_id: (*value_id).to_string(),
+            });
+        }
     }
 }
 
@@ -484,6 +486,72 @@ mod tests {
                 "enter:loop.sibling",
                 "node:node.sibling:loop.sibling",
                 "back:loop.sibling",
+            ]
+        );
+    }
+
+    #[test]
+    fn multiple_context_edges_to_one_consumer_are_all_scheduled() {
+        let air: AirModule = serde_json::from_value(json!({
+            "schema_version": "apxm.air.v2",
+            "semantic_operations": [{
+                "node_id": "node.consumer",
+                "op": "model.call",
+                "parent_region_id": "region.root",
+                "execution_order": 0
+            }],
+            "structural_ir": [{
+                "region_id": "region.root",
+                "kind": "region",
+                "execution_order": 0
+            }],
+            "context_flow": [
+                {
+                    "from_node": "region.first",
+                    "to_node": "node.consumer",
+                    "context_type_ref": "Context",
+                    "value_id": "context.first"
+                },
+                {
+                    "from_node": "region.second",
+                    "to_node": "node.consumer",
+                    "context_type_ref": "Context",
+                    "value_id": "context.second"
+                }
+            ],
+            "source_map": {
+                "schema_version": "apxm.source-map.v1",
+                "source_language": "python",
+                "node_spans": [],
+                "region_annotations": []
+            }
+        }))
+        .expect("duplicate-destination context edges");
+
+        let context_edges: Vec<_> = build_schedule(&air, &[])
+            .into_iter()
+            .filter_map(|step| match step {
+                ScheduleStep::ContextEdge {
+                    from_node,
+                    to_node,
+                    value_id,
+                } => Some((from_node, to_node, value_id)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            context_edges,
+            [
+                (
+                    "region.first".to_string(),
+                    "node.consumer".to_string(),
+                    "context.first".to_string()
+                ),
+                (
+                    "region.second".to_string(),
+                    "node.consumer".to_string(),
+                    "context.second".to_string()
+                )
             ]
         );
     }
