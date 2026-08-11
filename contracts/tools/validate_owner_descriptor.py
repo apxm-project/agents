@@ -221,7 +221,6 @@ VECTOR_SCHEMA = {
     "apxm.runtime-readiness.v1.json": "apxm.runtime-readiness.v1",
     "apxm.runtime-drain-quiescence.v1.json": "apxm.runtime-drain-quiescence.v1",
     "apxm.invocation-admission.v1.json": "apxm.invocation-admission.v1",
-    "apxm.runtime.host-request.v1.json": "apxm.runtime.host-request.v1",
     "apxm.reference-host-startup-input.v1.json": "apxm.reference-host-startup-input.v1",
     "apxm.execution-admission.v1.json": "apxm.execution-admission.v1",
 }
@@ -385,6 +384,64 @@ REFERENCE_HOST_EXECUTION_VECTOR_SPECS = (
         "apxm.runtime.host-transport.v1",
         "reference-host/vectors/apxm.runtime.host-transport.v1.json",
         "vectors/apxm.runtime.host-transport.v1.json",
+    ),
+)
+REFERENCE_HOST_EXECUTION_SCHEMA_SPECS = (
+    (
+        "startup_input_schema",
+        "apxm.reference-host-startup-input.v1",
+        "reference-host/schemas/apxm.reference-host-startup-input.v1.json",
+        "schemas/apxm.reference-host-startup-input.v1.json",
+    ),
+    (
+        "host_execution_manifest_schema",
+        "apxm.host-execution-manifest.v1",
+        "reference-host/schemas/apxm.host-execution-manifest.v1.json",
+        "schemas/apxm.host-execution-manifest.v1.json",
+    ),
+    (
+        "runtime_readiness_schema",
+        "apxm.runtime-readiness.v1",
+        "reference-host/schemas/apxm.runtime-readiness.v1.json",
+        "schemas/apxm.runtime-readiness.v1.json",
+    ),
+    (
+        "runtime_drain_quiescence_schema",
+        "apxm.runtime-drain-quiescence.v1",
+        "reference-host/schemas/apxm.runtime-drain-quiescence.v1.json",
+        "schemas/apxm.runtime-drain-quiescence.v1.json",
+    ),
+    (
+        "invocation_admission_schema",
+        "apxm.invocation-admission.v1",
+        "reference-host/schemas/apxm.invocation-admission.v1.json",
+        "schemas/apxm.invocation-admission.v1.json",
+    ),
+)
+REFERENCE_HOST_EXECUTION_VECTOR_SPECS = (
+    (
+        "startup_input_vector",
+        "apxm.reference-host-startup-input.v1",
+        "reference-host/vectors/apxm.reference-host-startup-input.v1.json",
+        "vectors/apxm.reference-host-startup-input.v1.json",
+    ),
+    (
+        "runtime_readiness_vector",
+        "apxm.runtime-readiness.v1",
+        "reference-host/vectors/apxm.runtime-readiness.v1.json",
+        "vectors/apxm.runtime-readiness.v1.json",
+    ),
+    (
+        "runtime_drain_quiescence_vector",
+        "apxm.runtime-drain-quiescence.v1",
+        "reference-host/vectors/apxm.runtime-drain-quiescence.v1.json",
+        "vectors/apxm.runtime-drain-quiescence.v1.json",
+    ),
+    (
+        "invocation_admission_vector",
+        "apxm.invocation-admission.v1",
+        "reference-host/vectors/apxm.invocation-admission.v1.json",
+        "vectors/apxm.invocation-admission.v1.json",
     ),
 )
 REFERENCE_HOST_DESCRIPTOR = {
@@ -1321,10 +1378,13 @@ def semantic_errors(schema_id: str, instance: object) -> list[str]:
     if schema_id == "apxm.capability-invocation.v1":
         return capability_invocation_errors(instance)
     if schema_id == "apxm.invocation-admission.v1":
-        # The transport authority carries independent digests. Runtime
-        # admission verifies each digest against its own exact bytes; the
-        # artifact, release, and provenance bytes are intentionally distinct.
-        pass
+        artifact_digest = instance.get("artifact_digest")
+        release_digest = instance.get("release_digest")
+        provenance_digest = instance.get("provenance_digest")
+        if artifact_digest != release_digest:
+            return ["artifact_digest must equal release_digest"]
+        if artifact_digest != provenance_digest:
+            return ["artifact_digest must equal provenance_digest"]
     if schema_id == "apxm.reference-host-startup-input.v1":
         return reference_host_startup_input_errors(instance)
     return []

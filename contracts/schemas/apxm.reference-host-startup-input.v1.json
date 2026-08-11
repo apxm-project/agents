@@ -31,10 +31,7 @@
       "const": "crates/tools/cli/src/bin/reference_host.rs"
     },
     "transport_protocol": {
-      "enum": [
-        "jsonl-stdin-stdout",
-        "jsonl-unix-stream"
-      ]
+      "const": "jsonl-stdin-stdout"
     },
     "reference_host_release_manifest": {
       "type": "object",
