@@ -958,7 +958,7 @@ async fn invalid_atomic_commit_request_rejects_before_any_effect_path() {
 }
 
 #[tokio::test]
-async fn committed_native_model_usage_publishes_commit_bound_lineage_evidence() {
+async fn committed_native_model_usage_is_fail_closed_without_lineage_evidence() {
     let commit = Arc::new(FakeCommit::new());
     let usage = Arc::new(RecordingOperationalUsage::default());
     let ports = ports(commit.clone()).with_committed_native_model_usage_port(usage.clone());

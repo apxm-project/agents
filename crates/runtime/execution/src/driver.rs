@@ -1500,6 +1500,29 @@ fn validate_commit_inputs(
         })
 }
 
+fn validate_commit_inputs(
+    program_instance_ref: &ProgramInstanceRef,
+    program_invocation_ref: &ProgramInvocationRef,
+    commit_id: &str,
+    write_set: &AtomicWriteSet,
+) -> Result<(), ExecutionError> {
+    let request = ExecutionCommitRequest {
+        commit_id: commit_id.to_string(),
+        program_instance_ref: program_instance_ref.clone(),
+        program_invocation_ref: program_invocation_ref.clone(),
+        idempotency_key: format!("idem.{commit_id}"),
+        expected_program_state_version: 0,
+        write_set: write_set.clone(),
+        tuple: ExecutionCommitTuple::empty(Vec::new()),
+        evidence_batch: Vec::new(),
+    };
+    request
+        .validate()
+        .map_err(|error| ExecutionError::InvalidCommitRequest {
+            message: error.to_string(),
+        })
+}
+
 /// Assemble the one authoritative execution tuple for a completion or yield.
 fn commit_tuple(
     state: &DriveState,
@@ -1563,7 +1586,6 @@ async fn commit_suspension(
         })
     });
     let attempts = state.committed_model_attempts.clone();
-    let lineages = state.committed_model_lineages.clone();
     let request = ExecutionCommitRequest {
         commit_id: format!("{}.yield", continuation.commit_id),
         program_instance_ref: continuation.program_instance_ref.clone(),
