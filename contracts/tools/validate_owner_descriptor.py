@@ -28,31 +28,6 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-
-def git_common_repo_root(root: Path) -> Path:
-    resolved = root.resolve(strict=False)
-    result = subprocess.run(
-        [
-            "git",
-            "-C",
-            str(resolved),
-            "rev-parse",
-            "--path-format=absolute",
-            "--git-common-dir",
-        ],
-        check=False,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    if result.returncode != 0 or not result.stdout.strip():
-        return resolved
-    common_dir = Path(result.stdout.strip()).resolve(strict=False)
-    if common_dir.name != ".git":
-        return resolved
-    return common_dir.parent
-
-
 SCRIPT_DIR = Path(__file__).resolve().parent
 CONTRACTS_DIR = SCRIPT_DIR.parent
 CHECKOUT_ROOT = CONTRACTS_DIR.parent.resolve(strict=False)
