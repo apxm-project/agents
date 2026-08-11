@@ -1,45 +1,53 @@
-// A conversational Agent authored on the installed typed frontend.
-//
-// A conversational Agent is an ordinary Agent: a typed input, an authored loop
-// that calls a Model and an optional Tool, an explicit Context replacement, and a
-// reply yielded before the next input. No conversation-specific runtime type
-// or hidden loop is involved.
+// A model-directed conversational Agent Program on the typed frontend.
 
-import { Agent, Context, Model, Tool } from "@apxm/frontend";
+import { Agent, Context, Hook, Model, Tool } from "@apxm/frontend";
 import "@apxm/frontend/node";
 import { staticSource } from "./static-source.js";
 
-type ConversationInput = { message: string; query: string };
+type ConversationInput = { message: string };
 type ConversationOutput = { message: string };
-type ResearchContext = { requests: number };
-type ConversationState = { messages: readonly string[] };
+type ToolKind = "search_web" | "read_page";
+type ToolRequest = { kind: ToolKind; arguments: string };
+type ModelRequest = {
+  messages: readonly unknown[];
+  policy: string;
+  availableTools: readonly ToolKind[];
+};
+type ModelResponse = {
+  message: string;
+  toolRequest: ToolRequest | null;
+};
+type SearchRequest = { query: string };
+type SearchResult = { content: string };
+type ReadPageRequest = { uri: string };
+type ReadPageResult = { content: string };
+type ConversationState = {
+  messages: readonly unknown[];
+  modelWindow: readonly unknown[];
+  activeInput: ConversationInput | null;
+  policy: string;
+  modelCalls: number;
+  toolCalls: number;
+};
 type ConversationalProgram = ReturnType<
   typeof Agent<ConversationInput, ConversationOutput, ConversationState>
 >;
 
-const SearchWeb = Tool<ConversationInput, string>("cap.search");
-const SupportModel = Model<
-  { incoming: ConversationInput; research: string },
-  ConversationOutput
->("model.target.v1");
-const ResearchContext = Context<ResearchContext>({ requests: 0 }, "ResearchContext");
-const source = staticSource(import.meta.url);
-
-const ResearchSpecialist = Agent<ConversationInput, string, ResearchContext>({
-  name: "ResearchSpecialist",
-  input: "ConversationInput",
-  output: "ResearchOutput",
-  source,
-  context: ResearchContext,
-  use: { SearchWeb },
-  async run(agent, incoming) {
-    const research = await SearchWeb(incoming);
-    agent.context = { requests: agent.context.requests + 1 };
-    return research;
+const SearchWeb = Tool<SearchRequest, SearchResult>("cap.search");
+const ReadPage = Tool<ReadPageRequest, ReadPageResult>("cap.read");
+const SupportModel = Model<ModelRequest, ModelResponse>("model.target.v1");
+const ConversationContext = Context<ConversationState>(
+  {
+    messages: [],
+    modelWindow: [],
+    activeInput: null,
+    policy: "grounded-support-v1",
+    modelCalls: 0,
+    toolCalls: 0,
   },
-});
-
-const ConversationContext = Context<ConversationState>({ messages: [] }, "ConversationContext");
+  "ConversationContext",
+);
+const source = staticSource(import.meta.url);
 
 export const ConversationalExample: ConversationalProgram = Agent<
   ConversationInput,
@@ -51,19 +59,102 @@ export const ConversationalExample: ConversationalProgram = Agent<
   output: "ConversationOutput",
   source,
   context: ConversationContext,
-  use: { ResearchSpecialist, ResearchContext, SupportModel },
+  use: { ReadPage, SearchWeb, SupportModel },
   async run(agent, incoming) {
     while (true) {
-      const specialist = ResearchSpecialist.new({ context: { requests: 0 } });
-      const research = await specialist.invoke(incoming);
-      const response = await SupportModel({ incoming, research });
-      agent.context = {
-        messages: [...agent.context.messages, incoming.message, response.message],
-      };
-      incoming = await agent.yield_(response);
+      if (agent.context.activeInput === null) {
+        agent.context = {
+          ...agent.context,
+          messages: [...agent.context.messages, incoming],
+          modelWindow: [...agent.context.modelWindow, incoming],
+          activeInput: incoming,
+        };
+      }
+
+      const response = await SupportModel({
+        messages: agent.context.modelWindow,
+        policy: agent.context.policy,
+        availableTools: ["search_web", "read_page"],
+      });
+
+      if (response.toolRequest !== null) {
+        let toolResult: SearchResult | ReadPageResult;
+        if (response.toolRequest.kind === "search_web") {
+          toolResult = await SearchWeb({ query: response.toolRequest.arguments });
+        } else {
+          toolResult = await ReadPage({ uri: response.toolRequest.arguments });
+        }
+        agent.context = {
+          ...agent.context,
+          messages: [...agent.context.messages, response, toolResult],
+          modelWindow: [...agent.context.modelWindow, response, toolResult],
+        };
+      } else {
+        agent.context = {
+          ...agent.context,
+          messages: [...agent.context.messages, response],
+          modelWindow: [...agent.context.modelWindow, response],
+          activeInput: null,
+        };
+        incoming = await agent.yield_({ message: response.message });
+      }
     }
   },
 });
+
+const PrepareModelContext = Hook.before({
+  agent: ConversationalExample,
+  target: SupportModel,
+  scope: "model",
+  async run(agent) {
+    agent.context = {
+      ...agent.context,
+      modelWindow: agent.context.modelWindow.slice(-24),
+      policy: "grounded-support-v1",
+    };
+  },
+});
+
+const CountModelCall = Hook.after({
+  agent: ConversationalExample,
+  target: SupportModel,
+  scope: "model",
+  async run(agent) {
+    agent.context = {
+      ...agent.context,
+      modelCalls: agent.context.modelCalls + 1,
+    };
+  },
+});
+
+const CountWebSearch = Hook.after({
+  agent: ConversationalExample,
+  target: SearchWeb,
+  scope: "capability",
+  async run(agent) {
+    agent.context = {
+      ...agent.context,
+      toolCalls: agent.context.toolCalls + 1,
+    };
+  },
+});
+
+const CountPageRead = Hook.after({
+  agent: ConversationalExample,
+  target: ReadPage,
+  scope: "capability",
+  async run(agent) {
+    agent.context = {
+      ...agent.context,
+      toolCalls: agent.context.toolCalls + 1,
+    };
+  },
+});
+
+void PrepareModelContext;
+void CountModelCall;
+void CountWebSearch;
+void CountPageRead;
 
 export function buildConversational(): ConversationalProgram {
   return ConversationalExample;
