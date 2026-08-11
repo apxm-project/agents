@@ -16,7 +16,7 @@ class SourceCompilerBoundaryTests(unittest.TestCase):
     def test_product_reference_pattern_is_case_insensitive(self) -> None:
         self.assertIsNotNone(
             check_source_compiler_boundary.FORBIDDEN_PRODUCT_REFERENCES.search(
-                "studio.workflow"
+                "downstream.workflow"
             )
         )
         self.assertIsNotNone(

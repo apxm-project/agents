@@ -31,6 +31,6 @@ or provide a fallback path.
 - the reference host must be built from an independently released APXM profile,
   not from the retired `apxm-server` client or a downstream product checkout.
 
-The current CLIC E2E smoke is correctly blocked until that APXM-owned host
-artifact exists; this document does not treat the local CLI development profile
-as a service runtime.
+The current downstream E2E smoke is correctly blocked until that APXM-owned
+host artifact exists; this document does not treat the local CLI development
+profile as a service runtime.

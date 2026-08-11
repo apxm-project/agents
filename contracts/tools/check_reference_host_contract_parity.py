@@ -426,6 +426,34 @@ def check_manifests(paths: ContractPaths) -> None:
     require(execution.get("transport_protocol") == "jsonl-stdin-stdout", "execution manifest: transport_protocol drifted")
     require(release.get("transport_protocol") == "jsonl-stdin-stdout", "release manifest: transport_protocol drifted")
 
+    neutrality = release.get("neutrality_vector")
+    require(isinstance(neutrality, dict), "release manifest: neutrality vector is missing")
+    require(
+        neutrality.get("vector_id") == "apxm.reference-host.neutrality.v1",
+        "release manifest: neutrality vector id drifted",
+    )
+    require(
+        neutrality.get("path") == "reference-host/vectors/apxm.reference-host.neutrality.v1.json",
+        "release manifest: neutrality vector path drifted",
+    )
+    require(
+        isinstance(neutrality.get("digest"), str),
+        "release manifest: neutrality vector digest is missing",
+    )
+    require(
+        neutrality.get("profiles") == REFERENCE_HOST_PROFILE_COHORT,
+        "release manifest: neutrality vector profiles drifted",
+    )
+    published_neutrality = resolve_contract_path(paths, neutrality["path"], "neutrality vector")
+    canonical_neutrality = resolve_contract_path(
+        paths, "vectors/apxm.reference-host.neutrality.v1.json", "neutrality vector"
+    )
+    require(
+        read_bytes(published_neutrality, "neutrality vector")
+        == read_bytes(canonical_neutrality, "neutrality vector"),
+        "neutrality vector: canonical source and published bytes drifted",
+    )
+    require_digest(published_neutrality, neutrality.get("digest"), "neutrality vector")
     for field, schema_id, filename in (
         ("host_request_schema", "apxm.runtime.host-request.v1", "apxm.runtime.host-request.v1.json"),
         ("host_response_schema", "apxm.runtime.host-response.v1", "apxm.runtime.host-response.v1.json"),
@@ -484,7 +512,10 @@ def check_manifests(paths: ContractPaths) -> None:
     constraints = release.get("constraints")
     require(isinstance(constraints, dict), "release manifest: constraints are missing")
     require(constraints.get("http_surface") == "absent", "release manifest: HTTP surface must remain absent")
-    require(constraints.get("clic_dependency") == "absent", "release manifest: CLIC dependency must remain absent")
+    require(
+        constraints.get("downstream_dependency") == "absent",
+        "release manifest: downstream dependency must remain absent",
+    )
     check_release_evidence(paths, release)
 
 
@@ -603,7 +634,6 @@ def check_reference_host_source(paths: ContractPaths, schemas: dict[str, dict[st
         require(rust_constant(source, name) == expected, f"reference host source: {name} drifted")
     for marker in SOURCE_BOUNDARY_MARKERS:
         require(marker in source, f"reference host source: private/public boundary marker missing: {marker}")
-    require("CLIC" not in source and "clic" not in source, "reference host source must not depend on CLIC")
 
     response_schema = schemas["apxm.runtime.host-response.v1"]
     statuses = set(response_schema.get("properties", {}).get("status", {}).get("enum", []))

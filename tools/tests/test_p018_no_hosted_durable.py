@@ -39,11 +39,11 @@ P018_ARTIFACT_PREFIXES = (
 )
 
 DOWNSTREAM_PRODUCT_NAMES = [
-    re.compile(r"\bCLIC\b", re.I),
-    re.compile(r"\bStudio\b"),
-    re.compile(r"\bAuth\b"),
-    re.compile(r"\bWidget\b"),
-    re.compile(r"\bHost SDK\b", re.I),
+    re.compile(
+        r"\b(?:downstream[-_](?:product|sdk|dependency)|"
+        r"(?:product|vendor|customer)[-_](?:sdk|client|service|dependency))\b",
+        re.I,
+    ),
 ]
 
 REMOTE_STORAGE_DEPENDENCIES = [

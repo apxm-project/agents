@@ -65,6 +65,12 @@ REFERENCE_HOST_INVOKE_PARITY_VECTOR_PATH = (
 REFERENCE_HOST_LIFECYCLE_PARITY_VECTOR_PATH = (
     CONTRACTS_DIR / "reference-host" / "vectors" / "apxm.reference-host.lifecycle-parity.v1.json"
 )
+REFERENCE_HOST_NEUTRALITY_VECTOR_PATH = (
+    CONTRACTS_DIR / "reference-host" / "vectors" / "apxm.reference-host.neutrality.v1.json"
+)
+REFERENCE_HOST_NEUTRALITY_VECTOR_SOURCE_PATH = (
+    CONTRACTS_DIR / "vectors" / "apxm.reference-host.neutrality.v1.json"
+)
 REFERENCE_HOST_EXECUTABLE_HARNESS_PATH = (
     CHECKOUT_ROOT / "crates" / "tools" / "cli" / "tests" / "reference_host_jsonl.rs"
 )
@@ -244,10 +250,11 @@ REFERENCE_HOST_RELEASE_CONSTRAINTS = {
     "source_checkout_fallback": "absent",
     "schema_aliases": "absent",
     "mixed_generation": "absent",
-    "clic_dependency": "absent",
+    "downstream_dependency": "absent",
 }
 REFERENCE_HOST_INVOKE_VECTOR_ID = "apxm.reference-host.invoke-parity.v1"
 REFERENCE_HOST_LIFECYCLE_VECTOR_ID = "apxm.reference-host.lifecycle-parity.v1"
+REFERENCE_HOST_NEUTRALITY_VECTOR_ID = "apxm.reference-host.neutrality.v1"
 RETIRED_REFERENCE_HOST_ADMISSION_ALIAS = "apxm.execution-admission.v1"
 REFERENCE_HOST_EXECUTION_SCHEMA_KEYS = (
     "startup_input_schema",
@@ -428,11 +435,10 @@ REFERENCE_HOST_DESCRIPTOR = {
     "descriptor_semantic_digest": "sha256:a007bb8daee44cfc5156a358bd4c0f4665adefc0d731738ead9c50a31734e14b",
     "descriptor_exact_checksum": "sha256:d771d3f2c4a50fdeee0c57475c4c00fc6b4121b1e4bf5147a57a76bf11ad7a88",
 }
-RETIRED_REFERENCE_HOST_OWNERS = frozenset({"coordinator", "clic", "host", "hostsdk"})
+RETIRED_REFERENCE_HOST_OWNERS = frozenset({"coordinator", "host", "hostsdk"})
 RETIRED_REFERENCE_HOST_SCHEMAS = frozenset(
     {
         "apxm.coordinator-owner-descriptor.v1",
-        "apxm.clic-owner-descriptor.v1",
         "apxm.host-owner-descriptor.v1",
         "apxm.hostsdk-owner-descriptor.v1",
         "apxm.host_sdk-owner-descriptor.v1",
@@ -617,6 +623,15 @@ def reference_host_invoke_vector_ref(invoke_vector: dict[str, Any]) -> dict[str,
     }
 
 
+def reference_host_neutrality_vector_ref() -> dict[str, Any]:
+    return {
+        "vector_id": REFERENCE_HOST_NEUTRALITY_VECTOR_ID,
+        "path": "reference-host/vectors/apxm.reference-host.neutrality.v1.json",
+        "digest": file_digest(REFERENCE_HOST_NEUTRALITY_VECTOR_PATH),
+        "profiles": REFERENCE_HOST_PROFILE_COHORT,
+    }
+
+
 def reference_host_executable_harness_ref() -> dict[str, str]:
     return {
         "kind": "rust-integration-test",
@@ -790,6 +805,7 @@ def reference_host_release_attestation(
         "executable_parity_evidence": reference_host_executable_parity_evidence(
             invoke_vector, lifecycle_vector
         ),
+        "neutrality_vector": reference_host_neutrality_vector_ref(),
     }
     golden_vectors = release_manifest.get("golden_vectors")
     if not isinstance(golden_vectors, list):
@@ -2075,6 +2091,21 @@ def check_reference_host_release_evidence(descriptor: dict[str, Any]) -> None:
         raise ValidationError("reference-host invoke parity vector schema_version drifted")
     if invoke_vector.get("profiles") != REFERENCE_HOST_PROFILE_COHORT:
         raise ValidationError("reference-host invoke parity vector profiles drifted")
+    neutrality_vector = load_json(REFERENCE_HOST_NEUTRALITY_VECTOR_PATH)
+    if neutrality_vector.get("schema_version") != REFERENCE_HOST_NEUTRALITY_VECTOR_ID:
+        raise ValidationError("reference-host neutrality vector schema_version drifted")
+    if neutrality_vector.get("semantic_owner") != "agents":
+        raise ValidationError("reference-host neutrality vector semantic_owner drifted")
+    if neutrality_vector.get("profiles") != REFERENCE_HOST_PROFILE_COHORT:
+        raise ValidationError("reference-host neutrality vector profiles drifted")
+    if (
+        REFERENCE_HOST_NEUTRALITY_VECTOR_PATH.read_bytes()
+        != REFERENCE_HOST_NEUTRALITY_VECTOR_SOURCE_PATH.read_bytes()
+    ):
+        raise ValidationError("reference-host neutrality vector publication drifted from canonical source")
+    expected_neutrality_vector_ref = reference_host_neutrality_vector_ref()
+    if release_manifest.get("neutrality_vector") != expected_neutrality_vector_ref:
+        raise ValidationError("reference-host release manifest neutrality vector drifted")
     expected_execution_manifest_ref = reference_host_execution_manifest_ref()
     expected_invoke_vector_ref = reference_host_invoke_vector_ref(invoke_vector)
     expected_lifecycle_vector_ref = reference_host_lifecycle_vector_ref(lifecycle_vector)
