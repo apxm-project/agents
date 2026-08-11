@@ -63,6 +63,22 @@ class OwnerDescriptorSchemaResolutionTests(unittest.TestCase):
             ["unresolved $ref 'apxm.contract-common.v1#/$defs/DoesNotExist'"],
         )
 
+    def test_not_keyword_rejects_reference_host_placeholder_digest_vector_case(self) -> None:
+        schema = self.schema_ids["apxm.reference-host-startup-input.v1"]
+        cases = json.loads(
+            REFERENCE_HOST_STARTUP_INPUT_VECTOR_PATH.read_text(encoding="utf-8")
+        )
+        case = next(item for item in cases if item["name"] == "rejects_placeholder_release_digest")
+
+        errors = self.validator.schema_instance_errors(
+            schema,
+            case["input"],
+            self.schema_ids,
+            schema,
+        )
+
+        self.assertTrue(errors)
+
 
 if __name__ == "__main__":
     unittest.main()

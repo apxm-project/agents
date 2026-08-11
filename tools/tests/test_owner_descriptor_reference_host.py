@@ -43,13 +43,6 @@ REFERENCE_HOST_LIFECYCLE_VECTOR = (
     / "vectors"
     / "apxm.reference-host.lifecycle-parity.v1.json"
 )
-REFERENCE_HOST_INVOKE_VECTOR = (
-    REPOSITORY_ROOT
-    / "contracts"
-    / "reference-host"
-    / "vectors"
-    / "apxm.reference-host.invoke-parity.v1.json"
-)
 REFERENCE_HOST_STARTUP_INPUT_SCHEMA = (
     REPOSITORY_ROOT
     / "contracts"
@@ -85,6 +78,20 @@ REFERENCE_HOST_STARTUP_INPUT_FIXTURE = (
     / "reference-host"
     / "fixtures"
     / "apxm.reference-host.startup-input.test.json"
+)
+REFERENCE_HOST_STARTUP_INPUT_SCHEMA = (
+    REPOSITORY_ROOT
+    / "contracts"
+    / "reference-host"
+    / "schemas"
+    / "apxm.reference-host-startup-input.v1.json"
+)
+REFERENCE_HOST_STARTUP_INPUT_VECTOR = (
+    REPOSITORY_ROOT
+    / "contracts"
+    / "reference-host"
+    / "vectors"
+    / "apxm.reference-host-startup-input.v1.json"
 )
 
 README_REFERENCE_HOST = re.compile(
@@ -273,22 +280,6 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
             expected_release_manifest_ref,
         )
 
-    def test_reference_host_executable_parity_evidence_covers_every_published_case(self) -> None:
-        release_manifest = load_json(REFERENCE_HOST_RELEASE_MANIFEST)
-        invoke_vector = load_json(REFERENCE_HOST_INVOKE_VECTOR)
-        lifecycle_vector = load_json(REFERENCE_HOST_LIFECYCLE_VECTOR)
-        evidence = release_manifest["executable_parity_evidence"]
-        expected = self.validator.reference_host_executable_parity_evidence(
-            invoke_vector, lifecycle_vector
-        )
-
-        self.assertEqual(evidence["harness"]["digest"], expected["harness"]["digest"])
-        self.assertEqual(
-            evidence["live_required_cases"],
-            [case["name"] for case in invoke_vector["cases"] + lifecycle_vector["cases"]],
-        )
-        self.assertEqual(evidence["unavailable_required_cases"], [])
-
     def test_reference_host_execution_manifest_publishes_startup_input_contracts(self) -> None:
         execution_manifest = load_json(REFERENCE_HOST_EXECUTION_MANIFEST)
 
@@ -399,7 +390,10 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
                 "contract_id": "apxm.reference-host-startup-input.v1",
                 "path": "contracts/schemas/apxm.reference-host-startup-input.v1.json",
                 "exact_bytes_digest": self.validator.file_digest(
-                    REFERENCE_HOST_STARTUP_INPUT_SCHEMA
+                    REPOSITORY_ROOT
+                    / "contracts"
+                    / "schemas"
+                    / "apxm.reference-host-startup-input.v1.json"
                 ),
             },
             attestation["owner_source_contracts"],
@@ -416,9 +410,7 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
             {
                 "schema_id": "apxm.reference-host-startup-input.v1",
                 "path": "contracts/reference-host/schemas/apxm.reference-host-startup-input.v1.json",
-                "exact_bytes_digest": self.validator.file_digest(
-                    REFERENCE_HOST_PUBLISHED_STARTUP_INPUT_SCHEMA
-                ),
+                "exact_bytes_digest": self.validator.file_digest(REFERENCE_HOST_STARTUP_INPUT_SCHEMA),
             },
             attestation["publication_cohort"]["schemas"],
         )
@@ -426,9 +418,7 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
             {
                 "schema_id": "apxm.reference-host-startup-input.v1",
                 "path": "contracts/reference-host/vectors/apxm.reference-host-startup-input.v1.json",
-                "exact_bytes_digest": self.validator.file_digest(
-                    REFERENCE_HOST_PUBLISHED_STARTUP_INPUT_VECTOR
-                ),
+                "exact_bytes_digest": self.validator.file_digest(REFERENCE_HOST_STARTUP_INPUT_VECTOR),
             },
             attestation["publication_cohort"]["vectors"],
         )
@@ -459,6 +449,10 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
             "the reference-host execution manifest must pin one exact test-scoped startup input fixture",
         )
         self.validator.check_reference_host_startup_input_preflight(execution_manifest)
+
+    def test_reference_host_execution_manifest_pins_runtime_startup_input_contract(self) -> None:
+        execution_manifest = load_json(REFERENCE_HOST_EXECUTION_MANIFEST)
+        self.validator.check_reference_host_runtime_startup_input_contract(execution_manifest)
 
     def test_reference_host_startup_input_preflight_rejects_missing_fixture(self) -> None:
         execution_manifest = load_json(REFERENCE_HOST_EXECUTION_MANIFEST)

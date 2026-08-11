@@ -12,6 +12,7 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPOSITORY_ROOT / "tools" / "scripts" / "reference_host_startup_input.py"
+VALIDATOR_PATH = REPOSITORY_ROOT / "contracts" / "tools" / "validate_owner_descriptor.py"
 
 
 def load_module(path: Path, name: str):
@@ -31,6 +32,7 @@ class ReferenceHostStartupInputTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.module = load_module(SCRIPT_PATH, "reference_host_startup_input")
+        cls.validator = load_module(VALIDATOR_PATH, "validate_owner_descriptor")
 
     def test_build_writes_exact_startup_input_for_clean_revision(self) -> None:
         original_git_stdout = self.module.git_stdout
@@ -116,6 +118,18 @@ class ReferenceHostStartupInputTests(unittest.TestCase):
     def test_parse_args_requires_explicit_values(self) -> None:
         with self.assertRaises(SystemExit):
             self.module.parse_args([])
+
+    def test_runtime_startup_input_contract_is_published_under_canonical_and_reference_host_surfaces(self) -> None:
+        execution_manifest = json.loads(
+            (
+                REPOSITORY_ROOT
+                / "contracts"
+                / "reference-host"
+                / "manifests"
+                / "apxm.reference-host-execution-manifest.v1.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.validator.check_reference_host_runtime_startup_input_contract(execution_manifest)
 
 
 if __name__ == "__main__":
