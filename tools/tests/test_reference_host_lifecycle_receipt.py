@@ -73,7 +73,34 @@ class ReferenceHostLifecycleReceiptTests(unittest.TestCase):
         }
         self.assertEqual(
             self.module.serialized_air_digest(air),
-            "sha256:f3755ae0ba0b4e73d5d058291ba830e4668ab6b83b48d7413688c58befe57383",
+            "sha256:917027d56e0e9941b39309e0c1120655b52edbd0bd37a54ced0187e5d954245b",
+        )
+
+    def test_serialized_air_digest_includes_nonempty_value_assemblies_in_owner_order(self) -> None:
+        air = {
+            "schema_version": "apxm.air.v2",
+            "value_assemblies": [
+                {
+                    "value_id": "value.1",
+                    "expression": {
+                        "kind": "context",
+                        "property_path": ["input"],
+                    },
+                }
+            ],
+            "semantic_operations": [],
+            "structural_ir": [],
+            "context_flow": [],
+            "source_map": {
+                "schema_version": "apxm.source-map.v1",
+                "source_language": "python",
+                "node_spans": [],
+                "region_annotations": [],
+            },
+        }
+        self.assertEqual(
+            self.module.serialized_air_digest(air),
+            "sha256:8aef1c6c6afd602a9616ba1dc6bf7eaf5f18d3a129c6c36c6f79a51450ee26b9",
         )
 
     def make_startup_input(self, root: Path) -> tuple[Path, dict[str, object]]:

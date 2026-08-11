@@ -232,6 +232,7 @@ struct Host {
 struct PreparedInvocation {
     admission: Admission,
     air: AirModule,
+    artifact_bytes: Vec<u8>,
 }
 
 fn admission_error_code(error: &apxm_kernel::InvocationAdmissionError) -> &'static str {
@@ -405,9 +406,7 @@ impl Host {
         let Some(admission) = admission else {
             return Err(self.reject("missing_admission", "invocation admission is required"));
         };
-        if let Err(rejection) = self.validate_admission(&admission) {
-            return Err(rejection);
-        }
+        self.validate_admission(&admission)?;
         let Some(air_value) = air else {
             return Err(self.reject("missing_air", "canonical apxm.air.v2 is required"));
         };
@@ -638,6 +637,7 @@ fn validate_exact_digest(field: &str, digest: &str) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 fn file_digest(path: &Path) -> Result<String> {
     Ok(bytes_digest(
         &fs::read(path).with_context(|| format!("read {}", path.display()))?,

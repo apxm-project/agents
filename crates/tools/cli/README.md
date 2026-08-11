@@ -24,7 +24,7 @@ Command-line interface for the APXM workflow compiler and runtime toolchain.
 |---------|-------------|
 | `init` | Scaffold project directories and `apxm.toml` |
 | `compile-service-canonical` | Compile a canonical source package to `apxm.air.v2` JSON |
-| `execute-canonical` | Execute canonical `apxm.air.v2` JSON through the canonical runtime |
+| `execute-canonical` | Execute canonical `apxm.air.v2` JSON through exact Invocation Admission and the canonical runtime |
 | `doctor` | Diagnose MLIR/LLVM/conda dependencies |
 | `backend` | Manage registered inference backend endpoints |
 | `tool` | Register/list/remove external tools |

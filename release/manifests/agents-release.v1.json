@@ -2,7 +2,7 @@
   "artifacts": [
     {
       "build_decision": "built",
-      "digest": "sha256:2b27a970b88f038a7cf005d3cde8a970326c5692704b45356925aedada90e20d",
+      "digest": "sha256:b2281934db5c08921d0d8ccd7482ba9d48eba648e341198559c58490863fc180",
       "kind": "source-archive",
       "provenance": "git archive of the pinned owner revision"
     }
@@ -124,7 +124,7 @@
         "schema_id": "apxm.diagnostic-correlation.v1"
       },
       {
-        "digest": "sha256:b2ffb39e5e005b9e6b99010953195e868256298f68bdd992f1bcec70cdb66918",
+        "digest": "sha256:a80fafd511b2d1b2c80be64f602dd29df9a71a2106dc3a101daf48bf58ad157f",
         "schema_id": "apxm.vllm-conformance-join.v1"
       },
       {
@@ -216,7 +216,7 @@
     ]
   },
   "owner_descriptor": {
-    "exact_bytes_digest": "sha256:65bb86c9fe3482895bb6270e669426e1540eae3af749a945d0d4eb722dff44e0",
+    "exact_bytes_digest": "sha256:3269599ff805a27704c0eca279dab5754fa799f22cb93cfd2d6afc941f284588",
     "path": "contracts/descriptors/apxm.agents-owner-descriptor.v1.json"
   },
   "provenance": {
@@ -359,14 +359,14 @@
       "path": "contracts/reference-host/manifests/apxm.reference-host-release-manifest.v1.json"
     }
   },
-  "release_id": "apxm-agents-6d10e2941554",
+  "release_id": "apxm-agents-140ce5b16b4b",
   "release_kind": "source-provenance",
   "schema_version": "apxm.owner-release-manifest.v1",
   "semantic_owner": "agents",
   "source": {
-    "archive_digest": "sha256:2b27a970b88f038a7cf005d3cde8a970326c5692704b45356925aedada90e20d",
+    "archive_digest": "sha256:b2281934db5c08921d0d8ccd7482ba9d48eba648e341198559c58490863fc180",
     "repository": "https://github.com/apxm-project/agents.git",
-    "revision": "6d10e2941554bae4f2f08fdeb993d37dd3207fa3",
-    "tree_digest": "sha256:620fbb261c28ad176e4c3fa6b0a4fbc3c31e34f5216def83499546bc860299ff"
+    "revision": "140ce5b16b4bc4a078800b52fffbfc8004169ee1",
+    "tree_digest": "sha256:955353a62021223be1ab24901841a3779ebbe6341489eb354624b0dba5bf3437"
   }
 }

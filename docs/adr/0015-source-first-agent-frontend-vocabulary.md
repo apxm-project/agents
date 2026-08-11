@@ -216,7 +216,7 @@ an Agent runtime or a frontend concept.
   ADR-0006's canonical-interchange and explicit-bridge decision is retained; the
   interchange shape is replaced under §6, not the bridge boundary.
 - The parent Agent Program composition and AIR contract is amended so §3 Source
-  API shows the source-first surface, §7 FrontendGraph v1 lists typed intents
+  API shows the source-first surface, §7 FrontendGraph v2 lists typed intents
   rather than raw operation records, and §8/§11 fix the AIR-to-registered-AIS
   signatures with complete typed operands/results.
 - `CONTEXT.md` is amended to distinguish friendly frontend names (`Agent`,

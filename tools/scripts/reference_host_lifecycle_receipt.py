@@ -177,8 +177,13 @@ def file_digest(path: Path) -> str:
 def serialized_air_digest(air: dict[str, Any]) -> str:
     """Match the owner runtime's AirModule serde digest exactly."""
     source_map = air.get("source_map")
-    ordered_air = {
+    ordered_air: dict[str, Any] = {
         "schema_version": air.get("schema_version"),
+    }
+    value_assemblies = air.get("value_assemblies", [])
+    if value_assemblies:
+        ordered_air["value_assemblies"] = value_assemblies
+    ordered_air.update({
         "semantic_operations": air.get("semantic_operations", []),
         "structural_ir": air.get("structural_ir", []),
         "context_flow": air.get("context_flow", []),
@@ -192,7 +197,7 @@ def serialized_air_digest(air: dict[str, Any]) -> str:
             if isinstance(source_map, dict)
             else source_map
         ),
-    }
+    })
     encoded = json.dumps(ordered_air, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
 

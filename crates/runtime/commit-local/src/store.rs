@@ -283,8 +283,7 @@ impl CommitLocalStore {
     pub fn current_version(&self, program_instance_ref: &ProgramInstanceRef) -> u64 {
         self.instances
             .get(program_instance_ref.as_str())
-            .map(|r| r.program_state_version)
-            .unwrap_or(0)
+            .map_or(0, |r| r.program_state_version)
     }
 
     pub fn load_continuation(&self, program_instance_ref: &ProgramInstanceRef) -> Option<Value> {

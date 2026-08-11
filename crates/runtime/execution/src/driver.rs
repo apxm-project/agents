@@ -644,16 +644,16 @@ impl DriveState {
             return;
         }
         self.seq += 1;
-        self.batch.push(join_fact(
-            &self.program_invocation_id,
-            self.seq,
-            FactKind::RegionOccurrenceStarted,
-            Some(occurrence.clone()),
-            Some(static_loop_id.to_string()),
-            None,
-            None,
-            None,
-        ));
+        self.batch.push(join_fact(JoinFactSpec {
+            program_invocation_id: &self.program_invocation_id,
+            seq: self.seq,
+            kind: FactKind::RegionOccurrenceStarted,
+            region_occurrence_id: Some(occurrence.clone()),
+            static_region_id: Some(static_loop_id.to_string()),
+            node_execution_id: None,
+            air_node_id: None,
+            parent_node_execution_id: None,
+        }));
         self.active_loops.push(DurableLoopFrame {
             static_loop_id: static_loop_id.to_string(),
             dynamic_occurrence_id: occurrence,
@@ -740,8 +740,8 @@ impl DriveState {
     }
 }
 
-fn join_fact(
-    program_invocation_id: &str,
+struct JoinFactSpec<'a> {
+    program_invocation_id: &'a str,
     seq: u64,
     kind: FactKind,
     region_occurrence_id: Option<String>,
@@ -749,14 +749,24 @@ fn join_fact(
     node_execution_id: Option<String>,
     air_node_id: Option<String>,
     parent_node_execution_id: Option<String>,
-) -> Fact {
-    let mut fact = fact(program_invocation_id, seq, kind, None, None, None, None);
+}
+
+fn join_fact(spec: JoinFactSpec<'_>) -> Fact {
+    let mut fact = fact(
+        spec.program_invocation_id,
+        spec.seq,
+        spec.kind,
+        None,
+        None,
+        None,
+        None,
+    );
     let runtime = runtime_fact_mut(&mut fact);
-    runtime.region_occurrence_id = region_occurrence_id;
-    runtime.static_region_id = static_region_id;
-    runtime.node_execution_id = node_execution_id;
-    runtime.air_node_id = air_node_id;
-    runtime.parent_node_execution_id = parent_node_execution_id;
+    runtime.region_occurrence_id = spec.region_occurrence_id;
+    runtime.static_region_id = spec.static_region_id;
+    runtime.node_execution_id = spec.node_execution_id;
+    runtime.air_node_id = spec.air_node_id;
+    runtime.parent_node_execution_id = spec.parent_node_execution_id;
     fact
 }
 
@@ -1046,21 +1056,32 @@ struct DriveOptions {
     yield_at_loop: bool,
 }
 
+struct DriveInputs<'a> {
+    ports: &'a ExecutionPorts,
+    air: &'a AirModule,
+    hook_bindings: &'a [HookBinding],
+    model_admission: &'a ModelBindingAdmission,
+    capability_invocations: &'a BTreeMap<String, CapabilityInvocationAdmission>,
+}
+
 /// Walk the structural execution schedule from `start_index`, dispatching semantic
 /// operations to their exact injected ports and threading Context through Hooks.
 /// When `suspend_on_park` is set, a parked `await.event` or loop yield stops the
 /// walk and returns [`DriveEnd::Parked`]; otherwise a parked outcome is recorded
 /// and the walk continues (the single-shot contract).
 async fn drive_from(
-    ports: &ExecutionPorts,
-    air: &AirModule,
-    hook_bindings: &[HookBinding],
-    model_admission: &ModelBindingAdmission,
-    capability_invocations: &BTreeMap<String, CapabilityInvocationAdmission>,
+    inputs: DriveInputs<'_>,
     start_schedule_position: usize,
     mut state: DriveState,
     options: DriveOptions,
 ) -> Result<DriveEnd, ExecutionError> {
+    let DriveInputs {
+        ports,
+        air,
+        hook_bindings,
+        model_admission,
+        capability_invocations,
+    } = inputs;
     let schedule = build_schedule(air, hook_bindings);
     if start_schedule_position > schedule.len() {
         return Err(ExecutionError::Continuation(
@@ -1604,8 +1625,9 @@ async fn drive_from(
                             );
                             let attached_fact = runtime_fact_mut(&mut attached);
                             attached_fact.air_node_id = Some(op.node_id.clone());
-                            attached_fact.parent_node_execution_id =
-                                state.last_program_new_node_execution_id.clone();
+                            attached_fact
+                                .parent_node_execution_id
+                                .clone_from(&state.last_program_new_node_execution_id);
                             state.batch.push(attached);
                         }
                         state.node_outcomes.push(NodeOutcome::ProgramInvoke {
@@ -1959,18 +1981,15 @@ async fn publish_committed_native_model_usage(
                 CommittedNativeModelUsageError::Rejected,
             );
         }
-        let usage = match CommittedNativeModelUsage::from_lineage(
+        let Ok(usage) = CommittedNativeModelUsage::from_lineage(
             commit_id.to_string(),
             evidence_position_ref.clone(),
             attempt.clone(),
             &lineage,
-        ) {
-            Ok(usage) => usage,
-            Err(_) => {
-                return CommittedNativeModelUsageOutcome::Failed(
-                    CommittedNativeModelUsageError::Rejected,
-                );
-            }
+        ) else {
+            return CommittedNativeModelUsageOutcome::Failed(
+                CommittedNativeModelUsageError::Rejected,
+            );
         };
         if let Err(error) = port.publish(usage).await {
             return CommittedNativeModelUsageOutcome::Failed(error);
@@ -2194,7 +2213,7 @@ fn collect_runtime_expression_references(
     match expression {
         ValueExpression::Ssa { value_id } => references.push(value_id.clone()),
         ValueExpression::Projection { root, .. } => {
-            collect_runtime_expression_references(root, references)
+            collect_runtime_expression_references(root, references);
         }
         ValueExpression::Object { fields } => fields
             .iter()
@@ -2327,11 +2346,13 @@ pub async fn execute(
         request.program_invocation_ref.as_str(),
     );
     let end = drive_from(
-        ports,
-        &request.air,
-        &request.hook_bindings,
-        &request.model_admission,
-        &request.capability_invocations,
+        DriveInputs {
+            ports,
+            air: &request.air,
+            hook_bindings: &request.hook_bindings,
+            model_admission: &request.model_admission,
+            capability_invocations: &request.capability_invocations,
+        },
         0,
         state,
         DriveOptions {
@@ -2383,11 +2404,13 @@ pub async fn execute_resumable(
         request.program_invocation_ref.as_str(),
     );
     let end = drive_from(
-        ports,
-        &request.air,
-        &request.hook_bindings,
-        &request.model_admission,
-        &request.capability_invocations,
+        DriveInputs {
+            ports,
+            air: &request.air,
+            hook_bindings: &request.hook_bindings,
+            model_admission: &request.model_admission,
+            capability_invocations: &request.capability_invocations,
+        },
         0,
         state,
         DriveOptions {
@@ -2583,11 +2606,13 @@ async fn resume_from_continuation(
     state.values.insert(resume_value_id, delivered);
 
     let end = drive_from(
-        ports,
-        &air,
-        &hook_bindings,
-        &model_admission,
-        &capability_invocations,
+        DriveInputs {
+            ports,
+            air: &air,
+            hook_bindings: &hook_bindings,
+            model_admission: &model_admission,
+            capability_invocations: &capability_invocations,
+        },
         next_schedule_position,
         state,
         DriveOptions {

@@ -37,9 +37,40 @@ use apxm_program::air::{AirModule, SemanticOpKind};
 use apxm_program::artifact::SchemaDigestRef;
 use apxm_program::external_agent::{AttributedEvent, AttributedEventKind, PeerUsage};
 
-pub async fn execute_canonical_command(input: PathBuf, _json_output: bool) -> Result<()> {
-    let _ = load_canonical_air(&input)?;
-    anyhow::bail!("canonical execution requires an explicit APXM Invocation Admission authority");
+pub async fn execute_canonical_command(
+    input: PathBuf,
+    invocation_admission: PathBuf,
+    release: PathBuf,
+    provenance: PathBuf,
+    json_output: bool,
+) -> Result<()> {
+    let (air, artifact_bytes) = load_canonical_air(&input)?;
+    let admission_bytes = read_exact_bytes(&invocation_admission, "Invocation Admission")?;
+    let admission: InvocationAdmission =
+        serde_json::from_slice(&admission_bytes).with_context(|| {
+            format!(
+                "{} must contain exact {} JSON",
+                invocation_admission.display(),
+                apxm_kernel::INVOCATION_ADMISSION_SCHEMA
+            )
+        })?;
+    let release_bytes = read_exact_bytes(&release, "release")?;
+    let provenance_bytes = read_exact_bytes(&provenance, "provenance")?;
+    let output = CanonicalRuntime::new()
+        .execute(
+            air,
+            &artifact_bytes,
+            &admission,
+            &release_bytes,
+            &provenance_bytes,
+        )
+        .await?;
+    if json_output {
+        println!("{}", serde_json::to_string(&output)?);
+    } else {
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    }
+    Ok(())
 }
 
 /// One APXM-owned canonical runtime instance. The commit port is retained for
@@ -60,16 +91,21 @@ impl CanonicalRuntime {
     pub async fn execute(
         &self,
         air: AirModule,
+        artifact_bytes: &[u8],
         admission: &InvocationAdmission,
         release_bytes: &[u8],
         provenance_bytes: &[u8],
     ) -> Result<Value> {
         ensure_local_capability_authority_available(&air)?;
-        let artifact_bytes = serde_json::to_vec(&air)?;
         let descriptor = reference_host_runtime_descriptor();
+        if admission.port_bindings_digest != reference_host_port_bindings_digest()
+            || admission.resource_ceiling_digest != reference_host_resource_ceiling_digest()
+        {
+            anyhow::bail!("Invocation Admission does not bind the exact reference runtime profile");
+        }
         let verified = verify_invocation_admission(
             admission,
-            &artifact_bytes,
+            artifact_bytes,
             release_bytes,
             provenance_bytes,
             &descriptor.port_bindings,
@@ -140,10 +176,16 @@ impl Default for CanonicalRuntime {
     }
 }
 
-fn load_canonical_air(input: &PathBuf) -> Result<AirModule> {
-    let text = std::fs::read_to_string(input)
-        .with_context(|| format!("failed to read canonical AIR from {}", input.display()))?;
-    let air: AirModule = serde_json::from_str(&text).with_context(|| {
+fn read_exact_bytes(path: &PathBuf, label: &str) -> Result<Vec<u8>> {
+    std::fs::read(path)
+        .with_context(|| format!("failed to read exact {label} bytes from {}", path.display()))
+}
+
+fn load_canonical_air(input: &PathBuf) -> Result<(AirModule, Vec<u8>)> {
+    let bytes = read_exact_bytes(input, "canonical AIR")?;
+    let text = std::str::from_utf8(&bytes)
+        .with_context(|| format!("{} must contain UTF-8 canonical AIR JSON", input.display()))?;
+    let air: AirModule = serde_json::from_str(text).with_context(|| {
         format!(
             "{} must contain canonical apxm.air.v2 JSON",
             input.display()
@@ -167,7 +209,7 @@ fn load_canonical_air(input: &PathBuf) -> Result<AirModule> {
             serde_json::to_string(&diagnostics)?
         );
     }
-    Ok(air)
+    Ok((air, bytes))
 }
 
 fn model_targets(air: &AirModule) -> Vec<String> {
@@ -220,8 +262,9 @@ fn ensure_local_capability_authority_available(air: &AirModule) -> Result<()> {
             .operands
             .iter()
             .find(|operand| operand.slot == "capability_ref")
-            .map(|operand| operand.value_id.as_str())
-            .unwrap_or("<missing capability_ref>");
+            .map_or("<missing capability_ref>", |operand| {
+                operand.value_id.as_str()
+            });
         if !capability_ref.starts_with("external-agent:") {
             anyhow::bail!(
                 "canonical local execution cannot invoke Capability {capability_ref} at node {}; explicit Invocation Admission authority is required",
@@ -254,6 +297,7 @@ fn model_admission(air: &AirModule, model_binding_digest: &str) -> ModelBindingA
     )
 }
 
+#[cfg(test)]
 fn dev_write_set() -> AtomicWriteSet {
     AtomicWriteSet {
         next_program_state_digest: digest('1'),
@@ -848,9 +892,16 @@ mod tests {
         let runtime = CanonicalRuntime::new();
         let air = empty_profile_air();
         let mut admission = invocation_admission(&air, "invocation.reference-host.unauthorized");
+        let artifact_bytes = serde_json::to_vec(&air).expect("test AIR serialization");
         admission.artifact_digest = digest('f');
         let output = runtime
-            .execute(air, &admission, TEST_RELEASE_BYTES, TEST_PROVENANCE_BYTES)
+            .execute(
+                air,
+                &artifact_bytes,
+                &admission,
+                TEST_RELEASE_BYTES,
+                TEST_PROVENANCE_BYTES,
+            )
             .await;
         assert!(output.is_err(), "tampered admission must fail closed");
     }
@@ -864,6 +915,7 @@ mod tests {
         tampered_json["source_map"]["source_language"] = Value::String("typescript".into());
         let tampered: AirModule =
             serde_json::from_value(tampered_json).expect("tampered AIR remains well-formed");
+        let tampered_bytes = serde_json::to_vec(&tampered).expect("tampered AIR serialization");
         assert!(
             tampered.verify().is_accepted(),
             "tampered AIR remains valid"
@@ -872,6 +924,7 @@ mod tests {
         let error = runtime
             .execute(
                 tampered,
+                &tampered_bytes,
                 &admission,
                 TEST_RELEASE_BYTES,
                 TEST_PROVENANCE_BYTES,
@@ -886,8 +939,15 @@ mod tests {
         let runtime = CanonicalRuntime::new();
         let air = empty_profile_air();
         let admission = invocation_admission(&air, "invocation.reference-host.1");
+        let artifact_bytes = serde_json::to_vec(&air).expect("test AIR serialization");
         let output = runtime
-            .execute(air, &admission, TEST_RELEASE_BYTES, TEST_PROVENANCE_BYTES)
+            .execute(
+                air,
+                &artifact_bytes,
+                &admission,
+                TEST_RELEASE_BYTES,
+                TEST_PROVENANCE_BYTES,
+            )
             .await
             .expect("verified transport authority reaches canonical runtime");
         assert_eq!(output["runtime"], "apxm_execution");
@@ -899,8 +959,15 @@ mod tests {
         let runtime = CanonicalRuntime::new();
         let air = empty_profile_air();
         let admission = invocation_admission(&air, "invocation.reference-host.commit");
+        let artifact_bytes = serde_json::to_vec(&air).expect("test AIR serialization");
         let output = runtime
-            .execute(air, &admission, TEST_RELEASE_BYTES, TEST_PROVENANCE_BYTES)
+            .execute(
+                air,
+                &artifact_bytes,
+                &admission,
+                TEST_RELEASE_BYTES,
+                TEST_PROVENANCE_BYTES,
+            )
             .await
             .expect("exact host admission reaches canonical runtime");
         assert_eq!(output["status"], "completed");
@@ -912,8 +979,15 @@ mod tests {
         let runtime = CanonicalRuntime::new();
         let air = empty_profile_air();
         let admission = invocation_admission(&air, "invocation.reference-host.negative");
+        let artifact_bytes = serde_json::to_vec(&air).expect("test AIR serialization");
         let error = runtime
-            .execute(air, &admission, TEST_RELEASE_BYTES, b"tampered-provenance")
+            .execute(
+                air,
+                &artifact_bytes,
+                &admission,
+                TEST_RELEASE_BYTES,
+                b"tampered-provenance",
+            )
             .await
             .expect_err("provenance drift must fail closed");
         assert!(error.to_string().contains("provenance digest mismatch"));

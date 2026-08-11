@@ -112,7 +112,15 @@ async fn run_cli(cli: Cli) -> Result<()> {
                 agent_dir, cli.config,
             )
         }
-        Commands::ExecuteCanonical { input } => execute_canonical_command(input, cli.json).await,
+        Commands::ExecuteCanonical {
+            input,
+            invocation_admission,
+            release,
+            provenance,
+        } => {
+            execute_canonical_command(input, invocation_admission, release, provenance, cli.json)
+                .await
+        }
         Commands::Doctor => doctor_command(cli.config, cli.json),
         Commands::Backend { action } => backend_command(action, cli.json).await,
         Commands::Tool { action } => tool_command(action, cli.json),
@@ -226,7 +234,15 @@ async fn rollout_action(action: commands::RolloutAction) -> Result<()> {
 async fn run_cli_no_driver(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Init { name } => init_command(&name),
-        Commands::ExecuteCanonical { input } => execute_canonical_command(input, cli.json).await,
+        Commands::ExecuteCanonical {
+            input,
+            invocation_admission,
+            release,
+            provenance,
+        } => {
+            execute_canonical_command(input, invocation_admission, release, provenance, cli.json)
+                .await
+        }
         Commands::Doctor => doctor_command(cli.config, cli.json),
         Commands::Tool { action } => tool_command(action, cli.json),
         Commands::Team { action } => team_command(action, cli.json),

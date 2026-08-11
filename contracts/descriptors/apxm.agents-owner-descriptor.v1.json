@@ -187,7 +187,7 @@
     {
       "schema_id": "apxm.vllm-conformance-join.v1",
       "path": "schemas/apxm.vllm-conformance-join.v1.json",
-      "digest": "sha256:b2ffb39e5e005b9e6b99010953195e868256298f68bdd992f1bcec70cdb66918"
+      "digest": "sha256:a80fafd511b2d1b2c80be64f602dd29df9a71a2106dc3a101daf48bf58ad157f"
     },
     {
       "schema_id": "apxm.external-agent-request.v1",
@@ -934,7 +934,7 @@
     {
       "schema_id": "apxm.vllm-conformance-join.v1",
       "path": "vectors/apxm.vllm-conformance-join.v1.json",
-      "digest": "sha256:8e8f5012734c04af07bce980bc79c72a9373dabdaef9fe6000d1a71829cc5a64",
+      "digest": "sha256:d645e11ac2b6875f0f326ca1f6810078f68864c61475cedda83bea813117d358",
       "coverage": [
         "positive",
         "candidate_without_live_release",
@@ -1087,5 +1087,5 @@
       ]
     }
   ],
-  "descriptor_digest": "sha256:653038822f0638b9a68bd400bc1b201b6b7039b05610dab3326216d77e412841"
+  "descriptor_digest": "sha256:d7a286d5836c2874abb6d9a6ae0b5cbbf75433218ba5aefea627494b24d27b2a"
 }
