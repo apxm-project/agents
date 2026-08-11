@@ -342,10 +342,41 @@ def test_conversational_examples_record_equivalent_frontend_graph_intent_and_dia
 def test_conversational_example_uses_only_generic_operations() -> None:
     air = python_air()
     ops = {op["op"] for op in air["semantic_operations"]}
-    assert ops == {"program.new", "program.invoke", "model.call"}
+    assert ops == {"capability.invoke", "model.call"}
     structural = {node["kind"] for node in air["structural_ir"]}
     assert "ais.loop" in structural
+    assert "branch" in structural
     assert "yield" in structural
+
+
+def test_conversational_tools_are_model_directed_and_hooks_are_bound() -> None:
+    graph = python_graph()
+    regions = {region["region_id"]: region for region in graph["regions"]}
+    calls = graph["call_intents"]
+    model_calls = [call for call in calls if call["intent_kind"] == "model_invocation"]
+    tool_calls = [call for call in calls if call["intent_kind"] == "tool_invocation"]
+
+    assert len(model_calls) == 1
+    assert regions[model_calls[0]["parent_region_id"]]["region_role"] == "loop_body"
+    assert len(tool_calls) == 2
+    assert {
+        regions[call["parent_region_id"]]["region_role"] for call in tool_calls
+    } == {"conditional_arm"}
+    assert {requirement["capability_ref"] for requirement in graph["capability_requirements"]} == {
+        "cap.read",
+        "cap.search",
+    }
+
+    hooks = {
+        (hook["phase"], hook["scope"])
+        for hook in graph["hook_bindings"]
+    }
+    assert hooks == {
+        ("before", "model"),
+        ("after", "model"),
+        ("after", "capability"),
+    }
+    assert len(graph["hook_bindings"]) == 4
 
 
 def test_paired_corpus_records_equivalent_complete_frontend_intent() -> None:
