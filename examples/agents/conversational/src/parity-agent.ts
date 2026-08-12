@@ -57,13 +57,13 @@ export const ParityCorpus: ParityProgram = Agent<unknown, unknown, ParityContext
       try {
         if (request !== null) {
           await TaskGroup.run(async () => {
-            toolResult = await ParityTool(request);
+            toolResult = await ParityTool(null);
           });
         } else {
-          toolResult = await ParityCapability(request);
+          toolResult = await ParityCapability(null);
         }
       } catch {
-        toolResult = await ParityCapability(request);
+        toolResult = await ParityCapability(null);
       }
       const child = ParityChild.new({ context: { iterations: 0 } });
       const childResult = await child.invoke(request);
