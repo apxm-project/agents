@@ -35,11 +35,11 @@ async def ParityCorpus(agent, request):
         try:
             if request is not None:
                 async with TaskGroup():
-                    tool_result = await ParityTool(request)
+                    tool_result = await ParityTool(None)
             else:
-                tool_result = await ParityCapability(request)
+                tool_result = await ParityCapability(None)
         except Exception:
-            tool_result = await ParityCapability(request)
+            tool_result = await ParityCapability(None)
         child = ParityChild.new(context=ParityContext(iterations=0))
         child_result = await child.invoke(request)
         event_result = await ParityEvent.wait()
