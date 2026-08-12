@@ -1422,10 +1422,11 @@ fn dominates_location(
         context.region_parent,
     ) {
         let mut child = use_location.region_id.as_str();
-        while let Some(parent) = region_parent.get(child).copied().flatten() {
+        while let Some(parent) = context.region_parent.get(child).copied().flatten() {
             if parent == definition.region_id {
                 return definition.entry
-                    || region_order
+                    || context
+                        .region_order
                         .get(child)
                         .is_some_and(|child_order| definition.execution_order < *child_order);
             }
@@ -1455,12 +1456,13 @@ fn dominates_location(
     if is_ancestor(
         &use_location.region_id,
         &definition.region_id,
-        region_parent,
+        context.region_parent,
     ) {
         let mut child = definition.region_id.as_str();
-        while let Some(parent) = region_parent.get(child).copied().flatten() {
+        while let Some(parent) = context.region_parent.get(child).copied().flatten() {
             if parent == use_location.region_id {
-                return region_order
+                return context
+                    .region_order
                     .get(child)
                     .is_some_and(|child_order| *child_order < use_location.execution_order);
             }

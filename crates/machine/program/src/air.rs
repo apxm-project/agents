@@ -342,6 +342,14 @@ struct AirSsaLocation {
     entry: bool,
 }
 
+struct AirSsaValidationContext<'a> {
+    results: &'a std::collections::HashMap<&'a str, AirSsaLocation>,
+    blocks: &'a std::collections::HashMap<&'a str, AirSsaLocation>,
+    assemblies: &'a std::collections::HashMap<&'a str, &'a ValueExpression>,
+    regions: &'a std::collections::HashMap<&'a str, &'a StructuralNode>,
+    resume_values: &'a HashSet<&'a str>,
+}
+
 /// Validate authored executable-invocation operands against AIR def-use order
 /// as a second closed boundary after FrontendGraph verification. This prevents
 /// a decoded AIR payload from smuggling a future or sibling-branch SSA value
@@ -401,6 +409,13 @@ fn validate_air_ssa_dominance(verdict: &mut Verdict, air: &AirModule) {
                 .map(|value| value.value_id.as_str())
         })
         .collect();
+    let context = AirSsaValidationContext {
+        results: &results,
+        blocks: &blocks,
+        assemblies: &assemblies,
+        regions: &regions,
+        resume_values: &resume_values,
+    };
 
     for operation in &air.semantic_operations {
         let use_location = AirSsaLocation {
@@ -430,10 +445,8 @@ fn validate_air_ssa_dominance(verdict: &mut Verdict, air: &AirModule) {
             if !air_value_dominates(
                 &operand.value_id,
                 &use_location,
-                &results,
-                &blocks,
-                &assemblies,
-                &regions,
+                operation.op == SemanticOpKind::ModelCall,
+                &context,
                 &mut visiting,
             ) {
                 verdict.push(Diagnostic::new(
@@ -469,15 +482,26 @@ fn air_value_dominates(
     if !visiting.insert(value_id.to_string()) {
         return false;
     }
-    let location = results.get(value_id).or_else(|| blocks.get(value_id));
+    let location = context
+        .results
+        .get(value_id)
+        .or_else(|| context.blocks.get(value_id));
     // AIR operands may be supplied as invocation-entry values by the runtime
     // host when no AIR definition or authored assembly claims the id. Those
     // external values are entry-dominating by construction; any value that is
     // declared as a result or block argument still goes through the strict
     // lexical dominance check above.
-    let base_ok = match location {
-        Some(definition) => air_dominates_location(definition, use_location, regions),
-        None => assemblies.contains_key(value_id) || !results.contains_key(value_id),
+    let base_ok = if context.resume_values.contains(value_id) {
+        allow_resume_value
+    } else {
+        match location {
+            Some(definition) => air_dominates_location(definition, use_location, context.regions),
+            None => {
+                context.assemblies.contains_key(value_id)
+                    || (!context.results.contains_key(value_id)
+                        && !context.blocks.contains_key(value_id))
+            }
+        }
     };
     if !base_ok {
         return false;

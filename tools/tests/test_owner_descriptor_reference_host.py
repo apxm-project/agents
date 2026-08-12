@@ -1,4 +1,4 @@
-"""Pin reference-host wire provenance without a downstream SDK build dependency."""
+"""Pin Agents-owned reference-host wire and Port Contract provenance."""
 
 from __future__ import annotations
 
@@ -42,6 +42,13 @@ REFERENCE_HOST_LIFECYCLE_VECTOR = (
     / "reference-host"
     / "vectors"
     / "apxm.reference-host.lifecycle-parity.v1.json"
+)
+REFERENCE_HOST_INVOKE_VECTOR = (
+    REPOSITORY_ROOT
+    / "contracts"
+    / "reference-host"
+    / "vectors"
+    / "apxm.reference-host.invoke-parity.v1.json"
 )
 REFERENCE_HOST_STARTUP_INPUT_SCHEMA = (
     REPOSITORY_ROOT
@@ -95,12 +102,8 @@ REFERENCE_HOST_STARTUP_INPUT_VECTOR = (
 )
 
 README_REFERENCE_HOST = re.compile(
-    r"The frozen interoperability provenance is pinned to Host SDK source revision\s+"
-    r"`(?P<revision>[0-9a-f]{40})`\.\s+Its\s+"
-    r"`(?P<schema_version>apxm\.host-sdk-owner-descriptor\.v1)` semantic digest is\s+"
-    r"`(?P<semantic_digest>sha256:[0-9a-f]{64})`,\s+and the SHA-256 checksum of the exact "
-    r"descriptor repository bytes is\s+`(?P<exact_checksum>sha256:[0-9a-f]{64})`\.",
-    re.MULTILINE,
+    r"Reference-host wire and Port Contracts are authored and digest-bound by\s+Agents\."
+    r"\s+No downstream owner descriptor or SDK checkout is required\."
 )
 FORBIDDEN_BOUNDARY_TOKENS = (
     "apxm.coordinator-owner-descriptor.v1",
@@ -143,38 +146,25 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.validator = load_validator_module()
-        cls.expected_reference = dict(cls.validator.REFERENCE_HOST_DESCRIPTOR)
+        cls.expected_provenance = cls.validator.reference_host_provenance()
 
     def test_descriptor_reference_host_cohort_is_exact(self) -> None:
         descriptor = json.loads(DESCRIPTOR_PATH.read_text(encoding="utf-8"))
         self.assertEqual(
             descriptor["referenced_owner_descriptors"],
-            [self.expected_reference],
-            "the owner descriptor must reference exactly one canonical Host SDK cohort",
+            [],
+            "the owner descriptor must not reference a downstream Host owner",
         )
 
-    def test_boundary_rejects_absent_reference_host_cohort(self) -> None:
+    def test_boundary_rejects_downstream_reference_host_cohort(self) -> None:
         descriptor = load_json(DESCRIPTOR_PATH)
-        descriptor["referenced_owner_descriptors"] = []
+        descriptor["referenced_owner_descriptors"] = [{"semantic_owner": "downstream"}]
 
         with self.assertRaisesRegex(
             self.validator.ValidationError,
-            "exactly the canonical Host SDK cohort",
+            "must not reference a downstream owner descriptor",
         ):
             self.validator.check_reference_host_boundary(descriptor)
-
-    def test_boundary_rejects_drifted_reference_host_cohort(self) -> None:
-        descriptor = load_json(DESCRIPTOR_PATH)
-        drifted = copy.deepcopy(descriptor)
-        drifted["referenced_owner_descriptors"][0]["descriptor_semantic_digest"] = (
-            "sha256:" + ("0" * 64)
-        )
-
-        with self.assertRaisesRegex(
-            self.validator.ValidationError,
-            "drifted from the canonical Host SDK cohort: descriptor_semantic_digest",
-        ):
-            self.validator.check_reference_host_boundary(drifted)
 
     def test_workspace_has_no_downstream_host_sdk_dependency(self) -> None:
         manifest = tomllib.loads(CARGO_TOML.read_text(encoding="utf-8"))
@@ -188,18 +178,7 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
         match = README_REFERENCE_HOST.search(readme)
         self.assertIsNotNone(
             match,
-            "contracts/README.md must spell out the exact frozen Host SDK provenance",
-        )
-        assert match is not None
-        self.assertEqual(match.group("revision"), self.expected_reference["source_revision"])
-        self.assertEqual(match.group("schema_version"), self.expected_reference["schema_version"])
-        self.assertEqual(
-            match.group("semantic_digest"),
-            self.expected_reference["descriptor_semantic_digest"],
-        )
-        self.assertEqual(
-            match.group("exact_checksum"),
-            self.expected_reference["descriptor_exact_checksum"],
+            "contracts/README.md must spell out local reference-host ownership",
         )
 
     def test_boundary_sources_do_not_name_retired_or_foreign_reference_hosts(self) -> None:
@@ -436,7 +415,7 @@ class OwnerDescriptorReferenceHostTests(unittest.TestCase):
             "scope": "test-only",
             "artifact_path": "reference-host/fixtures/apxm.reference-host.startup-input.test.json",
             "artifact_digest": self.validator.file_digest(REFERENCE_HOST_STARTUP_INPUT_FIXTURE),
-            "owner_revision": self.expected_reference["source_revision"],
+            "owner_revision": self.expected_provenance["owner_revision"],
             "fail_closed_on": ["missing", "stale", "dirty", "mismatched"],
         }
 
