@@ -257,11 +257,6 @@ fn admission_error_code(error: &apxm_kernel::InvocationAdmissionError) -> &'stat
     }
 }
 
-struct PreparedInvocation {
-    invocation_id: String,
-    air: AirModule,
-}
-
 impl Host {
     fn new(admitted_digests: AdmittedDigests) -> Self {
         Self {
@@ -406,9 +401,11 @@ impl Host {
         let Some(admission) = admission else {
             return Err(self.reject("missing_admission", "invocation admission is required"));
         };
-        self.validate_admission(&admission)?;
+        if let Err(rejection) = self.validate_admission(&admission) {
+            return Err(rejection);
+        }
         let Some(air_value) = air else {
-            return Err(self.reject("missing_air", "canonical apxm.air.v2 is required"));
+            return Err(self.reject("missing_air", "canonical apxm.air.v1 is required"));
         };
         let air: AirModule = match serde_json::from_value(air_value) {
             Ok(air) => air,
@@ -417,27 +414,43 @@ impl Host {
         if !air.verify().is_accepted() {
             return Err(self.reject("invalid_air", "canonical AIR verification failed"));
         }
-        self.in_flight = 1;
+        let descriptor = reference_host_runtime_descriptor();
+        let artifact_bytes = serde_json::to_vec(&air)
+            .map_err(|error| self.reject("invalid_air", error.to_string()))?;
+        verify_invocation_admission(
+            &admission,
+            &artifact_bytes,
+            &self.admitted_digests.release_bytes,
+            &self.admitted_digests.provenance_bytes,
+            &descriptor.port_bindings,
+            descriptor.resource_ceilings,
+            &descriptor.confinement,
+        )
+        .map_err(|error| self.reject(admission_error_code(&error), error.to_string()))?;
         Ok(PreparedInvocation {
-            invocation_id: admission.invocation_id,
+            admission,
             air,
+            artifact_bytes,
         })
     }
 
     fn complete_invocation(
         &mut self,
         invocation_id: String,
+        artifact_digest: String,
         execution: std::result::Result<Value, String>,
-    ) -> Value {
+    ) -> Result<Value> {
         let result = match execution {
             Ok(output) => {
                 let runtime_evidence =
                     self.runtime_evidence(&invocation_id, "invocation.committed");
-                self.last_runtime_evidence = Some(runtime_evidence.clone());
-                json!({
+                let mut runtime_evidence = runtime_evidence;
+                runtime_evidence["program_identity"]["artifact_digest"] =
+                    Value::String(artifact_digest);
+                let response = json!({
                     "schema_version": HOST_SCHEMA,
                     "status": "committed",
-                    "invocation_id": invocation_id,
+                    "invocation_id": invocation_id.clone(),
                     "result": output,
                     "runtime_evidence": runtime_evidence,
                 });
@@ -463,15 +476,29 @@ impl Host {
         Ok(result)
     }
 
-    async fn invoke(&mut self, request: Request) -> Value {
+    async fn invoke(&mut self, request: Request) -> Result<Value> {
         let prepared = match self.prepare_invocation(request) {
             Ok(prepared) => prepared,
-            Err(rejection) => return rejection,
+            Err(rejection) => return Ok(rejection),
         };
-        let execution = execute_canonical_air(prepared.air)
+        let invocation_id = prepared.admission.invocation_id.clone();
+        let artifact_digest = prepared.admission.artifact_digest.clone();
+        if let Some(response) = self.replayed_invocations.get(&invocation_id) {
+            return Ok(response.clone());
+        }
+        self.in_flight = 1;
+        let execution = self
+            .runtime
+            .execute(
+                prepared.air,
+                &prepared.artifact_bytes,
+                &prepared.admission,
+                &self.admitted_digests.release_bytes,
+                &self.admitted_digests.provenance_bytes,
+            )
             .await
             .map_err(|error| error.to_string());
-        self.complete_invocation(prepared.invocation_id, execution)
+        self.complete_invocation(invocation_id, artifact_digest, execution)
     }
 
     async fn probe_in_flight_drain(&mut self) -> Result<Value> {
@@ -496,26 +523,16 @@ impl Host {
                 admission: Some(Admission {
                     schema_version: ADMISSION_SCHEMA.into(),
                     invocation_id: probe_invocation_id.into(),
-                    artifact_digest: self.admitted_digests.release_digest.clone(),
+                    artifact_digest: probe_artifact_digest,
                     release_digest: self.admitted_digests.release_digest.clone(),
                     port_bindings_digest: self.admitted_digests.port_bindings_digest.clone(),
                     resource_ceiling_digest: self.admitted_digests.resource_ceiling_digest.clone(),
-                    provenance_digest: self.admitted_digests.release_digest.clone(),
+                    provenance_digest: self.admitted_digests.provenance_digest.clone(),
                 }),
-                air: Some(json!({
-                    "schema_version": "apxm.air.v1",
-                    "semantic_operations": [],
-                    "structural_ir": [],
-                    "context_flow": [],
-                    "source_map": {
-                        "schema_version": "apxm.source-map.v1",
-                        "source_language": "python",
-                        "node_spans": [],
-                        "region_annotations": []
-                    }
-                })),
+                air: Some(probe_air),
             })
             .map_err(|rejection| anyhow!("{rejection}"))?;
+        self.in_flight = 1;
         let in_flight_before_drain = self.readiness();
         let drain_response = self.handle_non_invoke(Request {
             schema_version: REQUEST_SCHEMA.into(),
@@ -523,10 +540,21 @@ impl Host {
             admission: None,
             air: None,
         });
-        let execution = execute_canonical_air(prepared.air)
+        let invocation_id = prepared.admission.invocation_id.clone();
+        let artifact_digest = prepared.admission.artifact_digest.clone();
+        let execution = self
+            .runtime
+            .execute(
+                prepared.air,
+                &prepared.artifact_bytes,
+                &prepared.admission,
+                &self.admitted_digests.release_bytes,
+                &self.admitted_digests.provenance_bytes,
+            )
             .await
             .map_err(|error| error.to_string());
-        let completion_response = self.complete_invocation(prepared.invocation_id, execution);
+        let completion_response =
+            self.complete_invocation(invocation_id, artifact_digest, execution)?;
         let terminal_readiness = self.readiness();
         Ok(json!({
             "schema_version": IN_FLIGHT_DRAIN_PROBE_SCHEMA,
@@ -591,17 +619,24 @@ impl Host {
         }
     }
 
-    async fn handle(&mut self, request: Request) -> Value {
+    async fn handle_result(&mut self, request: Request) -> Result<Value> {
         if request.schema_version != REQUEST_SCHEMA {
-            return self.reject(
+            return Ok(self.reject(
                 "invalid_request_schema",
                 "exact host request schema is required",
-            );
+            ));
         }
         if request.operation == "invoke" {
             self.invoke(request).await
         } else {
-            self.handle_non_invoke(request)
+            Ok(self.handle_non_invoke(request))
+        }
+    }
+
+    async fn handle(&mut self, request: Request) -> Value {
+        match self.handle_result(request).await {
+            Ok(response) => response,
+            Err(error) => self.reject("replay_persistence_failed", error.to_string()),
         }
     }
 }
@@ -637,11 +672,19 @@ fn validate_exact_digest(field: &str, digest: &str) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
 fn file_digest(path: &Path) -> Result<String> {
     Ok(bytes_digest(
         &fs::read(path).with_context(|| format!("read {}", path.display()))?,
     ))
+}
+
+fn bytes_digest(bytes: &[u8]) -> String {
+    format!("sha256:{:x}", Sha256::digest(bytes))
+}
+
+fn serialized_air_digest(value: &Value) -> Result<String> {
+    let air: AirModule = serde_json::from_value(value.clone()).context("parse canonical AIR")?;
+    Ok(bytes_digest(&serde_json::to_vec(&air)?))
 }
 
 fn canonical_release_manifest_source_path() -> &'static Path {
@@ -656,7 +699,14 @@ fn checkout_release_manifest_path() -> PathBuf {
     fs::canonicalize(&path).unwrap_or(path)
 }
 
-fn load_startup_input(path: &Path) -> Result<AdmittedDigests> {
+fn is_hex_revision(revision: &str) -> bool {
+    revision.len() == 40
+        && revision
+            .chars()
+            .all(|value| value.is_ascii_digit() || ('a'..='f').contains(&value))
+}
+
+fn load_startup_input(path: &Path, expected_transport: &str) -> Result<AdmittedDigests> {
     let startup: StartupInput = serde_json::from_slice(
         &fs::read(path).with_context(|| format!("read startup input {}", path.display()))?,
     )
@@ -721,7 +771,7 @@ fn load_startup_input(path: &Path) -> Result<AdmittedDigests> {
             manifest_path.display()
         );
     }
-    let actual_manifest_digest = file_digest(&manifest_path).with_context(|| {
+    let release_bytes = fs::read(&manifest_path).with_context(|| {
         format!(
             "load reference-host release manifest {}",
             manifest_path.display()
@@ -771,7 +821,7 @@ fn load_startup_input(path: &Path) -> Result<AdmittedDigests> {
     })
 }
 
-fn startup_input_path() -> Result<(PathBuf, Option<String>)> {
+fn startup_input_path() -> Result<(PathBuf, Option<String>, Option<PathBuf>)> {
     let mut args = std::env::args().skip(1);
     let Some(flag) = args.next() else {
         return Err(anyhow!(
@@ -788,19 +838,127 @@ fn startup_input_path() -> Result<(PathBuf, Option<String>)> {
             "missing startup input path; usage: apxm-reference-host --startup-input <path>"
         ));
     };
-    let probe = match (args.next(), args.next()) {
-        (None, None) => None,
-        (Some(flag), Some(case)) if flag == "--lifecycle-probe" => Some(case),
-        (Some(other), _) => return Err(anyhow!("unexpected argument {other:?}")),
-        (None, Some(_)) => return Err(anyhow!("unexpected trailing argument")),
+    let mut probe = None;
+    let mut unix_socket = None;
+    let mut remaining = args;
+    while let Some(flag) = remaining.next() {
+        match flag.as_str() {
+            "--lifecycle-probe" => {
+                let Some(case) = remaining.next() else {
+                    bail!("missing lifecycle probe case")
+                };
+                if probe.replace(case).is_some() {
+                    bail!("lifecycle probe may be supplied only once")
+                }
+            }
+            "--unix-socket" => {
+                let Some(socket_path) = remaining.next() else {
+                    bail!("missing Unix socket path")
+                };
+                if unix_socket.replace(PathBuf::from(socket_path)).is_some() {
+                    bail!("--unix-socket may be supplied only once")
+                }
+            }
+            other => return Err(anyhow!("unexpected argument {other:?}")),
+        }
+    }
+    Ok((PathBuf::from(path), probe, unix_socket))
+}
+
+async fn response_for_line(host: &mut Host, line: &str) -> Result<String> {
+    let response = match serde_json::from_str::<Request>(line) {
+        Ok(request) => host.handle(request).await,
+        Err(error) => host.reject("invalid_request", error.to_string()),
     };
-    Ok((PathBuf::from(path), probe))
+    Ok(serde_json::to_string(&response)?)
+}
+
+#[cfg(unix)]
+/// Returns whether a private transport peer belongs to the socket owner.
+fn private_transport_peer_is_owner(socket_owner_uid: u32, peer_uid: u32) -> bool {
+    peer_uid == socket_owner_uid
+}
+
+#[cfg(unix)]
+async fn run_unix_socket(mut host: Host, socket_path: &Path) -> Result<()> {
+    if !socket_path.is_absolute() {
+        bail!("{PRIVATE_TRANSPORT_PROTOCOL} requires an absolute Unix socket path")
+    }
+    let parent = socket_path
+        .parent()
+        .ok_or_else(|| anyhow!("private transport socket must have a parent directory"))?;
+    let parent_metadata = fs::metadata(parent)
+        .with_context(|| format!("inspect private transport directory {}", parent.display()))?;
+    if !parent_metadata.is_dir() {
+        bail!(
+            "private transport parent is not a directory: {}",
+            parent.display()
+        );
+    }
+    #[cfg(unix)]
+    if parent_metadata.mode() & 0o022 != 0 {
+        bail!(
+            "private transport parent must not be group/world writable: {}",
+            parent.display()
+        );
+    }
+    if let Ok(metadata) = fs::symlink_metadata(socket_path) {
+        if !metadata.file_type().is_socket() {
+            bail!("refusing to replace non-socket private transport endpoint")
+        }
+        fs::remove_file(socket_path)
+            .with_context(|| format!("remove stale Unix socket {}", socket_path.display()))?;
+    }
+    let listener = UnixListener::bind(socket_path)
+        .with_context(|| format!("bind private transport {}", socket_path.display()))?;
+    fs::set_permissions(socket_path, fs::Permissions::from_mode(0o600))
+        .with_context(|| format!("restrict private transport {}", socket_path.display()))?;
+    let socket_owner_uid = fs::metadata(socket_path)
+        .with_context(|| format!("inspect private transport {}", socket_path.display()))?
+        .uid();
+
+    let journal_path = PathBuf::from(format!(
+        "{}{}",
+        socket_path.display(),
+        REPLAY_JOURNAL_SUFFIX
+    ));
+    let (journal, replayed, last_runtime_evidence) = ReplayJournal::open(&journal_path)?;
+    host.replay_journal = Some(journal);
+    host.replayed_invocations = replayed;
+    host.last_runtime_evidence = last_runtime_evidence;
+
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let peer_uid = stream
+            .peer_cred()
+            .with_context(|| "inspect private transport peer credentials")?
+            .uid();
+        if !private_transport_peer_is_owner(socket_owner_uid, peer_uid) {
+            continue;
+        }
+        let (read_half, mut write_half) = stream.into_split();
+        let mut lines = BufReader::new(read_half).lines();
+        while let Some(line) = lines.next_line().await? {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let response = response_for_line(&mut host, &line).await?;
+            write_half.write_all(response.as_bytes()).await?;
+            write_half.write_all(b"\n").await?;
+            write_half.flush().await?;
+        }
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let (startup_input, probe) = startup_input_path()?;
-    let admitted_digests = load_startup_input(&startup_input)?;
+    let (startup_input, probe, unix_socket) = startup_input_path()?;
+    let expected_transport = if unix_socket.is_some() {
+        PRIVATE_TRANSPORT_PROTOCOL
+    } else {
+        TRANSPORT_PROTOCOL
+    };
+    let admitted_digests = load_startup_input(&startup_input, expected_transport)?;
     let stdin = std::io::stdin();
     let mut host = Host::new(admitted_digests);
     host.mark_ready();
@@ -813,6 +971,17 @@ async fn main() -> Result<()> {
             serde_json::to_string(&host.probe_in_flight_drain().await?)?
         );
         return Ok(());
+    }
+    if let Some(socket_path) = unix_socket {
+        #[cfg(unix)]
+        {
+            return run_unix_socket(host, &socket_path).await;
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = socket_path;
+            bail!("private Unix transport is unavailable on this platform")
+        }
     }
     for line in stdin.lock().lines() {
         let line = line?;
@@ -828,11 +997,6 @@ async fn main() -> Result<()> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
-
-    #[cfg(unix)]
-    use std::os::unix::fs::symlink as symlink_file;
-    #[cfg(windows)]
-    use std::os::windows::fs::symlink_file;
 
     fn exact_digest(label: &str) -> String {
         format!("sha256:{:x}", Sha256::digest(label.as_bytes()))
@@ -853,30 +1017,6 @@ mod tests {
             release_bytes,
             provenance_bytes,
         }
-    }
-
-    fn write_startup_input_file(
-        startup_path: &Path,
-        manifest_path: &Path,
-        release_digest: &str,
-        port_bindings_digest: &str,
-        resource_ceiling_digest: &str,
-    ) {
-        fs::write(
-            startup_path,
-            serde_json::to_string(&json!({
-                "schema_version": STARTUP_INPUT_SCHEMA,
-                "reference_host_release_manifest": {
-                    "path": manifest_path,
-                    "digest": file_digest(&canonical_release_manifest_path()).expect("manifest digest"),
-                },
-                "release_digest": release_digest,
-                "port_bindings_digest": port_bindings_digest,
-                "resource_ceiling_digest": resource_ceiling_digest,
-            }))
-            .expect("startup json"),
-        )
-        .expect("startup file");
     }
 
     fn admission(digests: &AdmittedDigests) -> Admission {
@@ -906,7 +1046,7 @@ mod tests {
 
     fn minimal_air() -> Value {
         json!({
-            "schema_version": "apxm.air.v2",
+            "schema_version": "apxm.air.v1",
             "semantic_operations": [],
             "structural_ir": [],
             "context_flow": [],
@@ -1098,8 +1238,9 @@ mod tests {
         assert_eq!(probe["case"], IN_FLIGHT_DRAIN_PROBE);
         assert_eq!(probe["in_flight_before_drain"]["state"], "ready");
         assert_eq!(probe["in_flight_before_drain"]["in_flight"], 1);
-        assert_eq!(probe["drain_response"]["state"], "draining");
-        assert_eq!(probe["drain_response"]["in_flight"], 1);
+        assert_eq!(probe["drain_response"]["status"], "readiness");
+        assert_eq!(probe["drain_response"]["readiness"]["state"], "draining");
+        assert_eq!(probe["drain_response"]["readiness"]["in_flight"], 1);
         assert_eq!(probe["completion_response"]["status"], "committed");
         assert_eq!(
             probe["completion_response"]["runtime_evidence"]["facts"][2]["fact_kind"],
@@ -1262,15 +1403,35 @@ mod tests {
     #[test]
     fn startup_input_rejects_placeholder_digests() {
         let temp_dir = tempdir().expect("temp dir");
-        let manifest_path = canonical_release_manifest_path();
+        let manifest_path = temp_dir.path().join("release-manifest.json");
+        fs::write(&manifest_path, "{\"schema_version\":\"test\"}\n").expect("manifest");
         let startup_path = temp_dir.path().join("startup.json");
-        write_startup_input_file(
+        fs::write(
             &startup_path,
-            &manifest_path,
-            &placeholder_digest('a'),
-            &exact_digest("port-bindings"),
-            &exact_digest("resource-ceiling"),
-        );
+            serde_json::to_string(&json!({
+                "schema_version": STARTUP_INPUT_SCHEMA,
+                "semantic_owner": "agents",
+                "owner_executable": OWNER_EXECUTABLE,
+                "owner_executable_path": OWNER_EXECUTABLE_PATH,
+                "transport_protocol": TRANSPORT_PROTOCOL,
+                "reference_host_release_manifest": {
+                    "path": manifest_path,
+                    "digest": file_digest(&manifest_path).expect("manifest digest"),
+                },
+                "release_digest": placeholder_digest('a'),
+                "port_bindings_digest": exact_digest("port-bindings"),
+                "resource_ceiling_digest": exact_digest("resource-ceiling"),
+                "provenance": {
+                    "owner_revision": "a".repeat(40),
+                    "descriptor_semantic_digest": exact_digest("descriptor-semantic"),
+                    "descriptor_exact_checksum": exact_digest("descriptor-exact"),
+                    "dirty": false,
+                },
+                "fail_closed_on": FAIL_CLOSED_ON,
+            }))
+            .expect("startup json"),
+        )
+        .expect("startup file");
 
         let error = load_startup_input(&startup_path, TRANSPORT_PROTOCOL)
             .expect_err("placeholder digest must fail");
@@ -1283,59 +1444,43 @@ mod tests {
     }
 
     #[test]
-    fn startup_input_accepts_runtime_mounted_manifest_path_when_it_resolves_to_canonical_source() {
+    fn startup_input_rejects_dirty_provenance() {
         let temp_dir = tempdir().expect("temp dir");
-        let mounted_manifest_path = temp_dir
-            .path()
-            .join("apxm-owner/contracts/reference-host/manifests/apxm.reference-host-release-manifest.v1.json");
-        fs::create_dir_all(
-            mounted_manifest_path
-                .parent()
-                .expect("mounted manifest parent"),
+        let manifest_path = checkout_release_manifest_path();
+        let startup_path = temp_dir.path().join("startup.json");
+        fs::write(
+            &startup_path,
+            serde_json::to_string(&json!({
+                "schema_version": STARTUP_INPUT_SCHEMA,
+                "semantic_owner": "agents",
+                "owner_executable": OWNER_EXECUTABLE,
+                "owner_executable_path": OWNER_EXECUTABLE_PATH,
+                "transport_protocol": TRANSPORT_PROTOCOL,
+                "reference_host_release_manifest": {
+                    "path": manifest_path,
+                    "digest": file_digest(&manifest_path).expect("manifest digest"),
+                },
+                "release_digest": exact_digest("release"),
+                "port_bindings_digest": exact_digest("port-bindings"),
+                "resource_ceiling_digest": exact_digest("resource-ceiling"),
+                "provenance": {
+                    "owner_revision": "a".repeat(40),
+                    "descriptor_semantic_digest": exact_digest("descriptor-semantic"),
+                    "descriptor_exact_checksum": exact_digest("descriptor-exact"),
+                    "dirty": true,
+                },
+                "fail_closed_on": FAIL_CLOSED_ON,
+            }))
+            .expect("startup json"),
         )
-        .expect("mounted manifest dirs");
-        symlink_file(canonical_release_manifest_path(), &mounted_manifest_path)
-            .expect("symlink mounted manifest");
+        .expect("startup file");
 
-        let startup_path = temp_dir.path().join("startup.json");
-        write_startup_input_file(
-            &startup_path,
-            &mounted_manifest_path,
-            &exact_digest("release"),
-            &exact_digest("port-bindings"),
-            &exact_digest("resource-ceiling"),
-        );
-
-        let admitted = load_startup_input(&startup_path).expect("mounted manifest must resolve");
-        assert_eq!(admitted.release_digest, exact_digest("release"));
-        assert_eq!(admitted.port_bindings_digest, exact_digest("port-bindings"));
-        assert_eq!(
-            admitted.resource_ceiling_digest,
-            exact_digest("resource-ceiling")
-        );
-    }
-
-    #[test]
-    fn startup_input_rejects_stale_release_manifest_checkout_paths() {
-        let temp_dir = tempdir().expect("temp dir");
-        let stale_manifest_path = temp_dir
-            .path()
-            .join("stale-checkout/contracts/reference-host/manifests/apxm.reference-host-release-manifest.v1.json");
-        let startup_path = temp_dir.path().join("startup.json");
-        write_startup_input_file(
-            &startup_path,
-            &stale_manifest_path,
-            &exact_digest("release"),
-            &exact_digest("port-bindings"),
-            &exact_digest("resource-ceiling"),
-        );
-
-        let error =
-            load_startup_input(&startup_path).expect_err("stale checkout path must fail closed");
+        let error = load_startup_input(&startup_path, TRANSPORT_PROTOCOL)
+            .expect_err("dirty startup input must fail");
         assert!(
             error
                 .to_string()
-                .contains("reference-host release manifest path mismatch"),
+                .contains("startup input provenance must prove a clean owner checkout"),
             "unexpected error: {error}"
         );
     }
@@ -1361,9 +1506,9 @@ mod tests {
                     "path": relocated_manifest,
                     "digest": file_digest(&relocated_manifest).expect("manifest digest"),
                 },
-                "release_digest": exact_digest("release"),
-                "port_bindings_digest": exact_digest("port-bindings"),
-                "resource_ceiling_digest": exact_digest("resource-ceiling"),
+                "release_digest": file_digest(&relocated_manifest).expect("manifest digest"),
+                "port_bindings_digest": reference_host_port_bindings_digest(),
+                "resource_ceiling_digest": reference_host_resource_ceiling_digest(),
                 "provenance": {
                     "owner_revision": "a".repeat(40),
                     "descriptor_semantic_digest": exact_digest("descriptor-semantic"),
@@ -1376,12 +1521,19 @@ mod tests {
         )
         .expect("startup file");
 
-        let admitted = load_startup_input(&startup_path).expect("relocated startup input");
-        assert_eq!(admitted.release_digest, exact_digest("release"));
-        assert_eq!(admitted.port_bindings_digest, exact_digest("port-bindings"));
+        let admitted =
+            load_startup_input(&startup_path, TRANSPORT_PROTOCOL).expect("relocated startup input");
+        assert_eq!(
+            admitted.release_digest,
+            file_digest(&relocated_manifest).expect("manifest digest")
+        );
+        assert_eq!(
+            admitted.port_bindings_digest,
+            reference_host_port_bindings_digest()
+        );
         assert_eq!(
             admitted.resource_ceiling_digest,
-            exact_digest("resource-ceiling")
+            reference_host_resource_ceiling_digest()
         );
     }
 
@@ -1421,8 +1573,8 @@ mod tests {
         )
         .expect("startup file");
 
-        let error =
-            load_startup_input(&startup_path).expect_err("mismatched manifest digest must fail");
+        let error = load_startup_input(&startup_path, TRANSPORT_PROTOCOL)
+            .expect_err("mismatched manifest digest must fail");
         assert!(
             error
                 .to_string()
@@ -1465,8 +1617,8 @@ mod tests {
         )
         .expect("startup file");
 
-        let error =
-            load_startup_input(&startup_path).expect_err("missing manifest path must fail");
+        let error = load_startup_input(&startup_path, TRANSPORT_PROTOCOL)
+            .expect_err("missing manifest path must fail");
         assert!(
             error
                 .to_string()
@@ -1508,12 +1660,20 @@ mod tests {
         )
         .expect("startup file");
 
-        let error = load_startup_input(&startup_path).expect_err("noncanonical path must fail");
+        let error = load_startup_input(&startup_path, TRANSPORT_PROTOCOL)
+            .expect_err("noncanonical path must fail");
         assert!(
             error
                 .to_string()
                 .contains("reference-host release manifest path mismatch"),
             "unexpected error: {error}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_transport_requires_peer_uid_to_match_socket_owner() {
+        assert!(private_transport_peer_is_owner(1000, 1000));
+        assert!(!private_transport_peer_is_owner(1000, 1001));
     }
 }

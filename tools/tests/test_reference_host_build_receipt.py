@@ -36,7 +36,7 @@ class ReferenceHostBuildReceiptTests(unittest.TestCase):
         )
         cls.validator = load_module(VALIDATOR_PATH, "validate_owner_descriptor")
 
-    def test_built_receipt_pins_exact_host_sdk_provenance(self) -> None:
+    def test_built_receipt_pins_exact_local_contract_provenance(self) -> None:
         expected_release = self.validator.reference_host_release_attestation(
             owner_revision="1" * 40,
             owner_descriptor_digest=self.validator.descriptor_exact_checksum(),
@@ -80,18 +80,8 @@ class ReferenceHostBuildReceiptTests(unittest.TestCase):
             ),
         )
         self.assertEqual(
-            receipt["referenced_host_sdk"],
-            {
-                "name": self.validator.REFERENCE_HOST_DEPENDENCY_NAME,
-                "git": self.validator.REFERENCE_HOST_DEPENDENCY_GIT,
-                "source_revision": self.validator.REFERENCE_HOST_DESCRIPTOR["source_revision"],
-                "descriptor_semantic_digest": self.validator.REFERENCE_HOST_DESCRIPTOR[
-                    "descriptor_semantic_digest"
-                ],
-                "descriptor_exact_checksum": self.validator.REFERENCE_HOST_DESCRIPTOR[
-                    "descriptor_exact_checksum"
-                ],
-            },
+            receipt["reference_host_contract"],
+            self.validator.reference_host_provenance(),
         )
         self.assertEqual(
             receipt["build"]["command"],

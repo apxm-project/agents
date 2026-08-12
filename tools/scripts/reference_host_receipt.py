@@ -503,17 +503,7 @@ def base_receipt(
             "execution_manifest_path": str(EXECUTION_MANIFEST_PATH.relative_to(REPOSITORY_ROOT)),
             "binary_platform": binary_platform_evidence(BUILD_COMMAND),
         },
-        "referenced_host_sdk": {
-            "name": validator.REFERENCE_HOST_DEPENDENCY_NAME,
-            "git": validator.REFERENCE_HOST_DEPENDENCY_GIT,
-            "source_revision": validator.REFERENCE_HOST_DESCRIPTOR["source_revision"],
-            "descriptor_semantic_digest": validator.REFERENCE_HOST_DESCRIPTOR[
-                "descriptor_semantic_digest"
-            ],
-            "descriptor_exact_checksum": validator.REFERENCE_HOST_DESCRIPTOR[
-                "descriptor_exact_checksum"
-            ],
-        },
+        "reference_host_contract": validator.reference_host_provenance(),
         "build": {
             "command": BUILD_COMMAND,
             "target_dir_command": TARGET_DIR_COMMAND,

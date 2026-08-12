@@ -910,14 +910,12 @@ fn evaluate_predicate(
     )?;
     let mut value = &materialized;
     for segment in &predicate.property_path {
-        value =
-            value
-                .get(segment)
-                .cloned()
-                .ok_or_else(|| ExecutionError::InvalidControlPredicate {
-                    region_id: region_id.to_string(),
-                    message: format!("property path segment '{segment}' is absent"),
-                })?;
+        value = value
+            .get(segment)
+            .ok_or_else(|| ExecutionError::InvalidControlPredicate {
+                region_id: region_id.to_string(),
+                message: format!("property path segment '{segment}' is absent"),
+            })?;
     }
     match predicate.comparator {
         PredicateComparator::Truthy => {
@@ -953,9 +951,9 @@ fn evaluate_predicate(
                 });
             }
             Ok(if predicate.comparator == PredicateComparator::Equals {
-                value == expected
+                *value == expected
             } else {
-                value != expected
+                *value != expected
             })
         }
     }
@@ -1963,7 +1961,7 @@ async fn publish_committed_native_model_usage(
     if attempts.is_empty() {
         return CommittedNativeModelUsageOutcome::NotApplicable;
     }
-    let Some(_port) = &ports.operational_usage else {
+    let Some(port) = &ports.operational_usage else {
         return CommittedNativeModelUsageOutcome::NotConfigured;
     };
     if attempts.len() != lineages.len() {
@@ -2294,6 +2292,7 @@ async fn commit_suspension(
         })
     });
     let attempts = state.committed_model_attempts.clone();
+    let lineages = state.committed_model_lineages.clone();
     let request = ExecutionCommitRequest {
         commit_id: format!("{}.yield", continuation.commit_id),
         program_instance_ref: continuation.program_instance_ref.clone(),

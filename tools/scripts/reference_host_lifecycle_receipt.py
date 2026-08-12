@@ -302,6 +302,16 @@ def host_readiness(
     }
 
 
+def host_readiness_response(
+    startup_input: dict[str, Any], state: str, in_flight: int = 0
+) -> dict[str, Any]:
+    return {
+        "schema_version": HOST_SCHEMA,
+        "status": "readiness",
+        "readiness": host_readiness(startup_input, state, in_flight),
+    }
+
+
 def load_profile_and_vectors() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     descriptor = load_json(OWNER_DESCRIPTOR_PATH)
     profiles = descriptor.get("published_host_lifecycle_profiles")
