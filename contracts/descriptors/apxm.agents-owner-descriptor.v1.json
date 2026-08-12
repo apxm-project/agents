@@ -2,15 +2,7 @@
   "schema_version": "apxm.agents-owner-descriptor.v1",
   "semantic_owner": "agents",
   "primary_responsibility": "Agent Program authoring frontends, FrontendGraph, instruction-only skill packages, metadata-only skill discovery roots, the closed five-operation effect/composition AIS family, the separate closed structural AIS family, digest-bound executable artifacts with artifact_semantic requirements only, generic loop-iteration runtime evidence, source maps, and the atomic execution-commit boundary.",
-  "referenced_owner_descriptors": [
-    {
-      "semantic_owner": "host-sdk",
-      "schema_version": "apxm.host-sdk-owner-descriptor.v1",
-      "source_revision": "ff48332f2ce6af8a45eb38a15f4510a134223f5f",
-      "descriptor_semantic_digest": "sha256:a007bb8daee44cfc5156a358bd4c0f4665adefc0d731738ead9c50a31734e14b",
-      "descriptor_exact_checksum": "sha256:d771d3f2c4a50fdeee0c57475c4c00fc6b4121b1e4bf5147a57a76bf11ad7a88"
-    }
-  ],
+  "referenced_owner_descriptors": [],
   "published_host_lifecycle_profiles": [
     {
       "profile_id": "reference-host",
@@ -24,12 +16,12 @@
       "release_manifest": {
         "schema_version": "apxm.reference-host-release-manifest.v1",
         "path": "reference-host/manifests/apxm.reference-host-release-manifest.v1.json",
-        "digest": "sha256:9c6dca7a1cb8c63e5d038966fd4d0ffa9b87f4f537df3149873fc68fcce41724"
+        "digest": "sha256:7e74239f349ae0b157a1808df2c882b49414568ea29bd12b2afd888fac686f58"
       },
       "execution_manifest": {
         "schema_version": "apxm.reference-host-execution-manifest.v1",
         "path": "reference-host/manifests/apxm.reference-host-execution-manifest.v1.json",
-        "digest": "sha256:8059b741dc39e17a204bec72e63b40734fdc40de47410978ed623cfbc55edbe7"
+        "digest": "sha256:dfa248b588d418a9eff466a3832ca78082f09707d38682cfead2267312aa574a"
       },
       "lifecycle_vector": {
         "vector_id": "apxm.reference-host.lifecycle-parity.v1",
@@ -182,7 +174,7 @@
     {
       "schema_id": "apxm.diagnostic-correlation.v1",
       "path": "schemas/apxm.diagnostic-correlation.v1.json",
-      "digest": "sha256:a1da8d0f61c45e5b74b14aeba01986c9564c84e4e6cf4e0858f742b3d8b36243"
+      "digest": "sha256:29b2a46bac272b0e696a4ac6a2114847c3fb93a10c39e135fd2d78e8ec948a3c"
     },
     {
       "schema_id": "apxm.vllm-conformance-join.v1",
@@ -242,7 +234,7 @@
     {
       "schema_id": "apxm.reference-host-startup-input.v1",
       "path": "schemas/apxm.reference-host-startup-input.v1.json",
-      "digest": "sha256:a5773b1560e5cc9c91ef35ec2bbeef67d55a8b2607329c2a00eaff72e293feed"
+      "digest": "sha256:b50931ee360132fa42004f42b053248a1c98d5884393fd958f238f778cbc17bc"
     },
     {
       "schema_id": "apxm.runtime-readiness.v1",
@@ -277,7 +269,7 @@
     {
       "schema_id": "apxm.reference-host-startup-input.v1",
       "path": "schemas/apxm.reference-host-startup-input.v1.json",
-      "digest": "sha256:c302ef92982cf60866caff3767fa0ef9e4e1e5d4729391b3ad80abbb15ad3e9e"
+      "digest": "sha256:b50931ee360132fa42004f42b053248a1c98d5884393fd958f238f778cbc17bc"
     },
     {
       "schema_id": "apxm.execution-admission.v1",
@@ -1042,7 +1034,7 @@
     {
       "schema_id": "apxm.reference-host-startup-input.v1",
       "path": "vectors/apxm.reference-host-startup-input.v1.json",
-      "digest": "sha256:e959d8d513ab11633e92ea64a75e7455cb884aff2b1884062226a97a9051c35c",
+      "digest": "sha256:26f4fbe6094bb63cb1551167c45e0e1737fc1f92007da4f959c821a16316458a",
       "coverage": [
         "positive",
         "placeholder_rejection",
@@ -1063,7 +1055,7 @@
     {
       "schema_id": "apxm.reference-host-startup-input.v1",
       "path": "vectors/apxm.reference-host-startup-input.v1.json",
-      "digest": "sha256:73ad787ce769e58b808ce134ed6cda3012b59e2c35f38f8fac442431c8189a37",
+      "digest": "sha256:26f4fbe6094bb63cb1551167c45e0e1737fc1f92007da4f959c821a16316458a",
       "coverage": [
         "positive",
         "placeholder_rejection",
@@ -1102,5 +1094,5 @@
       ]
     }
   ],
-  "descriptor_digest": "sha256:d7a286d5836c2874abb6d9a6ae0b5cbbf75433218ba5aefea627494b24d27b2a"
+  "descriptor_digest": "sha256:838fcbc20887d3813adcc112224e07b6fc28708441f8b4a0d453487510ff566c"
 }
