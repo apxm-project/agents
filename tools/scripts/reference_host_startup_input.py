@@ -296,6 +296,7 @@ def build_startup_input(
     manifest_digests = validate_reference_host_publication()
     validator = load_validator_module()
     descriptor_exact_checksum = validator.descriptor_exact_checksum()
+    local_provenance = validator.reference_host_provenance()
     payload = {
         "schema_version": STARTUP_INPUT_SCHEMA,
         "semantic_owner": "agents",
@@ -311,7 +312,7 @@ def build_startup_input(
         "resource_ceiling_digest": resource_ceiling_digest,
         "provenance": {
             "owner_revision": owner_revision,
-            "descriptor_semantic_digest": validator.REFERENCE_HOST_DESCRIPTOR[
+            "descriptor_semantic_digest": local_provenance[
                 "descriptor_semantic_digest"
             ],
             "descriptor_exact_checksum": descriptor_exact_checksum,

@@ -28,6 +28,31 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+
+def git_common_repo_root(root: Path) -> Path:
+    resolved = root.resolve(strict=False)
+    result = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(resolved),
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+        ],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return resolved
+    common_dir = Path(result.stdout.strip()).resolve(strict=False)
+    if common_dir.name != ".git":
+        return resolved
+    return common_dir.parent
+
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 CONTRACTS_DIR = SCRIPT_DIR.parent
 CHECKOUT_ROOT = CONTRACTS_DIR.parent.resolve(strict=False)
@@ -43,6 +68,15 @@ DESCRIPTOR_SIDECAR_PATH = DESCRIPTOR_PATH.with_suffix(".sha256")
 WORKSPACE_MANIFEST = AGENTS_ROOT / "Cargo.toml"
 REFERENCE_HOST_RELEASE_MANIFEST_PATH = (
     CONTRACTS_DIR / "reference-host" / "manifests" / "apxm.reference-host-release-manifest.v1.json"
+)
+REFERENCE_HOST_CONTRACT_DESCRIPTOR_PATH = (
+    CONTRACTS_DIR
+    / "reference-host"
+    / "descriptors"
+    / "apxm.reference-host-contract-descriptor.v1.json"
+)
+REFERENCE_HOST_CONTRACT_DESCRIPTOR_SIDECAR_PATH = (
+    REFERENCE_HOST_CONTRACT_DESCRIPTOR_PATH.with_suffix(".sha256")
 )
 REFERENCE_HOST_EXECUTION_MANIFEST_PATH = (
     CONTRACTS_DIR / "reference-host" / "manifests" / "apxm.reference-host-execution-manifest.v1.json"
@@ -221,12 +255,6 @@ FORBIDDEN_LANE_IDS = re.compile(r"\b(?:A|C|S|O|H|T|P|K|D|V|E|M|R)\d[a-z]?\b")
 
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
-REFERENCE_HOST_DEPENDENCY_NAME = "apxm-host-sdk"
-# The reference-host receipt records the immutable Host SDK owner cohort even
-# though the Agents Cargo workspace must not depend on that downstream SDK.
-# Keep the provenance coordinate available to receipt validation without
-# reintroducing a build dependency.
-REFERENCE_HOST_DEPENDENCY_GIT = "https://github.com/apxm-project/host-sdk.git"
 REFERENCE_HOST_PROFILE_COHORT = ["embedded", "reference-host"]
 REFERENCE_HOST_EXECUTION_MANIFEST_SCHEMA_VERSION = (
     "apxm.reference-host-execution-manifest.v1"
@@ -370,82 +398,6 @@ REFERENCE_HOST_EXECUTION_VECTOR_SPECS = (
         "vectors/apxm.runtime.host-transport.v1.json",
     ),
 )
-REFERENCE_HOST_EXECUTION_SCHEMA_SPECS = (
-    (
-        "startup_input_schema",
-        "apxm.reference-host-startup-input.v1",
-        "reference-host/schemas/apxm.reference-host-startup-input.v1.json",
-        "schemas/apxm.reference-host-startup-input.v1.json",
-    ),
-    (
-        "host_execution_manifest_schema",
-        "apxm.host-execution-manifest.v1",
-        "reference-host/schemas/apxm.host-execution-manifest.v1.json",
-        "schemas/apxm.host-execution-manifest.v1.json",
-    ),
-    (
-        "runtime_readiness_schema",
-        "apxm.runtime-readiness.v1",
-        "reference-host/schemas/apxm.runtime-readiness.v1.json",
-        "schemas/apxm.runtime-readiness.v1.json",
-    ),
-    (
-        "runtime_drain_quiescence_schema",
-        "apxm.runtime-drain-quiescence.v1",
-        "reference-host/schemas/apxm.runtime-drain-quiescence.v1.json",
-        "schemas/apxm.runtime-drain-quiescence.v1.json",
-    ),
-    (
-        "invocation_admission_schema",
-        "apxm.invocation-admission.v1",
-        "reference-host/schemas/apxm.invocation-admission.v1.json",
-        "schemas/apxm.invocation-admission.v1.json",
-    ),
-)
-REFERENCE_HOST_EXECUTION_VECTOR_SPECS = (
-    (
-        "startup_input_vector",
-        "apxm.reference-host-startup-input.v1",
-        "reference-host/vectors/apxm.reference-host-startup-input.v1.json",
-        "vectors/apxm.reference-host-startup-input.v1.json",
-    ),
-    (
-        "runtime_readiness_vector",
-        "apxm.runtime-readiness.v1",
-        "reference-host/vectors/apxm.runtime-readiness.v1.json",
-        "vectors/apxm.runtime-readiness.v1.json",
-    ),
-    (
-        "runtime_drain_quiescence_vector",
-        "apxm.runtime-drain-quiescence.v1",
-        "reference-host/vectors/apxm.runtime-drain-quiescence.v1.json",
-        "vectors/apxm.runtime-drain-quiescence.v1.json",
-    ),
-    (
-        "invocation_admission_vector",
-        "apxm.invocation-admission.v1",
-        "reference-host/vectors/apxm.invocation-admission.v1.json",
-        "vectors/apxm.invocation-admission.v1.json",
-    ),
-)
-REFERENCE_HOST_DESCRIPTOR = {
-    "semantic_owner": "host-sdk",
-    "schema_version": "apxm.host-sdk-owner-descriptor.v1",
-    "source_revision": "ff48332f2ce6af8a45eb38a15f4510a134223f5f",
-    "descriptor_semantic_digest": "sha256:a007bb8daee44cfc5156a358bd4c0f4665adefc0d731738ead9c50a31734e14b",
-    "descriptor_exact_checksum": "sha256:d771d3f2c4a50fdeee0c57475c4c00fc6b4121b1e4bf5147a57a76bf11ad7a88",
-}
-RETIRED_REFERENCE_HOST_OWNERS = frozenset({"coordinator", "host", "hostsdk"})
-RETIRED_REFERENCE_HOST_SCHEMAS = frozenset(
-    {
-        "apxm.coordinator-owner-descriptor.v1",
-        "apxm.host-owner-descriptor.v1",
-        "apxm.hostsdk-owner-descriptor.v1",
-        "apxm.host_sdk-owner-descriptor.v1",
-    }
-)
-
-
 class ValidationError(Exception):
     pass
 
@@ -554,6 +506,44 @@ def descriptor_exact_checksum() -> str:
     return actual_digest
 
 
+def reference_host_provenance() -> dict[str, str]:
+    descriptor = load_json(REFERENCE_HOST_CONTRACT_DESCRIPTOR_PATH)
+    if descriptor.get("schema_version") != "apxm.reference-host-contract-descriptor.v1":
+        raise ValidationError("reference-host contract descriptor schema_version is invalid")
+    if descriptor.get("semantic_owner") != "agents":
+        raise ValidationError("reference-host contract descriptor semantic_owner must be agents")
+    semantic_digest = descriptor.get("descriptor_digest")
+    if not isinstance(semantic_digest, str) or not HEX64.fullmatch(
+        semantic_digest.removeprefix("sha256:")
+    ):
+        raise ValidationError("reference-host contract descriptor semantic digest is invalid")
+    without_self = copy.deepcopy(descriptor)
+    without_self.pop("descriptor_digest", None)
+    if semantic_digest != content_digest(without_self):
+        raise ValidationError("reference-host contract descriptor semantic digest is stale")
+    if not REFERENCE_HOST_CONTRACT_DESCRIPTOR_SIDECAR_PATH.is_file():
+        raise ValidationError("reference-host contract descriptor exact-checksum sidecar is missing")
+    sidecar = REFERENCE_HOST_CONTRACT_DESCRIPTOR_SIDECAR_PATH.read_text(
+        encoding="utf-8"
+    ).splitlines()
+    if len(sidecar) != 2 or sidecar[1] != "digest_scope: exact repository bytes":
+        raise ValidationError("reference-host contract descriptor exact-checksum sidecar shape drifted")
+    recorded_digest, separator, recorded_path = sidecar[0].partition("  ")
+    if separator != "  " or recorded_path != (
+        "contracts/reference-host/descriptors/"
+        "apxm.reference-host-contract-descriptor.v1.json"
+    ):
+        raise ValidationError("reference-host contract descriptor exact-checksum sidecar path drifted")
+    exact_checksum = file_digest(REFERENCE_HOST_CONTRACT_DESCRIPTOR_PATH)
+    if recorded_digest != exact_checksum:
+        raise ValidationError("reference-host contract descriptor exact-checksum sidecar is stale")
+    return {
+        "owner_revision": descriptor["source_revision"],
+        "descriptor_semantic_digest": semantic_digest,
+        "descriptor_exact_checksum": exact_checksum,
+    }
+
+
 def reference_host_execution_manifest_ref() -> dict[str, str]:
     return {
         "schema_version": REFERENCE_HOST_EXECUTION_MANIFEST_SCHEMA_VERSION,
@@ -567,6 +557,16 @@ def reference_host_release_manifest_ref() -> dict[str, str]:
         "schema_version": "apxm.reference-host-release-manifest.v1",
         "path": "reference-host/manifests/apxm.reference-host-release-manifest.v1.json",
         "digest": file_digest(REFERENCE_HOST_RELEASE_MANIFEST_PATH),
+    }
+
+
+def reference_host_contract_descriptor_ref() -> dict[str, str]:
+    provenance = reference_host_provenance()
+    return {
+        "schema_version": "apxm.reference-host-contract-descriptor.v1",
+        "path": "reference-host/descriptors/apxm.reference-host-contract-descriptor.v1.json",
+        "semantic_digest": provenance["descriptor_semantic_digest"],
+        "exact_bytes_digest": provenance["descriptor_exact_checksum"],
     }
 
 
@@ -2006,32 +2006,9 @@ def check_reference_host_boundary(descriptor: dict[str, Any]) -> None:
     references = descriptor.get("referenced_owner_descriptors")
     if not isinstance(references, list):
         raise ValidationError("referenced_owner_descriptors must be an array")
-    if len(references) != 1:
+    if references:
         raise ValidationError(
-            "referenced_owner_descriptors must contain exactly the canonical Host SDK cohort"
-        )
-    reference = references[0]
-    if not isinstance(reference, dict):
-        raise ValidationError("referenced_owner_descriptors[0] must be an object")
-    semantic_owner = reference.get("semantic_owner")
-    if semantic_owner in RETIRED_REFERENCE_HOST_OWNERS:
-        raise ValidationError(
-            f"referenced_owner_descriptors[0].semantic_owner uses retired alias {semantic_owner!r}"
-        )
-    schema_version = reference.get("schema_version")
-    if schema_version in RETIRED_REFERENCE_HOST_SCHEMAS:
-        raise ValidationError(
-            f"referenced_owner_descriptors[0].schema_version uses retired alias {schema_version!r}"
-        )
-    if reference != REFERENCE_HOST_DESCRIPTOR:
-        drifted = sorted(
-            key
-            for key in set(reference).union(REFERENCE_HOST_DESCRIPTOR)
-            if reference.get(key) != REFERENCE_HOST_DESCRIPTOR.get(key)
-        )
-        raise ValidationError(
-            "referenced_owner_descriptors[0] drifted from the canonical Host SDK cohort: "
-            + ", ".join(drifted)
+            "Agents reference-host contracts must not reference a downstream owner descriptor"
         )
 
     manifest = load_toml(WORKSPACE_MANIFEST)
@@ -2041,9 +2018,12 @@ def check_reference_host_boundary(descriptor: dict[str, Any]) -> None:
     dependencies = workspace.get("dependencies")
     if not isinstance(dependencies, dict):
         raise ValidationError("Cargo.toml must define workspace.dependencies")
-    if REFERENCE_HOST_DEPENDENCY_NAME in dependencies:
+    if any(
+        name == "apxm-host-sdk" or "apxm-project/host-sdk" in canonical(value)
+        for name, value in dependencies.items()
+    ):
         raise ValidationError(
-            f"Cargo.toml must not depend on downstream SDK {REFERENCE_HOST_DEPENDENCY_NAME}"
+            "Cargo.toml must not depend on the retired downstream Host SDK"
         )
 
 
@@ -2054,6 +2034,8 @@ def check_reference_host_release_evidence(descriptor: dict[str, Any]) -> None:
     if release_manifest.get("semantic_owner") != "agents":
         raise ValidationError("reference-host release manifest semantic_owner must be agents")
     check_reference_host_release_manifest_contract(release_manifest)
+    if release_manifest.get("contract_descriptor") != reference_host_contract_descriptor_ref():
+        raise ValidationError("reference-host release manifest contract descriptor drifted")
     if release_manifest.get("profile_cohort") != REFERENCE_HOST_PROFILE_COHORT:
         raise ValidationError("reference-host release manifest profile_cohort drifted")
     if RETIRED_REFERENCE_HOST_ADMISSION_ALIAS in canonical(release_manifest):
@@ -2217,6 +2199,7 @@ def check_reference_host_runtime_startup_input_contract(
 def check_reference_host_startup_input_preflight(
     execution_manifest: dict[str, Any],
 ) -> None:
+    local_provenance = reference_host_provenance()
     fixture = execution_manifest.get("startup_input_preflight_test_fixture")
     if not isinstance(fixture, dict):
         raise ValidationError(
@@ -2238,7 +2221,7 @@ def check_reference_host_startup_input_preflight(
         raise ValidationError(
             "reference-host startup-input preflight fixture path drifted"
         )
-    if fixture.get("owner_revision") != REFERENCE_HOST_DESCRIPTOR["source_revision"]:
+    if fixture.get("owner_revision") != local_provenance["owner_revision"]:
         raise ValidationError(
             "reference-host startup-input preflight fixture owner revision is stale"
         )
@@ -2276,15 +2259,15 @@ def check_reference_host_startup_input_preflight(
     provenance = startup_input.get("provenance")
     if not isinstance(provenance, dict):
         raise ValidationError("reference-host startup-input fixture provenance must be an object")
-    if provenance.get("owner_revision") != REFERENCE_HOST_DESCRIPTOR["source_revision"]:
+    if provenance.get("owner_revision") != local_provenance["owner_revision"]:
         raise ValidationError("reference-host startup-input fixture owner revision is stale")
-    if provenance.get("descriptor_semantic_digest") != REFERENCE_HOST_DESCRIPTOR[
+    if provenance.get("descriptor_semantic_digest") != local_provenance[
         "descriptor_semantic_digest"
     ]:
         raise ValidationError(
             "reference-host startup-input fixture descriptor semantic digest mismatched"
         )
-    if provenance.get("descriptor_exact_checksum") != REFERENCE_HOST_DESCRIPTOR[
+    if provenance.get("descriptor_exact_checksum") != local_provenance[
         "descriptor_exact_checksum"
     ]:
         raise ValidationError(
@@ -2292,6 +2275,23 @@ def check_reference_host_startup_input_preflight(
         )
     if provenance.get("dirty") is not False:
         raise ValidationError("reference-host startup-input fixture must be clean")
+
+
+def check_reference_host_release_manifest_contract(
+    release_manifest: dict[str, Any],
+) -> None:
+    if release_manifest.get("owner_executable") != "apxm-reference-host":
+        raise ValidationError(
+            "reference-host release manifest owner_executable must stay apxm-reference-host"
+        )
+    if release_manifest.get("transport_protocol") != REFERENCE_HOST_TRANSPORT_PROTOCOL:
+        raise ValidationError(
+            "reference-host release manifest transport_protocol must stay product-neutral jsonl-stdin-stdout"
+        )
+    if release_manifest.get("constraints") != REFERENCE_HOST_RELEASE_CONSTRAINTS:
+        raise ValidationError(
+            "reference-host release manifest fail-closed constraints drifted"
+        )
 
 
 def check_reference_host_execution_publications(
