@@ -1,83 +1,17 @@
 ---
 name: mcp-server
 group: Domain
-description: Use when working on APXM MCP contract constants, local stdio registration, the outbound MCP bridge, or a downstream-managed inbound MCP boundary.
+description: Use when working on APXM MCP contract constants or local stdio registration.
 user-invocable: true
 ---
 
-# APXM MCP Surfaces
+# APXM MCP surfaces
 
-Load `_shared/apxm-development-rules.md` before broad work.
+Load `_shared/apxm-development-rules.md` before broad work. MCP is a thin
+transport over the APXM compiler and runtime contracts; it does not define
+program lifecycle, scheduling, authority, or provider routing.
 
-## What the MCP surfaces are
-
-APXM keeps its MCP roles separate:
-
-- Any inbound managed HTTP MCP surface is downstream-owned. `agents` may expose
-  product-neutral tool and handle contracts, but OAuth termination, acting-
-  principal resolution, and external Capability projection stay outside this
-  repo's semantic authority.
-- Local stdio registration is an APXM-owned transport for compile/query/debug
-  tools and does not authorize any downstream-managed HTTP surface.
-- The outbound MCP client bridge is a separate trust boundary from any inbound
-  MCP surface.
-
-MCP should stay a thin interface over APXM CLI/runtime contracts and exact
-handles.
-
-## HTTP MCP Tools
-
-- Compile/query: `validate`, `compile`, `ops_list`,
-  `run`, `prompt_as_workflow`, `trace_fetch`, `aam_recall`,
-  `evidence_lookup`, `capability_discovery`.
-- Skills: `skills_list`, `skill_get`, `skill_validate`,
-  `skill_call`.
-- Exact admitted Capabilities, when a downstream-managed inbound surface
-  projects them for one acting principal.
-
-## Stdio MCP Tools
-
-The registered stdio command exposes compile/query tools such as `validate`,
-`compile`, `get_contract`, `analyze`, `prompt_as_workflow`, `trace_fetch`,
-`aam_recall`, `evidence_lookup`, and `capability_discovery`. It does not define
-an Agent Program lifecycle tool family.
-
-## Registration
-
-```bash
-dekk agents mcp install     # registers with supported agent configs
-                          # (Claude Code, Cursor, etc.)
-```
-
-The installation path is owned by `tools/scripts/apxm_mcp_install.py`.
-Do not bypass it.
-
-## Rules
-
-- Keep MCP thin. Do not duplicate scheduling, worker admission, budget policy,
-  trigger matching, or session ownership in MCP wrappers.
-- Managed tools return APXM handles such as `execution_id`, `session_id`,
-  `session_dir`, `workflow_path`, and retained event cursors. Do not invent
-  shell process handles, alternate lifecycle ids, or product-owned authority
-  envelopes around them.
-- Secrets stay in the env — never accept `api_key` or
-  `LLM_GATEWAY_KEY` as a tool argument.
-
-## Diagnostics
-
-- `dekk agents mcp install` — register; surfaces config errors.
-
-## Cross-surface registration (REST + MCP + A2A)
-
-A new surface spans the handler, route/tool registration, the MCP manifest, the
-Dekk wrapper, and a smoke test — miss one and it ships half-wired. A REST route
-that should also be an MCP tool needs **both** the handler and the tool wrapper
-(don't ship REST-only). Route paths, env names, response markers, and tool names
-are contract strings — keep them in `contract.rs` / `apxm_vllm.contract`, not as
-handler literals.
-
-## Anti-patterns
-
-- Putting business logic in the MCP layer. It is a thin shim.
-- Accepting secrets as tool arguments.
-- Adding a second orchestration status/events/cancel control plane.
+Local stdio registration is owned by `tools/scripts/apxm_mcp_install.py` and
+must be exercised through `dekk agents mcp install`. Keep secrets in the
+environment, keep handles typed, and route execution through the same exact
+admission and capability boundaries as the CLI.

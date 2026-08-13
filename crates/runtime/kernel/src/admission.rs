@@ -1,7 +1,6 @@
 //! Product-neutral Execution Admission (agents synonym: Invocation Admission).
 //!
-//! This module freezes and enforces the P-006 admission contract from workspace
-//! ADR-0030 / master-plan §5.2:
+//! This module freezes and enforces the product-neutral admission contract:
 //!
 //! - signed, expiring, nonce-bound envelope;
 //! - exact Port bindings and exact model target when present;
@@ -37,8 +36,8 @@ pub const EXECUTION_ADMISSION_SCHEMA: &str = "apxm.execution-admission.v1";
 
 /// Frozen schema id for the product-neutral host-to-runtime invocation record.
 ///
-/// This record is the transport-facing runtime authority used by the
-/// reference host. It is verified against the exact artifact, release,
+/// This record is the transport-facing runtime authority used by an external
+/// composition root. It is verified against the exact artifact, release,
 /// provenance, Port bindings, resource ceilings, and confinement descriptors
 /// before the immutable runtime bundle is constructed.
 pub const INVOCATION_ADMISSION_SCHEMA: &str = "apxm.invocation-admission.v1";

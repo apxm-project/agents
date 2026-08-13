@@ -37,10 +37,10 @@ docs or frontend code. For per-operation details and examples, see the
 [apxm-ais README](../../crates/machine/ais/README.md).
 
 `COMMUNICATE`, `DELEGATE`, `HANDOFF`, and `SPAWN_AGENT` are executable
-coordination primitives. They are not an agent hierarchy model. Hosts such as
-`apxm-os` may use topology policy to decide whether these operations are allowed,
-but APXM runtime receives only the admitted concrete target. See
-[Agent Topology Boundary](../agent-topology-boundary.md).
+coordination primitives. They are not an agent hierarchy model. Hosts may use
+policy to decide whether an operation is allowed, but APXM runtime receives
+only the admitted concrete target. See the
+[execution admission contract](../agents/execution-admission-contract.md).
 
 ## Latency-Typed LLM Operations
 

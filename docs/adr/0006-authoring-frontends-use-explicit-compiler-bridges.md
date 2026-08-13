@@ -128,9 +128,9 @@ platform and network choices observable.
   [ADR-0007](0007-rust-embedding-uses-focused-libraries-and-injected-adapters.md):
   the bridge consumes the focused compiler embedding role, and the compiler
   has no runtime/provider/network/storage dependency.
-- Coordinator ADR-0001 fixes the APXM v1 Compatibility Set and version-line
-  mechanics.
+- The bridge advertises the repository's current contract versions and rejects
+  unknown or incompatible artifacts.
 
 ## Plan
 
-See the [compiler bridge delivery plan](../agents/compiler-bridge-delivery-plan.md).
+See the [frontend implementation guide](../../crates/compiler/frontend/README.md).

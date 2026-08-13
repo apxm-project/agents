@@ -23,7 +23,7 @@ to agentic AI: workflows are typed dataflow graphs instead of opaque scripts.
 5. **Execution topology vs. organization topology.** Agent processes and graph
    nodes are runtime facts. Reporting lines, approvals, and directory
    visibility are host policy; see
-   [agent topology boundary](../agent-topology-boundary.md).
+   [execution admission contract](../agents/execution-admission-contract.md).
 
 ## ISA Contract
 

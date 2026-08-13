@@ -3,7 +3,7 @@
   "invocation_id": "invocation.canonical-fixture.1",
   "artifact_digest": "sha256:12ce09d8cdb095f15186332386c592ff375fa92778667f18d5a18e6febcb11f0",
   "release_digest": "sha256:055f0be4e9e818691851bd5870e7836d293dcdbcf76c3b8ba46f3bd0a019f458",
-  "port_bindings_digest": "sha256:9cfeb1dee6cfb05086c170fdf9e8e8092c10f2d9410c2e48fd2377351b1a3df4",
+  "port_bindings_digest": "sha256:ac1681a626283c07f3156d183b7beb880a098059f893a13bd180fdfc25a6e056",
   "resource_ceiling_digest": "sha256:32fe0355dd58906703ee8731a407b77831954e255a40cc9df3f6e704f8579485",
   "provenance_digest": "sha256:897a6f1d5d4383f1c16b5c22f7182f1490d7a651624289eef4bc4ef388ea2f22"
 }

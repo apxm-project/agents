@@ -150,6 +150,7 @@ pub enum Commands {
     },
     ///.F — stream a run's dispatch tree from
     /// `/v1/runs/<thread>/events/stream` and render it as monospace.
+    #[command(hide = true)]
     Watch {
         /// Thread id (execution id) to attach to. Same id surfaced by
         /// `apxm rollout list` and by the chat panel's URL.
@@ -160,15 +161,17 @@ pub enum Commands {
         expand: Option<u64>,
     },
     ///.F — inspect, replay, and archive on-disk rollouts.
+    #[command(hide = true)]
     Rollout {
         #[command(subcommand)]
         action: RolloutAction,
     },
-    /// Interactive conversational REPL over a running apxm-server.
+    /// Retired product chat flow retained only for explicit rejection.
     ///
     /// Requires `--agent <id>` for server-backed chat
     /// (`POST /v1/agents/{{id}}/sessions`) or `--air <path>` for a
     /// custom in-graph artifact with an in-program recv loop.
+    #[command(hide = true)]
     Chat {
         /// Agent id for thin server-backed chat. Starts
         /// `POST /v1/agents/{{id}}/sessions` and pipes stdin messages to the
@@ -178,8 +181,7 @@ pub enum Commands {
         /// AIR graph with an in-program recv loop (path to a `.air` file).
         #[arg(long, conflicts_with = "agent")]
         air: Option<std::path::PathBuf>,
-        /// apxm-server base URL. Required via this flag or $APXM_SERVER_BASE;
-        /// there is no hardcoded default.
+        /// Retired host address field.
         #[arg(long)]
         server: Option<String>,
         /// Reuse/resume a prior conversation by session id instead of minting
@@ -233,7 +235,7 @@ pub enum RolloutAction {
     Archive {
         /// Thread id to bundle.
         thread_id: String,
-        /// Output path (default `./apxm-rollout-<thread>.tar.gz`).
+        /// Retired output path field.
         #[arg(short, long)]
         output: Option<PathBuf>,
         /// Optional directory holding source instruction files.
@@ -356,14 +358,7 @@ pub enum SessionAction {
 #[derive(Subcommand)]
 pub enum ProcessAction {
     /// List APXM job processes visible from this worktree
-    List {
-        /// Include long-running APXM services such as apxm-server and apxm-studio
-        #[arg(long)]
-        include_services: bool,
-        /// Include repo-local vLLM server/controller processes
-        #[arg(long)]
-        include_vllm: bool,
-    },
+    List {},
     /// Stop canonical APXM CLI job processes
     Stop {
         /// Show matching processes without sending a signal
@@ -372,12 +367,6 @@ pub enum ProcessAction {
         /// Send SIGKILL instead of SIGTERM
         #[arg(long, short)]
         force: bool,
-        /// Include long-running APXM services such as apxm-server and apxm-studio
-        #[arg(long)]
-        include_services: bool,
-        /// Include repo-local vLLM server/controller processes
-        #[arg(long)]
-        include_vllm: bool,
     },
 }
 
@@ -431,12 +420,12 @@ pub enum BackendAction {
     },
     /// Register a new backend endpoint
     Add {
-        /// Backend name (e.g., "openai", "local-vllm")
+        /// Backend name (for example, "openai").
         name: String,
         /// Backend type (cloud, onprem, local). For Ollama, defaults to "local".
         #[arg(long, default_value = "")]
         r#type: String,
-        /// Protocol (openai, anthropic, google, ollama, vllm)
+        /// Protocol name (openai, anthropic, google, or ollama).
         #[arg(long)]
         protocol: String,
         /// API endpoint URL

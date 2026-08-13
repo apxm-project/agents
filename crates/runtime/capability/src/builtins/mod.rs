@@ -3,7 +3,6 @@
 //! Provides `BashCapability`, `ReadCapability`, `WriteCapability`, and
 //! `SearchWebCapability` that agents can invoke during workflow execution.
 
-pub mod authoring;
 pub mod bash;
 pub mod count_tokens;
 pub mod http;
@@ -19,7 +18,6 @@ pub mod schedule;
 #[cfg(feature = "sqlite")]
 pub mod store;
 
-pub use authoring::{ComposeWorkflowCapability, RunWorkflowCapability};
 pub use bash::{BashCapability, BashConfig};
 pub use count_tokens::CountTokensCapability;
 pub use http::{HttpGetCapability, HttpPostCapability, guard_url_ssrf, guard_url_ssrf_pinned};

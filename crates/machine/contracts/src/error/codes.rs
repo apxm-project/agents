@@ -404,11 +404,6 @@ impl ErrorCode {
         )
     }
 
-    /// Get documentation URL
-    pub fn documentation_url(&self) -> String {
-        format!("https://apxm.dev/errors/{}", self.as_str())
-    }
-
     /// Convert from u32 (for FFI)
     pub fn from_u32(code: u32) -> Option<Self> {
         match code {

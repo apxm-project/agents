@@ -36,9 +36,6 @@ without becoming an Agents-owned example:
 dekk agents test-external-source-package path/to/package
 ```
 
-For the authoring API itself, read the
-[source-first guide](../docs/guides/creating-an-agent-program.md).
-
 ## Package tools
 
 Package-local capability handlers use the same small authoring pattern:

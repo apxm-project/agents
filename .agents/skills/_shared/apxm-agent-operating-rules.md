@@ -17,8 +17,8 @@ project conventions and skill defaults.
   first.
 - **No `--no-verify`.** If a hook fails, fix the root cause; never
   re-stage and bypass.
-- **Do not skip commit/release checks.** Run the relevant `dekk agents`
-  gate and fix the root cause when it fails.
+- **Do not skip commit checks.** Run the relevant `dekk agents` gate and
+  fix the root cause when it fails.
 - **No `git commit --amend`** on pushed commits. New commit instead.
 - **No `git add -A` / `git add .`** — name files explicitly so secrets
   and generated artifacts don't slip in.

@@ -16,7 +16,6 @@ APXM gates that generic planning skips.
 - Change modifies a **public API or AIS op** (anything other crates or
   the Python frontend will see).
 - Change requires a **Slurm GPU allocation**.
-- Change rebases or edits `external/vllm`.
 
 Trivial bug fixes, doc-only edits, single-file refactors with a clear
 local scope do not require this skill.
@@ -28,9 +27,8 @@ local scope do not require this skill.
 2. **Decide AIS-op-vs-compose** if the change adds or modifies behavior
    currently expressed in `apxm-core`. Adding an op? Invoke
    `ais-op-design` first — it owns the design-before-code gate.
-3. **State expected verification**: which `dekk agents test -p <crate>`,
-   which integration test, which `dekk agents vllm zoo-status` probe,
-   which `--strict` lint.
+3. **State expected verification**: which focused Dekk tests and checks,
+   and which strict lints.
 4. **State boundaries** — what the change is **NOT** doing. Prevents
    scope creep during execution.
 5. **State a rollback plan** — branch name, what's reversible, what's
@@ -47,7 +45,7 @@ local scope do not require this skill.
 
 ## Affected
 - Files: <list>
-- Subsystems: <crate(s), AIS ops, python frontend, vLLM fork>
+- Subsystems: <crate(s), AIS ops, python frontend, runtime>
 - Public API impact: <none / additive / breaking>
 
 ## Approach

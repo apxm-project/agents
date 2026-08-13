@@ -1426,10 +1426,8 @@ impl_event_payload!(SessionEndPayload, kind::SESSION_END);
 // Layer 2 — agent-layer payload structs
 //
 // Emitted alongside the Layer 1 graph events whenever the executor is
-// inside an agent scope. See `crates/runtime/engine/src/executor/
-// agent_scope.rs` for the scope primitive and CLAUDE.md §10 for the
-// canonical pairing rules. Field shapes follow the host app's dispatch
-// event-kind payloads so the relay can stop translating.
+// inside an agent scope. Field shapes follow the canonical pairing rules and
+// the host dispatch event-kind payloads so the relay can stop translating.
 // ===========================================================================
 
 /// A SPAWN_AGENT node is creating a new sub-agent execution scope.

@@ -33,7 +33,7 @@ pub fn team_command(action: TeamAction, json_output: bool) -> Result<()> {
 
             if teams.is_empty() {
                 println!("No teams defined in ~/.apxm/teams.toml.");
-                println!("Copy docs/examples/teams.toml to ~/.apxm/teams.toml to get started.");
+                println!("Create ~/.apxm/teams.toml to define a team.");
                 return Ok(());
             }
 

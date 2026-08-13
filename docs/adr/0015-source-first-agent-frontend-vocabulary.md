@@ -200,11 +200,11 @@ usage, output, and failure. Legal optimization must preserve types, effects,
 authority, ordering, durability, source lineage, and observable results, and
 must emit inspectable optimization provenance. The compiler may emit
 backend-neutral analysis/scheduling metadata; an admitted adapter may translate
-supported metadata into backend hints (including APXM-vLLM graph/prefix/priority
-hints) only while preserving the same request, result, cancellation, usage,
+supported metadata into backend hints only while preserving the same request,
+result, cancellation, usage,
 failure, and evidence semantics, and only while remaining visible in backend
-evidence. vLLM is an inference implementation behind the exact model port, not
-an Agent runtime or a frontend concept.
+evidence. Providers are inference implementations behind exact model ports, not
+Agent runtimes or frontend concepts.
 
 ## Consequences
 

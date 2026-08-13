@@ -156,7 +156,7 @@ impl RuntimeProfile {
 
     /// Construct the shared profile from a bundle whose event and composition
     /// implementations were admitted by the kernel itself. This is the only
-    /// composition path a reference host should use.
+    /// composition path an external caller should use.
     pub fn from_fully_admitted(
         admission: RuntimeAdmission,
         model_call_request_metadata: Arc<dyn ModelCallRequestMetadataPort>,

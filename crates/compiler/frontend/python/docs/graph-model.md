@@ -1,16 +1,13 @@
 # Retired prototype graph model
 
-- Status: historical implementation note; not an authoring or compiler contract
-- Target contract:
-  [FrontendGraph v2](../../../../../docs/agents/agent-program-composition-and-air-contract.md#7-frontendgraph-v2)
-- Replacement plan:
-  [Source-first Agent frontend master plan](../../../../../docs/agents/simple-agent-authoring-frontend-plan.md)
-
+This is a historical implementation note, not an authoring or compiler
+contract. The current frontend emits the versioned `FrontendGraph` consumed by
+the Rust compiler; the Python package does not expose this prototype DTO.
 The former `ApxmGraph`/`GraphRecorder` model used a plain
 `name`/`nodes`/`edges`/`parameters`/`metadata` DTO with arbitrary operation
 strings. Its cited Python and TypeScript implementation files are no longer
 present in this package. That shape is not `apxm.frontend-graph.v2` and must not
-be revived as a frontend, Studio, compiler, or compatibility path.
+be revived as a frontend, host integration, compiler, or compatibility path.
 
 The current executable `apxm_program` scaffold records the shallow
 `apxm.frontend-graph.v2` schema through

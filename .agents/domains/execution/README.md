@@ -6,25 +6,20 @@ Runtime executor, handlers, backend adapters.
 
 - **backend-add** — register a new APXM inference backend.
 - **compile-and-execute** — execute graphs via runtime.
-- **vllm-service** — APXM-vLLM service operation.
 
 ## Subsystems
 
 - `crates/runtime/` — executor + handlers.
-- `crates/runtime/backends/` — LLM provider implementations,
-  vLLM-fork glue.
+- `crates/runtime/backends/` — LLM provider implementations.
 
 ## Rules
 
 - Hard-fail at config time. No `or env or default` chains.
-- `model.id` must equal vLLM's `served_model_name` exactly — bare
-  name, not HF repo. See `feedback_apxm_model_id_must_match_served`.
 - Dispatch field names go through `graph_attrs::*` constants.
 
 ## Docs
 
-- `docs/backends/model-zoo.md`
-- `docs/backends/vllm.md`
+- `docs/agents/portable-core-interface-contract.md`
 
 ## Related rules
 

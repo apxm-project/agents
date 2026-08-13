@@ -33,7 +33,7 @@
 // unparseable and the port rejects with a diagnostic instead of returning a
 // graph.
 
-import { registerHooks } from "node:module";
+import { register } from "node:module";
 import path from "node:path";
 
 /** Closed reason tokens. The Rust port maps each to one typed diagnostic code. */
@@ -200,35 +200,49 @@ try {
 
 // The submitted module resolves through this closed table only. Any other
 // specifier — a Node builtin, an installed package, a relative path — is not
-// reachable, so the evaluated text has no ambient module surface.
-registerHooks({
-  resolve(specifier, context, next) {
-    if (context.parentURL === ENTRY_URL) {
-      if (specifier === FRONTEND_SPECIFIER) {
-        return { url: frontendModule, shortCircuit: true };
-      }
-      if (specifier === FRONTEND_NODE_SPECIFIER) {
-        return { url: frontendNodeModule, shortCircuit: true };
-      }
-      if (specifier === SOURCE_SPECIFIER) {
-        return { url: SOURCE_URL, shortCircuit: true };
-      }
-      throw new Error(
-        `the submitted source may not import '${specifier}'; only the authoring frontend and its static source token are reachable`,
-      );
+// reachable, so the evaluated text has no ambient module surface. The
+// `register` API is available on the repository's Node toolchain; newer
+// `registerHooks` is not, so the hooks are carried by a data URL loader.
+const loader = `
+const ENTRY_URL = ${JSON.stringify(ENTRY_URL)};
+const SOURCE_URL = ${JSON.stringify(SOURCE_URL)};
+const FRONTEND_SPECIFIER = ${JSON.stringify(FRONTEND_SPECIFIER)};
+const FRONTEND_NODE_SPECIFIER = ${JSON.stringify(FRONTEND_NODE_SPECIFIER)};
+const SOURCE_SPECIFIER = ${JSON.stringify(SOURCE_SPECIFIER)};
+const frontendModule = ${JSON.stringify(frontendModule)};
+const frontendNodeModule = ${JSON.stringify(frontendNodeModule)};
+const transpiled = ${JSON.stringify(transpiled)};
+const sourceModuleText = ${JSON.stringify(sourceModuleText)};
+
+export function resolve(specifier, context, next) {
+  if (context.parentURL === ENTRY_URL) {
+    if (specifier === FRONTEND_SPECIFIER) {
+      return { url: frontendModule, shortCircuit: true };
     }
-    return next(specifier, context);
-  },
-  load(url, context, next) {
-    if (url === ENTRY_URL) {
-      return { format: "module", source: transpiled, shortCircuit: true };
+    if (specifier === FRONTEND_NODE_SPECIFIER) {
+      return { url: frontendNodeModule, shortCircuit: true };
     }
-    if (url === SOURCE_URL) {
-      return { format: "module", source: sourceModuleText, shortCircuit: true };
+    if (specifier === SOURCE_SPECIFIER) {
+      return { url: SOURCE_URL, shortCircuit: true };
     }
-    return next(url, context);
-  },
-});
+    throw new Error(
+      \`the submitted source may not import '\${specifier}'; only the authoring frontend and its static source token are reachable\`,
+    );
+  }
+  return next(specifier, context);
+}
+
+export function load(url, context, next) {
+  if (url === ENTRY_URL) {
+    return { format: "module", source: transpiled, shortCircuit: true };
+  }
+  if (url === SOURCE_URL) {
+    return { format: "module", source: sourceModuleText, shortCircuit: true };
+  }
+  return next(url, context);
+}
+`;
+register(`data:text/javascript,${encodeURIComponent(loader)}`, import.meta.url);
 
 try {
   await import(frontendNodeModule);

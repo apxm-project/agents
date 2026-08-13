@@ -2,10 +2,6 @@
 
 - Current implementation: shipped source-first Python and TypeScript authoring
   surface
-- Author guide: [Author an Agent](../../../docs/guides/creating-an-agent-program.md)
-- First runnable program: [Create Your First APXM Agent](../../../docs/agents/first-agent.md)
-- Delivery record: [Source-first Agent frontend](../../../docs/agents/simple-agent-authoring-frontend-plan.md)
-
 Python and TypeScript must provide equivalent language-native views of one
 Agent programming model. Both produce the same versioned FrontendGraph; Rust
 alone validates it, constructs CFG/SSA and structural AIS, selects the five AIR

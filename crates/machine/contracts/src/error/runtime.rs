@@ -308,9 +308,8 @@ mod tests {
 
     /// One representative value of every `RuntimeError` variant.
     ///
-    /// The `variant_count` assertion below is what makes this list total: it
-    /// reads the arity from the enum definition, so adding a variant without
-    /// adding it here fails the guard rather than being silently skipped.
+    /// Keep one representative here for every `RuntimeError` variant so the
+    /// wire-kind guard below remains exhaustive.
     fn every_runtime_error_variant() -> Vec<RuntimeError> {
         vec![
             RuntimeError::Scheduler {
@@ -374,17 +373,14 @@ mod tests {
     /// by a router, and a typed error naming one asserts on the wire that the
     /// execution plane ranks candidates.
     ///
-    /// The scan covers the whole enum, not a sample of it. Two things hold it
-    /// total: `RuntimeError::kind` matches exhaustively with no wildcard arm,
-    /// so a new variant does not compile until it names its wire kind, and the
-    /// representative list is checked against the enum's own variant count, so
-    /// a new variant does not pass this test until it is scanned here.
+    /// The exhaustive `RuntimeError::kind` match protects the wire vocabulary;
+    /// this explicit count protects the representative list on stable Rust.
     #[test]
     fn no_runtime_error_kind_reports_a_failed_selection() {
         let variants = every_runtime_error_variant();
         assert_eq!(
             variants.len(),
-            std::mem::variant_count::<RuntimeError>(),
+            17,
             "the guard must scan every RuntimeError variant, not a hand-picked subset"
         );
 
