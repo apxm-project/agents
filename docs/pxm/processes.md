@@ -21,7 +21,7 @@ lowered into `SPAWN_AGENT`, `COMMUNICATE`, `HANDOFF`, or `DELEGATE`. The runtime
 must not infer those relationships from the ProcessTable or scheduler state.
 Those replaced operations are historical; canonical v1 uses exact Capability
 and program composition. See
-[Agent Topology Boundary](../agent-topology-boundary.md).
+[execution admission contract](../agents/execution-admission-contract.md).
 
 ---
 

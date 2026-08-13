@@ -1,71 +1,19 @@
-# apxm-cli
+# APXM CLI
 
-Command-line interface for the APXM workflow compiler and runtime toolchain.
+`apxm` is the local authoring, compiler, admission, and runtime inspection
+surface. Invoke it through `dekk agents` so the managed toolchain and target
+directory remain consistent.
 
-## Overview
+The canonical path is:
 
-`apxm-cli` provides the `apxm` binary with subcommands for canonical authoring, execution, validation, and APXM operations. Invoke it through `dekk agents ...` so the managed environment, toolchain, and helper scripts stay consistent.
-
-## Module Structure
-
-| Module | Description |
-|--------|-------------|
-| `commands/cli` | Clap CLI definition (`Cli`, `Commands` enum) |
-| `commands/implementations` | Command handler functions |
-| `commands/mod` | Command dispatch and shared helpers |
-| `frontend/codegen` | `codegen frontend` -- generates Python frontend code from the shared workflow contract |
-| `frontend/codegen_ts` | `codegen typescript` -- generates TypeScript types from the shared workflow contract |
-| `frontend/registry` | Frontend code generation registry |
-| `frontend/mod` | Frontend subcommand dispatch |
-
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| `init` | Scaffold project directories and `apxm.toml` |
-| `compile-service-canonical` | Compile a canonical source package to `apxm.air.v2` JSON |
-| `execute-canonical` | Execute canonical `apxm.air.v2` JSON through exact Invocation Admission and the canonical runtime |
-| `doctor` | Diagnose MLIR/LLVM/conda dependencies |
-| `backend` | Manage registered inference backend endpoints |
-| `tool` | Register/list/remove external tools |
-| `team` | Manage multi-agent teams |
-| `agent` | Scaffold, sync, lint, build, and install agents |
-| `org` | Scaffold, lint, and install organization packages |
-| `ops` | List/show AIS operations |
-| `validate` | Check AIR against AIS contract |
-| `analyze` | Parallelism, critical path, speedup estimate |
-| `template` | List/show workflow templates |
-| `explain` | Human-readable summary of a workflow |
-| `codegen` | Generate frontend (Python) and TypeScript code from AIS definitions |
-| `canonical-air` | Lower `apxm.frontend-graph.v2` JSON through the native compiler bridge |
-| `session` | Session management |
-| `process` | List or stop canonical APXM job processes (`canonical-air`, `compile-service-canonical`, `execute-canonical`) |
-| `cache` | Cache management |
-| `tokenize` | Report standalone token-accounting availability for text |
-| `watch` | Stream a run's dispatch tree from `apxm-server` |
-| `rollout` | Inspect, replay, and archive rollout transcripts |
-| `chat` | Interactive REPL over a running `apxm-server` |
-
-## Complex Work Paths
-
-Use `chat` for a conversational loop over `apxm-server`. Pass `--agent <id>` to
-open a server-backed session (`POST /v1/agents/{id}/sessions`) and pipe stdin
-messages to it. The server address must be given explicitly via `--server <URL>`
-or `APXM_SERVER_BASE` (there is no hardcoded default):
-
-```bash
-dekk agents chat --agent my-agent --server "$APXM_SERVER_BASE"
+```text
+agent source -> compile-service-canonical -> execute-canonical
 ```
 
-## Key Exports
+The CLI also exposes focused commands for `doctor`, `backend`, `tool`, `agent`,
+`org`, `ops`, `validate`, `analyze`, `template`, `explain`, `codegen`,
+`canonical-air`, `session`, `process`, `cache`, and `tokenize`.
 
-- `Cli` -- top-level Clap parser
-- `Commands` -- enum of all subcommands
-
-## Dependencies
-
-| Crate | Purpose |
-|-------|---------|
-| apxm-core | Shared workflow contract, types, and error codes |
-| apxm-program | Canonical FrontendGraph, AIR, and executable artifact types |
-| apxm-execution | Canonical local execution driver |
+The CLI does not own a server chat REPL, rollout archive, deployment fleet,
+model zoo, or product UI. Those surfaces belong to downstream hosts. Runtime
+implementations enter through exact admitted capability and model ports.

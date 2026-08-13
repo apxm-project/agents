@@ -246,4 +246,4 @@ reachable. Rust owns the operation schema, verifier, lowering, and printer.
 - Conformance must prove the five operations, structural control flow,
   stateful yield/resume, callbacks, and absence of all retired handlers.
 - The reference implementation sequence is the
-  [Agent Program composition and AIR full-replacement plan](../agents/agent-program-composition-and-air-full-replacement-plan.md).
+  [Agent Program composition and AIR contract](../agents/agent-program-composition-and-air-contract.md).

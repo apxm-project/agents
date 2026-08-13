@@ -196,12 +196,6 @@ impl Error {
             ));
         }
 
-        // Documentation link.
-        output.push_str(&format!(
-            "\n  For more information, see: {}\n",
-            self.code.documentation_url()
-        ));
-
         output
     }
 

@@ -3,11 +3,9 @@
 - Audience: Python and TypeScript Agent Program authors
 - Frontend status: source-first authoring is the public frontend direction;
   compile the checked-in references to confirm the checkout you are using
-- Authority: [ADR-0014](../adr/0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md),
-  [ADR-0015](../adr/0015-source-first-agent-frontend-vocabulary.md), and
+- Authority: [ADR-0015](../adr/0015-source-first-agent-frontend-vocabulary.md),
   [ADR-0016](../adr/0016-tool-authoring-and-handler-execution-are-separate.md),
-  as amended by
-  [ADR-0017](../adr/0017-gao-is-a-studio-owned-agent-program-over-host-capabilities.md)
+  and [ADR-0013](../adr/0013-core-semantics-are-closed-and-implementations-enter-through-exact-port-bindings.md)
 
 ## Start with one ordinary Agent
 
@@ -19,7 +17,7 @@ uses an ordinary source loop with `agent.yield_()`.
 That shape is intentionally not a framework within the framework. APXM has no
 package-level `ConversationalAgent`, conversational runtime, or core `Turn`
 type. It is one generic Agent Program whose source makes the behavior visible
-([ADR-0014](../adr/0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md)).
+the generic Agent Program contract.
 
 Use the smallest vocabulary that describes your program:
 
@@ -41,13 +39,12 @@ their behavior matches the program you are writing:
 | Need | Read | Take from it |
 | --- | --- | --- |
 | A coding-oriented review/proposal flow | [Coder](../../examples/agents/coder/README.md) | Typed read, edit-proposal, and test-command capabilities; the program proposes work and never mutates files or runs commands itself. |
-| APXM and Workflow authoring help | Studio-owned [Gao](../adr/0017-gao-is-a-studio-owned-agent-program-over-host-capabilities.md) | Explicit APXM knowledge discovery and typed Host Capabilities over ordinary Context, Model calls, and yield/resume. |
+| APXM authoring | Ordinary Agent Program source | Explicit Context, Model calls, Capabilities, and yield/resume. |
 
-Coder and Studio-owned Gao build on the same installed generic frontend as
-Conversational. They are not imports, base classes, runtime modes, or
-privileged identities. Copy the small generic behavior pattern you need into a
-new ordinary Agent; do not make your program depend on either product/example
-name.
+Coder and the conversational example build on the same installed generic
+frontend. They are not imports, base classes, runtime modes, or privileged
+identities. Copy the small generic behavior pattern you need into a new
+ordinary Agent; do not make your program depend on an example name.
 
 ## A professional authoring loop
 

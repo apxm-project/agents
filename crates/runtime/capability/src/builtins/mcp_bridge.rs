@@ -26,9 +26,8 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::OnceLock;
 
-// This is the outbound MCP client role. It is a separate ADR-0018 trust
-// boundary from APXM's managed inbound resource edge and is intentionally
-// versioned independently.
+// The outbound MCP client has a separate trust boundary from APXM's managed
+// inbound resource edge and is versioned independently.
 const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 const MAX_BODY_BYTES: usize = 1_000_000;

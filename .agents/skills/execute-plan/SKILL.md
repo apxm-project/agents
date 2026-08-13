@@ -51,10 +51,8 @@ Use the smallest correct command:
 - Touched the CLI? `dekk agents test-cli`.
 - Touched Python frontend? `dekk agents test-python-frontend`.
 - Touched `.td`? `build-dialect && codegen` *then* the test commands.
-- Touched a zoo manifest? `dekk agents vllm zoo-status`.
 - Touched anything that lint might care about?
-  Run the relevant focused check, or `dekk agents release check` when the
-  change is release-facing.
+  Run the relevant focused Dekk check for the changed surface.
 
 ## Anti-patterns
 

@@ -8,12 +8,8 @@ cut across them.
   simplify → finish → commit
 - [compiler/](compiler/README.md) — AIS dialect, passes, codegen
 - [execution/](execution/README.md) — runtime, handlers, backends
-- [operations/](operations/README.md) — vLLM service / zoo /
-  storage layout
 - [meta/](meta/README.md) — skill authoring, MCP server, agent
   contracts
-
-Owner-local offline and observed prompt evaluation lives under `evaluation/`.
 
 The skills themselves live in flat layout under
 `.agents/skills/<name>/SKILL.md` (adapter-compatible). These

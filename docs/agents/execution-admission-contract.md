@@ -3,9 +3,7 @@
 - Status: frozen public contract for G3 / P-006
 - Date: 2026-08-03
 - Owner: APXM `agents`
-- Authority: [ADR-0030](../../../../docs/adr/0030-execution-inference-evidence-and-deployment-are-exact-and-product-neutral.md),
-  master-plan §5.2
-- Issue: [agents#36](https://github.com/apxm-project/agents/issues/36)
+- Authority: [ADR-0013](../adr/0013-core-semantics-are-closed-and-implementations-enter-through-exact-port-bindings.md)
 
 ## 1. Purpose
 
@@ -70,7 +68,7 @@ Optional:
 
 - Company Auth, Sessions, budgets, catalogues, or Host brand semantics.
 - Inference driver implementation (P-010 / agents#37).
-- vLLM backend conformance (P-011 / vllm#3).
+- provider-specific backend conformance.
 - Hosted durable checkpoint product service decision (P-018 / agents#39).
 - Compiler FrontendGraph/AIR freeze (P-002–P-005 / agents#35) beyond consuming
   artifact digests already present on the admission.

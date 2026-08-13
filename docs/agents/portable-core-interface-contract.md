@@ -3,12 +3,10 @@
 - Status: canonical APXM v1 owner contract
 - Date: 2026-07-16
 - Decision: [ADR-0013](../adr/0013-core-semantics-are-closed-and-implementations-enter-through-exact-port-bindings.md)
-- Product-neutral scope: [ADR-0028](../../../../docs/adr/0028-apxm-is-the-product-neutral-agent-program-and-inference-core.md)
-  (apxm#148)
-- Semantic authority: [ADR-0029](../../../../docs/adr/0029-agent-program-source-and-closed-semantics-are-behavior-truth.md)
-  (apxm#148)
-- Execution and exact-binding authority: [ADR-0030](../../../../docs/adr/0030-execution-inference-evidence-and-deployment-are-exact-and-product-neutral.md)
-  (apxm#148)
+- Product-neutral scope: this repository's source, compiler, runtime, and
+  exact-port contracts.
+- Semantic authority: [ADR-0013](../adr/0013-core-semantics-are-closed-and-implementations-enter-through-exact-port-bindings.md)
+- Execution and exact-binding authority: [execution admission contract](execution-admission-contract.md)
 - Owner: APXM `agents`
 - Applies to: contracts/types, AIS, artifact, compiler, runtime, CLI and
   Composition Root wiring, inference/Capability/ACP/handler/confinement/store/
@@ -51,13 +49,13 @@ The canonical terms are in [`CONTEXT.md`](../../CONTEXT.md).
 - **Deployment Composition Manifest**: deployment-specific materialization of
   one selected Runtime Profile.
 - **Execution Admission** (agents synonym: **Invocation Admission**): the
-  product-neutral signed admission envelope from workspace ADR-0030 and the
-  master-plan admission contract—exact artifact and invocation identities,
+  product-neutral signed admission envelope defined by the local
+  [execution admission contract](execution-admission-contract.md)—exact artifact and invocation identities,
   context digest, resource ceilings, exact Port bindings, exact model target
   when present, expiry/nonce, issuer/audience, and opaque caller correlations.
   It carries no downstream product schema.
-- **Composition Root**: outer composition root (ADR-0029) that selects one
-  Runtime Profile, supplies exact admitted bindings and deployment resources,
+- **Composition Root**: outer composition root that selects one Runtime
+  Profile, supplies exact admitted bindings and deployment resources,
   invokes the shared verifier, and owns constructed implementations.
 - **Execution Commit Port**: one atomic authoritative commit of Program state,
   continuation/checkpoint, effect facts, canonical evidence, and output refs.

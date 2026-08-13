@@ -40,6 +40,9 @@ LLVM_PREFIX = "{environment}"
 CC = "{environment}/bin/x86_64-conda-linux-gnu-gcc"
 CXX = "{environment}/bin/x86_64-conda-linux-gnu-g++"
 CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER = "{environment}/bin/clang"
+RUSTUP_HOME = "/opt/shared/rust/2025.10.06"
+CARGO_HOME = "/lustre/parot/MiguelRosas/.tools/cargo"
+RUSTUP_TOOLCHAIN = "stable"
 # Intentionally NOT setting APXM_HOME: it's the user data root
 # (default ~/.apxm), and pinning it to {project} broke roaming-bucket
 # resolution. Override per-shell or via .apxm/config.toml instead.
@@ -49,20 +52,25 @@ APXM_TYPESCRIPT_AGENT_PACKAGING_PACKAGE = "{project}/crates/tools/cli/agent-pack
 LD_LIBRARY_PATH = "{project}/target/release/lib:{project}/target/release:{environment}/lib"
 
 [paths]
-bin = ["{project}/bin", "{project}/target/release", "{home}/.cargo/bin"]
+bin = [
+	"{project}/bin",
+	"{project}/target/release",
+	"{home}/.local/bin",
+	"/opt/shared/rust/2025.10.06/bin",
+	"{home}/.cargo/bin",
+]
 lib = ["{project}/target/release/lib", "{environment}/lib"]
 
 [commands]
 build = { run = "python tools/scripts/cargo.py build -p apxm-cli --features driver,metrics --release", description = "Build the APXM CLI", skill = true, group = "Build & Test" }
 build-dialect = { run = "python tools/scripts/cargo.py build-dialect", description = "Rebuild MLIR dialect (TableGen + C++ + Rust) after editing .td or .cpp files", skill = true, group = "Build & Test" }
-test = { run = "python -m unittest discover -s tools/tests -p test_offline_prompt_evaluation.py && python -m unittest discover -s tools/tests -p test_observed_prompt_evaluation.py && python -m unittest discover -s tools/tests -p test_release_privacy.py && python tools/scripts/check_frontend_parity.py && python tools/scripts/cargo.py test --workspace --exclude apxm-compiler --exclude apxm-cli && python -m pytest crates/compiler/frontend/python/tests_program -q", description = "Run evaluator evidence validation, release privacy, frontend parity checks, workspace tests, and canonical authoring tests", skill = true, group = "Build & Test" }
+test = { run = "python tools/scripts/check_frontend_parity.py && python tools/scripts/cargo.py test --workspace --exclude apxm-compiler --exclude apxm-cli && python -m pytest crates/compiler/frontend/python/tests_program -q", description = "Run frontend parity, workspace, and canonical authoring tests", skill = true, group = "Build & Test" }
 test-compiler = { run = "env -u CC -u CXX python tools/scripts/cargo.py test -p apxm-compiler", description = "Run compiler AIR builder and pipeline tests", group = "Build & Test" }
 test-source-port = { run = "env -u CC -u CXX python tools/scripts/cargo.py test -p apxm-source-port", description = "Run source-bundle compiler port conformance", group = "Build & Test" }
 test-program = { run = "env -u CC -u CXX python tools/scripts/cargo.py test -p apxm-program", description = "Run Agent Program artifact and lowering conformance", group = "Build & Test" }
 test-program-source = { run = "env -u CC -u CXX python tools/scripts/cargo.py test -p apxm-program --lib --test artifact_conformance --test lower_conformance --test semantic_conformance --test structural_containment", description = "Run source/compiler Agent Program graph, AIR, artifact, and source-map conformance", group = "Build & Test" }
 test-kernel = { run = "python tools/scripts/cargo.py test -p apxm-kernel", description = "Run atomic execution commit and lifecycle conformance", group = "Build & Test" }
-test-commit-local = { run = "python tools/scripts/cargo.py test -p apxm-commit-local && python -m unittest tools.tests.test_p018_no_hosted_durable", description = "Run P-018 owner-local commit adapters and hosted-absence proof", group = "Build & Test" }
-verify-p018-no-hosted-durable = { run = "python tools/scripts/verify_p018_no_hosted_durable.py", description = "Verify the checked-in P-018 no-build dossier, digests, and pre/post-merge authority text", group = "Build & Test" }
+test-commit-local = { run = "python tools/scripts/cargo.py test -p apxm-commit-local", description = "Run P-018 owner-local commit adapters", group = "Build & Test" }
 test-runtime-seams = { run = "python tools/scripts/cargo.py test -p apxm-inference -p apxm-execution", description = "Run focused model inference and execution runtime conformance", group = "Build & Test" }
 test-execution = { run = "python tools/scripts/cargo.py build -p apxm-frontend-python -p apxm-frontend-typescript --release && python tools/scripts/install_frontend_native.py python && npm --prefix crates/compiler/frontend/typescript run build && python tools/scripts/install_frontend_native.py typescript && python tools/scripts/cargo.py test -p apxm-execution", description = "Run public-authored generic structural runtime conformance", group = "Build & Test" }
 test-all = { run = "python tools/scripts/cargo.py test --workspace", description = "All tests (requires MLIR)", group = "Build & Test" }
@@ -70,22 +78,18 @@ test-cli = { run = "npm --prefix crates/tools/cli/agent-packaging ci --ignore-sc
 test-python-frontend = { run = "env -u CC -u CXX python tools/scripts/cargo.py build -p apxm-frontend-python --release && python tools/scripts/install_frontend_native.py python && APXM_SKIP_NATIVE_BUILD=1 python -m pytest crates/compiler/frontend/python/tests_program/test_generic_frontend.py crates/compiler/frontend/python/tests_program/test_packed_package.py -q", description = "Run generic Python frontend and packed-wheel tests", group = "Build & Test" }
 test-typescript-frontend = { run = "npm --prefix crates/compiler/frontend/typescript ci --ignore-scripts --no-audit --no-fund && npm --prefix crates/compiler/frontend/typescript run typecheck && env -u CC -u CXX python tools/scripts/cargo.py build -p apxm-frontend-typescript --release && npm --prefix crates/compiler/frontend/typescript run build && python tools/scripts/install_frontend_native.py typescript && npm --prefix crates/compiler/frontend/typescript test", description = "Install the locked frontend dependencies, then run generic TypeScript frontend and packed-package tests", group = "Build & Test" }
 test-external-source-package = { run = "env -u CC -u CXX python tools/scripts/cargo.py build -p apxm-frontend-typescript --release && npm --prefix crates/compiler/frontend/typescript run build && python tools/scripts/install_frontend_native.py typescript && python tools/scripts/check_external_typescript_package.py tools/tests/fixtures/external-typescript-package", description = "Compile an external TypeScript Agent Program package through the public frontend", group = "Build & Test" }
-test-source-compiler-acceptance = { run = "python tools/scripts/check_source_compiler_acceptance.py --report-json .apxm/compiler/source-compiler-acceptance/report.json", description = "Run the focused source/frontend/compiler acceptance gates and write one structured report", group = "Build & Test" }
-check-source-compiler-boundary = { run = "python tools/scripts/check_source_compiler_boundary.py", description = "Reject downstream dependencies, retired compiler paths, and hand-authored frontend AIR", group = "Build & Test" }
 test-handler-packaging = { run = "npm --prefix crates/tools/cli/agent-packaging test", description = "Run private TypeScript handler-packaging API conformance", group = "Build & Test" }
 test-frontend-examples = { run = "env -u CC -u CXX python tools/scripts/cargo.py build -p apxm-frontend-python -p apxm-frontend-typescript --release && python tools/scripts/install_frontend_native.py python && npm --prefix crates/compiler/frontend/typescript run build && python tools/scripts/install_frontend_native.py typescript && rm -rf .apxm/frontend-example-python .apxm/frontend-example-packages && mkdir -p .apxm/frontend-example-python .apxm/frontend-example-packages && python -m pip wheel --no-deps --no-build-isolation --wheel-dir .apxm/frontend-example-packages crates/compiler/frontend/python && python -m pip install --no-deps --target .apxm/frontend-example-python .apxm/frontend-example-packages/*.whl && npm --prefix examples/agents/conversational install --ignore-scripts --no-audit --no-fund --no-package-lock && npm --prefix examples/agents/conversational run build && npm --prefix examples/agents/conversational run build:python && npm --prefix examples/agents/conversational run compile >/dev/null && npm --prefix examples/agents/conversational run run >/dev/null && PYTHONPATH=\"$PWD/.apxm/frontend-example-python\" npm --prefix examples/agents/conversational run compile:python >/dev/null && PYTHONPATH=\"$PWD/.apxm/frontend-example-python\" npm --prefix examples/agents/conversational run run:python >/dev/null && npm --prefix examples/agents/coder install --ignore-scripts --no-audit --no-fund --no-package-lock && npm --prefix examples/agents/coder run build && npm --prefix examples/agents/coder run compile >/dev/null && npm --prefix examples/agents/coder run run >/dev/null && PYTHONPATH=.apxm/frontend-example-python python -m pytest examples/agents/conversational/tests/test_parity.py -q && python examples/agents/coder/tests/acceptance.py", description = "Build, compile, run, and validate the conversational and Coder repository examples", group = "Build & Test" }
 build-frontend-native = { run = "python tools/scripts/cargo.py build -p apxm-frontend-python --release && python tools/scripts/install_frontend_native.py python", description = "Build the canonical PyO3 authoring bridge (_native.so) reproducibly from source", group = "Build & Test" }
 build-example-artifacts = { run = "env -u CC -u CXX -u DYLD_LIBRARY_PATH -u DYLD_FALLBACK_LIBRARY_PATH python tools/scripts/cargo.py build -p apxm-frontend-python -p apxm-frontend-typescript --release && python tools/scripts/install_frontend_native.py python && npm --prefix crates/compiler/frontend/typescript run build && python tools/scripts/install_frontend_native.py typescript && npm --prefix examples/agents/conversational install --ignore-scripts --no-audit --no-fund --no-package-lock && npm --prefix examples/agents/conversational run build && python tools/scripts/build_example_artifacts.py --python-package-root crates/compiler/frontend/python", description = "Build deterministic repository example executable artifacts from installed generic frontends", group = "Build & Test" }
 check-example-artifacts = { run = "python tools/scripts/build_example_artifacts.py --python-package-root crates/compiler/frontend/python --check", description = "Drift-check repository example executable artifacts", group = "Build & Test" }
 test-canonical-only = { run = "python -m unittest tools.tests.test_canonical_only_reachability", description = "Reject retired execution surfaces from the build graph", group = "Build & Test" }
-test-owner-gates = { run = "python -m unittest tools.tests.test_owner_gate_commands tools.tests.test_owner_descriptor_reference_host", description = "Prove owner-lane gates resolve to declared commands and the Agents-owned reference-host cohort is exact", group = "Build & Test" }
 test-dekk-cli-wrapper = { run = "python -m unittest tools.tests.test_dekk_cli_wrapper", description = "Run exact APXM CLI wrapper target-selection and native-toolchain readiness guards", group = "Build & Test" }
-test-reference-host = { run = "python -m unittest tools.tests.test_owner_descriptor_reference_host tools.tests.test_reference_host_build_receipt tools.tests.test_reference_host_startup_input tools.tests.test_reference_host_lifecycle_receipt tools.tests.test_reference_host_image tools.tests.test_reference_host_image_gate tools.tests.test_dekk_cli_wrapper && python tools/scripts/cargo.py test -p apxm-cli --test reference_host_jsonl --release", description = "Run exact reference-host provenance, startup-input, lifecycle receipt, Linux/arm64 image, wrapper, and JSONL lifecycle checks", group = "Build & Test" }
 frontend-cli-path = { run = "python tools/scripts/cargo.py build -p apxm-cli --bin apxm >/dev/null && target_dir=$(python tools/scripts/cargo.py target-dir) && printf '%s/debug/apxm\\n' \"$target_dir\"", description = "Build the debug APXM CLI and print its path for frontend integration tests", group = "Build & Test" }
 frontend-typescript-package-path = { run = "python tools/scripts/cargo.py build -p apxm-frontend-typescript --release >/dev/null && npm --prefix crates/compiler/frontend/typescript run build >/dev/null && python tools/scripts/install_frontend_native.py typescript && printf '%s/crates/compiler/frontend/typescript\\n' \"$PWD\"", description = "Build the TypeScript frontend package and print its path for frontend integration tests", group = "Build & Test" }
 check-frontend-parity = { run = "python tools/scripts/check_frontend_parity.py", description = "Prove Python/TypeScript frontends emit closed-semantics-equivalent AIR (source maps may differ by language)", group = "Build & Test" }
-check-frontend-surface = { run = "python tools/scripts/check_frontend_surface.py", description = "Prove authoring-package exports and teaching imports match the frontend-surface manifest", group = "Build & Test" }
-check = { run = "python3 tools/scripts/generate_contract_bindings.py --check && python tools/scripts/cargo.py run -p apxm-cli --bin apxm -- codegen op-spec --check && python tools/scripts/cargo.py run -p apxm-cli --bin apxm -- codegen frontend --check && python tools/scripts/cargo.py run -p apxm-cli --bin apxm -- codegen typescript --check && python tools/scripts/cargo.py run -p apxm-cli --bin apxm -- codegen typescript-frontend --check && python tools/scripts/cargo.py run -p apxm-cli --bin apxm -- codegen event-kinds --check && python tools/scripts/check_frontend_parity.py && python tools/scripts/check_frontend_surface.py && python tools/scripts/cargo.py check --workspace", description = "Check public seams, generated metadata, frontend parity, manifest alignment, and compiler types", group = "Build & Test" }
+check-frontend-surface = { run = "python tools/scripts/check_frontend_surface.py", description = "Prove authoring-package exports and example imports match the frontend-surface manifest", group = "Build & Test" }
+check = { run = "python tools/scripts/cargo.py run -p apxm-cli --bin apxm -- codegen op-spec --check && python tools/scripts/cargo.py run -p apxm-cli --bin apxm -- codegen frontend --check && python tools/scripts/cargo.py run -p apxm-cli --bin apxm -- codegen typescript --check && python tools/scripts/cargo.py run -p apxm-cli --bin apxm -- codegen typescript-frontend --check && python tools/scripts/cargo.py run -p apxm-cli --bin apxm -- codegen event-kinds --check && python tools/scripts/check_frontend_parity.py && python tools/scripts/check_frontend_surface.py && python tools/scripts/cargo.py check --workspace", description = "Check generated metadata, frontend parity, manifest alignment, and compiler types", group = "Build & Test" }
 fmt = { run = "python tools/scripts/cargo.py fmt", description = "Format Rust sources (cargo fmt)", group = "Build & Test" }
 clippy = { run = "python tools/scripts/cargo.py clippy -- -D warnings", description = "Lint Rust sources, denying warnings (cargo clippy)", group = "Build & Test" }
 clean = { run = "python tools/scripts/cargo.py clean", description = "Clean", group = "Build & Test" }
@@ -94,19 +98,6 @@ stop = { run = "python tools/scripts/apxm_cli.py process stop", description = "S
 clean-processes = { run = "python tools/scripts/apxm_cli.py process stop", description = "Stop APXM job processes without cleaning build outputs", group = "Configuration" }
 
 codegen = { run = "python tools/scripts/cargo.py run -p apxm-cli --bin apxm --no-default-features -- codegen op-spec && python tools/scripts/cargo.py run -p apxm-cli --bin apxm --no-default-features -- codegen frontend && python tools/scripts/cargo.py run -p apxm-cli --bin apxm --no-default-features -- codegen typescript && python tools/scripts/cargo.py run -p apxm-cli --bin apxm --no-default-features -- codegen typescript-frontend && python tools/scripts/cargo.py run -p apxm-cli --bin apxm --no-default-features -- codegen event-kinds", description = "Regenerate operation catalog, frontend bindings, and event kind metadata", skill = true, group = "Build & Test" }
-gen = { run = "python3 tools/scripts/generate_contract_bindings.py", description = "Generate event seam and host manifest bindings from contracts", skill = true, group = "Build & Test" }
-check-contract-codegen = { run = "python3 tools/scripts/generate_contract_bindings.py --check", description = "Check event seam and host manifest generated outputs", group = "Build & Test" }
-owner-descriptor = { run = "python contracts/tools/validate_owner_descriptor.py", description = "Validate Agents owner schemas, vectors, Port Contract, and descriptor digests", group = "Build & Test" }
-check-agents-release-manifest = { run = "python tools/scripts/check_agents_release_manifest.py --check", description = "Validate the digest-bound Agents owner release manifest and Linux/arm64 reference-host cohort", group = "Build & Test" }
-check-reference-host-image = { run = "python tools/scripts/check_reference_host_image.py --check", description = "Validate the exact Agents-owned Linux/arm64 reference-host image recipe and sidecar", group = "Build & Test" }
-reference-host-image-receipt = { run = "python tools/scripts/reference_host_image_gate.py --write", description = "Build the exact Linux/arm64 image twice and emit its inspected runtime receipt", group = "Build & Test" }
-check-reference-host-image-runtime = { run = "python tools/scripts/reference_host_image_gate.py --check", description = "Rebuild and dynamically verify the committed Linux/arm64 image receipt", group = "Build & Test" }
-test-agents-release-manifest = { run = "python -m unittest tools.tests.test_agents_release_manifest -q", description = "Run focused mutation and provenance checks for the Agents owner release cohort", group = "Build & Test" }
-test-inference-evidence = { run = "python -m unittest tools.tests.test_inference_evidence_contracts && python contracts/tools/validate_owner_descriptor.py", description = "Validate exact inference binding, lease, immutable usage, diagnostic, and backend-join evidence vectors", group = "Build & Test" }
-owner-descriptor-sync = { run = "python contracts/tools/validate_owner_descriptor.py --write-digests && python contracts/tools/validate_owner_descriptor.py", description = "Regenerate and verify Agents owner descriptor digests", group = "Build & Test" }
-reference-host-receipt = { run = "python tools/scripts/reference_host_receipt.py", description = "Build the canonical reference-host binary and write an exact receipt under .apxm/reference-host/receipts", group = "Build & Test" }
-reference-host-lifecycle-receipt = { run = "python tools/scripts/reference_host_lifecycle_receipt.py", description = "Exercise the canonical reference-host JSONL transport from an explicit startup input and write a typed lifecycle receipt under .apxm/reference-host/receipts", group = "Build & Test" }
-reference-host-startup-input = { run = "python tools/scripts/reference_host_startup_input.py", description = "Emit the exact reference-host startup-input artifact under .apxm/reference-host/startup-inputs for one explicit clean owner revision and explicit operator digests", group = "Build & Test" }
 check-frontend-codegen = { run = "env -u CC -u CXX python tools/scripts/cargo.py run -p apxm-cli --bin apxm --no-default-features -- codegen op-spec --check && env -u CC -u CXX python tools/scripts/cargo.py run -p apxm-cli --bin apxm --no-default-features -- codegen frontend --check && env -u CC -u CXX python tools/scripts/cargo.py run -p apxm-cli --bin apxm --no-default-features -- codegen typescript --check && env -u CC -u CXX python tools/scripts/cargo.py run -p apxm-cli --bin apxm --no-default-features -- codegen typescript-frontend --check && env -u CC -u CXX python tools/scripts/cargo.py run -p apxm-cli --bin apxm --no-default-features -- codegen event-kinds --check", description = "Check operation catalog, event kind, and frontend generated metadata for drift", group = "Build & Test" }
 codegen-typescript = { run = "python tools/scripts/cargo.py run -p apxm-cli --bin apxm --no-default-features -- codegen typescript", description = "Regenerate TypeScript bindings from Core definitions", skill = true, group = "Build & Test" }
 codegen-typescript-frontend = { run = "python tools/scripts/cargo.py run -p apxm-cli --bin apxm --no-default-features -- codegen typescript-frontend", description = "Regenerate @apxm/frontend contract constants from AIS definitions", skill = true, group = "Build & Test" }
@@ -120,18 +111,10 @@ execute-canonical = { run = "env -u CC -u CXX -u DYLD_LIBRARY_PATH -u DYLD_FALLB
 doctor = { run = "python tools/scripts/apxm_cli.py doctor", description = "Diagnose the APXM toolchain and canonical authoring environment", group = "Configuration" }
 commit-lint = { run = "python tools/scripts/check_commit_message.py", description = "Lint a commit message file, --current (HEAD), or --range REV1..REV2", group = "Configuration" }
 
-gui = { run = "python tools/scripts/apxm_cli.py gui", description = "Launch the web-based GUI dashboard", skill = true, group = "Authoring" }
-watch = { run = "python tools/scripts/apxm_cli.py watch", description = "Stream a live run's dispatch tree from apxm-server (Phase 14.8.F)", group = "Observability" }
-chat = { run = "python tools/scripts/apxm_cli.py chat", description = "Run the APXM conversational REPL over apxm-server", group = "Authoring" }
 validate = { run = "python tools/scripts/apxm_cli.py validate", description = "Validate graph against AIS contract", skill = true, group = "Authoring" }
 analyze = { run = "python tools/scripts/apxm_cli.py analyze", description = "Analyze parallelism and critical path", group = "Authoring" }
 explain = { run = "python tools/scripts/apxm_cli.py explain", description = "Human-readable summary of a graph", group = "Authoring" }
-goal = { run = "python tools/scripts/apxm_cli.py goal", description = "Start, follow, inspect, or cancel a bounded APXM goal run", group = "Goals & Workflows" }
-offline-prompt-evaluation = { run = "python tools/scripts/offline_prompt_evaluation.py", description = "Validate preregistered prompt-output bundles with classified backend evidence", group = "Evaluation" }
-observed-prompt-evaluation = { run = "python tools/scripts/observed_prompt_evaluation.py", description = "Execute preregistered prompt arms and record portable backend evidence", group = "Evaluation" }
-test-offline-prompt-evaluation = { run = "python -m unittest discover -s tools/tests -p test_offline_prompt_evaluation.py", description = "Test offline prompt-evaluation evidence validation", group = "Evaluation" }
-test-observed-prompt-evaluation = { run = "python -m unittest discover -s tools/tests -p test_observed_prompt_evaluation.py", description = "Test observed backend execution evidence", group = "Evaluation" }
-test-release-privacy = { run = "python -m unittest discover -s tools/tests -p test_release_privacy.py -v", description = "Audit every tracked package manifest and release command for private fail-closed publication", group = "Build & Test" }
+goal = { run = "python tools/scripts/apxm_cli.py goal", description = "Run a bounded canonical program goal", group = "Goals & Workflows" }
 
 [commands.session]
 description = "Inspect APXM execution session outputs"
@@ -152,45 +135,12 @@ status = { run = "python tools/scripts/apxm_cli.py backend status", description 
 sync-models = { run = "python tools/scripts/apxm_cli.py backend sync-models", description = "Sync installed Ollama models into a backend registration" }
 add-model = { run = "python tools/scripts/apxm_cli.py backend add-model", description = "Add model to backend" }
 
-[commands.vllm]
-description = "Operate APXM-vLLM through Dekk-controlled Slurm services and Docker image primitives"
-group = "Configuration"
-help = { run = "python tools/scripts/vllm.py help", description = "Show detailed vLLM controller help" }
-doctor = { run = "python tools/scripts/vllm.py doctor", description = "Verify APXM-vLLM Docker, fork source, GPU, Slurm, and port readiness" }
-probe = { run = "python tools/scripts/vllm.py probe", description = "Probe OpenAI models and APXM graph endpoints" }
-enable = { run = "python tools/scripts/vllm.py enable", description = "Register a probed APXM-vLLM HTTP endpoint as an APXM backend" }
-cache-warm = { run = "python tools/scripts/vllm.py cache-warm", description = "Download a model to the shared HF cache without GPU allocation (resumes partial)" }
-docker-build = { run = "python tools/scripts/vllm.py docker-build", description = "Build the APXM-vLLM runtime Docker image" }
-docker-save = { run = "python tools/scripts/vllm.py docker-save", description = "Save APXM-vLLM image to shared APXM image store" }
-docker-load = { run = "python tools/scripts/vllm.py docker-load", description = "Load APXM-vLLM image from shared APXM image store" }
-docker-start = { run = "python tools/scripts/vllm.py docker-start", description = "Start Docker vLLM inside an owned allocation" }
-docker-stop = { run = "python tools/scripts/vllm.py docker-stop", description = "Stop allocation-local Docker vLLM" }
-docker-status = { run = "python tools/scripts/vllm.py docker-status", description = "Show allocation-local Docker vLLM status" }
-docker-logs = { run = "python tools/scripts/vllm.py docker-logs", description = "Show allocation-local Docker vLLM logs" }
-service-list = { run = "python tools/scripts/vllm.py service-list", description = "List every recorded APXM-vLLM service and its Slurm state" }
-service-status = { run = "python tools/scripts/vllm.py service-status", description = "Show persistent APXM-vLLM service status" }
-service-exec = { run = "python tools/scripts/vllm.py service-exec", description = "Run a command inside a persistent APXM-vLLM service allocation" }
-service-stop = { run = "python tools/scripts/vllm.py service-stop", description = "Cancel a persistent APXM-vLLM service job" }
-zoo-apply = { run = "python tools/scripts/vllm.py zoo-apply", description = "Reconcile zoo manifest against currently-recorded services" }
-zoo-status = { run = "python tools/scripts/vllm.py zoo-status", description = "Probe every service in the zoo manifest" }
-zoo-scale = { run = "python tools/scripts/vllm.py zoo-scale", description = "Scale a zoo-managed service's replica count" }
-zoo-cache-warm = { run = "python tools/scripts/vllm.py zoo-cache-warm", description = "Warm the HF cache for every model in the manifest" }
-zoo-logs = { run = "python tools/scripts/vllm.py zoo-logs", description = "Tail container logs for a zoo-managed service" }
-
 [commands.mcp]
 description = "Install the APXM MCP server into supported coding-agent configs"
 group = "Configuration"
 install = { run = "python tools/scripts/apxm_mcp_install.py install", description = "Install apxm-mcp-server into detected agent configs" }
 list = { run = "python tools/scripts/apxm_mcp_install.py list", description = "List detected MCP-capable agent configs and APXM install status" }
 uninstall = { run = "python tools/scripts/apxm_mcp_install.py uninstall", description = "Remove APXM MCP registration from agent configs" }
-
-[commands.release]
-description = "Prepare and publish APXM releases"
-group = "Release"
-check = { run = "python tools/scripts/release.py check", description = "Run release readiness checks without publishing" }
-dist = { run = "python tools/scripts/release.py dist", description = "Build APXM release artifacts and checksums under .apxm/releases" }
-publish = { run = "python tools/scripts/release.py publish", description = "Create or update a GitHub release from .apxm/releases artifacts" }
-python = { run = "python tools/scripts/release.py python", description = "Upload an eligible Python distribution to an exact signed private registry" }
 
 [commands.ops]
 description = "Browse AIS operations"
@@ -234,13 +184,6 @@ group = "Configuration"
 list = { run = "python tools/scripts/apxm_cli.py process list", description = "List canonical APXM CLI job processes" }
 stop = { run = "python tools/scripts/apxm_cli.py process stop", description = "Stop canonical APXM CLI job processes" }
 
-[commands.rollout]
-description = "Inspect and replay per-thread rollout transcripts (Phase 14.8.F)"
-group = "Observability"
-list = { run = "python tools/scripts/apxm_cli.py rollout list", description = "List recent rollouts from the SQLite index" }
-replay = { run = "python tools/scripts/apxm_cli.py rollout replay", description = "Replay a rollout JSONL as a monospace tree" }
-archive = { run = "python tools/scripts/apxm_cli.py rollout archive", description = "Bundle rollout + blobs + skill source into a .tar.gz" }
-
 [install]
 wrap = { name = "apxm", target = "target/release/apxm" }
 
@@ -250,18 +193,3 @@ label = "Compiler + Runtime"
 description = "APXM compiler and dataflow runtime"
 run = "python tools/scripts/cargo.py build -p apxm-cli --features driver,metrics --release"
 default = true
-
-[[install.components]]
-name = "vllm"
-label = "APXM-vLLM Docker readiness"
-description = "Verifies the APXM-vLLM fork, Docker, Slurm tools, and port readiness"
-run = "python tools/scripts/vllm.py doctor"
-default = false
-
-[[install.components]]
-name = "dspy"
-label = "DSPy Prompt Optimizer"
-description = "Automatic prompt optimization via DSPy (Stanford NLP)"
-run = "pip install dspy-ai>=2.6.0"
-default = false
-requires = ["pip"]

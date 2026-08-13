@@ -44,7 +44,7 @@ static GLOBAL_ENV: std::sync::LazyLock<Environment<'static>> =
 /// Render a prompt template by name with the given context.
 ///
 /// # Arguments
-/// - `template_name`: Logical template name (see crate-level docs).
+/// - `template_name`: Logical template name.
 /// - `context`: Serializable data to interpolate into the template.
 ///
 /// # Returns
@@ -78,7 +78,7 @@ pub fn render_inline<T: Serialize>(
 
 /// List all available prompt templates.
 ///
-/// Returns logical template names (see crate-level docs). The returned list is sorted and deduplicated.
+/// Returns sorted, deduplicated logical template names.
 pub fn list_prompts() -> Vec<String> {
     let mut names: Vec<String> = PROMPTS_DIR
         .files()

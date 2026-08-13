@@ -320,7 +320,7 @@ fn default_structural_tablegen_declarations_path() -> PathBuf {
 
 fn default_typescript_codegen_path() -> PathBuf {
     // Generated TS lives in-repo so APXM is self-contained. Consumers
-    // (apxm-studio) vendor/import it.
+    // Downstream tooling may vendor/import the generated asset.
     Path::new(env!("CARGO_MANIFEST_DIR")).join("generated/typescript/generated.ts")
 }
 

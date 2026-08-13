@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import re
 import tomllib
 import unittest
@@ -95,7 +94,7 @@ class CanonicalOnlyReachabilityTests(unittest.TestCase):
         self.assertEqual(packages, ["apxm_program"])
 
     def test_no_source_imports_the_retired_apxm_package(self) -> None:
-        """Operator tooling imports `apxm_vllm`; authoring imports `apxm_program`."""
+        """Authoring imports only the canonical `apxm_program` package."""
         pattern = re.compile(r"^\s*(?:from|import)\s+apxm(?:\.|\s|$)", re.MULTILINE)
         offenders: list[str] = []
         for root in ("tools", "crates/compiler/frontend/python", "examples"):
@@ -103,15 +102,6 @@ class CanonicalOnlyReachabilityTests(unittest.TestCase):
                 if pattern.search(path.read_text(errors="ignore")):
                     offenders.append(str(path.relative_to(REPOSITORY_ROOT)))
         self.assertEqual(offenders, [], "\n".join(offenders))
-
-    def test_operator_contract_resolves_from_the_declared_import_root(self) -> None:
-        """`apxm_vllm` is importable from `tools/`, the declared PYTHONPATH entry."""
-        package = REPOSITORY_ROOT / "tools" / "apxm_vllm"
-        for module in ("__init__.py", "contract.py", "data_config.py"):
-            self.assertTrue((package / module).is_file(), f"missing operator module: {module}")
-        spec = importlib.util.find_spec("apxm_vllm.contract")
-        self.assertIsNotNone(spec, "apxm_vllm.contract is not importable")
-        self.assertEqual(Path(spec.origin).resolve(), (package / "contract.py").resolve())
 
     def test_no_python_package_local_handler_surface_remains(self) -> None:
         """Package-local handlers are TypeScript-only across every owned surface."""

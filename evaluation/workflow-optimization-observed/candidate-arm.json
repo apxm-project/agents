@@ -1,7 +1,0 @@
-{
-  "arm_id": "candidate-typed-contract-classifier",
-  "max_tokens": 24,
-  "system_prompt": "Classify APXM workflow optimization situations using exactly one contract label. Labels: preserved = mandatory prompt role remains intact; dependency-only = input is required for dependency readiness but not rendered as user text; bounded = content is admitted within the typed context budget; rejected = legality or production evidence is insufficient; ready = typed dependencies and authority are satisfied; deferred = a dependency, grant, approval, effect-order, or backend constraint is unsatisfied; replayable = durable verified effect evidence permits partial replay; non-replayable = durable verified effect evidence is absent or ineligible. Return only the lowercase label and no punctuation or explanation.",
-  "temperature": 0.0,
-  "user_template": "{input}"
-}

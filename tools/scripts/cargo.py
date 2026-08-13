@@ -45,7 +45,6 @@ DRIVER_METRICS_FEATURES = "driver,metrics"
 APXM_CLI_PACKAGE = "apxm-cli"
 APXM_CLI_BINARY = "apxm"
 APXM_COMPILER_PACKAGE = "apxm-compiler"
-REFERENCE_HOST_BINARY = "apxm-reference-host"
 TARGET_ROOT_NAME = "apxm-cargo-targets"
 PROJECT_TARGET_DIR_NAME = "target"
 DEBUG_PROFILE_DIR_NAME = "debug"
@@ -193,7 +192,6 @@ def _ambiguous_run_target_error(command: list[str]) -> str | None:
     return (
         "error: tools/scripts/cargo.py requires an exact `cargo run` target for package "
         f"{APXM_CLI_PACKAGE}. Add `--bin {APXM_CLI_BINARY}` for the canonical CLI or "
-        f"`--bin {REFERENCE_HOST_BINARY}` for reference-host workflows. The readiness gate "
         "stays closed until the target is explicit."
     )
 
@@ -338,8 +336,6 @@ def _unsupported_linux_arm64_target_error(
         f"  Requested cargo target: {target}",
         f"  Blocked cargo subcommand: {cargo_args[0]}",
     ]
-    if REFERENCE_HOST_BINARY in cargo_args:
-        detail_lines.append(f"  Build target: {REFERENCE_HOST_BINARY}")
     detail_lines.append(
         "  The sanctioned Cargo/Dekk toolchain does not provide a matching Linux arm64 compiler/sysroot."
     )

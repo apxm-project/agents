@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "apxm.invocation-admission.v1",
   "title": "APXM Invocation Admission",
-  "description": "Exact product-neutral authority for one reference-host invocation.",
+  "description": "Exact product-neutral authority for one canonical runtime invocation.",
   "type": "object",
   "required": ["schema_version", "invocation_id", "artifact_digest", "release_digest", "port_bindings_digest", "resource_ceiling_digest", "provenance_digest"],
   "properties": {

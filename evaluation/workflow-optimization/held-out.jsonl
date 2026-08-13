@@ -1,4 +1,0 @@
-{"id":"typed-system-role","expected":"preserved"}
-{"id":"dependency-only-input","expected":"dependency-only"}
-{"id":"tool-result-budget","expected":"bounded"}
-{"id":"production-dspy","expected":"rejected"}

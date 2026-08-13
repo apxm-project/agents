@@ -4,7 +4,6 @@
 //! public semantic AIS operations and the closed compiler-emitted structural
 //! AIS operation family.
 
-pub mod aam;
 pub mod attrs;
 pub mod capabilities;
 pub mod chat;
@@ -15,7 +14,6 @@ pub mod passes;
 pub mod types;
 pub mod validation;
 
-pub use aam::{AAM, Beliefs, Capabilities, Goal, GoalId, GoalStatus, Goals};
 pub use memory::MemoryTier;
 pub use operations::tablegen::generate_tablegen;
 pub use operations::{

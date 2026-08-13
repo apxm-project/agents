@@ -278,4 +278,4 @@ their declared `T`; tools and Studio query execution evidence separately.
 - The exact target AIR constitution is fixed by
   [ADR-0009](0009-air-has-five-public-semantic-operations.md).
 - Delivery is governed by the
-  [Agent Program composition and AIR full-replacement plan](../agents/agent-program-composition-and-air-full-replacement-plan.md).
+  [Agent Program composition and AIR contract](../agents/agent-program-composition-and-air-contract.md).
