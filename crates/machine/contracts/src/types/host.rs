@@ -250,11 +250,6 @@ fn is_local_exec_op(kind: Option<OpKind>) -> bool {
     )
 }
 
-#[path = "generated_host_execution_manifest.rs"]
-mod generated_host_execution_manifest;
-
-pub use generated_host_execution_manifest::HostExecutionManifest;
-
 // These product-neutral effect records are owned by Agents because the runtime
 // creates the request and consumes the terminal result. Downstream host SDKs
 // implement this wire contract; Agents must not depend on any downstream SDK.

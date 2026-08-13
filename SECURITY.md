@@ -1,51 +1,17 @@
-# Security Policy
+# Security policy
 
-## Reporting a vulnerability
+Report vulnerabilities privately to the repository maintainers. Include the
+affected commit, component, reproduction, and impact. Do not include API keys,
+OAuth tokens, model credentials, or other secrets in an issue or patch.
 
-If you believe you have found a security-sensitive issue in APXM — for example,
-a way for a skill to escape its declared capabilities, an authentication bypass
-on `apxm-server`, or any path that reveals backend API-key material or sealed
-credentials
-— please report it privately rather than opening a public issue.
+Security-sensitive boundaries in this repository are:
 
-Email: **randres2011@gmail.com**
+- exact Invocation Admission and capability grants;
+- Port binding and target identity verification;
+- confinement and resource ceilings;
+- request identity, idempotency, and outcome-unknown handling;
+- append-only runtime evidence.
 
-Please include:
-
-- The affected component (e.g. `apxm-server`, `apxm-runtime`, the vLLM fork).
-- A reproduction (an AIR graph, a curl invocation, or a Python frontend snippet
-  is ideal).
-- The impact you believe the issue has.
-- Any logs or session directories that demonstrate the behavior.
-
-You should expect an acknowledgement within a few working days. Coordinated
-disclosure is preferred: please give the project a reasonable window to
-remediate before publishing details.
-
-## Supported versions
-
-APXM is currently in early development (`0.0.x`). Until a `1.0` release, only
-the `main` branch and the most recent tagged release receive security fixes.
-
-## Scope
-
-In-scope:
-
-- The Rust workspace under [`crates/`](crates/).
-- The Python frontend under [`crates/compiler/frontend/python/`](crates/compiler/frontend/python/).
-- The `apxm-server` HTTP and MCP surfaces.
-- The `apxm-backend-registry` backend roster and API-key reference store.
-- Any sample skill or workflow under [`examples/`](examples/) where the
-  vulnerability is in APXM machinery rather than an example-specific bug.
-
-Out of scope (please report upstream):
-
-- The optional vLLM fork/backend checkout (report to the vLLM project, or to
-  APXM only if the bug is in APXM's wrapping of vLLM).
-- Third-party agent CLIs invoked over ACP (Claude Code, Codex, etc.).
-
-## Hall of fame
-
-We are happy to publicly credit security researchers who responsibly disclose
-issues. Please tell us in your report if you would like to be credited and how
-to attribute you.
+Product transports, credential stores, deployment infrastructure, and external
+provider services are separate owners and should be reported to their
+respective maintainers.

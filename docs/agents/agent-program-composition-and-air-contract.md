@@ -2,9 +2,8 @@
 
 - Status: canonical APXM v1 contract
 - Owner: APXM `agents`
-- Decisions: [ADR-0008](../adr/0008-agent-programs-compose-through-new-and-invoke.md), [ADR-0009](../adr/0009-air-has-five-public-semantic-operations.md), [ADR-0010](../adr/0010-agent-program-source-owns-context-hooks-and-conversational-loops.md), [ADR-0011](../adr/0011-agent-program-execution-is-one-end-to-end-spine.md), [ADR-0014](../adr/0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md)
+- Decisions: [ADR-0008](../adr/0008-agent-programs-compose-through-new-and-invoke.md), [ADR-0009](../adr/0009-air-has-five-public-semantic-operations.md), [ADR-0010](../adr/0010-agent-program-source-owns-context-hooks-and-conversational-loops.md), and [ADR-0011](../adr/0011-agent-program-execution-is-one-end-to-end-spine.md)
 - Canonical contracts: `apxm.frontend-graph.v2`, `apxm.air.v2`, `apxm.executable-artifact.v1`, `apxm.runtime-evidence.v1`
-- Baseline evidence: `agents@9e26a62adebb`
 
 This document is the normative APXM v1 contract for composing, compiling,
 and executing Agent Programs. It is intentionally target-only. The key words
@@ -24,19 +23,19 @@ The `agents` repository owns:
   generic checkpoint/recovery, and execution evidence;
 - the typed model-adapter/inference-backend boundary required by `model.call`;
   and
-- cross-language/local/server conformance vectors.
+- cross-language conformance vectors.
 
 Other APXM planes may expose root instance/run APIs, create and publish Agent
 Programs, or visualize their evidence. They may not redefine `.new`,
 `.invoke`, context, Hooks, loops, AIS/AIR, runtime, or model-backend semantics.
 
 Installable frontends expose generic Agent Program APIs only.
-`ConversationalAgent` is a repository-example construct. Gao is a Studio-owned
-ordinary Agent Program. Neither is a frontend export or core contract name.
+`ConversationalAgent` is a repository-example construct. Example names are not
+frontend exports or core contract names.
 
 This contract does not define user administration, Agent Definition lifecycle,
 company hierarchy, Skill catalogue policy, product billing, provider-specific
-protocols, deployment placement, Studio UI layout, or package coordinates.
+protocols, deployment placement, UI layout, or package coordinates.
 
 ## 2. Type model
 
@@ -162,8 +161,8 @@ exact Python decorator/TypeScript factory matrix is frozen by ADR-0015 §4.
 - Same-program functions MUST remain internal calls and MUST NOT create a
   Program Invocation or Session Output subtree.
 - An authored Program Instance MUST be attached to its owning Program Instance.
-  A root instance is created by the APXM root API or APXM Studio, not by an
-  unscoped form of `.new`.
+  A root instance is created by the host admission API, not by an unscoped
+  form of `.new`.
 - No authored API accepts protocol, endpoint, runtime profile, provider,
   process, executable, path, current directory, worker, or placement options.
 
@@ -431,8 +430,8 @@ options are explicit typed operands/properties. The operation does not mutate
 context, beliefs, goals, or graph topology and does not execute a tool loop.
 
 The selected Deployment Composition Manifest predeclares exactly one
-`model_ref -> ModelDeploymentRef -> ExactPortBindingRef` mapping. Managed
-Server or the identical standalone composition verifier validates and
+`model_ref -> ModelDeploymentRef -> ExactPortBindingRef` mapping. The host or
+the identical standalone composition verifier validates and
 materializes it without candidate search, ranking, or fallback. The adapter
 sends only the admitted Model Context, messages, Tool schemas,
 structured-output schema, options, budget, deadline, cancellation, and trace
@@ -594,10 +593,11 @@ causal_node_execution_ids
 
 `iteration_index` is zero-based within the dynamic loop occurrence. Fact
 identity and ordering MUST be replay-stable. A failed, cancelled, or rolled-back
-body MUST NOT emit completion. A trace, region-start fact, or Studio projection
+body MUST NOT emit completion. A trace or region-start fact
 cannot substitute for the committed fact.
 
-Studio projects generic loop iterations and has no core `Turn` type. Repository
+Hosts may project generic loop iterations and the core has no `Turn` type.
+Repository
 examples may label a conversational iteration as a “turn” in example-local
 documentation.
 
@@ -611,9 +611,8 @@ terminal activity, reverse requests and usage are nested attributed evidence.
 The runtime never turns those peer-private events into APXM nodes.
 
 V1 source selects one exact admitted External Agent Profile and one exact model
-deployment. Policy-based routing is future work and cannot change v1
-composition or add AIR operations. The complete contract is
-[ACP interoperability and selection](acp-and-routing-contract.md).
+deployment. Policy-based routing is external to this core contract and cannot
+change v1 composition or add AIR operations.
 
 ## 11. Execution evidence
 
@@ -675,9 +674,9 @@ facts add required payload and MUST share the same sequence/transaction; they
 cannot contradict the state fact.
 
 A Session Output folder belongs to each actual NodeExecution occurrence, not
-only to the static node. Admin-authorized Studio inspection can drill from a
+only to the static node. Authorized host inspection can drill from a
 loop-iteration projection to each NodeExecution and its evidence. Access and
-content capture remain governed by APXM Studio access, retention, and
+content capture remain governed by host access, retention, and
 observability policy.
 
 ## 12. Failure contract
@@ -710,7 +709,7 @@ as a digest-bound export, never as executable legacy support.
 The complete current-operation disposition is normative in
 [ADR-0009](../adr/0009-air-has-five-public-semantic-operations.md). The
 implementation and deletion sequence is the
-[full-replacement plan](agent-program-composition-and-air-full-replacement-plan.md).
+The implementation follows the current source and compiler ownership rules.
 
 ## 14. Root lifecycle service contract
 
@@ -827,7 +826,7 @@ Positive vectors MUST cover:
 - Skill discovery without automatic Skill injection;
 - generic loop/yield, `LoopIterationCompleted`, replay-stable iteration
   projection, and NodeExecution evidence; and
-- local embedded and Server-hosted execution equivalence.
+- local embedded and host-admitted execution equivalence.
 
 Negative vectors MUST cover:
 

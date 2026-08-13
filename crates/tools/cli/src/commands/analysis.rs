@@ -429,7 +429,6 @@ fn explain_error_code(target: &str, json_output: bool) -> Result<()> {
             "code": error_code.as_str(),
             "component": error_code.component(),
             "is_warning": error_code.is_warning(),
-            "documentation_url": error_code.documentation_url(),
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
         return Ok(());
@@ -457,10 +456,5 @@ fn explain_error_code(target: &str, json_output: bool) -> Result<()> {
     );
     println!("{}", "=".repeat(70).bright_cyan());
     println!();
-    println!(
-        "{} {}",
-        "Documentation:".bright_yellow(),
-        error_code.documentation_url()
-    );
     Ok(())
 }

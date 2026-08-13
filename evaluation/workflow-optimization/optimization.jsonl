@@ -1,2 +1,0 @@
-{"id":"optimization-role-catalog","prompt":"Preserve typed prompt roles during lowering."}
-{"id":"optimization-budget-policy","prompt":"Bound tool results before context assembly."}

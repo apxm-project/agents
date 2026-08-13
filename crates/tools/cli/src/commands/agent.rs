@@ -1,21 +1,9 @@
 //! `apxm agent new|sync|lint|build|install` — the toolchain for the
 //! canonical agent folder format (`apxm.agent.v1`).
 //!
-//! The folder contract, required/optional files, and integrity hash-chain
-//! algorithm are hand-ported from that schema into the Rust checks below
-//! rather than loading the JSON schema file at runtime.
-//!
-//! Capability-set drift (agent.toml vs capabilities/capabilities.toml vs
-//! capabilities/permissions.toml) is enforced as a lint ERROR
-//! as a agent invariant. No hand-rolled equivalent of this check
-//! was found elsewhere in the workspace at the schema's grammar (the
-//! only existing "undeclared capability" check is
-//! `server/crates/core/src/skills.rs::validate_inv_cap_node`, which compares
-//! compiled AIR INV_CAP nodes against runtime admission metadata — a different,
-//! narrower check than the agent's authored `capabilities.toml`/
-//! `permissions.toml`/`agent.toml` triple). This module's drift check is
-//! therefore a fresh implementation of the  "joined capability" semantics
-//! described in the agent schema, not a port of that server check.
+//! The folder contract, required files, and integrity hash-chain algorithm are
+//! enforced locally. Capability-set drift across the package manifests is a
+//! lint error so an agent package cannot declare inconsistent authority.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{self, Write};

@@ -15,7 +15,6 @@ members = [
 	"crates/runtime/memory",
 	"crates/runtime/backends",
 	"crates/runtime/backend-registry",
-	"crates/runtime/rollout",
 	"crates/runtime/inference",
 	"crates/runtime/kernel",
 	"crates/runtime/commit-local",
@@ -53,7 +52,6 @@ apxm-capability = { version = "0.1.0", path = "crates/runtime/capability" }
 apxm-memory = { version = "0.1.0", path = "crates/runtime/memory" }
 apxm-backends = { version = "0.1.0", path = "crates/runtime/backends" }
 apxm-backend-registry = { version = "0.1.0", path = "crates/runtime/backend-registry" }
-apxm-rollout = { version = "0.1.0", path = "crates/runtime/rollout" }
 apxm-inference = { version = "0.1.0", path = "crates/runtime/inference" }
 apxm-kernel = { version = "0.1.0", path = "crates/runtime/kernel" }
 apxm-commit-local = { version = "0.1.0", path = "crates/runtime/commit-local" }

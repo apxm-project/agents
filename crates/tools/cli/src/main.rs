@@ -16,10 +16,6 @@
     clippy::struct_field_names
 )]
 
-// Typed apxm-server HTTP client (folded in from the former standalone
-// apxm-client crate, ). `goal` uses it unconditionally; `chat`/`watch`/
-// `sse_permissions` use it under the `driver` feature only.
-mod client;
 mod commands;
 mod frontend;
 
@@ -141,92 +137,9 @@ async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Process { action } => process_command(action, cli.json),
         Commands::Cache { action } => cache_command(action, cli.json),
         Commands::Tokenize { text, file, model } => tokenize_command(text, file, model, cli.json),
-        Commands::Watch { thread_id, expand } => watch_command(thread_id, expand).await,
-        Commands::Rollout { action } => rollout_action(action).await,
-        Commands::Chat {
-            agent,
-            air,
-            server,
-            session_id,
-            capability_grant_ids,
-            import,
-            backend,
-            model,
-            owner,
-        } => {
-            commands::chat::chat_command(commands::chat::ChatOptions {
-                agent,
-                air,
-                server,
-                session_id,
-                capability_grant_ids,
-                import,
-                backend,
-                model,
-                owner,
-            })
-            .await
-        }
-    }
-}
-
-#[cfg(feature = "driver")]
-async fn rollout_action(action: commands::RolloutAction) -> Result<()> {
-    use commands::rollout::{
-        RolloutArchiveOptions, RolloutCompactOptions, RolloutListOptions, RolloutReplayOptions,
-        rollout_archive_command, rollout_compact_command, rollout_list_command,
-        rollout_replay_command,
-    };
-    match action {
-        commands::RolloutAction::List {
-            session,
-            since,
-            agent_role,
-            limit,
-        } => {
-            rollout_list_command(RolloutListOptions {
-                session,
-                since,
-                agent_role,
-                limit,
-                home: None,
-            })
-            .await
-        }
-        commands::RolloutAction::Replay { thread_id } => {
-            rollout_replay_command(RolloutReplayOptions {
-                thread_id,
-                home: None,
-            })
-            .await
-        }
-        commands::RolloutAction::Archive {
-            thread_id,
-            output,
-            skill_dir,
-        } => {
-            let path = rollout_archive_command(RolloutArchiveOptions {
-                thread_id,
-                output,
-                home: None,
-                skill_dir,
-            })
-            .await?;
-            println!("wrote archive: {}", path.display());
-            Ok(())
-        }
-        commands::RolloutAction::Compact {
-            max_age_days,
-            blob_grace_hours,
-        } => {
-            rollout_compact_command(RolloutCompactOptions {
-                home: None,
-                max_age_days,
-                blob_grace_hours,
-            })
-            .await?;
-            Ok(())
-        }
+        Commands::Watch { .. } | Commands::Rollout { .. } | Commands::Chat { .. } => Err(
+            anyhow::anyhow!("this legacy product flow is not part of the canonical CLI"),
+        ),
     }
 }
 
@@ -262,12 +175,9 @@ async fn run_cli_no_driver(cli: Cli) -> Result<()> {
         Commands::Process { action } => process_command(action, cli.json),
         Commands::Cache { action } => cache_command(action, cli.json),
         Commands::Tokenize { text, file, model } => tokenize_command(text, file, model, cli.json),
-        Commands::Watch { .. } | Commands::Rollout { .. } | Commands::Chat { .. } => {
-            Err(anyhow::anyhow!(
-                "apxm watch / apxm rollout / apxm chat require the `driver` feature. Rebuild through `{}`, then re-run the command.",
-                commands::dekk_hints::BUILD
-            ))
-        }
+        Commands::Watch { .. } | Commands::Rollout { .. } | Commands::Chat { .. } => Err(
+            anyhow::anyhow!("this legacy product flow is not part of the canonical CLI"),
+        ),
         Commands::CompileServiceCanonical { .. } => Err(anyhow::anyhow!(
             "apxm compile-service-canonical requires the `driver` feature. Rebuild through `{}`, then re-run the command.",
             commands::dekk_hints::BUILD

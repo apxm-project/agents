@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """APXM commit-message lint.
 
-Enforces `.agents/skills/_shared/apxm-commit-message-rules.md`:
+Enforces the repository commit-message rules:
 
 - subject: `<type>(<scope>): <subject>`, ≤72 chars, imperative, no emoji.
 - type ∈ ALLOWED_TYPES; deprecated spellings map to a suggestion.
-- scope = subsystem; `planNN` only allowed for `prereg`/`eval`.
+- scope = subsystem.
 - body: no AI-attribution lines, no referential phrasing.
 
 Modes:
@@ -27,17 +27,10 @@ from dataclasses import dataclass
 
 ALLOWED_TYPES: frozenset[str] = frozenset({
     "feat", "fix", "perf", "refactor", "docs", "test",
-    "chore", "bench", "eval", "prereg", "sec", "style",
+    "chore", "bench", "sec", "style",
 })
 
-DEPRECATED_TYPES: dict[str, str] = {
-    "pre-reg": "prereg",
-    "preregister": "prereg",
-    "preregistration": "prereg",
-}
-
-PLAN_SCOPE_TYPES: frozenset[str] = frozenset({"prereg", "eval"})
-PLAN_SCOPE_RE = re.compile(r"^plan-?\d{1,3}$")
+DEPRECATED_TYPES: dict[str, str] = {}
 SCOPE_SHAPE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_/\-]*$")
 
 RESERVED_SCOPE_NAMES: frozenset[str] = frozenset({
@@ -168,19 +161,7 @@ def _lint_subject(subject: str) -> list[Finding]:
 
     if scope:
         scope_lower = scope.lower()
-        if PLAN_SCOPE_RE.match(scope_lower):
-            if ctype not in PLAN_SCOPE_TYPES:
-                findings.append(Finding(
-                    "plan-scope-misuse",
-                    f"`planNN` scope only valid for {sorted(PLAN_SCOPE_TYPES)}; "
-                    f"got `{ctype}({scope})`. Scope by subsystem instead.",
-                ))
-            if "-" in scope:
-                findings.append(Finding(
-                    "plan-scope-spelling",
-                    f"use `plan{scope.split('-', 1)[1]}` (no hyphen) instead of `{scope}`",
-                ))
-        elif scope_lower in RESERVED_SCOPE_NAMES:
+        if scope_lower in RESERVED_SCOPE_NAMES:
             findings.append(Finding(
                 "reserved-scope",
                 f"scope `{scope}` names a tool/agent, not a subsystem; rename",
@@ -190,12 +171,6 @@ def _lint_subject(subject: str) -> list[Finding]:
                 "scope-shape",
                 f"scope `{scope}` must match {SCOPE_SHAPE_RE.pattern}",
             ))
-    elif ctype in PLAN_SCOPE_TYPES:
-        findings.append(Finding(
-            "missing-plan-scope",
-            f"`{ctype}` requires a `(planNN)` scope (e.g. `{ctype}(plan04): ...`)",
-        ))
-
     body_lower = body_text.lower()
     for word in RESERVED_SUBJECT_WORDS:
         if re.search(rf"\b{re.escape(word)}\b", body_lower):
@@ -272,10 +247,6 @@ def main(argv: list[str]) -> int:
         return 2
 
     if failed:
-        print(
-            "\nSee .agents/skills/_shared/apxm-commit-message-rules.md",
-            file=sys.stderr,
-        )
         return 1
     return 0
 

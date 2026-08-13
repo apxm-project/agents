@@ -18,33 +18,31 @@ file is the spec.
 ## Allowed types
 
 `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `chore`, `bench`,
-`eval`, `prereg`, `sec`, `style`.
+`sec`, `style`.
 
 `sec` is for security fixes/hardening; `style` is for formatting-only
 changes (e.g. `cargo fmt`). Exactly these. Deprecated spellings the lint
 will reject with a suggestion:
 
-- `pre-reg`, `preregister`, `preregistration` → `prereg`
 - `Add …`, `Update …`, `Harden …` (no type prefix) → `<type>(<scope>): …`
 
 ## Scope rules
 
 - Shape: `[A-Za-z][A-Za-z0-9_/-]*`. Common examples: `runtime`,
-  `compiler`, `core`, `cli`, `frontend`, `vllm`, `backends`,
+  `compiler`, `core`, `cli`, `frontend`, `backends`,
   `benchmarks`, `tools`, `mlir`, `dispatch`, `lint`, `agents`, `tests`,
-  `metrics`, `examples`, `deploy`, `external/vllm`.
-- `planNN` (e.g. `plan04`, `plan09`) is **only** valid for `prereg(...)`
-  and `eval(...)`. Never for `feat`, `fix`, `refactor`, `perf`, `chore`.
-- Use `plan04` (no hyphen), not `plan-04`.
+  `metrics`, `examples`.
+- Use subsystem scopes such as `compiler`, `runtime`, `frontend`, or
+  `examples`; do not scope commits by a plan number.
 - Tool/agent names (`ultrathink`, `claude`, `codex`, `cursor`, `aider`,
   `copilot`) are not valid scopes — name the subsystem instead.
 
-Wrong: `feat(plan04): cohort stamping` — scope by *subsystem*:
+Wrong: `feat(run42): cohort stamping` — scope by *subsystem*:
 `feat(benchmarks): cohort stamping for cross-system run`.
 
 Wrong: `fix(ultrathink): foo` — name the actual subsystem touched.
 
-Right: `prereg(plan09): J/req cell — telecom N=20`.
+Right: `feat(benchmarks): add telecom workload`.
 
 ## Excluded from subject
 
@@ -61,10 +59,8 @@ Right: `prereg(plan09): J/req cell — telecom N=20`.
   - `🤖 Generated with …`
 - Referential phrasing tied to ephemeral context:
   - "as discussed", "per the chat", "per the user", "Claude said".
-- Cross-references to plans / tickets / skills for non-`prereg`/`eval`
-  commits. Those belong in the PR description. Exception: `prereg(...)`
-  and `eval(...)` bodies may cite the experiment id and the
-  preregistration file path.
+- Cross-references to plans, tickets, or skills. Those belong in the
+  change description or issue tracker, not in the commit body.
 
 ## Required in body (when a body is present)
 
@@ -74,17 +70,10 @@ Right: `prereg(plan09): J/req cell — telecom N=20`.
 
 ## Per-type expectations
 
-- `prereg(<planNN>)`: subject names the cell/scenario; body cites the
-  owning `evaluation/<scenario>/preregistration.json` and the fixed metric,
-  split, arm, and decision-rule design. No write-up of results — that belongs
-  in an `eval(...)` commit later.
-- `eval(<scenario>)`: subject names the scenario; body cites the
-  preregistration commit SHA and the artifact path under
-  `.apxm/evaluation/`.
-- `bench(<scenario>)` / `feat(benchmarks)`: scope by the workload name
-  (`apxm_review_council`, `apxm_priority_lane`), not by plan id.
-- `chore(external/vllm)`: submodule bump; body names the upstream SHA
-  and what APXM commits ride on top.
+- `bench(<scenario>)` / `feat(benchmarks)`: scope by the workload name,
+  not by a plan or ticket id.
+- `chore(agents)`: agent-facing contract and generated-instruction
+  maintenance.
 - `docs(<scope>)`: when touching `.agents/` SSOT, remember to
   `dekk agents skills generate --target all` so generated agent files stay synced.
 

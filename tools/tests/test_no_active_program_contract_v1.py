@@ -12,13 +12,11 @@ ACTIVE_ROOTS = (
     ".dekk.toml",
     "contracts/schemas",
     "contracts/vectors",
-    "contracts/reference-host",
     "crates/compiler",
     "crates/machine/program/src",
     "crates/runtime",
     "crates/tools",
     "examples",
-    "release/manifests",
     "tools/scripts",
 )
 EXEMPTIONS = {

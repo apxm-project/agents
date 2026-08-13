@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check authoring exports and teaching imports against the surface manifest."""
+"""Check authoring exports and examples against the surface manifest."""
 
 from __future__ import annotations
 
@@ -14,9 +14,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = REPO_ROOT / "contracts" / "vectors" / "apxm.frontend-surface.v1.json"
 PYTHON_ROOT = REPO_ROOT / "crates" / "compiler" / "frontend" / "python" / "apxm_program" / "__init__.py"
 TYPESCRIPT_ROOT = REPO_ROOT / "crates" / "compiler" / "frontend" / "typescript" / "src" / "index.ts"
-TEACHING_DOCUMENTS = (
-    *sorted((REPO_ROOT / "docs" / "guides").glob("*.md")),
-    REPO_ROOT / "docs" / "agents" / "first-agent.md",
+AUTHORING_SAMPLES = (
+    *sorted((REPO_ROOT / "examples").glob("**/*.md")),
     REPO_ROOT / "crates" / "compiler" / "frontend" / "python" / "README.md",
     REPO_ROOT / "crates" / "compiler" / "frontend" / "typescript" / "README.md",
 )
@@ -66,7 +65,7 @@ def typescript_exports(path: Path) -> set[str]:
 
 
 def imported_names(text: str, path: Path) -> list[str]:
-    """Return authoring imports in teaching snippets, with their source path."""
+    """Return authoring imports in examples, with their source path."""
     violations: list[str] = []
     patterns = (
         r"from\s+apxm_program\s+import\s+([^\n]+)",
@@ -106,9 +105,9 @@ def check() -> list[str]:
             f"TypeScript root exports differ from manifest: expected {sorted(expected)}, got {sorted(ts_surface)}"
         )
 
-    for document in TEACHING_DOCUMENTS:
-        if document.exists():
-            failures.extend(imported_names(document.read_text(encoding="utf-8"), document))
+    for sample in AUTHORING_SAMPLES:
+        if sample.exists():
+            failures.extend(imported_names(sample.read_text(encoding="utf-8"), sample))
     return failures
 
 
@@ -120,7 +119,7 @@ def main() -> int:
         for failure in failures:
             print(f"  {failure}", file=sys.stderr)
         return 1
-    print("OK: frontend exports and teaching imports match apxm.frontend-surface.v1.")
+    print("OK: frontend exports and authoring examples match apxm.frontend-surface.v1.")
     return 0
 
 

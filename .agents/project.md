@@ -22,7 +22,7 @@ GitHub Copilot reads `.github/copilot-instructions.md`.
 `agents` is the APXM abstract-machine repo: AIS dialect, compiler, runtime,
 capability contracts, context handling, permissions, orchestration, CLI, and
 the profile-backed agent execution path. It is not the whole APXM workspace;
-the top-level workspace coordinates docs and release entry points but owns no
+the top-level workspace coordinates shared documentation but owns no
 product control plane or alternate execution semantics. Downstream products may
 pin APXM, but `agents` stays product-neutral and cannot depend on their
 identifiers, schemas, routes, or services.
@@ -43,15 +43,11 @@ Command groups (see `dekk agents --help` for the live list):
 - **Build & Test**: `build`, `build-dialect`, `test`, `test-cli`,
   `test-python-frontend`, `codegen`, `clean`, `scrub-rustc-cache`
 - **Compilation**: `compile`, `execute`, `run`, `decompile`
-- **Authoring**: `validate`, `analyze`, `explain`, `gui`, `tokenize`
+- **Authoring**: `validate`, `analyze`, `explain`, `tokenize`
 - **Goals & Workflows**: `goal`
-- **Configuration**: `doctor`, `backend`, `vllm`, `agent`, `tool`, `cache`,
-  `process`, `mcp`, `server`, `commit-lint`
+- **Configuration**: `doctor`, `backend`, `agent`, `tool`, `cache`, `process`,
+  `mcp`, `commit-lint`
 - **Discovery**: `ops`, `template`
-- **Release**: `release {check, dist, publish, pypi}`
-- **vLLM operate**: `dekk agents vllm {doctor, probe, cache-warm,
-  docker-build, docker-save, docker-load, zoo-apply, zoo-status, zoo-scale,
-  zoo-cache-warm, service-list, service-status, service-exec, service-stop}`
 
 If a needed action isn't yet wrapped, **add a Dekk command** in `.dekk.toml`
 rather than shelling out — that is the project-wide pattern.
@@ -80,7 +76,7 @@ content themselves; they point at `_shared/` rules.
    abstractions, referential comments, and over-large skill bodies before
    declaring done.
 5. **`finish`** — pre-claim gate: run focused
-   `dekk agents test`, `dekk agents doctor`, release checks, secrets scan,
+   `dekk agents test`, `dekk agents doctor`, secrets scan,
    artifact-placement check. Refuse to claim "done" until all pass.
 6. **`commit`** — commit/push gate: enforce the
    user's commit rules — no auto-commit, no push without explicit
@@ -88,8 +84,7 @@ content themselves; they point at `_shared/` rules.
    authorized.
 
 This is the *ironbear pattern* — each skill is a checkpoint, not a body of
-new content. Skills inside the lifecycle can invoke domain skills (e.g.
-`vllm-service` for vLLM service operations).
+new content.
 
 ## 4. Repo layout
 
@@ -102,38 +97,18 @@ new content. Skills inside the lifecycle can invoke domain skills (e.g.
     TableGen-driven MLIR.
   - `crates/runtime/` — executor, handlers, backend adapters (LLM, local,
     tool).
-  - `crates/runtime/backends/` — LLM provider implementations,
-    vLLM-fork glue.
+  - `crates/runtime/backends/` — LLM provider implementations.
   - `crates/tools/cli/` — `apxm` binary subcommands.
-- **`external/vllm/`** — git submodule, vLLM fork on branch
-  `apxm-rebase-v0.21.0` (upstream v0.21.0 + 5 APXM commits at
-  `apxm-project/vllm`). Never edit upstream files there directly without a
-  cherry-pick plan.
 - **`tools/scripts/`** — Python entrypoints Dekk calls into (`cargo.py`,
-  `vllm.py`, `release.py`, `apxm_mcp_install.py`). Larger command implementations live in a
-  script-local package such as `apxm_release/`.
+  `apxm_mcp_install.py`).
 - **`crates/compiler/frontend/python/apxm_program/`** — the canonical
   installable Python Agent Program authoring frontend. It is the only
   Python package under the authoring frontend.
-- **`tools/apxm_vllm/`** — operator-side APXM/vLLM contract, importable from
-  the `tools/` PYTHONPATH root. `apxm_vllm.contract` owns the operational
-  names (env vars, routes, dataclasses, `build_layout()`);
-  `apxm_vllm.data_config` resolves the `.apxm/` data buckets. Operator
-  tooling only; authoring never imports it.
-- **`deploy/vllm/`** — `zoo.toml` manifests (operator state) and
-  `run-vllm.sh` (the deploy script used by zoo services).
 - **`docs/`** — design docs for the core runtime.
 - **`.agents/`** — this SSOT plus `_shared/` rules, lifecycle skills,
   domain skills, and `domains/` navigation README-only directories.
-- **`.apxm/`** — generated artifacts (gitignored): benchmark results,
-  evaluation runs, service registry, compiler diagnostics, vLLM images.
-
-### External dependency: vLLM fork
-
-`apxm-project/vllm` is the graph-aware vLLM fork that exposes five
-`/v1/apxm/*` routes and the `vllm_xargs.apxm` request-hint envelope. It
-is vendored at `external/vllm` on branch `apxm-rebase-v0.21.0` and is the
-only external repo this codebase depends on directly.
+- **`.apxm/`** — generated compiler, execution, and local session artifacts
+  (gitignored).
 
 Skills under `.agents/skills/` are agent-tooling for working *on* APXM and
 stay here.
@@ -151,7 +126,7 @@ Standard cadences:
 
 ```bash
 dekk agents doctor                # always run on session start
-dekk agents build                 # release build of apxm-cli (driver+metrics)
+dekk agents build                 # build of apxm-cli (driver+metrics)
 dekk agents build-dialect         # rebuild MLIR after .td or C++ shim edits
 dekk agents codegen               # regen Python frontend bindings after .td edits
 dekk agents test                  # workspace tests (excluding compiler+cli)
@@ -170,48 +145,25 @@ Rust workspace will compile or the Python frontend will see the new op.
 
 All generated artifacts live under `.apxm/` (repo-local, gitignored).
 Never put benchmark CSVs, session directories, `.apxmobj` files, compiler
-diagnostics, evidence manifests, vLLM logs, or per-run configs under
+diagnostics, evidence manifests, or per-run configs under
 `examples/`, `docs/`, or repo root.
-
-Use the helper:
-
-```python
-from apxm_vllm.contract import RepoLayout, build_layout
-layout = build_layout(__file__)  # paths for benchmarks/evaluation/vllm-*
-```
-
-Canonical sub-locations:
-
-- Benchmark results: `.apxm/benchmarks/results/`
-- Evaluation runs: `.apxm/evaluation/<scenario>/runs/<UTC>/`
-- vLLM image store: `.apxm/vllm-images/`
-- vLLM service registry: `.apxm/vllm-services/`
-- HF cache: `data.vllm.hf_cache` in `.apxm/config.toml`, or
-  `APXM_VLLM_HF_HOME` (must be visible from every Slurm compute node).
 
 If you find a generated artifact under `examples/` or `docs/`, move it to
 the matching `.apxm` location and patch whatever script wrote it there —
 do **not** add an ignore guard to mask the bug.
 
-## 7. vLLM operating contract
+## 7. Verification contract
 
-Hard-fail at config time, never `or env or default` chains. Use the zoo
-manifest as the operator surface and keep service state explicit.
+Run `dekk agents doctor` and the smallest focused test for the changed crate.
+Promote schema and attribute strings to their owning constants rather than
+duplicating literals.
 
-Run `dekk agents release check` before release work; use focused tests for
-ordinary development changes.
+## 8. PXM theory and current semantics
 
-Promote contract strings (env var names, route paths, response markers)
-to constants. The `metrics_keys::*` and `graph_attrs::*` modules are the
-source of truth — refer to them, don't duplicate the literal.
-
-## 8. Owner-local evaluation
-
-Agents-owned offline and observed prompt evaluation lives under
-`evaluation/` and is driven through the `dekk agents
-offline-prompt-evaluation` and `dekk agents observed-prompt-evaluation`
-surfaces. Each bundle carries a `preregistration.json` recording disjoint
-case ids, digests, and provenance before execution.
+The pages under `docs/pxm/` preserve the theory and historical lineage of the
+abstract machine. They are not alternate executable APIs. Current authority is
+the five-operation AIS catalogue, FrontendGraph, AIR, exact Port Contracts,
+and the execution runtime described by current contracts and guides.
 
 ## 9. AIS operation ownership
 
@@ -222,12 +174,10 @@ compiler passes, runtime handlers, frontends, and inference backends are
 consumers. `ais.loop` is not a sixth effect/composition operation, and no
 frontend exposes a raw operation builder.
 
-`ConversationalAgent` is a repository-example construct only. Gao is a
-Studio-owned ordinary Agent Program that enters through the same external
-source boundary as any other product package. Neither is an installable
-frontend export or core compiler/runtime concept. Runtime evidence records
-committed loop iterations through generic `LoopIterationCompleted` facts; core
-has no `Turn` type.
+Repository examples are ordinary Agent Programs, not core runtime types or
+product lifecycle concepts. Runtime evidence records committed loop
+iterations through generic `LoopIterationCompleted` facts; core has no `Turn`
+type.
 
 After editing any `.td` file (TableGen op definition) or a TableGen-emitted C++
 shim:
@@ -272,25 +222,17 @@ keep code, schemas, and evidence aligned.
 
 ## 11. Storage layout
 
-`/home` is shared WekaFS (9.1 TiB, 50+ tenants). It is **not** personal
-disk:
+`/home` is shared WekaFS. It is **not** personal disk:
 
 - **Build outputs**: `/tmp/apxm-target-$USER` (456 GiB local). `/home`
   contention has caused random ENOSPC and invalid-rustc-cache SIGBUS in
   the past.
-- **HF cache + vLLM images + service registry**: under
-  `~/.cache/huggingface-apxm-vllm/hub/` and `.apxm/vllm-images/`; these
-  must be visible from every Slurm compute node at the same path.
-  `dekk agents vllm doctor` prints the resolved layout.
-- **HF cache deletion**: blobs are root-owned (docker runs as root). A
-  plain `rm` silently succeeds without freeing space — use `sudo rm`.
 - **Config resolver**: `load_scoped` is **first-wins, not merge**. A
   project-local `.apxm/config.toml` with only a data-dir override will
   shadow the backend block in `~/.apxm/config.toml` and produce a silent
   "no backends configured". Either fully merge or use one config file.
 
-See `docs/backends/storage-layout.md` for the full contract and the
-supported migration procedure.
+See the local `.apxm` configuration contract in the runtime crates.
 
 ## 12. Boundaries (read before any potentially destructive action)
 

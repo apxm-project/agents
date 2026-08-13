@@ -2,7 +2,7 @@
 
 An Agent Program is ordinary Python or TypeScript source. The frontend reads
 that source statically into `apxm.frontend-graph.v2`; Rust alone validates it,
-constructs CFG/SSA and AIR, and produces the artifact admitted by Server.
+constructs CFG/SSA and AIR, and produces the artifact admitted by the host.
 
 The public authoring vocabulary is `Agent`, `Context`, `Tool`, `Model`, and
 ordinary language control flow. `Capability`, `Event`, `Hook`, and `TaskGroup`
@@ -82,7 +82,7 @@ admitted Capability execution boundary. See
 ## Compile through the owner boundary
 
 Place source and its manifest in an Agent Program Source Bundle, then submit it
-through Server compile-admission. Studio follows the same source-first path.
+through host compile-admission. Other tools follow the same source-first path.
 The compiler bridge is explicit and has no local fallback, raw-AIR input, or
 frontend runtime mode.
 

@@ -18,16 +18,9 @@ const CANONICAL_JOB_COMMANDS: &[&str] = &[
 const APXM_BINARY: &str = "apxm";
 const DEKK_BINARY: &str = "dekk";
 const DEKK_AGENTS_SURFACE: &str = "agents";
-const APXM_SERVER_BINARY: &str = "apxm-server";
-const APXM_STUDIO_BINARY: &str = "apxm-studio";
-const VLLM_ENTRYPOINT: &str = "vllm.entrypoints.cli.main";
-const VLLM_SCRIPT: &str = "tools/scripts/vllm.py";
 
 #[derive(Clone, Debug)]
-struct ProcessScope {
-    include_services: bool,
-    include_vllm: bool,
-}
+struct ProcessScope {}
 
 #[derive(Debug, Serialize)]
 struct ProcessReport {
@@ -50,27 +43,13 @@ struct ProcEntry {
 
 pub fn process_command(action: ProcessAction, json: bool) -> Result<()> {
     match action {
-        ProcessAction::List {
-            include_services,
-            include_vllm,
-        } => {
-            let scope = ProcessScope {
-                include_services,
-                include_vllm,
-            };
+        ProcessAction::List {} => {
+            let scope = ProcessScope {};
             let matches = matching_processes(&scope)?;
             emit_process_list(&matches, json)
         }
-        ProcessAction::Stop {
-            dry_run,
-            force,
-            include_services,
-            include_vllm,
-        } => {
-            let scope = ProcessScope {
-                include_services,
-                include_vllm,
-            };
+        ProcessAction::Stop { dry_run, force } => {
+            let scope = ProcessScope {};
             let matches = matching_processes(&scope)?;
             stop_processes(&matches, dry_run, force, json)
         }
@@ -216,18 +195,12 @@ fn process_belongs_to_project(entry: &ProcEntry, project_root: &Path) -> bool {
     entry.cmdline.iter().any(|arg| arg.contains(root.as_ref()))
 }
 
-fn classify_process(cmdline: &[String], scope: &ProcessScope) -> Option<String> {
+fn classify_process(cmdline: &[String], _scope: &ProcessScope) -> Option<String> {
     if matches_direct_apxm_job(cmdline) {
         return Some("apxm-job".to_string());
     }
     if matches_dekk_apxm_job(cmdline) {
         return Some("dekk-apxm-job".to_string());
-    }
-    if scope.include_services && matches_apxm_service(cmdline) {
-        return Some("apxm-service".to_string());
-    }
-    if scope.include_vllm && matches_vllm_process(cmdline) {
-        return Some("vllm".to_string());
     }
     None
 }
@@ -275,21 +248,6 @@ fn is_apxm_job_command(args: &[String]) -> bool {
         return false;
     };
     CANONICAL_JOB_COMMANDS.contains(&command)
-}
-
-fn matches_apxm_service(cmdline: &[String]) -> bool {
-    cmdline.iter().any(|arg| {
-        let name = basename(arg);
-        name == APXM_SERVER_BINARY || name == APXM_STUDIO_BINARY
-    }) || cmdline
-        .windows(2)
-        .any(|window| basename(&window[0]) == APXM_BINARY && window[1].as_str() == "studio")
-}
-
-fn matches_vllm_process(cmdline: &[String]) -> bool {
-    cmdline
-        .iter()
-        .any(|arg| arg.contains(VLLM_ENTRYPOINT) || arg.ends_with(VLLM_SCRIPT))
 }
 
 fn basename(text: &str) -> &str {

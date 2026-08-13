@@ -1,7 +1,7 @@
 ---
 name: finish
 group: Lifecycle
-description: Pre-claim gate — runs focused dekk agents test, doctor, release checks when relevant, secrets scan, and artifact-placement check before any claim of completion. Refuses to claim done until all pass.
+description: Pre-claim gate — runs focused Dekk tests, doctor, secrets, and artifact-placement checks before any claim of completion. Refuses to claim done until all pass.
 user-invocable: true
 ---
 
@@ -24,28 +24,25 @@ Run these in order. If any fail, do **not** claim completion:
      `crates/compiler/frontend/python/` changed.
 3. **Doctor**: `dekk agents doctor`. Catches a drifted conda env or
    stale MLIR.
-4. **Release checks** when release-facing files changed:
-   `dekk agents release check` with the smallest justified skip set for
-   unrelated expensive checks.
-5. **Commit-message lint** for any queued commits:
+4. **Commit-message lint** for any queued commits:
    `dekk agents commit-lint --range origin/main..HEAD`.
-6. **Skills status** if anything under `.agents/` changed:
+5. **Skills status** if anything under `.agents/` changed:
    `dekk agents skills status`. Confirm generated agent files and
    `.agents.json` are coherent.
-7. **`git status --short`** and **`git diff --stat`**. Read every
+6. **`git status --short`** and **`git diff --stat`**. Read every
    line. Nothing should be unexpected.
-8. **Secrets scan** if settings/env/deploy files changed:
+7. **Secrets scan** if settings/env/deploy files changed:
    ```bash
    git diff --staged | grep -iE 'LLM_GATEWAY_KEY|oauth_token|hf_token|HUGGING_FACE_HUB_TOKEN|sk-[a-zA-Z0-9]{20,}'
    ```
    Should return nothing. Also confirm `.claude/settings.local.json`
    is **not** staged (it's gitignored for a reason).
-9. **Artifact placement** if any new path is added:
+8. **Artifact placement** if any new path is added:
     - All generated artifacts under `.apxm/`?
     - Nothing under `examples/**/results/`, `examples/**/runs/`, or
       `examples/**/sessions/`?
     - `RepoLayout` used for any new path?
-10. **Report concretely** to the user:
+9. **Report concretely** to the user:
     - What changed (per file/crate).
     - What passed (each command + exit code).
     - What's local-only (build artifacts, local config).
@@ -63,7 +60,6 @@ Run these in order. If any fail, do **not** claim completion:
 ### Passed
 - dekk agents test -p <crate>: green
 - dekk agents doctor: green
-- dekk agents release check: green
 - skills status: coherent
 
 ### Local-only

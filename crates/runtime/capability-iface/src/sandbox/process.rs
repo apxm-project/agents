@@ -117,17 +117,8 @@ impl ProcessSandbox {
                     String::new()
                 };
 
-                // Truncate (floor to char boundary to avoid panic on multi-byte UTF-8)
-                let stdout = if stdout.len() > max {
-                    stdout[..stdout.floor_char_boundary(max)].to_string()
-                } else {
-                    stdout
-                };
-                let stderr = if stderr.len() > max {
-                    stderr[..stderr.floor_char_boundary(max)].to_string()
-                } else {
-                    stderr
-                };
+                let stdout = truncate_output(stdout, max);
+                let stderr = truncate_output(stderr, max);
 
                 Ok(SandboxResult {
                     stdout,
@@ -179,4 +170,18 @@ impl ProcessSandbox {
         )
         .await
     }
+}
+
+/// Truncate captured process output without splitting a UTF-8 code point.
+fn truncate_output(text: String, max: usize) -> String {
+    if text.len() <= max {
+        return text;
+    }
+    let boundary = text
+        .char_indices()
+        .take_while(|(index, _)| *index < max)
+        .map(|(index, _)| index)
+        .last()
+        .unwrap_or(0);
+    text[..boundary].to_string()
 }

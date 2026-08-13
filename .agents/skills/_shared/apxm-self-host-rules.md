@@ -26,12 +26,10 @@ pairs with `check_commit_message.py`.
    provider-specific host exists.
 4. **Control flow lives in the graph, not the agent.** Use
    `BRANCH_ON_VALUE` / fan-in nodes; do not delegate "iterate until
-   tests pass" to an agent's internal loop. There is no `g.loop()` sugar
-   (LOOP_START/LOOP_END were removed because they compiled but never
-   re-executing at runtime); real in-graph iteration is the splice-based
-   session/turn re-arm mechanism (drive it via the host turn-loop, e.g.
-   `apxm chat`) or `AUTONOMOUS`'s fused plan/act/evaluate macro-op. Design
-   convergence as explicit graph structure, not an agent instruction.
+   tests pass" to an agent's internal loop. Design convergence as explicit
+   graph structure, not an agent instruction. Runtime iteration must use the
+   structural loop and yield/resume semantics exposed by the canonical
+   frontend and AIR contracts.
 
 ## Authoring checklist
 

@@ -15,8 +15,8 @@ greppable subset.
   identifier name carries the meaning, no comment is needed.
 - **Zero `TODO` / `FIXME` / `XXX` / `HACK` in first-party code.**
   Work-in-progress goes in a module-doc `Status` / `Future work` prose
-  section. Vendored trees (`tools/external/*`, `external/vllm`) are
-  exempt — never edit upstream markers.
+  section. Vendored or generated dependency trees are exempt — never edit
+  upstream markers.
 - **No license / SPDX / copyright headers.**
 - **No referential comments.** Never point at plans, tickets, prior
   conversations, audit artifacts, or `// see X.md`. The commit message
