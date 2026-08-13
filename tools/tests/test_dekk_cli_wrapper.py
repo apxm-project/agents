@@ -71,7 +71,6 @@ class DekkCliWrapperTests(unittest.TestCase):
         rendered = stderr.getvalue()
         self.assertIn("requires an exact `cargo run` target", rendered)
         self.assertIn("`--bin apxm`", rendered)
-        self.assertIn("`--bin apxm-reference-host`", rendered)
 
     def test_cargo_wrapper_fails_closed_on_macos_linux_compiler_mismatch(self) -> None:
         stderr = io.StringIO()
@@ -89,7 +88,7 @@ class DekkCliWrapperTests(unittest.TestCase):
                         with contextlib.redirect_stderr(stderr):
                             with mock.patch.object(self.cargo_wrapper.subprocess, "run") as run_mock:
                                 exit_code = self.cargo_wrapper.main(
-                                    ["test", "-p", "apxm-cli", "--test", "reference_host_jsonl", "--release"]
+                                    ["test", "-p", "apxm-cli", "--lib", "--release"]
                                 )
 
         self.assertEqual(exit_code, self.cargo_wrapper.READINESS_FAILURE_EXIT_CODE)
@@ -191,7 +190,7 @@ class DekkCliWrapperTests(unittest.TestCase):
                                 "-p",
                                 "apxm-cli",
                                 "--bin",
-                                "apxm-reference-host",
+                                "apxm",
                                 "--release",
                                 "--target",
                                 "x86_64-unknown-linux-gnu",
@@ -200,81 +199,6 @@ class DekkCliWrapperTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 31)
         run_mock.assert_called_once()
-
-    def test_cargo_wrapper_rejects_linux_arm64_reference_host_target_without_toolchain(self) -> None:
-        stderr = io.StringIO()
-        with mock.patch.object(self.cargo_wrapper.platform, "system", return_value="Darwin"):
-            with mock.patch.object(self.cargo_wrapper.platform, "machine", return_value="arm64"):
-                with mock.patch.dict(
-                    self.cargo_wrapper.os.environ,
-                    {
-                        "CC": "/tmp/x86_64-conda-linux-gnu-gcc",
-                        "CXX": "/tmp/x86_64-conda-linux-gnu-g++",
-                    },
-                    clear=False,
-                ):
-                    with contextlib.redirect_stderr(stderr):
-                        with mock.patch.object(self.cargo_wrapper.subprocess, "run") as run_mock:
-                            exit_code = self.cargo_wrapper.main(
-                                [
-                                    "build",
-                                    "-p",
-                                    "apxm-cli",
-                                    "--bin",
-                                    "apxm-reference-host",
-                                    "--release",
-                                    "--target",
-                                    "aarch64-unknown-linux-gnu",
-                                ]
-                            )
-
-        self.assertEqual(exit_code, self.cargo_wrapper.READINESS_FAILURE_EXIT_CODE)
-        run_mock.assert_not_called()
-        rendered = stderr.getvalue()
-        self.assertIn("APXM Linux target readiness failed", rendered)
-        self.assertIn("Requested cargo target: aarch64-unknown-linux-gnu", rendered)
-        self.assertIn("Build target: apxm-reference-host", rendered)
-        self.assertIn("CC=/tmp/x86_64-conda-linux-gnu-gcc", rendered)
-        self.assertIn("CXX=/tmp/x86_64-conda-linux-gnu-g++", rendered)
-        self.assertIn("matching Linux arm64 compiler/sysroot", rendered)
-
-    def test_cargo_wrapper_rejects_linux_arm64_reference_host_target_without_dekk_metadata(self) -> None:
-        stderr = io.StringIO()
-        with tempfile.TemporaryDirectory() as temp_dir_name:
-            temp_dir = Path(temp_dir_name)
-            with mock.patch.object(self.cargo_wrapper, "_repo_root", return_value=temp_dir):
-                with mock.patch.object(self.cargo_wrapper.platform, "system", return_value="Darwin"):
-                    with mock.patch.object(self.cargo_wrapper.platform, "machine", return_value="arm64"):
-                        with mock.patch.dict(
-                            self.cargo_wrapper.os.environ,
-                            {},
-                            clear=True,
-                        ):
-                            with contextlib.redirect_stderr(stderr):
-                                with mock.patch.object(
-                                    self.cargo_wrapper.subprocess, "run"
-                                ) as run_mock:
-                                    exit_code = self.cargo_wrapper.main(
-                                        [
-                                            "build",
-                                            "-p",
-                                            "apxm-cli",
-                                            "--bin",
-                                            "apxm-reference-host",
-                                            "--release",
-                                            "--target",
-                                            "aarch64-unknown-linux-gnu",
-                                        ]
-                                    )
-
-        self.assertEqual(exit_code, self.cargo_wrapper.READINESS_FAILURE_EXIT_CODE)
-        run_mock.assert_not_called()
-        rendered = stderr.getvalue()
-        self.assertIn("APXM Linux target readiness failed", rendered)
-        self.assertIn("Requested cargo target: aarch64-unknown-linux-gnu", rendered)
-        self.assertIn("Build target: apxm-reference-host", rendered)
-        self.assertIn("No Dekk Linux compiler metadata was found under `.dekk/`", rendered)
-        self.assertIn("matching Linux arm64 compiler/sysroot", rendered)
 
     def test_dekk_manifest_pins_exact_apxm_run_target(self) -> None:
         manifest = tomllib.loads(DEKK_MANIFEST_PATH.read_text(encoding="utf-8"))

@@ -24,7 +24,7 @@ review = await SecurityReviewer.invoke(ReviewRequest(diff=diff))
 const review = await SecurityReviewer.invoke({ diff });
 ```
 
-`SecurityReviewer` is a statically imported typed `ProgramRef`. Server admits
+`SecurityReviewer` is a statically imported typed `ProgramRef`. The host admits
 the exact child artifact and Agent Identity. The parent receives the declared
 plain result, not the child's private Context or authority.
 
@@ -61,7 +61,7 @@ match choice:
 
 The closed enum may come from pure logic, a model call or an admitted
 Capability. It cannot contain an arbitrary program name. Source owns the
-branch, so compiler and Studio can explain it.
+branch, so the compiler and an authorized host can explain it.
 
 ## 5. Hierarchy, Skills and authority
 
@@ -79,5 +79,5 @@ grants, prompt history or filesystem access automatically.
 Parent and child have distinct Program Invocations linked by causal evidence.
 Cancellation propagates only according to the structured task contract.
 Idempotency, retries and outcome-unknown handling remain per exact effect.
-Studio can traverse parent → child → node while preserving each identity,
+An authorized host can traverse parent → child → node while preserving each identity,
 authority, budget, usage and Session Output folder.

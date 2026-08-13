@@ -7,9 +7,9 @@ user-invocable: true
 
 # APXM AIS Op Design
 
-The AIS dialect is the public IR contract — compiler passes, runtime
-handlers, the Python frontend, and the vLLM fork all consume it.
-**Every other crate consumes; only `apxm-core` defines.**
+The AIS dialect is the public IR contract — compiler passes, runtime handlers,
+and the Python/TypeScript frontends consume it. **Every other crate consumes;
+only `crates/machine/ais` defines.**
 
 Load `_shared/apxm-development-rules.md` before broad work.
 
@@ -31,15 +31,15 @@ Before editing `definitions.rs`, answer in writing (in the plan):
 3. **Type signature.** Operands/results, and which attributes it carries.
 4. **Attribute naming.** Every attribute name is an `attrs.rs` constant
    added to `ALL_ATTR_NAMES`. No string literals in spec/TableGen/handler.
-5. **Frontend / runtime / vLLM impact.** What `dekk agents validate` must
+5. **Frontend / runtime impact.** What `dekk agents validate` must
    accept; which runtime handler owns dispatch; whether it crosses
-   `/v1/apxm/*` (if so coordinate with `fork-vllm-rebase`).
+   any provider-specific route (which remains an external adapter concern).
 
 Get user sign-off on the design before any code change.
 
 ## Source of truth and what's generated
 
-`crates/machine/core/src/operations/definitions.rs` is the source of truth. Two
+`crates/machine/ais/src/operations/definitions.rs` is the source of truth. Two
 layers are **generated from it — never hand-edit**:
 
 - the C++ `OperationKind` enum + lowering `TypeSwitch` cases
@@ -51,7 +51,7 @@ generated — its `arguments` must match the spec's attribute fields by name.
 
 ## Layers to edit, in order (a new op)
 
-1. `crates/machine/core/src/operations/definitions.rs`:
+1. `crates/machine/ais/src/operations/definitions.rs`:
    - add the `AISOperationType` variant;
    - append `(N, AISOperationType::Yours)` to `WIRE_INDEXED_OPERATIONS`
      (next free index — **append-only; index 30 is reserved**);
@@ -60,7 +60,7 @@ generated — its `arguments` must match the spec's attribute fields by name.
    The exhaustive matches (`Display`, `FromStr`, `mlir_mnemonic`,
    `to_tablegen_name`) **fail to compile** until you add each arm — let
    the compiler drive them.
-2. `crates/machine/core/src/operations/attrs.rs`: add each attribute-name const and
+2. `crates/machine/ais/src/attrs.rs`: add each attribute-name const and
    list it in `ALL_ATTR_NAMES`.
 3. `mlir/include/ais/Dialect/AIS/IR/AISOps.td`: hand-write the `AIS_Op`
    def; its `arguments` mirror the spec fields by the same attr names
@@ -70,8 +70,8 @@ generated — its `arguments` must match the spec's attribute fields by name.
    `executor/dispatcher.rs` (`match node.op_type`). Lowering in
    `mlir/lib/Dialect/AIS/Conversion/Artifact/ArtifactEmitter.cpp` is
    usually untouched — its cases are generated.
-5. Consumers (`apxm-studio/src/air.rs`, prompt-as-workflow catalog) only
-   if the op is author-facing.
+5. Consumers only if the operation is author-facing; downstream products are
+   outside this repository.
 
 ## Build + verify cadence
 
@@ -97,9 +97,3 @@ and the spec-field ↔ TableGen-attr parity test.
 - Don't add an op for "future flexibility" with no current consumer.
 - Pass-list edits (`build_pass_list`) apply **only** if the op also ships
   a new pass — not a normal add-op step.
-
-## Self-hosted workflow
-
-The add-op procedure (architect → parallel compiler/runtime impl → reviewer)
-is authored as an APXM graph / goal bundle, not ad-hoc Python. Follow this
-skill's steps, then verify against it. See `_shared/apxm-self-host-rules.md`.

@@ -4,8 +4,8 @@
   direction
 - Frontend syntax status: implemented source-first authoring surface; package
   export and canonical capture checks are the current compatibility evidence
-- Implementation plan:
-  [Source-first Agent frontend master plan](../agents/simple-agent-authoring-frontend-plan.md)
+- Implementation contract:
+  [Agent Program composition and AIR](../agents/agent-program-composition-and-air-contract.md)
 - Audience: Python and TypeScript authors
 
 ## 1. The simple rule
@@ -44,7 +44,8 @@ Markers are statically recognized by imported symbol identity. Compiling does
 not execute the decorator, declaration factory callback, Agent body, or handler
 to discover behavior. The complete declaration matrix and composition rules live
 in the master plan's
-[language projections and decorator matrix](../agents/simple-agent-authoring-frontend-plan.md#24-language-projections-and-decorator-matrix).
+the [Python frontend](../../crates/compiler/frontend/python/README.md) and
+[TypeScript frontend](../../crates/compiler/frontend/typescript/README.md).
 
 ### 1.2 Authoring conventions
 
@@ -94,16 +95,15 @@ That one path is what makes the frontend more than syntax sugar. The compiler
 can analyze types, dependencies, effects, Context flow, loops, and structured
 concurrency; legal optimizations retain source/static-node identity. Runtime
 then records dynamic NodeExecutions, attempts, effects, loop occurrences,
-Context transitions, usage, outputs, and failures that Studio can project back
-onto the same source. Exact inference implementations such as APXM-vLLM remain
-behind admitted ports and do not change the Agent API.
+Context transitions, usage, outputs, and failures that a host can project back
+onto the same source. Exact inference implementations remain behind admitted
+ports and do not change the Agent API.
 
 This boundary is fixed by
 [ADR-0006](../adr/0006-authoring-frontends-use-explicit-compiler-bridges.md),
 the
 [Agent Program contract](../agents/agent-program-composition-and-air-contract.md),
-and
-[ADR-0014](../adr/0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md).
+and the repository example boundary.
 
 ## 3. Python
 
@@ -402,8 +402,8 @@ typed values, and context edges from lexical source structure. Authors may
 inspect FrontendGraph and AIR after compilation, but neither is editable
 behavior source.
 
-Visual authoring and Studio should generate readable Python or TypeScript and
-use the same capture path. They must not maintain a Studio-only graph emitter.
+Visual authoring should generate readable Python or TypeScript and use the same
+capture path. It must not maintain a product-only graph emitter.
 
 Internally, the language frontend may use visitors and compiler passes over its
 bound typed source tree. Those passes have explicit inputs and outputs, retain
@@ -435,8 +435,8 @@ The frontend is ready when:
   strings, and registered AIS verification preserves every operand/result;
 - legal optimization preserves program meaning, authority, durability,
   source/evidence correlation, and observable outcomes;
-- exact inference backends, including APXM-vLLM, execute through the same
-  provider-neutral Model contract without appearing in source/AIR; and
+- exact inference backends execute through the same provider-neutral Model
+  contract without appearing in source/AIR; and
 - Tool decorators/references lower only through Capability contracts and never
   grant authority;
 - frontend packages contain no runtime, AIR printer, compiler fallback, or raw

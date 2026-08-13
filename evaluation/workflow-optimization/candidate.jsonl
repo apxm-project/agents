@@ -1,4 +1,0 @@
-{"id":"typed-system-role","output":"preserved","arm_id":"candidate-typed-planner","token_count":1,"latency_ms":4.0}
-{"id":"dependency-only-input","output":"dependency-only","arm_id":"candidate-typed-planner","token_count":1,"latency_ms":4.2}
-{"id":"tool-result-budget","output":"bounded","arm_id":"candidate-typed-planner","token_count":1,"latency_ms":4.4}
-{"id":"production-dspy","output":"rejected","arm_id":"candidate-typed-planner","token_count":1,"latency_ms":3.8}

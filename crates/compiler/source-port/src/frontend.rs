@@ -73,7 +73,10 @@ impl Frontend {
             // read the declared frontend package and nothing else on the
             // filesystem, and can write nowhere at all.
             Self::Typescript => vec![
-                "--permission".to_string(),
+                // `--experimental-permission` is supported across the Node
+                // versions used by the repository toolchain.
+                "--no-warnings".to_string(),
+                "--experimental-permission".to_string(),
                 format!("--allow-fs-read={}", frontend_root.display()),
                 "--input-type=module".to_string(),
                 "--eval".to_string(),

@@ -1,47 +1,12 @@
 //! Build script for the `apxm` CLI binary.
 //!
-//! Two unrelated jobs share this file because Cargo allows only one
-//! `build.rs` per crate:
-//!
-//! 1. Embed runpaths so optional driver-linked dylibs and MLIR/LLVM runtime
-//!    libraries resolve consistently for the final `apxm` binary.
-//! 2. Generate the typed HTTP client (`src/client/mod.rs`) from
-//!    `openapi/openapi-session-v1.yaml` via `progenitor` — folded in from the
-//!    former standalone `apxm-client` crate; it had no consumer
-//!    outside this binary.
+//! Embed runpaths so driver-linked dylibs and MLIR/LLVM runtime libraries
+//! resolve consistently for the final `apxm` binary.
 
 use std::env;
 use std::path::{Path, PathBuf};
 
 use apxm_core::toolchain_env;
-
-/// Job 2: generate the progenitor client from the OpenAPI spec into
-/// `OUT_DIR/apxm_client_codegen.rs`, included by `src/client/mod.rs`.
-fn generate_client_codegen() {
-    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let spec_path = manifest_dir.join("openapi/openapi-session-v1.yaml");
-    println!("cargo:rerun-if-changed={}", spec_path.display());
-
-    let spec_file = std::fs::File::open(&spec_path).unwrap_or_else(|error| {
-        panic!(
-            "failed to open OpenAPI spec {}: {error}",
-            spec_path.display()
-        )
-    });
-    let spec: openapiv3::OpenAPI =
-        serde_yaml::from_reader(spec_file).expect("OpenAPI spec parses as YAML");
-
-    let mut generator = progenitor::Generator::default();
-    let tokens = generator
-        .generate_tokens(&spec)
-        .expect("progenitor generates client tokens");
-    let ast = syn::parse2(tokens).expect("generated tokens parse as Rust syntax");
-    let content = prettyplease::unparse(&ast);
-
-    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    std::fs::write(out_dir.join("apxm_client_codegen.rs"), content)
-        .expect("write generated client");
-}
 
 // --- Cargo `build.rs` directives (machine-readable prefixes from Cargo docs) ---------------
 
@@ -104,7 +69,6 @@ fn export_contract_schema_env() {
 }
 
 fn main() {
-    generate_client_codegen();
     export_contract_schema_env();
 
     for key in toolchain_env::PREFIX_ENV_KEYS_FOR_RERUN {

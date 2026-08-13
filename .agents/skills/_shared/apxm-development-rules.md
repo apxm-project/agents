@@ -7,7 +7,7 @@ when writing tests load `_shared/apxm-test-rules.md`.
 ## Authority CLI
 
 - `dekk agents` is the only sanctioned entry point for build, test,
-  compile, execute, codegen, doctor, backend, vLLM, MCP, processes.
+  compile, execute, codegen, doctor, backend, MCP, and processes.
 - Never invoke `cargo`, `docker`, `srun`, `sbatch`, or
   `python tools/scripts/cargo.py` directly. Going through Dekk preserves the env
   contract (`CARGO_TARGET_DIR`, `MLIR_DIR`, `LD_LIBRARY_PATH`, etc.).
@@ -38,28 +38,21 @@ when writing tests load `_shared/apxm-test-rules.md`.
 
 ## Ownership
 
-- **`apxm-core`** owns the AIS dialect. Every other crate consumes it.
-  Never define an op outside `apxm-core`.
-- Canonical pass list:
-  `crates/compiler/pipeline/src/passes/pipeline.rs::build_pass_list()`.
-  Add new passes only there.
+- **`crates/machine/ais`** owns the AIS dialect. Every other crate consumes it.
+  Never define an op outside that crate.
+- Canonical AIR → AIS lowering is
+  `crates/compiler/pipeline/src/canonical.rs`; there is no second
+  optimization pipeline.
 - Attribute names: canonical enum in `apxm-core`. Python kwargs, MLIR
   attrs, Rust executors all resolve through it. See the
   `feedback_attribute_dual_naming` incident.
-- vLLM fork lives at `external/vllm` (submodule, branch
-  `apxm-rebase-v0.21.0`, upstream `apxm-project/vllm`). Edits there require
-  a cherry-pick plan and the G1 build/smoke gate.
 
 ## Reuse-first
 
-- Before inventing a path string, check `apxm_vllm.contract.RepoLayout` /
-  `apxm_vllm.contract.build_layout()`.
 - Before adding a new script, look in `tools/scripts/` — many entrypoints
-  already exist (`cargo.py`, `vllm.py`, `release.py`,
+  already exist (`cargo.py`,
   `apxm_mcp_install.py`). Keep public names in
   `.dekk.toml`; put larger implementations in a script-local package.
-  The shared APXM/vLLM operational names live in the `apxm` Python package at
-  `crates/compiler/frontend/python/`.
 
 ## Targeted verification
 
@@ -71,7 +64,6 @@ After each phase of work, run the smallest correct check:
 - Touched a `.td`? `dekk agents build-dialect && dekk agents codegen`,
   *then* the test commands.
 - Touched the Python frontend? `dekk agents test-python-frontend`.
-- Touched a vLLM zoo manifest? `dekk agents vllm zoo-status`.
 
 Run `dekk agents doctor` if anything in `dekk env`, the conda env, or the
 binary toolchain feels off.

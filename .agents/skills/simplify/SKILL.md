@@ -64,7 +64,7 @@ If the change adds or changes any skill, run
 ### 9. Generated artifact placement
 
 Confirm any new artifact path is under `.apxm/`. See
-`_shared/apxm-evaluation-rules.md`.
+`_shared/apxm-storage-layout-rules.md`.
 
 ## Output
 

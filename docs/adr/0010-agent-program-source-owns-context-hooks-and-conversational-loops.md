@@ -239,4 +239,4 @@ as use. Discovery Capabilities keep context bounded and explicit.
 - The compiler, artifact, and runtime remain generic; Studio owns Turn and
   inspection projections.
 - Implementation follows the
-  [Agent Program composition and AIR full-replacement plan](../agents/agent-program-composition-and-air-full-replacement-plan.md).
+  [Agent Program composition and AIR contract](../agents/agent-program-composition-and-air-contract.md).

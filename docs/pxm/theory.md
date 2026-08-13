@@ -2,7 +2,7 @@
 
 - Status: normative APXM v1 theory
 - Owner: APXM `agents`
-- Binding decisions: [ADR-0008](../adr/0008-agent-programs-compose-through-new-and-invoke.md), [ADR-0009](../adr/0009-air-has-five-public-semantic-operations.md), [ADR-0010](../adr/0010-agent-program-source-owns-context-hooks-and-conversational-loops.md), [ADR-0011](../adr/0011-agent-program-execution-is-one-end-to-end-spine.md), [ADR-0012](../adr/0012-acp-uses-explicit-capabilities-selection-is-not-runtime-semantics.md), [ADR-0014](../adr/0014-conversational-agent-and-gao-are-examples-over-generic-agent-program-apis.md), and [ADR-0017](../adr/0017-gao-is-a-studio-owned-agent-program-over-host-capabilities.md)
+- Binding decisions: [ADR-0008](../adr/0008-agent-programs-compose-through-new-and-invoke.md), [ADR-0009](../adr/0009-air-has-five-public-semantic-operations.md), [ADR-0010](../adr/0010-agent-program-source-owns-context-hooks-and-conversational-loops.md), [ADR-0011](../adr/0011-agent-program-execution-is-one-end-to-end-spine.md), [ADR-0013](../adr/0013-core-semantics-are-closed-and-implementations-enter-through-exact-port-bindings.md), and [ADR-0015](../adr/0015-source-first-agent-frontend-vocabulary.md)
 
 ## 1. Thesis
 
@@ -15,15 +15,15 @@ behavior of an agent or workflow through an APXM authoring frontend. The source
 records one equivalent FrontendGraph. Rust verifies and lowers that graph to
 AIR containing the closed five-operation effect/composition family and the
 closed structural family, then produces an immutable executable artifact.
-Server admits the artifact under current identity, authority, budget, profile,
+The host admits the artifact under current identity, authority, budget, profile,
 and event facts. The runtime executes the admitted artifact through exact
 injected adapters. Evidence reports what actually happened.
 
 The central rule is:
 
-> Source owns behavior; the compiler owns meaning; Auth owns authority; Server
-> owns root admission and spend; OS owns durable delivery; runtime owns faithful
-> execution; evidence owns historical fact; Studio owns projections.
+> Source owns behavior; the compiler owns meaning; the admission authority owns
+> identity and spend; the host owns delivery; runtime owns faithful execution;
+> evidence owns historical fact; presentation is a projection.
 
 No projection, manifest, adapter, backend, registry, transport, or product UI
 is permitted to become a competing behavior source.
@@ -41,12 +41,12 @@ consumer follows the same digest-linked chain.
 | semantic legality | Rust compiler/verifier over AIS-owned operation families | types, effects, closed structural operations, source maps, artifact requirements | choose runtime providers or change source control flow |
 | publication | immutable artifact digest | the exact admitted executable meaning and requirements | imply current authorization or successful execution |
 | authority | Auth facts and signed decisions | who may act, as which Agent Identity, on which resource, within which ceiling | select program behavior, models, or retries |
-| root admission and spend | Server | whether an Invocation may begin/resume; reservation, pricing and ledger facts | rewrite AIR or perform hidden effects |
+| root admission and spend | admission authority | whether an Invocation may begin/resume; reservation and budget facts | rewrite AIR or perform hidden effects |
 | durable delivery | OS journal | accepted commands/events, ordering, deduplication, retry, DLQ and replay lineage | grant authority or claim Program success |
 | execution | runtime lifecycle | faithful node/region/Invocation state transitions over one admitted artifact | invent a conversation, loop, model, Tool cycle, fallback, or provider |
 | external effects | exact admitted adapter | protocol-specific request, response, reconciliation and outcome facts | widen grants, choose an undeclared target, or become the ledger |
 | history | runtime/owner evidence | what was attempted, committed, denied, cancelled, failed, or became unknown | retroactively change behavior or authority |
-| presentation | Studio projection | explain and administer authoritative facts | become an execution engine or private owner store |
+| presentation | host projection | explain authoritative facts | become an execution engine or private owner store |
 
 The chain is content-addressed:
 
@@ -58,7 +58,7 @@ source revision
   -> Compatibility Set + Runtime Profile
   -> admission/authority/budget decisions
   -> Program Invocation and NodeExecution evidence
-  -> Studio projection
+  -> host projection
 ```
 
 Breaking any link fails closed. Display names, mutable aliases, local config,
@@ -171,18 +171,18 @@ the static loop without a conversation-specific annotation.
 When a loop body and its back-edge commit atomically, runtime emits one
 `LoopIterationCompleted` fact containing the static loop id, dynamic occurrence
 id, iteration index, and causal execution identities. Failed, cancelled, or
-rolled-back bodies emit no completion fact. Studio projects this generic
+rolled-back bodies emit no completion fact. Hosts may project this generic
 evidence without defining a core `Turn` model.
 
 The repository's Python and TypeScript conversational examples may define an
 example-local `ConversationalAgent` and describe a completed iteration as a
 “turn.” Gao is a Studio-owned ordinary Agent Program that may use the same
-generic loop pattern and admitted Host Capabilities. Neither name is an
-installable frontend API, contract, compiler/runtime branch, Server route, or
-admission identity; Gao's Studio product ownership adds no execution semantic.
+generic loop pattern and admitted Host Capabilities. Neither example name is
+an installable frontend API, contract, compiler/runtime branch, route, or
+admission identity.
 
 The model's returned content may include a provider-supported reasoning or
-thinking field. Studio may display that attributed output when the provider
+thinking field. A host may display that attributed output when the provider
 made it available and policy permits. APXM never requests, reconstructs, or
 fabricates private chain-of-thought.
 
@@ -193,15 +193,15 @@ composition, structured-control-flow, source-map, and compiler-bridge APIs.
 
 V1 source selects one immutable content-addressed `ModelTargetRef` for each
 `model.call`. The portable target fixes exact model/checkpoint/configuration and
-deployment-eligibility requirements. Server binds it once to one admitted
+deployment-eligibility requirements. The host binds it once to one admitted
 deployment before dispatch; runtime invokes only that immutable binding. An unavailable or ineligible model is a
 typed failure; there is no alias, default, first-available selection, or
 post-send fallback.
 
-APXM-owned model routing is future work. It will be an explicit source opt-in
+APXM-owned model routing is future work. If added, it must be an explicit source opt-in
 to an immutable policy whose finite candidate set, hard constraints, objective,
 budget facts, evaluation claim, selected binding, and rejected candidates are
-evidenced. Server will own the pre-dispatch decision; runtime will still receive
+evidenced. The admission authority owns the pre-dispatch decision; runtime still receives
 one immutable exact binding. Research systems such as Lemonade and RouteLLM are
 precedents only, never dependencies or semantic owners.
 

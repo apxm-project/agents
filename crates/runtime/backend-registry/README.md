@@ -13,8 +13,8 @@ sealed connections, webhook secrets, and tenant/user key hierarchy belong to
 `auth`. When a backend needs bearer material, the registry stores only an
 `env:VAR` reference. Raw API keys and sensitive literal headers are rejected.
 
-Container lifecycle is not part of this crate. The graph-aware vLLM backend has
-its own operator path under `deploy/vllm/` and `dekk agents vllm ...`.
+Container and deployment lifecycle are not part of this crate. An inference
+implementation is admitted through the generic Port Contract boundary.
 
 ## Module Structure
 

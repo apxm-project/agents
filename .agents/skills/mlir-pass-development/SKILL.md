@@ -37,9 +37,8 @@ dekk agents test -p apxm-compiler
 
 - New op? Invoke `ais-op-design` first (the design-before-code
   gate) — even before adding the `.td` entry.
-- New pass? Add it to `build_pass_list()`, with a one-line comment
-  explaining the *why* (a real reason, never "for plan04" — see
-  `_shared/apxm-agent-operating-rules.md`).
+- New pass? Add it to `build_pass_list()` with a one-line comment explaining
+  the real invariant it preserves.
 - Reordering passes? Confirm with the user — pass order has subtle
   effects on later passes and on the runtime executor.
 - Attribute names go through the canonical enum in `apxm-core`. Never

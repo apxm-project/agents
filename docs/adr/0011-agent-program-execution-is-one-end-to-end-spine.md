@@ -198,8 +198,8 @@ One release candidate must prove:
 
 - Compiler, runtime, and inference work can proceed in separate worktrees only
   after their shared v1 vectors are frozen.
-- The vLLM integration is a model adapter/backend implementation, not an Agent
-  Program runtime or loop owner.
+- Provider integrations are model adapter/backend implementations, not Agent
+  Program runtimes or loop owners.
 - Backend performance optimizations are valid only when semantic and evidence
   conformance remains unchanged.
 - Release promotion requires end-to-end evidence for the exact compiler,

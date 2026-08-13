@@ -1,47 +1,26 @@
 # PXM documentation
 
-The normative theory is [Program Execution Model theory](theory.md). It defines
-the single digest-linked execution spine and the separate authoritative sources
-for behavior, semantic legality, publication, authority, admission/spend,
-delivery, execution, evidence, and Studio projections.
+The [Program Execution Model theory](theory.md) is the current conceptual
+authority. It explains how authored behavior becomes an admitted execution and
+authoritative evidence.
 
-## Historical theory
+The remaining pages preserve the earlier abstract-machine theory because it is
+useful background. They are intentionally historical: they explain the
+problems and vocabulary that led to the current design, but they are not
+alternate APIs, schemas, operation sets, or runtime contracts.
 
-- Status: non-normative migration evidence
-- Baseline: pre-replacement APXM abstract-machine design
-- Target authority: [Program Execution Model theory](theory.md) and [Agent Program composition and AIR contract](../agents/agent-program-composition-and-air-contract.md)
-
-This directory preserves the theory that informed the prototype
-implementation: AAM beliefs/goals, memory tiers, the 38-operation AIS,
-process/spawn/communicate semantics, cognition op latency classes, session
-re-arm, and graph scheduling. It is useful for understanding what must be
-migrated, but it is not the accepted target architecture.
-
-The target replaces those assumptions:
-
-| Pre-canonical idea | Canonical v1 target |
+| Historical page | Subject |
 | --- | --- |
-| AAM beliefs/goals/capabilities as runtime semantic state | Explicit typed Program Context/local values plus admitted Capabilities |
-| QMEM/UMEM and memory tiers in AIR | Local values or external durable-memory Capability |
-| ASK/THINK/REASON/etc. runtime operations | Frontend patterns over `model.call` |
-| spawn/communicate/handoff/delegate/flow/workflow ops | `program.new` and `program.invoke` |
-| host/runtime session re-arm loop | Frontend-authored loop and generic program yield/resume |
-| runtime Turn | Studio projection of a generic loop-region occurrence |
-| direct/raw AIR authoring | Python/TypeScript FrontendGraph v2 through Rust compiler |
+| [AAM](aam.md) | beliefs, goals, and capability-oriented abstract-machine state |
+| [AIS](ais.md) | the earlier instruction-set and operation taxonomy |
+| [Memory](memory.md) | memory tiers and durable context analysis |
+| [Processes](processes.md) | process, spawn, communication, and handoff models |
+| [Foundations](foundations.md) | early PXM terminology |
+| [Compute](compute.md) | early compute and effect framing |
+| [Scheduling](scheduling.md) | graph scheduling and readiness theory |
 
-Historical pages:
-
-1. [AAM](aam.md)
-2. [AIS](ais.md)
-3. [Memory](memory.md)
-4. [Processes](processes.md)
-5. [Foundations](foundations.md)
-6. [Compute](compute.md)
-7. [Scheduling](scheduling.md)
-
-Every page above is baseline evidence only. The binding dispositions are
-[ADR-0008](../adr/0008-agent-programs-compose-through-new-and-invoke.md),
-[ADR-0009](../adr/0009-air-has-five-public-semantic-operations.md), and
-[ADR-0010](../adr/0010-agent-program-source-owns-context-hooks-and-conversational-loops.md).
-No target implementation may cite this directory to preserve a v1 operation,
-runtime state model, loop, callback, reader, or compatibility path.
+The current target replaces those prototypes with explicit Program Context,
+local values, admitted Capabilities, model calls, program composition,
+frontend-authored loops, exact Port bindings, and generic evidence. See the
+[Agent Program composition and AIR contract](../agents/agent-program-composition-and-air-contract.md)
+for the implementation boundary.

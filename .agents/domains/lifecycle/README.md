@@ -11,8 +11,8 @@ routes through these:
    tracker, focused verification, no scope creep.
 4. **simplify** — remove copied `_shared/` text, weak
    abstractions, referential comments before claiming done.
-5. **finish** — focused tests, doctor, release checks, secrets
-   scan, artifact placement.
+5. **finish** — focused tests, doctor, secrets scan, and artifact
+   placement.
 6. **commit** — commit/push gate; no push without approval, push to
    `main` only when explicitly authorized.
 

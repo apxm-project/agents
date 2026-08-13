@@ -97,9 +97,9 @@ impl CanonicalRuntime {
         provenance_bytes: &[u8],
     ) -> Result<Value> {
         ensure_local_capability_authority_available(&air)?;
-        let descriptor = reference_host_runtime_descriptor();
-        if admission.port_bindings_digest != reference_host_port_bindings_digest()
-            || admission.resource_ceiling_digest != reference_host_resource_ceiling_digest()
+        let descriptor = canonical_runtime_descriptor();
+        if admission.port_bindings_digest != canonical_port_bindings_digest()
+            || admission.resource_ceiling_digest != canonical_resource_ceiling_digest()
         {
             anyhow::bail!("Invocation Admission does not bind the exact reference runtime profile");
         }
@@ -125,16 +125,16 @@ impl CanonicalRuntime {
             air,
             hook_bindings: Vec::new(),
             capability_invocations: BTreeMap::new(),
-            program_instance_ref: ProgramInstanceRef::new("reference-host.instance"),
+            program_instance_ref: ProgramInstanceRef::new("canonical.instance"),
             program_invocation_ref: ProgramInvocationRef::new(admission.invocation_id.clone()),
-            commit_id: format!("reference-host.commit.{}", admission.invocation_id),
+            commit_id: format!("canonical.commit.{}", admission.invocation_id),
             write_set: reference_write_set(&admission.invocation_id),
         };
         let profile = runtime_profile_from_invocation(
             self.commit.clone(),
             Arc::new(UnavailableModelRequestMetadata),
             verified,
-            "reference-host.execution",
+            "canonical.execution",
         )
         .await?;
         let report = profile
@@ -284,7 +284,7 @@ fn model_admission(air: &AirModule, model_binding_digest: &str) -> ModelBindingA
                     InferenceTargetCommitment::commit(
                         target,
                         digest('b'),
-                        "reference-host.model",
+                        "canonical.model",
                         model_binding_digest,
                         digest('c'),
                         digest('d'),
@@ -321,17 +321,17 @@ fn reference_write_set(invocation_id: &str) -> AtomicWriteSet {
     }
 }
 
-/// Exact APXM-owned descriptors used by the reference-host composition root.
+/// Exact APXM-owned descriptors used by the canonical composition root.
 /// The transport digest must hash these descriptors; it is never copied onto
 /// an unrelated implementation.
 #[derive(Clone, Debug)]
-pub struct ReferenceRuntimeDescriptor {
+pub struct CanonicalRuntimeDescriptor {
     pub port_bindings: Vec<AdmittedPortBinding>,
     pub resource_ceilings: ResourceCeilings,
     pub confinement: AdmittedConfinement,
 }
 
-pub fn reference_host_runtime_descriptor() -> ReferenceRuntimeDescriptor {
+pub fn canonical_runtime_descriptor() -> CanonicalRuntimeDescriptor {
     let port_bindings = [
         (
             PortSlot::ExecutionCommit,
@@ -374,11 +374,11 @@ pub fn reference_host_runtime_descriptor() -> ReferenceRuntimeDescriptor {
         slot: slot.as_str().into(),
         port_contract_schema_id: schema_id.into(),
         port_contract_digest: format!("sha256:{contract_digest}"),
-        binding_digest: digest_text(&format!("apxm.reference-host.binding.{}", slot.as_str())),
-        proof_digest: digest_text(&format!("apxm.reference-host.proof.{}", slot.as_str())),
+        binding_digest: digest_text(&format!("apxm.canonical.binding.{}", slot.as_str())),
+        proof_digest: digest_text(&format!("apxm.canonical.proof.{}", slot.as_str())),
     })
     .collect();
-    ReferenceRuntimeDescriptor {
+    CanonicalRuntimeDescriptor {
         port_bindings,
         resource_ceilings: ResourceCeilings {
             max_wall_ms: 60_000,
@@ -387,20 +387,20 @@ pub fn reference_host_runtime_descriptor() -> ReferenceRuntimeDescriptor {
         },
         confinement: AdmittedConfinement {
             confinement_type: "NATIVE-SANDBOX".into(),
-            sandbox_digest: digest_text("apxm.reference-host.sandbox.v1"),
-            policy_digest: digest_text("apxm.reference-host.policy.v1"),
+            sandbox_digest: digest_text("apxm.canonical.sandbox.v1"),
+            policy_digest: digest_text("apxm.canonical.policy.v1"),
         },
     }
 }
 
-pub fn reference_host_port_bindings_digest() -> String {
-    digest_serializable(&reference_host_runtime_descriptor().port_bindings)
-        .expect("reference host bindings are serializable")
+pub fn canonical_port_bindings_digest() -> String {
+    digest_serializable(&canonical_runtime_descriptor().port_bindings)
+        .expect("canonical bindings are serializable")
 }
 
-pub fn reference_host_resource_ceiling_digest() -> String {
-    digest_serializable(&reference_host_runtime_descriptor().resource_ceilings)
-        .expect("reference host ceilings are serializable")
+pub fn canonical_resource_ceiling_digest() -> String {
+    digest_serializable(&canonical_runtime_descriptor().resource_ceilings)
+        .expect("canonical ceilings are serializable")
 }
 
 fn digest_text(value: &str) -> String {
@@ -671,7 +671,7 @@ async fn runtime_profile_from_invocation(
         })
         .collect();
     let runtime_admission =
-        RuntimeAdmission::admit_invocation(verified, entries, "apxm-reference-host", execution_id)
+        RuntimeAdmission::admit_invocation(verified, entries, "apxm-canonical", execution_id)
             .await
             .map_err(|error| anyhow::anyhow!(error))?;
     RuntimeProfile::from_fully_admitted(
@@ -826,8 +826,8 @@ mod tests {
             invocation_id: invocation_id.into(),
             artifact_digest: bytes_digest(&artifact_bytes),
             release_digest: bytes_digest(TEST_RELEASE_BYTES),
-            port_bindings_digest: reference_host_port_bindings_digest(),
-            resource_ceiling_digest: reference_host_resource_ceiling_digest(),
+            port_bindings_digest: canonical_port_bindings_digest(),
+            resource_ceiling_digest: canonical_resource_ceiling_digest(),
             provenance_digest: bytes_digest(TEST_PROVENANCE_BYTES),
         }
     }
@@ -837,7 +837,7 @@ mod tests {
         invocation_id: &str,
         commit: Arc<DevCommit>,
     ) -> RuntimeProfile {
-        let descriptor = reference_host_runtime_descriptor();
+        let descriptor = canonical_runtime_descriptor();
         let admission = invocation_admission(air, invocation_id);
         let artifact_bytes = serde_json::to_vec(air).expect("test AIR serialization");
         let verified = verify_invocation_admission(
@@ -891,7 +891,7 @@ mod tests {
     async fn canonical_runtime_requires_transport_invocation_admission() {
         let runtime = CanonicalRuntime::new();
         let air = empty_profile_air();
-        let mut admission = invocation_admission(&air, "invocation.reference-host.unauthorized");
+        let mut admission = invocation_admission(&air, "invocation.canonical.unauthorized");
         let artifact_bytes = serde_json::to_vec(&air).expect("test AIR serialization");
         admission.artifact_digest = digest('f');
         let output = runtime
@@ -910,7 +910,7 @@ mod tests {
     async fn canonical_runtime_rejects_a_tampered_but_valid_air_module() {
         let runtime = CanonicalRuntime::new();
         let original = empty_profile_air();
-        let admission = invocation_admission(&original, "invocation.reference-host.air-drift");
+        let admission = invocation_admission(&original, "invocation.canonical.air-drift");
         let mut tampered_json = serde_json::to_value(&original).expect("AIR value");
         tampered_json["source_map"]["source_language"] = Value::String("typescript".into());
         let tampered: AirModule =
@@ -938,7 +938,7 @@ mod tests {
     async fn canonical_execution_enters_through_the_verified_invocation_admission() {
         let runtime = CanonicalRuntime::new();
         let air = empty_profile_air();
-        let admission = invocation_admission(&air, "invocation.reference-host.1");
+        let admission = invocation_admission(&air, "invocation.canonical.1");
         let artifact_bytes = serde_json::to_vec(&air).expect("test AIR serialization");
         let output = runtime
             .execute(
@@ -958,7 +958,7 @@ mod tests {
     async fn invocation_admission_is_carried_into_atomic_runtime_commit() {
         let runtime = CanonicalRuntime::new();
         let air = empty_profile_air();
-        let admission = invocation_admission(&air, "invocation.reference-host.commit");
+        let admission = invocation_admission(&air, "invocation.canonical.commit");
         let artifact_bytes = serde_json::to_vec(&air).expect("test AIR serialization");
         let output = runtime
             .execute(
@@ -978,7 +978,7 @@ mod tests {
     async fn invocation_admission_provenance_drift_fails_before_commit() {
         let runtime = CanonicalRuntime::new();
         let air = empty_profile_air();
-        let admission = invocation_admission(&air, "invocation.reference-host.negative");
+        let admission = invocation_admission(&air, "invocation.canonical.negative");
         let artifact_bytes = serde_json::to_vec(&air).expect("test AIR serialization");
         let error = runtime
             .execute(
@@ -1014,7 +1014,7 @@ mod tests {
     #[test]
     fn profile_admission_rejects_missing_required_slot() {
         let air = empty_profile_air();
-        let descriptor = reference_host_runtime_descriptor();
+        let descriptor = canonical_runtime_descriptor();
         let bindings = descriptor
             .port_bindings
             .into_iter()
@@ -1028,8 +1028,8 @@ mod tests {
             TEST_RELEASE_BYTES,
             TEST_PROVENANCE_BYTES,
             &bindings,
-            reference_host_runtime_descriptor().resource_ceilings,
-            &reference_host_runtime_descriptor().confinement,
+            canonical_runtime_descriptor().resource_ceilings,
+            &canonical_runtime_descriptor().confinement,
         )
         .expect_err("missing confinement binding must fail closed");
         assert!(error.to_string().contains("port binding digest mismatch"));

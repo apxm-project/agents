@@ -12,8 +12,6 @@ pub mod backend;
 pub mod cache;
 pub mod canonical_air;
 pub mod canonical_execute;
-#[cfg(feature = "driver")]
-pub mod chat;
 pub mod codegen;
 #[cfg(feature = "driver")]
 pub mod compile_service_canonical;
@@ -21,20 +19,12 @@ pub(crate) mod dekk_hints;
 pub mod ops;
 pub mod org;
 pub mod process;
-#[cfg(feature = "driver")]
-pub mod render;
-#[cfg(feature = "driver")]
-pub mod rollout;
 pub mod session;
-#[cfg(feature = "driver")]
-pub(crate) mod sse_permissions;
 pub mod system;
 pub mod team;
 pub mod template;
 pub mod tokenize;
 pub mod tool;
-#[cfg(feature = "driver")]
-pub mod watch;
 
 pub use cli::*;
 
@@ -55,8 +45,6 @@ pub use team::*;
 pub use template::*;
 pub use tokenize::*;
 pub use tool::*;
-#[cfg(feature = "driver")]
-pub use watch::*;
 
 #[derive(Debug)]
 pub struct OutputAlreadyEmitted;

@@ -1,4 +1,4 @@
-name: Agents owner-local gates
+name: Agents product gates
 
 on:
   pull_request:
@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   deterministic:
-    name: G-AGENTS — portable policy and evaluation gates
+    name: Portable product gates
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     defaults:
@@ -23,9 +23,6 @@ jobs:
           path: workspace/agents
           persist-credentials: false
 
-      # These gates need Python but do not enter the native build graph. Use a
-      # real Conda prefix at Dekk's configured path without claiming that this
-      # is the complete MLIR/LLVM environment declared by `.dekk.toml`.
       - name: Create the portable-gate Conda prefix
         uses: conda-incubator/setup-miniconda@fc2d68f6413eb2d87b895e92f8584b5b94a10167 # v3.3.0
         with:
@@ -38,29 +35,11 @@ jobs:
       - name: Install the pinned public Dekk runner
         run: python -m pip install --disable-pip-version-check "dekk==1.11.5"
 
-      - name: Audit private release surfaces
-        run: dekk agents test-release-privacy
-
-      - name: Check reference-host contract parity
-        run: python contracts/tools/check_reference_host_contract_parity.py --root .
-
-      - name: Check reference-host neutrality
-        run: python contracts/tools/check_reference_host_neutrality.py --root .
-
-      - name: Test reference-host contract parity gate
-        run: python -m unittest tools.tests.test_reference_host_contract_parity -v
-
-      - name: Test offline evaluation evidence
-        run: dekk agents test-offline-prompt-evaluation
-
-      - name: Test observed evaluation evidence
-        run: dekk agents test-observed-prompt-evaluation
-
       - name: Check authoring surface alignment
         run: dekk agents check-frontend-surface
 
   source-compiler-acceptance:
-    name: G1–G2 — source/compiler acceptance bundle
+    name: Source/compiler acceptance
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     defaults:
@@ -76,10 +55,6 @@ jobs:
       - name: Provision the complete Dekk environment
         uses: conda-incubator/setup-miniconda@fc2d68f6413eb2d87b895e92f8584b5b94a10167 # v3.3.0
         with:
-          # Keep the runner itself in base. Dekk must create the declared
-          # .dekk/env from .dekk.toml; pre-creating that prefix with Python
-          # alone makes `dekk install` treat an incomplete environment as
-          # already provisioned and leaves clang/MLIR/uv absent.
           activate-environment: base
           channels: conda-forge
           conda-remove-defaults: "true"
@@ -89,19 +64,13 @@ jobs:
       - name: Install the pinned public Dekk runner
         run: python -m pip install --disable-pip-version-check "dekk==1.11.5"
 
-      # GitHub-hosted Ubuntu images may carry a partially installed nightly
-      # toolchain. Remove that runner cache so rustup can install the exact
-      # repository-declared toolchain without rust-src directory conflicts.
       - name: Clear any partial hosted-runner nightly toolchain
         run: rustup toolchain uninstall nightly || true
 
       - name: Provision the declared native toolchain
-        # The gate builds exactly the crates it verifies. `dekk install` also
-        # performs the full release CLI build, duplicating work before the
-        # acceptance bundle and obscuring which gate failed.
         run: dekk agents setup
 
-      - name: Run the nine-gate source/compiler acceptance bundle
+      - name: Run the source/compiler acceptance bundle
         run: dekk agents test-source-compiler-acceptance
 
       - name: Upload the acceptance report and logs

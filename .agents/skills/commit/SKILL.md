@@ -63,5 +63,5 @@ message.
 ## Prerequisite gates
 
 `finish` must pass before this skill commits. That means
-`dekk agents test`, `dekk agents doctor`, relevant release checks, and
-`dekk agents skills status` (if `.agents/` changed) all clean.
+`dekk agents test`, `dekk agents doctor`, and `dekk agents skills status`
+(if `.agents/` changed) all clean.

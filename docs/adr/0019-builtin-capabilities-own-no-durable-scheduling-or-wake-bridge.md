@@ -41,7 +41,7 @@ At the pinned revision the following exist in the Agents checkout.
 Capability whose actions create, list, get, and cancel timers expressed as
 `after_secs`, `at_ms`, or `every_secs`. It spawns a background firer task, and
 on fire it invokes an `OnFire` hook and wakes a parked invocation through the
-`CapabilityHost` bridge. Its own documentation states that `apxm-server` uses
+`CapabilityHost` bridge. A host may use the bridge to
 that hook to enqueue prompt wakeups into an existing task queue, which places
 one half of a durable coordination protocol inside an Agents builtin.
 

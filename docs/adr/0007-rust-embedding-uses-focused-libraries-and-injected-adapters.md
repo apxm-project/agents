@@ -46,8 +46,8 @@ unrelated application composition.
 ### Public library roles
 
 APXM publishes five focused Rust library roles. These are architectural roles;
-private registry coordinates and family-version mechanics are fixed by APXM
-coordinator ADR-0001 and the APXM master plan.
+private registry coordinates and product-version mechanics remain downstream
+packaging concerns.
 
 | Public role | Owns | Default dependency and network ceiling |
 | --- | --- | --- |
@@ -302,9 +302,9 @@ and observable provider/network/storage choices.
   runtime defaults.
 - Canonical v1 Skill discovery and semantic contracts are consumed through the
   stable, acyclic Rust boundary.
-- Coordinator ADR-0001 owns family versioning, private coordinates,
-  platform/support line, and promotion mechanics.
+- Downstream packaging owns family publication, platform/support lines, and
+  promotion mechanics.
 
 ## Plan
 
-See the [Rust embedding library hardening plan](../agents/rust-embedding-library-hardening-plan.md).
+See the focused crate READMEs and the repository development instructions.
