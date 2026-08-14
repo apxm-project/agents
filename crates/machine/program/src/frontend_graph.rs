@@ -16,6 +16,8 @@ use serde::{Deserialize, Serialize};
 
 const MAX_SAFE_PREDICATE_INTEGER: u64 = 9_007_199_254_740_991;
 
+pub use apxm_ais::permissions::PermissionDecision;
+
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Verdict, schema_violation};
 use crate::grammar::{is_digest, is_identifier};
 use crate::source_map::{SourceLanguage, SourceMap};
@@ -390,10 +392,13 @@ pub struct CapabilityRequirement {
     pub capability_ref: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_schema_present: Option<bool>,
-    /// The permission the author requested for this capability. Recorded and
-    /// digest-bound as authored; it confers no authority on its own.
+    /// The permission decision the author requested for this capability.
+    ///
+    /// It is the program's *request*, recorded and digest-bound as authored,
+    /// and it confers no authority: the resolution layer stack may only narrow
+    /// it, and no layer may widen it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub requested_permission: Option<String>,
+    pub requested_permission: Option<PermissionDecision>,
 }
 
 /// A declared model requirement referencing exactly one target.
@@ -495,16 +500,21 @@ impl FrontendGraph {
             }
         }
 
-        // An authored permission is recorded verbatim, so it is held to the
-        // published Identifier grammar here rather than at the point some later
-        // consumer reads it.
+        // The decision itself is closed, so decode already rejected anything
+        // outside the vocabulary. What decode cannot reject is a decision that
+        // structurally carries a reason and says nothing, which would put an
+        // empty explanation into the digest-bound source bundle.
         for requirement in &self.capability_requirements {
-            if let Some(permission) = requirement.requested_permission.as_deref() {
-                check_identifier(
-                    &mut verdict,
-                    permission,
-                    "capability requirement requested_permission",
-                );
+            if let Some(permission) = &requirement.requested_permission
+                && permission
+                    .reason()
+                    .is_some_and(|reason| reason.trim().is_empty())
+            {
+                verdict.push(Diagnostic::new(
+                    DiagnosticCode::SchemaViolation,
+                    requirement.capability_ref.clone(),
+                    "capability requirement requested_permission carries an empty reason",
+                ));
             }
         }
 

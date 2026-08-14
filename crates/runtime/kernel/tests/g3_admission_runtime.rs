@@ -7,7 +7,7 @@
 //! crash, replay, cancellation, confinement-escape, ambiguous-binding,
 //! lost-reply.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -15,18 +15,22 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use apxm_program::artifact::SchemaDigestRef;
-use apxm_program::runtime_evidence::{ProgramIdentity, RuntimeEvidenceVersion};
+use apxm_program::runtime_evidence::{
+    LayerDecisions, PermissionDecision, PermissionLayer, PermissionResolution, ProgramIdentity,
+    ResolvedPermission, RuntimeEvidenceVersion,
+};
 
 use apxm_kernel::{
-    AdmissionError, AdmittedModelTarget, AdmittedPortBinding, AtomicWriteSet, CapabilityOutcome,
-    CapabilityPort, CapabilityRequest, CheckpointAdvancer, ConfinementAttestation,
-    ConfinementError, ConfinementPort, ConfinementRequest, EffectRecord, EffectState,
-    EffectTransition, ExactPortBinding, ExecutionAdmission, ExecutionCommitPort,
+    AdmissionError, AdmittedCapabilityPermission, AdmittedModelTarget, AdmittedPortBinding,
+    AtomicWriteSet, CapabilityOutcome, CapabilityPort, CapabilityRequest, CheckpointAdvancer,
+    ConfinementAttestation, ConfinementError, ConfinementPort, ConfinementRequest, EffectRecord,
+    EffectState, EffectTransition, ExactPortBinding, ExecutionAdmission, ExecutionCommitPort,
     ExecutionCommitRequest, ExecutionCommitResult, ExecutionCommitTuple, InstanceError, Invocation,
     IssuerKeyring, IssuerSigningKey, NonceLedger, PortBundle, PortImplementation, PortSlot,
     PreparedEffect, ProgramInstance, ProgramInstanceRef, ProgramInvocationRef, RuntimeAdmission,
-    RuntimeAdmissionError, SignatureRejection, digest_char, minimal_port_bindings,
-    parse_execution_admission, unsigned_admission_skeleton, verify_execution_admission,
+    RuntimeAdmissionError, SignatureRejection, admitted_capability_permissions, digest_char,
+    minimal_port_bindings, parse_execution_admission, unsigned_admission_skeleton,
+    verify_execution_admission,
 };
 
 fn write_set(tag: char) -> AtomicWriteSet {
@@ -866,5 +870,116 @@ fn checkpoint_advancer_is_monotonic_and_replay_idempotent() {
             .advance_on_commit("instance.checkpoint", 1)
             .expect("replayed commit"),
         1
+    );
+}
+
+/// The composition root resolves the layer stack and seals the outcome into
+/// admission, so the runtime reads a decision it can attribute to a layer
+/// rather than inferring one. Nothing here is a grant: `grant_fact_refs`
+/// stays banned, and a decision may not travel as an opaque correlation.
+#[test]
+fn admission_carries_resolved_permission_decisions_but_never_a_grant() {
+    let resolution = PermissionResolution::resolve(&BTreeMap::from([
+        (
+            PermissionLayer::Code,
+            LayerDecisions::from([("cap.search".to_string(), PermissionDecision::allow())]),
+        ),
+        (
+            PermissionLayer::Deployment,
+            LayerDecisions::from([(
+                "cap.search".to_string(),
+                PermissionDecision::deny("no egress"),
+            )]),
+        ),
+    ]))
+    .expect("a tightening stack resolves");
+
+    let signer = IssuerSigningKey::generate("issuer.permissions");
+    let keyring = IssuerKeyring::from_keys([signer.enrollment(u64::MAX, false)]).expect("keyring");
+    let mut unsigned = unsigned_admission_skeleton(
+        "invocation.permissions",
+        "nonce.permissions.1",
+        "runtime.audience.1",
+        10_000,
+        minimal_port_bindings(),
+    );
+    unsigned.capability_permissions = admitted_capability_permissions(&resolution);
+    let sealed = signer.seal_admission(unsigned);
+
+    let verified = verify_execution_admission(
+        &sealed,
+        &keyring,
+        &NonceLedger::new(),
+        "runtime.audience.1",
+        1_000,
+        false,
+    )
+    .expect("an admission carrying decisions verifies");
+    let admitted = &verified.admission.capability_permissions;
+    assert_eq!(admitted.len(), 1);
+    assert_eq!(admitted[0].capability_ref, "cap.search");
+    assert_eq!(
+        admitted[0].permission.decision,
+        PermissionDecision::deny("no egress")
+    );
+    assert_eq!(
+        admitted[0].permission.layer,
+        PermissionLayer::Deployment,
+        "the sealed decision names the layer that produced it"
+    );
+
+    // The typed field is the only way in. A decision spelled as a correlation,
+    // or a grant reference beside it, is still refused.
+    let mut smuggled = serde_json::to_value(&sealed).expect("encode admission");
+    smuggled["grant_fact_refs"] = json!(["grant.search.1"]);
+    assert!(matches!(
+        parse_execution_admission(&smuggled),
+        Err(AdmissionError::ProductPlaneField(field)) if field == "grant_fact_refs"
+    ));
+}
+
+/// A repeated capability reference would leave which decision applies up to
+/// iteration order, so it fails closed before anything is admitted.
+#[test]
+fn a_capability_decided_twice_in_one_admission_fails_closed() {
+    let signer = IssuerSigningKey::generate("issuer.duplicate-permission");
+    let keyring = IssuerKeyring::from_keys([signer.enrollment(u64::MAX, false)]).expect("keyring");
+    let mut unsigned = unsigned_admission_skeleton(
+        "invocation.duplicate",
+        "nonce.duplicate.1",
+        "runtime.audience.1",
+        10_000,
+        minimal_port_bindings(),
+    );
+    unsigned.capability_permissions = vec![
+        AdmittedCapabilityPermission {
+            capability_ref: "cap.search".into(),
+            permission: ResolvedPermission {
+                decision: PermissionDecision::deny("no egress"),
+                layer: PermissionLayer::Deployment,
+            },
+        },
+        AdmittedCapabilityPermission {
+            capability_ref: "cap.search".into(),
+            permission: ResolvedPermission {
+                decision: PermissionDecision::allow(),
+                layer: PermissionLayer::Code,
+            },
+        },
+    ];
+    let sealed = signer.seal_admission(unsigned);
+
+    let error = verify_execution_admission(
+        &sealed,
+        &keyring,
+        &NonceLedger::new(),
+        "runtime.audience.1",
+        1_000,
+        false,
+    )
+    .expect_err("one capability, one decision");
+    assert!(
+        matches!(error, AdmissionError::DuplicateCapabilityPermission(ref capability_ref) if capability_ref == "cap.search"),
+        "{error}"
     );
 }

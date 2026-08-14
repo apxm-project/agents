@@ -199,6 +199,50 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
 
             Ok(())
         }
+        CodegenAction::Permissions { check } => {
+            let python_path = default_python_permissions_codegen_path();
+            let typescript_path = default_typescript_permissions_codegen_path();
+            let python = crate::frontend::codegen_permissions::render_permissions_python();
+            let typescript = crate::frontend::codegen_permissions::render_permissions_typescript();
+            let outputs = [(&python_path, &python), (&typescript_path, &typescript)];
+
+            if check {
+                for (path, rendered) in outputs {
+                    check_generated_file(path, rendered, "permissions")?;
+                }
+            } else {
+                for (path, rendered) in outputs {
+                    if let Some(parent) = path.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+                    fs::write(path, rendered)?;
+                }
+            }
+
+            let files = vec![
+                python_path.display().to_string(),
+                typescript_path.display().to_string(),
+            ];
+            if json_output {
+                let output = serde_json::json!({
+                    "target": "permissions",
+                    "files": files,
+                    "check": check,
+                });
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else {
+                println!(
+                    "{} permission decisions:",
+                    if check { "Checked" } else { "Generated" }
+                );
+                println!("  target: permissions");
+                for file in files {
+                    println!("  - {file}");
+                }
+            }
+
+            Ok(())
+        }
         CodegenAction::OpSpec { output_dir, check } => {
             let output_dir = output_dir.unwrap_or_else(default_op_spec_codegen_dir);
             let rendered = apxm_ais::render_op_spec_files();
@@ -359,6 +403,17 @@ fn default_python_capabilities_codegen_path() -> PathBuf {
 fn default_typescript_capabilities_codegen_path() -> PathBuf {
     default_typescript_frontend_codegen_dir()
         .join(crate::frontend::codegen_capabilities::TYPESCRIPT_CAPABILITIES_FILE)
+}
+
+fn default_python_permissions_codegen_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../compiler/frontend/python/apxm_program/_generated")
+        .join(crate::frontend::codegen_permissions::PYTHON_PERMISSIONS_FILE)
+}
+
+fn default_typescript_permissions_codegen_path() -> PathBuf {
+    default_typescript_frontend_codegen_dir()
+        .join(crate::frontend::codegen_permissions::TYPESCRIPT_PERMISSIONS_FILE)
 }
 
 fn default_op_spec_codegen_dir() -> PathBuf {

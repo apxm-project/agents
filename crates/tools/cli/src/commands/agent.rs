@@ -11,6 +11,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
+use apxm_ais::permissions::{
+    LayerDecisions, PermissionDecision, PermissionLayer, PermissionResolution,
+};
 use apxm_core::types::{HandlerKind, HandlerLanguage, HandlerManifest};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -66,6 +69,11 @@ pub struct AgentToml {
     pub capabilities: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_agent_skills: Vec<String>,
+    /// The package layer of the permission resolution stack: what this package
+    /// decides about capabilities its own tree declares. It may only tighten a
+    /// capability's declared decision, and it may not introduce a capability.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub permissions: BTreeMap<String, PermissionDecision>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat: Option<toml::Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -119,10 +127,26 @@ pub struct PermissionsToml {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PermissionEntry {
     pub capability: String,
+    /// The decision this capability declares for itself, spelled in the one
+    /// permission vocabulary rather than as a free string.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub decision: Option<String>,
+    pub decision: Option<PermissionDecision>,
+    /// Why the capability declares that decision. Flat in the file, joined to
+    /// the decision by [`PermissionEntry::declared_decision`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
     #[serde(flatten)]
     pub extra: toml::Table,
+}
+
+impl PermissionEntry {
+    /// The declared decision carrying the reason declared beside it.
+    #[must_use]
+    pub fn declared_decision(&self) -> Option<PermissionDecision> {
+        self.decision
+            .as_ref()
+            .map(|decision| decision.with_reason(self.reason.clone()))
+    }
 }
 
 /// Source language accepted by the supported compiler frontends.
@@ -613,26 +637,24 @@ fn enrich_typescript_capabilities_from_tools_manifest(
                 entry.name
             )
         })?;
-        let requires_approval = match permission.decision.as_deref() {
-            Some("allow") => false,
-            Some("ask") => true,
-            Some("deny") => {
+        // The decision vocabulary is closed at decode, so there is no
+        // unsupported-string arm left to write: only the three decisions and
+        // an absent one can reach this match.
+        let requires_approval = match &permission.decision {
+            Some(PermissionDecision::Allow { .. }) => false,
+            Some(PermissionDecision::Ask { .. }) => true,
+            Some(PermissionDecision::Deny { .. }) => {
                 bail!(
                     "TypeScript capability '{}' is denied and cannot be emitted as an executable handler",
                     entry.name
                 )
             }
-            Some(decision) => {
-                bail!(
-                    "TypeScript capability '{}' uses unsupported permission decision '{}'",
-                    entry.name,
-                    decision
-                )
-            }
             None => {
                 bail!(
-                    "TypeScript capability '{}' must declare permission decision = \"allow\" or \"ask\"",
-                    entry.name
+                    "TypeScript capability '{}' must declare permission decision = \"{}\" or \"{}\"",
+                    entry.name,
+                    PermissionDecision::allow().as_str(),
+                    PermissionDecision::ask("").as_str(),
                 )
             }
         };
@@ -718,7 +740,10 @@ fn write_generated_permissions_toml(path: &Path, permissions: &[PermissionEntry]
         lines.push("[[permission]]".to_string());
         lines.push(format!("capability = \"{}\"", perm.capability));
         if let Some(decision) = &perm.decision {
-            lines.push(format!("decision = \"{decision}\""));
+            lines.push(format!("decision = \"{}\"", decision.as_str()));
+        }
+        if let Some(reason) = &perm.reason {
+            lines.push(format!("reason = \"{reason}\""));
         }
         for (key, value) in &perm.extra {
             lines.push(format!("{key} = {}", format_toml_value(value)));
@@ -1067,6 +1092,39 @@ fn check_capability_drift(pkg: &LoadedAgent, org_globals: &BTreeSet<String>) -> 
     errors
 }
 
+/// Resolve the package's permission layer stack and report every refusal.
+///
+/// The two layers a package can state are both here: `capabilities/<cap>/
+/// permission.toml` — synced into `capabilities/permissions.toml` — is what the
+/// program's own tree declares for a capability, and `agent.toml [permissions]`
+/// is what the package manifest decides on top of that. The stack is
+/// tighten-only, so the manifest may narrow `allow` to `ask` or `deny` and may
+/// never hand back authority the tree withheld, nor decide anything for a
+/// capability the tree does not declare.
+fn check_permission_resolution(pkg: &LoadedAgent) -> Vec<String> {
+    let declared: LayerDecisions = pkg
+        .permissions
+        .permission
+        .iter()
+        .filter_map(|entry| {
+            entry
+                .declared_decision()
+                .map(|decision| (entry.capability.clone(), decision))
+        })
+        .collect();
+    let layers = BTreeMap::from([
+        (PermissionLayer::Code, declared),
+        (
+            PermissionLayer::Package,
+            pkg.agent.permissions.clone().into_iter().collect(),
+        ),
+    ]);
+    match PermissionResolution::resolve(&layers) {
+        Ok(_) => Vec::new(),
+        Err(error) => vec![format!("agent.toml [permissions]: {error}")],
+    }
+}
+
 /// Structural + required-field checks for `agent.v1`: id/version, source
 /// declaration, hierarchy, instruction inventory, and hook vocabulary.
 fn check_schema_shape(pkg: &LoadedAgent) -> Vec<String> {
@@ -1392,6 +1450,7 @@ pub(crate) fn agent_lint(path: &Path, org: Option<PathBuf>, json_output: bool) -
 
     let mut errors = check_schema_shape(&pkg);
     errors.extend(check_capability_drift(&pkg, &org_globals));
+    errors.extend(check_permission_resolution(&pkg));
     errors.extend(check_hook_contradictions(&pkg));
     errors.extend(check_capability_bindings(&pkg));
     for unrecognized in find_unrecognized_files(path)? {
@@ -1916,6 +1975,83 @@ mod tests {
         );
     }
 
+    /// `agent.toml [permissions]` is the package layer of the resolution
+    /// stack. It may take authority away from what the tree declares and may
+    /// never hand any back — the scaffold declares `write = ask`, so `deny`
+    /// resolves and `allow` is a hard error rather than a silent widening.
+    #[test]
+    fn lint_refuses_a_package_permission_that_widens_what_the_tree_declared() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("permissions");
+        scaffold(&root, "permissions");
+        let agent_path = root.join("agent.toml");
+        let scaffolded = fs::read_to_string(&agent_path).unwrap();
+
+        fs::write(
+            &agent_path,
+            format!("{scaffolded}\n[permissions]\nwrite = \"deny\"\n"),
+        )
+        .unwrap();
+        agent_lint(&root, None, true).expect("tightening ask to deny resolves");
+
+        fs::write(
+            &agent_path,
+            format!("{scaffolded}\n[permissions]\nwrite = \"allow\"\n"),
+        )
+        .unwrap();
+        agent_lint(&root, None, true).expect_err("widening ask to allow must fail");
+        let refusals = check_permission_resolution(&load_agent(&root).unwrap());
+        assert!(
+            refusals
+                .iter()
+                .any(|refusal| refusal.contains("may only tighten")),
+            "expected a widening refusal, got: {refusals:?}"
+        );
+
+        // The manifest cannot decide anything for a capability the tree never
+        // declared: there is no request there for it to narrow.
+        fs::write(
+            &agent_path,
+            format!("{scaffolded}\n[permissions]\nexfiltrate = \"allow\"\n"),
+        )
+        .unwrap();
+        agent_lint(&root, None, true).expect_err("an unrequested override must fail lint");
+        let refusals = check_permission_resolution(&load_agent(&root).unwrap());
+        assert!(
+            refusals
+                .iter()
+                .any(|refusal| refusal.contains("never requested")),
+            "expected an unrequested-override refusal, got: {refusals:?}"
+        );
+    }
+
+    /// A capability declares its decision and the reason for it in one file;
+    /// both must survive the sync that regenerates `permissions.toml`.
+    #[test]
+    fn a_declared_decision_keeps_the_reason_declared_beside_it() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("reasoned");
+        scaffold(&root, "reasoned");
+        fs::write(
+            root.join("capabilities/write/permission.toml"),
+            "capability = \"write\"\ndecision = \"ask\"\nreason = \"Writes files on the host.\"\n",
+        )
+        .unwrap();
+        agent_sync(&root, true).unwrap();
+
+        let permissions: PermissionsToml =
+            read_toml(&root.join("capabilities/permissions.toml")).unwrap();
+        let write = permissions
+            .permission
+            .iter()
+            .find(|entry| entry.capability == "write")
+            .expect("the synced entry");
+        assert_eq!(
+            write.declared_decision(),
+            Some(PermissionDecision::ask("Writes files on the host."))
+        );
+    }
+
     #[test]
     fn new_resolves_example_names_and_template_paths_generically() {
         let coder = resolve_agent_template_dir("coder").expect("named example resolves");
@@ -1979,9 +2115,10 @@ mod tests {
                 ("read_only".to_string(), toml::Value::Boolean(read_only)),
             ]),
         };
-        let permission = |id: &str, decision: &str| PermissionEntry {
+        let permission = |id: &str, decision: PermissionDecision| PermissionEntry {
             capability: id.to_string(),
-            decision: Some(decision.to_string()),
+            decision: Some(decision),
+            reason: None,
             extra: toml::Table::new(),
         };
         let mut capabilities = vec![
@@ -1989,8 +2126,8 @@ mod tests {
             capability("write_tool", false),
         ];
         let permissions = vec![
-            permission("read_tool", "allow"),
-            permission("write_tool", "ask"),
+            permission("read_tool", PermissionDecision::allow()),
+            permission("write_tool", PermissionDecision::ask("writes the host")),
         ];
         let mut manifest = HandlerManifest::new(vec![
             descriptor("read_tool", 'a'),

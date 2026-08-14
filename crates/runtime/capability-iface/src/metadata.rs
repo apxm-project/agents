@@ -250,7 +250,7 @@ mod tests {
     use super::*;
     use apxm_core::types::capability::{
         CAPABILITY_DEFINITION_SCHEMA_V1, CapabilityBinding, CapabilityBindingHandler,
-        CapabilityMetadata as ContractCapabilityMetadata, PermissionEffect, PermissionPolicy,
+        CapabilityMetadata as ContractCapabilityMetadata, PermissionDecision, PermissionPolicy,
         PromptPolicy, ResourceSelector,
     };
 
@@ -272,7 +272,7 @@ mod tests {
                     kind: "capability".to_string(),
                     selectors: Default::default(),
                 }],
-                effect: PermissionEffect::Allow,
+                effect: PermissionDecision::allow(),
                 prompt_policy: PromptPolicy {
                     default: PromptMode::Confirm,
                     by_operation: Default::default(),
@@ -311,7 +311,7 @@ mod tests {
                     kind: "capability".to_string(),
                     selectors: Default::default(),
                 }],
-                effect: PermissionEffect::Allow,
+                effect: PermissionDecision::allow(),
                 prompt_policy: PromptPolicy {
                     default: PromptMode::Auto,
                     by_operation: Default::default(),

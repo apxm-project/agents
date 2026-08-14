@@ -23,6 +23,7 @@ use sha2::{Digest, Sha256};
 
 use apxm_program::artifact::SchemaDigestRef;
 use apxm_program::grammar::{is_digest, is_identifier};
+use apxm_program::runtime_evidence::{PermissionResolution, ResolvedPermission};
 
 use crate::bundle::{
     BundleError, ExactPortBinding, PortBundle, PortBundleSpec, PortImplementation, PortSlot,
@@ -202,6 +203,13 @@ pub fn digest_serializable<T: Serialize + ?Sized>(
 const ED25519: &str = "ed25519";
 
 /// Correlation / field names that would smuggle ambient or product-plane authority.
+///
+/// `grant_fact_refs` stays banned here and is *not* what
+/// [`ExecutionAdmission::capability_permissions`] carries: a permission
+/// decision states what a capability may do, while a grant reference would
+/// hand the runtime an authority minted elsewhere. The typed field is the only
+/// way a decision reaches the runtime, and no decision may travel as an opaque
+/// caller correlation.
 const FORBIDDEN_AMBIENT_KEYS: &[&str] = &[
     "company_ref",
     "budget_reservation_ref",
@@ -243,6 +251,35 @@ pub struct AdmittedPortBinding {
     pub port_contract_digest: String,
     pub binding_digest: String,
     pub proof_digest: String,
+}
+
+/// One capability's resolved permission decision, carried by admission.
+///
+/// The decision is the *outcome* of the resolution layer stack — code (10) <
+/// package (20) < deployment (30), tighten-only — sealed into the envelope by
+/// the composition root that resolved it. It records what was decided and
+/// which layer decided it; it is not a grant and mints no authority.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdmittedCapabilityPermission {
+    pub capability_ref: String,
+    pub permission: ResolvedPermission,
+}
+
+/// Project a resolved layer stack into the admission's typed decision list.
+#[must_use]
+pub fn admitted_capability_permissions(
+    resolution: &PermissionResolution,
+) -> Vec<AdmittedCapabilityPermission> {
+    resolution
+        .iter()
+        .map(
+            |(capability_ref, permission)| AdmittedCapabilityPermission {
+                capability_ref: capability_ref.to_string(),
+                permission: permission.clone(),
+            },
+        )
+        .collect()
 }
 
 /// Exact model target when the admitted artifact requires inference.
@@ -291,6 +328,10 @@ pub struct ExecutionAdmission {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_target: Option<AdmittedModelTarget>,
     pub confinement: AdmittedConfinement,
+    /// Resolved permission decisions for this invocation, one per capability.
+    /// Absent when the composition root resolved none; never a grant.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capability_permissions: Vec<AdmittedCapabilityPermission>,
     pub expires_at_ms: u64,
     pub nonce: String,
     pub issuer: String,
@@ -478,6 +519,7 @@ pub enum AdmissionError {
     ProductPlaneField(String),
     MissingModelTarget,
     ModelBindingMismatch,
+    DuplicateCapabilityPermission(String),
     EmptyNonce,
     EmptyAudience,
     EmptyReference(&'static str),
@@ -527,6 +569,10 @@ impl std::fmt::Display for AdmissionError {
             Self::ModelBindingMismatch => {
                 write!(f, "model target does not match an admitted model binding")
             }
+            Self::DuplicateCapabilityPermission(capability_ref) => write!(
+                f,
+                "capability {capability_ref} carries more than one admitted permission decision"
+            ),
             Self::EmptyNonce => write!(f, "nonce must be non-empty"),
             Self::EmptyAudience => write!(f, "audience must be non-empty"),
             Self::EmptyReference(field) => write!(f, "{field} must be non-empty"),
@@ -1097,6 +1143,23 @@ pub fn verify_execution_admission(
         return Err(AdmissionError::MissingModelTarget);
     }
 
+    // A decision must name exactly one capability, exactly once: a repeated
+    // reference would leave which decision applies up to iteration order.
+    let mut decided: HashSet<&str> = HashSet::new();
+    for entry in &admission.capability_permissions {
+        if entry.capability_ref.trim().is_empty() {
+            return Err(AdmissionError::EmptyReference("capability_ref"));
+        }
+        if !is_identifier(&entry.capability_ref) {
+            return Err(AdmissionError::InvalidReference("capability_ref"));
+        }
+        if !decided.insert(entry.capability_ref.as_str()) {
+            return Err(AdmissionError::DuplicateCapabilityPermission(
+                entry.capability_ref.clone(),
+            ));
+        }
+    }
+
     // Confinement slot must be admitted exactly; absence fails closed.
     if !port_bindings
         .iter()
@@ -1349,6 +1412,7 @@ pub fn unsigned_admission_skeleton(
             sandbox_digest: digest_char('d'),
             policy_digest: digest_char('e'),
         },
+        capability_permissions: Vec::new(),
         expires_at_ms,
         nonce: nonce.into(),
         issuer: "apxm.test-issuer".into(),

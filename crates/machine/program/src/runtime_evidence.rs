@@ -10,6 +10,11 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+pub use apxm_ais::permissions::{
+    LayerDecisions, PermissionDecision, PermissionLayer, PermissionResolution,
+    PermissionResolutionError, ResolvedPermission,
+};
+
 use crate::common::{TypedErrorEnvelope, TypedRef};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Verdict, schema_violation};
 use crate::grammar::{is_digest, is_identifier};
@@ -258,6 +263,15 @@ pub struct RuntimeFact {
     pub context_after_ref: Option<TypedRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effect_outcome_ref: Option<TypedRef>,
+    /// The exact capability this fact is about. Without it a capability
+    /// outcome — a denial above all — is only recoverable by re-parsing the
+    /// AIR the fact came from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_ref: Option<String>,
+    /// The resolved permission decision the effect was admitted or refused
+    /// under, carrying the layer that produced it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_decision: Option<ResolvedPermission>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub typed_error: Option<TypedErrorEnvelope>,
 }
@@ -901,6 +915,22 @@ impl RuntimeEvidence {
                             DiagnosticCode::SchemaViolation,
                             &runtime.fact_id,
                             "evidence join fact is missing a required typed join",
+                        ));
+                    }
+                    if let Some(capability_ref) = &runtime.capability_ref
+                        && !is_identifier(capability_ref)
+                    {
+                        verdict.push(Diagnostic::new(
+                            DiagnosticCode::InvalidIdentifier,
+                            &runtime.fact_id,
+                            "capability_ref is not a contract identifier",
+                        ));
+                    }
+                    if runtime.permission_decision.is_some() && runtime.capability_ref.is_none() {
+                        verdict.push(Diagnostic::new(
+                            DiagnosticCode::SchemaViolation,
+                            &runtime.fact_id,
+                            "a recorded permission decision must name the capability it decided",
                         ));
                     }
                 }

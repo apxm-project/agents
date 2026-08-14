@@ -9,6 +9,7 @@ from apxm_program._generated.runtime_evidence import (
     LoopIterationCompletedFact,
     decode_fact,
 )
+from apxm_program.permissions import Allow, Ask
 
 SummarizerModel = Model[object, object]("summarizer.model")
 
@@ -52,9 +53,11 @@ async def Support(agent, incoming):
         return response
 
 
-AuditCapability = Capability[object, object]("cap.audit")
+AuditCapability = Capability[object, object]("cap.audit", permission=Allow)
 AuditModel = Model[object, object]("audit.model")
-AuditTool = Tool[object, object]("cap.audit", requested_permission="cap.audit.read")
+AuditTool = Tool[object, object](
+    "cap.audit", permission=Ask("Reads whatever the model asks for.")
+)
 
 
 @Agent(input="AuditRequest", output="AuditReport")
@@ -408,11 +411,18 @@ def test_one_capability_declared_twice_keeps_both_declarations_and_its_permissio
 
     # Keying requirements by capability_ref would drop one of these two.
     assert graph["capability_requirements"] == [
-        {"capability_ref": "cap.audit", "tool_schema_present": False},
+        {
+            "capability_ref": "cap.audit",
+            "tool_schema_present": False,
+            "requested_permission": "allow",
+        },
         {
             "capability_ref": "cap.audit",
             "tool_schema_present": True,
-            "requested_permission": "cap.audit.read",
+            "requested_permission": {
+                "decision": "ask",
+                "reason": "Reads whatever the model asks for.",
+            },
         },
     ]
     assert Auditor.diagnostics() is None

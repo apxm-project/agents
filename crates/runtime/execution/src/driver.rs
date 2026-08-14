@@ -51,7 +51,7 @@ use apxm_program::frontend_graph::ValueExpression;
 use apxm_program::runtime_evidence::{
     Fact, FactKind, HookPhase as EvidenceHookPhase, HookScope as EvidenceHookScope, InstanceState,
     InvocationState, LoopIterationCompletedFact, LoopMembership, ModelAttemptRecordedFact,
-    NodeExecutionRecordedFact, NodeExecutionScope, RuntimeFact,
+    NodeExecutionRecordedFact, NodeExecutionScope, ResolvedPermission, RuntimeFact,
 };
 
 use crate::ExecutionPortBundle;
@@ -219,6 +219,11 @@ pub struct ExecutionRequest {
 pub struct CapabilityInvocationAdmission {
     pub capability_ref: String,
     pub authority: CapabilityInvocationAuthority,
+    /// The decision the resolution layer stack reached for this capability,
+    /// when the composition root resolved one. Anything short of an outright
+    /// allow refuses the effect before an argument reaches an implementation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission: Option<ResolvedPermission>,
 }
 
 /// The typed outcome of one executed node.
@@ -500,6 +505,8 @@ fn fact(
             context_before_ref: None,
             context_after_ref: None,
             effect_outcome_ref: None,
+            capability_ref: None,
+            permission_decision: None,
             typed_error: None,
         },
     )
@@ -1506,34 +1513,69 @@ async fn drive_from(
                                     },
                                 );
                             }
-                            let arguments_value_id =
-                                operand_str(op, "arguments").ok_or_else(|| {
-                                    ExecutionError::MissingOperand {
-                                        node_id: op.node_id.clone(),
-                                        operand: "arguments",
+                            // A resolved decision is recorded before the effect
+                            // is attempted, so a refusal is in the committed
+                            // evidence rather than only in a log line.
+                            if let Some(resolved) = &admission.permission {
+                                state.seq += 1;
+                                let mut decided = fact(
+                                    &state.program_invocation_id,
+                                    state.seq,
+                                    FactKind::CapabilityAttemptRecorded,
+                                    None,
+                                    None,
+                                    Some(node_execution_id.clone()),
+                                    None,
+                                );
+                                let recorded = runtime_fact_mut(&mut decided);
+                                recorded.capability_ref = Some(capability_ref.clone());
+                                recorded.permission_decision = Some(resolved.clone());
+                                state.batch.push(decided);
+                            }
+
+                            // Anything the layer stack did not resolve to an
+                            // outright allow refuses here: this driver has no
+                            // approval broker, so `Ask` has nothing to ask.
+                            let outcome =
+                                if let Some(resolved) = admission
+                                    .permission
+                                    .as_ref()
+                                    .filter(|resolved| !resolved.decision.is_allow())
+                                {
+                                    CapabilityOutcome::Failed {
+                                        message: format!(
+                                            "capability '{capability_ref}' is {} by the {} layer",
+                                            resolved.decision, resolved.layer
+                                        ),
                                     }
-                                })?;
-                            let authored_arguments = materialize_ssa_value(
-                                air,
-                                &state,
-                                &op.node_id,
-                                &arguments_value_id,
-                                &mut BTreeSet::new(),
-                            )?;
-                            let outcome = ports
-                                .capability
-                                .invoke(
-                                    CapabilityRequest::prepare(
-                                        capability_ref,
-                                        arguments_type_ref,
-                                        authored_arguments,
-                                        &state.program_invocation_id,
-                                        &node_execution_id,
-                                        admission.authority.clone(),
-                                    )
-                                    .map_err(ExecutionError::CapabilityRequest)?,
-                                )
-                                .await;
+                                } else {
+                                    let arguments_value_id = operand_str(op, "arguments")
+                                        .ok_or_else(|| ExecutionError::MissingOperand {
+                                            node_id: op.node_id.clone(),
+                                            operand: "arguments",
+                                        })?;
+                                    let authored_arguments = materialize_ssa_value(
+                                        air,
+                                        &state,
+                                        &op.node_id,
+                                        &arguments_value_id,
+                                        &mut BTreeSet::new(),
+                                    )?;
+                                    ports
+                                        .capability
+                                        .invoke(
+                                            CapabilityRequest::prepare(
+                                                capability_ref,
+                                                arguments_type_ref,
+                                                authored_arguments,
+                                                &state.program_invocation_id,
+                                                &node_execution_id,
+                                                admission.authority.clone(),
+                                            )
+                                            .map_err(ExecutionError::CapabilityRequest)?,
+                                        )
+                                        .await
+                                };
                             state.last_operation_succeeded =
                                 matches!(&outcome, CapabilityOutcome::Completed { .. });
                             state.last_result = match &outcome {

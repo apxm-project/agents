@@ -10,6 +10,7 @@ pub mod chat;
 pub mod defaults;
 pub mod operations;
 pub mod passes;
+pub mod permissions;
 pub mod types;
 pub mod validation;
 

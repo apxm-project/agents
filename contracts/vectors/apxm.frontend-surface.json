@@ -72,11 +72,12 @@
     {
       "concept": "Imported Tool binding",
       "tier": "everyday",
-      "python_projection": "Tool[I, O](capability_ref)",
-      "typescript_projection": "Tool<I, O>(capabilityRef)",
+      "python_projection": "Tool[I, O](capability_ref, permission=...)",
+      "typescript_projection": "Tool<I, O>(capabilityRef, { permission })",
       "bound_semantic_node": "ToolBinding",
       "arguments": [
-        { "name": "capability_ref", "accepts": "exact_reference", "required": true }
+        { "name": "capability_ref", "accepts": "exact_reference", "required": true },
+        { "name": "permission", "accepts": "closed_option", "required": false }
       ],
       "produces_intent": "tool_invocation",
       "diagnostics": ["ToolRefNotCapability", "ToolDisplayNameRejected", "ToolCredentialInSource"]
@@ -84,11 +85,12 @@
     {
       "concept": "Imported Capability",
       "tier": "advanced",
-      "python_projection": "Capability[I, O](ref)",
-      "typescript_projection": "Capability<I, O>(ref)",
+      "python_projection": "Capability[I, O](ref, permission=...)",
+      "typescript_projection": "Capability<I, O>(ref, { permission })",
       "bound_semantic_node": "CapabilityBinding",
       "arguments": [
-        { "name": "ref", "accepts": "exact_reference", "required": true }
+        { "name": "ref", "accepts": "exact_reference", "required": true },
+        { "name": "permission", "accepts": "closed_option", "required": false }
       ],
       "produces_intent": "capability_invocation",
       "diagnostics": ["CapabilityRefNotExact", "CapabilityDisplayNameRejected"]

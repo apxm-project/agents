@@ -5,6 +5,8 @@
 // authored body to discover the graph, and they carry no credential, grant,
 // endpoint, or runtime object.
 
+import type { Permission } from "./generated/permissions.js";
+
 const FORBIDDEN_DISPLAY_NAMES = new Set(["default", "model.default", "support", "search-web", ""]);
 
 function rejectDisplayName(value: unknown, marker: string): void {
@@ -31,7 +33,7 @@ export type ToolBinding<I = unknown, O = unknown> = {
   readonly targetRef: string;
   readonly inputTypeRef: string;
   readonly outputTypeRef: string;
-  readonly requestedPermission?: string;
+  readonly permission?: Permission;
   (args: I): Promise<O>;
 };
 
@@ -40,7 +42,7 @@ export type CapabilityBinding<I = unknown, O = unknown> = {
   readonly targetRef: string;
   readonly inputTypeRef: string;
   readonly outputTypeRef: string;
-  readonly requestedPermission?: string;
+  readonly permission?: Permission;
   (args: I): Promise<O>;
 };
 
@@ -153,7 +155,7 @@ export function Model<I, O>(ref: string): ModelBinding<I, O> {
 
 export function Tool<I, O>(
   targetRef: string,
-  options: { readonly requestedPermission?: string } = {},
+  options: { readonly permission?: Permission } = {},
 ): ToolBinding<I, O> {
   const binding = () => uncallable("Tool");
   rejectDisplayName(targetRef, "Tool");
@@ -162,13 +164,13 @@ export function Tool<I, O>(
     targetRef,
     inputTypeRef: "ToolInput",
     outputTypeRef: "ToolOutput",
-    requestedPermission: options.requestedPermission,
+    permission: options.permission,
   });
 }
 
 export function Capability<I, O>(
   targetRef: string,
-  options: { readonly requestedPermission?: string } = {},
+  options: { readonly permission?: Permission } = {},
 ): CapabilityBinding<I, O> {
   const binding = () => uncallable("Capability");
   rejectDisplayName(targetRef, "Capability");
@@ -177,7 +179,7 @@ export function Capability<I, O>(
     targetRef,
     inputTypeRef: "CapabilityInput",
     outputTypeRef: "CapabilityOutput",
-    requestedPermission: options.requestedPermission,
+    permission: options.permission,
   });
 }
 

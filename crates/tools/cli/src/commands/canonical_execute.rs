@@ -85,20 +85,18 @@ mod capability_port {
             _args: &HashMap<String, CapabilityValue>,
         ) -> InterceptDecision {
             if self.admitted.contains(name) {
-                return InterceptDecision::Allow;
+                return InterceptDecision::allow();
             }
-            InterceptDecision::Deny {
-                reason: format!(
-                    "capability '{name}' is not admitted by canonical local execution: the local \
-                     composition root binds no sandbox backend and no issued Capability grant, so it \
-                     admits only the read-only capability surface [{}]",
-                    self.admitted
-                        .iter()
-                        .map(String::as_str)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
-            }
+            InterceptDecision::deny(format!(
+                "capability '{name}' is not admitted by canonical local execution: the local \
+                 composition root binds no sandbox backend and no issued Capability grant, so it \
+                 admits only the read-only capability surface [{}]",
+                self.admitted
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
         }
     }
 
@@ -194,10 +192,14 @@ mod capability_port {
     /// conversion is total for them. The one root that has no mapping is a
     /// non-object: capability arguments are named, and inventing a name for a bare
     /// scalar or array would fabricate an argument the author never wrote.
-    fn named_arguments(request: &CapabilityRequest) -> Result<HashMap<String, CapabilityValue>, String> {
+    fn named_arguments(
+        request: &CapabilityRequest,
+    ) -> Result<HashMap<String, CapabilityValue>, String> {
         let capability_ref = request.capability_ref();
         let decoded = request.arguments().value().map_err(|error| {
-            format!("canonical arguments for capability '{capability_ref}' are not decodable: {error}")
+            format!(
+                "canonical arguments for capability '{capability_ref}' are not decodable: {error}"
+            )
         })?;
         let serde_json::Value::Object(fields) = decoded else {
             return Err(format!(
@@ -406,11 +408,11 @@ mod model_port {
 
     use anyhow::Result;
     use apxm_backend_registry::BackendStore;
+    #[cfg(test)]
+    use apxm_backends::llm::backends::LLMBackend;
     use apxm_backends::llm::{
         BackendRegistration, LLMRegistry, LLMRequest, LLMResponse, Message, Role,
     };
-    #[cfg(test)]
-    use apxm_backends::llm::backends::LLMBackend;
     use apxm_core::types::FinishReason;
     use apxm_inference::{
         AttemptDisposition, ErrorCategory, IdempotencyKey, ModelCallPreparation, ModelCallRequest,
@@ -1343,12 +1345,8 @@ fn load_canonical_air(input: &PathBuf) -> Result<(AirModule, Vec<u8>)> {
     let bytes = read_exact_bytes(input, "canonical AIR")?;
     let text = std::str::from_utf8(&bytes)
         .with_context(|| format!("{} must contain UTF-8 canonical AIR JSON", input.display()))?;
-    let air: AirModule = serde_json::from_str(text).with_context(|| {
-        format!(
-            "{} must contain canonical apxm.air JSON",
-            input.display()
-        )
-    })?;
+    let air: AirModule = serde_json::from_str(text)
+        .with_context(|| format!("{} must contain canonical apxm.air JSON", input.display()))?;
     let verdict = air.verify();
     if !verdict.is_accepted() {
         let diagnostics = verdict
@@ -1465,6 +1463,7 @@ fn local_capability_invocation_admissions(
             CapabilityInvocationAdmission {
                 capability_ref,
                 authority,
+                permission: None,
             },
         );
     }
@@ -1748,18 +1747,9 @@ fn dev_ports(
         proof_digest: DEV_BINDING_DIGEST.into(),
     };
     let spec = PortBundleSpec::new(vec![
-        (
-            PortSlot::ExecutionCommit,
-            contract("apxm.execution-commit"),
-        ),
-        (
-            PortSlot::ModelInference,
-            contract("apxm.model-inference"),
-        ),
-        (
-            PortSlot::Capability,
-            contract("apxm.capability-invocation"),
-        ),
+        (PortSlot::ExecutionCommit, contract("apxm.execution-commit")),
+        (PortSlot::ModelInference, contract("apxm.model-inference")),
+        (PortSlot::Capability, contract("apxm.capability-invocation")),
         (
             PortSlot::ExternalAgentCapability,
             contract("apxm.external-agent"),
@@ -1860,7 +1850,8 @@ fn failed_node_count(outcomes: &[NodeOutcome]) -> usize {
             NodeOutcome::Capability { outcome, .. } => {
                 matches!(outcome, CapabilityOutcome::Failed { .. })
             }
-            NodeOutcome::ProgramNew { outcome, .. } | NodeOutcome::ProgramInvoke { outcome, .. } => {
+            NodeOutcome::ProgramNew { outcome, .. }
+            | NodeOutcome::ProgramInvoke { outcome, .. } => {
                 matches!(outcome, CompositionOutcome::Failed { .. })
             }
             NodeOutcome::AwaitEvent { outcome, .. } => matches!(
@@ -2044,9 +2035,7 @@ mod tests {
         runtime_profile_from_invocation(
             commit,
             Arc::new(LocalCapabilityPort::new().expect("local capability port")),
-            Arc::new(
-                LocalModelInferencePort::from_backend_roster().expect("local inference port"),
-            ),
+            Arc::new(LocalModelInferencePort::from_backend_roster().expect("local inference port")),
             Arc::new(LocalModelRequestMetadata),
             verified,
             "test.execution",
@@ -2291,9 +2280,7 @@ mod tests {
         let ports = dev_ports(
             commit,
             Arc::new(LocalCapabilityPort::new().expect("local capability port")),
-            Arc::new(
-                LocalModelInferencePort::from_backend_roster().expect("local inference port"),
-            ),
+            Arc::new(LocalModelInferencePort::from_backend_roster().expect("local inference port")),
             local_model_request_metadata(),
         )
         .expect("development ports form an admitted bundle");
@@ -2351,9 +2338,7 @@ mod tests {
         let ports = dev_ports(
             commit,
             Arc::new(LocalCapabilityPort::new().expect("local capability port")),
-            Arc::new(
-                LocalModelInferencePort::from_backend_roster().expect("local inference port"),
-            ),
+            Arc::new(LocalModelInferencePort::from_backend_roster().expect("local inference port")),
             local_model_request_metadata(),
         )
         .expect("development ports form an admitted bundle");
@@ -2567,9 +2552,11 @@ mod tests {
     /// model node is asserted here; the capability nodes are covered from the
     /// repository root by the CLI integration test.
     async fn execute_canonical_fixture(model: Arc<LocalModelInferencePort>) -> Value {
-        let (air, artifact_bytes) =
-            checked_in_fixture("canonical-capability-execute.air.json");
-        assert!(air.verify().is_accepted(), "the checked-in fixture is valid AIR");
+        let (air, artifact_bytes) = checked_in_fixture("canonical-capability-execute.air.json");
+        assert!(
+            air.verify().is_accepted(),
+            "the checked-in fixture is valid AIR"
+        );
         let admission =
             checked_in_admission("canonical-capability-execute.invocation-admission.json");
         let release = std::fs::read(

@@ -7,7 +7,7 @@ mod common;
 use std::collections::HashSet;
 
 use apxm_program::air::{SemanticOpKind, StructuralOpKind};
-use apxm_program::frontend_graph::CapabilityRequirement;
+use apxm_program::frontend_graph::{CapabilityRequirement, PermissionDecision};
 use apxm_program::source_map::{RegionAnnotationKind, SourceLanguage};
 use apxm_program::{
     FrontendGraph, verify_air_json, verify_frontend_graph_json, verify_source_map_json,
@@ -68,7 +68,9 @@ fn capability_requirement_field_set_is_closed_identically_in_schema_and_rust() {
     let populated = CapabilityRequirement {
         capability_ref: "cap.search".to_string(),
         tool_schema_present: Some(true),
-        requested_permission: Some("cap.search.read".to_string()),
+        requested_permission: Some(PermissionDecision::ask(
+            "Reads whatever the model asks for.",
+        )),
     };
     let encoded = serde_json::to_value(&populated).expect("encode requirement");
     let mut emitted: Vec<String> = encoded
@@ -89,9 +91,31 @@ fn capability_requirement_field_set_is_closed_identically_in_schema_and_rust() {
     let decoded: CapabilityRequirement =
         serde_json::from_value(encoded).expect("every published field decodes");
     assert_eq!(decoded, populated);
-    let unknown = json!({"capability_ref": "cap.search", "granted_permission": "cap.search.write"});
+    let unknown = json!({"capability_ref": "cap.search", "granted_permission": "allow"});
     serde_json::from_value::<CapabilityRequirement>(unknown)
         .expect_err("an unknown CapabilityRequirement field must fail decode");
+
+    // The requested permission is a decision, not free text: the published
+    // property is the closed vocabulary and Rust decodes exactly that set.
+    let published_decision = &schema["$defs"]["PermissionDecision"]["oneOf"][0]["enum"];
+    assert_eq!(published_decision, &json!(PermissionDecision::DECISIONS));
+    for decision in PermissionDecision::DECISIONS {
+        let requirement: CapabilityRequirement = serde_json::from_value(
+            json!({"capability_ref": "cap.search", "requested_permission": decision}),
+        )
+        .expect("every published decision decodes");
+        assert_eq!(
+            requirement
+                .requested_permission
+                .as_ref()
+                .map(PermissionDecision::as_str),
+            Some(decision)
+        );
+    }
+    serde_json::from_value::<CapabilityRequirement>(
+        json!({"capability_ref": "cap.search", "requested_permission": "cap.search.read"}),
+    )
+    .expect_err("a name outside the decision vocabulary must fail decode");
 }
 
 /// A permission the author never wrote must never appear, and one the author did
@@ -117,8 +141,11 @@ fn repeated_capability_declarations_each_keep_their_own_permission() {
         "both declarations name the same capability and both survive"
     );
     assert_eq!(
-        requirements[0].requested_permission.as_deref(),
-        Some("cap.search.read")
+        requirements[0].requested_permission,
+        Some(PermissionDecision::ask(
+            "Reads whatever the model asks for."
+        )),
+        "the authored decision and the reason it gave both survive"
     );
     assert_eq!(requirements[1].requested_permission, None);
 }
@@ -342,7 +369,10 @@ fn air_operand_slot_enum_does_not_drift() {
         .map(|vector| (vector.name, vector.input))
         .collect();
     for artifact in ["conversational-python", "conversational-typescript"] {
-        documents.push((artifact.to_string(), load_example_artifact(artifact)["air"].clone()));
+        documents.push((
+            artifact.to_string(),
+            load_example_artifact(artifact)["air"].clone(),
+        ));
     }
     for (name, document) in documents {
         for slot in operand_slots_in(&document) {

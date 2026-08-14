@@ -233,44 +233,32 @@ impl CapabilitySystem {
             });
         }
 
-        let mut args = args;
-        if let Some(cached) = self.approval_store.check(name) {
-            match cached {
-                InterceptDecision::Allow => {}
-                InterceptDecision::Deny { reason } => {
-                    return Err(RuntimeError::Capability {
-                        capability: name.to_string(),
-                        message: reason,
-                    });
-                }
-                InterceptDecision::EditArgs { args: edited } => args = edited,
-            }
+        let refusal = |decision: InterceptDecision| {
+            decision
+                .denial_reason()
+                .map(|reason| RuntimeError::Capability {
+                    capability: name.to_string(),
+                    message: reason.to_string(),
+                })
+        };
+
+        if let Some(cached) = self.approval_store.check(name)
+            && let Some(error) = refusal(cached)
+        {
+            return Err(error);
         }
 
-        if let Some(ctx) = pre_ctx {
-            match pre_invoke_policy_ctx(ctx, name, &args, requires_approval).await {
-                InterceptDecision::Allow => {}
-                InterceptDecision::Deny { reason } => {
-                    return Err(RuntimeError::Capability {
-                        capability: name.to_string(),
-                        message: reason,
-                    });
-                }
-                InterceptDecision::EditArgs { args: edited } => args = edited,
-            }
+        if let Some(ctx) = pre_ctx
+            && let Some(error) =
+                refusal(pre_invoke_policy_ctx(ctx, name, &args, requires_approval).await)
+        {
+            return Err(error);
         }
 
         let interceptors = self.interceptors.read().clone();
         for interceptor in &interceptors {
-            match interceptor.pre_invoke(name, &args).await {
-                InterceptDecision::Allow => {}
-                InterceptDecision::Deny { reason } => {
-                    return Err(RuntimeError::Capability {
-                        capability: name.to_string(),
-                        message: reason,
-                    });
-                }
-                InterceptDecision::EditArgs { args: edited } => args = edited,
+            if let Some(error) = refusal(interceptor.pre_invoke(name, &args).await) {
+                return Err(error);
             }
         }
 

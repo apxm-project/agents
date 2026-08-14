@@ -139,6 +139,7 @@ fn request(air: AirModule, commit_id: &str) -> ExecutionRequest {
                         Vec::new(),
                     )
                     .expect("valid test authority"),
+                    permission: None,
                 },
             ))
         })
@@ -555,18 +556,9 @@ fn ports_with_hooks(
         proof_digest: digest('c'),
     };
     let spec = PortBundleSpec::new(vec![
-        (
-            PortSlot::ExecutionCommit,
-            contract("apxm.execution-commit"),
-        ),
-        (
-            PortSlot::ModelInference,
-            contract("apxm.model-inference"),
-        ),
-        (
-            PortSlot::Capability,
-            contract("apxm.capability-invocation"),
-        ),
+        (PortSlot::ExecutionCommit, contract("apxm.execution-commit")),
+        (PortSlot::ModelInference, contract("apxm.model-inference")),
+        (PortSlot::Capability, contract("apxm.capability-invocation")),
         (
             PortSlot::ExternalAgentCapability,
             contract("apxm.external-agent"),

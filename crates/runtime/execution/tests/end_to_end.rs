@@ -26,7 +26,10 @@ use apxm_program::artifact::SchemaDigestRef;
 use apxm_program::capability::CapabilityInvocationAuthority;
 use apxm_program::external_agent::{AttributedEvent, AttributedEventKind, PeerUsage};
 use apxm_program::frontend_graph::{HookBinding, HookPhase, HookReturnMode, HookScope};
-use apxm_program::runtime_evidence::{Fact, ModelAttemptRecordedFact};
+use apxm_program::runtime_evidence::{
+    Fact, FactKind, ModelAttemptRecordedFact, PermissionDecision, PermissionLayer,
+    ResolvedPermission,
+};
 
 use apxm_execution::{
     CapabilityInvocationAdmission, CapabilityOutcome, CapabilityPort, CapabilityRequest,
@@ -603,18 +606,9 @@ fn ports_with_model_composition_capability_external_and_hooks(
         proof_digest: digest('c'),
     };
     let spec = PortBundleSpec::new(vec![
-        (
-            PortSlot::ExecutionCommit,
-            contract("apxm.execution-commit"),
-        ),
-        (
-            PortSlot::ModelInference,
-            contract("apxm.model-inference"),
-        ),
-        (
-            PortSlot::Capability,
-            contract("apxm.capability-invocation"),
-        ),
+        (PortSlot::ExecutionCommit, contract("apxm.execution-commit")),
+        (PortSlot::ModelInference, contract("apxm.model-inference")),
+        (PortSlot::Capability, contract("apxm.capability-invocation")),
         (
             PortSlot::ExternalAgentCapability,
             contract("apxm.external-agent"),
@@ -776,6 +770,7 @@ fn typed_tool_request(air: AirModule, hook_bindings: Vec<HookBinding>) -> Execut
                     Vec::new(),
                 )
                 .expect("valid test authority"),
+                permission: None,
             },
         )]),
         program_instance_ref: ProgramInstanceRef::new("instance.typed-loop"),
@@ -1002,6 +997,7 @@ fn request() -> ExecutionRequest {
                         ["approval.search.1".to_string()],
                     )
                     .expect("valid test authority"),
+                    permission: None,
                 },
             ),
             (
@@ -1015,6 +1011,7 @@ fn request() -> ExecutionRequest {
                         ["approval.acp.1".to_string()],
                     )
                     .expect("valid external-agent authority"),
+                    permission: None,
                 },
             ),
         ]),
@@ -1304,6 +1301,129 @@ async fn capability_port_receives_arguments_authority_identity_and_stable_effect
         request.effect().request_digest
     );
     assert!(request.effect().request_digest.starts_with("sha256:"));
+}
+
+/// A resolved denial must stop the effect *and* be readable afterwards. Before
+/// this, a refused capability left nothing in evidence naming what was refused
+/// or who refused it, and the capability id was recoverable only by re-parsing
+/// the AIR.
+#[tokio::test]
+async fn a_denied_capability_is_refused_before_the_port_and_recorded_in_evidence() {
+    let capability = Arc::new(RecordingCapability::with_results(["never", "never"]));
+    let commit = Arc::new(FakeCommit::new());
+    let mut denied = request();
+    denied
+        .capability_invocations
+        .get_mut("n.cap")
+        .expect("test admission")
+        .permission = Some(ResolvedPermission {
+        decision: PermissionDecision::deny("no egress from this deployment"),
+        layer: PermissionLayer::Deployment,
+    });
+
+    let report = execute(
+        &ports_with_model_composition_and_capability(
+            Arc::clone(&commit),
+            Arc::new(FakeModel),
+            Arc::new(FakeComposition),
+            Arc::clone(&capability) as Arc<dyn CapabilityPort>,
+        ),
+        denied,
+        Value::Null,
+    )
+    .await
+    .expect("a refused capability is a typed outcome, not a driver error");
+
+    assert!(
+        capability
+            .requests()
+            .iter()
+            .all(|request| request.capability_ref() != "cap.search"),
+        "a denied capability must not reach the port at all"
+    );
+    let refused = report
+        .node_outcomes
+        .iter()
+        .find_map(|outcome| match outcome {
+            NodeOutcome::Capability {
+                outcome: CapabilityOutcome::Failed { message },
+                ..
+            } => Some(message.clone()),
+            _ => None,
+        })
+        .expect("the denied node reports a failed capability outcome");
+    assert!(
+        refused.contains("no egress from this deployment") && refused.contains("deployment"),
+        "the refusal names the reason and the layer that gave it: {refused}"
+    );
+
+    let decided = commit
+        .facts()
+        .into_iter()
+        .filter_map(|fact| {
+            fact.is_kind(FactKind::CapabilityAttemptRecorded)
+                .then(|| fact.runtime().expect("runtime fact").clone())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(decided.len(), 1, "one decision, one fact");
+    assert_eq!(decided[0].capability_ref.as_deref(), Some("cap.search"));
+    assert_eq!(
+        decided[0].permission_decision,
+        Some(ResolvedPermission {
+            decision: PermissionDecision::deny("no egress from this deployment"),
+            layer: PermissionLayer::Deployment,
+        }),
+        "evidence carries the decision and the layer that produced it"
+    );
+}
+
+/// An admitted allow changes nothing about the effect, and still leaves the
+/// decision auditable.
+#[tokio::test]
+async fn an_admitted_allow_still_records_which_layer_allowed_it() {
+    let capability = Arc::new(RecordingCapability::with_results(["ok", "ok"]));
+    let commit = Arc::new(FakeCommit::new());
+    let mut allowed = request();
+    allowed
+        .capability_invocations
+        .get_mut("n.cap")
+        .expect("test admission")
+        .permission = Some(ResolvedPermission {
+        decision: PermissionDecision::allow(),
+        layer: PermissionLayer::Code,
+    });
+
+    execute(
+        &ports_with_model_composition_and_capability(
+            Arc::clone(&commit),
+            Arc::new(FakeModel),
+            Arc::new(FakeComposition),
+            Arc::clone(&capability) as Arc<dyn CapabilityPort>,
+        ),
+        allowed,
+        Value::Null,
+    )
+    .await
+    .expect("an allowed capability runs");
+
+    assert!(
+        capability
+            .requests()
+            .iter()
+            .any(|request| request.capability_ref() == "cap.search"),
+        "an allowed capability still reaches the port"
+    );
+    let decided = commit
+        .facts()
+        .into_iter()
+        .find(|fact| fact.is_kind(FactKind::CapabilityAttemptRecorded))
+        .and_then(|fact| fact.runtime().cloned())
+        .expect("the allowed decision is recorded too");
+    assert_eq!(decided.capability_ref.as_deref(), Some("cap.search"));
+    assert_eq!(
+        decided.permission_decision.map(|resolved| resolved.layer),
+        Some(PermissionLayer::Code)
+    );
 }
 
 #[tokio::test]

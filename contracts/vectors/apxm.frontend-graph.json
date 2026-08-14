@@ -561,7 +561,7 @@
         {
           "capability_ref": "cap.search",
           "tool_schema_present": true,
-          "requested_permission": "cap.search.read"
+          "requested_permission": { "decision": "ask", "reason": "Reads whatever the model asks for." }
         },
         {
           "capability_ref": "cap.search",
@@ -579,7 +579,7 @@
     "expected_valid": true
   },
   {
-    "name": "capability-requirement-permission-grammar-rejected",
+    "name": "capability-requirement-permission-outside-closed-vocabulary-rejected",
     "input": {
       "schema_version": "apxm.frontend-graph",
       "source_language": "python",
@@ -620,7 +620,7 @@
       "capability_requirements": [
         {
           "capability_ref": "cap.search",
-          "requested_permission": "read write"
+          "requested_permission": "require_approval"
         }
       ],
       "model_requirements": [],
