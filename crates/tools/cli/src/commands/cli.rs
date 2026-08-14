@@ -543,22 +543,24 @@ pub enum AgentAction {
         #[arg(long, default_value = "looped-agent")]
         template: String,
     },
-    /// Regenerate aggregate manifests from capability/skill folders
+    /// Recompile the package's TypeScript handlers into capabilities/handlers/tools.json.
     Sync {
         /// Agent directory to sync (default: current directory).
         #[arg(default_value = ".")]
         path: PathBuf,
     },
-    /// Validate an agent folder against the apxm.agent contract and
-    /// check capability-set agreement across agent.toml/capabilities.toml/skills.
+    /// Validate an agent folder against the apxm.agent contract: manifest
+    /// shape, the compiled source declaration, the permission layer stack,
+    /// and the published folder contract.
     Lint {
         /// Agent directory to validate (default: current directory).
         #[arg(default_value = ".")]
         path: PathBuf,
         /// An org package directory whose capabilities/{capabilities,
-        /// permissions}.toml are this agent's org-global capability set
-        ///: a skill invoking one of these is not flagged as
-        /// undeclared even though the agent itself never joins it.
+        /// permissions}.toml are this agent's org-global capability set. Those
+        /// ids extend what this package can supply, so `agent.toml
+        /// [permissions]` may state a decision for a capability the org
+        /// provides rather than one this package ships itself.
         #[arg(long)]
         org: Option<PathBuf>,
     },
@@ -576,6 +578,12 @@ pub enum AgentAction {
         /// Overwrite an existing install at the destination.
         #[arg(long)]
         force: bool,
+    },
+    /// Verify a built agent folder against its generated integrity chain.
+    Verify {
+        /// Agent directory to verify (default: current directory).
+        #[arg(default_value = ".")]
+        path: PathBuf,
     },
 }
 

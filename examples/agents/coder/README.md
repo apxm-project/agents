@@ -10,9 +10,9 @@ The entire flow is deliberately small:
 2. `edit` returns a structured before/after proposal; and
 3. `test` returns a single test-command proposal.
 
-All three capabilities are read-only. Coder never writes a file or executes a
-command; a host must explicitly review and apply a proposal. The final model
-call summarizes those three explicit results.
+Coder never writes a file or executes a command: both package-local handlers
+return a proposal marked `mutates: false`, and a host must explicitly review and
+apply one. The final model call summarizes those three explicit results.
 
 The two package-local tools use `Tool.define`, `Tool.object`, and
 `Tool.answer`. Their input schemas and handler manifest are generated from that

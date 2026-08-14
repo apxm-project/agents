@@ -1,6 +1,0 @@
-id = "test"
-description = "Prepare a test command for review without running it."
-kind = "typescript_handler"
-handler_function = "prepareTest"
-handler_module = "capabilities/test/handler"
-read_only = true

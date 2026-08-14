@@ -1,11 +1,10 @@
-capabilities = []
+id = "canonical-session-agent"
+version = "0.1.0"
+schema_version = "apxm.agent"
 display_name = "Canonical Session Agent"
 domain = "general"
-id = "canonical-session-agent"
 kind = "agent"
 license = "MIT"
-schema_version = "apxm.agent"
-version = "0.1.0"
 
 [compile]
 entry = "python/session.py"

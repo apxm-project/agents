@@ -134,6 +134,14 @@ jobs:
       - name: Run CLI tests
         run: dekk agents test-cli
 
+      # `test-cli`, `check`, and `test-frontend-examples` all passed once while
+      # a checked-in example's integrity.toml was stale. This is the gate that
+      # notices: every checked-in package is linted and held against its own
+      # chain, so a package edit without `dekk agents build-agent-packages`
+      # fails here.
+      - name: Verify checked-in agent packages
+        run: dekk agents check-agent-packages
+
       - name: Run repository example frontend tests
         run: dekk agents test-frontend-examples
 

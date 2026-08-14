@@ -87,6 +87,8 @@ test-frontend-examples = { run = "env -u CC -u CXX python tools/scripts/cargo.py
 build-frontend-native = { run = "python tools/scripts/cargo.py build -p apxm-frontend-python --release && python tools/scripts/install_frontend_native.py python", description = "Build the canonical PyO3 authoring bridge (_native.so) reproducibly from source", group = "Build & Test" }
 build-example-artifacts = { run = "env -u CC -u CXX -u DYLD_LIBRARY_PATH -u DYLD_FALLBACK_LIBRARY_PATH python tools/scripts/cargo.py build -p apxm-frontend-python -p apxm-frontend-typescript --release && python tools/scripts/install_frontend_native.py python && npm --prefix crates/compiler/frontend/typescript run build && python tools/scripts/install_frontend_native.py typescript && npm --prefix examples/agents/conversational install --ignore-scripts --no-audit --no-fund --no-package-lock && npm --prefix examples/agents/conversational run build && python tools/scripts/build_example_artifacts.py --python-package-root crates/compiler/frontend/python", description = "Build deterministic repository example executable artifacts from installed generic frontends", group = "Build & Test" }
 check-example-artifacts = { run = "python tools/scripts/build_example_artifacts.py --python-package-root crates/compiler/frontend/python --check", description = "Drift-check repository example executable artifacts", group = "Build & Test" }
+build-agent-packages = { run = "python tools/scripts/agent_packages.py --build", description = "Rebuild every checked-in agent package's integrity chain", group = "Build & Test" }
+check-agent-packages = { run = "python tools/scripts/agent_packages.py", description = "Lint every checked-in agent package and verify it against its own integrity chain", group = "Build & Test" }
 test-canonical-only = { run = "python -m unittest tools.tests.test_canonical_only_reachability", description = "Reject retired execution surfaces from the build graph", group = "Build & Test" }
 test-dekk-cli-wrapper = { run = "python -m unittest tools.tests.test_dekk_cli_wrapper", description = "Run exact APXM CLI wrapper target-selection and native-toolchain readiness guards", group = "Build & Test" }
 frontend-cli-path = { run = "python tools/scripts/cargo.py build -p apxm-cli --bin apxm >/dev/null && target_dir=$(python tools/scripts/cargo.py target-dir) && printf '%s/debug/apxm\\n' \"$target_dir\"", description = "Build the debug APXM CLI and print its path for frontend integration tests", group = "Build & Test" }
@@ -168,12 +170,13 @@ list = { run = "python tools/scripts/apxm_cli.py template list", description = "
 show = { run = "python tools/scripts/apxm_cli.py template show", description = "Show template" }
 
 [commands.agent]
-description = "Scaffold, sync, lint, build, and install agents"
+description = "Scaffold, sync, lint, build, verify, and install agents"
 group = "Authoring"
 new = { run = "python tools/scripts/apxm_cli.py agent new", description = "Scaffold a new agent folder tree", skill = true }
-sync = { run = "python tools/scripts/apxm_cli.py agent sync", description = "Regenerate aggregate agent manifests", skill = true }
-lint = { run = "python tools/scripts/apxm_cli.py agent lint", description = "Validate an agent + capability-set agreement", skill = true }
+sync = { run = "python tools/scripts/apxm_cli.py agent sync", description = "Recompile the package's TypeScript handlers", skill = true }
+lint = { run = "python tools/scripts/apxm_cli.py agent lint", description = "Validate an agent against the apxm.agent contract", skill = true }
 build = { run = "npm --prefix crates/tools/cli/agent-packaging ci --ignore-scripts --no-audit --no-fund && env -u CC -u CXX -u DYLD_LIBRARY_PATH -u DYLD_FALLBACK_LIBRARY_PATH python tools/scripts/apxm_cli.py agent build", description = "Compile package handlers and recompute agent integrity", skill = true }
+verify = { run = "python tools/scripts/apxm_cli.py agent verify", description = "Verify an agent against its generated integrity chain", skill = true }
 install = { run = "python tools/scripts/apxm_cli.py agent install", description = "Install a built agent to APXM_HOME/agents/<id>" }
 
 [commands.cache]

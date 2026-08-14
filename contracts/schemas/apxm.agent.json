@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.agent",
+  "title": "AgentPackage",
+  "description": "The canonical authored agent package: one authored manifest (`agent.toml`) and the closed set of package-relative paths the folder contract recognizes. `files` is the digest map `apxm agent build` hashes into the generated `integrity.toml` chain, so the paths this schema recognizes and the paths that are hashed are one statement. A package declares no capability inventory and no permission inventory of its own: a Capability reference is satisfied by a built-in id or by a `capabilities/<id>/handler.ts` the package ships, and the only authored permission surface is the manifest's `[permissions]` table.",
+  "type": "object",
+  "required": [
+    "agent",
+    "files"
+  ],
+  "properties": {
+    "agent": {
+      "$ref": "#/$defs/AgentManifest"
+    },
+    "files": {
+      "$ref": "#/$defs/PackageFiles"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "Identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,255}$"
+    },
+    "FileDigest": {
+      "type": "string",
+      "description": "Lowercase hex SHA-256 of the file's bytes, as recorded in the integrity chain.",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "PermissionDecision": {
+      "description": "The closed three-value permission vocabulary, in the one wire form the machine publishes: a bare decision string, or an object carrying the reason declared beside it.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "allow",
+            "ask",
+            "deny"
+          ]
+        },
+        {
+          "type": "object",
+          "required": [
+            "decision"
+          ],
+          "properties": {
+            "decision": {
+              "type": "string",
+              "enum": [
+                "allow",
+                "ask",
+                "deny"
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "AgentManifest": {
+      "description": "`agent.toml` — the only authored manifest in the package. Every key is stated here; a key this schema does not name is a parse error, not a tolerated extra.",
+      "type": "object",
+      "required": [
+        "id",
+        "version"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$"
+        },
+        "schema_version": {
+          "const": "apxm.agent"
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "domain": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "license": {
+          "type": "string",
+          "minLength": 1
+        },
+        "compile": {
+          "$ref": "#/$defs/CompileDeclaration"
+        },
+        "prompts": {
+          "type": "object",
+          "description": "Named instruction resources, each a package-relative path under `prompts/`.",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "source": {
+          "type": "object",
+          "description": "How the package's authored source is obtained. Carried verbatim; this schema states only that it is a table."
+        },
+        "hierarchy": {
+          "$ref": "#/$defs/Hierarchy"
+        },
+        "permissions": {
+          "type": "object",
+          "description": "The package layer of the permission stack: what this package decides about a capability its own tree can supply. Tighten-only — it may narrow a decision and may never decide for a capability nothing grants.",
+          "additionalProperties": {
+            "$ref": "#/$defs/PermissionDecision"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "CompileDeclaration": {
+      "description": "The package's single compiled entry. Both keys are stated together or neither is.",
+      "type": "object",
+      "properties": {
+        "entry": {
+          "type": "string",
+          "minLength": 1
+        },
+        "frontend": {
+          "type": "string",
+          "enum": [
+            "python",
+            "typescript"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "Hierarchy": {
+      "description": "This agent's parent and the children it may spawn or delegate to. Absorbed into the manifest; there is no separate `hierarchy.toml`.",
+      "type": "object",
+      "properties": {
+        "parent": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "permitted_children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Identifier"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "PackageFiles": {
+      "description": "Every package-relative path the folder contract recognizes, mapped to the digest of its bytes. `patternProperties` is the sole authority: `apxm agent lint` and `verify_agent_integrity` both derive their recognized-path predicate from these patterns, so a path this object does not match is not part of the package.",
+      "type": "object",
+      "patternProperties": {
+        "^agent\\.toml$": {
+          "$ref": "#/$defs/FileDigest"
+        },
+        "^integrity\\.toml$": {
+          "$ref": "#/$defs/FileDigest"
+        },
+        "^README\\.md$": {
+          "$ref": "#/$defs/FileDigest"
+        },
+        "^package\\.json$": {
+          "$ref": "#/$defs/FileDigest"
+        },
+        "^tsconfig\\.json$": {
+          "$ref": "#/$defs/FileDigest"
+        },
+        "^capabilities/handlers/tools\\.json$": {
+          "$ref": "#/$defs/FileDigest"
+        },
+        "^capabilities/handlers/[^/]+\\.(py|ts)$": {
+          "$ref": "#/$defs/FileDigest"
+        },
+        "^capabilities/[^/]+/handler\\.ts$": {
+          "$ref": "#/$defs/FileDigest"
+        },
+        "^prompts/[^/]+\\.md$": {
+          "$ref": "#/$defs/FileDigest"
+        },
+        "^python/[^/]+\\.py$": {
+          "$ref": "#/$defs/FileDigest"
+        },
+        "^src/([^/]+/)*[^/]+\\.ts$": {
+          "$ref": "#/$defs/FileDigest"
+        },
+        "^examples/[^/]+\\.md$": {
+          "$ref": "#/$defs/FileDigest"
+        },
+        "^tests/[^/]+$": {
+          "$ref": "#/$defs/FileDigest"
+        },
+        "^shared/[^/]+$": {
+          "$ref": "#/$defs/FileDigest"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

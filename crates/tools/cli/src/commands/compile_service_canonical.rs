@@ -60,12 +60,12 @@ pub(crate) fn emit_canonical_air_from_agent(
 /// Hold every Capability the compiled program names against what the package
 /// can actually supply.
 ///
-/// This is the join the three namespaces never made: the reference an author
-/// writes in program source, the ids `capabilities/capabilities.toml`
-/// declares, and the runtime's builtin allowlist. Without it a program could
-/// name a Capability that is in none of them and still compile, produce an
-/// artifact, and run — the reference simply resolved to nothing at the
-/// registry, far past the point where the author could see the mistake.
+/// This is the join the namespaces never made: the reference an author writes
+/// in program source, the `capabilities/<id>/handler.ts` handlers the package
+/// ships, and the runtime's builtin allowlist. Without it a program could name
+/// a Capability that is in none of them and still compile, produce an artifact,
+/// and run — the reference simply resolved to nothing at the registry, far past
+/// the point where the author could see the mistake.
 fn check_capability_references_are_granted(
     agent_dir: &Path,
     module: &apxm_program::air::AirModule,
@@ -91,7 +91,7 @@ fn check_capability_references_are_granted(
     }
     anyhow::bail!(
         "{} authors {} no implementation can satisfy: [{}]. A Capability reference must name a \
-         built-in id or an id declared in {}",
+         built-in id or an id this package ships a handler for at {}",
         agent_dir.join("agent.toml").display(),
         if ungranted.len() == 1 {
             "a Capability"
@@ -99,7 +99,7 @@ fn check_capability_references_are_granted(
             "Capabilities"
         },
         ungranted.join(", "),
-        agent_dir.join("capabilities/capabilities.toml").display(),
+        agent_dir.join("capabilities/<id>/handler.ts").display(),
     )
 }
 

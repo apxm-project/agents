@@ -43,6 +43,9 @@ tempfile.workspace = true
 toml.workspace = true
 # agent new/sync/lint/build/install manifest parsing + integrity hash chain.
 sha2.workspace = true
+# Compiles the apxm.agent contract's `files` patternProperties into the
+# recognized-path predicate, so the folder contract is derived and not restated.
+regex.workspace = true
 rusqlite = { workspace = true, optional = true }
 
 [dev-dependencies]

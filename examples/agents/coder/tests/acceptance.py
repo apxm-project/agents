@@ -14,33 +14,34 @@ def load_toml(path: Path) -> dict:
     return tomllib.loads(path.read_text())
 
 
-def folder_entries(root: Path, file_name: str) -> dict[str, dict]:
-    return {
-        path.parent.name: load_toml(path)
-        for path in sorted((root / "capabilities").glob(f"*/{file_name}"))
-    }
-
-
-def test_coder_declares_only_read_only_capabilities() -> None:
+def test_coder_is_two_manifests_plus_the_handlers_it_ships() -> None:
     agent = load_toml(CODER_ROOT / "agent.toml")
-    capabilities = folder_entries(CODER_ROOT, "capability.toml")
-    permissions = folder_entries(CODER_ROOT, "permission.toml")
 
-    assert set(capabilities) == {"edit", "read", "test"}
-    assert set(permissions) == set(capabilities)
-    assert agent["capabilities"] == ["edit", "read", "test"]
-    assert all(entry["read_only"] is True for entry in capabilities.values())
-    assert all(entry == {"capability": name, "decision": "allow"} for name, entry in permissions.items())
+    assert sorted(path.name for path in CODER_ROOT.glob("*.toml")) == [
+        "agent.toml",
+        "integrity.toml",
+    ]
+    # The capability surface is the handlers the package ships, not an
+    # inventory file restating them.
+    shipped = sorted(
+        path.parent.name for path in CODER_ROOT.glob("capabilities/*/handler.ts")
+    )
+    assert shipped == ["edit", "test"]
+    assert not list(CODER_ROOT.glob("capabilities/**/*.toml"))
+    # Every decision Coder makes is the default one, so it states none.
+    assert "permissions" not in agent
+    assert "capabilities" not in agent
+    assert "allowed_agent_skills" not in agent
     assert "hooks" not in agent
 
 
 def test_coder_tools_are_typed_and_non_mutating() -> None:
     manifest = json.loads((CODER_ROOT / "capabilities/handlers/tools.json").read_text())
-    tools = manifest["handlers"]
-    tools_by_name = {entry["name"]: entry for entry in tools}
+    tools_by_name = {entry["name"]: entry for entry in manifest["handlers"]}
 
     assert set(tools_by_name) == {"edit", "test"}
-    assert all(entry["read_only"] is True for entry in tools_by_name.values())
+    # `requires_approval` is the resolved permission decision, carried from the
+    # one place a package states permissions.
     assert all(entry["requires_approval"] is False for entry in tools_by_name.values())
     assert tools_by_name["edit"]["schema"]["required"] == ["file_path", "before", "after"]
     assert tools_by_name["test"]["schema"]["required"] == ["command"]
@@ -49,7 +50,7 @@ def test_coder_tools_are_typed_and_non_mutating() -> None:
 
 def main() -> None:
     tests = [
-        test_coder_declares_only_read_only_capabilities,
+        test_coder_is_two_manifests_plus_the_handlers_it_ships,
         test_coder_tools_are_typed_and_non_mutating,
     ]
     for test in tests:

@@ -1,17 +1,11 @@
-allowed_agent_skills = []
-capabilities = [
-    "edit",
-    "read",
-    "test",
-]
-description = "A read-only coding extension that reads source and prepares edit and test proposals."
-display_name = "Coder"
-domain = "software"
 id = "coder"
+version = "0.1.0"
+schema_version = "apxm.agent"
+display_name = "Coder"
+description = "A read-only coding extension that reads source and prepares edit and test proposals."
+domain = "software"
 kind = "agent"
 license = "MIT"
-schema_version = "apxm.agent"
-version = "0.1.0"
 
 [compile]
 entry = "src/main.ts"

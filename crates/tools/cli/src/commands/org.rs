@@ -8,15 +8,16 @@
 //! this repo does not vendor or path-depend on the sibling `contracts`
 //! repo), same lint reporting style, same install-to-`APXM_HOME` pattern.
 //! Where a check can reuse the agent command logic (installed-agent resolution,
-//! the joined capabilities/permissions grammar, `hierarchy.toml`'s
-//! parent/permitted_children shape, recursive directory copy) it does —
-//! see the `use super::agent::{...}` imports below — rather than
-//! reimplementing it.
+//! the `[hierarchy]` parent/permitted_children shape, recursive directory copy)
+//! it does — see the `use super::agent::{...}` imports below — rather than
+//! reimplementing it. The joined capabilities/permissions grammar is *not*
+//! shared: it is the org format's alone now that an agent package declares no
+//! capability inventory of its own.
 //!
 //! An org package's `members.toml` entries carry a `hierarchy` snapshot
 //! (org-package.v1#/properties/members/items/properties/hierarchy) of the
-//! referenced agent's own `hierarchy.toml`. That snapshot — not a
-//! second resolve-and-read of the installed agent's `hierarchy.toml` — is
+//! referenced agent's own `agent.toml [hierarchy]`. That snapshot — not a
+//! second resolve-and-read of the installed agent's manifest — is
 //! what `org lint`'s hierarchy-consistency check compares against
 //! `topology.toml`'s tree edges; this is the schema's own design ("carried
 //! here so org-package lint can check consistency ... without
@@ -32,14 +33,90 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
-use super::agent::{
-    CapabilitiesToml, HierarchyToml, PermissionsToml, copy_dir_recursive, resolve_installed_agent,
-};
+use super::agent::{HierarchyToml, copy_dir_recursive, resolve_installed_agent};
 use super::implementations::{Status, print_section_header, print_status_line};
 
 // ---------------------------------------------------------------------
 // On-disk manifest shapes (org-package.v1 / org-topology.v1 projections)
 // ---------------------------------------------------------------------
+
+/// `capabilities/capabilities.toml` — the org's GLOBAL capability set.
+///
+/// This shape is the org format's alone. An agent package declares no
+/// capability inventory: what it can supply is the built-in allowlist plus the
+/// handlers it ships, so there is nothing at the agent level for these types to
+/// be shared with.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CapabilitiesToml {
+    #[serde(default, rename = "capability")]
+    pub capability: Vec<CapabilityEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilityEntry {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(flatten)]
+    pub extra: toml::Table,
+}
+
+/// `capabilities/permissions.toml` — one policy entry per joined global
+/// capability id. A global with no matching policy is not a capability and
+/// fails `org lint`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PermissionsToml {
+    #[serde(default, rename = "permission")]
+    pub permission: Vec<PermissionEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermissionEntry {
+    pub capability: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision: Option<toml::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(flatten)]
+    pub extra: toml::Table,
+}
+
+/// The org-global joined capability set (declared ∩ permitted — the same join
+/// `check_global_capability_join` enforces), read for `agent lint --org` so a
+/// member package's `agent.toml [permissions]` may state a decision for a
+/// capability the org supplies.
+///
+/// Missing files are an empty global set rather than an error: this is opt-in
+/// plumbing for a package that is a member of an org, not a requirement every
+/// org must satisfy.
+pub(super) fn load_org_global_capabilities(org_root: &Path) -> Result<BTreeSet<String>> {
+    let capabilities_path = org_root.join("capabilities/capabilities.toml");
+    let permissions_path = org_root.join("capabilities/permissions.toml");
+    let capabilities: CapabilitiesToml = if capabilities_path.is_file() {
+        read_toml(&capabilities_path)?
+    } else {
+        CapabilitiesToml::default()
+    };
+    let permissions: PermissionsToml = if permissions_path.is_file() {
+        read_toml(&permissions_path)?
+    } else {
+        PermissionsToml::default()
+    };
+    let declared: BTreeSet<&str> = capabilities
+        .capability
+        .iter()
+        .map(|c| c.id.as_str())
+        .collect();
+    let permitted: BTreeSet<&str> = permissions
+        .permission
+        .iter()
+        .map(|p| p.capability.as_str())
+        .collect();
+    Ok(declared
+        .intersection(&permitted)
+        .map(|id| (*id).to_string())
+        .collect())
+}
 
 /// Projection of `org.toml` (`org-package.v1#/properties/org`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,9 +153,8 @@ pub struct MemberEntry {
     pub enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capability_mask: Option<CapabilityMaskToml>,
-    /// Snapshot of the referenced agent's own `hierarchy.toml`
-    /// (`apxm.agent#/properties/hierarchy`, 's
-    /// `AgentDefinition.hierarchy`). Reused verbatim from
+    /// Snapshot of the referenced agent's own `[hierarchy]` table
+    /// (`apxm.agent#/$defs/Hierarchy`). Reused verbatim from
     /// [`super::agent::HierarchyToml`] — same shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hierarchy: Option<HierarchyToml>,

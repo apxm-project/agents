@@ -1,0 +1,861 @@
+[
+  {
+    "name": "valid-two-file-python-package",
+    "input": {
+      "agent": {
+        "id": "conversational",
+        "version": "0.1.0",
+        "schema_version": "apxm.agent",
+        "display_name": "Conversational",
+        "description": "A conversational agent.",
+        "domain": "general",
+        "kind": "agent",
+        "license": "MIT",
+        "compile": {
+          "entry": "python/agent.py",
+          "frontend": "python"
+        },
+        "prompts": {
+          "persona": "prompts/persona.md"
+        },
+        "source": {
+          "type": "local"
+        }
+      },
+      "files": {
+        "agent.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "prompts/persona.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "python/agent.py": "3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "valid-typescript-package-shipping-capability-handlers",
+    "input": {
+      "agent": {
+        "id": "conversational",
+        "version": "0.1.0",
+        "schema_version": "apxm.agent",
+        "display_name": "Conversational",
+        "description": "A conversational agent.",
+        "domain": "general",
+        "kind": "agent",
+        "license": "MIT",
+        "compile": {
+          "entry": "src/main.ts",
+          "frontend": "typescript"
+        },
+        "prompts": {
+          "persona": "prompts/persona.md",
+          "safety": "prompts/safety.md"
+        },
+        "source": {
+          "type": "local"
+        }
+      },
+      "files": {
+        "agent.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "README.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "package.json": "3333333333333333333333333333333333333333333333333333333333333333",
+        "tsconfig.json": "4444444444444444444444444444444444444444444444444444444444444444",
+        "prompts/persona.md": "1111111111111111111111111111111111111111111111111111111111111111",
+        "prompts/safety.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "src/main.ts": "3333333333333333333333333333333333333333333333333333333333333333",
+        "src/static-source.ts": "4444444444444444444444444444444444444444444444444444444444444444",
+        "capabilities/edit/handler.ts": "1111111111111111111111111111111111111111111111111111111111111111",
+        "capabilities/test/handler.ts": "2222222222222222222222222222222222222222222222222222222222222222",
+        "capabilities/handlers/tools.json": "3333333333333333333333333333333333333333333333333333333333333333",
+        "tests/acceptance.py": "4444444444444444444444444444444444444444444444444444444444444444"
+      }
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "valid-package-absorbing-hierarchy-and-a-permission-override",
+    "input": {
+      "agent": {
+        "id": "conversational",
+        "version": "0.1.0",
+        "schema_version": "apxm.agent",
+        "display_name": "Conversational",
+        "description": "A conversational agent.",
+        "domain": "general",
+        "kind": "agent",
+        "license": "MIT",
+        "compile": {
+          "entry": "python/agent.py",
+          "frontend": "python"
+        },
+        "prompts": {
+          "persona": "prompts/persona.md"
+        },
+        "source": {
+          "type": "local"
+        },
+        "hierarchy": {
+          "parent": "team.supervisor",
+          "permitted_children": [
+            "conversational.child"
+          ]
+        },
+        "permissions": {
+          "write": {
+            "decision": "ask",
+            "reason": "Writes files on the host."
+          }
+        }
+      },
+      "files": {
+        "agent.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "prompts/persona.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "python/agent.py": "3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "valid-package-with-a-bare-decision-string",
+    "input": {
+      "agent": {
+        "id": "conversational",
+        "version": "0.1.0",
+        "schema_version": "apxm.agent",
+        "display_name": "Conversational",
+        "description": "A conversational agent.",
+        "domain": "general",
+        "kind": "agent",
+        "license": "MIT",
+        "compile": {
+          "entry": "python/agent.py",
+          "frontend": "python"
+        },
+        "prompts": {
+          "persona": "prompts/persona.md"
+        },
+        "source": {
+          "type": "local"
+        },
+        "permissions": {
+          "write": "deny"
+        }
+      },
+      "files": {
+        "agent.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "prompts/persona.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "python/agent.py": "3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "agent-declaring-a-capability-array-rejected",
+    "input": {
+      "agent": {
+        "id": "conversational",
+        "version": "0.1.0",
+        "schema_version": "apxm.agent",
+        "display_name": "Conversational",
+        "description": "A conversational agent.",
+        "domain": "general",
+        "kind": "agent",
+        "license": "MIT",
+        "compile": {
+          "entry": "python/agent.py",
+          "frontend": "python"
+        },
+        "prompts": {
+          "persona": "prompts/persona.md"
+        },
+        "source": {
+          "type": "local"
+        },
+        "capabilities": [
+          "read",
+          "write"
+        ]
+      },
+      "files": {
+        "agent.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "prompts/persona.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "python/agent.py": "3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "agent-declaring-allowed-agent-skills-rejected",
+    "input": {
+      "agent": {
+        "id": "conversational",
+        "version": "0.1.0",
+        "schema_version": "apxm.agent",
+        "display_name": "Conversational",
+        "description": "A conversational agent.",
+        "domain": "general",
+        "kind": "agent",
+        "license": "MIT",
+        "compile": {
+          "entry": "python/agent.py",
+          "frontend": "python"
+        },
+        "prompts": {
+          "persona": "prompts/persona.md"
+        },
+        "source": {
+          "type": "local"
+        },
+        "allowed_agent_skills": []
+      },
+      "files": {
+        "agent.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "prompts/persona.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "python/agent.py": "3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "agent-declaring-hooks-rejected",
+    "input": {
+      "agent": {
+        "id": "conversational",
+        "version": "0.1.0",
+        "schema_version": "apxm.agent",
+        "display_name": "Conversational",
+        "description": "A conversational agent.",
+        "domain": "general",
+        "kind": "agent",
+        "license": "MIT",
+        "compile": {
+          "entry": "python/agent.py",
+          "frontend": "python"
+        },
+        "prompts": {
+          "persona": "prompts/persona.md"
+        },
+        "source": {
+          "type": "local"
+        },
+        "hooks": [
+          {
+            "event": "pre_turn",
+            "mode": "observe",
+            "handler": "h"
+          }
+        ]
+      },
+      "files": {
+        "agent.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "prompts/persona.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "python/agent.py": "3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "agent-declaring-a-top-level-entry-rejected",
+    "input": {
+      "agent": {
+        "id": "conversational",
+        "version": "0.1.0",
+        "schema_version": "apxm.agent",
+        "display_name": "Conversational",
+        "description": "A conversational agent.",
+        "domain": "general",
+        "kind": "agent",
+        "license": "MIT",
+        "compile": {
+          "entry": "python/agent.py",
+          "frontend": "python"
+        },
+        "prompts": {
+          "persona": "prompts/persona.md"
+        },
+        "source": {
+          "type": "local"
+        },
+        "entry": "python/agent.py"
+      },
+      "files": {
+        "agent.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "prompts/persona.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "python/agent.py": "3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "package-carrying-generated-capabilities-toml-rejected",
+    "input": {
+      "agent": {
+        "id": "conversational",
+        "version": "0.1.0",
+        "schema_version": "apxm.agent",
+        "display_name": "Conversational",
+        "description": "A conversational agent.",
+        "domain": "general",
+        "kind": "agent",
+        "license": "MIT",
+        "compile": {
+          "entry": "python/agent.py",
+          "frontend": "python"
+        },
+        "prompts": {
+          "persona": "prompts/persona.md"
+        },
+        "source": {
+          "type": "local"
+        }
+      },
+      "files": {
+        "agent.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "prompts/persona.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "python/agent.py": "3333333333333333333333333333333333333333333333333333333333333333",
+        "capabilities/capabilities.toml": "4444444444444444444444444444444444444444444444444444444444444444"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "package-carrying-generated-permissions-toml-rejected",
+    "input": {
+      "agent": {
+        "id": "conversational",
+        "version": "0.1.0",
+        "schema_version": "apxm.agent",
+        "display_name": "Conversational",
+        "description": "A conversational agent.",
+        "domain": "general",
+        "kind": "agent",
+        "license": "MIT",
+        "compile": {
+          "entry": "python/agent.py",
+          "frontend": "python"
+        },
+        "prompts": {
+          "persona": "prompts/persona.md"
+        },
+        "source": {
+          "type": "local"
+        }
+      },
+      "files": {
+        "agent.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "prompts/persona.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "python/agent.py": "3333333333333333333333333333333333333333333333333333333333333333",
+        "capabilities/permissions.toml": "4444444444444444444444444444444444444444444444444444444444444444"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "package-carrying-per-capability-capability-toml-rejected",
+    "input": {
+      "agent": {
+        "id": "conversational",
+        "version": "0.1.0",
+        "schema_version": "apxm.agent",
+        "display_name": "Conversational",
+        "description": "A conversational agent.",
+        "domain": "general",
+        "kind": "agent",
+        "license": "MIT",
+        "compile": {
+          "entry": "python/agent.py",
+          "frontend": "python"
+        },
+        "prompts": {
+          "persona": "prompts/persona.md"
+        },
+        "source": {
+          "type": "local"
+        }
+      },
+      "files": {
+        "agent.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "prompts/persona.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "python/agent.py": "3333333333333333333333333333333333333333333333333333333333333333",
+        "capabilities/read/capability.toml": "4444444444444444444444444444444444444444444444444444444444444444"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "package-carrying-per-capability-permission-toml-rejected",
+    "input": {
+      "agent": {
+        "id": "conversational",
+        "version": "0.1.0",
+        "schema_version": "apxm.agent",
+        "display_name": "Conversational",
+        "description": "A conversational agent.",
+        "domain": "general",
+        "kind": "agent",
+        "license": "MIT",
+        "compile": {
+          "entry": "python/agent.py",
+          "frontend": "python"
+        },
+        "prompts": {
+          "persona": "prompts/persona.md"
+        },
+        "source": {
+          "type": "local"
+        }
+      },
+      "files": {
+        "agent.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "prompts/persona.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "python/agent.py": "3333333333333333333333333333333333333333333333333333333333333333",
+        "capabilities/read/permission.toml": "4444444444444444444444444444444444444444444444444444444444444444"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "package-carrying-hierarchy-toml-rejected",
+    "input": {
+      "agent": {
+        "id": "conversational",
+        "version": "0.1.0",
+        "schema_version": "apxm.agent",
+        "display_name": "Conversational",
+        "description": "A conversational agent.",
+        "domain": "general",
+        "kind": "agent",
+        "license": "MIT",
+        "compile": {
+          "entry": "python/agent.py",
+          "frontend": "python"
+        },
+        "prompts": {
+          "persona": "prompts/persona.md"
+        },
+        "source": {
+          "type": "local"
+        }
+      },
+      "files": {
+        "agent.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "prompts/persona.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "python/agent.py": "3333333333333333333333333333333333333333333333333333333333333333",
+        "hierarchy.toml": "4444444444444444444444444444444444444444444444444444444444444444"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "agent-without-an-id-rejected",
+    "input": {
+      "agent": {
+        "version": "0.1.0",
+        "schema_version": "apxm.agent",
+        "display_name": "Conversational",
+        "description": "A conversational agent.",
+        "domain": "general",
+        "kind": "agent",
+        "license": "MIT",
+        "compile": {
+          "entry": "python/agent.py",
+          "frontend": "python"
+        },
+        "prompts": {
+          "persona": "prompts/persona.md"
+        },
+        "source": {
+          "type": "local"
+        }
+      },
+      "files": {
+        "agent.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "prompts/persona.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "python/agent.py": "3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "agent-without-a-version-rejected",
+    "input": {
+      "agent": {
+        "id": "conversational",
+        "schema_version": "apxm.agent",
+        "display_name": "Conversational",
+        "description": "A conversational agent.",
+        "domain": "general",
+        "kind": "agent",
+        "license": "MIT",
+        "compile": {
+          "entry": "python/agent.py",
+          "frontend": "python"
+        },
+        "prompts": {
+          "persona": "prompts/persona.md"
+        },
+        "source": {
+          "type": "local"
+        }
+      },
+      "files": {
+        "agent.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "prompts/persona.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "python/agent.py": "3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "agent-version-that-is-not-semver-rejected",
+    "input": {
+      "agent": {
+        "id": "conversational",
+        "version": "0.1",
+        "schema_version": "apxm.agent",
+        "display_name": "Conversational",
+        "description": "A conversational agent.",
+        "domain": "general",
+        "kind": "agent",
+        "license": "MIT",
+        "compile": {
+          "entry": "python/agent.py",
+          "frontend": "python"
+        },
+        "prompts": {
+          "persona": "prompts/persona.md"
+        },
+        "source": {
+          "type": "local"
+        }
+      },
+      "files": {
+        "agent.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "prompts/persona.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "python/agent.py": "3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "agent-schema-version-outside-the-published-constant-rejected",
+    "input": {
+      "agent": {
+        "id": "conversational",
+        "version": "0.1.0",
+        "schema_version": "apxm.agent.v1",
+        "display_name": "Conversational",
+        "description": "A conversational agent.",
+        "domain": "general",
+        "kind": "agent",
+        "license": "MIT",
+        "compile": {
+          "entry": "python/agent.py",
+          "frontend": "python"
+        },
+        "prompts": {
+          "persona": "prompts/persona.md"
+        },
+        "source": {
+          "type": "local"
+        }
+      },
+      "files": {
+        "agent.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "prompts/persona.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "python/agent.py": "3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "compile-frontend-outside-the-closed-set-rejected",
+    "input": {
+      "agent": {
+        "id": "conversational",
+        "version": "0.1.0",
+        "schema_version": "apxm.agent",
+        "display_name": "Conversational",
+        "description": "A conversational agent.",
+        "domain": "general",
+        "kind": "agent",
+        "license": "MIT",
+        "compile": {
+          "entry": "python/agent.py",
+          "frontend": "ruby"
+        },
+        "prompts": {
+          "persona": "prompts/persona.md"
+        },
+        "source": {
+          "type": "local"
+        }
+      },
+      "files": {
+        "agent.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "prompts/persona.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "python/agent.py": "3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "compile-carrying-an-undeclared-key-rejected",
+    "input": {
+      "agent": {
+        "id": "conversational",
+        "version": "0.1.0",
+        "schema_version": "apxm.agent",
+        "display_name": "Conversational",
+        "description": "A conversational agent.",
+        "domain": "general",
+        "kind": "agent",
+        "license": "MIT",
+        "compile": {
+          "entry": "python/agent.py",
+          "frontend": "python",
+          "target": "native"
+        },
+        "prompts": {
+          "persona": "prompts/persona.md"
+        },
+        "source": {
+          "type": "local"
+        }
+      },
+      "files": {
+        "agent.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "prompts/persona.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "python/agent.py": "3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "permission-decision-outside-the-closed-vocabulary-rejected",
+    "input": {
+      "agent": {
+        "id": "conversational",
+        "version": "0.1.0",
+        "schema_version": "apxm.agent",
+        "display_name": "Conversational",
+        "description": "A conversational agent.",
+        "domain": "general",
+        "kind": "agent",
+        "license": "MIT",
+        "compile": {
+          "entry": "python/agent.py",
+          "frontend": "python"
+        },
+        "prompts": {
+          "persona": "prompts/persona.md"
+        },
+        "source": {
+          "type": "local"
+        },
+        "permissions": {
+          "write": "maybe"
+        }
+      },
+      "files": {
+        "agent.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "prompts/persona.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "python/agent.py": "3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "hierarchy-carrying-an-undeclared-key-rejected",
+    "input": {
+      "agent": {
+        "id": "conversational",
+        "version": "0.1.0",
+        "schema_version": "apxm.agent",
+        "display_name": "Conversational",
+        "description": "A conversational agent.",
+        "domain": "general",
+        "kind": "agent",
+        "license": "MIT",
+        "compile": {
+          "entry": "python/agent.py",
+          "frontend": "python"
+        },
+        "prompts": {
+          "persona": "prompts/persona.md"
+        },
+        "source": {
+          "type": "local"
+        },
+        "hierarchy": {
+          "parent": "team.supervisor",
+          "siblings": []
+        }
+      },
+      "files": {
+        "agent.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "prompts/persona.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "python/agent.py": "3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "nested-capability-handler-path-rejected",
+    "input": {
+      "agent": {
+        "id": "conversational",
+        "version": "0.1.0",
+        "schema_version": "apxm.agent",
+        "display_name": "Conversational",
+        "description": "A conversational agent.",
+        "domain": "general",
+        "kind": "agent",
+        "license": "MIT",
+        "compile": {
+          "entry": "python/agent.py",
+          "frontend": "python"
+        },
+        "prompts": {
+          "persona": "prompts/persona.md"
+        },
+        "source": {
+          "type": "local"
+        }
+      },
+      "files": {
+        "agent.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "prompts/persona.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "python/agent.py": "3333333333333333333333333333333333333333333333333333333333333333",
+        "capabilities/edit/nested/handler.ts": "4444444444444444444444444444444444444444444444444444444444444444"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "agent-private-skill-resource-rejected",
+    "input": {
+      "agent": {
+        "id": "conversational",
+        "version": "0.1.0",
+        "schema_version": "apxm.agent",
+        "display_name": "Conversational",
+        "description": "A conversational agent.",
+        "domain": "general",
+        "kind": "agent",
+        "license": "MIT",
+        "compile": {
+          "entry": "python/agent.py",
+          "frontend": "python"
+        },
+        "prompts": {
+          "persona": "prompts/persona.md"
+        },
+        "source": {
+          "type": "local"
+        }
+      },
+      "files": {
+        "agent.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "prompts/persona.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "python/agent.py": "3333333333333333333333333333333333333333333333333333333333333333",
+        "skills/review/SKILL.md": "4444444444444444444444444444444444444444444444444444444444444444"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "unrecognized-top-level-file-rejected",
+    "input": {
+      "agent": {
+        "id": "conversational",
+        "version": "0.1.0",
+        "schema_version": "apxm.agent",
+        "display_name": "Conversational",
+        "description": "A conversational agent.",
+        "domain": "general",
+        "kind": "agent",
+        "license": "MIT",
+        "compile": {
+          "entry": "python/agent.py",
+          "frontend": "python"
+        },
+        "prompts": {
+          "persona": "prompts/persona.md"
+        },
+        "source": {
+          "type": "local"
+        }
+      },
+      "files": {
+        "agent.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "prompts/persona.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "python/agent.py": "3333333333333333333333333333333333333333333333333333333333333333",
+        "not-a-real-file.txt": "4444444444444444444444444444444444444444444444444444444444444444"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "prompt-that-is-not-markdown-rejected",
+    "input": {
+      "agent": {
+        "id": "conversational",
+        "version": "0.1.0",
+        "schema_version": "apxm.agent",
+        "display_name": "Conversational",
+        "description": "A conversational agent.",
+        "domain": "general",
+        "kind": "agent",
+        "license": "MIT",
+        "compile": {
+          "entry": "python/agent.py",
+          "frontend": "python"
+        },
+        "prompts": {
+          "persona": "prompts/persona.md"
+        },
+        "source": {
+          "type": "local"
+        }
+      },
+      "files": {
+        "agent.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "prompts/persona.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "python/agent.py": "3333333333333333333333333333333333333333333333333333333333333333",
+        "prompts/persona.txt": "4444444444444444444444444444444444444444444444444444444444444444"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "file-digest-that-is-not-lowercase-sha256-hex-rejected",
+    "input": {
+      "agent": {
+        "id": "conversational",
+        "version": "0.1.0",
+        "schema_version": "apxm.agent",
+        "display_name": "Conversational",
+        "description": "A conversational agent.",
+        "domain": "general",
+        "kind": "agent",
+        "license": "MIT",
+        "compile": {
+          "entry": "python/agent.py",
+          "frontend": "python"
+        },
+        "prompts": {
+          "persona": "prompts/persona.md"
+        },
+        "source": {
+          "type": "local"
+        }
+      },
+      "files": {
+        "agent.toml": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "prompts/persona.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "python/agent.py": "3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    },
+    "expected_valid": false
+  }
+]

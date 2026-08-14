@@ -1,18 +1,29 @@
-//! `apxm agent new|sync|lint|build|install` — the toolchain for the
+//! `apxm agent new|sync|lint|build|install|verify` — the toolchain for the
 //! canonical agent folder format (`apxm.agent`).
 //!
-//! The folder contract, required files, and integrity hash-chain algorithm are
-//! enforced locally. Capability-set drift across the package manifests is a
-//! lint error so an agent package cannot declare inconsistent authority.
+//! An agent package is two files: the authored `agent.toml` and the generated
+//! `integrity.toml`. Everything a package can say about itself is said once —
+//! the capability ids it can satisfy are the built-in allowlist plus the
+//! `capabilities/<id>/handler.ts` handlers it ships, and the only authored
+//! permission surface is `agent.toml [permissions]`. There is no capability
+//! inventory, no permission inventory, and no separate hierarchy file to drift
+//! against each other.
+//!
+//! The recognized folder contract is not restated here: it is derived from
+//! `contracts/schemas/apxm.agent.json`'s `files` patternProperties, so the
+//! published schema and the predicate `agent lint` and `agent verify` enforce
+//! cannot disagree.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{self, Write};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use anyhow::{Context, Result, anyhow, bail};
 use apxm_ais::permissions::{LayerDecisions, PermissionDecision, PermissionResolution};
 use apxm_core::types::{HandlerKind, HandlerLanguage, HandlerManifest};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -23,6 +34,18 @@ use super::implementations::{Status, print_section_header, print_status_line};
 // ---------------------------------------------------------------------
 
 const AGENT_SCHEMA_V1: &str = "apxm.agent";
+
+/// The published `apxm.agent` contract, embedded from its checked-in bytes.
+///
+/// The folder contract has exactly one statement, and this is it. Deriving the
+/// recognized-path predicate from these bytes is what makes the collapse
+/// enforceable: a package still carrying `capabilities/capabilities.toml` is
+/// rejected because the schema does not name that path, not because a
+/// hand-written `match` arm happened to be deleted alongside it.
+pub(crate) const AGENT_SCHEMA_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../contracts/schemas/apxm.agent.json"
+));
 
 /// Projection of generated-only `integrity.toml`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,6 +63,12 @@ pub struct ChainLinkToml {
 }
 
 /// Projection of `agent.toml` (`apxm.agent#/properties/agent`).
+///
+/// Scalars come first and table-valued fields last so a round-trip through
+/// `toml::to_string_pretty` — which `agent new` performs when it rewrites a
+/// scaffolded identity — emits valid TOML. `deny_unknown_fields` is what makes
+/// a retired key (`capabilities`, `allowed_agent_skills`, `hooks`) a parse
+/// error rather than a silently dropped table.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentToml {
@@ -48,103 +77,45 @@ pub struct AgentToml {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub license: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<toml::Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub compile: Option<CompileToml>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub domain: Option<String>,
+    pub license: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compile: Option<CompileToml>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub prompts: BTreeMap<String, String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub capabilities: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub allowed_agent_skills: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<toml::Value>,
+    /// This agent's parent and the children it may spawn or delegate to.
+    /// Absorbed from the retired `hierarchy.toml`: one manifest, one place.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hierarchy: Option<HierarchyToml>,
     /// The package layer of the permission resolution stack: what this package
-    /// decides about capabilities its own tree declares. It may only tighten a
-    /// capability's declared decision, and it may not introduce a capability.
+    /// decides about a capability it can actually supply. It may only tighten
+    /// the unqualified request a capability reference is, and it may not decide
+    /// for a capability nothing grants.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub permissions: BTreeMap<String, PermissionDecision>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub chat: Option<toml::Value>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub hooks: Vec<HookToml>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HookToml {
-    pub event: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub r#match: Option<String>,
-    pub mode: String,
-    pub handler: String,
-}
-
-/// Projection of the optional `hierarchy.toml`.
+/// Projection of `agent.toml`'s `[hierarchy]` table.
+///
+/// Shared with `org.rs`, whose `members.toml` entries carry a snapshot of this
+/// exact shape so org lint can check a member against `topology.toml` without
+/// resolving the installed agent.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HierarchyToml {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub permitted_children: Vec<String>,
-}
-
-/// `capabilities/capabilities.toml` — array of agent capability ids used by
-/// agent lint.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct CapabilitiesToml {
-    #[serde(default, rename = "capability")]
-    pub capability: Vec<CapabilityEntry>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CapabilityEntry {
-    pub id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(flatten)]
-    pub extra: toml::Table,
-}
-
-/// `capabilities/permissions.toml` — one policy entry per joined capability
-/// id (the  "joined capability" rule: every `capabilities.toml` entry
-/// must have a matching permission policy here or it is not a capability).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct PermissionsToml {
-    #[serde(default, rename = "permission")]
-    pub permission: Vec<PermissionEntry>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PermissionEntry {
-    pub capability: String,
-    /// The decision this capability declares for itself, spelled in the one
-    /// permission vocabulary rather than as a free string.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub decision: Option<PermissionDecision>,
-    /// Why the capability declares that decision. Flat in the file, joined to
-    /// the decision by [`PermissionEntry::declared_decision`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-    #[serde(flatten)]
-    pub extra: toml::Table,
-}
-
-impl PermissionEntry {
-    /// The declared decision carrying the reason declared beside it.
-    #[must_use]
-    pub fn declared_decision(&self) -> Option<PermissionDecision> {
-        self.decision
-            .as_ref()
-            .map(|decision| decision.with_reason(self.reason.clone()))
-    }
 }
 
 /// Source language accepted by the supported compiler frontends.
@@ -222,7 +193,44 @@ pub fn agent_command(action: super::AgentAction, json_output: bool) -> Result<()
         super::AgentAction::Lint { path, org } => agent_lint(&path, org, json_output),
         super::AgentAction::Build { path } => agent_build(&path, json_output),
         super::AgentAction::Install { path, force } => agent_install(&path, force, json_output),
+        super::AgentAction::Verify { path } => agent_verify(&path, json_output),
     }
+}
+
+/// Hold a checked-in package against its own generated integrity chain.
+///
+/// `agent lint` reads the package as authored and `agent build` writes the
+/// chain; neither notices a package edited after its last build. This does, so
+/// a package whose bytes moved without a rebuild fails a gate instead of
+/// shipping a chain that describes something else.
+fn agent_verify(path: &Path, json_output: bool) -> Result<()> {
+    verify_agent_integrity(path)?;
+    let pkg = load_agent(path)?;
+    let integrity: IntegrityToml = read_toml(&path.join("integrity.toml"))?;
+    if json_output {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "id": pkg.agent.id,
+                "path": path.display().to_string(),
+                "files": integrity.chain.len(),
+                "hash": integrity.hash,
+                "status": "verified",
+            }))?
+        );
+    } else {
+        print_section_header("Agent Verify");
+        print_status_line(
+            &pkg.agent.id,
+            Status::Ok,
+            &format!(
+                "{} files verified, hash={}",
+                integrity.chain.len(),
+                integrity.hash
+            ),
+        );
+    }
+    Ok(())
 }
 
 fn default_agent_root(id: &str) -> PathBuf {
@@ -343,27 +351,27 @@ fn agent_new_looped_agent(
             "id = \"{id}\"\n\
              version = \"0.1.0\"\n\
              schema_version = \"{AGENT_SCHEMA_V1}\"\n\
-             license = \"MIT\"\n\
              display_name = \"{display_name}\"\n\
-             kind = \"agent\"\n\
              domain = \"{id}\"\n\
-             capabilities = []\n\
-             allowed_agent_skills = []\n\n\
+             kind = \"agent\"\n\
+             license = \"MIT\"\n\n\
              [compile]\n\
              frontend = \"typescript\"\n\
              entry = \"src/main.ts\"\n\n\
              [prompts]\n\
              persona = \"prompts/persona.md\"\n\n\
              [source]\n\
-             type = \"local\"\n"
+             type = \"local\"\n\n\
+             # Optional: this agent's parent and the children it may spawn or\n\
+             # delegate to.\n\
+             [hierarchy]\n\
+             permitted_children = []\n\n\
+             # Optional: tighten a capability this package can supply. A key\n\
+             # must name a built-in id or a capabilities/<id>/handler.ts this\n\
+             # package ships.\n\
+             [permissions]\n\
+             write = \"ask\"\n"
         ),
-    )?;
-
-    write_new_file(
-        &root.join("hierarchy.toml"),
-        "# Optional: this agent's parent and the children it may spawn/delegate to.\n\
-         # parent = \"team.supervisor\"\n\
-         permitted_children = []\n",
     )?;
 
     write_new_file(
@@ -373,31 +381,6 @@ fn agent_new_looped_agent(
     write_new_file(
         &root.join("tsconfig.json"),
         "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"bundler\",\n    \"strict\": true\n  }\n}\n",
-    )?;
-
-    scaffold_capability_folder(
-        root,
-        "read",
-        "Read a file under declared read roots.",
-        "builtin",
-        None,
-        true,
-        "allow",
-    )?;
-    scaffold_capability_folder(
-        root,
-        "write",
-        "Write a file under declared write roots.",
-        "builtin",
-        None,
-        false,
-        "ask",
-    )?;
-
-    write_new_file(
-        &root.join("capabilities/handlers/hooks.ts"),
-        "// Sample hook handlers for an explicit agent package.\n\
-         export function inject_context(_ctx: unknown): null {\n  return null;\n}\n",
     )?;
 
     write_new_file(
@@ -420,36 +403,6 @@ fn agent_new_looped_agent(
 
     agent_sync(root, json_output)?;
     print_agent_scaffolded(id, root, json_output)
-}
-
-fn scaffold_capability_folder(
-    root: &Path,
-    cap_id: &str,
-    description: &str,
-    kind: &str,
-    builtin_group: Option<&str>,
-    read_only: bool,
-    decision: &str,
-) -> Result<()> {
-    let dir = root.join("capabilities").join(cap_id);
-    let builtin_group_line = builtin_group
-        .map(|group| format!("builtin_group = \"{group}\"\n"))
-        .unwrap_or_default();
-    write_new_file(
-        &dir.join("capability.toml"),
-        &format!(
-            "id = \"{cap_id}\"\n\
-             description = \"{description}\"\n\
-             kind = \"{kind}\"\n\
-             {builtin_group_line}\
-             read_only = {read_only}\n"
-        ),
-    )?;
-    write_new_file(
-        &dir.join("permission.toml"),
-        &format!("capability = \"{cap_id}\"\ndecision = \"{decision}\"\n"),
-    )?;
-    Ok(())
 }
 
 fn print_agent_scaffolded(id: &str, root: &Path, json_output: bool) -> Result<()> {
@@ -483,95 +436,6 @@ fn write_new_file(path: &Path, contents: &str) -> Result<()> {
     fs::write(path, contents).with_context(|| format!("Failed to write {}", path.display()))
 }
 
-const SYNC_GENERATED_HEADER: &str = "# Generated by apxm agent sync; edit folders instead.\n";
-
-fn capability_kind(entry: &CapabilityEntry) -> Option<&str> {
-    entry.extra.get("kind").and_then(|value| value.as_str())
-}
-
-fn validate_flat_capability_id(id: &str, cap_id: &str, folder: &str) -> Result<()> {
-    if cap_id != folder {
-        bail!(
-            "capability folder '{folder}' declares id '{cap_id}' in capability.toml; ids must match their folder name"
-        );
-    }
-    if cap_id.contains('.') {
-        bail!(
-            "capability id '{cap_id}' must be flat (no '.' segments); edit capabilities/{folder}/ instead"
-        );
-    }
-    let prefix = format!("{id}.");
-    if cap_id.starts_with(&prefix) {
-        bail!("capability id '{cap_id}' must not embed the agent id prefix '{id}.'; use flat ids");
-    }
-    Ok(())
-}
-
-fn scan_capability_folders(
-    root: &Path,
-    id: &str,
-) -> Result<(Vec<CapabilityEntry>, Vec<PermissionEntry>)> {
-    let caps_dir = root.join("capabilities");
-    if !caps_dir.is_dir() {
-        return Ok((Vec::new(), Vec::new()));
-    }
-
-    let mut capabilities = Vec::new();
-    let mut permissions = Vec::new();
-    let mut entries: Vec<_> = fs::read_dir(&caps_dir)
-        .with_context(|| format!("Failed to read {}", caps_dir.display()))?
-        .collect::<std::io::Result<Vec<_>>>()?;
-    entries.sort_by_key(|entry| entry.path());
-
-    for entry in entries {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let folder = entry.file_name().to_string_lossy().into_owned();
-        if folder == "handlers" {
-            continue;
-        }
-
-        let cap_path = path.join("capability.toml");
-        let perm_path = path.join("permission.toml");
-        if !cap_path.is_file() {
-            bail!(
-                "capability folder '{}' is missing required capability.toml",
-                path.display()
-            );
-        }
-        if !perm_path.is_file() {
-            bail!(
-                "capability folder '{}' is missing required permission.toml",
-                path.display()
-            );
-        }
-
-        let cap: CapabilityEntry = read_toml(&cap_path)?;
-        let perm: PermissionEntry = read_toml(&perm_path)?;
-        validate_flat_capability_id(id, &cap.id, &folder)?;
-        if perm.capability != cap.id {
-            bail!(
-                "capability folder '{folder}': permission.toml capability '{}' does not match capability id '{}'",
-                perm.capability,
-                cap.id
-            );
-        }
-        if capability_kind(&cap) == Some("typescript_handler") && !path.join("handler.ts").is_file()
-        {
-            bail!(
-                "capability '{folder}' has kind = \"typescript_handler\" but is missing handler.ts"
-            );
-        }
-
-        capabilities.push(cap);
-        permissions.push(perm);
-    }
-
-    Ok((capabilities, permissions))
-}
-
 fn load_typescript_tools_manifest(root: &Path) -> Result<HandlerManifest> {
     let tools_path = root.join("capabilities/handlers/tools.json");
     if !tools_path.is_file() {
@@ -588,107 +452,42 @@ fn load_typescript_tools_manifest(root: &Path) -> Result<HandlerManifest> {
     Ok(manifest)
 }
 
-fn enrich_typescript_capabilities_from_tools_manifest(
-    capabilities: &mut [CapabilityEntry],
-    permissions: &[PermissionEntry],
+/// Project each shipped TypeScript Tool's resolved permission decision onto
+/// its handler manifest entry.
+///
+/// This is the handler plane's whole authority story now that the per-capability
+/// manifests are gone. `requires_approval` is not a second opinion about a
+/// capability: it is the one decision `resolve_permission_layers` produced for
+/// that capability id, carried to the only consumer that reads a manifest.
+///
+/// A handler the package ships for a capability the resolution denies is a hard
+/// error, not a filtered entry: emitting an executable handler for refused
+/// authority is exactly the state the manifest exists to make impossible.
+fn apply_resolved_permissions_to_tools_manifest(
     manifest: &mut HandlerManifest,
+    resolved: &BTreeMap<String, PermissionDecision>,
 ) -> Result<()> {
-    let capability_by_id: BTreeMap<&str, &CapabilityEntry> = capabilities
-        .iter()
-        .map(|capability| (capability.id.as_str(), capability))
-        .collect();
-    let permission_by_id: BTreeMap<&str, &PermissionEntry> = permissions
-        .iter()
-        .map(|permission| (permission.capability.as_str(), permission))
-        .collect();
-
     for entry in manifest.handlers.iter_mut().filter(|entry| {
         entry.kind == HandlerKind::Tool && entry.language == HandlerLanguage::TypeScript
     }) {
-        let capability = capability_by_id.get(entry.name.as_str()).ok_or_else(|| {
-            anyhow!(
-                "TypeScript handler '{}' has no matching capability folder",
-                entry.name
-            )
-        })?;
-        if capability_kind(capability) != Some("typescript_handler") {
-            bail!(
-                "TypeScript handler '{}' must match a capability with kind = \"typescript_handler\"",
-                entry.name
-            );
-        }
-        let read_only = capability
-            .extra
-            .get("read_only")
-            .and_then(toml::Value::as_bool)
-            .ok_or_else(|| {
-                anyhow!(
-                    "TypeScript capability '{}' must declare boolean read_only metadata",
-                    entry.name
-                )
-            })?;
-        let permission = permission_by_id.get(entry.name.as_str()).ok_or_else(|| {
-            anyhow!(
-                "TypeScript capability '{}' has no matching permission policy",
-                entry.name
-            )
-        })?;
         // The decision vocabulary is closed at decode, so there is no
-        // unsupported-string arm left to write: only the three decisions and
-        // an absent one can reach this match.
-        let requires_approval = match &permission.decision {
+        // unsupported-string arm left to write: only the three decisions and an
+        // absent one can reach this match.
+        let requires_approval = match resolved.get(entry.name.as_str()) {
             Some(PermissionDecision::Allow { .. }) => false,
             Some(PermissionDecision::Ask { .. }) => true,
-            Some(PermissionDecision::Deny { .. }) => {
-                bail!(
-                    "TypeScript capability '{}' is denied and cannot be emitted as an executable handler",
-                    entry.name
-                )
-            }
-            None => {
-                bail!(
-                    "TypeScript capability '{}' must declare permission decision = \"{}\" or \"{}\"",
-                    entry.name,
-                    PermissionDecision::allow().as_str(),
-                    PermissionDecision::ask("").as_str(),
-                )
-            }
+            Some(PermissionDecision::Deny { .. }) => bail!(
+                "TypeScript capability '{}' is denied and cannot be emitted as an executable handler",
+                entry.name
+            ),
+            None => bail!(
+                "TypeScript handler '{}' has no matching capability; a handler must live at \
+                 capabilities/{}/handler.ts so the package can supply the capability it names",
+                entry.name,
+                entry.name
+            ),
         };
-        entry.read_only = Some(read_only);
         entry.requires_approval = Some(requires_approval);
-    }
-
-    let by_name: BTreeMap<&str, _> = manifest
-        .handlers
-        .iter()
-        .filter(|entry| {
-            entry.kind == HandlerKind::Tool && entry.language == HandlerLanguage::TypeScript
-        })
-        .map(|entry| (entry.name.as_str(), entry))
-        .collect();
-
-    for cap in capabilities {
-        if capability_kind(cap) != Some("typescript_handler") {
-            continue;
-        }
-        let Some(entry) = by_name.get(cap.id.as_str()) else {
-            bail!(
-                "capability '{}' has kind = \"typescript_handler\" but no matching \
-                 tools.json entry named '{}'; run 'apxm agent build' or fix handler.ts",
-                cap.id,
-                cap.id
-            );
-        };
-        let module = &entry.module;
-        let qualname = &entry.qualname;
-        cap.extra.insert(
-            "handler_module".to_string(),
-            toml::Value::String(module.clone()),
-        );
-        cap.extra.insert(
-            "handler_function".to_string(),
-            toml::Value::String(qualname.clone()),
-        );
     }
     Ok(())
 }
@@ -711,81 +510,76 @@ fn write_typescript_tools_manifest(root: &Path, manifest: &HandlerManifest) -> R
         .with_context(|| format!("Failed to write {}", path.display()))
 }
 
-fn write_generated_capabilities_toml(path: &Path, capabilities: &[CapabilityEntry]) -> Result<()> {
-    let mut lines = vec![SYNC_GENERATED_HEADER.to_string()];
-    for cap in capabilities {
-        lines.push("[[capability]]".to_string());
-        lines.push(format!("id = \"{}\"", cap.id));
-        if let Some(description) = &cap.description {
-            lines.push(format!(
-                "description = \"{}\"",
-                description.replace('\\', "\\\\").replace('"', "\\\"")
-            ));
-        }
-        for (key, value) in &cap.extra {
-            lines.push(format!("{key} = {}", format_toml_value(value)));
-        }
-        lines.push(String::new());
-    }
-    fs::write(path, lines.join("\n")).with_context(|| format!("Failed to write {}", path.display()))
+/// Every Capability id an Agent Program compiled from this package may name.
+///
+/// The union of the runtime's built-in allowlist and the ids the package itself
+/// ships a `capabilities/<id>/handler.ts` for — the two namespaces a Capability
+/// reference can be satisfied from, now that no file declares an inventory. The
+/// handler's existence *is* the declaration: a package that ships a handler can
+/// supply the capability, and one that does not cannot.
+pub(crate) fn granted_capability_ids(root: &Path) -> Result<BTreeSet<String>> {
+    Ok(apxm_ais::capabilities::BUILTINS
+        .iter()
+        .map(|id| (*id).to_string())
+        .chain(shipped_capability_handler_ids(root)?)
+        .collect())
 }
 
-fn write_generated_permissions_toml(path: &Path, permissions: &[PermissionEntry]) -> Result<()> {
-    let mut lines = vec![SYNC_GENERATED_HEADER.to_string()];
-    for perm in permissions {
-        lines.push("[[permission]]".to_string());
-        lines.push(format!("capability = \"{}\"", perm.capability));
-        if let Some(decision) = &perm.decision {
-            lines.push(format!("decision = \"{}\"", decision.as_str()));
-        }
-        if let Some(reason) = &perm.reason {
-            lines.push(format!("reason = \"{reason}\""));
-        }
-        for (key, value) in &perm.extra {
-            lines.push(format!("{key} = {}", format_toml_value(value)));
-        }
-        lines.push(String::new());
+/// The capability ids this package ships a TypeScript handler for.
+fn shipped_capability_handler_ids(root: &Path) -> Result<BTreeSet<String>> {
+    let caps_dir = root.join("capabilities");
+    if !caps_dir.is_dir() {
+        return Ok(BTreeSet::new());
     }
-    fs::write(path, lines.join("\n")).with_context(|| format!("Failed to write {}", path.display()))
+    let mut ids = BTreeSet::new();
+    for entry in
+        fs::read_dir(&caps_dir).with_context(|| format!("Failed to read {}", caps_dir.display()))?
+    {
+        let path = entry?.path();
+        if path.is_dir() && path.join("handler.ts").is_file() {
+            ids.insert(
+                path.file_name()
+                    .expect("a directory entry has a file name")
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+        }
+    }
+    Ok(ids)
 }
 
-fn format_toml_value(value: &toml::Value) -> String {
-    match value {
-        toml::Value::String(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
-        toml::Value::Integer(i) => i.to_string(),
-        toml::Value::Float(f) => f.to_string(),
-        toml::Value::Boolean(b) => b.to_string(),
-        toml::Value::Array(arr) => {
-            let items: Vec<String> = arr.iter().map(format_toml_value).collect();
-            format!("[{}]", items.join(", "))
-        }
-        other => other.to_string(),
-    }
-}
-
-fn update_agent_inventories(root: &Path, capabilities: &[String]) -> Result<()> {
-    let path = root.join("agent.toml");
-    let text =
-        fs::read_to_string(&path).with_context(|| format!("Failed to read {}", path.display()))?;
-    let mut doc: toml::Value =
-        toml::from_str(&text).with_context(|| format!("Failed to parse {}", path.display()))?;
-    let Some(table) = doc.as_table_mut() else {
-        bail!("agent.toml must be a TOML table");
-    };
-    table.insert(
-        "capabilities".into(),
-        toml::Value::Array(
-            capabilities
-                .iter()
-                .map(|cap| toml::Value::String(cap.clone()))
-                .collect(),
-        ),
-    );
-    fs::write(
-        &path,
-        toml::to_string_pretty(&doc).context("Failed to serialize agent.toml")?,
+/// Resolve the package's permission layer stack into one decision per capability
+/// the package can supply.
+///
+/// **Code layer.** Authoring a Capability reference is the program asking to
+/// invoke it, unqualified, so the code layer states one bare `allow` per
+/// grantable capability id. That is the widest a request can be, which is the
+/// correct floor for a tighten-only stack: every narrowing below is the
+/// machine's ruling rather than the program's own claim of authority. It is the
+/// same code layer `local_capability_permissions` states for canonical local
+/// execution, read here from the package's grantable surface rather than from a
+/// compiled module's capability references.
+///
+/// **Package layer.** `agent.toml [permissions]` is what this package decides on
+/// top of that. It may narrow `allow` to `ask` or `deny`, and it may not decide
+/// for a capability nothing grants — there is no request there for it to narrow.
+fn resolve_permission_layers(
+    agent: &AgentToml,
+    grantable: &BTreeSet<String>,
+) -> Result<BTreeMap<String, PermissionDecision>, String> {
+    let requested: LayerDecisions = grantable
+        .iter()
+        .map(|id| (id.clone(), PermissionDecision::allow()))
+        .collect();
+    let resolution = PermissionResolution::resolve_code_over_package(
+        requested,
+        agent.permissions.clone().into_iter().collect(),
     )
-    .with_context(|| format!("Failed to write {}", path.display()))
+    .map_err(|error| format!("agent.toml [permissions]: {error}"))?;
+    Ok(resolution
+        .iter()
+        .map(|(capability_ref, resolved)| (capability_ref.to_string(), resolved.decision.clone()))
+        .collect())
 }
 
 pub(crate) fn agent_sync(root: &Path, json_output: bool) -> Result<()> {
@@ -798,29 +592,21 @@ pub(crate) fn agent_sync(root: &Path, json_output: bool) -> Result<()> {
     }
     let agent: AgentToml = read_toml(&agent_path)?;
 
-    let (mut capabilities, permissions) = scan_capability_folders(root, &agent.id)?;
+    let grantable = granted_capability_ids(root)?;
+    let resolved = resolve_permission_layers(&agent, &grantable).map_err(|error| anyhow!(error))?;
+
     compile_agent_handlers(root)?;
     let mut tools_manifest = load_typescript_tools_manifest(root)?;
-    enrich_typescript_capabilities_from_tools_manifest(
-        &mut capabilities,
-        &permissions,
-        &mut tools_manifest,
-    )?;
+    apply_resolved_permissions_to_tools_manifest(&mut tools_manifest, &resolved)?;
     write_typescript_tools_manifest(root, &tools_manifest)?;
-    let capability_ids: Vec<String> = capabilities.iter().map(|cap| cap.id.clone()).collect();
 
-    fs::create_dir_all(root.join("capabilities"))
-        .with_context(|| format!("Failed to create {}", root.join("capabilities").display()))?;
-    write_generated_capabilities_toml(&root.join("capabilities/capabilities.toml"), &capabilities)?;
-    write_generated_permissions_toml(&root.join("capabilities/permissions.toml"), &permissions)?;
-    update_agent_inventories(root, &capability_ids)?;
-
+    let handler_count = tools_manifest.handlers.len();
     if json_output {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "path": root.display().to_string(),
-                "capabilities": capability_ids,
+                "handlers": handler_count,
                 "status": "synced",
             }))?
         );
@@ -829,7 +615,7 @@ pub(crate) fn agent_sync(root: &Path, json_output: bool) -> Result<()> {
         print_status_line(
             &agent.id,
             Status::Ok,
-            &format!("{} capabilities regenerated", capability_ids.len()),
+            &format!("{handler_count} handlers regenerated"),
         );
     }
     Ok(())
@@ -848,9 +634,6 @@ fn read_toml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
 struct LoadedAgent {
     root: PathBuf,
     agent: AgentToml,
-    hierarchy: Option<HierarchyToml>,
-    capabilities: CapabilitiesToml,
-    permissions: PermissionsToml,
 }
 
 fn load_agent(root: &Path) -> Result<LoadedAgent> {
@@ -861,34 +644,9 @@ fn load_agent(root: &Path) -> Result<LoadedAgent> {
     if !agent_path.is_file() {
         bail!("missing required file: {}", agent_path.display());
     }
-    let agent: AgentToml = read_toml(&agent_path)?;
-
-    let hierarchy_path = root.join("hierarchy.toml");
-    let hierarchy = if hierarchy_path.is_file() {
-        Some(read_toml(&hierarchy_path)?)
-    } else {
-        None
-    };
-
-    let capabilities_path = root.join("capabilities/capabilities.toml");
-    let capabilities = if capabilities_path.is_file() {
-        read_toml(&capabilities_path)?
-    } else {
-        CapabilitiesToml::default()
-    };
-    let permissions_path = root.join("capabilities/permissions.toml");
-    let permissions = if permissions_path.is_file() {
-        read_toml(&permissions_path)?
-    } else {
-        PermissionsToml::default()
-    };
-
     Ok(LoadedAgent {
         root: root.to_path_buf(),
-        agent,
-        hierarchy,
-        capabilities,
-        permissions,
+        agent: read_toml(&agent_path)?,
     })
 }
 
@@ -896,40 +654,39 @@ fn load_agent(root: &Path) -> Result<LoadedAgent> {
 // agent lint
 // ---------------------------------------------------------------------
 
-/// Every path recognized by `agent.v1#/properties/files` (see the
-/// JSON schema's `patternProperties`). Anything else fails validation ("no
-/// agent-private layout").
+/// The recognized-path patterns published by
+/// `apxm.agent#/$defs/PackageFiles/patternProperties`, compiled once.
+///
+/// The schema's property names are ECMA-262 regexes and are used here as Rust
+/// regexes; both are unanchored searches over the whole path, and every
+/// published pattern anchors itself with `^`/`$`, so the two agree by
+/// construction. Deriving the predicate rather than restating it is what keeps
+/// a retired path — `capabilities/capabilities.toml`, `hierarchy.toml` — from
+/// being tolerated by a `match` arm nobody remembered to delete.
+fn recognized_relpath_patterns() -> &'static [Regex] {
+    static PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
+    PATTERNS.get_or_init(|| {
+        let schema: serde_json::Value = serde_json::from_str(AGENT_SCHEMA_JSON)
+            .expect("the embedded apxm.agent contract is valid JSON");
+        schema["$defs"]["PackageFiles"]["patternProperties"]
+            .as_object()
+            .expect("apxm.agent publishes PackageFiles.patternProperties")
+            .keys()
+            .map(|pattern| {
+                Regex::new(pattern).unwrap_or_else(|error| {
+                    panic!("apxm.agent publishes an uncompilable file pattern {pattern:?}: {error}")
+                })
+            })
+            .collect()
+    })
+}
+
+/// Is `rel` a package-relative path the published folder contract recognizes?
+/// Anything else fails validation ("no agent-private layout").
 fn recognized_relpath(rel: &str) -> bool {
-    if matches!(
-        rel,
-        "agent.toml"
-            | "integrity.toml"
-            | "hierarchy.toml"
-            | "README.md"
-            | "package.json"
-            | "tsconfig.json"
-    ) {
-        return true;
-    }
-    let parts: Vec<&str> = rel.split('/').collect();
-    match parts.as_slice() {
-        ["capabilities", "capabilities.toml" | "permissions.toml"] => true,
-        ["capabilities", "handlers", f] => {
-            f.ends_with(".py") || f.ends_with(".ts") || *f == "tools.json"
-        }
-        [
-            "capabilities",
-            id,
-            "capability.toml" | "permission.toml" | "handler.ts",
-        ] if *id != "handlers" => true,
-        ["prompts", f] => f.ends_with(".md"),
-        ["python", f] => f.ends_with(".py"),
-        ["src", .., f] => f.ends_with(".ts"),
-        ["examples", f] => f.ends_with(".md"),
-        ["tests", f] => !f.is_empty(),
-        ["shared", f] => !f.is_empty(),
-        _ => false,
-    }
+    recognized_relpath_patterns()
+        .iter()
+        .any(|pattern| pattern.is_match(rel))
 }
 
 /// Walk the agent root and return every recognized file as a
@@ -982,143 +739,25 @@ fn find_unrecognized_files(root: &Path) -> Result<Vec<String>> {
     Ok(out)
 }
 
-/// Load the org-global joined capability set (declared ∩ permitted, same
-/// join rule used at the agent level and
-/// `check_global_capability_join` uses at the org level) from an org
-/// agent's own `capabilities/capabilities.toml` +
-/// `capabilities/permissions.toml`, so agent lint validates
-/// every skill's capability references against the agent's joined
-/// capability set and the org-global joined set.
-///
-/// Missing files are treated as an empty global set (no org context, or an
-/// org agent that declares no globals) rather than an error — this
-/// function is opt-in plumbing for a agent that is a member of an org,
-/// not a requirement every agent must satisfy.
-fn load_org_global_capabilities(org_root: &Path) -> Result<BTreeSet<String>> {
-    let capabilities_path = org_root.join("capabilities/capabilities.toml");
-    let permissions_path = org_root.join("capabilities/permissions.toml");
-    let capabilities: CapabilitiesToml = if capabilities_path.is_file() {
-        read_toml(&capabilities_path)?
-    } else {
-        CapabilitiesToml::default()
-    };
-    let permissions: PermissionsToml = if permissions_path.is_file() {
-        read_toml(&permissions_path)?
-    } else {
-        PermissionsToml::default()
-    };
-    let declared: BTreeSet<&str> = capabilities
-        .capability
-        .iter()
-        .map(|c| c.id.as_str())
-        .collect();
-    let permitted: BTreeSet<&str> = permissions
-        .permission
-        .iter()
-        .map(|p| p.capability.as_str())
-        .collect();
-    Ok(declared
-        .intersection(&permitted)
-        .map(|s| s.to_string())
-        .collect())
-}
-
-/// The  capability-set agreement check: agent.toml's declared
-/// capabilities must resolve into `capabilities.toml`, every
-/// `capabilities.toml` entry must have a matching `permissions.toml` entry
-/// (the "joined capability" — otherwise it "is not a capability and fails
-/// lint"). Executable capability use is declared by program/workflow package
-/// metadata, while Agent Skill selection is owned by the Server catalogue.
-/// Returns human-readable error strings; empty = clean.
-fn check_capability_drift(pkg: &LoadedAgent, org_globals: &BTreeSet<String>) -> Vec<String> {
-    let mut errors = Vec::new();
-
-    let declared_caps: BTreeSet<&str> = pkg
-        .capabilities
-        .capability
-        .iter()
-        .map(|c| c.id.as_str())
-        .collect();
-    let permitted_caps: BTreeSet<&str> = pkg
-        .permissions
-        .permission
-        .iter()
-        .map(|p| p.capability.as_str())
-        .collect();
-
-    // Joined capability: every capabilities.toml entry needs a permissions.toml entry.
-    for cap in &declared_caps {
-        if !permitted_caps.contains(cap) {
-            errors.push(format!(
-                "capability '{cap}' is declared in capabilities/capabilities.toml but has no \
-                 matching entry in capabilities/permissions.toml — an entry with no permission \
-                 policy is not a capability"
-            ));
-        }
-    }
-    // A permission entry with no matching declaration is equally a drift: the
-    // permission plane has no capability to attach to.
-    for cap in &permitted_caps {
-        if !declared_caps.contains(cap) {
-            errors.push(format!(
-                "capabilities/permissions.toml declares a policy for '{cap}', which is not \
-                 defined in capabilities/capabilities.toml"
-            ));
-        }
-    }
-
-    // agent.toml capabilities must resolve into the joined set, or be an
-    // org-global capability (already joined at the org level — ).
-    for cap in &pkg.agent.capabilities {
-        if org_globals.contains(cap.as_str()) {
-            continue;
-        }
-        if !declared_caps.contains(cap.as_str()) {
-            errors.push(format!(
-                "agent.toml declares capability '{cap}' which is not defined in \
-                 capabilities/capabilities.toml (and is not an org-global capability)"
-            ));
-        } else if !permitted_caps.contains(cap.as_str()) {
-            errors.push(format!(
-                "agent.toml declares capability '{cap}' which has no permissions.toml entry"
-            ));
-        }
-    }
-
-    errors
-}
-
 /// Resolve the package's permission layer stack and report every refusal.
 ///
-/// The two layers a package can state are both here: `capabilities/<cap>/
-/// permission.toml` — synced into `capabilities/permissions.toml` — is what the
-/// program's own tree declares for a capability, and `agent.toml [permissions]`
-/// is what the package manifest decides on top of that. The stack is
-/// tighten-only, so the manifest may narrow `allow` to `ask` or `deny` and may
-/// never hand back authority the tree withheld, nor decide anything for a
-/// capability the tree does not declare.
-fn check_permission_resolution(pkg: &LoadedAgent) -> Vec<String> {
-    let declared: LayerDecisions = pkg
-        .permissions
-        .permission
-        .iter()
-        .filter_map(|entry| {
-            entry
-                .declared_decision()
-                .map(|decision| (entry.capability.clone(), decision))
-        })
-        .collect();
-    match PermissionResolution::resolve_code_over_package(
-        declared,
-        pkg.agent.permissions.clone().into_iter().collect(),
-    ) {
+/// See [`resolve_permission_layers`] for the two layers. `org_globals` extends
+/// the grantable surface with the org's own joined global capability set, so a
+/// member package may state a decision for a capability its org supplies.
+fn check_permission_resolution(pkg: &LoadedAgent, org_globals: &BTreeSet<String>) -> Vec<String> {
+    let mut grantable = match granted_capability_ids(&pkg.root) {
+        Ok(grantable) => grantable,
+        Err(error) => return vec![error.to_string()],
+    };
+    grantable.extend(org_globals.iter().cloned());
+    match resolve_permission_layers(&pkg.agent, &grantable) {
         Ok(_) => Vec::new(),
-        Err(error) => vec![format!("agent.toml [permissions]: {error}")],
+        Err(error) => vec![error],
     }
 }
 
-/// Structural + required-field checks for `agent.v1`: id/version, source
-/// declaration, hierarchy, instruction inventory, and hook vocabulary.
+/// Structural + required-field checks for `apxm.agent`: id/version, schema
+/// version, the compiled source declaration, and the absorbed hierarchy.
 fn check_schema_shape(pkg: &LoadedAgent) -> Vec<String> {
     let mut errors = Vec::new();
 
@@ -1173,34 +812,11 @@ fn check_schema_shape(pkg: &LoadedAgent) -> Vec<String> {
         }
         Err(error) => errors.push(error),
     }
-    for hook in &pkg.agent.hooks {
-        const VALID_EVENTS: &[&str] = &[
-            "session_start",
-            "pre_turn",
-            "post_turn",
-            "pre_ask",
-            "post_ask",
-            "pre_cap",
-            "post_cap",
-        ];
-        if !VALID_EVENTS.contains(&hook.event.as_str()) {
-            errors.push(format!(
-                "agent.toml: hook event '{}' is not a recognized lifecycle event",
-                hook.event
-            ));
-        }
-        if hook.mode != "observe" && hook.mode != "gate" {
-            errors.push(format!(
-                "agent.toml: hook mode '{}' must be 'observe' or 'gate'",
-                hook.mode
-            ));
-        }
-    }
-    if let Some(hierarchy) = &pkg.hierarchy
+    if let Some(hierarchy) = &pkg.agent.hierarchy
         && let Some(parent) = &hierarchy.parent
         && parent.trim().is_empty()
     {
-        errors.push("hierarchy.toml: parent must not be empty when present".to_string());
+        errors.push("agent.toml: [hierarchy].parent must not be empty when present".to_string());
     }
     errors
 }
@@ -1223,142 +839,6 @@ fn declared_compile_source(agent: &AgentToml) -> Result<Option<(&str, FrontendLa
     }
 }
 
-/// A `@hook(...)` call site found by statically scanning the agent's
-/// `python/` tree.
-struct ProgrammaticHook {
-    file: String,
-    line: usize,
-    event: Option<String>,
-    r#match: Option<String>,
-    mode: Option<String>,
-}
-
-/// Extract `key="value"`/`key='value'` from a raw `@hook(...)` argument
-/// string. Best-effort: only literal-string keyword arguments are
-/// recognized (a hook that computes its event/mode dynamically is not
-/// statically checkable and is skipped, not flagged — this lint fails
-/// closed on *detectable* contradictions, it does not claim to prove their
-/// absence).
-fn extract_kwarg(args: &str, key: &str) -> Option<String> {
-    // Accept `key = "value"` / `key='value'`.
-    let needle = key;
-    let mut search_from = 0;
-    while let Some(rel) = args[search_from..].find(needle) {
-        let pos = search_from + rel;
-        // Ensure this is a whole keyword token, not a substring of another
-        // identifier (e.g. "match" inside "rematch").
-        let boundary_ok = pos == 0
-            || !args.as_bytes()[pos - 1].is_ascii_alphanumeric()
-                && args.as_bytes()[pos - 1] != b'_';
-        if !boundary_ok {
-            search_from = pos + needle.len();
-            continue;
-        }
-        let rest = args[pos + needle.len()..].trim_start();
-        if let Some(rest) = rest.strip_prefix('=') {
-            let rest = rest.trim_start();
-            for quote in ['"', '\''] {
-                if let Some(rest) = rest.strip_prefix(quote)
-                    && let Some(end) = rest.find(quote)
-                {
-                    return Some(rest[..end].to_string());
-                }
-            }
-        }
-        search_from = pos + needle.len();
-    }
-    None
-}
-
-/// Statically scan every `.py` file under `python/` for `@hook(on=…,
-/// match=…, mode=…)` call sites ( lint: manifest/entry contradiction
-/// check). This is a textual scan, not a Python parse/AST — it is
-/// deliberately conservative (see [`extract_kwarg`]) rather than a full
-/// interpreter, matching the rest of this module's "hand-port the schema's
-/// checks without vendoring a runtime" approach.
-fn find_programmatic_hooks(python_dir: &Path) -> Vec<ProgrammaticHook> {
-    let mut hooks = Vec::new();
-    if !python_dir.is_dir() {
-        return hooks;
-    }
-    for entry in walkdir::WalkDir::new(python_dir)
-        .into_iter()
-        .filter_map(Result::ok)
-    {
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        if entry.path().extension().and_then(|e| e.to_str()) != Some("py") {
-            continue;
-        }
-        let Ok(text) = fs::read_to_string(entry.path()) else {
-            continue;
-        };
-        let rel = entry
-            .path()
-            .strip_prefix(python_dir)
-            .unwrap_or(entry.path())
-            .display()
-            .to_string();
-        let mut search_from = 0usize;
-        while let Some(rel_idx) = text[search_from..].find("@hook(") {
-            let start = search_from + rel_idx;
-            let args_start = start + "@hook(".len();
-            let Some(close_rel) = text[args_start..].find(')') else {
-                break;
-            };
-            let args = &text[args_start..args_start + close_rel];
-            let line = text[..start].matches('\n').count() + 1;
-            hooks.push(ProgrammaticHook {
-                file: rel.clone(),
-                line,
-                event: extract_kwarg(args, "on"),
-                r#match: extract_kwarg(args, "match"),
-                mode: extract_kwarg(args, "mode"),
-            });
-            search_from = args_start + close_rel + 1;
-        }
-    }
-    hooks
-}
-
-/// entry code may add hooks programmatically (`@hook`) but must never
-/// *contradict* what `agent.toml`'s `[[hooks]]` already declares for the
-/// same `(event, match)` pair — a different `mode` there is a silent
-/// footgun (an author reads the manifest and gets the entry's behavior
-/// instead), so it is a lint error, not a warning.
-fn check_hook_contradictions(pkg: &LoadedAgent) -> Vec<String> {
-    let mut errors = Vec::new();
-    let python_dir = pkg.root.join("python");
-    let programmatic = find_programmatic_hooks(&python_dir);
-
-    for declared in &pkg.agent.hooks {
-        let declared_match = declared.r#match.clone().unwrap_or_else(|| "*".to_string());
-        for found in &programmatic {
-            let (Some(event), Some(mode)) = (found.event.as_deref(), found.mode.as_deref()) else {
-                continue;
-            };
-            if event != declared.event {
-                continue;
-            }
-            let found_match = found.r#match.clone().unwrap_or_else(|| "*".to_string());
-            if found_match != declared_match {
-                continue;
-            }
-            if mode != declared.mode {
-                errors.push(format!(
-                    "agent.toml declares hook on event '{}' match '{}' with mode '{}', but \
-                     python/{}:{} registers @hook(on=\"{event}\", match=\"{found_match}\", \
-                     mode=\"{mode}\") — entry code must not contradict the manifest",
-                    declared.event, declared_match, declared.mode, found.file, found.line
-                ));
-            }
-        }
-    }
-
-    errors
-}
-
 fn semver_like(version: &str) -> bool {
     // SemVer core: MAJOR.MINOR.PATCH, optionally with -prerelease/+build.
     let core = version.split(['-', '+']).next().unwrap_or(version);
@@ -1369,103 +849,19 @@ fn semver_like(version: &str) -> bool {
             .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
 }
 
-/// Validate capability implementation metadata against the canonical server
-/// loader contract. Builtin dispatch uses `id`; grouped builtins use
-/// `builtin_group`; `runtime` and `binding` are rejected.
-fn check_capability_bindings(pkg: &LoadedAgent) -> Vec<String> {
-    use apxm_ais::capabilities::{BUILTIN_GROUPS, BUILTINS};
-    let mut errors = Vec::new();
-    for cap in &pkg.capabilities.capability {
-        let kind = capability_kind(cap);
-        if cap.extra.contains_key("binding") {
-            errors.push(format!(
-                "capability '{}' uses removed field 'binding'; use id for builtin dispatch \
-                 and builtin_group for grouped builtins",
-                cap.id
-            ));
-        }
-        match kind {
-            Some("builtin") => {
-                let builtin_group = cap.extra.get("builtin_group").and_then(|v| v.as_str());
-                if BUILTINS.contains(&cap.id.as_str()) {
-                    continue;
-                }
-                match builtin_group {
-                    Some(group) if BUILTIN_GROUPS.contains(&group) => {}
-                    Some(group) => errors.push(format!(
-                        "capability '{}' (kind=builtin) has unknown builtin_group '{group}'; expected one of {BUILTIN_GROUPS:?}",
-                        cap.id
-                    )),
-                    None => errors.push(format!(
-                        "capability '{}' (kind=builtin) is not a registered builtin id and is missing builtin_group",
-                        cap.id
-                    )),
-                }
-            }
-            Some("typescript_handler") => {
-                if !cap.extra.contains_key("handler_module") {
-                    errors.push(format!(
-                        "capability '{}' (kind={}) is missing handler_module",
-                        cap.id,
-                        kind.unwrap()
-                    ));
-                }
-                if !cap.extra.contains_key("handler_function") {
-                    errors.push(format!(
-                        "capability '{}' (kind={}) is missing handler_function",
-                        cap.id,
-                        kind.unwrap()
-                    ));
-                }
-            }
-            Some("host" | "provider" | "http" | "static" | "mcp") => {}
-            Some(other) => errors.push(format!(
-                "capability '{}' has unsupported kind '{other}'; expected one of \
-                 builtin, typescript_handler, host, provider, http, static, mcp",
-                cap.id
-            )),
-            None => {
-                errors.push(format!("capability '{}' is missing kind", cap.id));
-            }
-        }
-    }
-    errors
-}
-
-/// Every Capability id an Agent Program compiled from this package may name.
-///
-/// The union of the runtime's built-in allowlist and the ids the package's own
-/// `capabilities/capabilities.toml` declares — the two namespaces a Capability
-/// reference can be satisfied from. `agent lint` already holds the package's
-/// declarations against the builtin allowlist; this is the same set projected
-/// for the other direction, so a compiled program's references can be held
-/// against what the package actually ships.
-#[cfg(feature = "driver")]
-pub(crate) fn granted_capability_ids(root: &Path) -> Result<BTreeSet<String>> {
-    let pkg = load_agent(root)?;
-    Ok(apxm_ais::capabilities::BUILTINS
-        .iter()
-        .map(|id| (*id).to_string())
-        .chain(pkg.capabilities.capability.iter().map(|cap| cap.id.clone()))
-        .collect())
-}
-
 pub(crate) fn agent_lint(path: &Path, org: Option<PathBuf>, json_output: bool) -> Result<()> {
     let pkg = load_agent(path)?;
     let org_globals = match &org {
-        Some(org_root) => load_org_global_capabilities(org_root)
+        Some(org_root) => super::org::load_org_global_capabilities(org_root)
             .with_context(|| format!("Failed to load org globals from {}", org_root.display()))?,
         None => BTreeSet::new(),
     };
 
     let mut errors = check_schema_shape(&pkg);
-    errors.extend(check_capability_drift(&pkg, &org_globals));
-    errors.extend(check_permission_resolution(&pkg));
-    errors.extend(check_hook_contradictions(&pkg));
-    errors.extend(check_capability_bindings(&pkg));
+    errors.extend(check_permission_resolution(&pkg, &org_globals));
     for unrecognized in find_unrecognized_files(path)? {
         errors.push(format!(
-            "unrecognized file '{unrecognized}' is not part of the agent.v1 folder contract"
+            "unrecognized file '{unrecognized}' is not part of the {AGENT_SCHEMA_V1} folder contract"
         ));
     }
 
@@ -1574,8 +970,7 @@ fn write_integrity_toml(path: &Path, integrity: &IntegrityToml) -> Result<()> {
 }
 
 /// Verify a built agent package against its generated integrity chain.
-#[cfg(feature = "driver")]
-pub(super) fn verify_agent_integrity(root: &Path) -> Result<()> {
+pub(crate) fn verify_agent_integrity(root: &Path) -> Result<()> {
     let integrity_path = root.join("integrity.toml");
     if !integrity_path.is_file() {
         bail!(
@@ -1621,6 +1016,12 @@ pub(super) fn seal_agent_integrity_for_test(root: &Path) -> Result<()> {
     write_integrity_toml(&root.join("integrity.toml"), &integrity)
 }
 
+/// Every TypeScript handler source the package ships.
+///
+/// Discovery is the folder contract itself: a `capabilities/<id>/handler.ts` is
+/// the package's declaration that it supplies capability `<id>`, and a
+/// `capabilities/handlers/*.ts` is a shared handler module. Neither needs a
+/// second file restating what the first one already says by existing.
 fn collect_typescript_handler_sources(root: &Path) -> Result<Vec<PathBuf>> {
     let mut sources = BTreeSet::new();
     let handlers_dir = root.join("capabilities/handlers");
@@ -1640,20 +1041,9 @@ fn collect_typescript_handler_sources(root: &Path) -> Result<Vec<PathBuf>> {
         for entry in fs::read_dir(&caps_dir)
             .with_context(|| format!("Failed to read {}", caps_dir.display()))?
         {
-            let path = entry?.path();
-            if !path.is_dir() {
-                continue;
-            }
-            let cap_path = path.join("capability.toml");
-            if !cap_path.is_file() {
-                continue;
-            }
-            let cap: CapabilityEntry = read_toml(&cap_path)?;
-            if capability_kind(&cap) == Some("typescript_handler") {
-                let handler = path.join("handler.ts");
-                if handler.is_file() {
-                    sources.insert(handler);
-                }
+            let handler = entry?.path().join("handler.ts");
+            if handler.is_file() {
+                sources.insert(handler);
             }
         }
     }
@@ -1851,19 +1241,13 @@ mod tests {
     }
 
     #[test]
-    fn new_scaffolds_schema_valid_tree() {
+    fn new_scaffolds_the_two_manifest_package() {
         let tmp = tempdir().unwrap();
         let root = tmp.path().join("demo");
         scaffold(&root, "demo");
 
         for rel in [
             "agent.toml",
-            "hierarchy.toml",
-            "capabilities/capabilities.toml",
-            "capabilities/permissions.toml",
-            "capabilities/read/capability.toml",
-            "capabilities/write/capability.toml",
-            "capabilities/handlers/hooks.ts",
             "package.json",
             "tsconfig.json",
             "prompts/persona.md",
@@ -1871,6 +1255,17 @@ mod tests {
             "tests/README.md",
         ] {
             assert!(root.join(rel).is_file(), "missing scaffolded file: {rel}");
+        }
+        // The collapse is the point: a fresh package carries no capability
+        // inventory, no permission inventory, and no separate hierarchy file.
+        for rel in [
+            "hierarchy.toml",
+            "capabilities/capabilities.toml",
+            "capabilities/permissions.toml",
+            "capabilities/read/capability.toml",
+            "capabilities/write/permission.toml",
+        ] {
+            assert!(!root.join(rel).exists(), "scaffold resurrected {rel}");
         }
 
         let agent: AgentToml = read_toml(&root.join("agent.toml")).unwrap();
@@ -1884,13 +1279,15 @@ mod tests {
                 .and_then(|compile| compile.entry.as_deref()),
             Some("src/main.ts")
         );
-
         assert_eq!(agent.kind.as_deref(), Some("agent"));
-        assert_eq!(agent.capabilities, vec!["read", "write"]);
-        assert!(agent.allowed_agent_skills.is_empty());
-        // The freshly scaffolded tree must lint clean (no capability
-        // declared => nothing to join, no drift).
+        assert!(agent.hierarchy.is_some());
+        assert!(matches!(
+            agent.permissions.get("write"),
+            Some(PermissionDecision::Ask { .. })
+        ));
+
         agent_lint(&root, None, true).expect("scaffolded agent should lint clean");
+        agent_build(&root, true).expect("scaffolded agent should build");
     }
 
     #[test]
@@ -1926,6 +1323,27 @@ mod tests {
         assert!(error.to_string().contains("unknown field `entry`"));
     }
 
+    /// The keys the collapse retired are parse errors, not tolerated extras.
+    /// A package still carrying one is refused at decode, which is what makes
+    /// "no space for old things" enforceable rather than aspirational.
+    #[test]
+    fn agent_toml_rejects_every_retired_key() {
+        for retired in [
+            "capabilities = [\"read\"]",
+            "allowed_agent_skills = []",
+            "chat = { enabled = true }",
+            "[[hooks]]\nevent = \"pre_turn\"\nmode = \"observe\"\nhandler = \"h\"",
+        ] {
+            let document = format!("id = \"demo\"\nversion = \"0.1.0\"\n{retired}\n");
+            let error = toml::from_str::<AgentToml>(&document)
+                .expect_err("a retired key must not decode: {retired}");
+            assert!(
+                error.to_string().contains("unknown field"),
+                "expected an unknown-field refusal for {retired:?}, got: {error}"
+            );
+        }
+    }
+
     #[test]
     fn new_refuses_nonempty_destination() {
         let tmp = tempdir().unwrap();
@@ -1935,131 +1353,111 @@ mod tests {
         assert!(err.to_string().contains("already exists"));
     }
 
+    /// The package's capability surface is the built-in allowlist plus the
+    /// handlers it ships. Nothing declares an inventory, so nothing can drift
+    /// from one.
     #[test]
-    fn lint_passes_on_consistent_agent() {
+    fn the_grantable_surface_is_builtins_plus_shipped_handlers() {
         let tmp = tempdir().unwrap();
-        let root = tmp.path().join("clean");
-        scaffold(&root, "clean");
+        let root = tmp.path().join("granting");
+        scaffold(&root, "granting");
 
-        // Add one joined capability referenced by agent.toml and used by the skill.
-        fs::create_dir_all(root.join("capabilities/clean_example")).unwrap();
+        let builtins_only = granted_capability_ids(&root).unwrap();
+        assert!(builtins_only.contains("read"));
+        assert!(builtins_only.contains("write"));
+        assert!(!builtins_only.contains("propose_edit"));
+
+        fs::create_dir_all(root.join("capabilities/propose_edit")).unwrap();
         fs::write(
-            root.join("capabilities/clean_example/capability.toml"),
-            "id = \"clean_example\"\ndescription = \"demo\"\nkind = \"static\"\n",
+            root.join("capabilities/propose_edit/handler.ts"),
+            "export function proposeEdit() {}\n",
         )
         .unwrap();
-        fs::write(
-            root.join("capabilities/clean_example/permission.toml"),
-            "capability = \"clean_example\"\ndecision = \"allow\"\n",
-        )
-        .unwrap();
-        agent_sync(&root, true).unwrap();
-
-        agent_lint(&root, None, true).expect("consistent agent should lint clean");
+        let with_handler = granted_capability_ids(&root).unwrap();
+        assert!(with_handler.contains("propose_edit"));
+        assert_eq!(with_handler.len(), builtins_only.len() + 1);
     }
 
+    /// `agent.toml [permissions]` is the package layer of the resolution stack.
+    /// The code layer states one bare `allow` per grantable capability, so the
+    /// package may narrow one and may not decide for a capability nothing
+    /// grants — there is no request there for it to narrow.
     #[test]
-    fn lint_catches_capability_set_drift() {
-        let tmp = tempdir().unwrap();
-        let root = tmp.path().join("drift");
-        scaffold(&root, "drift");
-
-        // agent.toml references a capability that capabilities.toml never declares.
-        update_agent_inventories(&root, &["drift.undeclared".to_string()]).unwrap();
-
-        let err = agent_lint(&root, None, true).expect_err("drift must fail lint");
-        assert!(err.to_string().contains("lint error"));
-
-        // Now declare the capability but withhold its permissions entry —
-        // "not a capability" per .
-        fs::write(
-            root.join("capabilities/capabilities.toml"),
-            "[[capability]]\nid = \"drift.undeclared\"\n",
-        )
-        .unwrap();
-        let err =
-            agent_lint(&root, None, true).expect_err("missing permission entry must fail lint");
-        assert!(
-            err.to_string().contains("lint error"),
-            "expected a lint error, got: {err}"
-        );
-    }
-
-    /// `agent.toml [permissions]` is the package layer of the resolution
-    /// stack. It may take authority away from what the tree declares and may
-    /// never hand any back — the scaffold declares `write = ask`, so `deny`
-    /// resolves and `allow` is a hard error rather than a silent widening.
-    #[test]
-    fn lint_refuses_a_package_permission_that_widens_what_the_tree_declared() {
+    fn lint_refuses_a_package_permission_for_a_capability_nothing_grants() {
         let tmp = tempdir().unwrap();
         let root = tmp.path().join("permissions");
         scaffold(&root, "permissions");
         let agent_path = root.join("agent.toml");
         let scaffolded = fs::read_to_string(&agent_path).unwrap();
+        let without_permissions = scaffolded
+            .split("[permissions]")
+            .next()
+            .expect("the scaffolded manifest states [permissions] last")
+            .to_string();
+
+        for tightened in ["ask", "deny"] {
+            fs::write(
+                &agent_path,
+                format!("{without_permissions}[permissions]\nwrite = \"{tightened}\"\n"),
+            )
+            .unwrap();
+            agent_lint(&root, None, true)
+                .unwrap_or_else(|e| panic!("tightening allow to {tightened} resolves: {e}"));
+        }
 
         fs::write(
             &agent_path,
-            format!("{scaffolded}\n[permissions]\nwrite = \"deny\"\n"),
-        )
-        .unwrap();
-        agent_lint(&root, None, true).expect("tightening ask to deny resolves");
-
-        fs::write(
-            &agent_path,
-            format!("{scaffolded}\n[permissions]\nwrite = \"allow\"\n"),
-        )
-        .unwrap();
-        agent_lint(&root, None, true).expect_err("widening ask to allow must fail");
-        let refusals = check_permission_resolution(&load_agent(&root).unwrap());
-        assert!(
-            refusals
-                .iter()
-                .any(|refusal| refusal.contains("may only tighten")),
-            "expected a widening refusal, got: {refusals:?}"
-        );
-
-        // The manifest cannot decide anything for a capability the tree never
-        // declared: there is no request there for it to narrow.
-        fs::write(
-            &agent_path,
-            format!("{scaffolded}\n[permissions]\nexfiltrate = \"allow\"\n"),
+            format!("{without_permissions}[permissions]\nexfiltrate = \"allow\"\n"),
         )
         .unwrap();
         agent_lint(&root, None, true).expect_err("an unrequested override must fail lint");
-        let refusals = check_permission_resolution(&load_agent(&root).unwrap());
+        let refusals = check_permission_resolution(&load_agent(&root).unwrap(), &BTreeSet::new());
         assert!(
             refusals
                 .iter()
                 .any(|refusal| refusal.contains("never requested")),
             "expected an unrequested-override refusal, got: {refusals:?}"
         );
+
+        // An org supplying that capability is exactly what makes the decision
+        // legitimate, which is the whole remaining job of `agent lint --org`.
+        let org_globals = BTreeSet::from(["exfiltrate".to_string()]);
+        assert!(
+            check_permission_resolution(&load_agent(&root).unwrap(), &org_globals).is_empty(),
+            "an org-global capability must accept a package decision"
+        );
     }
 
-    /// A capability declares its decision and the reason for it in one file;
-    /// both must survive the sync that regenerates `permissions.toml`.
+    /// A capability's decision and the reason declared beside it survive into
+    /// the one place a decision is now stated.
     #[test]
     fn a_declared_decision_keeps_the_reason_declared_beside_it() {
         let tmp = tempdir().unwrap();
         let root = tmp.path().join("reasoned");
         scaffold(&root, "reasoned");
+        let agent_path = root.join("agent.toml");
+        let scaffolded = fs::read_to_string(&agent_path).unwrap();
+        let without_permissions = scaffolded
+            .split("[permissions]")
+            .next()
+            .expect("the scaffolded manifest states [permissions] last")
+            .to_string();
         fs::write(
-            root.join("capabilities/write/permission.toml"),
-            "capability = \"write\"\ndecision = \"ask\"\nreason = \"Writes files on the host.\"\n",
+            &agent_path,
+            format!(
+                "{without_permissions}[permissions]\n                 write = {{ decision = \"ask\", reason = \"Writes files on the host.\" }}\n"
+            ),
         )
         .unwrap();
-        agent_sync(&root, true).unwrap();
 
-        let permissions: PermissionsToml =
-            read_toml(&root.join("capabilities/permissions.toml")).unwrap();
-        let write = permissions
-            .permission
-            .iter()
-            .find(|entry| entry.capability == "write")
-            .expect("the synced entry");
+        let pkg = load_agent(&root).unwrap();
+        let resolved =
+            resolve_permission_layers(&pkg.agent, &granted_capability_ids(&root).unwrap()).unwrap();
         assert_eq!(
-            write.declared_decision(),
-            Some(PermissionDecision::ask("Writes files on the host."))
+            resolved.get("write"),
+            Some(&PermissionDecision::ask("Writes files on the host."))
         );
+        agent_lint(&root, None, true).expect("a reasoned decision resolves");
     }
 
     #[test]
@@ -2092,7 +1490,7 @@ mod tests {
     }
 
     #[test]
-    fn typescript_manifest_joins_capability_and_permission_policy() {
+    fn typescript_manifest_carries_the_resolved_permission_decision() {
         let tmp = tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("capabilities/handlers")).unwrap();
         let descriptor = |name: &str, hash: char| HandlerDescriptor {
@@ -2114,42 +1512,20 @@ mod tests {
             r#match: None,
             mode: None,
         };
-        let capability = |id: &str, read_only: bool| CapabilityEntry {
-            id: id.to_string(),
-            description: None,
-            extra: toml::Table::from_iter([
-                (
-                    "kind".to_string(),
-                    toml::Value::String("typescript_handler".to_string()),
-                ),
-                ("read_only".to_string(), toml::Value::Boolean(read_only)),
-            ]),
-        };
-        let permission = |id: &str, decision: PermissionDecision| PermissionEntry {
-            capability: id.to_string(),
-            decision: Some(decision),
-            reason: None,
-            extra: toml::Table::new(),
-        };
-        let mut capabilities = vec![
-            capability("read_tool", true),
-            capability("write_tool", false),
-        ];
-        let permissions = vec![
-            permission("read_tool", PermissionDecision::allow()),
-            permission("write_tool", PermissionDecision::ask("writes the host")),
-        ];
         let mut manifest = HandlerManifest::new(vec![
             descriptor("read_tool", 'a'),
             descriptor("write_tool", 'b'),
         ]);
+        let resolved = BTreeMap::from([
+            ("read_tool".to_string(), PermissionDecision::allow()),
+            (
+                "write_tool".to_string(),
+                PermissionDecision::ask("writes the host"),
+            ),
+        ]);
 
-        enrich_typescript_capabilities_from_tools_manifest(
-            &mut capabilities,
-            &permissions,
-            &mut manifest,
-        )
-        .expect("policy join");
+        apply_resolved_permissions_to_tools_manifest(&mut manifest, &resolved)
+            .expect("policy join");
         write_typescript_tools_manifest(tmp.path(), &manifest).expect("manifest write");
 
         let loaded = load_typescript_tools_manifest(tmp.path()).expect("manifest reload");
@@ -2158,10 +1534,27 @@ mod tests {
             .iter()
             .map(|entry| (entry.name.as_str(), entry))
             .collect::<BTreeMap<_, _>>();
-        assert_eq!(by_name["read_tool"].read_only, Some(true));
         assert_eq!(by_name["read_tool"].requires_approval, Some(false));
-        assert_eq!(by_name["write_tool"].read_only, Some(false));
         assert_eq!(by_name["write_tool"].requires_approval, Some(true));
+
+        // A handler for a capability the resolution denies, and a handler for a
+        // capability nothing grants, are both refused rather than emitted.
+        for (label, decisions) in [
+            (
+                "denied",
+                BTreeMap::from([(
+                    "read_tool".to_string(),
+                    PermissionDecision::deny("no reads"),
+                )]),
+            ),
+            ("ungranted", BTreeMap::new()),
+        ] {
+            let mut refused = HandlerManifest::new(vec![descriptor("read_tool", 'a')]);
+            assert!(
+                apply_resolved_permissions_to_tools_manifest(&mut refused, &decisions).is_err(),
+                "a {label} capability must not be emitted as an executable handler"
+            );
+        }
     }
 
     #[test]
@@ -2299,6 +1692,37 @@ mod tests {
             persona_link.hash,
             "tampering with a hashed file must invalidate its chain link"
         );
+        // The gate `check-agent-packages` runs is the same one, so the tamper
+        // that breaks a link also fails verification.
+        verify_agent_integrity(&root)
+            .expect_err("a package edited after its last build must fail verification");
+    }
+
+    /// `agent verify` refuses a package that grew a file the folder contract
+    /// does not recognize, even when every hashed file is untouched.
+    #[test]
+    fn verify_refuses_a_package_carrying_a_retired_manifest() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("legacy");
+        scaffold(&root, "legacy");
+        agent_build(&root, true).expect("build ok");
+        verify_agent_integrity(&root).expect("a freshly built package verifies");
+
+        fs::create_dir_all(root.join("capabilities")).unwrap();
+        fs::write(
+            root.join("capabilities/capabilities.toml"),
+            "[[capability]]\nid = \"read\"\n",
+        )
+        .unwrap();
+
+        let error = verify_agent_integrity(&root)
+            .expect_err("a package still carrying capabilities.toml must fail verification");
+        assert!(
+            error.to_string().contains("capabilities/capabilities.toml"),
+            "expected the retired manifest to be named, got: {error}"
+        );
+        agent_lint(&root, None, true)
+            .expect_err("a package still carrying capabilities.toml must fail lint");
     }
 
     // Spawns the package's Python entry, which imports the apxm_program frontend;
@@ -2307,7 +1731,7 @@ mod tests {
     #[ignore = "requires the apxm_program frontend installed on the subprocess path"]
     #[cfg(feature = "driver")]
     #[test]
-    fn studio_style_source_package_builds_with_server_selected_skill_policy() {
+    fn studio_style_source_package_builds_from_its_compile_entry_alone() {
         let tmp = tempdir().unwrap();
         let root = tmp.path().join("studio-generated");
         fs::create_dir_all(root.join("python")).unwrap();
@@ -2315,8 +1739,7 @@ mod tests {
             root.join("agent.toml"),
             "id = \"studio-generated\"\n\
              version = \"0.1.0\"\n\
-             schema_version = \"apxm.agent\"\n\
-             allowed_agent_skills = [\"studio-instructions\"]\n\n\
+             schema_version = \"apxm.agent\"\n\n\
              [compile]\n\
              entry = \"python/main.py\"\n\
              frontend = \"python\"\n",
@@ -2337,12 +1760,8 @@ mod tests {
              \x20\x20\x20\x20print(StudioGenerated.canonical_air(), end=\"\")\n",
         )
         .unwrap();
-        agent_build(&root, true).expect("package with Server-selected skill policy must build");
+        agent_build(&root, true).expect("a generated source package must build");
         let agent: AgentToml = read_toml(&root.join("agent.toml")).unwrap();
-        assert_eq!(
-            agent.allowed_agent_skills,
-            vec!["studio-instructions".to_string()]
-        );
         assert_eq!(
             agent
                 .compile
@@ -2358,18 +1777,21 @@ mod tests {
         assert!(air.contains("\"op\":\"model.call\""));
     }
 
+    /// Sync regenerates the handler manifest and nothing else. It used to
+    /// rewrite `agent.toml`'s capability array on every run, which is how a
+    /// deleted inventory would have come straight back.
     #[test]
-    fn sync_preserves_only_package_capability_inventory() {
+    fn sync_leaves_the_authored_manifest_byte_for_byte() {
         let tmp = tempdir().unwrap();
         let root = tmp.path().join("catalogue");
         scaffold(&root, "catalogue");
-        let manifest = fs::read_to_string(root.join("agent.toml")).expect("agent manifest");
+        let before = fs::read_to_string(root.join("agent.toml")).expect("agent manifest");
 
-        assert!(
-            !manifest
-                .lines()
-                .any(|line| line.trim_start().starts_with("skills ="))
-        );
+        agent_sync(&root, true).expect("sync ok");
+        agent_sync(&root, true).expect("sync is idempotent");
+
+        let after = fs::read_to_string(root.join("agent.toml")).expect("agent manifest");
+        assert_eq!(before, after, "sync must not rewrite the authored manifest");
     }
 
     #[test]
@@ -2429,5 +1851,171 @@ mod tests {
                 .join("agents/conflicted/agent.toml")
                 .is_file()
         );
+    }
+
+    // -----------------------------------------------------------------
+    // apxm.agent contract conformance
+    // -----------------------------------------------------------------
+
+    /// The published `apxm.agent` vectors, decoded from their checked-in bytes.
+    fn agent_vectors() -> Vec<serde_json::Value> {
+        let text = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../contracts/vectors/apxm.agent.json"
+        ));
+        serde_json::from_str::<Vec<serde_json::Value>>(text)
+            .expect("the published apxm.agent vectors are a JSON array")
+    }
+
+    /// Materialize one vector as a package on disk and run the real
+    /// `agent lint` over it.
+    ///
+    /// The vector's `files` map is the package layout, so every path it names
+    /// becomes a file; `agent.toml` is written from the vector's manifest. This
+    /// is the whole admission the CLI performs, held against the same document
+    /// the published schema judges.
+    fn lint_admits_vector(vector: &serde_json::Value) -> Result<(), String> {
+        let files = vector["files"].as_object().expect("vector files map");
+        for digest in files.values() {
+            let digest = digest.as_str().ok_or("a file digest must be a string")?;
+            if digest.len() != 64
+                || !digest
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            {
+                return Err(format!(
+                    "file digest {digest:?} is not lowercase sha256 hex"
+                ));
+            }
+        }
+
+        let tmp = tempdir().map_err(|error| error.to_string())?;
+        let root = tmp.path().join("package");
+        for path in files.keys() {
+            let file = root.join(path);
+            if let Some(parent) = file.parent() {
+                fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+            fs::write(&file, "").map_err(|error| error.to_string())?;
+        }
+        let manifest = toml::to_string(&vector["agent"]).map_err(|error| error.to_string())?;
+        fs::write(root.join("agent.toml"), manifest).map_err(|error| error.to_string())?;
+
+        agent_lint(&root, None, true).map_err(|error| error.to_string())
+    }
+
+    /// Every vector's verdict matches what `agent lint` decides about the same
+    /// package.
+    ///
+    /// This is the drift gate the most author-facing surface in the system never
+    /// had: a key the schema stops naming, a path it stops recognizing, or a
+    /// rule the CLI stops enforcing, fails here rather than in some author's
+    /// package months later.
+    #[test]
+    fn agent_vectors_match_the_lint_path() {
+        for vector in agent_vectors() {
+            let name = vector["name"].as_str().expect("vector name");
+            let expected = vector["expected_valid"].as_bool().expect("expected_valid");
+            let verdict = lint_admits_vector(&vector["input"]);
+            assert_eq!(
+                verdict.is_ok(),
+                expected,
+                "vector '{name}' expected valid={expected} but agent lint returned {verdict:?}",
+            );
+        }
+    }
+
+    /// The digests the integrity chain records satisfy the shape the contract
+    /// publishes for them, so the producer and the schema cannot drift.
+    #[test]
+    fn produced_digests_satisfy_the_published_digest_pattern() {
+        let schema: serde_json::Value =
+            serde_json::from_str(AGENT_SCHEMA_JSON).expect("the embedded contract is valid JSON");
+        let pattern = schema["$defs"]["FileDigest"]["pattern"]
+            .as_str()
+            .expect("FileDigest pattern");
+        let published = Regex::new(pattern).expect("the published digest pattern compiles");
+        assert!(published.is_match(&sha256_hex(b"apxm.agent")));
+        assert!(published.is_match(GENESIS_HASH));
+    }
+
+    /// Every path the published contract recognizes, and only those.
+    ///
+    /// `recognized_relpath` is compiled from the schema's own patterns, so this
+    /// asserts the derivation actually took: the retired manifests are refused
+    /// and the surviving layout is admitted.
+    #[test]
+    fn the_recognized_folder_contract_is_the_published_one() {
+        for recognized in [
+            "agent.toml",
+            "integrity.toml",
+            "README.md",
+            "package.json",
+            "tsconfig.json",
+            "capabilities/handlers/tools.json",
+            "capabilities/handlers/shared.ts",
+            "capabilities/edit/handler.ts",
+            "prompts/persona.md",
+            "python/agent.py",
+            "src/main.ts",
+            "src/nested/deep/module.ts",
+            "examples/basic.md",
+            "tests/acceptance.py",
+            "shared/notes.txt",
+        ] {
+            assert!(
+                recognized_relpath(recognized),
+                "the published contract must recognize {recognized}"
+            );
+        }
+        for retired in [
+            "hierarchy.toml",
+            "capabilities/capabilities.toml",
+            "capabilities/permissions.toml",
+            "capabilities/read/capability.toml",
+            "capabilities/read/permission.toml",
+            "capabilities/edit/nested/handler.ts",
+            "prompts/persona.txt",
+            "not-a-real-file.txt",
+        ] {
+            assert!(
+                !recognized_relpath(retired),
+                "the published contract must not recognize {retired}"
+            );
+        }
+    }
+
+    /// The schema names the version constant the manifest check enforces.
+    #[test]
+    fn the_schema_version_constant_is_read_from_the_published_contract() {
+        let schema: serde_json::Value =
+            serde_json::from_str(AGENT_SCHEMA_JSON).expect("the embedded contract is valid JSON");
+        assert_eq!(schema["$id"].as_str(), Some(AGENT_SCHEMA_V1));
+        assert_eq!(
+            schema["$defs"]["AgentManifest"]["properties"]["schema_version"]["const"].as_str(),
+            Some(AGENT_SCHEMA_V1),
+            "the schema_version constant drifted from the schema `const`",
+        );
+    }
+
+    /// Every checked-in agent package satisfies the folder contract it names.
+    #[test]
+    fn checked_in_packages_satisfy_the_published_folder_contract() {
+        let repository_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        for package in [
+            "examples/agents/conversational",
+            "examples/agents/coder",
+            "crates/compiler/frontend/python/tests_program/fixtures/canonical_session_agent",
+        ] {
+            let root = repository_root.join(package);
+            let unrecognized = find_unrecognized_files(&root)
+                .unwrap_or_else(|error| panic!("walk {package}: {error}"));
+            assert!(
+                unrecognized.is_empty(),
+                "{package} carries paths outside the published folder contract: {unrecognized:?}"
+            );
+            let pkg = load_agent(&root).unwrap_or_else(|error| panic!("load {package}: {error}"));
+            assert_eq!(pkg.agent.schema_version.as_deref(), Some(AGENT_SCHEMA_V1));
+        }
     }
 }
