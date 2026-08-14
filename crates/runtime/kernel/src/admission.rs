@@ -449,6 +449,17 @@ pub struct ExecutionAdmission {
     /// field is verified (`verify_execution_admission` rejects an empty or
     /// duplicated `capability_ref`) but unproduced. Read its emptiness as
     /// "this envelope has no producer", not as "no capability was decided".
+    ///
+    /// That is a property of the envelope, not of this field: no field here has
+    /// an in-tree producer, because nothing in this tree mints an
+    /// [`ExecutionAdmission`] at all. So deleting this one would not retire a
+    /// dead surface — the surface stays exactly as unproduced — while costing
+    /// the machine the only signed, nonce-bound place a decision can ride.
+    /// [`InvocationAdmission`], the route execution actually takes, is neither
+    /// signed nor nonce-bound and has no decision field; it carries the ruling
+    /// on the in-process per-node capability admission instead, which no
+    /// signature or nonce covers. A composition root that seals its resolution
+    /// has this field and nowhere else.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capability_permissions: Vec<AdmittedCapabilityPermission>,
     pub expires_at_ms: u64,

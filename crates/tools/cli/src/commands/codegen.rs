@@ -199,6 +199,22 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
                 check,
                 "permissions",
             )?;
+            if check {
+                // The generated modules are private; authors import the
+                // hand-written module beside them. Nothing generated it, so
+                // nothing above compares it — and a decision declared there
+                // would be importable without ever reaching the machine. It is
+                // read-only here: this arm holds it to re-exporting, and never
+                // rewrites a file it does not generate.
+                crate::frontend::codegen_permissions::check_reexport_module(
+                    &default_python_permissions_reexport_path(),
+                    true,
+                )?;
+                crate::frontend::codegen_permissions::check_reexport_module(
+                    &default_typescript_permissions_reexport_path(),
+                    false,
+                )?;
+            }
             report_pair(
                 "permissions",
                 "permission decisions",
@@ -610,6 +626,21 @@ fn default_python_permissions_codegen_path() -> PathBuf {
 fn default_typescript_permissions_codegen_path() -> PathBuf {
     default_typescript_frontend_codegen_dir()
         .join(crate::frontend::codegen_permissions::TYPESCRIPT_PERMISSIONS_FILE)
+}
+
+/// The hand-written module that publishes the generated Python vocabulary. It
+/// sits one directory above `_generated`, outside every generated-file check.
+fn default_python_permissions_reexport_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../compiler/frontend/python/apxm_program")
+        .join(crate::frontend::codegen_permissions::PYTHON_REEXPORT_FILE)
+}
+
+/// The hand-written module that publishes the generated TypeScript vocabulary.
+fn default_typescript_permissions_reexport_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../compiler/frontend/typescript/src")
+        .join(crate::frontend::codegen_permissions::TYPESCRIPT_REEXPORT_FILE)
 }
 
 fn default_op_spec_codegen_dir() -> PathBuf {

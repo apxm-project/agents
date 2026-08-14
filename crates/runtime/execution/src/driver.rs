@@ -1658,6 +1658,22 @@ async fn drive_from(
                                         node_id: op.node_id.clone(),
                                     }
                                 })?;
+                            // This is not the grant check, and it is not
+                            // `x == x`. `CapabilityGrantSet::resolve` answers
+                            // "is this reference granted"; it is handed a bare
+                            // reference and never sees a node id, so it cannot
+                            // say which node the reference was granted *for*.
+                            // The node-to-admission pairing is established
+                            // entirely outside this crate: `capability_invocations`
+                            // is a public field on `ExecutionRequest`, keyed by
+                            // node id, that a composition root fills in by
+                            // walking the AIR — and that `Continuation`
+                            // serializes, so after a park it is rehydrated from
+                            // persisted bytes and paired with an AIR supplied
+                            // separately. Nothing between those two sources
+                            // re-checks that the admission filed under this node
+                            // still names the capability this node authored.
+                            // This does, before any argument is materialized.
                             if admission.capability_ref != capability_ref {
                                 return Err(
                                     ExecutionError::CapabilityInvocationAdmissionMismatch {

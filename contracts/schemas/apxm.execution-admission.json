@@ -62,7 +62,8 @@
     },
     "capability_permissions": {
       "type": "array",
-      "description": "Resolved permission decisions for this invocation, one per capability. Each records what was decided and which resolution layer decided it. A decision is not a grant: it mints no authority and carries no grant reference.",
+      "description": "Resolved permission decisions for this invocation, one per capability. Each records what was decided and which resolution layer decided it. A decision is not a grant: it mints no authority and carries no grant reference. A capability_ref may appear at most once: two decisions for one capability would leave which one applies to iteration order. JSON Schema can only reject wholly identical entries here, so verify_execution_admission is stricter and rejects a repeated capability_ref whatever decision sits beside it.",
+      "uniqueItems": true,
       "items": { "$ref": "#/$defs/AdmittedCapabilityPermission" }
     },
     "expires_at_ms": {

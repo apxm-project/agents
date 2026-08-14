@@ -184,6 +184,112 @@ pub fn render_permissions_typescript() -> String {
     buf
 }
 
+/// The hand-written module in each authoring package that gives the generated
+/// vocabulary a stable, non-private import path.
+///
+/// These two files are not generated, so no byte comparison covers them, and
+/// they sit on the only import path an author uses — which is exactly where a
+/// fourth decision would be cheapest to add and hardest to notice. A decision
+/// declared here would be importable from `apxm_program.permissions` without
+/// ever appearing in `PermissionDecision::DECISIONS`, and the enumeration the
+/// generator is built on would not have been consulted at all.
+///
+/// The guard is that each file may re-export the generated module and do
+/// nothing else. Its significant lines — everything that is not a comment, a
+/// module docstring, or blank — must be exactly the re-export below, so a
+/// declaration added here is a new line and fails, a re-export deleted is a
+/// missing line and fails, and one repointed at another module fails on the
+/// path it names.
+pub const PYTHON_REEXPORT_FILE: &str = "permissions.py";
+pub const TYPESCRIPT_REEXPORT_FILE: &str = "permissions.ts";
+
+const PYTHON_REEXPORT_LINES: &[&str] = &[
+    "from __future__ import annotations",
+    "from ._generated.permissions import *  # noqa: F401,F403",
+    "from ._generated.permissions import __all__ as __all__",
+];
+
+const TYPESCRIPT_REEXPORT_LINES: &[&str] = &["export * from \"./generated/permissions.js\";"];
+
+/// Whether a source line carries code rather than commentary.
+fn is_comment(line: &str, python: bool) -> bool {
+    let trimmed = line.trim_start();
+    if python {
+        trimmed.starts_with('#')
+    } else {
+        trimmed.starts_with("//")
+    }
+}
+
+/// The lines of `source` that declare something, with blank lines, comments,
+/// and a leading Python module docstring removed.
+fn significant_lines(source: &str, python: bool) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut in_docstring = false;
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if python {
+            if in_docstring {
+                if trimmed.ends_with("\"\"\"") {
+                    in_docstring = false;
+                }
+                continue;
+            }
+            if let Some(rest) = trimmed.strip_prefix("\"\"\"") {
+                // A docstring closed on its own opening line declares nothing
+                // either; only an unterminated one opens a skipped block.
+                if !rest.ends_with("\"\"\"") || rest.len() < 3 {
+                    in_docstring = true;
+                }
+                continue;
+            }
+        }
+        if trimmed.is_empty() || is_comment(line, python) {
+            continue;
+        }
+        lines.push(trimmed.to_owned());
+    }
+    lines
+}
+
+/// Hold one hand-written re-export module to re-exporting and nothing else.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be read, or when it declares anything
+/// other than the exact re-export of the generated permission module.
+pub fn check_reexport_module(path: &std::path::Path, python: bool) -> anyhow::Result<()> {
+    let source = std::fs::read_to_string(path).map_err(|error| {
+        anyhow::anyhow!(
+            "permissions re-export module is missing: {} ({error})",
+            path.display()
+        )
+    })?;
+    let expected: Vec<String> = if python {
+        PYTHON_REEXPORT_LINES
+    } else {
+        TYPESCRIPT_REEXPORT_LINES
+    }
+    .iter()
+    .map(|line| (*line).to_owned())
+    .collect();
+    let found = significant_lines(&source, python);
+    if found != expected {
+        anyhow::bail!(
+            "permissions re-export module declares something other than the \
+             generated vocabulary: {} must re-export \
+             `{}` and nothing else.\n  expected: {expected:#?}\n  found:    {found:#?}",
+            path.display(),
+            if python {
+                "apxm_program._generated.permissions"
+            } else {
+                "./generated/permissions.js"
+            },
+        );
+    }
+    Ok(())
+}
+
 fn exported_names(decisions: &[Decision]) -> Vec<String> {
     let mut names = vec!["Permission".to_string(), "PermissionDecision".to_string()];
     names.extend(decisions.iter().map(|decision| decision.marker.clone()));

@@ -4,7 +4,7 @@
 
 mod common;
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use apxm_program::air::{SemanticOpKind, StructuralOpKind};
 use apxm_program::frontend_graph::{
@@ -15,7 +15,7 @@ use apxm_program::source_map::{RegionAnnotationKind, SourceLanguage};
 use apxm_program::{
     FrontendGraph, verify_air_json, verify_frontend_graph_json, verify_source_map_json,
 };
-use common::{Vector, load_contract, load_vectors, schema_enum};
+use common::{Vector, load_contract, load_vectors, published_contract_files, schema_enum};
 use serde_json::Value;
 use serde_json::json;
 
@@ -119,6 +119,116 @@ fn capability_requirement_field_set_is_closed_identically_in_schema_and_rust() {
         json!({"capability_ref": "cap.search", "requested_permission": "cap.search.read"}),
     )
     .expect_err("a name outside the decision vocabulary must fail decode");
+}
+
+/// Every published schema that spells the permission decision vocabulary, and
+/// the JSON pointer of each place it spells it.
+///
+/// A place counts when it is an `enum` whose members include any decision the
+/// Rust owner defines. That is deliberately wider than "an enum equal to the
+/// vocabulary": an enum that gained a fourth decision, or lost one, still
+/// matches here and is then held to the owner below. An enum nothing recognizes
+/// would not be a drifted decision vocabulary at all.
+fn published_decision_enum_sites() -> Vec<(String, String, Vec<String>)> {
+    fn walk(node: &Value, pointer: &str, found: &mut Vec<(String, Vec<String>)>) {
+        match node {
+            Value::Object(map) => {
+                if let Some(Value::Array(members)) = map.get("enum") {
+                    let members: Vec<String> = members
+                        .iter()
+                        .filter_map(|member| member.as_str().map(str::to_owned))
+                        .collect();
+                    if members
+                        .iter()
+                        .any(|member| PermissionDecision::DECISIONS.contains(&member.as_str()))
+                    {
+                        found.push((pointer.to_owned(), members));
+                    }
+                }
+                for (key, value) in map {
+                    walk(value, &format!("{pointer}/{key}"), found);
+                }
+            }
+            Value::Array(items) => {
+                for (index, item) in items.iter().enumerate() {
+                    walk(item, &format!("{pointer}/{index}"), found);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut sites = Vec::new();
+    for file in published_contract_files("schemas") {
+        let schema = load_contract(&format!("schemas/{file}"));
+        let mut found = Vec::new();
+        walk(&schema, "", &mut found);
+        for (pointer, members) in found {
+            sites.push((file.clone(), pointer, members));
+        }
+    }
+    sites
+}
+
+/// The published schemas that must keep constraining the decision vocabulary.
+///
+/// This is a census, not a filter: a schema that stops spelling the vocabulary
+/// has replaced a closed decision with free text, and a schema that starts
+/// spelling it is a new copy of an owned vocabulary. Both are failures here.
+const SCHEMAS_SPELLING_THE_DECISION_VOCABULARY: &[&str] = &[
+    "apxm.agent.json",
+    "apxm.execution-admission.json",
+    "apxm.frontend-conformance.json",
+    "apxm.frontend-graph.json",
+    "apxm.runtime-evidence.json",
+];
+
+/// The permission decision has one owner — `PermissionDecision::DECISIONS` —
+/// and five published schemas restate it inline, in nine places. Before this
+/// test, exactly one of those nine (`apxm.frontend-graph`'s bare-string branch,
+/// pinned above) was held to the owner; the other eight could gain or lose a
+/// decision with nothing to disagree.
+///
+/// A single `$defs.PermissionDecision` reached by cross-file `$ref` is not
+/// available as the one owner here. `apxm.runtime-evidence` is embedded
+/// verbatim into the generated Python and TypeScript evidence decoders
+/// (`crates/tools/cli/src/frontend/codegen.rs`, `codegen_ts.rs`), and those
+/// decoders resolve only `#/$defs/…` and the `apxm.contract-common.v1`
+/// snapshot — a reference to a sibling schema raises "unsupported schema ref"
+/// at decode time rather than resolving. `apxm.air` already carries such a
+/// cross-file reference and gets away with it only because no validator ever
+/// compiles it. So the Rust enum stays the owner, and this census is what makes
+/// it one.
+#[test]
+fn every_published_decision_enum_is_exactly_the_rust_owner_vocabulary() {
+    let sites = published_decision_enum_sites();
+    assert!(
+        !sites.is_empty(),
+        "no published schema constrains the permission decision: a census that \
+         finds nothing enforces nothing"
+    );
+
+    for (file, pointer, members) in &sites {
+        assert_eq!(
+            members.as_slice(),
+            PermissionDecision::DECISIONS.as_slice(),
+            "{file}{pointer}: the published decision vocabulary drifted from \
+             PermissionDecision::DECISIONS, the one owner of the decision set"
+        );
+    }
+
+    let covered: BTreeSet<&str> = sites.iter().map(|(file, _, _)| file.as_str()).collect();
+    let expected: BTreeSet<&str> = SCHEMAS_SPELLING_THE_DECISION_VOCABULARY
+        .iter()
+        .copied()
+        .collect();
+    assert_eq!(
+        covered, expected,
+        "the set of published schemas spelling the permission decision changed: \
+         a schema that stopped spelling it replaced a closed decision with free \
+         text, and one that started spelling it is a new inline copy that must \
+         be recorded here"
+    );
 }
 
 /// A permission the author never wrote must never appear, and one the author did
