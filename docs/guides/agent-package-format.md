@@ -131,8 +131,12 @@ the union of two sets, computed by `granted_capability_ids` in `agent.rs`:
 
 1. **The builtin catalogue** — `apxm_ais::capabilities::BUILTINS` in
    `crates/machine/ais/src/capabilities.rs`: `bash`, `read`, `write`,
-   `search_web`, `http_get`, `http_post`, `count_tokens`, `mcp.call`,
-   `provider.call`, `schedule`.
+   `search_web`, `http_get`, `http_post`, `count_tokens`, `list_skills`,
+   `search_skills`, `read_skill`, `mcp.call`, `provider.call`, `schedule`.
+   That same set is projected into both frontends by `apxm codegen
+   capabilities`, so an Agent Program imports the id from
+   `apxm_program.capabilities` or `@apxm/frontend/capabilities` instead of
+   retyping it.
 2. **Every id the package ships a handler for** — any subdirectory of
    `capabilities/` that contains a `handler.ts`. The directory name *is*
    the capability id.

@@ -87,6 +87,7 @@ inferred and exposes `.context` and `.yield_(...)`. No ordinary source imports
 
 ```python
 from apxm_program import Agent, Context, Model, Tool
+from apxm_program.capabilities import SEARCH_WEB
 
 
 @Context
@@ -94,7 +95,7 @@ class Conversation:
     messages: tuple[Message, ...] = ()
 
 
-SearchWeb = Tool[SearchRequest, SearchResult]("capability.search-web")
+SearchWeb = Tool[SearchRequest, SearchResult](SEARCH_WEB)
 SupportModel = Model[ModelRequest, ModelResponse]("model.support")
 
 
@@ -114,12 +115,13 @@ summary = await Summarizer.invoke(SummaryInput(answer=answer))
 
 ```typescript
 import { Agent, Context, Model, Tool } from "@apxm/frontend";
+import { SEARCH_WEB } from "@apxm/frontend/capabilities";
 import { source } from "@apxm/frontend/node";
 
 source(import.meta.url);
 
 const ConversationContext = Context<Conversation>({ messages: [] });
-const SearchWeb = Tool<SearchRequest, SearchResult>("capability.search-web");
+const SearchWeb = Tool<SearchRequest, SearchResult>(SEARCH_WEB);
 const SupportModel = Model<ModelRequest, ModelResponse>("model.support");
 
 export const Support = Agent<ConversationInput, ConversationOutput, Conversation>({
@@ -139,7 +141,11 @@ binding the Agent body reads is that Agent's declaration; neither language asks
 an author to list them a second time.
 
 Both examples MUST record semantically equivalent `FrontendGraph` values. The
-exact Python decorator/TypeScript factory matrix is frozen by ADR-0015 §4.
+exact Python/TypeScript projection of every declaration — its module, its
+symbol, and the form each argument takes — is stated per language in
+`contracts/vectors/apxm.frontend-surface.json` and held to both frontends'
+sources by `dekk agents check-frontend-surface`, which is where ADR-0015 §4's
+frozen matrix now lives (ADR-0022).
 
 ### 3.3 Rules
 

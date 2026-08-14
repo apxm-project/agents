@@ -143,26 +143,3 @@ ordinary Tool implementation harder and create an accidental public protocol.
 Rejected. No Python package-handler compiler or admitted worker adapter exists
 today. Advertising one would create a partial runtime path and an unsupported
 second API.
-
-## Amendment — Python declares handlers; it still cannot execute them
-
-The decision above deferred the whole Python handler surface, authoring
-included, because no Python bundler or worker adapter existed. That conflated
-two questions. Whether a language *can declare* a shipped Capability is a
-question about the authoring surface, which
-`contracts/vectors/apxm.frontend-surface.json` states and
-`dekk agents check-frontend-surface` proves for every registered language;
-whether one *can run* is a question about the packaging and execution path,
-which is what §4 was actually protecting. Deferring the first to protect the
-second left Python unable to state something true about a package it ships, and
-left the gap invisible, because a missing projection is not something a name-set
-comparison can see.
-
-`apxm_program.handlers.capability(...)` now declares a shipped Capability in the
-same shape `Tool.define` uses, and both return the Capability id they implement
-rather than a descriptor that has to agree with a string written elsewhere.
-`crates/machine/contracts/src/types/handler_manifest.rs` still admits only
-`HandlerLanguage::TypeScript`, and there is still no Python bundler or worker
-adapter, so a Python handler declaration does not become an executable handler
-in a compiled artifact. That remains a deliberate future capability; what
-changed is that the surface no longer pretends the declaration is one too.

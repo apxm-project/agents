@@ -250,29 +250,3 @@ the frontend. FrontendGraph carries typed source intent; Rust alone selects AIS.
 
 Rejected. Canonical lowering must verify with unregistered dialects disabled so
 no success depends on the escape hatch.
-
-## Amendment — the matrix is checked, not asserted
-
-D0's matrix above was a table in a document. Nothing read it: the only gate over
-the authoring surface compared sets of identifier *names*, so it could not see a
-declaration one language projects and the other does not, and it could not see
-two projections that share a name while accepting different arguments.
-
-`contracts/vectors/apxm.frontend-surface.json` now registers the languages that
-implement the surface and, per declaration, states each language's projection —
-the module, the symbol, and, for every argument, the form that language projects
-it in. `dekk agents check-frontend-surface` extracts the real argument shape from
-each language's own source and holds it to that statement, so a registered
-language with no projection for a declaration is
-`FrontendSurfaceIncomplete{language, declaration}` and a generated module that
-has drifted from the manifest is `FrontendSurfaceUnsynced{artifact}`. Adding a
-third language is one `languages` entry, one projection per declaration, and one
-extraction layer in the gate.
-
-Two rows of the matrix moved. "Bundled Tool handler" and "Bundled Capability
-handler" are one concept — a Capability a package ships — declared by
-`Tool.define` in `crates/tools/cli/agent-packaging` and by `capability(...)` in
-`apxm_program.handlers`, not by overloading the `Tool`/`Capability` markers that
-*reference* a Capability. Both return the Capability id they implement, so the
-reference and the implementation are one object.
-

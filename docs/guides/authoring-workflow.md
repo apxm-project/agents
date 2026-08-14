@@ -5,7 +5,9 @@
   compile the checked-in references to confirm the checkout you are using
 - Authority: [ADR-0015](../adr/0015-source-first-agent-frontend-vocabulary.md),
   [ADR-0016](../adr/0016-tool-authoring-and-handler-execution-are-separate.md),
-  and [ADR-0013](../adr/0013-core-semantics-are-closed-and-implementations-enter-through-exact-port-bindings.md)
+  [ADR-0013](../adr/0013-core-semantics-are-closed-and-implementations-enter-through-exact-port-bindings.md),
+  and [ADR-0022](../adr/0022-capability-references-resolve-against-a-catalogue-and-permissions-are-declared-requests.md),
+  which amends the first two
 
 ## Start with one ordinary Agent
 
@@ -50,16 +52,30 @@ ordinary Agent; do not make your program depend on an example name.
 
 1. Define typed input, output, and only the Context that must survive a
    stateful invocation.
-2. Bind exact Models and Tool/Capability references at module scope. Make every
-   effect call and every Context replacement explicit in the Agent body.
+2. Bind exact Models and Tool/Capability references at module scope, importing
+   builtin capability ids from `apxm_program.capabilities` or
+   `@apxm/frontend/capabilities` rather than retyping them. Those module-scope
+   declarations are the Agent's declarations — nothing lists them a second time.
+   Make every effect call and every Context replacement explicit in the Agent
+   body.
 3. Use normal `if`, `match`/`switch`, loops, `try`/`catch`, and `return` for
    behavior. Use `agent.yield_(output)` only when the Program Instance should
    commit its next Context and resume on its next input; use an `Event` wait to
    park the same invocation instead.
-4. If a TypeScript package supplies a local Tool implementation, keep it in a
-   handler module using `Tool.define`. The generated handler manifest is build
-   output; it is not source to edit and it does not make Node the Agent runtime
-   or grant authority ([ADR-0016](../adr/0016-tool-authoring-and-handler-execution-are-separate.md)).
+4. If a package supplies a local Tool implementation, keep it in a handler
+   module — `Tool.define` from `@apxm/agent-packaging` in TypeScript,
+   `capability(...)` from `apxm_program.handlers` in Python — never in the Agent
+   Program source. Only the TypeScript form becomes executable: the handler
+   manifest admits `typescript` alone, so a Python declaration states what a
+   package contains without producing a runnable handler
+   ([ADR-0016](../adr/0016-tool-authoring-and-handler-execution-are-separate.md),
+   as amended by [ADR-0022](../adr/0022-capability-references-resolve-against-a-catalogue-and-permissions-are-declared-requests.md)).
+   The generated manifest is build output; it is not source to edit and it does
+   not make Node the Agent runtime or grant authority.
+   If the package needs to narrow what its program asked for, state it in
+   `agent.toml [permissions]` — the one authored layer above the program's
+   request, and one that may only tighten
+   ([the package format](agent-package-format.md#5-permissions-the-tighten-only-layer)).
 5. Compile and validate references through the repository surface:
 
    ```sh

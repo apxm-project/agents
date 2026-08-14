@@ -14,12 +14,14 @@ Accepted for the Agents repository. It is subordinate to ADR-0013 (core
 semantics are closed and implementations enter through exact Port Bindings)
 and to ADR-0009 (AIR has five public semantic operations); it adds no
 operation. It amends ADR-0015 and ADR-0016 by restating what a Capability
-reference is, what an author may say about one, and where the metadata that
-used to sit beside one now lives. It does not reopen ADR-0015's five-concept
-everyday surface, its representation stack, or its FrontendGraph-owns-intent
-boundary, and it does not reopen ADR-0016's separation of Tool declaration
-from admitted execution. Following ADR-0020's precedent, the amended records
-are left as they were written; this is the later record that resolves them.
+reference is, what an author may say about one, where the metadata that used to
+sit beside one now lives, how the cross-language declaration matrix is held, and
+which half of ADR-0016's Python deferral survives. It does not reopen ADR-0015's
+five-concept everyday surface, its representation stack, or its
+FrontendGraph-owns-intent boundary, and it does not reopen ADR-0016's separation
+of Tool declaration from admitted execution. Following ADR-0020's precedent, the
+amended records are left as they were written; this is the later record that
+resolves them.
 
 ## Context
 
@@ -43,10 +45,23 @@ per-capability `capability.toml` beside a per-capability `permission.toml` —
 was deleted along with the aggregates that restated them, so the sentence
 points at a file that no longer exists in any package.
 
-None of that is a change of position about who holds authority. It is the
+None of the three is a change of position about who holds authority. It is the
 opposite: the reason a permission may now be written in source is that writing
-one grants nothing. But ADR-0015 and ADR-0016 are accepted decisions carrying
-`amends` provenance to ADRs 0006, 0007, 0010, and 0014, and this repository
+one grants nothing.
+
+Two further sentences in the same two records had the opposite problem: they
+were never held to anything. ADR-0015 §4 froze the declaration matrix as a table
+in a document, and §7 assigned
+`contracts/vectors/apxm.frontend-surface.json` the machine-readable version of
+it, but the gate over that manifest compared sets of exported identifier *names*.
+A name-set comparison cannot see a declaration one language projects and the
+other does not, nor two projections sharing a name while accepting different
+arguments. ADR-0016 §4 had meanwhile deferred "Python package-local handlers" as one thing,
+so it covered Python's ability to *declare* a shipped Capability as well as its
+ability to run one — a conflation the same gate left invisible.
+
+But ADR-0015 and ADR-0016 are accepted decisions carrying `amends` provenance to
+ADRs 0006, 0007, 0010, 0014, and 0015, and this repository
 amends such a record by a later one rather than editing its decision text.
 This is that record.
 
@@ -200,6 +215,73 @@ handler, so the generated tool manifest carries none even though
 would mean inventing a second declaration beside the handler, which is the
 shape this collapse removed.
 
+### The declaration matrix is checked, not asserted
+
+ADR-0015 §4's matrix was a table in a document, and the gate over ADR-0015 §7's
+manifest compared sets of exported identifier names, so nothing read the matrix
+itself.
+
+`contracts/vectors/apxm.frontend-surface.json` now registers the languages that
+implement the surface — `python` and `typescript` — and, per declaration, states
+each language's projection: the module, the symbol, and, for every argument, the
+form that language projects it in. `dekk agents check-frontend-surface`
+(`tools/scripts/check_frontend_surface.py`) extracts the real argument shape from
+each language's own source and holds it to that statement. A registered language
+with no projection for a declaration is
+`FrontendSurfaceIncomplete{language, declaration}`; a generated module that has
+drifted from the manifest is `FrontendSurfaceUnsynced{artifact}`. Adding a third
+language is one `languages` entry, one projection per declaration, and one
+extraction layer in the gate.
+
+The gate compares shape rather than spelling — `capabilityRef` and
+`capability_ref` fold to one argument — which is what lets a single declaration
+say that `permission` is a Python keyword argument and a TypeScript option field
+without either counting as drift.
+
+Holding both languages to one statement forced the asymmetries out, and two rows
+of the matrix moved. "Bundled Tool handler" and "Bundled Capability handler" are
+one concept — a Capability a package ships — declared by `Tool.define` in
+`crates/tools/cli/agent-packaging` and by `capability(...)` in
+`crates/compiler/frontend/python/apxm_program/handlers.py`, not by overloading
+the `Tool` and `Capability` markers that *reference* a Capability. Both return
+the Capability id they implement, so the reference and the implementation are one
+object. And an Agent's input and output are the declared types themselves in both
+languages rather than strings naming a type in one: Python refuses a string
+annotation at the marker
+(`crates/compiler/frontend/python/apxm_program/_agent.py`), as TypeScript already
+did through its type arguments.
+
+### Python declares a shipped Capability; it still cannot execute one
+
+ADR-0016 §4 deferred the whole Python handler surface, authoring included,
+because no Python bundler or worker adapter existed. That conflated two
+questions. Whether a language *can declare* a shipped Capability is a question
+about the authoring surface, which the manifest above states and the gate above
+proves for every registered language; whether one *can run* is a question about
+the packaging and execution path, which is what ADR-0016 §4 was actually
+protecting. Deferring the first to protect the second left Python unable to state
+something true about a package it ships, and left the gap invisible, because a
+missing projection is not something a name-set comparison can see.
+
+`apxm_program.handlers.capability(...)` now declares a shipped Capability in the
+same shape `Tool.define` uses, and both return the Capability id they implement
+rather than a descriptor that has to agree with a string written elsewhere
+(`crates/compiler/frontend/python/apxm_program/handlers.py`).
+
+The execution half of ADR-0016 §4 stands unchanged, and is now pinned in more
+places than it was written in. `HandlerLanguage` admits only `typescript`
+(`crates/machine/contracts/src/types/handler_manifest.rs`);
+`CapabilityBindingHandler` has no Python variant, so a Python package handler is
+not representable on the wire
+(`crates/machine/contracts/src/types/capability/capability_binding.rs`); and
+`shipped_capability_handler_ids` recognizes only
+`capabilities/<id>/handler.ts`, so a Python declaration never enters
+`granted_capability_ids` and a program naming it fails the grant check
+(`crates/tools/cli/src/commands/agent.rs`). A Python handler declaration
+therefore does not become an executable handler in a compiled artifact. That
+remains a deliberate future capability; what changed is that the authoring
+surface no longer pretends the declaration is one too.
+
 ## What this does not change
 
 ADR-0015 §1's everyday surface is still exactly five concepts and §2's advanced
@@ -238,6 +320,17 @@ it.
   `crates/machine/ais/src/permissions.rs`; both
   reach the frontends only by codegen under a drift gate, per ADR-0006's
   explicit-bridge boundary.
+- ADR-0015 §4's matrix is no longer where the cross-language surface is
+  decided. `contracts/vectors/apxm.frontend-surface.json` is, and a change to
+  either frontend's marker arguments is a change to that manifest or a gate
+  failure.
+- ADR-0015 §4's "Bundled Tool handler" and "Bundled Capability handler" rows
+  are one row: a Capability a package ships, declared by `Tool.define` or by
+  `apxm_program.handlers.capability(...)`, never by the `Tool` or `Capability`
+  markers.
+- ADR-0016 §4's Python deferral covers execution only. Declaring a shipped
+  Capability from Python is supported; running one is still the separate owner
+  change that record describes.
 
 ## Open
 
@@ -264,14 +357,21 @@ until something authors one — recognizing the path first would repeat, at the
 folder level, the allowlist-without-implementation mistake the capability ids
 just came back from.
 
-The frontend surface is not yet a checked interface.
-`tools/scripts/check_frontend_surface.py` compares sets of exported identifiers
-against the manifest and scans authoring samples for non-manifest imports; it
-does not check that a marker's arguments match the `arguments` the manifest
-records for it. ADR-0015 §7 assigned the manifest that content and the manifest
-carries it, including this ADR's `permission` argument, but nothing yet holds
-the frontends to it. Until something does, an argument may be added to a marker
-in one language and not the other without the gate noticing.
+No shipped code-layer producer reads `requested_permission`.
+`resolve_permission_layers` states one bare `allow` per grantable id
+(`crates/tools/cli/src/commands/agent.rs`) and `local_capability_permissions`
+one per authored `capability.invoke`, because AIR carries no requirements
+(`crates/tools/cli/src/commands/canonical_execute.rs`, whose own doc comment
+records that a graph-bearing path should state the authored request instead).
+The stack, the tighten-only rule, and the digest-bound record are all in place;
+what is missing is the producer that starts the code layer from what the program
+actually asked for rather than from the widest thing it could have asked for.
+
+A Python-declared shipped Capability is not executable. No Python bundler or
+admitted worker adapter exists, and `HandlerLanguage` admits only `typescript`
+(`crates/machine/contracts/src/types/handler_manifest.rs`), so the declaration
+states something true about a package that the packaging path cannot yet honour.
+Closing it is the separate owner change ADR-0016 §4 describes.
 
 `PermissionLayer::Deployment` has no producer. `PermissionResolution::resolve`
 applies the layer the moment a caller supplies one and the tighten-only rule
@@ -281,11 +381,26 @@ decision, so the shipped stack stops at two layers
 
 ## Rejected alternatives
 
-**Edit ADR-0015 §4 and ADR-0016 §1 and §3 in place.** Rejected, on ADR-0020's
-reasoning: both are accepted decisions with recorded `amends` provenance, and
-rewriting their decision text erases what was decided when. The signature and
-the capability definition are exactly the kind of pinned detail a later record
-is supposed to restate.
+**Edit ADR-0015 §4 and §7 and ADR-0016 §1, §3, and §4 in place, or append an
+amendment section to each.** Rejected, on ADR-0020's reasoning: both are
+accepted decisions with recorded `amends` provenance, and rewriting their
+decision text erases what was decided when. Appending to them is the same
+erasure with a heading on it, and it puts a second amendment mechanism beside
+the `amends` front matter this repository already uses. The signature, the
+capability definition, the frozen matrix, and the language deferral are exactly
+the kind of pinned detail a later record is supposed to restate.
+
+**Hold the cross-language surface with the prose matrix and the name-set gate.**
+Rejected. A table nothing reads and a comparison of exported identifier names
+cannot see the two failures that matter — a declaration one language projects
+and the other does not, and two projections sharing a name while accepting
+different arguments. Both had already happened when the gate was replaced.
+
+**Keep deferring Python's authoring surface until Python can execute a
+handler.** Rejected. It ties a statement about what a package contains to a
+capability of the packaging toolchain, which is what left the asymmetry
+unstated. The execution boundary is enforced by the contract types and the grant
+check, not by withholding a declaration.
 
 **Emit every `pub const` in the capability source of truth as a frontend
 symbol.** Rejected. The constants declare more than an author may bind, so the

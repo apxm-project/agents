@@ -67,20 +67,55 @@ with `source(import.meta.url)` from `@apxm/frontend/node`. Python recovers the
 authored text through `inspect`; JavaScript has no equivalent, so the module
 supplies it.
 
-Keep bindings at module scope and use exact references such as `model.summary`
-or `capability.search`. The declarations a module makes are its Agents'
-declarations — an author does not list again the names their own body already
-names. The frontend rejects dynamic marker lookup and local shadowing instead of
-guessing what an Agent means.
+Keep bindings at module scope and use exact references. A Model reference is a
+string naming an exact target, such as `model.summary`. A Capability reference
+has to name something an implementation exists for — a builtin id, or an id the
+package ships a handler for at `capabilities/<id>/handler.ts` — so import the
+builtin from the generated catalogue instead of retyping it:
+
+```python
+from apxm_program.capabilities import SEARCH_WEB
+
+SearchWeb = Tool[SearchWebRequest, SearchWebResult](SEARCH_WEB)
+```
+
+```typescript
+import { SEARCH_WEB } from "@apxm/frontend/capabilities";
+
+const SearchWeb = Tool<SearchWebRequest, SearchWebResult>(SEARCH_WEB);
+```
+
+The catalogue is generated from `crates/machine/ais/src/capabilities.rs`, so a
+misspelled symbol fails at import, while a misspelled string survives until
+`dekk agents compile-service-canonical` holds every reference against the
+granted set. The marker itself refuses a mutable display name on sight:
+`Tool("search-web")` raises "Tool accepts an exact typed reference, not a
+display name 'search-web'" in both languages, because the id is `search_web`.
+That is the `ToolDisplayNameRejected` case the surface manifest declares for the
+Tool binding (`contracts/vectors/apxm.frontend-surface.json`).
+
+The declarations a module makes are its Agents' declarations — an author does not
+list again the names their own body already names. The frontend rejects dynamic
+marker lookup and local shadowing instead of guessing what an Agent means.
 
 `Tool` in an Agent Program is a typed reference to an admitted Capability; it
 does not implement or execute a runtime tool. A package-local handler, when one is
-needed, uses `Tool.define`/`Tool.answer` in TypeScript or `capability(...)` from
-`apxm_program.handlers` in Python, in a separate handler module. Either returns
-the Capability id it implements, so the reference and the implementation are one
-object. Its generated manifest is Rust-validated, and Rust owns the
-admitted Capability execution boundary. See
-[ADR-0016](../adr/0016-tool-authoring-and-handler-execution-are-separate.md).
+needed, uses `Tool.define`/`Tool.answer` from `@apxm/agent-packaging` in
+TypeScript or `capability(...)` from `apxm_program.handlers` in Python, in a
+separate handler module. Either returns the Capability id it implements, so the
+reference and the implementation are one object.
+
+Declaring is not executing, and the split runs along the language. Only a
+TypeScript handler becomes an executable one: `HandlerLanguage` admits only
+`typescript` (`crates/machine/contracts/src/types/handler_manifest.rs`), and the
+package build recognizes only `capabilities/<id>/handler.ts`
+(`crates/tools/cli/src/commands/agent.rs`). A Python `capability(...)` states
+what a package contains; no bundler or admitted worker adapter turns it into a
+handler an artifact can run. Either way Rust owns the admitted Capability
+execution boundary. See
+[ADR-0016](../adr/0016-tool-authoring-and-handler-execution-are-separate.md)
+and its amending record
+[ADR-0022](../adr/0022-capability-references-resolve-against-a-catalogue-and-permissions-are-declared-requests.md).
 
 ## Compile through the owner boundary
 

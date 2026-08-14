@@ -1,8 +1,11 @@
 # Compose Agent Programs
 
 - Architectural status: canonical target guide
-- Frontend syntax status: design proposal aligned with
-  [Author an Agent](creating-an-agent-program.md)
+- Frontend syntax status: `.new(...)` and `.invoke(...)` are captured by both
+  frontends (`crates/compiler/frontend/typescript/src/capture.ts`,
+  `crates/compiler/frontend/python/apxm_program/_capture.py`) and lower to
+  `program.new` / `program.invoke`, per
+  [ADR-0008](../adr/0008-agent-programs-compose-through-new-and-invoke.md)
 - Normative contract: [composition and AIR](../agents/agent-program-composition-and-air-contract.md)
 
 ## 1. Three explicit calls
@@ -63,16 +66,32 @@ The closed enum may come from pure logic, a model call or an admitted
 Capability. It cannot contain an arbitrary program name. Source owns the
 branch, so the compiler and an authorized host can explain it.
 
-## 5. Hierarchy, Skills and authority
+## 5. Hierarchy, skills and authority
 
-A parent/child Program relationship is execution composition, not Company
-hierarchy. An Area, Department or Group membership never causes invocation.
+A parent/child Program relationship is execution composition, and the three
+calls in §1 are the only things that invoke. It is a different thing from the
+`[hierarchy]` table a package declares: `parent` and `permitted_children` in
+`agent.toml` are packaging topology, checked for consistency against an org's
+`topology.toml` by `apxm org lint`
+(`crates/tools/cli/src/commands/org.rs`). No membership, edge, or declared
+parent causes an invocation.
 
-A specialist has its own Skill associations even when its parent does not.
-Those Skills remain discovery-only. The child also has its own Agent Identity
-and receives an explicitly attenuated grant. The parent may pass typed input
-and explicitly projected context, but cannot transfer all Skills, secrets,
-grants, prompt history or filesystem access automatically.
+Skills are not something an Agent Program declares, associates, or inherits.
+There is no `Skill` marker in either frontend — the surface manifest carries no
+skill declaration, so a program cannot author one. What a program can do is
+*read* one through an admitted Capability: `list_skills`, `search_skills`, and
+`read_skill` are builtin ids (`crates/machine/ais/src/capabilities.rs`)
+implemented in `crates/runtime/capability/src/builtins/skills.rs`, resolving
+against discovery roots the composition root configures. That root list is empty
+by default, so nothing scans whatever happens to sit near the process.
+
+Skill access is therefore an admitted grant to one invocation, not an attribute
+travelling down a parent/child edge. A child that can read skills can do so
+because its own admission says so; nothing copies from the parent, and the
+program decides explicitly which discovered content reaches a model. The child
+also has its own Agent Identity and receives an explicitly attenuated grant. The
+parent may pass typed input and explicitly projected context, but cannot
+transfer secrets, grants, prompt history or filesystem access automatically.
 
 ## 6. Failure and evidence
 

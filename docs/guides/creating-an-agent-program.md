@@ -2,8 +2,13 @@
 
 - Architectural status: accepted APXM v1 source → FrontendGraph → Rust → AIR
   direction
-- Frontend syntax status: implemented source-first authoring surface; package
-  export and canonical capture checks are the current compatibility evidence
+- Frontend syntax status: implemented source-first authoring surface. Every
+  declaration below is stated per language in
+  `contracts/vectors/apxm.frontend-surface.json` and held to both frontends'
+  own sources by `dekk agents check-frontend-surface`
+  (`tools/scripts/check_frontend_surface.py`). That gate reads the frontend
+  packages and the sample Markdown under `examples/`, not this guide, so the
+  snippets here are held to it by review rather than by CI.
 - Implementation contract:
   [Agent Program composition and AIR](../agents/agent-program-composition-and-air-contract.md)
 - Audience: Python and TypeScript authors
@@ -28,24 +33,34 @@ source does not import or mention `AgentFacade`.
 
 ### 1.1 Decorators and declaration factories
 
-Python uses decorators for local declarations because that is the clearest
-native syntax: `@Agent`, `@Context`, `@Tool`, `@Capability`, and
-`@Hook.before`/`@Hook.after`. Imported Models, Tools, and Capabilities use typed
-binding factories because they bind exact external references rather than
-decorate local handlers.
+Python uses decorators where a declaration attaches to a local definition,
+because that is the clearest native syntax: `@Agent`, `@Context`, and
+`@Hook.before`/`@Hook.after`. TypeScript uses declaration factories for the
+same three — `Agent({...})`, `Context(...)`, `Hook.before({...})` — because it
+has no equally direct standalone-function decorator form.
 
-TypeScript uses typed declaration factories—`Agent({...})`, `Context(...)`,
-`Tool({...})`, `Capability({...})`, and `Hook.before({...})`—because TypeScript
-does not have an equally direct standalone-function decorator form. These are
-semantic equivalents, not different programming models. Both produce the same
-bound semantic nodes and FrontendGraph intents.
+`Model`, `Tool`, and `Capability` are binding factories in both languages,
+never decorators, because they bind an exact external reference rather than
+decorate a local body:
+
+| Concept | Python | TypeScript |
+| --- | --- | --- |
+| Exact Model binding | `Model[I, O](ref)` | `Model<I, O>(ref)` |
+| Imported Tool binding | `Tool[I, O](capability_ref, permission=...)` | `Tool<I, O>(capabilityRef, { permission })` |
+| Imported Capability | `Capability[I, O](ref, permission=...)` | `Capability<I, O>(ref, { permission })` |
+
+A Capability a *package ships* is a fourth thing again, and it is not spelled
+with these markers at all — see [§3.3](#33-a-tool-reference-and-a-shipped-handler).
 
 Markers are statically recognized by imported symbol identity. Compiling does
 not execute the decorator, declaration factory callback, Agent body, or handler
-to discover behavior. The complete declaration matrix and composition rules live
-in the master plan's
-the [Python frontend](../../crates/compiler/frontend/python/README.md) and
-[TypeScript frontend](../../crates/compiler/frontend/typescript/README.md).
+to discover behavior. `contracts/vectors/apxm.frontend-surface.json` is the
+declaration matrix itself — it names each language's module, symbol, and
+argument form per declaration, and `dekk agents check-frontend-surface` extracts
+the real shape from
+[Python](../../crates/compiler/frontend/python/README.md) and
+[TypeScript](../../crates/compiler/frontend/typescript/README.md) and holds them
+to it.
 
 ### 1.2 Authoring conventions
 
@@ -130,6 +145,7 @@ region, model operation, compiler, AIR module, runtime, or deployment.
 
 ```python
 from apxm_program import Agent, Context, Model, Tool
+from apxm_program.capabilities import SEARCH_WEB
 
 
 @Context
@@ -137,7 +153,7 @@ class Conversation:
     messages: tuple[Message, ...] = ()
 
 
-SearchWeb = Tool[SearchRequest, SearchResult]("capability.search-web")
+SearchWeb = Tool[SearchRequest, SearchResult](SEARCH_WEB)
 SupportModel = Model[ModelRequest, ModelResponse]("model.support")
 
 
@@ -174,28 +190,94 @@ The loop, optional Tool call, Model call, context update, and stateful yield are
 visible in ordinary source. There is no hidden model/Tool loop or implicit
 memory update.
 
-### 3.3 A Tool reference
+### 3.3 A Tool reference, and a shipped handler
+
+A `Tool` reference names an id that something can already satisfy: a builtin
+from the generated catalogue, or an id the package ships a handler for at
+`capabilities/<id>/handler.ts`. It is not a name an author invents.
 
 ```python
 from apxm_program import Tool
+from apxm_program.capabilities import READ
+from apxm_program.permissions import Ask
 
 
-NormalizeAddress = Tool[AddressInput, NormalizedAddress](
-    "capability.normalize-address"
+ReadFile = Tool[ReadInput, ReadResult](
+    READ,
+    permission=Ask("Reads whatever path the model asks for."),
 )
 ```
 
 The Python frontend records this typed Capability reference; it never runs a
-handler while compiling and grants no permission. Calling
-`NormalizeAddress(...)` from an Agent emits one typed Capability intent into
-FrontendGraph; execution still requires admission.
+handler while compiling. Calling `ReadFile(...)` from an Agent emits one typed
+Capability intent into FrontendGraph; execution still requires admission.
+
+`permission=` does not grant anything either — it records what the program is
+*asking for*. It is captured onto the FrontendGraph as
+`CapabilityRequirement.requested_permission`, whose own contract says it "is the
+program's *request*, recorded and digest-bound as authored, and it confers no
+authority" (`crates/machine/program/src/frontend_graph.rs`).
+
+Authority is settled above the program, by a closed tighten-only layer stack —
+code (10), package (20), deployment (30) — applied in the machine's own enum
+order rather than in whatever order a caller assembles it
+(`crates/machine/ais/src/permissions.rs`). A layer above may narrow `allow` to
+`ask` or `deny`; widening a held decision, or deciding for a capability the
+program never requested, is a hard failure that leaves nothing resolved. That is
+why writing a permission in source is safe: the widest thing a program can say
+is still only a request, and every narrowing below it belongs to the machine.
+The one authored layer above code is `agent.toml [permissions]` — see
+[the package format](agent-package-format.md#5-permissions-the-tighten-only-layer).
+
+One caveat, so you don't expect more than the tree does: neither shipped
+code-layer producer reads `requested_permission` yet. `resolve_permission_layers`
+states one bare `allow` per grantable id from the package's surface
+(`crates/tools/cli/src/commands/agent.rs`), and `local_capability_permissions`
+states one per `capability.invoke` the AIR names, because AIR carries no
+requirements (`crates/tools/cli/src/commands/canonical_execute.rs`). So a
+declared permission is recorded, digest-bound, and carried, but a stricter
+request does not yet tighten either shipped stack on its own. Narrowing you
+actually depend on belongs in `agent.toml [permissions]` today.
 
 A Python package declares the handlers it ships with `capability(...)` from
 `apxm_program.handlers`, in the same shape `Tool.define` uses in TypeScript, and
-gets back the exact Capability id it implements. What Python still lacks is the
-other half: a deterministic bundler and an admitted worker adapter, so a Python
-handler is declarable but not yet executable through the runtime. See
-[ADR-0016](../adr/0016-tool-authoring-and-handler-execution-are-separate.md).
+gets back the exact Capability id it implements, so the reference and the
+implementation are one object:
+
+```python
+from apxm_program import Tool
+from apxm_program.handlers import answer, capability, schema, text
+
+edit = capability({
+    "name": "edit",
+    "description": "Return a before/after proposal without changing a file.",
+    "read_only": True,
+    "input": schema(
+        additional_properties=False,
+        properties={
+            "file_path": text(required=True, min_length=1),
+            "before": text(required=True, min_length=1),
+            "after": text(required=True, min_length=1),
+        },
+    ),
+    "run": lambda args: answer({**args, "mutates": False}),
+})
+
+ProposeEdit = Tool[dict, dict](edit)
+```
+
+Declaring is not executing. `HandlerLanguage` admits only `typescript`
+(`crates/machine/contracts/src/types/handler_manifest.rs`),
+`CapabilityBindingHandler` has no Python variant
+(`crates/machine/contracts/src/types/capability/capability_binding.rs`), and the
+package build recognizes only `capabilities/<id>/handler.ts`
+(`crates/tools/cli/src/commands/agent.rs`). Python has neither a deterministic
+bundler nor an admitted worker adapter, so a Python handler declaration states
+something true about a package without becoming an executable handler in a
+compiled artifact. See
+[ADR-0016](../adr/0016-tool-authoring-and-handler-execution-are-separate.md) and
+its amending record
+[ADR-0022](../adr/0022-capability-references-resolve-against-a-catalogue-and-permissions-are-declared-requests.md).
 
 ### 3.4 Compose Agents
 
@@ -241,6 +323,7 @@ The callback parameter is inferred. Authors do not import `AgentFacade`.
 
 ```typescript
 import { Agent, Context, Model, Tool } from "@apxm/frontend";
+import { SEARCH_WEB } from "@apxm/frontend/capabilities";
 import { source } from "@apxm/frontend/node";
 
 source(import.meta.url);
@@ -250,7 +333,7 @@ type Conversation = {
 };
 
 const ConversationContext = Context<Conversation>({ messages: [] });
-const SearchWeb = Tool<SearchRequest, SearchResult>("capability.search-web");
+const SearchWeb = Tool<SearchRequest, SearchResult>(SEARCH_WEB);
 const SupportModel = Model<ModelRequest, ModelResponse>("model.support");
 
 export const Support = Agent<
@@ -289,23 +372,39 @@ import { Tool } from "@apxm/agent-packaging";
 type AddressInput = { line: string };
 type NormalizedAddress = { normalized: string };
 
-export const NormalizeAddress = Tool.define({
+export const normalizeAddress = Tool.define({
   name: "normalize_address",
   description: "Normalize one address without changing external state.",
   input: Tool.object<AddressInput>({
     line: Tool.text({ minLength: 1 }),
   }),
   run(input) {
-    return Tool.answer({ normalized: normalizeAddress(input.line) });
+    return Tool.answer({ normalized: normalize(input.line) });
   },
 });
 ```
 
-This declaration lives in a package handler module. The Agent Program itself
-uses `Tool<AddressInput, NormalizedAddress>("capability.normalize-address")`
-from `@apxm/frontend` as a static reference. The packaging helper generates the
-Rust-owned handler manifest; it is not a frontend runtime or an authority path.
-Authors never write the manifest, JSON Schema, or worker protocol.
+This declaration lives in a package handler module at
+`capabilities/normalize_address/handler.ts`. The directory name *is* the
+capability id — the handler's existence is the whole declaration that the
+package supplies it — so the Agent Program binds that id:
+
+```typescript
+const NormalizeAddress = Tool<AddressInput, NormalizedAddress>(
+  "normalize_address",
+);
+```
+
+That is what [`examples/agents/coder/src/main.ts`](../../examples/agents/coder/src/main.ts)
+does for its own `edit` and `test` handlers. `Tool.define` also returns the
+Capability id it implements, and the marker accepts that returned object in place
+of the string (`crates/compiler/frontend/typescript/src/markers.ts`), which is
+how a package makes referencing one capability while implementing another
+unrepresentable.
+
+The packaging helper generates the Rust-owned handler manifest; it is not a
+frontend runtime or an authority path. Authors never write the manifest, JSON
+Schema, or worker protocol.
 
 ### 4.4 Compose Agents
 
@@ -366,17 +465,26 @@ Tool declaration
 ```
 
 A Tool declaration cannot contain credentials, grants, endpoints, provider
-fallbacks, or implementation selection. A Tool request returned by a model is
-data. Source chooses a closed Tool variant, invokes it, and decides whether to
-call the Model again.
+fallbacks, or implementation selection. It may carry a `permission`, but that is
+a request the layer stack above it may only tighten, never a grant
+([§3.3](#33-a-tool-reference-and-a-shipped-handler)). A Tool request returned by
+a model is data. Source chooses a closed Tool variant, invokes it, and decides
+whether to call the Model again.
 
 `Model(...)` receives a typed digest-pinned Model Target reference. An imported
-`Tool(...)` receives a typed Capability-definition reference. A separate
-TypeScript package handler can use `Tool.define` to generate a private build
-sidecar, but it cannot select an implementation or grant authority; Python
-package handlers are intentionally unsupported today. Mutable display names
-such as `"default-model"` and `"search-web"` are not executable source
-references.
+`Tool(...)` receives an exact Capability reference: a builtin id from the
+generated catalogue, or an id the package ships a handler for. A separate
+package handler module can use `Tool.define` (TypeScript) or `capability(...)`
+(Python) to declare one, but neither can select an implementation or grant
+authority, and only the TypeScript declaration reaches an executable handler.
+
+A mutable display name is not an executable source reference. The marker
+refuses `"default"`, `"model.default"`, `"support"`, `"search-web"`, and the
+empty string outright in both languages
+(`crates/compiler/frontend/typescript/src/markers.ts`,
+`crates/compiler/frontend/python/apxm_program/_markers.py`); the builtin ids
+those names get confused with are `search_web` and the rest of
+`apxm_program.capabilities` / `@apxm/frontend/capabilities`.
 
 Programs that need an executable action which is not model-callable may use the
 focused advanced `Capability` API. That distinction keeps APXM authority
@@ -432,7 +540,9 @@ The frontend is ready when:
 - each frontend binds its native AST into an immutable typed source tree and
   deterministically traverses it into FrontendGraph without running user code;
 - Python and TypeScript produce equivalent FrontendGraph, AIR, diagnostics,
-  source maps, and artifacts; TypeScript package handlers separately generate
+  source maps, and artifacts, and every declaration's per-language projection is
+  stated in `contracts/vectors/apxm.frontend-surface.json` and checked against
+  each frontend's own source; TypeScript package handlers separately generate
   the one Rust-validated sidecar when a package supplies them;
 - FrontendGraph contains typed source intent rather than raw AIR/AIS operation
   strings, and registered AIS verification preserves every operand/result;
@@ -440,8 +550,9 @@ The frontend is ready when:
   source/evidence correlation, and observable outcomes;
 - exact inference backends execute through the same provider-neutral Model
   contract without appearing in source/AIR; and
-- Tool decorators/references lower only through Capability contracts and never
-  grant authority;
+- Tool references lower only through Capability contracts and never grant
+  authority, and a declared permission is resolved by the tighten-only layer
+  stack rather than honoured as written;
 - frontend packages contain no runtime, AIR printer, compiler fallback, or raw
   public operation builder; and
 - the old imperative teaching examples and compatibility exports are absent.

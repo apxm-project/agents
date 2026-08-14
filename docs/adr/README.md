@@ -21,5 +21,15 @@ from the active index; Git history retains their rationale.
 | [0021](0021-backend-neutral-graph-hints.md) | Graph hints are one Agents contract projected onto vLLM and llama.cpp `apxm` branches; the vLLM pin/join catalog is retired. |
 | [0022](0022-capability-references-resolve-against-a-catalogue-and-permissions-are-declared-requests.md) | Capability references resolve against a generated catalogue plus shipped handlers; a declared permission is a request the layer stack may only tighten. |
 
+## Amending an accepted record
+
+An accepted ADR is amended by a **later record**, never by editing its decision
+text and never by appending an amendment section to it. The later record
+declares the relationship in its front matter as `amends: ADR-NNNN`, restates
+what changed and why, and leaves the amended record as it was written, so what
+was decided when stays legible. ADR-0020 amends ADR-0018 and ADR-0019 this way;
+ADR-0022 amends ADR-0015 and ADR-0016. Some earlier records also carry the
+back-link `amended_by:`.
+
 The PXM pages under `docs/pxm/` are historical theory, not ADRs or executable
 compatibility promises.
