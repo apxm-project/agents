@@ -55,7 +55,7 @@
     },
     "MarkerKind": {
       "description": "The declaration markers a fixture may state. Every one is a name the frontend-surface manifest publishes.",
-      "enum": ["Model", "Tool", "Capability", "Event"]
+      "enum": ["Model", "Tool", "Capability", "Event", "Skill"]
     },
     "Vector": {
       "type": "object",
@@ -131,7 +131,20 @@
         "marker": { "$ref": "#/$defs/MarkerKind" },
         "target_ref": {
           "type": "string",
-          "description": "The exact typed reference the declaration binds."
+          "description": "The exact typed reference the declaration binds. For a Skill it is the skill's own id, which is what that marker takes."
+        },
+        "instructions": {
+          "type": "object",
+          "description": "Where a Skill's instructions live. Stated only by a Skill declaration. The `entry` branch carries no path: the one package path a skill_id resolves to is derived, so no fixture restates it and no fixture can disagree with the frontends about it.",
+          "required": ["kind"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "enum": ["entry", "inline"] },
+            "text": {
+              "type": "string",
+              "description": "The instruction body, stated only by the `inline` branch."
+            }
+          }
         },
         "permission": {
           "type": "object",
@@ -225,6 +238,7 @@
         "callee": { "type": "string" },
         "instance": { "type": "string" },
         "event": { "type": "string" },
+        "skill": { "type": "string" },
         "arguments": {
           "type": "array",
           "items": { "$ref": "#/$defs/Expression" }
@@ -242,7 +256,8 @@
         "unawaited_effect",
         "plain_call",
         "invoke",
-        "await_event"
+        "await_event",
+        "load"
       ]
     },
     "Expectation": {

@@ -225,6 +225,16 @@ export const PREDICATE_SCALAR_TYPES = [
   PREDICATE_SCALAR_TYPE_NULL,
 ] as const satisfies readonly PredicateScalarType[];
 
+export type SkillInstructionKind =
+  | "entry"
+  | "inline";
+export const SKILL_INSTRUCTION_KIND_ENTRY = "entry" satisfies SkillInstructionKind;
+export const SKILL_INSTRUCTION_KIND_INLINE = "inline" satisfies SkillInstructionKind;
+export const SKILL_INSTRUCTION_KINDS = [
+  SKILL_INSTRUCTION_KIND_ENTRY,
+  SKILL_INSTRUCTION_KIND_INLINE,
+] as const satisfies readonly SkillInstructionKind[];
+
 export type HookScope =
   | "agent"
   | "loop"

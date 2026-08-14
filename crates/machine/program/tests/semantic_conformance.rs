@@ -7,7 +7,10 @@ mod common;
 use std::collections::HashSet;
 
 use apxm_program::air::{SemanticOpKind, StructuralOpKind};
-use apxm_program::frontend_graph::{CapabilityRequirement, PermissionDecision};
+use apxm_program::frontend_graph::{
+    CapabilityRequirement, MAX_INSTRUCTION_BYTES, PermissionDecision, SkillInstructionSource,
+    SkillRequirement,
+};
 use apxm_program::source_map::{RegionAnnotationKind, SourceLanguage};
 use apxm_program::{
     FrontendGraph, verify_air_json, verify_frontend_graph_json, verify_source_map_json,
@@ -580,4 +583,114 @@ fn loop_carried_signatures_reject_arity_slot_and_type_drift() {
     let mut wrong_type = valid;
     wrong_type["structural_ir"][1]["operands"][1]["type_ref"] = json!("OtherResponse");
     assert!(!verify_air_json(&wrong_type).is_accepted());
+}
+
+/// `SkillRequirement` is closed on both sides — `additionalProperties: false`
+/// in the published schema, `deny_unknown_fields` in Rust — and so is each
+/// branch of the instruction source it discriminates. The two field sets are
+/// held equal here, in both directions, exactly as `CapabilityRequirement`'s
+/// are: a skill declaration reaches the digest-bound source bundle, so a field
+/// added to one side only would either fail decode or be silently dropped out
+/// of the thing being hashed.
+#[test]
+fn skill_requirement_field_set_is_closed_identically_in_schema_and_rust() {
+    let schema = load_contract("schemas/apxm.frontend-graph.json");
+    for name in ["SkillRequirement", "SkillEntrySource", "SkillInlineSource"] {
+        assert_eq!(
+            schema["$defs"][name]["additionalProperties"],
+            json!(false),
+            "the published {name} must stay closed"
+        );
+    }
+
+    let populated = SkillRequirement {
+        skill_id: "review".to_string(),
+        instruction_source: SkillInstructionSource::Entry {
+            path: "skills/review/SKILL.md".to_string(),
+        },
+    };
+    let encoded = serde_json::to_value(&populated).expect("encode requirement");
+    let mut emitted: Vec<String> = encoded
+        .as_object()
+        .expect("requirement object")
+        .keys()
+        .cloned()
+        .collect();
+    emitted.sort();
+    let mut declared: Vec<String> = schema["$defs"]["SkillRequirement"]["properties"]
+        .as_object()
+        .expect("SkillRequirement properties")
+        .keys()
+        .cloned()
+        .collect();
+    declared.sort();
+    assert_eq!(
+        emitted, declared,
+        "the Rust SkillRequirement fields drifted from the published schema"
+    );
+    let decoded: SkillRequirement =
+        serde_json::from_value(encoded).expect("every published field decodes");
+    assert_eq!(decoded, populated);
+
+    serde_json::from_value::<SkillRequirement>(
+        json!({"skill_id": "review", "instruction_source": {"kind": "entry", "path": "skills/review/SKILL.md"}, "digest": "sha256:0"}),
+    )
+    .expect_err("an unknown SkillRequirement field must fail decode");
+
+    // The two branches are closed against each other, not merely discriminated:
+    // a document naming a package path and an inline body at once states two
+    // different integrity anchors and matches neither branch.
+    serde_json::from_value::<SkillRequirement>(
+        json!({"skill_id": "review", "instruction_source": {"kind": "entry", "path": "skills/review/SKILL.md", "text": "Review carefully."}}),
+    )
+    .expect_err("an instruction source naming both anchors must fail decode");
+}
+
+/// Where a declared skill's instructions live is checked, not merely recorded.
+///
+/// The entry path is derived from the skill id rather than believed, so a
+/// declaration cannot name a file the folder contract would refuse for that
+/// skill; an inline body is held to the ceiling the reader enforces, so an
+/// empty one cannot reach an artifact; and one skill is declared once.
+#[test]
+fn a_declared_skill_states_where_its_instructions_are() {
+    let base = load_vectors("apxm.frontend-graph.json")
+        .into_iter()
+        .find(|vector| vector.name == "valid-frontend-graph-typed-intents")
+        .expect("typed frontend graph vector")
+        .input;
+
+    let mut carried = base.clone();
+    carried["skill_requirements"] = json!([{
+        "skill_id": "review",
+        "instruction_source": {"kind": "entry", "path": "skills/review/SKILL.md"}
+    }]);
+    assert!(verify_frontend_graph_json(&carried).is_accepted());
+
+    let mut elsewhere = carried.clone();
+    elsewhere["skill_requirements"][0]["instruction_source"]["path"] = json!("prompts/review.md");
+    assert!(!verify_frontend_graph_json(&elsewhere).is_accepted());
+
+    let mut written = base.clone();
+    written["skill_requirements"] = json!([{
+        "skill_id": "tone",
+        "instruction_source": {"kind": "inline", "text": "Answer in one sentence."}
+    }]);
+    assert!(verify_frontend_graph_json(&written).is_accepted());
+
+    let mut empty = written.clone();
+    empty["skill_requirements"][0]["instruction_source"]["text"] = json!("");
+    assert!(!verify_frontend_graph_json(&empty).is_accepted());
+
+    let mut overlong = written.clone();
+    overlong["skill_requirements"][0]["instruction_source"]["text"] =
+        json!("x".repeat(MAX_INSTRUCTION_BYTES + 1));
+    assert!(!verify_frontend_graph_json(&overlong).is_accepted());
+
+    let mut twice = carried.clone();
+    twice["skill_requirements"] = json!([
+        {"skill_id": "review", "instruction_source": {"kind": "entry", "path": "skills/review/SKILL.md"}},
+        {"skill_id": "review", "instruction_source": {"kind": "inline", "text": "Review carefully."}}
+    ]);
+    assert!(!verify_frontend_graph_json(&twice).is_accepted());
 }

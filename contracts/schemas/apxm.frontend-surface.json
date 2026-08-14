@@ -16,9 +16,9 @@
     },
     "advanced": {
       "type": "array",
-      "description": "The advanced names imported only when their behavior is needed. `capability` declares a handler a package ships, as against `Capability`, which references one.",
+      "description": "The advanced names imported only when their behavior is needed. `capability` declares a handler a package ships, as against `Capability`, which references one. `Skill` declares instructions a program can load; it is not a second way to declare a persona, it is the one way.",
       "items": { "type": "string" },
-      "const": ["Capability", "capability", "Event", "Hook", "TaskGroup"]
+      "const": ["Capability", "capability", "Event", "Hook", "TaskGroup", "Skill"]
     },
     "non_public": {
       "type": "array",
@@ -141,7 +141,8 @@
             "HookDecl",
             "EventType",
             "EventWait",
-            "TaskScope"
+            "TaskScope",
+            "SkillDecl"
           ]
         },
         "arguments": {
@@ -163,7 +164,9 @@
                   "object_schema",
                   "permission",
                   "selector",
-                  "phase"
+                  "phase",
+                  "package_path",
+                  "instruction_text"
                 ]
               },
               "required": { "type": "boolean" },

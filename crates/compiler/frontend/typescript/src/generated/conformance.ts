@@ -14,7 +14,7 @@
 // makes this module Node-only; nothing in the browser authoring entrypoint
 // imports it.
 
-import { Agent, Capability, Context, Event, Model, Tool } from "../index.js";
+import { Agent, Capability, Context, Event, Model, Skill, Tool } from "../index.js";
 import { submitAuthoredSource } from "../node.js";
 import { Allow, Ask } from "../permissions.js";
 
@@ -338,9 +338,28 @@ const EXPECTATIONS: Readonly<Record<string, Expectation[]>> = {
     {"equals":[{"kind":"integer","value":-9007199254740991}],"query":"graph:values[origin=literal].expression"},
     {"equals":null,"query":"diagnostics"},
   ],
+  "skill_carried_by_package_entry": [
+    {"equals":[{"instruction_source":{"kind":"entry","path":"skills/review/SKILL.md"},"skill_id":"review"}],"query":"graph:skill_requirements"},
+    {"equals":[{"capability_ref":"read_skill","tool_schema_present":false}],"query":"graph:capability_requirements"},
+    {"equals":["capability_binding"],"query":"graph:declarations[].decl_kind"},
+    {"equals":["read_skill"],"query":"graph:declarations[].target_ref"},
+    {"equals":["capability_invocation"],"query":"graph:call_intents[].intent_kind"},
+    {"equals":null,"query":"diagnostics"},
+    {"equals":["capability.invoke"],"query":"air:semantic_operations[].op"},
+    {"equals":["read_skill"],"query":"air:semantic_operations[0].operands[slot=capability_ref].value_id"},
+    {"length":1,"query":"artifact:artifact_semantic_requirements[typed_port_slot=read_skill].typed_port_slot"},
+  ],
+  "skill_written_inline_in_source": [
+    {"equals":[{"instruction_source":{"kind":"inline","text":"Answer in one sentence."},"skill_id":"tone"}],"query":"graph:skill_requirements"},
+    {"equals":["read_skill"],"query":"graph:capability_requirements[].capability_ref"},
+    {"equals":["capability_invocation"],"query":"graph:call_intents[].intent_kind"},
+    {"equals":null,"query":"diagnostics"},
+    {"equals":["capability.invoke"],"query":"air:semantic_operations[].op"},
+    {"equals":["read_skill"],"query":"air:semantic_operations[0].operands[slot=capability_ref].value_id"},
+  ],
 };
 
-const source_minimal_model_agent = "import { Agent, Capability, Context, Event, Hook, Model, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\n\nconst SummarizerModel = Model<Input, Output>(\"summarizer.model\");\n\nconst Summarizer = Agent<Input, Output>({\n  name: \"Summarizer\",\n  async run(agent, input) {\n    return await SummarizerModel(input);\n  },\n});\n";
+const source_minimal_model_agent = "import { Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\n\nconst SummarizerModel = Model<Input, Output>(\"summarizer.model\");\n\nconst Summarizer = Agent<Input, Output>({\n  name: \"Summarizer\",\n  async run(agent, input) {\n    return await SummarizerModel(input);\n  },\n});\n";
 
 function vector_minimal_model_agent(): string[] {
   const SummarizerModel = Model<Input, Output>("summarizer.model");
@@ -350,7 +369,7 @@ function vector_minimal_model_agent(): string[] {
   return check("minimal_model_agent", Summarizer, EXPECTATIONS["minimal_model_agent"]);
 }
 
-const source_initial_context_assignment = "import { Agent, Capability, Context, Event, Hook, Model, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\ntype InitialContext = { messages: unknown[] };\n\nconst InitialContext = Context<InitialContext>({ messages: [] });\nconst InitialModel = Model<Input, Output>(\"initial.model\");\n\nconst InitialContextAgent = Agent<Input, Output, InitialContext>({\n  name: \"InitialContextAgent\",\n  context: InitialContext,\n  async run(agent, input) {\n    agent.context = { messages: [] };\n    return await InitialModel(input);\n  },\n});\n";
+const source_initial_context_assignment = "import { Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\ntype InitialContext = { messages: unknown[] };\n\nconst InitialContext = Context<InitialContext>({ messages: [] });\nconst InitialModel = Model<Input, Output>(\"initial.model\");\n\nconst InitialContextAgent = Agent<Input, Output, InitialContext>({\n  name: \"InitialContextAgent\",\n  context: InitialContext,\n  async run(agent, input) {\n    agent.context = { messages: [] };\n    return await InitialModel(input);\n  },\n});\n";
 
 function vector_initial_context_assignment(): string[] {
   const InitialContext = Context<InitialContext>({ messages: [] });
@@ -362,7 +381,7 @@ function vector_initial_context_assignment(): string[] {
   return check("initial_context_assignment", InitialContextAgent, EXPECTATIONS["initial_context_assignment"]);
 }
 
-const source_contextual_tool_loop = "import { Agent, Capability, Context, Event, Hook, Model, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\ntype Conversation = { messages: unknown[] };\n\nconst Conversation = Context<Conversation>({ messages: [] });\nconst SearchWeb = Tool<Input, Output>(\"search.web.capability\");\nconst SupportModel = Model<Input, Output>(\"support.model\");\n\nconst Support = Agent<Input, Output, Conversation>({\n  name: \"Support\",\n  context: Conversation,\n  async run(agent, input) {\n    while (true) {\n      let research: any = null;\n      if (input !== null) {\n        research = await SearchWeb(input);\n      }\n      const response = await SupportModel(input);\n      agent.context = { messages: [] };\n      return response;\n    }\n  },\n});\n";
+const source_contextual_tool_loop = "import { Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\ntype Conversation = { messages: unknown[] };\n\nconst Conversation = Context<Conversation>({ messages: [] });\nconst SearchWeb = Tool<Input, Output>(\"search.web.capability\");\nconst SupportModel = Model<Input, Output>(\"support.model\");\n\nconst Support = Agent<Input, Output, Conversation>({\n  name: \"Support\",\n  context: Conversation,\n  async run(agent, input) {\n    while (true) {\n      let research: any = null;\n      if (input !== null) {\n        research = await SearchWeb(input);\n      }\n      const response = await SupportModel(input);\n      agent.context = { messages: [] };\n      return response;\n    }\n  },\n});\n";
 
 function vector_contextual_tool_loop(): string[] {
   const Conversation = Context<Conversation>({ messages: [] });
@@ -376,7 +395,7 @@ function vector_contextual_tool_loop(): string[] {
   return check("contextual_tool_loop", Support, EXPECTATIONS["contextual_tool_loop"]);
 }
 
-const source_capability_declared_twice = "import { Agent, Capability, Context, Event, Hook, Model, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\n\nconst AuditCapability = Capability<Input, Output>(\"cap.audit\", { permission: Allow });\nconst AuditModel = Model<Input, Output>(\"audit.model\");\nconst AuditTool = Tool<Input, Output>(\"cap.audit\", { permission: Ask(\"Reads whatever the model asks for.\") });\n\nconst Auditor = Agent<Input, Output>({\n  name: \"Auditor\",\n  async run(agent, input) {\n    const findings = await AuditTool(input);\n    const archived = await AuditCapability(findings);\n    return await AuditModel(archived);\n  },\n});\n";
+const source_capability_declared_twice = "import { Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\n\nconst AuditCapability = Capability<Input, Output>(\"cap.audit\", { permission: Allow });\nconst AuditModel = Model<Input, Output>(\"audit.model\");\nconst AuditTool = Tool<Input, Output>(\"cap.audit\", { permission: Ask(\"Reads whatever the model asks for.\") });\n\nconst Auditor = Agent<Input, Output>({\n  name: \"Auditor\",\n  async run(agent, input) {\n    const findings = await AuditTool(input);\n    const archived = await AuditCapability(findings);\n    return await AuditModel(archived);\n  },\n});\n";
 
 function vector_capability_declared_twice(): string[] {
   const AuditCapability = Capability<Input, Output>("cap.audit", { permission: Allow });
@@ -390,7 +409,7 @@ function vector_capability_declared_twice(): string[] {
   return check("capability_declared_twice", Auditor, EXPECTATIONS["capability_declared_twice"]);
 }
 
-const source_composed_agent_event_and_task_group = "import { Agent, Capability, Context, Event, Hook, Model, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\ntype ReviewContext = { completed: boolean };\n\nconst ReviewContext = Context<ReviewContext>({ completed: false });\nconst ReviewModel = Model<Input, Output>(\"review.model\");\nconst SpecialistModel = Model<Input, Output>(\"specialist.model\");\nconst Approval = Event<Input>(\"approval.event\");\n\nconst Specialist = Agent<Input, Output, ReviewContext>({\n  name: \"Specialist\",\n  context: ReviewContext,\n  async run(agent, input) {\n    return await SpecialistModel(input);\n  },\n});\n\nconst Coordinator = Agent<Input, Output, ReviewContext>({\n  name: \"Coordinator\",\n  context: ReviewContext,\n  async run(agent, input) {\n    while (true) {\n      const specialist = Specialist.new({ context: { completed: false } });\n      const review = await specialist.invoke(input);\n      const approved = await Approval.wait();\n      await TaskGroup.run(async () => {\n        const result = await ReviewModel(review);\n      });\n      agent.context = { completed: true };\n      input = await agent.yield_(review);\n    }\n  },\n});\n\nconst RecordModelStart = Hook.before<ReviewContext>({\n  agent: Coordinator,\n  target: ReviewModel,\n  scope: \"model\",\n  async run(agent) {\n  },\n});\n";
+const source_composed_agent_event_and_task_group = "import { Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\ntype ReviewContext = { completed: boolean };\n\nconst ReviewContext = Context<ReviewContext>({ completed: false });\nconst ReviewModel = Model<Input, Output>(\"review.model\");\nconst SpecialistModel = Model<Input, Output>(\"specialist.model\");\nconst Approval = Event<Input>(\"approval.event\");\n\nconst Specialist = Agent<Input, Output, ReviewContext>({\n  name: \"Specialist\",\n  context: ReviewContext,\n  async run(agent, input) {\n    return await SpecialistModel(input);\n  },\n});\n\nconst Coordinator = Agent<Input, Output, ReviewContext>({\n  name: \"Coordinator\",\n  context: ReviewContext,\n  async run(agent, input) {\n    while (true) {\n      const specialist = Specialist.new({ context: { completed: false } });\n      const review = await specialist.invoke(input);\n      const approved = await Approval.wait();\n      await TaskGroup.run(async () => {\n        const result = await ReviewModel(review);\n      });\n      agent.context = { completed: true };\n      input = await agent.yield_(review);\n    }\n  },\n});\n\nconst RecordModelStart = Hook.before<ReviewContext>({\n  agent: Coordinator,\n  target: ReviewModel,\n  scope: \"model\",\n  async run(agent) {\n  },\n});\n";
 
 function vector_composed_agent_event_and_task_group(): string[] {
   const ReviewContext = Context<ReviewContext>({ completed: false });
@@ -408,7 +427,7 @@ function vector_composed_agent_event_and_task_group(): string[] {
   return check("composed_agent_event_and_task_group", Coordinator, EXPECTATIONS["composed_agent_event_and_task_group"]);
 }
 
-const source_resumable_loop_block_arguments = "import { Agent, Capability, Context, Event, Hook, Model, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\n\nconst ResumeModel = Model<Input, Output>(\"resume.model\");\n\nconst Resumable = Agent<Input, Output>({\n  name: \"Resumable\",\n  async run(agent, input) {\n    while (true) {\n      const reply = await ResumeModel(input);\n      input = await agent.yield_(reply);\n    }\n  },\n});\n";
+const source_resumable_loop_block_arguments = "import { Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\n\nconst ResumeModel = Model<Input, Output>(\"resume.model\");\n\nconst Resumable = Agent<Input, Output>({\n  name: \"Resumable\",\n  async run(agent, input) {\n    while (true) {\n      const reply = await ResumeModel(input);\n      input = await agent.yield_(reply);\n    }\n  },\n});\n";
 
 function vector_resumable_loop_block_arguments(): string[] {
   const ResumeModel = Model<Input, Output>("resume.model");
@@ -418,7 +437,7 @@ function vector_resumable_loop_block_arguments(): string[] {
   return check("resumable_loop_block_arguments", Resumable, EXPECTATIONS["resumable_loop_block_arguments"]);
 }
 
-const source_nested_loop_hook_targets_inner_loop = "import { Agent, Capability, Context, Event, Hook, Model, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\ntype NestedContext = { depth: number };\n\nconst NestedContext = Context<NestedContext>({ depth: 0 });\nconst NestedOuterModel = Model<Input, Output>(\"nested.outer.model\");\nconst NestedInnerTool = Tool<Input, Output>(\"nested.inner.capability\");\nconst NestedAudit = Tool<Input, Output>(\"nested.audit.capability\");\n\nconst NestedLoops = Agent<Input, Output, NestedContext>({\n  name: \"NestedLoops\",\n  context: NestedContext,\n  async run(agent, input) {\n    while (true) {\n      const reply = await NestedOuterModel(input);\n      while (true) {\n        const found = await NestedInnerTool(reply);\n        input = await agent.yield_(found);\n      }\n    }\n  },\n});\n\nconst AuditInnerIteration = Hook.before<NestedContext>({\n  agent: NestedLoops,\n  target: NestedInnerTool,\n  scope: \"loop\",\n  async run(agent) {\n    await NestedAudit(agent.context);\n  },\n});\n";
+const source_nested_loop_hook_targets_inner_loop = "import { Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\ntype NestedContext = { depth: number };\n\nconst NestedContext = Context<NestedContext>({ depth: 0 });\nconst NestedOuterModel = Model<Input, Output>(\"nested.outer.model\");\nconst NestedInnerTool = Tool<Input, Output>(\"nested.inner.capability\");\nconst NestedAudit = Tool<Input, Output>(\"nested.audit.capability\");\n\nconst NestedLoops = Agent<Input, Output, NestedContext>({\n  name: \"NestedLoops\",\n  context: NestedContext,\n  async run(agent, input) {\n    while (true) {\n      const reply = await NestedOuterModel(input);\n      while (true) {\n        const found = await NestedInnerTool(reply);\n        input = await agent.yield_(found);\n      }\n    }\n  },\n});\n\nconst AuditInnerIteration = Hook.before<NestedContext>({\n  agent: NestedLoops,\n  target: NestedInnerTool,\n  scope: \"loop\",\n  async run(agent) {\n    await NestedAudit(agent.context);\n  },\n});\n";
 
 function vector_nested_loop_hook_targets_inner_loop(): string[] {
   const NestedContext = Context<NestedContext>({ depth: 0 });
@@ -434,7 +453,7 @@ function vector_nested_loop_hook_targets_inner_loop(): string[] {
   return check("nested_loop_hook_targets_inner_loop", NestedLoops, EXPECTATIONS["nested_loop_hook_targets_inner_loop"]);
 }
 
-const source_negative_integer_at_safe_boundary = "import { Agent, Capability, Context, Event, Hook, Model, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\n\nconst NegativeValueModel = Model<Input, Output>(\"negative.value.model\");\n\nconst NegativeValue = Agent<Input, Output>({\n  name: \"NegativeValue\",\n  async run(agent, input) {\n    return await NegativeValueModel(-9007199254740991);\n  },\n});\n";
+const source_negative_integer_at_safe_boundary = "import { Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\n\nconst NegativeValueModel = Model<Input, Output>(\"negative.value.model\");\n\nconst NegativeValue = Agent<Input, Output>({\n  name: \"NegativeValue\",\n  async run(agent, input) {\n    return await NegativeValueModel(-9007199254740991);\n  },\n});\n";
 
 function vector_negative_integer_at_safe_boundary(): string[] {
   const NegativeValueModel = Model<Input, Output>("negative.value.model");
@@ -444,7 +463,27 @@ function vector_negative_integer_at_safe_boundary(): string[] {
   return check("negative_integer_at_safe_boundary", NegativeValue, EXPECTATIONS["negative_integer_at_safe_boundary"]);
 }
 
-const source_rejects_unresolved_returned_call = "import { Agent, Capability, Context, Event, Hook, Model, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\n\nconst UnresolvedReturnModel = Model<Input, Output>(\"unresolved.return.model\");\n\nconst ReturnsUnresolved = Agent<Input, Output>({\n  name: \"ReturnsUnresolved\",\n  async run(agent, input) {\n    return Unresolved(input);\n  },\n});\n";
+const source_skill_carried_by_package_entry = "import { Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\n\nconst ReviewSkill = Skill(\"review\", { entry: \"skills/review/SKILL.md\" });\n\nconst PackagedSkillAgent = Agent<Input, Output>({\n  name: \"PackagedSkillAgent\",\n  async run(agent, input) {\n    return await ReviewSkill.load();\n  },\n});\n";
+
+function vector_skill_carried_by_package_entry(): string[] {
+  const ReviewSkill = Skill("review", { entry: "skills/review/SKILL.md" });
+  void ReviewSkill;
+  submitAuthoredSource({ fileName: "skill_carried_by_package_entry.ts", text: source_skill_carried_by_package_entry });
+  const PackagedSkillAgent = Agent<Input, Output>({ name: "PackagedSkillAgent", async run() { return null; } });
+  return check("skill_carried_by_package_entry", PackagedSkillAgent, EXPECTATIONS["skill_carried_by_package_entry"]);
+}
+
+const source_skill_written_inline_in_source = "import { Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\n\nconst ToneSkill = Skill(\"tone\", { text: \"Answer in one sentence.\" });\n\nconst InlineSkillAgent = Agent<Input, Output>({\n  name: \"InlineSkillAgent\",\n  async run(agent, input) {\n    return await ToneSkill.load();\n  },\n});\n";
+
+function vector_skill_written_inline_in_source(): string[] {
+  const ToneSkill = Skill("tone", { text: "Answer in one sentence." });
+  void ToneSkill;
+  submitAuthoredSource({ fileName: "skill_written_inline_in_source.ts", text: source_skill_written_inline_in_source });
+  const InlineSkillAgent = Agent<Input, Output>({ name: "InlineSkillAgent", async run() { return null; } });
+  return check("skill_written_inline_in_source", InlineSkillAgent, EXPECTATIONS["skill_written_inline_in_source"]);
+}
+
+const source_rejects_unresolved_returned_call = "import { Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\n\nconst UnresolvedReturnModel = Model<Input, Output>(\"unresolved.return.model\");\n\nconst ReturnsUnresolved = Agent<Input, Output>({\n  name: \"ReturnsUnresolved\",\n  async run(agent, input) {\n    return Unresolved(input);\n  },\n});\n";
 
 function vector_rejects_unresolved_returned_call(): string[] {
   const UnresolvedReturnModel = Model<Input, Output>("unresolved.return.model");
@@ -462,7 +501,7 @@ function vector_rejects_unresolved_returned_call(): string[] {
   return [failure("rejects_unresolved_returned_call", "authoring was accepted, and the corpus states it is rejected")];
 }
 
-const source_rejects_unresolved_operand_call = "import { Agent, Capability, Context, Event, Hook, Model, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\n\nconst UnresolvedOperandModel = Model<Input, Output>(\"unresolved.operand.model\");\n\nconst OperandUnresolved = Agent<Input, Output>({\n  name: \"OperandUnresolved\",\n  async run(agent, input) {\n    return await UnresolvedOperandModel(Unresolved(input));\n  },\n});\n";
+const source_rejects_unresolved_operand_call = "import { Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\n\nconst UnresolvedOperandModel = Model<Input, Output>(\"unresolved.operand.model\");\n\nconst OperandUnresolved = Agent<Input, Output>({\n  name: \"OperandUnresolved\",\n  async run(agent, input) {\n    return await UnresolvedOperandModel(Unresolved(input));\n  },\n});\n";
 
 function vector_rejects_unresolved_operand_call(): string[] {
   const UnresolvedOperandModel = Model<Input, Output>("unresolved.operand.model");
@@ -480,7 +519,7 @@ function vector_rejects_unresolved_operand_call(): string[] {
   return [failure("rejects_unresolved_operand_call", "authoring was accepted, and the corpus states it is rejected")];
 }
 
-const source_rejects_effect_read_as_data = "import { Agent, Capability, Context, Event, Hook, Model, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\n\nconst ValuePositionModel = Model<Input, Output>(\"value.position.model\");\n\nconst EffectAsValue = Agent<Input, Output>({\n  name: \"EffectAsValue\",\n  async run(agent, input) {\n    return ValuePositionModel(input);\n  },\n});\n";
+const source_rejects_effect_read_as_data = "import { Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\n\nconst ValuePositionModel = Model<Input, Output>(\"value.position.model\");\n\nconst EffectAsValue = Agent<Input, Output>({\n  name: \"EffectAsValue\",\n  async run(agent, input) {\n    return ValuePositionModel(input);\n  },\n});\n";
 
 function vector_rejects_effect_read_as_data(): string[] {
   const ValuePositionModel = Model<Input, Output>("value.position.model");
@@ -498,7 +537,7 @@ function vector_rejects_effect_read_as_data(): string[] {
   return [failure("rejects_effect_read_as_data", "authoring was accepted, and the corpus states it is rejected")];
 }
 
-const source_rejects_extra_authored_operands = "import { Agent, Capability, Context, Event, Hook, Model, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\n\nconst ExtraOperandModel = Model<Input, Output>(\"extra.operand.model\");\n\nconst ExtraOperands = Agent<Input, Output>({\n  name: \"ExtraOperands\",\n  async run(agent, input) {\n    return await ExtraOperandModel(input, input);\n  },\n});\n";
+const source_rejects_extra_authored_operands = "import { Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\n\nconst ExtraOperandModel = Model<Input, Output>(\"extra.operand.model\");\n\nconst ExtraOperands = Agent<Input, Output>({\n  name: \"ExtraOperands\",\n  async run(agent, input) {\n    return await ExtraOperandModel(input, input);\n  },\n});\n";
 
 function vector_rejects_extra_authored_operands(): string[] {
   const ExtraOperandModel = Model<Input, Output>("extra.operand.model");
@@ -516,7 +555,7 @@ function vector_rejects_extra_authored_operands(): string[] {
   return [failure("rejects_extra_authored_operands", "authoring was accepted, and the corpus states it is rejected")];
 }
 
-const source_rejects_predicate_integer_outside_safe_domain = "import { Agent, Capability, Context, Event, Hook, Model, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\n\n\nconst UnsafeIntegerPredicate = Agent<Input, Output>({\n  name: \"UnsafeIntegerPredicate\",\n  async run(agent, input) {\n    if (input.count === 9007199254740992) {\n      return input;\n    }\n    return input;\n  },\n});\n";
+const source_rejects_predicate_integer_outside_safe_domain = "import { Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\n\n\nconst UnsafeIntegerPredicate = Agent<Input, Output>({\n  name: \"UnsafeIntegerPredicate\",\n  async run(agent, input) {\n    if (input.count === 9007199254740992) {\n      return input;\n    }\n    return input;\n  },\n});\n";
 
 function vector_rejects_predicate_integer_outside_safe_domain(): string[] {
   submitAuthoredSource({ fileName: "rejects_predicate_integer_outside_safe_domain.ts", text: source_rejects_predicate_integer_outside_safe_domain });
@@ -532,7 +571,7 @@ function vector_rejects_predicate_integer_outside_safe_domain(): string[] {
   return [failure("rejects_predicate_integer_outside_safe_domain", "authoring was accepted, and the corpus states it is rejected")];
 }
 
-const source_rejects_local_binding_shadowing_a_declared_marker = "import { Agent, Capability, Context, Event, Hook, Model, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\n\nconst ShadowedModel = Model<Input, Output>(\"shadowed.model\");\n\nconst Shadowed = Agent<Input, Output>({\n  name: \"Shadowed\",\n  async run(agent, input) {\n    const ShadowedModel = async (value: any) => value;\n    return await ShadowedModel(input);\n  },\n});\n";
+const source_rejects_local_binding_shadowing_a_declared_marker = "import { Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\n\nconst ShadowedModel = Model<Input, Output>(\"shadowed.model\");\n\nconst Shadowed = Agent<Input, Output>({\n  name: \"Shadowed\",\n  async run(agent, input) {\n    const ShadowedModel = async (value: any) => value;\n    return await ShadowedModel(input);\n  },\n});\n";
 
 function vector_rejects_local_binding_shadowing_a_declared_marker(): string[] {
   const ShadowedModel = Model<Input, Output>("shadowed.model");
@@ -549,7 +588,7 @@ function vector_rejects_local_binding_shadowing_a_declared_marker(): string[] {
 
 function vector_rejects_display_name_marker_references(): string[] {
   const failures: string[] = [];
-  const markers: Array<[string, (reference: unknown) => unknown]> = [["Model", Model as unknown as (reference: unknown) => unknown], ["Tool", Tool as unknown as (reference: unknown) => unknown], ["Capability", Capability as unknown as (reference: unknown) => unknown], ["Event", Event as unknown as (reference: unknown) => unknown]];
+  const markers: Array<[string, (reference: unknown) => unknown]> = [["Model", Model as unknown as (reference: unknown) => unknown], ["Tool", Tool as unknown as (reference: unknown) => unknown], ["Capability", Capability as unknown as (reference: unknown) => unknown], ["Event", Event as unknown as (reference: unknown) => unknown], ["Skill", Skill as unknown as (reference: unknown) => unknown]];
   const references = ["","default","model.default","support","search-web"];
   for (const [, marker] of markers) {
     for (const reference of references) {
@@ -587,6 +626,26 @@ function vector_rejects_handler_object_marker_references(): string[] {
   return failures;
 }
 
+function vector_rejects_skill_with_no_instruction_source(): string[] {
+  const failures: string[] = [];
+  const markers: Array<[string, (reference: unknown) => unknown]> = [["Skill", Skill as unknown as (reference: unknown) => unknown]];
+  const references = ["review"];
+  for (const [, marker] of markers) {
+    for (const reference of references) {
+      const argument: unknown = reference === "@handler_object" ? { run() {} } : reference;
+      try {
+        marker(argument);
+        failures.push(failure("rejects_skill_with_no_instruction_source", `declaring ${JSON.stringify(reference)} was accepted, and the corpus states it is rejected`));
+      } catch (error) {
+        if (!String(error).includes("SkillSourceMissing")) {
+          failures.push(failure("rejects_skill_with_no_instruction_source", `declaring ${JSON.stringify(reference)} was rejected with ${String(error)}`));
+        }
+      }
+    }
+  }
+  return failures;
+}
+
 export const VECTOR_IDS: readonly string[] = [
   "minimal_model_agent",
   "initial_context_assignment",
@@ -596,6 +655,8 @@ export const VECTOR_IDS: readonly string[] = [
   "resumable_loop_block_arguments",
   "nested_loop_hook_targets_inner_loop",
   "negative_integer_at_safe_boundary",
+  "skill_carried_by_package_entry",
+  "skill_written_inline_in_source",
   "rejects_unresolved_returned_call",
   "rejects_unresolved_operand_call",
   "rejects_effect_read_as_data",
@@ -604,6 +665,7 @@ export const VECTOR_IDS: readonly string[] = [
   "rejects_local_binding_shadowing_a_declared_marker",
   "rejects_display_name_marker_references",
   "rejects_handler_object_marker_references",
+  "rejects_skill_with_no_instruction_source",
 ];
 
 const VECTORS: Readonly<Record<string, () => string[]>> = {
@@ -615,6 +677,8 @@ const VECTORS: Readonly<Record<string, () => string[]>> = {
   "resumable_loop_block_arguments": vector_resumable_loop_block_arguments,
   "nested_loop_hook_targets_inner_loop": vector_nested_loop_hook_targets_inner_loop,
   "negative_integer_at_safe_boundary": vector_negative_integer_at_safe_boundary,
+  "skill_carried_by_package_entry": vector_skill_carried_by_package_entry,
+  "skill_written_inline_in_source": vector_skill_written_inline_in_source,
   "rejects_unresolved_returned_call": vector_rejects_unresolved_returned_call,
   "rejects_unresolved_operand_call": vector_rejects_unresolved_operand_call,
   "rejects_effect_read_as_data": vector_rejects_effect_read_as_data,
@@ -623,6 +687,7 @@ const VECTORS: Readonly<Record<string, () => string[]>> = {
   "rejects_local_binding_shadowing_a_declared_marker": vector_rejects_local_binding_shadowing_a_declared_marker,
   "rejects_display_name_marker_references": vector_rejects_display_name_marker_references,
   "rejects_handler_object_marker_references": vector_rejects_handler_object_marker_references,
+  "rejects_skill_with_no_instruction_source": vector_rejects_skill_with_no_instruction_source,
 };
 
 /** Every failure one corpus vector states against this frontend. */

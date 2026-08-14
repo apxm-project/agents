@@ -48,6 +48,7 @@ from ._generated.frontend_serializers import (
     serialize_model_requirement,
     serialize_program_definition,
     serialize_region,
+    serialize_skill_requirement,
     serialize_value,
 )
 
@@ -166,6 +167,10 @@ def emit_frontend_graph(
         "model_requirements": [
             serialize_model_requirement(ModelRequirement(model_target_ref=target_ref))
             for target_ref in program.model_requirements
+        ],
+        "skill_requirements": [
+            serialize_skill_requirement(requirement)
+            for requirement in program.skill_requirements
         ],
         "source_map": {
             "schema_version": SOURCE_MAP_VERSION,

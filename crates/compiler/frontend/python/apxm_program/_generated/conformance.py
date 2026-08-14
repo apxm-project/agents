@@ -19,7 +19,7 @@ import json
 import re
 from typing import Any, Optional
 
-from .. import Agent, Capability, Context, Event, Hook, Model, TaskGroup, Tool
+from .. import Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool
 from ..permissions import Allow, Ask
 
 
@@ -271,6 +271,25 @@ _EXPECTATIONS: dict[str, list[dict[str, Any]]] = {
         {"equals": [{"kind": "integer", "value": -9007199254740991}], "query": "graph:values[origin=literal].expression"},
         {"equals": None, "query": "diagnostics"},
     ],
+    "skill_carried_by_package_entry": [
+        {"equals": [{"instruction_source": {"kind": "entry", "path": "skills/review/SKILL.md"}, "skill_id": "review"}], "query": "graph:skill_requirements"},
+        {"equals": [{"capability_ref": "read_skill", "tool_schema_present": False}], "query": "graph:capability_requirements"},
+        {"equals": ["capability_binding"], "query": "graph:declarations[].decl_kind"},
+        {"equals": ["read_skill"], "query": "graph:declarations[].target_ref"},
+        {"equals": ["capability_invocation"], "query": "graph:call_intents[].intent_kind"},
+        {"equals": None, "query": "diagnostics"},
+        {"equals": ["capability.invoke"], "query": "air:semantic_operations[].op"},
+        {"equals": ["read_skill"], "query": "air:semantic_operations[0].operands[slot=capability_ref].value_id"},
+        {"length": 1, "query": "artifact:artifact_semantic_requirements[typed_port_slot=read_skill].typed_port_slot"},
+    ],
+    "skill_written_inline_in_source": [
+        {"equals": [{"instruction_source": {"kind": "inline", "text": "Answer in one sentence."}, "skill_id": "tone"}], "query": "graph:skill_requirements"},
+        {"equals": ["read_skill"], "query": "graph:capability_requirements[].capability_ref"},
+        {"equals": ["capability_invocation"], "query": "graph:call_intents[].intent_kind"},
+        {"equals": None, "query": "diagnostics"},
+        {"equals": ["capability.invoke"], "query": "air:semantic_operations[].op"},
+        {"equals": ["read_skill"], "query": "air:semantic_operations[0].operands[slot=capability_ref].value_id"},
+    ],
 }
 
 class Input:
@@ -425,6 +444,26 @@ async def NegativeValue(agent, input):
 def _vector_negative_integer_at_safe_boundary() -> list[str]:
     return _check("negative_integer_at_safe_boundary", NegativeValue, _EXPECTATIONS["negative_integer_at_safe_boundary"])
 
+# vector: skill_carried_by_package_entry
+ReviewSkill = Skill("review", entry="skills/review/SKILL.md")
+
+@Agent(input=Input, output=Output)
+async def PackagedSkillAgent(agent, input):
+    return await ReviewSkill.load()
+
+def _vector_skill_carried_by_package_entry() -> list[str]:
+    return _check("skill_carried_by_package_entry", PackagedSkillAgent, _EXPECTATIONS["skill_carried_by_package_entry"])
+
+# vector: skill_written_inline_in_source
+ToneSkill = Skill("tone", text="Answer in one sentence.")
+
+@Agent(input=Input, output=Output)
+async def InlineSkillAgent(agent, input):
+    return await ToneSkill.load()
+
+def _vector_skill_written_inline_in_source() -> list[str]:
+    return _check("skill_written_inline_in_source", InlineSkillAgent, _EXPECTATIONS["skill_written_inline_in_source"])
+
 # vector: rejects_unresolved_returned_call
 def _vector_rejects_unresolved_returned_call() -> list[str]:
     UnresolvedReturnModel = Model[object, object]("unresolved.return.model")
@@ -506,7 +545,7 @@ def _vector_rejects_local_binding_shadowing_a_declared_marker() -> list[str]:
 # vector: rejects_display_name_marker_references
 def _vector_rejects_display_name_marker_references() -> list[str]:
     failures: list[str] = []
-    for marker in (Model, Tool, Capability, Event,):
+    for marker in (Model, Tool, Capability, Event, Skill,):
         for reference in ["", "default", "model.default", "support", "search-web"]:
             argument: Any = (lambda: None) if reference == "@handler_object" else reference
             try:
@@ -533,6 +572,21 @@ def _vector_rejects_handler_object_marker_references() -> list[str]:
                 failures.append(_failure("rejects_handler_object_marker_references", f"declaring {reference!r} was accepted, and the corpus states it is rejected"))
     return failures
 
+# vector: rejects_skill_with_no_instruction_source
+def _vector_rejects_skill_with_no_instruction_source() -> list[str]:
+    failures: list[str] = []
+    for marker in (Skill,):
+        for reference in ["review"]:
+            argument: Any = (lambda: None) if reference == "@handler_object" else reference
+            try:
+                marker(argument)
+            except (ValueError, TypeError) as error:
+                if "SkillSourceMissing" not in str(error):
+                    failures.append(_failure("rejects_skill_with_no_instruction_source", f"declaring {reference!r} was rejected with {error}"))
+            else:
+                failures.append(_failure("rejects_skill_with_no_instruction_source", f"declaring {reference!r} was accepted, and the corpus states it is rejected"))
+    return failures
+
 
 VECTOR_IDS: tuple[str, ...] = (
     "minimal_model_agent",
@@ -543,6 +597,8 @@ VECTOR_IDS: tuple[str, ...] = (
     "resumable_loop_block_arguments",
     "nested_loop_hook_targets_inner_loop",
     "negative_integer_at_safe_boundary",
+    "skill_carried_by_package_entry",
+    "skill_written_inline_in_source",
     "rejects_unresolved_returned_call",
     "rejects_unresolved_operand_call",
     "rejects_effect_read_as_data",
@@ -551,6 +607,7 @@ VECTOR_IDS: tuple[str, ...] = (
     "rejects_local_binding_shadowing_a_declared_marker",
     "rejects_display_name_marker_references",
     "rejects_handler_object_marker_references",
+    "rejects_skill_with_no_instruction_source",
 )
 
 _VECTORS = {
@@ -562,6 +619,8 @@ _VECTORS = {
     "resumable_loop_block_arguments": _vector_resumable_loop_block_arguments,
     "nested_loop_hook_targets_inner_loop": _vector_nested_loop_hook_targets_inner_loop,
     "negative_integer_at_safe_boundary": _vector_negative_integer_at_safe_boundary,
+    "skill_carried_by_package_entry": _vector_skill_carried_by_package_entry,
+    "skill_written_inline_in_source": _vector_skill_written_inline_in_source,
     "rejects_unresolved_returned_call": _vector_rejects_unresolved_returned_call,
     "rejects_unresolved_operand_call": _vector_rejects_unresolved_operand_call,
     "rejects_effect_read_as_data": _vector_rejects_effect_read_as_data,
@@ -570,6 +629,7 @@ _VECTORS = {
     "rejects_local_binding_shadowing_a_declared_marker": _vector_rejects_local_binding_shadowing_a_declared_marker,
     "rejects_display_name_marker_references": _vector_rejects_display_name_marker_references,
     "rejects_handler_object_marker_references": _vector_rejects_handler_object_marker_references,
+    "rejects_skill_with_no_instruction_source": _vector_rejects_skill_with_no_instruction_source,
 }
 
 

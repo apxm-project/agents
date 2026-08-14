@@ -27,6 +27,7 @@ from .frontend_graph import (
     PredicateScalarType,
     ReceiverKind,
     RegionRole,
+    SkillInstructionKind,
     ValueExpressionKind,
     ValueOrigin,
 )
@@ -280,9 +281,32 @@ class ModelRequirement:
 
     model_target_ref: str
 
+@dataclass(frozen=True, slots=True)
+class SkillRequirement:
+    """One `SkillRequirement` record from the apxm.frontend-graph contract."""
+
+    skill_id: str
+    instruction_source: SkillInstructionSource
+
+@dataclass(frozen=True, slots=True)
+class SkillEntrySource:
+    """One `SkillEntrySource` record from the apxm.frontend-graph contract."""
+
+    kind: SkillInstructionKind
+    path: str
+
+@dataclass(frozen=True, slots=True)
+class SkillInlineSource:
+    """One `SkillInlineSource` record from the apxm.frontend-graph contract."""
+
+    kind: SkillInstructionKind
+    text: str
+
 ValueExpression: TypeAlias = Union[SsaExpression, ContextExpression, ProjectionExpression, ObjectExpression, ArrayExpression, StringExpression, IntegerExpression, BooleanExpression, NullExpression]
 
 ControlPredicate: TypeAlias = Union[TruthyPredicate, EqualsPredicate, NotEqualsPredicate]
+
+SkillInstructionSource: TypeAlias = Union[SkillEntrySource, SkillInlineSource]
 
 @dataclass(frozen=True, slots=True)
 class BooleanLiteral:
@@ -342,8 +366,12 @@ __all__ = [
     "HookBinding",
     "CapabilityRequirement",
     "ModelRequirement",
+    "SkillRequirement",
+    "SkillEntrySource",
+    "SkillInlineSource",
     "ValueExpression",
     "ControlPredicate",
+    "SkillInstructionSource",
     "BooleanLiteral",
     "StringLiteral",
     "IntegerLiteral",

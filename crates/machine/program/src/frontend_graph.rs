@@ -426,6 +426,53 @@ pub struct ModelRequirement {
     pub model_target_ref: String,
 }
 
+/// The ceiling one authored inline instruction body may reach.
+///
+/// It is the ceiling the skill-reading capability already enforces on a body it
+/// loads: an inline skill is the same trusted context landing in the same
+/// model window, so admitting a larger one here would only move the failure
+/// from authoring to execution.
+pub const MAX_INSTRUCTION_BYTES: usize = 128 * 1024;
+
+/// Where an authored skill's instructions live.
+///
+/// The two branches reach the artifact digest by different routes, which is why
+/// they are discriminated rather than merged. An [`SkillInstructionSource::Entry`]
+/// names a package file hashed into the carrying package's integrity chain; an
+/// [`SkillInstructionSource::Inline`] carries the text, which is already inside
+/// the source bundle. Neither restates the other's anchor.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SkillInstructionSource {
+    Entry { path: String },
+    Inline { text: String },
+}
+
+/// One authored Agent Skill declaration.
+///
+/// This is the program's statement, not the resolved `apxm.package-local-skill`
+/// document: a packager computes digests and byte counts, and a graph records
+/// what the author wrote. The authority to load it is an ordinary
+/// [`CapabilityRequirement`] on the skill-reading capability, so it appears
+/// there rather than here.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillRequirement {
+    pub skill_id: String,
+    pub instruction_source: SkillInstructionSource,
+}
+
+impl SkillRequirement {
+    /// The one package path the folder contract recognizes for this skill's
+    /// instruction file. Both the authoring frontends and this verifier derive
+    /// the path from the id rather than accepting an independent second
+    /// spelling of where the instructions live.
+    #[must_use]
+    pub fn entry_path_for(skill_id: &str) -> String {
+        format!("skills/{skill_id}/SKILL.md")
+    }
+}
+
 /// A decoded FrontendGraph.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -446,6 +493,7 @@ pub struct FrontendGraph {
     pub hook_bindings: Vec<HookBinding>,
     pub capability_requirements: Vec<CapabilityRequirement>,
     pub model_requirements: Vec<ModelRequirement>,
+    pub skill_requirements: Vec<SkillRequirement>,
     pub source_map: SourceMap,
 }
 
@@ -536,6 +584,7 @@ impl FrontendGraph {
             }
         }
 
+        collect_skill_diagnostics(&mut verdict, self);
         collect_containment_diagnostics(&mut verdict, self);
         collect_typed_link_diagnostics(&mut verdict, self);
 
@@ -1754,6 +1803,47 @@ fn collect_hook_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph) {
                 region.region_id.clone(),
                 "captured Hook body region is claimed by no Hook binding",
             ));
+        }
+    }
+}
+
+/// Verify every authored skill declaration.
+///
+/// Decode already closed the instruction branches, so what is left is what
+/// decode cannot see: that a skill is identified once, that a file-carried
+/// skill names the one path its id resolves to rather than an independent
+/// second spelling of it, and that an inline body is neither empty nor larger
+/// than the reader will load.
+fn collect_skill_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph) {
+    let mut seen: HashSet<&str> = HashSet::new();
+    for requirement in &graph.skill_requirements {
+        check_identifier(verdict, &requirement.skill_id, "skill requirement skill_id");
+        if !seen.insert(requirement.skill_id.as_str()) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                requirement.skill_id.clone(),
+                "skill requirement skill_id is not unique",
+            ));
+        }
+        match &requirement.instruction_source {
+            SkillInstructionSource::Entry { path } => {
+                if *path != SkillRequirement::entry_path_for(&requirement.skill_id) {
+                    verdict.push(Diagnostic::new(
+                        DiagnosticCode::SchemaViolation,
+                        requirement.skill_id.clone(),
+                        "a file-carried skill's instruction path is skills/<skill_id>/SKILL.md",
+                    ));
+                }
+            }
+            SkillInstructionSource::Inline { text } => {
+                if text.is_empty() || text.len() > MAX_INSTRUCTION_BYTES {
+                    verdict.push(Diagnostic::new(
+                        DiagnosticCode::SchemaViolation,
+                        requirement.skill_id.clone(),
+                        "an inline skill body is neither empty nor beyond the instruction ceiling",
+                    ));
+                }
+            }
         }
     }
 }

@@ -217,6 +217,7 @@ fn python_expression(node: &Value) -> String {
         "plain_call" => format!("{}({})", string(node, "callee"), arguments()),
         "invoke" => format!("await {}.invoke({})", string(node, "instance"), arguments()),
         "await_event" => format!("await {}.wait()", string(node, "event")),
+        "load" => format!("await {}.load()", string(node, "skill")),
         other => panic!("unhandled corpus expression {other}"),
     }
 }
@@ -298,8 +299,39 @@ fn python_body(body: &[Value], indent: usize) -> Vec<String> {
     lines
 }
 
+/// The one package path a skill id resolves to. The corpus never states it, so
+/// no fixture can disagree with the frontends about where a skill's
+/// instructions live.
+fn skill_entry_path(skill_id: &str) -> String {
+    format!("skills/{skill_id}/SKILL.md")
+}
+
+/// The instruction argument a `Skill` declaration takes, in the spelling each
+/// language gives a named argument.
+fn skill_instruction_argument(declaration: &Value, quote: fn(&str) -> String) -> (String, String) {
+    let instructions = declaration
+        .get("instructions")
+        .unwrap_or_else(|| panic!("a Skill declaration states its instructions"));
+    match string(instructions, "kind").as_str() {
+        "entry" => (
+            "entry".to_string(),
+            quote(&skill_entry_path(&string(declaration, "target_ref"))),
+        ),
+        "inline" => ("text".to_string(), quote(&string(instructions, "text"))),
+        other => panic!("unhandled corpus instruction source {other}"),
+    }
+}
+
 fn python_declaration(declaration: &Value) -> String {
     let marker = string(declaration, "marker");
+    if marker == "Skill" {
+        let (name, value) = skill_instruction_argument(declaration, python_string);
+        return format!(
+            "{} = Skill({}, {name}={value})",
+            string(declaration, "name"),
+            python_string(&string(declaration, "target_ref"))
+        );
+    }
     let typed = if marker == "Event" {
         "[object]"
     } else {
@@ -388,7 +420,7 @@ pub fn render_conformance_python() -> String {
         "import re".to_string(),
         "from typing import Any, Optional".to_string(),
         String::new(),
-        "from .. import Agent, Capability, Context, Event, Hook, Model, TaskGroup, Tool"
+        "from .. import Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool"
             .to_string(),
         "from ..permissions import Allow, Ask".to_string(),
         String::new(),
@@ -601,6 +633,7 @@ fn typescript_expression(node: &Value) -> String {
         "plain_call" => format!("{}({})", string(node, "callee"), arguments()),
         "invoke" => format!("await {}.invoke({})", string(node, "instance"), arguments()),
         "await_event" => format!("await {}.wait()", string(node, "event")),
+        "load" => format!("await {}.load()", string(node, "skill")),
         other => panic!("unhandled corpus expression {other}"),
     }
 }
@@ -741,6 +774,14 @@ fn typescript_body(
 
 fn typescript_declaration(declaration: &Value) -> String {
     let marker = string(declaration, "marker");
+    if marker == "Skill" {
+        let (name, value) = skill_instruction_argument(declaration, typescript_string);
+        return format!(
+            "const {} = Skill({}, {{ {name}: {value} }});",
+            string(declaration, "name"),
+            typescript_string(&string(declaration, "target_ref"))
+        );
+    }
     let typed = if marker == "Event" {
         "<Input>"
     } else {
@@ -766,7 +807,7 @@ fn typescript_declaration(declaration: &Value) -> String {
 /// The authored TypeScript module one vector's programs are captured from.
 fn typescript_source_text(corpus: &Value, vector: &Value) -> String {
     let mut lines = vec![
-        "import { Agent, Capability, Context, Event, Hook, Model, TaskGroup, Tool } from \"@apxm/frontend\";"
+        "import { Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";"
             .to_string(),
         String::new(),
     ];
@@ -898,7 +939,7 @@ pub fn render_conformance_typescript() -> String {
         TYPESCRIPT_HEADER.to_string(),
         TYPESCRIPT_MODULE_DOC.to_string(),
         String::new(),
-        "import { Agent, Capability, Context, Event, Model, Tool } from \"../index.js\";"
+        "import { Agent, Capability, Context, Event, Model, Skill, Tool } from \"../index.js\";"
             .to_string(),
         "import { submitAuthoredSource } from \"../node.js\";".to_string(),
         "import { Allow, Ask } from \"../permissions.js\";".to_string(),

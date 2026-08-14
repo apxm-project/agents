@@ -11,7 +11,29 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional, TypeVar
 
+from ._generated.diagnostics import (
+    SKILL_ENTRY_PATH_NOT_CANONICAL,
+    SKILL_ID_NOT_EXACT,
+    SKILL_INSTRUCTIONS_OVERLONG,
+    SKILL_LOAD_OUTSIDE_BODY,
+    SKILL_SOURCE_AMBIGUOUS,
+    SKILL_SOURCE_MISSING,
+)
+from ._generated.frontend_graph import (
+    SKILL_INSTRUCTION_KIND_ENTRY,
+    SKILL_INSTRUCTION_KIND_INLINE,
+)
+from ._generated.frontend_records import (
+    SkillEntrySource,
+    SkillInlineSource,
+    SkillInstructionSource,
+)
 from ._generated.permissions import Permission
+
+#: The ceiling the skill-reading capability enforces on a body it loads. An
+#: inline skill is the same trusted context landing in the same model window,
+#: so it is refused here rather than at execution.
+MAX_INSTRUCTION_BYTES = 128 * 1024
 
 I = TypeVar("I")
 O = TypeVar("O")
@@ -73,6 +95,25 @@ class EventType:
 
     def wait(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
         raise RuntimeError("an Event is awaited inside a compiled Agent body")
+
+
+@dataclass(frozen=True, slots=True)
+class SkillDecl:
+    """A declared Agent Skill: instructions plus where they live.
+
+    Loading one is an ordinary Capability invocation, not a construct of its
+    own: ``await skill.load()`` records a ``capability.invoke`` on the
+    skill-reading capability, so the authority to read the instructions is
+    declared in the artifact like any other.
+    """
+
+    skill_id: str
+    instruction_source: SkillInstructionSource
+
+    def load(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
+        raise RuntimeError(
+            f"{SKILL_LOAD_OUTSIDE_BODY}: a Skill is loaded inside a compiled Agent body"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,9 +204,63 @@ def Context(schema: Any) -> ContextSchema:
     return ContextSchema(type_ref=schema.__name__, default_present=default_present)
 
 
-def _require_exact_reference(value: Any, marker: str) -> None:
+def Skill(
+    skill_id: str, *, entry: Optional[str] = None, text: Optional[str] = None
+) -> SkillDecl:
+    """Declare one Agent Skill, its instructions carried one of two ways.
+
+    ``entry`` names the package file holding them, which the carrying package's
+    integrity chain hashes. ``text`` writes them here, inside the source bundle
+    the artifact digest already covers. They are the two routes an edit takes to
+    the artifact digest, so exactly one is stated: both is a contradiction about
+    where the instructions live, and neither leaves the skill with no body.
+    """
+    if not _is_exact_reference(skill_id):
+        raise ValueError(
+            f"{SKILL_ID_NOT_EXACT}: Skill accepts an exact typed reference, not a "
+            f"display name '{skill_id}'"
+        )
+    if entry is not None and text is not None:
+        raise ValueError(
+            f"{SKILL_SOURCE_AMBIGUOUS}: Skill '{skill_id}' states both a package "
+            "entry and inline text; instructions live in one place"
+        )
+    if entry is None and text is None:
+        raise ValueError(
+            f"{SKILL_SOURCE_MISSING}: Skill '{skill_id}' states neither a package "
+            "entry nor inline text"
+        )
+    source: SkillInstructionSource
+    if text is not None:
+        if not text or len(text.encode("utf-8")) > MAX_INSTRUCTION_BYTES:
+            raise ValueError(
+                f"{SKILL_INSTRUCTIONS_OVERLONG}: Skill '{skill_id}' states an empty "
+                f"or oversized body; a loaded skill is at most {MAX_INSTRUCTION_BYTES} bytes"
+            )
+        source = SkillInlineSource(kind=SKILL_INSTRUCTION_KIND_INLINE, text=text)
+    else:
+        expected = _skill_entry_path(skill_id)
+        if entry != expected:
+            raise ValueError(
+                f"{SKILL_ENTRY_PATH_NOT_CANONICAL}: Skill '{skill_id}' carries its "
+                f"instructions at '{expected}', not '{entry}'"
+            )
+        source = SkillEntrySource(kind=SKILL_INSTRUCTION_KIND_ENTRY, path=expected)
+    return SkillDecl(skill_id=skill_id, instruction_source=source)
+
+
+def _skill_entry_path(skill_id: str) -> str:
+    """The one package path the folder contract recognizes for this skill."""
+    return f"skills/{skill_id}/SKILL.md"
+
+
+def _is_exact_reference(value: Any) -> bool:
     forbidden = {"default", "model.default", "support", "search-web", ""}
-    if not isinstance(value, str) or value in forbidden:
+    return isinstance(value, str) and value not in forbidden
+
+
+def _require_exact_reference(value: Any, marker: str) -> None:
+    if not _is_exact_reference(value):
         raise ValueError(
             f"{marker} accepts an exact typed reference, not a display name '{value}'"
         )

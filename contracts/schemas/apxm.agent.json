@@ -184,6 +184,12 @@
         "^prompts/[^/]+\\.md$": {
           "$ref": "#/$defs/FileDigest"
         },
+        "^skills/[^/]+/SKILL\\.md$": {
+          "$ref": "#/$defs/FileDigest"
+        },
+        "^skills/[^/]+/resources/([^/]+/)*[^/]+$": {
+          "$ref": "#/$defs/FileDigest"
+        },
         "^python/[^/]+\\.py$": {
           "$ref": "#/$defs/FileDigest"
         },

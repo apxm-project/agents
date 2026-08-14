@@ -50,6 +50,7 @@ fn nested_sibling_graph() -> Value {
         "hook_bindings": [],
         "capability_requirements": [],
         "model_requirements": [],
+        "skill_requirements": [],
         "source_map": {
             "schema_version": "apxm.source-map",
             "source_language": "python",

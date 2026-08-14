@@ -20,6 +20,7 @@ import type {
   PredicateScalarType,
   ReceiverKind,
   RegionRole,
+  SkillInstructionKind,
   ValueExpressionKind,
   ValueOrigin,
 } from "./frontend-graph.js";
@@ -217,6 +218,21 @@ export type ModelRequirement = {
   readonly model_target_ref: string;
 };
 
+export type SkillRequirement = {
+  readonly skill_id: string;
+  readonly instruction_source: SkillInstructionSource;
+};
+
+export type SkillEntrySource = {
+  readonly kind: SkillInstructionKind;
+  readonly path: string;
+};
+
+export type SkillInlineSource = {
+  readonly kind: SkillInstructionKind;
+  readonly text: string;
+};
+
 export type ValueExpression =
   | SsaExpression
   | ContextExpression
@@ -232,6 +248,10 @@ export type ControlPredicate =
   | TruthyPredicate
   | EqualsPredicate
   | NotEqualsPredicate;
+
+export type SkillInstructionSource =
+  | SkillEntrySource
+  | SkillInlineSource;
 
 export type BooleanLiteral = {
   readonly scalar_type: PredicateScalarType;

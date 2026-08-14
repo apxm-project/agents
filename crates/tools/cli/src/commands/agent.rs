@@ -387,9 +387,21 @@ fn agent_new_looped_agent(
         "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"bundler\",\n    \"strict\": true\n  }\n}\n",
     )?;
 
+    // A persona is instructions and supporting context, which is what a skill
+    // is. It is scaffolded as one so the file a package writes is a file a
+    // program can load — `Skill("persona", entry="skills/persona/SKILL.md")`
+    // and `await persona.load()`. The retired `[prompts]` table pointed at a
+    // file nothing read; this points at the loader that now exists.
     write_new_file(
-        &root.join("prompts/persona.md"),
-        &format!("# {display_name}\n\nDescribe this agent's persona here.\n"),
+        &root.join("skills/persona/SKILL.md"),
+        &format!(
+            "---\n\
+             name: persona\n\
+             description: How the {display_name} agent presents itself and what it is for.\n\
+             ---\n\n\
+             # {display_name}\n\n\
+             Describe this agent's persona here.\n"
+        ),
     )?;
     write_new_file(
         &root.join("src/main.ts"),
@@ -1291,12 +1303,16 @@ mod tests {
             "agent.toml",
             "package.json",
             "tsconfig.json",
-            "prompts/persona.md",
+            "skills/persona/SKILL.md",
             "examples/basic.md",
             "tests/README.md",
         ] {
             assert!(root.join(rel).is_file(), "missing scaffolded file: {rel}");
         }
+        // The persona is scaffolded where a program can load it from, not as a
+        // `prompts/` file with no reader. `prompts/` stays a recognized path
+        // for packages that already carry one; nothing new is written there.
+        assert!(!root.join("prompts/persona.md").exists());
         // The collapse is the point: a fresh package carries no capability
         // inventory, no permission inventory, and no separate hierarchy file.
         for rel in [
@@ -1789,26 +1805,29 @@ mod tests {
             .expect("local build sidecars do not violate the folder contract");
     }
 
-    /// The folder contract still refuses `skills/`, deliberately.
+    /// The folder contract recognizes `skills/`, now that a producer exists.
     ///
-    /// `apxm.package-local-skill` describes a skill carried inside an
-    /// executable package at `skills/<skill_id>/SKILL.md`, and it has a reader
-    /// and vectors — the shape is settled. The folder allowlist is a separate
-    /// question, and it stays closed because nothing authors such a skill yet:
-    /// no frontend emits one and no loader reads one off disk. Opening the
-    /// allowlist first would make `agent lint` accept a directory the machine
-    /// cannot do anything with, which is precisely the failure that put
-    /// `read_local_skill` on the built-in allowlist with no handler behind it.
-    /// The ordering is the same either way — the thing that consumes the path
-    /// lands first, then the path is recognized.
+    /// It was closed while nothing could author such a skill: `agent lint`
+    /// would have accepted a directory the machine could do nothing with, and
+    /// `walk_recognized_files` would have hashed it into every package's
+    /// integrity chain on behalf of a producer that did not exist. The
+    /// ordering is the one the built-in capability allowlist follows — the
+    /// thing that consumes the path lands first, then the path is recognized.
+    /// Both halves are here now: the `Skill` marker declares one and
+    /// `Skill(...).load()` reads it through `read_skill`.
     ///
-    /// Concretely: recognizing `skills/` would put those files into
-    /// `walk_recognized_files`, and therefore into every package's generated
-    /// integrity chain, on behalf of a producer that does not exist.
+    /// The instruction document is the one file name `apxm.package-local-skill`
+    /// admits; everything else a skill carries is a resource, and nesting is
+    /// allowed there because supporting material has its own shape.
     #[test]
-    fn agent_package_rejects_local_skill_resources() {
-        assert!(!recognized_relpath("skills/review/SKILL.md"));
-        assert!(!recognized_relpath("skills/review/resources/guide.md"));
+    fn agent_package_recognizes_local_skill_resources() {
+        assert!(recognized_relpath("skills/review/SKILL.md"));
+        assert!(recognized_relpath("skills/review/resources/guide.md"));
+        assert!(recognized_relpath("skills/review/resources/deep/table.csv"));
+        // A skill is its instruction document plus resources, not a second
+        // place to put arbitrary package content.
+        assert!(!recognized_relpath("skills/review/notes.md"));
+        assert!(!recognized_relpath("skills/SKILL.md"));
     }
 
     #[test]
@@ -1859,17 +1878,17 @@ mod tests {
         // A tampered file must break the chain: mutate one hashed file and
         // confirm the recomputed digest at that path no longer matches the
         // hash recorded in the (untouched) chain.
-        fs::write(root.join("prompts/persona.md"), "tampered content\n").unwrap();
+        fs::write(root.join("skills/persona/SKILL.md"), "tampered content\n").unwrap();
         let tampered_files = digest_recognized_files(&root).expect("recompute after tamper");
         let persona_link = integrity
             .chain
             .iter()
-            .find(|l| l.path == "prompts/persona.md")
-            .expect("persona.md is in the chain");
+            .find(|l| l.path == "skills/persona/SKILL.md")
+            .expect("the persona skill is in the chain");
         let mut preimage = String::new();
         preimage.push_str(&persona_link.prev_hash);
         preimage.push_str(&persona_link.path);
-        preimage.push_str(&tampered_files["prompts/persona.md"]);
+        preimage.push_str(&tampered_files["skills/persona/SKILL.md"]);
         assert_ne!(
             sha256_hex(preimage.as_bytes()),
             persona_link.hash,
@@ -1991,7 +2010,10 @@ mod tests {
         let dest = fake_home.path().join("agents").join("installable");
         assert!(dest.join("agent.toml").is_file());
         assert!(dest.join("integrity.toml").is_file());
-        assert!(!dest.join("skills").exists());
+        // A package's skills install with it. They are recognized package
+        // content now, hashed into the same chain as everything else, so an
+        // installed package carries the instructions its program loads.
+        assert!(dest.join("skills/persona/SKILL.md").is_file());
 
         // The real home directory must never be touched by this test.
         let real_home = dirs::home_dir().unwrap_or_default();
@@ -2139,6 +2161,8 @@ mod tests {
             "capabilities/handlers/shared.ts",
             "capabilities/edit/handler.ts",
             "prompts/persona.md",
+            "skills/review/SKILL.md",
+            "skills/review/resources/checklist.md",
             "python/agent.py",
             "src/main.ts",
             "src/nested/deep/module.ts",
@@ -2159,6 +2183,7 @@ mod tests {
             "capabilities/read/permission.toml",
             "capabilities/edit/nested/handler.ts",
             "prompts/persona.txt",
+            "skills/review/notes.md",
             "not-a-real-file.txt",
         ] {
             assert!(
@@ -2188,6 +2213,7 @@ mod tests {
         for package in [
             "examples/agents/conversational",
             "examples/agents/coder",
+            "examples/agents/skilled",
             "crates/compiler/frontend/python/tests_program/fixtures/canonical_session_agent",
         ] {
             let root = repository_root.join(package);

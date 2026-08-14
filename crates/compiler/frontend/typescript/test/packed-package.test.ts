@@ -74,7 +74,7 @@ describe("packed @apxm/frontend", () => {
         '  "AgentDefinition", "ProgramInstance", "decodeFact", "RuntimeFact"];',
         "if (typeof frontend.Agent !== 'function') process.exit(2);",
         "if (removed.some((name) => name in frontend)) process.exit(3);",
-        'const expected = ["Agent", "Capability", "Context", "Event", "Hook", "Model", "TaskGroup", "Tool"];',
+        'const expected = ["Agent", "Capability", "Context", "Event", "Hook", "Model", "Skill", "TaskGroup", "Tool"];',
         "if (JSON.stringify(Object.keys(frontend).sort()) !== JSON.stringify(expected)) process.exit(7);",
         "const { Agent, Context, Model, Tool } = frontend;",
         "const Weather = Tool('weather.capability');",

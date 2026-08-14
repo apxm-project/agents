@@ -665,7 +665,7 @@
     "expected_valid": false
   },
   {
-    "name": "agent-private-skill-resource-rejected",
+    "name": "package-local-skill-and-its-resources-accepted",
     "input": {
       "agent": {
         "id": "conversational",
@@ -688,10 +688,11 @@
         "agent.toml": "1111111111111111111111111111111111111111111111111111111111111111",
         "prompts/persona.md": "2222222222222222222222222222222222222222222222222222222222222222",
         "python/agent.py": "3333333333333333333333333333333333333333333333333333333333333333",
-        "skills/review/SKILL.md": "4444444444444444444444444444444444444444444444444444444444444444"
+        "skills/review/SKILL.md": "4444444444444444444444444444444444444444444444444444444444444444",
+        "skills/review/resources/checklist.md": "5555555555555555555555555555555555555555555555555555555555555555"
       }
     },
-    "expected_valid": false
+    "expected_valid": true
   },
   {
     "name": "unrecognized-top-level-file-rejected",

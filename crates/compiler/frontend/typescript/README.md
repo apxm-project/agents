@@ -23,7 +23,11 @@ export const Summarizer = Agent<SummaryRequest, Summary>({
 ```
 
 `Agent`, `Context`, `Tool`, and `Model` cover ordinary programs;
-`Capability`, `Event`, `Hook`, and `TaskGroup` are focused extensions.
+`Capability`, `Event`, `Hook`, `Skill`, and `TaskGroup` are focused extensions.
+`Skill` declares instructions the program can load — carried as a package file
+with `{ entry }`, or written in the source with `{ text }`, never both — and
+`await skill.load()` reads them through the skill-reading Capability, so the
+artifact declares that authority the way it declares any other.
 TypeScript uses the compiler AST, symbols, and TypeChecker to build an immutable
 frontend-internal typed source tree, then deterministically traverses it into
 FrontendGraph. It never executes the Agent or prints AIR or MLIR.

@@ -30,6 +30,8 @@ from .frontend_graph import (
     PREDICATE_SCALAR_TYPE_INTEGER,
     PREDICATE_SCALAR_TYPE_NULL,
     PREDICATE_SCALAR_TYPE_STRING,
+    SKILL_INSTRUCTION_KIND_ENTRY,
+    SKILL_INSTRUCTION_KIND_INLINE,
     VALUE_EXPRESSION_KIND_ARRAY,
     VALUE_EXPRESSION_KIND_BOOLEAN,
     VALUE_EXPRESSION_KIND_CONTEXT,
@@ -70,6 +72,10 @@ from .frontend_records import (
     ProgramDefinition,
     ProjectionExpression,
     Region,
+    SkillEntrySource,
+    SkillInlineSource,
+    SkillInstructionSource,
+    SkillRequirement,
     SsaExpression,
     StringExpression,
     StringLiteral,
@@ -435,6 +441,33 @@ def serialize_model_requirement(record: ModelRequirement) -> dict[str, Any]:
     return emitted
 
 
+def serialize_skill_requirement(record: SkillRequirement) -> dict[str, Any]:
+    """One `SkillRequirement` in contract key order: every required key, then each stated optional key."""
+    emitted: dict[str, Any] = {
+        "skill_id": _field(record, "skill_id"),
+        "instruction_source": serialize_skill_instruction_source(_field(record, "instruction_source")),
+    }
+    return emitted
+
+
+def serialize_skill_entry_source(record: SkillEntrySource) -> dict[str, Any]:
+    """One `SkillEntrySource` in contract key order: every required key, then each stated optional key."""
+    emitted: dict[str, Any] = {
+        "kind": _field(record, "kind"),
+        "path": _field(record, "path"),
+    }
+    return emitted
+
+
+def serialize_skill_inline_source(record: SkillInlineSource) -> dict[str, Any]:
+    """One `SkillInlineSource` in contract key order: every required key, then each stated optional key."""
+    emitted: dict[str, Any] = {
+        "kind": _field(record, "kind"),
+        "text": _field(record, "text"),
+    }
+    return emitted
+
+
 def serialize_boolean_literal(record: BooleanLiteral) -> dict[str, Any]:
     """One `BooleanLiteral` in contract key order: every required key, then each stated optional key."""
     emitted: dict[str, Any] = {
@@ -506,6 +539,16 @@ def serialize_control_predicate(record: ControlPredicate) -> dict[str, Any]:
     raise ValueError(f"ControlPredicate states no branch for comparator {discriminant!r}")
 
 
+def serialize_skill_instruction_source(record: SkillInstructionSource) -> dict[str, Any]:
+    """One `SkillInstructionSource` branch, chosen by the `kind` the contract discriminates on."""
+    discriminant = _field(record, "kind")
+    if discriminant == SKILL_INSTRUCTION_KIND_ENTRY:
+        return serialize_skill_entry_source(record)
+    if discriminant == SKILL_INSTRUCTION_KIND_INLINE:
+        return serialize_skill_inline_source(record)
+    raise ValueError(f"SkillInstructionSource states no branch for kind {discriminant!r}")
+
+
 def serialize_predicate_literal(record: PredicateLiteral) -> dict[str, Any]:
     """One `PredicateLiteral` branch, chosen by the `scalar_type` the contract discriminates on."""
     discriminant = _field(record, "scalar_type")
@@ -550,11 +593,15 @@ __all__ = [
     "serialize_hook_binding",
     "serialize_capability_requirement",
     "serialize_model_requirement",
+    "serialize_skill_requirement",
+    "serialize_skill_entry_source",
+    "serialize_skill_inline_source",
     "serialize_boolean_literal",
     "serialize_string_literal",
     "serialize_integer_literal",
     "serialize_null_literal",
     "serialize_value_expression",
     "serialize_control_predicate",
+    "serialize_skill_instruction_source",
     "serialize_predicate_literal",
 ]

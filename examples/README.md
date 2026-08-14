@@ -8,9 +8,11 @@ frontend runtime, or a privileged named-agent API.
 | --- | --- | --- |
 | [Conversational](agents/conversational/README.md) | Primary reference: Context, Tool, Model, composition, loop, and yield/resume | Python and TypeScript |
 | [Coder](agents/coder/README.md) | Coding-capability extension: read, edit proposal, and test proposal | TypeScript |
+| [Skilled](agents/skilled/README.md) | Agent Skills: declaring instructions a package carries and instructions the program writes, and loading both | Python |
 
 Conversational is the teaching reference. Coder is its focused coding
-extension. Both are ordinary Agent Programs, not product features, package
+extension. Skilled is the smallest program that declares an Agent Skill and
+reads it. All three are ordinary Agent Programs, not product features, package
 exports, compiler modes, or runtime identities. Product-owned Agent Programs
 enter through the same public frontend as external source packages.
 
@@ -21,6 +23,7 @@ From this repository root:
 ```sh
 dekk agents doctor
 dekk agents test-frontend-examples
+dekk agents test-skill-example
 ```
 
 The gate builds each checked-in example with the installed Python or TypeScript
@@ -28,6 +31,12 @@ frontend, compiles it through the explicit compiler bridge, and checks the
 conversational Python/TypeScript parity. Compile-only validation uses
 deterministic test bindings; executing a real Model or Capability requires its
 separately admitted deployment and authority.
+
+`test-skill-example` goes one step further for Skilled, because a skill that
+cannot be read is not a skill: it compiles the package, publishes the skills the
+program declares into a local discovery root, and executes the compiled AIR
+through `apxm execute-canonical`, so the instructions come back from the
+`read_skill` capability rather than from a fixture.
 
 An external TypeScript package can run the same frontend/compiler conformance
 without becoming an Agents-owned example:

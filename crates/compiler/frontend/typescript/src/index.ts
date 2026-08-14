@@ -8,5 +8,5 @@
 // constant, node or region identity, or raw graph builder.
 
 export { Agent } from "./agent.js";
-export { Capability, Context, Event, Model, Tool } from "./markers.js";
+export { Capability, Context, Event, Model, Skill, Tool } from "./markers.js";
 export { Hook, TaskGroup } from "./advanced.js";

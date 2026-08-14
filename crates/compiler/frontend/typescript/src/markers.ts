@@ -6,7 +6,27 @@
 // endpoint, or runtime object.
 
 import { recordDeclaration } from "./declared.js";
+import {
+  SKILL_ENTRY_PATH_NOT_CANONICAL,
+  SKILL_ID_NOT_EXACT,
+  SKILL_INSTRUCTIONS_OVERLONG,
+  SKILL_LOAD_OUTSIDE_BODY,
+  SKILL_SOURCE_AMBIGUOUS,
+  SKILL_SOURCE_MISSING,
+} from "./generated/diagnostics.js";
+import {
+  SKILL_INSTRUCTION_KIND_ENTRY,
+  SKILL_INSTRUCTION_KIND_INLINE,
+} from "./generated/frontend-graph.js";
+import type { SkillInstructionSource } from "./generated/frontend-records.js";
 import type { Permission } from "./generated/permissions.js";
+
+/**
+ * The ceiling the skill-reading capability enforces on a body it loads. An
+ * inline skill is the same trusted context landing in the same model window, so
+ * it is refused here rather than at execution.
+ */
+const MAX_INSTRUCTION_BYTES = 128 * 1024;
 
 const FORBIDDEN_DISPLAY_NAMES = new Set(["default", "model.default", "support", "search-web", ""]);
 
@@ -71,6 +91,34 @@ export type ContextSchema = {
   readonly typeRef: string;
   readonly defaultPresent: boolean;
 };
+
+/**
+ * Where a declared skill's instructions live. Exactly one field is stated: the
+ * two are the two routes an edit takes to the artifact digest, and stating both
+ * is a contradiction about where the instructions are.
+ */
+export type SkillSource = {
+  readonly entry?: string;
+  readonly text?: string;
+};
+
+/**
+ * A declared Agent Skill. Loading one is an ordinary Capability invocation, not
+ * a construct of its own: `await skill.load()` records a `capability.invoke` on
+ * the skill-reading capability, so the authority to read the instructions is
+ * declared in the artifact like any other.
+ */
+export type SkillBinding = {
+  readonly kind: "skill";
+  readonly skillId: string;
+  readonly instructionSource: SkillInstructionSource;
+  load(): Promise<string>;
+};
+
+/** The one package path the folder contract recognizes for this skill. */
+function skillEntryPath(skillId: string): string {
+  return `skills/${skillId}/SKILL.md`;
+}
 
 /** Derive a deterministic source-identity digest for static declarations. */
 export function stableDigest(value: string): string {
@@ -205,6 +253,60 @@ export function Event<Payload>(ref: string): EventTypeBinding<Payload> {
     typeRef: "Event",
     targetRef: ref,
     wait: () => uncallable("Event"),
+  });
+}
+
+/**
+ * Declare one Agent Skill, its instructions carried one of two ways.
+ *
+ * `entry` names the package file holding them, which the carrying package's
+ * integrity chain hashes. `text` writes them here, inside the source bundle the
+ * artifact digest already covers. Exactly one is stated.
+ */
+export function Skill(skillId: string, source: SkillSource): SkillBinding {
+  if (typeof skillId !== "string" || FORBIDDEN_DISPLAY_NAMES.has(skillId)) {
+    throw new Error(
+      `${SKILL_ID_NOT_EXACT}: Skill accepts an exact typed reference, not a display name '${skillId}'`,
+    );
+  }
+  const entry = source?.entry;
+  const text = source?.text;
+  if (entry !== undefined && text !== undefined) {
+    throw new Error(
+      `${SKILL_SOURCE_AMBIGUOUS}: Skill '${skillId}' states both a package entry and inline text; instructions live in one place`,
+    );
+  }
+  if (entry === undefined && text === undefined) {
+    throw new Error(
+      `${SKILL_SOURCE_MISSING}: Skill '${skillId}' states neither a package entry nor inline text`,
+    );
+  }
+  let instructionSource: SkillInstructionSource;
+  if (text !== undefined) {
+    if (text === "" || new TextEncoder().encode(text).length > MAX_INSTRUCTION_BYTES) {
+      throw new Error(
+        `${SKILL_INSTRUCTIONS_OVERLONG}: Skill '${skillId}' states an empty or oversized body; a loaded skill is at most ${MAX_INSTRUCTION_BYTES} bytes`,
+      );
+    }
+    instructionSource = { kind: SKILL_INSTRUCTION_KIND_INLINE, text };
+  } else {
+    const expected = skillEntryPath(skillId);
+    if (entry !== expected) {
+      throw new Error(
+        `${SKILL_ENTRY_PATH_NOT_CANONICAL}: Skill '${skillId}' carries its instructions at '${expected}', not '${entry}'`,
+      );
+    }
+    instructionSource = { kind: SKILL_INSTRUCTION_KIND_ENTRY, path: expected };
+  }
+  return recordDeclaration({
+    kind: "skill" as const,
+    skillId,
+    instructionSource,
+    load: (): never => {
+      throw new Error(
+        `${SKILL_LOAD_OUTSIDE_BODY}: a Skill is loaded inside a compiled Agent body`,
+      );
+    },
   });
 }
 

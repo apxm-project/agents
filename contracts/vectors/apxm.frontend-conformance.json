@@ -979,6 +979,170 @@
       ]
     },
     {
+      "id": "skill_carried_by_package_entry",
+      "covers": "A skill whose instructions the package file carries is declared in the graph and loaded through an ordinary capability.invoke on the skill-reading capability.",
+      "declarations": [
+        {
+          "name": "ReviewSkill",
+          "marker": "Skill",
+          "target_ref": "review",
+          "instructions": {
+            "kind": "entry"
+          }
+        }
+      ],
+      "programs": [
+        {
+          "program_id": "PackagedSkillAgent",
+          "input": "Input",
+          "output": "Output",
+          "body": [
+            {
+              "stmt": "return",
+              "value": {
+                "expr": "load",
+                "skill": "ReviewSkill"
+              }
+            }
+          ]
+        }
+      ],
+      "expect": [
+        {
+          "query": "graph:skill_requirements",
+          "equals": [
+            {
+              "skill_id": "review",
+              "instruction_source": {
+                "kind": "entry",
+                "path": "skills/review/SKILL.md"
+              }
+            }
+          ]
+        },
+        {
+          "query": "graph:capability_requirements",
+          "equals": [
+            {
+              "capability_ref": "read_skill",
+              "tool_schema_present": false
+            }
+          ]
+        },
+        {
+          "query": "graph:declarations[].decl_kind",
+          "equals": [
+            "capability_binding"
+          ]
+        },
+        {
+          "query": "graph:declarations[].target_ref",
+          "equals": [
+            "read_skill"
+          ]
+        },
+        {
+          "query": "graph:call_intents[].intent_kind",
+          "equals": [
+            "capability_invocation"
+          ]
+        },
+        {
+          "query": "diagnostics",
+          "equals": null
+        },
+        {
+          "query": "air:semantic_operations[].op",
+          "equals": [
+            "capability.invoke"
+          ]
+        },
+        {
+          "query": "air:semantic_operations[0].operands[slot=capability_ref].value_id",
+          "equals": [
+            "read_skill"
+          ]
+        },
+        {
+          "query": "artifact:artifact_semantic_requirements[typed_port_slot=read_skill].typed_port_slot",
+          "length": 1
+        }
+      ]
+    },
+    {
+      "id": "skill_written_inline_in_source",
+      "covers": "A skill written in the program carries its instructions in the graph verbatim, so the source bundle is their integrity anchor, and it loads through the same capability a file-carried one does.",
+      "declarations": [
+        {
+          "name": "ToneSkill",
+          "marker": "Skill",
+          "target_ref": "tone",
+          "instructions": {
+            "kind": "inline",
+            "text": "Answer in one sentence."
+          }
+        }
+      ],
+      "programs": [
+        {
+          "program_id": "InlineSkillAgent",
+          "input": "Input",
+          "output": "Output",
+          "body": [
+            {
+              "stmt": "return",
+              "value": {
+                "expr": "load",
+                "skill": "ToneSkill"
+              }
+            }
+          ]
+        }
+      ],
+      "expect": [
+        {
+          "query": "graph:skill_requirements",
+          "equals": [
+            {
+              "skill_id": "tone",
+              "instruction_source": {
+                "kind": "inline",
+                "text": "Answer in one sentence."
+              }
+            }
+          ]
+        },
+        {
+          "query": "graph:capability_requirements[].capability_ref",
+          "equals": [
+            "read_skill"
+          ]
+        },
+        {
+          "query": "graph:call_intents[].intent_kind",
+          "equals": [
+            "capability_invocation"
+          ]
+        },
+        {
+          "query": "diagnostics",
+          "equals": null
+        },
+        {
+          "query": "air:semantic_operations[].op",
+          "equals": [
+            "capability.invoke"
+          ]
+        },
+        {
+          "query": "air:semantic_operations[0].operands[slot=capability_ref].value_id",
+          "equals": [
+            "read_skill"
+          ]
+        }
+      ]
+    },
+    {
       "id": "rejects_unresolved_returned_call",
       "covers": "A returned call the frontend cannot resolve is rejected rather than dropped, which would silently lose the author's whole result expression.",
       "declarations": [
@@ -1223,7 +1387,8 @@
           "Model",
           "Tool",
           "Capability",
-          "Event"
+          "Event",
+          "Skill"
         ],
         "references": [
           "",
@@ -1247,6 +1412,19 @@
           "@handler_object"
         ],
         "message_contains": "exact typed reference"
+      }
+    },
+    {
+      "id": "rejects_skill_with_no_instruction_source",
+      "covers": "A skill that states neither a package entry nor inline text is refused: a declared skill with no body is a declaration that could never be loaded.",
+      "declaration_rejections": {
+        "markers": [
+          "Skill"
+        ],
+        "references": [
+          "review"
+        ],
+        "message_contains": "SkillSourceMissing"
       }
     }
   ]

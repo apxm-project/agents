@@ -29,7 +29,11 @@ type that does not exist is a `NameError` at the definition site. TypeScript
 states the same three as `Agent<Input, Output, Context>`.
 
 `Agent`, `Context`, `Tool`, and `Model` cover ordinary programs;
-`Capability`, `Event`, `Hook`, and `TaskGroup` are focused extensions. Python
+`Capability`, `Event`, `Hook`, `Skill`, and `TaskGroup` are focused extensions.
+`Skill` declares instructions the program can load — carried as a package file
+with `entry=`, or written in the source with `text=`, never both — and
+`await skill.load()` reads them through the skill-reading Capability, so the
+artifact declares that authority the way it declares any other. Python
 parses the module with the host AST, binds recognized APXM symbols and types
 into an immutable frontend-internal typed source tree, and deterministically
 traverses it into FrontendGraph. It never executes the Agent body to discover

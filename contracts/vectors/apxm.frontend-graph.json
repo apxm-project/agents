@@ -268,6 +268,7 @@
           "model_target_ref": "model.target"
         }
       ],
+      "skill_requirements": [],
       "source_map": {
         "schema_version": "apxm.source-map",
         "source_language": "python",
@@ -316,6 +317,7 @@
       "hook_bindings": [],
       "capability_requirements": [],
       "model_requirements": [],
+      "skill_requirements": [],
       "source_map": {
         "schema_version": "apxm.source-map",
         "source_language": "python",
@@ -357,6 +359,7 @@
       "hook_bindings": [],
       "capability_requirements": [],
       "model_requirements": [],
+      "skill_requirements": [],
       "source_map": {
         "schema_version": "apxm.source-map",
         "source_language": "python",
@@ -393,6 +396,7 @@
       "hook_bindings": [],
       "capability_requirements": [],
       "model_requirements": [],
+      "skill_requirements": [],
       "source_map": {
         "schema_version": "apxm.source-map",
         "source_language": "python",
@@ -443,6 +447,7 @@
       ],
       "capability_requirements": [],
       "model_requirements": [],
+      "skill_requirements": [],
       "source_map": {
         "schema_version": "apxm.source-map",
         "source_language": "typescript",
@@ -479,6 +484,7 @@
       "hook_bindings": [],
       "capability_requirements": [],
       "model_requirements": [],
+      "skill_requirements": [],
       "source_map": {
         "schema_version": "apxm.source-map",
         "source_language": "python",
@@ -516,6 +522,7 @@
       "capability_requirements": [],
       "model_requirements": [],
       "legacy_alias": "must-not-be-accepted",
+      "skill_requirements": [],
       "source_map": {
         "schema_version": "apxm.source-map",
         "source_language": "typescript",
@@ -576,6 +583,7 @@
         }
       ],
       "model_requirements": [],
+      "skill_requirements": [],
       "source_map": {
         "schema_version": "apxm.source-map",
         "source_language": "python",
@@ -631,6 +639,7 @@
         }
       ],
       "model_requirements": [],
+      "skill_requirements": [],
       "source_map": {
         "schema_version": "apxm.source-map",
         "source_language": "python",

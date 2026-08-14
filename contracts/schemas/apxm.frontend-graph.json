@@ -21,6 +21,7 @@
     "hook_bindings",
     "capability_requirements",
     "model_requirements",
+    "skill_requirements",
     "source_map"
   ],
   "properties": {
@@ -125,6 +126,12 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/ModelRequirement"
+      }
+    },
+    "skill_requirements": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SkillRequirement"
       }
     },
     "source_map": {
@@ -631,6 +638,43 @@
       "required": ["model_target_ref"],
       "properties": {
         "model_target_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" }
+      },
+      "additionalProperties": false
+    },
+    "SkillRequirement": {
+      "type": "object",
+      "description": "One authored Agent Skill declaration, carried into the digest-bound source bundle exactly as a Capability or model requirement is. This is the author's statement, not the resolved document: `apxm.package-local-skill` states the digests and byte counts a packager computes, and this states what the program said. Loading the skill is an ordinary capability.invoke on the skill-reading capability, so the authority to read it is a capability_requirement and appears there rather than here.",
+      "required": ["skill_id", "instruction_source"],
+      "properties": {
+        "skill_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "instruction_source": { "$ref": "#/$defs/SkillInstructionSource" }
+      },
+      "additionalProperties": false
+    },
+    "SkillInstructionSource": {
+      "description": "Where an authored skill's instructions live, discriminated by `kind` exactly as `apxm.package-local-skill` discriminates its own. The two branches differ in how an edit reaches the artifact digest, which is why they are discriminated rather than merged: an `entry` names a package file hashed into the carrying package's integrity chain, and an `inline` carries the text itself, already inside `source_bundle_digest`. Neither branch restates the other's anchor, so an author cannot state a path and a body at once.",
+      "oneOf": [
+        { "$ref": "#/$defs/SkillEntrySource" },
+        { "$ref": "#/$defs/SkillInlineSource" }
+      ]
+    },
+    "SkillEntrySource": {
+      "type": "object",
+      "description": "Instructions carried as a package file. The path is stated in full so the declaration names the file a reader can open, and it is the one path the folder contract recognizes for this skill_id.",
+      "required": ["kind", "path"],
+      "properties": {
+        "kind": { "const": "entry" },
+        "path": { "type": "string", "pattern": "^skills/[A-Za-z0-9][A-Za-z0-9._@-]*/SKILL\\.md$" }
+      },
+      "additionalProperties": false
+    },
+    "SkillInlineSource": {
+      "type": "object",
+      "description": "Instructions written inline in Agent Program source. There is no package path and no per-file digest to state: the text is already inside the source bundle. The ceiling is the one the skill-reading capability enforces on a body it loads, because a skill is trusted context that lands in a model's window.",
+      "required": ["kind", "text"],
+      "properties": {
+        "kind": { "const": "inline" },
+        "text": { "type": "string", "minLength": 1, "maxLength": 131072 }
       },
       "additionalProperties": false
     }

@@ -24,6 +24,8 @@ def test_every_corpus_vector_is_projected() -> None:
         "resumable_loop_block_arguments",
         "nested_loop_hook_targets_inner_loop",
         "negative_integer_at_safe_boundary",
+        "skill_carried_by_package_entry",
+        "skill_written_inline_in_source",
         "rejects_unresolved_returned_call",
         "rejects_unresolved_operand_call",
         "rejects_effect_read_as_data",
@@ -32,4 +34,5 @@ def test_every_corpus_vector_is_projected() -> None:
         "rejects_local_binding_shadowing_a_declared_marker",
         "rejects_display_name_marker_references",
         "rejects_handler_object_marker_references",
+        "rejects_skill_with_no_instruction_source",
     )

@@ -50,6 +50,11 @@ pub struct SourceBundle {
     pub hook_bindings: Vec<crate::frontend_graph::HookBinding>,
     pub capability_requirements: Vec<crate::frontend_graph::CapabilityRequirement>,
     pub model_requirements: Vec<crate::frontend_graph::ModelRequirement>,
+    /// Declared Agent Skills. An inline skill's instructions are carried here
+    /// verbatim, which is what makes `source_bundle_digest` their integrity
+    /// anchor: editing the body changes the artifact digest through this
+    /// bundle, exactly as the contract says it does.
+    pub skill_requirements: Vec<crate::frontend_graph::SkillRequirement>,
 }
 
 impl SourceBundle {
@@ -62,6 +67,7 @@ impl SourceBundle {
             hook_bindings: graph.hook_bindings.clone(),
             capability_requirements: graph.capability_requirements.clone(),
             model_requirements: graph.model_requirements.clone(),
+            skill_requirements: graph.skill_requirements.clone(),
         }
     }
 
@@ -968,6 +974,7 @@ mod from_graph_tests {
             "hook_bindings": [],
             "capability_requirements": [{ "capability_ref": "cap.search" }],
             "model_requirements": [{ "model_target_ref": "model.target" }],
+            "skill_requirements": [],
             "source_map": {
                 "schema_version": "apxm.source-map",
                 "source_language": "python",

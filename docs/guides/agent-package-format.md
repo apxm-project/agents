@@ -70,7 +70,6 @@ write.)
 | `kind` | no | Free text; the schema does not close its vocabulary. |
 | `license` | no | Free text. |
 | `[compile]` | required in practice | See below — the CLI rejects a manifest without one even though the schema alone would allow it. |
-| `[prompts]` | no | A map of name → package-relative path under `prompts/`, each of which must exist and end in `.md` to lint clean. |
 | `[source]` | no | Carried verbatim; the schema states only that it must be a table. Every shipped package uses `type = "local"`, but no shipped code branches on its value — it is authored metadata, not a consumed instruction. |
 | `[hierarchy]` | no | See [§3](#3-hierarchy). |
 | `[permissions]` | no | See [§4](#4-permissions-the-tighten-only-layer). |
@@ -92,19 +91,38 @@ package-relative path (no leading `/`, no `..` component) that exists on
 disk and ends in the extension `frontend` implies (`.py` for `python`,
 `.ts` for `typescript`).
 
-### `[prompts]`
+### Instructions: there is no `[prompts]` table
 
-```toml
-[prompts]
-persona = "prompts/persona.md"
-safety = "prompts/safety.md"
+A `[prompts]` table used to map a name to a package-relative path. It was
+parsed, scaffolded into every new package, and hashed into the integrity
+chain, and nothing ever loaded a declared path or checked that one existed.
+`deny_unknown_fields` now makes it a parse error, like every other retired key.
+
+It has not come back, and it is not coming back as a differently named
+manifest key, because a persona is instructions and supporting context — which
+is what an Agent Skill is. The program declares it and the program loads it:
+
+```python
+Persona = Skill("persona", entry="skills/persona/SKILL.md")
+...
+instructions = await Persona.load()
 ```
 
-Each value is a package-relative path; the folder contract only recognizes
-paths matching `^prompts/[^/]+\.md$` (flat, one level, Markdown only —
-`prompt-that-is-not-markdown-rejected` and
-`agent-private-skill-resource-rejected` are both lint failures in the
-vectors).
+That is one declaration a reader can follow to a file, and one
+`capability.invoke` on `read_skill` that says, in the artifact, that this
+program reads instructions. A manifest key could state neither. `apxm agent
+new` scaffolds `skills/persona/SKILL.md` for exactly this reason.
+
+`prompts/<name>.md` remains a recognized package path, so a package that
+already carries one still lints and still hashes it; what is gone is the table
+claiming those files were loaded, and nothing new is scaffolded there.
+
+### `[skills]`: also absent, for the same reason
+
+A skill is declared in the program, not in the manifest. The manifest would be
+a second place to state which skills a package carries, and the two could
+disagree; `skill_requirements` in the compiled artifact is the one statement,
+and it is digest-bound.
 
 ## 3. Hierarchy
 
@@ -213,12 +231,25 @@ bytes, so the published schema and the enforced predicate cannot disagree.
 | `capabilities/<id>/handler.ts` | one Tool handler, declaring capability `<id>` |
 | `capabilities/handlers/<name>.py`/`.ts` | shared handler modules |
 | `capabilities/handlers/tools.json` | generated joined handler manifest (see §7) |
-| `prompts/<name>.md` | flat, Markdown-only instruction resources |
+| `prompts/<name>.md` | flat, Markdown-only instruction resources carried by packages written before skills |
+| `skills/<skill_id>/SKILL.md` | one Agent Skill's instruction document |
+| `skills/<skill_id>/resources/**` | the supporting files that skill carries |
 | `python/<name>.py` | flat Python source |
 | `src/**/*.ts` | nested TypeScript source |
 | `examples/<name>.md` | flat worked examples |
 | `tests/<anything>` | flat test resources |
 | `shared/<anything>` | flat shared resources |
+
+`skills/` was refused until a program could author one. The rule is the same
+one the built-in capability allowlist follows — the thing that consumes a name
+lands before the name is recognized — and recognizing it earlier would have
+meant `agent lint` accepting a directory the machine could do nothing with,
+while `walk_recognized_files` hashed it into every package's chain on behalf of
+a producer that did not exist. Both halves are here now: the `Skill` marker
+declares one, and `Skill(...).load()` reads it through `read_skill`. Note what
+the patterns admit and what they do not: `SKILL.md` is the one instruction
+document `apxm.package-local-skill` names, everything else a skill carries is a
+resource, and `skills/<id>/notes.md` is neither and is refused.
 
 Any other path fails lint as "unrecognized file ... is not part of the
 apxm.agent folder contract" (`find_unrecognized_files` in `agent.rs`). This
@@ -364,10 +395,6 @@ license = "MIT"
 [compile]
 entry = "python/agent.py"
 frontend = "python"
-
-[prompts]
-context = "prompts/context.md"
-persona = "prompts/persona.md"
 
 [source]
 type = "local"

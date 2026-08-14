@@ -21,6 +21,8 @@ import {
   PREDICATE_SCALAR_TYPE_INTEGER,
   PREDICATE_SCALAR_TYPE_NULL,
   PREDICATE_SCALAR_TYPE_STRING,
+  SKILL_INSTRUCTION_KIND_ENTRY,
+  SKILL_INSTRUCTION_KIND_INLINE,
   VALUE_EXPRESSION_KIND_ARRAY,
   VALUE_EXPRESSION_KIND_BOOLEAN,
   VALUE_EXPRESSION_KIND_CONTEXT,
@@ -61,6 +63,10 @@ import type {
   ProgramDefinition,
   ProjectionExpression,
   Region,
+  SkillEntrySource,
+  SkillInlineSource,
+  SkillInstructionSource,
+  SkillRequirement,
   SsaExpression,
   StringExpression,
   StringLiteral,
@@ -422,6 +428,33 @@ export function serializeModelRequirement(record: ModelRequirement): Json {
   return emitted;
 }
 
+/** One `SkillRequirement` in contract key order: every required key, then each stated optional key. */
+export function serializeSkillRequirement(record: SkillRequirement): Json {
+  const emitted: Json = {
+    skill_id: record.skill_id,
+    instruction_source: serializeSkillInstructionSource(record.instruction_source),
+  };
+  return emitted;
+}
+
+/** One `SkillEntrySource` in contract key order: every required key, then each stated optional key. */
+export function serializeSkillEntrySource(record: SkillEntrySource): Json {
+  const emitted: Json = {
+    kind: record.kind,
+    path: record.path,
+  };
+  return emitted;
+}
+
+/** One `SkillInlineSource` in contract key order: every required key, then each stated optional key. */
+export function serializeSkillInlineSource(record: SkillInlineSource): Json {
+  const emitted: Json = {
+    kind: record.kind,
+    text: record.text,
+  };
+  return emitted;
+}
+
 /** One `BooleanLiteral` in contract key order: every required key, then each stated optional key. */
 export function serializeBooleanLiteral(record: BooleanLiteral): Json {
   const emitted: Json = {
@@ -503,6 +536,18 @@ export function serializeControlPredicate(record: ControlPredicate): Json {
     return serializeNotEqualsPredicate(record as NotEqualsPredicate);
   }
   throw new Error(`ControlPredicate states no branch for comparator '${discriminant}'`);
+}
+
+/** One `SkillInstructionSource` branch, chosen by the `kind` the contract discriminates on. */
+export function serializeSkillInstructionSource(record: SkillInstructionSource): Json {
+  const discriminant = record.kind;
+  if (discriminant === SKILL_INSTRUCTION_KIND_ENTRY) {
+    return serializeSkillEntrySource(record as SkillEntrySource);
+  }
+  if (discriminant === SKILL_INSTRUCTION_KIND_INLINE) {
+    return serializeSkillInlineSource(record as SkillInlineSource);
+  }
+  throw new Error(`SkillInstructionSource states no branch for kind '${discriminant}'`);
 }
 
 /** One `PredicateLiteral` branch, chosen by the `scalar_type` the contract discriminates on. */

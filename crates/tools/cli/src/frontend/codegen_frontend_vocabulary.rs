@@ -164,6 +164,15 @@ pub(crate) const FAMILIES: &[Family] = &[
         },
     },
     Family {
+        type_name: "SkillInstructionKind",
+        prefix: "SKILL_INSTRUCTION_KIND_",
+        set_name: "SKILL_INSTRUCTION_KINDS",
+        source: Source::DiscriminatedConst {
+            def: "SkillInstructionSource",
+            discriminant: "kind",
+        },
+    },
+    Family {
         type_name: "HookScope",
         prefix: "HOOK_SCOPE_",
         set_name: "HOOK_SCOPES",

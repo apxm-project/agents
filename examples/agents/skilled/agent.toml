@@ -1,0 +1,15 @@
+id = "skilled"
+version = "0.1.0"
+schema_version = "apxm.agent"
+display_name = "Skilled"
+description = "A reference agent that declares Agent Skills and loads their instructions."
+domain = "general"
+kind = "agent"
+license = "MIT"
+
+[compile]
+entry = "python/agent.py"
+frontend = "python"
+
+[source]
+type = "local"

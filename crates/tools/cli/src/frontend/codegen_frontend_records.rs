@@ -81,6 +81,9 @@ pub(crate) const RECORDS: &[&str] = &[
     "HookBinding",
     "CapabilityRequirement",
     "ModelRequirement",
+    "SkillRequirement",
+    "SkillEntrySource",
+    "SkillInlineSource",
 ];
 
 /// One discriminated union: the `$defs` key stating the `oneOf`, and each
@@ -120,6 +123,13 @@ pub(crate) const UNIONS: &[UnionDef] = &[
             Branch::Named("TruthyPredicate"),
             Branch::Named("EqualsPredicate"),
             Branch::Named("NotEqualsPredicate"),
+        ],
+    },
+    UnionDef {
+        name: "SkillInstructionSource",
+        branches: &[
+            Branch::Named("SkillEntrySource"),
+            Branch::Named("SkillInlineSource"),
         ],
     },
     UnionDef {

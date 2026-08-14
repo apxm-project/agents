@@ -39,14 +39,26 @@ from ._generated.frontend_graph import (
     HOOK_SCOPE_LOOP,
     REGION_ROLE_HOOK_BODY,
 )
-from ._generated.frontend_records import CallIntent, ControlIntent
+from ._generated.capabilities import READ_SKILL
+from ._generated.frontend_records import CallIntent, ControlIntent, SkillRequirement
 from ._markers import (
     CapabilityBinding,
     ContextSchema,
     EventType,
     ModelBinding,
+    SkillDecl,
     ToolBinding,
 )
+
+#: The declaration every `Skill(...).load()` invokes. One synthetic Capability
+#: binding serves every skill a program declares: loading instructions is one
+#: authority, not one per skill, and it is the authority the artifact states.
+SKILL_READER_DECL_ID = "decl.capability.read_skill"
+
+#: The typed interface of that binding. A load takes the skill's identity and
+#: returns its instruction document.
+SKILL_READER_INPUT = "SkillRequest"
+SKILL_READER_OUTPUT = "SkillInstructions"
 
 
 class CaptureError(ValueError):
@@ -93,6 +105,8 @@ class _Capture:
         self.imported_programs: list[tuple[str, str, str, str]] = []
         self.capability_requirements: list[BoundCapabilityRequirement] = []
         self.model_requirements: list[str] = []
+        self.skill_requirements: list[SkillRequirement] = []
+        self._skills_by_name: dict[str, str] = {}
         self.spans: list[tuple[str, Span, str]] = []
 
         self._facade_name: Optional[str] = None
@@ -219,6 +233,14 @@ class _Capture:
                         context_default_present=binding.default_present,
                     )
                 )
+            elif isinstance(binding, SkillDecl):
+                self._skills_by_name[name] = binding.skill_id
+                self.skill_requirements.append(
+                    SkillRequirement(
+                        skill_id=binding.skill_id,
+                        instruction_source=binding.instruction_source,
+                    )
+                )
             elif isinstance(binding, HookDecl):
                 if binding.handler_ref is None or binding.handler_digest is None:
                     raise CaptureError(f"Hook '{name}' is missing its decorated async handler")
@@ -231,6 +253,31 @@ class _Capture:
                         self.imported_programs.append(
                             (program_ref, digest, entrypoint, identity_requirement)
                         )
+        if self.skill_requirements:
+            self._declare_skill_reader()
+
+    def _declare_skill_reader(self) -> None:
+        """Declare the one Capability every ``Skill(...).load()`` invokes.
+
+        It is declared last, after the author's own bindings, so both frontends
+        place it identically. One binding serves every declared skill: reading
+        instructions is a single authority the artifact states once, not one
+        authority per skill.
+        """
+        self.declarations.append(
+            BoundDeclaration(
+                decl_id=SKILL_READER_DECL_ID,
+                decl_kind="capability_binding",
+                input_type_ref=SKILL_READER_INPUT,
+                output_type_ref=SKILL_READER_OUTPUT,
+                target_ref=READ_SKILL,
+            )
+        )
+        requirement = BoundCapabilityRequirement(
+            capability_ref=READ_SKILL, tool_schema_present=False
+        )
+        if requirement not in self.capability_requirements:
+            self.capability_requirements.append(requirement)
 
     def capture(self, func_ast: ast.AsyncFunctionDef) -> BoundProgram:
         # A Hook body is captured source too, so the Models and Capabilities it
@@ -321,6 +368,7 @@ class _Capture:
             imported_programs=tuple(self.imported_programs),
             capability_requirements=tuple(self.capability_requirements),
             model_requirements=tuple(self.model_requirements),
+            skill_requirements=tuple(self.skill_requirements),
             spans=tuple(self.spans),
         )
 
@@ -494,6 +542,15 @@ class _Capture:
                 if binding_ref not in {reference[0] for reference in self.imported_programs}:
                     raise CaptureError("Agent.new resolves one static Agent reference", call)
                 return "agent_creation", binding_ref, None, "initial_context"
+            if func.attr == "load":
+                if self._skill_id_of_load(call) is None:
+                    raise CaptureError("load receiver is a statically declared Skill", call)
+                return (
+                    "capability_invocation",
+                    SKILL_READER_DECL_ID,
+                    None,
+                    "arguments",
+                )
             if func.attr == "wait":
                 binding_ref = self._binding_of(func.value)
                 if binding_ref not in {decl.decl_id for decl in self.declarations if decl.decl_kind == "event_type"}:
@@ -687,6 +744,41 @@ class _Capture:
             return (self._values_by_name[node.id], path)
         return None
 
+    def _skill_id_of_load(self, call: ast.Call) -> Optional[str]:
+        """The skill a ``<name>.load()`` call names, when it names one."""
+        func = call.func
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr == "load"
+            and isinstance(func.value, ast.Name)
+        ):
+            return self._skills_by_name.get(func.value.id)
+        return None
+
+    def _skill_argument_value(self, skill_id: str) -> str:
+        """The typed argument a skill load carries: the skill's own identity.
+
+        The author writes no operand, so one is assembled here rather than left
+        out. It is an ordinary authored literal, which is what keeps the loaded
+        skill visible in the graph, in AIR, and to anything reading the effect's
+        operands.
+        """
+        value_id = self._next("value")
+        self.values.append(
+            BoundValue(
+                value_id=value_id,
+                type_ref="ArgumentValue",
+                origin="literal",
+                expression={
+                    "kind": "object",
+                    "fields": [
+                        {"name": "skill_id", "value": {"kind": "string", "value": skill_id}}
+                    ],
+                },
+            )
+        )
+        return value_id
+
     def _call_operands(
         self,
         call: ast.Call,
@@ -695,6 +787,13 @@ class _Capture:
         receiver_kind: Optional[str],
     ) -> list[BoundOperand]:
         operands: list[BoundOperand] = []
+        skill_id = self._skill_id_of_load(call)
+        if skill_id is not None:
+            if call.args or call.keywords:
+                raise CaptureError("a Skill load takes no authored operand", call)
+            return [
+                BoundOperand(value_id=self._skill_argument_value(skill_id), slot=slot)
+            ]
         argument_count = len(call.args) + len(call.keywords)
         if argument_count == 0:
             return operands

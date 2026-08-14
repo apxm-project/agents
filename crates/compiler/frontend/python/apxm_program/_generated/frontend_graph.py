@@ -239,6 +239,17 @@ PREDICATE_SCALAR_TYPES: Final[tuple[PredicateScalarType, ...]] = (
     PREDICATE_SCALAR_TYPE_NULL,
 )
 
+SkillInstructionKind: TypeAlias = Literal[
+    "entry",
+    "inline",
+]
+SKILL_INSTRUCTION_KIND_ENTRY: Final[SkillInstructionKind] = "entry"
+SKILL_INSTRUCTION_KIND_INLINE: Final[SkillInstructionKind] = "inline"
+SKILL_INSTRUCTION_KINDS: Final[tuple[SkillInstructionKind, ...]] = (
+    SKILL_INSTRUCTION_KIND_ENTRY,
+    SKILL_INSTRUCTION_KIND_INLINE,
+)
+
 HookScope: TypeAlias = Literal[
     "agent",
     "loop",
@@ -361,6 +372,10 @@ __all__ = [
     "PREDICATE_SCALAR_TYPE_INTEGER",
     "PREDICATE_SCALAR_TYPE_NULL",
     "PREDICATE_SCALAR_TYPES",
+    "SkillInstructionKind",
+    "SKILL_INSTRUCTION_KIND_ENTRY",
+    "SKILL_INSTRUCTION_KIND_INLINE",
+    "SKILL_INSTRUCTION_KINDS",
     "HookScope",
     "HOOK_SCOPE_AGENT",
     "HOOK_SCOPE_LOOP",

@@ -20,15 +20,24 @@
 // * The generated runtime-evidence binding. It is a generated contract binding
 //   rather than an authored Agent, so it has no source fixture to capture and no
 //   FrontendGraph to compare.
+// * A `Skill` stating both an entry and inline text. The corpus's
+//   `declaration_rejections` vocabulary states one reference per marker and
+//   calls the marker with it, so it can state the skill that names neither
+//   source — and does — but not the one that names two. The Python frontend
+//   carries the same test for the same reason.
 
 import { describe, expect, it } from "vitest";
 
 import { source } from "../src/node.ts";
-import { Agent, Event, Model } from "../src/index.ts";
+import { Agent, Event, Model, Skill } from "../src/index.ts";
 import { captureProgram } from "../src/capture.ts";
 import { declaredSoFar } from "../src/declared.ts";
 import { decodeFact } from "../src/generated/runtime-evidence.ts";
 import { stableDigest } from "../src/markers.ts";
+import {
+  SKILL_ENTRY_PATH_NOT_CANONICAL,
+  SKILL_SOURCE_AMBIGUOUS,
+} from "../src/generated/diagnostics.ts";
 
 source(import.meta.url);
 
@@ -48,6 +57,18 @@ describe("language-local TypeScript frontend facts", () => {
     const event = Event<object>("event.session.input");
     expect(event.targetRef).toBe("event.session.input");
     expect((Event as unknown as { wait?: unknown }).wait).toBeUndefined();
+  });
+
+  it("holds a Skill to one instruction source", () => {
+    expect(() =>
+      Skill("review", { entry: "skills/review/SKILL.md", text: "Review carefully." }),
+    ).toThrow(SKILL_SOURCE_AMBIGUOUS);
+  });
+
+  it("holds a file-carried Skill to the path its id resolves to", () => {
+    expect(() => Skill("review", { entry: "prompts/review.md" })).toThrow(
+      SKILL_ENTRY_PATH_NOT_CANONICAL,
+    );
   });
 
   it("redacts source tokens that escape the author workspace", () => {

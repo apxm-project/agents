@@ -44,6 +44,7 @@ import {
   serializeModelRequirement,
   serializeProgramDefinition,
   serializeRegion,
+  serializeSkillRequirement,
   serializeValue,
 } from "./generated/frontend-serializers.js";
 
@@ -159,6 +160,9 @@ export function emitFrontendGraph(
     ),
     model_requirements: program.model_requirements.map((targetRef) =>
       serializeModelRequirement({ model_target_ref: targetRef }),
+    ),
+    skill_requirements: program.skill_requirements.map((requirement) =>
+      serializeSkillRequirement(requirement),
     ),
     source_map: {
       schema_version: SOURCE_MAP_VERSION,

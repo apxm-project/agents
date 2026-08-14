@@ -164,5 +164,13 @@ jobs:
       - name: Run repository example frontend tests
         run: dekk agents test-frontend-examples
 
+      # A `Skill` declaration is only worth anything if the instructions it
+      # names can be read at execution. This runs the Skilled example end to
+      # end — compile, publish into a discovery root, execute — so the claim
+      # that `Skill(...).load()` reaches `read_skill` is checked rather than
+      # asserted.
+      - name: Execute the Agent Skill example
+        run: dekk agents test-skill-example
+
       - name: Run repository tooling tests
         run: python -m pytest tools/tests/

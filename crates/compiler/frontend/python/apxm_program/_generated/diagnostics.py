@@ -34,6 +34,12 @@ DiagnosticCode: TypeAlias = Literal[
     "HookOrderAmbiguous",
     "EventNotTyped",
     "EventWaitOutsideBody",
+    "SkillIdNotExact",
+    "SkillSourceMissing",
+    "SkillSourceAmbiguous",
+    "SkillEntryPathNotCanonical",
+    "SkillInstructionsOverlong",
+    "SkillLoadOutsideBody",
     "TaskGroupMissingJoin",
     "TaskGroupDetachedWork",
     "TaskGroupRawCoroutine",
@@ -61,6 +67,12 @@ HOOK_DYNAMIC_REGISTRATION: Final[DiagnosticCode] = "HookDynamicRegistration"
 HOOK_ORDER_AMBIGUOUS: Final[DiagnosticCode] = "HookOrderAmbiguous"
 EVENT_NOT_TYPED: Final[DiagnosticCode] = "EventNotTyped"
 EVENT_WAIT_OUTSIDE_BODY: Final[DiagnosticCode] = "EventWaitOutsideBody"
+SKILL_ID_NOT_EXACT: Final[DiagnosticCode] = "SkillIdNotExact"
+SKILL_SOURCE_MISSING: Final[DiagnosticCode] = "SkillSourceMissing"
+SKILL_SOURCE_AMBIGUOUS: Final[DiagnosticCode] = "SkillSourceAmbiguous"
+SKILL_ENTRY_PATH_NOT_CANONICAL: Final[DiagnosticCode] = "SkillEntryPathNotCanonical"
+SKILL_INSTRUCTIONS_OVERLONG: Final[DiagnosticCode] = "SkillInstructionsOverlong"
+SKILL_LOAD_OUTSIDE_BODY: Final[DiagnosticCode] = "SkillLoadOutsideBody"
 TASK_GROUP_MISSING_JOIN: Final[DiagnosticCode] = "TaskGroupMissingJoin"
 TASK_GROUP_DETACHED_WORK: Final[DiagnosticCode] = "TaskGroupDetachedWork"
 TASK_GROUP_RAW_COROUTINE: Final[DiagnosticCode] = "TaskGroupRawCoroutine"
@@ -88,6 +100,12 @@ DIAGNOSTIC_CODES: Final[tuple[DiagnosticCode, ...]] = (
     HOOK_ORDER_AMBIGUOUS,
     EVENT_NOT_TYPED,
     EVENT_WAIT_OUTSIDE_BODY,
+    SKILL_ID_NOT_EXACT,
+    SKILL_SOURCE_MISSING,
+    SKILL_SOURCE_AMBIGUOUS,
+    SKILL_ENTRY_PATH_NOT_CANONICAL,
+    SKILL_INSTRUCTIONS_OVERLONG,
+    SKILL_LOAD_OUTSIDE_BODY,
     TASK_GROUP_MISSING_JOIN,
     TASK_GROUP_DETACHED_WORK,
     TASK_GROUP_RAW_COROUTINE,
@@ -118,6 +136,12 @@ __all__ = [
     "HOOK_ORDER_AMBIGUOUS",
     "EVENT_NOT_TYPED",
     "EVENT_WAIT_OUTSIDE_BODY",
+    "SKILL_ID_NOT_EXACT",
+    "SKILL_SOURCE_MISSING",
+    "SKILL_SOURCE_AMBIGUOUS",
+    "SKILL_ENTRY_PATH_NOT_CANONICAL",
+    "SKILL_INSTRUCTIONS_OVERLONG",
+    "SKILL_LOAD_OUTSIDE_BODY",
     "TASK_GROUP_MISSING_JOIN",
     "TASK_GROUP_DETACHED_WORK",
     "TASK_GROUP_RAW_COROUTINE",

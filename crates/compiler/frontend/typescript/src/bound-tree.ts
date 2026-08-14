@@ -31,6 +31,7 @@ import type {
   CallIntent,
   ControlIntent,
   PredicateLiteral,
+  SkillRequirement,
   ValueExpression,
 } from "./generated/frontend-records.js";
 import type { Permission } from "./generated/permissions.js";
@@ -189,6 +190,12 @@ export type BoundProgram = {
   readonly imported_programs: readonly (readonly [string, string, string, string])[];
   readonly capability_requirements: readonly BoundCapabilityRequirement[];
   readonly model_requirements: readonly string[];
+  /**
+   * Authored Agent Skills, held as the generated contract record: unlike a
+   * Capability requirement, nothing about a skill declaration is derived at
+   * capture time, so there is nothing for a bound wrapper to add.
+   */
+  readonly skill_requirements: readonly SkillRequirement[];
   /** [node_id, span, semantic_annotation] */
   readonly spans: readonly (readonly [string, Span, string])[];
 };

@@ -44,17 +44,31 @@ import {
 import type {
   CallIntent,
   PredicateLiteral,
+  SkillRequirement,
   ValueExpression,
 } from "./generated/frontend-records.js";
+import { READ_SKILL } from "./generated/capabilities.js";
 import type { Permission } from "./generated/permissions.js";
 import type {
   CapabilityBinding,
   ContextSchema,
   EventTypeBinding,
   ModelBinding,
+  SkillBinding,
   ToolBinding,
 } from "./markers.js";
 import { stableDigest } from "./markers.js";
+
+/**
+ * The declaration every `Skill(...).load()` invokes. One synthetic Capability
+ * binding serves every skill a program declares: loading instructions is one
+ * authority, not one per skill, and it is the authority the artifact states.
+ */
+const SKILL_READER_DECL_ID = "decl.capability.read_skill";
+
+/** The typed interface of that binding: an identity in, a document out. */
+const SKILL_READER_INPUT = "SkillRequest";
+const SKILL_READER_OUTPUT = "SkillInstructions";
 
 /** Static program reference metadata consumed by composition capture. */
 export type ProgramBinding = {
@@ -71,6 +85,7 @@ export type Binding =
   | CapabilityBinding<any, any>
   | EventTypeBinding<any>
   | ContextSchema
+  | SkillBinding
   | ProgramBinding;
 
 /** Whether two declarations request the very same decision, reason included. */
@@ -104,7 +119,7 @@ export type CaptureInput = {
 };
 
 /** The module-scope factories whose calls declare a binding an Agent can use. */
-const MARKER_FACTORIES = ["Model", "Tool", "Capability", "Event", "Context", "Agent"] as const;
+const MARKER_FACTORIES = ["Model", "Tool", "Capability", "Event", "Context", "Skill", "Agent"] as const;
 
 /** The binding each factory produces, so a resolved pairing can be checked. */
 const MARKER_BINDING_KINDS: Readonly<Record<string, Binding["kind"]>> = {
@@ -112,6 +127,7 @@ const MARKER_BINDING_KINDS: Readonly<Record<string, Binding["kind"]>> = {
   Tool: "tool_binding",
   Capability: "capability_binding",
   Event: "event_type",
+  Skill: "skill",
   Context: "context",
   Agent: "agent_definition",
 };
@@ -127,6 +143,8 @@ function declarationIdFor(name: string, binding: Binding): string {
       return `decl.capability.${name}`;
     case "event_type":
       return `decl.event.${name}`;
+    case "skill":
+      return SKILL_READER_DECL_ID;
     case "context":
       return `decl.context.${name}`;
     case "agent_definition":
@@ -163,6 +181,9 @@ class Capture {
   private readonly hookContextAssignment = new Map<string, string>();
   private readonly capabilityRequirements: BoundCapabilityRequirement[] = [];
   private readonly modelRequirements: string[] = [];
+  private readonly skillRequirements: SkillRequirement[] = [];
+  /** Declared skill bindings, resolved from the name the body loads through. */
+  private readonly skillsByName = new Map<string, string>();
   private readonly spans: Array<readonly [string, Span, string]> = [];
   private readonly bodyRegionId: string;
   private programBindingSymbol: ts.Symbol | undefined;
@@ -258,6 +279,12 @@ class Capture {
           output_type_ref: binding.typeRef,
           context_default_present: binding.defaultPresent,
         });
+      } else if (binding.kind === "skill") {
+        this.skillsByName.set(name, binding.skillId);
+        this.skillRequirements.push({
+          skill_id: binding.skillId,
+          instruction_source: binding.instructionSource,
+        });
       } else if (binding.kind === "agent_definition") {
         this.importedPrograms.set(binding.programId, [
           binding.programId,
@@ -267,6 +294,28 @@ class Capture {
         ]);
       }
     }
+    if (this.skillRequirements.length > 0) {
+      this.declareSkillReader();
+    }
+  }
+
+  /**
+   * Declare the one Capability every `Skill(...).load()` invokes.
+   *
+   * It is declared last, after the author's own bindings, so both frontends
+   * place it identically. One binding serves every declared skill: reading
+   * instructions is a single authority the artifact states once, not one
+   * authority per skill.
+   */
+  private declareSkillReader(): void {
+    this.declarations.push({
+      decl_id: SKILL_READER_DECL_ID,
+      decl_kind: "capability_binding",
+      input_type_ref: SKILL_READER_INPUT,
+      output_type_ref: SKILL_READER_OUTPUT,
+      target_ref: READ_SKILL,
+    });
+    this.requireCapability({ targetRef: READ_SKILL }, false);
   }
 
   /**
@@ -840,6 +889,16 @@ class Capture {
           slot: "initial_context",
         };
       }
+      if (method === "load") {
+        if (this.skillIdOfLoad(call) === undefined) {
+          throw new CaptureError("load receiver is a statically declared Skill");
+        }
+        return {
+          intent: "capability_invocation",
+          bindingRef: SKILL_READER_DECL_ID,
+          slot: "arguments",
+        };
+      }
       if (method === "wait") {
         const bindingRef = this.bindingRefOfBinding(bindingName);
         if (bindingRef === undefined) {
@@ -1089,7 +1148,50 @@ class Capture {
     return undefined;
   }
 
+  /** The skill a `<name>.load()` call names, when it names one. */
+  private skillIdOfLoad(call: ts.CallExpression): string | undefined {
+    const callee = call.expression;
+    if (
+      !ts.isPropertyAccessExpression(callee) ||
+      callee.name.text !== "load" ||
+      !ts.isIdentifier(callee.expression)
+    ) {
+      return undefined;
+    }
+    const bindingName = this.bindingNameFor(callee.expression);
+    return bindingName === undefined ? undefined : this.skillsByName.get(bindingName);
+  }
+
+  /**
+   * The typed argument a skill load carries: the skill's own identity.
+   *
+   * The author writes no operand, so one is assembled here rather than left
+   * out. It is an ordinary authored literal, which is what keeps the loaded
+   * skill visible in the graph, in AIR, and to anything reading the effect's
+   * operands.
+   */
+  private skillArgumentValue(skillId: string): string {
+    const valueId = this.next("value");
+    this.values.push({
+      value_id: valueId,
+      type_ref: "ArgumentValue",
+      origin: "literal",
+      expression: {
+        kind: "object",
+        fields: [{ name: "skill_id", value: { kind: "string", value: skillId } }],
+      },
+    });
+    return valueId;
+  }
+
   private callOperands(call: ts.CallExpression, slot: string): BoundOperand[] {
+    const skillId = this.skillIdOfLoad(call);
+    if (skillId !== undefined) {
+      if (call.arguments.length > 0) {
+        throw new CaptureError("a Skill load takes no authored operand");
+      }
+      return [{ value_id: this.skillArgumentValue(skillId), slot }];
+    }
     if (call.arguments.length === 0) {
       return [];
     }
@@ -1844,6 +1946,7 @@ class Capture {
       imported_programs: [...this.importedPrograms.values()],
       capability_requirements: this.capabilityRequirements,
       model_requirements: this.modelRequirements,
+      skill_requirements: this.skillRequirements,
       spans: this.spans,
     };
   }

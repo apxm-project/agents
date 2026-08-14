@@ -2,7 +2,7 @@
   "schema_version": "apxm.frontend-surface",
   "surface_version": "apxm.frontend-graph",
   "everyday": ["Agent", "agent", "Context", "Tool", "Model"],
-  "advanced": ["Capability", "capability", "Event", "Hook", "TaskGroup"],
+  "advanced": ["Capability", "capability", "Event", "Hook", "TaskGroup", "Skill"],
   "non_public": [
     "AgentProgram",
     "AgentFacade",
@@ -422,6 +422,54 @@
       ],
       "produces_intent": "event_wait",
       "diagnostics": ["EventNotTyped", "EventWaitOutsideBody"]
+    },
+    {
+      "concept": "Declared Agent Skill",
+      "tier": "advanced",
+      "bound_semantic_node": "SkillDecl",
+      "projections": {
+        "python": {
+          "module": "crates/compiler/frontend/python/apxm_program/_markers.py",
+          "symbol": "Skill",
+          "exported_from_root": true,
+          "signature": "Skill(skill_id, entry=...) or Skill(skill_id, text=...), then await skill.load()"
+        },
+        "typescript": {
+          "module": "crates/compiler/frontend/typescript/src/markers.ts",
+          "symbol": "Skill",
+          "exported_from_root": true,
+          "signature": "Skill(skillId, { entry }) or Skill(skillId, { text }), then await skill.load()"
+        }
+      },
+      "arguments": [
+        {
+          "name": "skill_id",
+          "accepts": "exact_reference",
+          "required": true,
+          "projected_as": { "python": ["parameter"], "typescript": ["parameter"] }
+        },
+        {
+          "name": "entry",
+          "accepts": "package_path",
+          "required": false,
+          "projected_as": { "python": ["keyword"], "typescript": ["option_field"] }
+        },
+        {
+          "name": "text",
+          "accepts": "instruction_text",
+          "required": false,
+          "projected_as": { "python": ["keyword"], "typescript": ["option_field"] }
+        }
+      ],
+      "produces_intent": "capability_invocation",
+      "diagnostics": [
+        "SkillIdNotExact",
+        "SkillSourceMissing",
+        "SkillSourceAmbiguous",
+        "SkillEntryPathNotCanonical",
+        "SkillInstructionsOverlong",
+        "SkillLoadOutsideBody"
+      ]
     },
     {
       "concept": "Structured task scope",

@@ -102,6 +102,7 @@ fn generic_graph_value() -> Value {
         "hook_bindings": [],
         "capability_requirements": [{"capability_ref": "cap.search"}],
         "model_requirements": [{"model_target_ref": "model.target"}],
+        "skill_requirements": [],
         "source_map": {
             "schema_version": "apxm.source-map",
             "source_language": "python",

@@ -14,11 +14,22 @@ into both languages could not state it:
 * The generated runtime-evidence binding decodes facts. It is a generated
   contract binding rather than an authored Agent, so it has no source fixture to
   capture and no FrontendGraph to compare.
+* A ``Skill`` stating both an entry and inline text is a rejection the corpus's
+  ``declaration_rejections`` cannot express: that vocabulary states one
+  reference per marker and calls the marker with it, so it can state the skill
+  that names neither source — and does — but not the one that names two. The
+  TypeScript frontend carries the same test for the same reason.
 """
 
 from __future__ import annotations
 
-from apxm_program import Event
+import pytest
+
+from apxm_program import Event, Skill
+from apxm_program._generated.diagnostics import (
+    SKILL_ENTRY_PATH_NOT_CANONICAL,
+    SKILL_SOURCE_AMBIGUOUS,
+)
 from apxm_program._generated.runtime_evidence import (
     LoopIterationCompletedFact,
     decode_fact,
@@ -31,6 +42,16 @@ def test_a_bare_typed_marker_factory_is_not_yet_a_declaration() -> None:
 
     event = bare_typed_factory("event.session.input")
     assert event.target_ref == "event.session.input"
+
+
+def test_a_skill_states_one_instruction_source() -> None:
+    with pytest.raises(ValueError, match=SKILL_SOURCE_AMBIGUOUS):
+        Skill("review", entry="skills/review/SKILL.md", text="Review carefully.")
+
+
+def test_a_file_carried_skill_names_the_path_its_id_resolves_to() -> None:
+    with pytest.raises(ValueError, match=SKILL_ENTRY_PATH_NOT_CANONICAL):
+        Skill("review", entry="prompts/review.md")
 
 
 def test_generated_runtime_evidence_binding_is_closed() -> None:

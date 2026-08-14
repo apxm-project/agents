@@ -31,6 +31,12 @@ export type DiagnosticCode =
   | "HookOrderAmbiguous"
   | "EventNotTyped"
   | "EventWaitOutsideBody"
+  | "SkillIdNotExact"
+  | "SkillSourceMissing"
+  | "SkillSourceAmbiguous"
+  | "SkillEntryPathNotCanonical"
+  | "SkillInstructionsOverlong"
+  | "SkillLoadOutsideBody"
   | "TaskGroupMissingJoin"
   | "TaskGroupDetachedWork"
   | "TaskGroupRawCoroutine";
@@ -57,6 +63,12 @@ export const HOOK_DYNAMIC_REGISTRATION = "HookDynamicRegistration" satisfies Dia
 export const HOOK_ORDER_AMBIGUOUS = "HookOrderAmbiguous" satisfies DiagnosticCode;
 export const EVENT_NOT_TYPED = "EventNotTyped" satisfies DiagnosticCode;
 export const EVENT_WAIT_OUTSIDE_BODY = "EventWaitOutsideBody" satisfies DiagnosticCode;
+export const SKILL_ID_NOT_EXACT = "SkillIdNotExact" satisfies DiagnosticCode;
+export const SKILL_SOURCE_MISSING = "SkillSourceMissing" satisfies DiagnosticCode;
+export const SKILL_SOURCE_AMBIGUOUS = "SkillSourceAmbiguous" satisfies DiagnosticCode;
+export const SKILL_ENTRY_PATH_NOT_CANONICAL = "SkillEntryPathNotCanonical" satisfies DiagnosticCode;
+export const SKILL_INSTRUCTIONS_OVERLONG = "SkillInstructionsOverlong" satisfies DiagnosticCode;
+export const SKILL_LOAD_OUTSIDE_BODY = "SkillLoadOutsideBody" satisfies DiagnosticCode;
 export const TASK_GROUP_MISSING_JOIN = "TaskGroupMissingJoin" satisfies DiagnosticCode;
 export const TASK_GROUP_DETACHED_WORK = "TaskGroupDetachedWork" satisfies DiagnosticCode;
 export const TASK_GROUP_RAW_COROUTINE = "TaskGroupRawCoroutine" satisfies DiagnosticCode;
@@ -84,6 +96,12 @@ export const DIAGNOSTIC_CODES = [
   HOOK_ORDER_AMBIGUOUS,
   EVENT_NOT_TYPED,
   EVENT_WAIT_OUTSIDE_BODY,
+  SKILL_ID_NOT_EXACT,
+  SKILL_SOURCE_MISSING,
+  SKILL_SOURCE_AMBIGUOUS,
+  SKILL_ENTRY_PATH_NOT_CANONICAL,
+  SKILL_INSTRUCTIONS_OVERLONG,
+  SKILL_LOAD_OUTSIDE_BODY,
   TASK_GROUP_MISSING_JOIN,
   TASK_GROUP_DETACHED_WORK,
   TASK_GROUP_RAW_COROUTINE,

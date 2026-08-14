@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional, Union
 
-from ._generated.frontend_records import CallIntent, ControlIntent
+from ._generated.frontend_records import CallIntent, ControlIntent, SkillRequirement
 from ._generated.permissions import Permission
 
 
@@ -243,6 +243,10 @@ class BoundProgram:
     imported_programs: tuple[tuple[str, str, str, str], ...] = ()
     capability_requirements: tuple[BoundCapabilityRequirement, ...] = ()
     model_requirements: tuple[str, ...] = ()
+    #: Authored Agent Skills, held as the generated contract record: unlike a
+    #: Capability requirement, nothing about a skill declaration is derived at
+    #: capture time, so there is nothing for a bound wrapper to add.
+    skill_requirements: tuple[SkillRequirement, ...] = ()
     spans: tuple[tuple[str, Span, str], ...] = field(default=())
 
 

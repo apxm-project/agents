@@ -21,6 +21,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 AGENT_PACKAGES = (
     "examples/agents/conversational",
     "examples/agents/coder",
+    "examples/agents/skilled",
     "crates/compiler/frontend/python/tests_program/fixtures/canonical_session_agent",
 )
 
