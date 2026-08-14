@@ -1,5 +1,5 @@
 //! `apxm agent new|sync|lint|build|install` — the toolchain for the
-//! canonical agent folder format (`apxm.agent.v1`).
+//! canonical agent folder format (`apxm.agent`).
 //!
 //! The folder contract, required files, and integrity hash-chain algorithm are
 //! enforced locally. Capability-set drift across the package manifests is a
@@ -18,10 +18,10 @@ use sha2::{Digest, Sha256};
 use super::implementations::{Status, print_section_header, print_status_line};
 
 // ---------------------------------------------------------------------
-// On-disk manifest shapes (apxm.agent.v1 projections)
+// On-disk manifest shapes (apxm.agent projections)
 // ---------------------------------------------------------------------
 
-const AGENT_SCHEMA_V1: &str = "apxm.agent.v1";
+const AGENT_SCHEMA_V1: &str = "apxm.agent";
 
 /// Projection of generated-only `integrity.toml`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,7 +38,7 @@ pub struct ChainLinkToml {
     pub hash: String,
 }
 
-/// Projection of `agent.toml` (`apxm.agent.v1#/properties/agent`).
+/// Projection of `agent.toml` (`apxm.agent#/properties/agent`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentToml {
@@ -60,8 +60,6 @@ pub struct AgentToml {
     pub kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime: Option<RuntimeToml>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub prompts: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -81,18 +79,6 @@ pub struct HookToml {
     pub r#match: Option<String>,
     pub mode: String,
     pub handler: String,
-}
-
-/// `agent.toml`'s runtime metadata. Execution control belongs to the explicit
-/// compiled entry flow, so this table intentionally has no generic extension
-/// bucket and rejects unknown settings.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RuntimeToml {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub memory_space: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_prefix: Option<String>,
 }
 
 /// Projection of the optional `hierarchy.toml`.
@@ -318,9 +304,6 @@ fn rewrite_scaffolded_identity(root: &Path, id: &str, display_name: Option<Strin
     let mut agent: AgentToml = read_toml(&agent_path)?;
     agent.id = id.to_string();
     agent.display_name = Some(display_name);
-    if let Some(runtime) = agent.runtime.as_mut() {
-        runtime.session_prefix = Some(id.to_string());
-    }
     fs::write(&agent_path, toml::to_string_pretty(&agent)?)?;
     Ok(())
 }
@@ -344,9 +327,6 @@ fn agent_new_looped_agent(
              domain = \"{id}\"\n\
              capabilities = []\n\
              allowed_agent_skills = []\n\n\
-             [runtime]\n\
-             memory_space = \"stm\"\n\
-             session_prefix = \"{id}\"\n\n\
              [compile]\n\
              frontend = \"typescript\"\n\
              entry = \"src/main.ts\"\n\n\
@@ -1853,7 +1833,7 @@ mod tests {
         let text = fs::read_to_string(&agent_path).unwrap();
         fs::write(
             &agent_path,
-            text.replace("schema_version = \"apxm.agent.v1\"\n", ""),
+            text.replace("schema_version = \"apxm.agent\"\n", ""),
         )
         .unwrap();
 
@@ -1946,7 +1926,7 @@ mod tests {
         fs::create_dir_all(&template).unwrap();
         fs::write(
             template.join("agent.toml"),
-            "id = \"template\"\nversion = \"0.1.0\"\n\n[runtime]\nsession_prefix = \"template\"\n",
+            "id = \"template\"\nversion = \"0.1.0\"\n",
         )
         .unwrap();
         let destination = tmp.path().join("generated");
@@ -1962,13 +1942,6 @@ mod tests {
         let agent: AgentToml = read_toml(&destination.join("agent.toml")).unwrap();
         assert_eq!(agent.id, "generated");
         assert_eq!(agent.display_name.as_deref(), Some("Generated Agent"));
-        assert_eq!(
-            agent
-                .runtime
-                .as_ref()
-                .and_then(|runtime| runtime.session_prefix.as_deref()),
-            Some("generated")
-        );
         assert!(!destination.join("integrity.toml").exists());
     }
 
@@ -2056,7 +2029,7 @@ mod tests {
         fs::write(
             handlers_dir.join("tools.json"),
             serde_json::json!({
-                "version": "apxm.handler-manifest.v1",
+                "version": "apxm.handler-manifest",
                 "handlers": [
                     {
                         "kind": "tool",
@@ -2195,7 +2168,7 @@ mod tests {
             root.join("agent.toml"),
             "id = \"studio-generated\"\n\
              version = \"0.1.0\"\n\
-             schema_version = \"apxm.agent.v1\"\n\
+             schema_version = \"apxm.agent\"\n\
              allowed_agent_skills = [\"studio-instructions\"]\n\n\
              [compile]\n\
              entry = \"python/main.py\"\n\
@@ -2206,7 +2179,7 @@ mod tests {
             root.join("python/main.py"),
             "from apxm_program import Agent, Model\n\
              \n\
-             StudioModel = Model[object, object](\"model.target.v1\")\n\
+             StudioModel = Model[object, object](\"model.target\")\n\
              \n\
              \n\
              @Agent(input=\"Input\", output=\"Output\")\n\
@@ -2234,7 +2207,7 @@ mod tests {
         let air =
             super::super::compile_service_canonical::emit_canonical_air_from_agent(&root, None)
                 .expect("canonical compile-service must compile the package-level program entry");
-        assert!(air.contains("\"schema_version\":\"apxm.air.v2\""));
+        assert!(air.contains("\"schema_version\":\"apxm.air\""));
         assert!(air.contains("\"op\":\"model.call\""));
     }
 

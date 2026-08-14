@@ -32,7 +32,7 @@ pub const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 /// Maximum prepared plus committed output records retained by one local store.
 pub const MAX_OUTPUT_RECORDS: usize = 10_000;
 
-const LOCAL_OUTPUT_REF_PREFIX: &str = "apxm.local-session-output.v1/";
+const LOCAL_OUTPUT_REF_PREFIX: &str = "apxm.local-session-output/";
 
 #[derive(Debug, Error)]
 pub enum CommitLocalError {

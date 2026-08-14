@@ -1,0 +1,24 @@
+{
+  "schema_version": "apxm.port-contract",
+  "port_contract_id": "apxm.durable-event",
+  "port_contract_digest": "sha256:11d948af38dd743c68e88bc3c4038a1fd600b4580f8ad76aa93151c1e9a6ed61",
+  "semantic_owner": "agents",
+  "primary_responsibility": "park, fulfill, expire, or cancel one exact durable Event Reference without broker discovery, duplicate semantic fulfillment, or conflating Server managed delivery with Program success",
+  "request_schema": {
+    "schema_id": "apxm.durable-event-request",
+    "digest": "sha256:c2a787961ca24acb569e613d13b5643cae15affaa300c19ce22f794ecb24e87a"
+  },
+  "result_schema": {
+    "schema_id": "apxm.durable-event-outcome",
+    "digest": "sha256:0ca4a000949dc7bf470ce4b907ba6dc915d397c8c1b7c0ed80af09cb45b9b91d"
+  },
+  "failure_schema": {
+    "schema_id": "apxm.durable-event-outcome",
+    "digest": "sha256:0ca4a000949dc7bf470ce4b907ba6dc915d397c8c1b7c0ed80af09cb45b9b91d"
+  },
+  "lifecycle_digest": "sha256:393d0df77137ba1649f75f3bb1e2d9699185fda7209f7831efa1930876eb3f01",
+  "authority_data_classification_digest": "sha256:743127f172237eaa1c065fd36567cf23bdf73c7a672aa1f22014b962a7f19c8f",
+  "feature_vocabulary_digest": "sha256:097c056b5fb1382c9f3dca3c75498bca9526ab74e3483a6c3e5ebb0e6b3db062",
+  "configuration_contract_digest": "sha256:354d17c635c707d001ee0a9567c95e57fb68de20dbfda657f11ae68055d1c000",
+  "conformance_vector_digest": "sha256:f4e34c0d8a91c93473b568522b1349aed4ad3ebfdc4d020e62e7d917f1eb8861"
+}

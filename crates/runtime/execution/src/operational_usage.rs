@@ -15,7 +15,7 @@ use apxm_program::runtime_evidence::ModelAttemptRecordedFact;
 /// The single accepted schema version.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CommittedNativeModelUsageVersion {
-    #[serde(rename = "apxm.committed-native-model-usage.v1")]
+    #[serde(rename = "apxm.committed-native-model-usage")]
     V1,
 }
 
@@ -58,7 +58,7 @@ impl CommittedNativeModelUsage {
         use sha2::{Digest, Sha256};
 
         let mut hasher = Sha256::new();
-        hasher.update(b"apxm.committed-native-model-usage.v1\0");
+        hasher.update(b"apxm.committed-native-model-usage\0");
         hasher.update(commit_id.as_bytes());
         hasher.update(b"\0");
         hasher.update(attempt_fact_id.as_bytes());

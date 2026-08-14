@@ -12,11 +12,11 @@ const source = staticSource(import.meta.url);
 const ReadSource = Tool<{ file_path: string }, string>("read");
 const ProposeEdit = Tool<EditProposal, PreparedEdit>("edit");
 const PrepareTest = Tool<{ command: string }, { command: string; executes: false; mutates: false }>("test");
-const DraftEdit = Model<{ request: CoderInput; source: string }, EditDraft>("model.target.v1");
+const DraftEdit = Model<{ request: CoderInput; source: string }, EditDraft>("model.target");
 const ReviewModel = Model<
   { request: CoderInput; source: string; proposal: PreparedEdit; test: { command: string } },
   CoderOutput
->("model.target.v1");
+>("model.target");
 
 export const Coder = Agent<CoderInput, CoderOutput>({
   name: "Coder",

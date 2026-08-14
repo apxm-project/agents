@@ -28,19 +28,19 @@ fn check(file: &str, verify: impl Fn(&Value) -> bool) {
 
 #[test]
 fn air_vectors_match_verifier() {
-    check("apxm.air.v2.json", |v| verify_air_json(v).is_accepted());
+    check("apxm.air.json", |v| verify_air_json(v).is_accepted());
 }
 
 #[test]
 fn frontend_graph_vectors_match_verifier() {
-    check("apxm.frontend-graph.v2.json", |v| {
+    check("apxm.frontend-graph.json", |v| {
         verify_frontend_graph_json(v).is_accepted()
     });
 }
 
 #[test]
 fn tool_argument_must_be_defined_before_its_effect_site() {
-    let mut input = load_vectors("apxm.frontend-graph.v2.json")
+    let mut input = load_vectors("apxm.frontend-graph.json")
         .into_iter()
         .find(|vector| vector.name == "valid-frontend-graph-typed-intents")
         .expect("typed frontend graph vector")
@@ -62,7 +62,7 @@ fn tool_argument_must_be_defined_before_its_effect_site() {
 
 #[test]
 fn every_executable_invocation_operand_must_be_dominated() {
-    let base = load_vectors("apxm.frontend-graph.v2.json")
+    let base = load_vectors("apxm.frontend-graph.json")
         .into_iter()
         .find(|vector| vector.name == "valid-frontend-graph-typed-intents")
         .expect("typed frontend graph vector")
@@ -150,7 +150,7 @@ fn every_executable_invocation_operand_must_be_dominated() {
 
 #[test]
 fn air_invocation_operands_cover_model_and_nested_completion() {
-    let mut future = load_vectors("apxm.air.v2.json")
+    let mut future = load_vectors("apxm.air.json")
         .into_iter()
         .find(|vector| vector.name == "valid-air-five-semantic-ops-and-structural-ir")
         .expect("valid AIR vector")
@@ -158,7 +158,7 @@ fn air_invocation_operands_cover_model_and_nested_completion() {
     future["semantic_operations"][0]["operands"][1]["value_id"] = json!("value.cap.out");
     assert!(!verify_air_json(&future).is_accepted());
 
-    let mut future_options = load_vectors("apxm.air.v2.json")
+    let mut future_options = load_vectors("apxm.air.json")
         .into_iter()
         .find(|vector| vector.name == "valid-air-five-semantic-ops-and-structural-ir")
         .expect("valid AIR vector")
@@ -188,7 +188,7 @@ fn air_invocation_operands_cover_model_and_nested_completion() {
 
 #[test]
 fn source_map_vectors_match_verifier() {
-    check("apxm.source-map.v1.json", |v| {
+    check("apxm.source-map.json", |v| {
         verify_source_map_json(v).is_accepted()
     });
 }
@@ -211,7 +211,7 @@ fn wire_members<T: serde::Serialize>(variants: &[T]) -> Vec<String> {
 
 #[test]
 fn air_semantic_op_enum_does_not_drift() {
-    let schema = load_contract("schemas/apxm.air.v2.json");
+    let schema = load_contract("schemas/apxm.air.json");
     let expected = schema_enum(&schema, "SemanticOp", "op");
     let actual = wire_members(&[
         SemanticOpKind::ModelCall,
@@ -233,7 +233,7 @@ fn air_semantic_op_enum_does_not_drift() {
 
 #[test]
 fn air_structural_kind_enum_does_not_drift() {
-    let schema = load_contract("schemas/apxm.air.v2.json");
+    let schema = load_contract("schemas/apxm.air.json");
     let expected = schema_enum(&schema, "StructuralNode", "kind");
     let actual = wire_members(&[
         StructuralOpKind::Function,
@@ -262,7 +262,7 @@ fn air_structural_kind_enum_does_not_drift() {
 
 #[test]
 fn source_map_enums_do_not_drift() {
-    let schema = load_contract("schemas/apxm.source-map.v1.json");
+    let schema = load_contract("schemas/apxm.source-map.json");
     let annotations = schema_enum(&schema, "RegionAnnotation", "annotation");
     assert_eq!(
         wire_members(&[
@@ -290,7 +290,7 @@ fn source_map_enums_do_not_drift() {
 
 #[test]
 fn verifier_is_deterministic() {
-    let doc = load_vectors("apxm.air.v2.json")
+    let doc = load_vectors("apxm.air.json")
         .into_iter()
         .find(|v| v.name == "valid-air-five-semantic-ops-and-structural-ir")
         .expect("named vector present");
@@ -301,14 +301,14 @@ fn verifier_is_deterministic() {
 
 fn predicate_air() -> Value {
     json!({
-        "schema_version": "apxm.air.v2",
+        "schema_version": "apxm.air",
         "semantic_operations": [{
             "node_id": "node.model",
             "op": "model.call",
             "parent_region_id": "region.fn",
             "execution_order": 0,
             "operands": [
-                {"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"},
+                {"slot": "model_ref", "value_id": "model.target", "type_ref": "ModelTargetRef"},
                 {"slot": "request", "value_id": "value.request", "type_ref": "ModelRequest"}
             ],
             "result": {"value_id": "value.response", "type_ref": "ModelResponse"}
@@ -331,7 +331,7 @@ fn predicate_air() -> Value {
             {"region_id": "region.then", "kind": "region", "parent_region_id": "region.branch", "execution_order": 0}
         ],
         "context_flow": [],
-        "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
+        "source_map": {"schema_version": "apxm.source-map", "source_language": "python", "node_spans": [], "region_annotations": []}
     })
 }
 

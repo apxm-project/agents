@@ -202,7 +202,7 @@ mod tests {
     }
 
     fn kernel_bundle() -> Arc<PortBundle> {
-        let execution_contract = contract("apxm.execution-commit.v1", 0x10);
+        let execution_contract = contract("apxm.execution-commit", 0x10);
         Arc::new(
             PortBundle::construct(
                 &PortBundleSpec::new(vec![(
@@ -219,9 +219,9 @@ mod tests {
     }
 
     fn fully_admitted_kernel_bundle() -> Arc<PortBundle> {
-        let execution_contract = contract("apxm.execution-commit.v1", 0x10);
-        let event_contract = contract("apxm.durable-event.v1", 0x20);
-        let composition_contract = contract("apxm.program-composition.v1", 0x30);
+        let execution_contract = contract("apxm.execution-commit", 0x10);
+        let event_contract = contract("apxm.durable-event", 0x20);
+        let composition_contract = contract("apxm.program-composition", 0x30);
         Arc::new(
             PortBundle::construct(
                 &PortBundleSpec::new(vec![
@@ -250,8 +250,8 @@ mod tests {
 
     #[test]
     fn driver_ports_join_only_through_exact_bindings() {
-        let event_contract = contract("apxm.durable-event.v1", 0x20);
-        let composition_contract = contract("apxm.program-composition.v1", 0x30);
+        let event_contract = contract("apxm.durable-event", 0x20);
+        let composition_contract = contract("apxm.program-composition", 0x30);
         let bundle = ExecutionPortBundle::construct(
             kernel_bundle(),
             event_contract.clone(),
@@ -276,8 +276,8 @@ mod tests {
 
     #[test]
     fn driver_ports_reject_wrong_slots_and_contracts() {
-        let event_contract = contract("apxm.durable-event.v1", 0x20);
-        let composition_contract = contract("apxm.program-composition.v1", 0x30);
+        let event_contract = contract("apxm.durable-event", 0x20);
+        let composition_contract = contract("apxm.program-composition", 0x30);
         let wrong_slot = ExecutionPortBundle::construct(
             kernel_bundle(),
             event_contract.clone(),
@@ -304,7 +304,7 @@ mod tests {
             event_contract.clone(),
             binding(
                 PortSlot::DurableEvent,
-                contract("apxm.durable-event.v1", 0x22),
+                contract("apxm.durable-event", 0x22),
                 0x21,
             ),
             Arc::new(Events),

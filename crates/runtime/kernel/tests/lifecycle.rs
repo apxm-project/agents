@@ -49,7 +49,7 @@ fn identity(id: &str) -> ProgramIdentity {
 
 fn contract() -> SchemaDigestRef {
     SchemaDigestRef {
-        schema_id: "apxm.execution-commit.v1".into(),
+        schema_id: "apxm.execution-commit".into(),
         digest: digest('e'),
     }
 }

@@ -1,6 +1,6 @@
 //! Portable frontend handler-manifest contract.
 //!
-//! TypeScript package build tooling emits this versioned artifact sidecar for
+//! TypeScript package build tooling emits this artifact sidecar for
 //! every packaged tool and hook. The manifest carries only artifact-local
 //! source, never a build-host path.
 
@@ -11,9 +11,9 @@ use std::path::{Component, Path};
 use thiserror::Error;
 
 /// Version identifier for the frontend handler sidecar.
-pub const HANDLER_MANIFEST_VERSION: &str = "apxm.handler-manifest.v1";
+pub const HANDLER_MANIFEST_VERSION: &str = "apxm.handler-manifest";
 /// Artifact section kind carrying the frontend handler sidecar.
-pub const HANDLER_MANIFEST_ARTIFACT_SECTION: &str = "apxm.handler_manifest.v1";
+pub const HANDLER_MANIFEST_ARTIFACT_SECTION: &str = "apxm.handler_manifest";
 /// AIR comment prefix carrying a handler manifest before artifact creation.
 pub const HANDLER_MANIFEST_AIR_SIDECAR_PREFIX: &str = "; __apxm_handler_manifest__ ";
 /// Artifact-local directory holding embedded executable handler modules.

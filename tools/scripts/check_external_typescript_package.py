@@ -110,8 +110,8 @@ def run_json_script(package_root: Path, script: str) -> dict[str, Any]:
 def validate_frontend_graph(graph: dict[str, Any]) -> None:
     """Require the ordinary TypeScript FrontendGraph contract."""
 
-    if graph.get("schema_version") != "apxm.frontend-graph.v2":
-        fail("external package did not emit apxm.frontend-graph.v2")
+    if graph.get("schema_version") != "apxm.frontend-graph":
+        fail("external package did not emit apxm.frontend-graph")
     if graph.get("source_language") != "typescript":
         fail("external package FrontendGraph did not record source_language=typescript")
     call_intents = graph.get("call_intents")
@@ -131,8 +131,8 @@ def validate_frontend_graph(graph: dict[str, Any]) -> None:
 def validate_air(air: dict[str, Any]) -> None:
     """Require canonical AIR with no product-specific operation family."""
 
-    if air.get("schema_version") != "apxm.air.v2":
-        fail("external package did not emit apxm.air.v2")
+    if air.get("schema_version") != "apxm.air":
+        fail("external package did not emit apxm.air")
     operations = air.get("semantic_operations")
     structural_ir = air.get("structural_ir")
     if not isinstance(operations, list) or not isinstance(structural_ir, list):

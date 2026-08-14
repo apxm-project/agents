@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.executable-artifact",
+  "title": "ExecutableArtifact",
+  "description": "Digest-bound executable contract. It pins the AIR, source bundle, source map, and entrypoints, and emits only artifact_semantic Port Requirements. It carries no deployment implementation, Exact Port Binding, Runtime Profile, root-admission fact, authority grant, endpoint, credential, or executable placement.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "artifact_digest",
+    "air_digest",
+    "air",
+    "source_bundle_digest",
+    "source_map",
+    "entrypoints",
+    "artifact_semantic_requirements",
+    "integrity_algorithm"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "apxm.executable-artifact"
+    },
+    "artifact_digest": {
+      "$ref": "apxm.contract-common.v1#/$defs/Digest"
+    },
+    "air_digest": {
+      "$ref": "apxm.contract-common.v1#/$defs/Digest"
+    },
+    "air": {
+      "$ref": "apxm.air"
+    },
+    "source_bundle_digest": {
+      "$ref": "apxm.contract-common.v1#/$defs/Digest"
+    },
+    "source_map": {
+      "$ref": "apxm.source-map#/$defs/SourceMapBody"
+    },
+    "entrypoints": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/Entrypoint"
+      }
+    },
+    "artifact_semantic_requirements": {
+      "type": "array",
+      "items": {
+        "$ref": "apxm.port-requirement.v1"
+      }
+    },
+    "integrity_algorithm": {
+      "const": "sha256"
+    },
+    "hook_bindings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/HookBinding"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "HookBinding": {
+      "type": "object",
+      "required": [
+        "hook_id",
+        "scope",
+        "phase",
+        "target_selector",
+        "declaration_order",
+        "handler_ref",
+        "handler_digest",
+        "input_type_ref",
+        "output_type_ref",
+        "return_mode"
+      ],
+      "properties": {
+        "hook_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "scope": {
+          "type": "string",
+          "enum": ["agent", "loop", "node", "model", "capability"]
+        },
+        "phase": {
+          "type": "string",
+          "enum": ["before", "after"]
+        },
+        "target_selector": {
+          "type": "string"
+        },
+        "declaration_order": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "handler_ref": {
+          "type": "string"
+        },
+        "handler_digest": {
+          "$ref": "apxm.contract-common.v1#/$defs/Digest"
+        },
+        "input_type_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "output_type_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "return_mode": {
+          "type": "string",
+          "enum": ["observe", "replace_result"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "Entrypoint": {
+      "type": "object",
+      "required": [
+        "entrypoint",
+        "program_id",
+        "input_type_ref",
+        "output_type_ref"
+      ],
+      "properties": {
+        "entrypoint": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "program_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "input_type_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "output_type_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "context_type_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.frontend-surface",
+  "title": "FrontendSurfaceManifest",
+  "description": "The single machine-readable manifest of the public source-first authoring surface. Public-export scans, documentation-alignment checks, and generated reference docs derive from this one manifest. A guide, README, generated doc, or package export that names a symbol absent here fails the alignment check. This manifest carries no AIR/AIS operation string and no lowering identity.",
+  "type": "object",
+  "required": ["schema_version", "surface_version", "everyday", "advanced", "non_public", "declarations"],
+  "properties": {
+    "schema_version": { "const": "apxm.frontend-surface" },
+    "surface_version": { "const": "apxm.frontend-graph" },
+    "everyday": {
+      "type": "array",
+      "description": "The five everyday author-facing names. A beginner needs only these.",
+      "items": { "type": "string" },
+      "const": ["Agent", "agent", "Context", "Tool", "Model"]
+    },
+    "advanced": {
+      "type": "array",
+      "description": "The four advanced names imported only when their behavior is needed.",
+      "items": { "type": "string" },
+      "const": ["Capability", "Event", "Hook", "TaskGroup"]
+    },
+    "non_public": {
+      "type": "array",
+      "description": "Names that are contract/lowering identities and MUST NOT be exported by installable authoring packages nor taught as author API.",
+      "items": { "type": "string" },
+      "const": [
+        "AgentProgram",
+        "AgentFacade",
+        "FrontendGraph",
+        "model.call",
+        "capability.invoke",
+        "program.new",
+        "program.invoke",
+        "await.event",
+        "ais.loop",
+        "ais.model_call",
+        "ais.capability_invoke",
+        "ais.program_new",
+        "ais.program_invoke",
+        "ais.await_event",
+        "OP_MODEL_CALL",
+        "OP_CAPABILITY_INVOKE",
+        "OP_PROGRAM_NEW",
+        "OP_PROGRAM_INVOKE",
+        "OP_AWAIT_EVENT",
+        "FIVE_OPS",
+        "SEMANTIC_MODEL_CALL",
+        "STRUCTURAL_AIS_LOOP",
+        "AgentInstance",
+        "AgentLoop",
+        "Loop"
+      ]
+    },
+    "declarations": {
+      "type": "array",
+      "description": "Every public declaration/marker: its two language projections, the bound semantic node, its accepted arguments, its inferred/produced types, and the diagnostics it can raise.",
+      "items": { "$ref": "#/$defs/SurfaceDeclaration" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "SurfaceDeclaration": {
+      "type": "object",
+      "required": ["concept", "tier", "python_projection", "typescript_projection", "bound_semantic_node", "arguments", "diagnostics"],
+      "properties": {
+        "concept": { "type": "string" },
+        "tier": { "type": "string", "enum": ["everyday", "advanced"] },
+        "python_projection": { "type": "string" },
+        "typescript_projection": { "type": "string" },
+        "bound_semantic_node": {
+          "type": "string",
+          "enum": ["AgentDecl", "ContextDecl", "ModelBinding", "ToolBinding", "CapabilityBinding", "HookDecl", "EventType", "EventWait", "TaskScope"]
+        },
+        "arguments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "accepts", "required"],
+            "properties": {
+              "name": { "type": "string" },
+              "accepts": {
+                "type": "string",
+                "enum": ["type_ref", "exact_reference", "closed_option", "literal", "typed_default", "callback_body", "selector", "phase"]
+              },
+              "required": { "type": "boolean" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "produces_intent": {
+          "type": "string",
+          "description": "The FrontendGraph call_intent or control_intent kind produced when this declaration is invoked in a body, if any.",
+          "enum": ["model_invocation", "tool_invocation", "capability_invocation", "agent_creation", "agent_invocation", "event_wait", "none"]
+        },
+        "diagnostics": {
+          "type": "array",
+          "description": "Closed diagnostic codes this marker/declaration can raise, anchored to the offending marker/argument/callsite.",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

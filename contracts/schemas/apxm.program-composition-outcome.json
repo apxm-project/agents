@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.program-composition-outcome",
+  "title": "ProgramCompositionOutcome",
+  "description": "The closed result of creating or invoking one child Program through Server-owned lifecycle admission.",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["created"],
+      "properties": { "created": { "$ref": "#/$defs/Child" } },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["invoked"],
+      "properties": { "invoked": { "$ref": "#/$defs/Child" } },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["failed"],
+      "properties": { "failed": { "$ref": "#/$defs/Failure" } },
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "Child": {
+      "type": "object",
+      "required": ["child_instance_ref"],
+      "properties": { "child_instance_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" } },
+      "additionalProperties": false
+    },
+    "Failure": {
+      "type": "object",
+      "required": ["message"],
+      "properties": { "message": { "type": "string", "minLength": 1, "maxLength": 4096 } },
+      "additionalProperties": false
+    }
+  }
+}

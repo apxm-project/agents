@@ -9,7 +9,7 @@ domain = "general"
 id = "conversational"
 kind = "agent"
 license = "MIT"
-schema_version = "apxm.agent.v1"
+schema_version = "apxm.agent"
 version = "0.1.0"
 
 [compile]

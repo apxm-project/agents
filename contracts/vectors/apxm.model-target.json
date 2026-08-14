@@ -1,0 +1,65 @@
+[
+  {
+    "name": "valid_exact_content_addressed_target",
+    "input": {
+      "schema_version": "apxm.model-target",
+      "target_ref": "model-target:qwen3-32b-instruct@2026-06-01",
+      "model_identity_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "configuration_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "eligibility": {
+        "locality": "any",
+        "required_capabilities": ["tools", "structured_output"],
+        "minimum_context_tokens": 4096
+      },
+      "target_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "valid_local_no_capabilities",
+    "input": {
+      "schema_version": "apxm.model-target",
+      "target_ref": "model-target:phi4-mini@2026-05-01",
+      "model_identity_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "configuration_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "eligibility": {
+        "locality": "local",
+        "required_capabilities": [],
+        "minimum_context_tokens": 0
+      },
+      "target_digest": "sha256:6666666666666666666666666666666666666666666666666666666666666666"
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "rejects_missing_target_digest",
+    "input": {
+      "schema_version": "apxm.model-target",
+      "target_ref": "model-target:qwen3-32b-instruct@2026-06-01",
+      "model_identity_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "configuration_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "eligibility": {
+        "locality": "any",
+        "required_capabilities": ["tools"],
+        "minimum_context_tokens": 4096
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "rejects_unknown_locality",
+    "input": {
+      "schema_version": "apxm.model-target",
+      "target_ref": "model-target:qwen3-32b-instruct@2026-06-01",
+      "model_identity_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "configuration_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "eligibility": {
+        "locality": "on_device",
+        "required_capabilities": ["tools"],
+        "minimum_context_tokens": 4096
+      },
+      "target_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    "expected_valid": false
+  }
+]

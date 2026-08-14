@@ -37,13 +37,13 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-/// Minimal, service-agnostic telemetry configuration. Services map their own
-/// process config into this at startup (e.g. server's
-/// `ServerObservabilityConfig` -> [`Config`]).
+/// Minimal, service-agnostic telemetry configuration. Downstream processes
+/// map their own process config into this at startup (e.g. a process-local
+/// `ObservabilityConfig` -> [`Config`]).
 #[derive(Debug, Clone)]
 pub struct Config {
     /// Logical service name, used as the OTel tracer name (e.g.
-    /// `"apxm-server"`, `"apxm-os"`, `"apxm-auth"`, `"apxm-studio"`).
+    /// `"apxm-auth"`, `"apxm-runtime"`).
     pub service_name: &'static str,
     /// `tracing_subscriber::EnvFilter` directive string (e.g. `"info"`).
     pub log_filter: String,

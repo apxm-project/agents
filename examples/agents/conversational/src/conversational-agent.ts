@@ -37,7 +37,7 @@ type ConversationalProgram = ReturnType<
 >;
 
 const SearchWeb = Tool<SearchWebRequest, SearchWebResult>("cap.search");
-const SupportModel = Model<ModelRequest, ModelResponse>("model.target.v1");
+const SupportModel = Model<ModelRequest, ModelResponse>("model.target");
 const ConversationContext = Context<ConversationState>(
   { messages: [], tool_calls: 0, last_reply: "" },
   "ConversationContext",

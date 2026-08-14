@@ -13,7 +13,7 @@ import { stableDigest } from "../src/markers.ts";
 const sourceFile = fileURLToPath(import.meta.url);
 const source = { fileName: sourceFile, text: readFileSync(sourceFile, "utf8") };
 
-const SummarizerModel = Model("summarizer.model.v1");
+const SummarizerModel = Model("summarizer.model");
 
 const Summarizer = Agent({
   name: "Summarizer",
@@ -25,10 +25,10 @@ const Summarizer = Agent({
 });
 
 const ConversationCtx = Context({ messages: [] as string[] });
-const SearchWeb = Tool("search.web.capability.v1");
-const SupportModel = Model("support.model.v1");
+const SearchWeb = Tool("search.web.capability");
+const SupportModel = Model("support.model");
 const InitialCtx = Context({ messages: [] as string[] });
-const InitialModel = Model("initial.model.v1");
+const InitialModel = Model("initial.model");
 
 const InitialContextAgent = Agent({
   name: "InitialContextAgent",
@@ -122,7 +122,7 @@ describe("source-first TypeScript authoring", () => {
 
   it("binds a minimal one-shot Model agent", () => {
     const graph = Summarizer.frontendGraph() as unknown as Graph;
-    expect(graph.schema_version).toBe("apxm.frontend-graph.v2");
+    expect(graph.schema_version).toBe("apxm.frontend-graph");
     expect(graph.declarations.map((d) => d.decl_kind)).toEqual(["model_binding"]);
     expect(graph.call_intents.map((c) => c.intent_kind)).toEqual(["model_invocation"]);
     expect(Summarizer.diagnostics()).toBeNull();
@@ -139,7 +139,7 @@ describe("source-first TypeScript authoring", () => {
     expect(air.semantic_operations[0].operands.some((o) => o.slot === "request")).toBe(true);
     expect(air.semantic_operations[0].operands).toContainEqual({
       slot: "model_ref",
-      value_id: "summarizer.model.v1",
+      value_id: "summarizer.model",
       type_ref: "ModelTargetRef",
     });
   });
@@ -166,8 +166,8 @@ describe("source-first TypeScript authoring", () => {
     expect(() => Tool({ run() {} } as unknown as string)).toThrow(/exact typed reference/);
     expect(() => Capability({ run() {} } as unknown as string)).toThrow(/exact typed reference/);
 
-    const event = Event<object>("event.session.input.v1");
-    expect(event.targetRef).toBe("event.session.input.v1");
+    const event = Event<object>("event.session.input");
+    expect(event.targetRef).toBe("event.session.input");
     expect((Event as unknown as { wait?: unknown }).wait).toBeUndefined();
   });
 
@@ -186,7 +186,7 @@ describe("source-first TypeScript authoring", () => {
       new Set(["loop", "conditional", "task_group", "yield"]),
     );
     expect(graph.capability_requirements).toEqual([
-      { capability_ref: "search.web.capability.v1", tool_schema_present: true },
+      { capability_ref: "search.web.capability", tool_schema_present: true },
     ]);
     expect(graph.context_flow.length).toBeGreaterThan(0);
     expect(graph.hook_bindings).toEqual([
@@ -264,7 +264,7 @@ describe("source-first TypeScript authoring", () => {
         fileName: "../../outside-workspace/agent.ts",
         text: `
           import { Agent, Model } from "@apxm/frontend";
-          const SummarizerModel = Model("summarizer.model.v1");
+          const SummarizerModel = Model("summarizer.model");
           const EscapingSource = Agent({
             async run(agent, input) {
               return await SummarizerModel(input);
@@ -299,7 +299,7 @@ describe("source-first TypeScript authoring", () => {
       inputTypeRef: "Input",
       outputTypeRef: "Output",
       hasDefaultContext: false,
-      bindings: new Map([["BoundModel", Model("shadowed.model.v1")]]),
+      bindings: new Map([["BoundModel", Model("shadowed.model")]]),
       bindingDeclIds: new Map([["BoundModel", "decl.model.BoundModel"]]),
       source: shadowedSource,
     })).toThrow(CaptureError);
@@ -313,13 +313,13 @@ describe("source-first TypeScript authoring", () => {
         inputTypeRef: "Input",
         outputTypeRef: "Output",
         hasDefaultContext: false,
-        bindings: new Map([["BoundModel", Model("value.position.model.v1")]]),
+        bindings: new Map([["BoundModel", Model("value.position.model")]]),
         bindingDeclIds: new Map([["BoundModel", "decl.model.BoundModel"]]),
         source: {
           fileName: "value-position-agent.ts",
           text: `
             import { Agent, Model } from "@apxm/frontend";
-            const BoundModel = Model("value.position.model.v1");
+            const BoundModel = Model("value.position.model");
             const ValuePosition = Agent({
               name: "ValuePosition",
               use: { BoundModel },
@@ -380,13 +380,13 @@ describe("source-first TypeScript authoring", () => {
       inputTypeRef: "Input",
       outputTypeRef: "Output",
       hasDefaultContext: false,
-      bindings: new Map([["BoundModel", Model("negative.value.model.v1")]]),
+      bindings: new Map([["BoundModel", Model("negative.value.model")]]),
       bindingDeclIds: new Map([["BoundModel", "decl.model.BoundModel"]]),
       source: {
         fileName: "negative-value-agent.ts",
         text: `
           import { Agent, Model } from "@apxm/frontend";
-          const BoundModel = Model("negative.value.model.v1");
+          const BoundModel = Model("negative.value.model");
           const NegativeIntegerValue = Agent({
             name: "NegativeIntegerValue",
             async run(agent, input) {
@@ -407,13 +407,13 @@ describe("source-first TypeScript authoring", () => {
       inputTypeRef: "Input",
       outputTypeRef: "Output",
       hasDefaultContext: false,
-      bindings: new Map([["BoundModel", Model("multiple.operands.model.v1")]]),
+      bindings: new Map([["BoundModel", Model("multiple.operands.model")]]),
       bindingDeclIds: new Map([["BoundModel", "decl.model.BoundModel"]]),
       source: {
         fileName: "multiple-operands-agent.ts",
         text: `
           import { Agent, Model } from "@apxm/frontend";
-          const BoundModel = Model("multiple.operands.model.v1");
+          const BoundModel = Model("multiple.operands.model");
           const MultipleOperands = Agent({
             name: "MultipleOperands",
             async run(agent, input) {

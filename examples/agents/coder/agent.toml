@@ -10,7 +10,7 @@ domain = "software"
 id = "coder"
 kind = "agent"
 license = "MIT"
-schema_version = "apxm.agent.v1"
+schema_version = "apxm.agent"
 version = "0.1.0"
 
 [compile]
@@ -20,10 +20,6 @@ frontend = "typescript"
 [prompts]
 persona = "prompts/persona.md"
 safety = "prompts/safety.md"
-
-[runtime]
-memory_space = "stm"
-session_prefix = "coder"
 
 [source]
 type = "local"

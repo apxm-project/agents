@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.capability-outcome",
+  "title": "CapabilityOutcome",
+  "description": "The closed outcome set returned by one admitted Capability implementation.",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["outcome", "result"],
+      "properties": {
+        "outcome": {"const": "completed"},
+        "result": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["outcome", "message"],
+      "properties": {
+        "outcome": {"const": "failed"},
+        "message": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["outcome", "message"],
+      "properties": {
+        "outcome": {"const": "outcome_unknown"},
+        "message": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    }
+  ]
+}

@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.inference-driver-binding",
+  "title": "InferenceDriverBinding",
+  "description": "Exact, product-neutral inference driver/profile/binding admission for one model effect. Availability is explicit. There is no ranking, alias, first-available selection, silent substitution, or fallback target.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "driver_id",
+    "inference_profile_ref",
+    "model_target_ref",
+    "model_target_digest",
+    "model_deployment_ref",
+    "exact_port_binding_digest",
+    "port_contract_digest",
+    "composition_digest",
+    "availability",
+    "target_commitment"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "apxm.inference-driver-binding"
+    },
+    "driver_id": {
+      "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+    },
+    "inference_profile_ref": {
+      "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+    },
+    "model_target_ref": {
+      "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+    },
+    "model_target_digest": {
+      "$ref": "apxm.contract-common.v1#/$defs/Digest"
+    },
+    "model_deployment_ref": {
+      "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+    },
+    "exact_port_binding_digest": {
+      "$ref": "apxm.contract-common.v1#/$defs/Digest"
+    },
+    "port_contract_digest": {
+      "$ref": "apxm.contract-common.v1#/$defs/Digest"
+    },
+    "composition_digest": {
+      "$ref": "apxm.contract-common.v1#/$defs/Digest"
+    },
+    "availability": {
+      "type": "string",
+      "enum": [
+        "available",
+        "unavailable"
+      ]
+    },
+    "target_commitment": {
+      "$ref": "#/$defs/TargetCommitment"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "TargetCommitment": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "target_ref",
+        "target_digest",
+        "model_deployment_ref",
+        "exact_port_binding_digest",
+        "port_contract_digest",
+        "composition_digest",
+        "target_generation",
+        "deployment_generation",
+        "binding_generation",
+        "composition_generation",
+        "generation_cohort_digest",
+        "commit_digest",
+        "state"
+      ],
+      "properties": {
+        "schema_version": { "const": "apxm.inference-target-commitment" },
+        "target_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "target_digest": { "$ref": "apxm.contract-common.v1#/$defs/Digest" },
+        "model_deployment_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "exact_port_binding_digest": { "$ref": "apxm.contract-common.v1#/$defs/Digest" },
+        "port_contract_digest": { "$ref": "apxm.contract-common.v1#/$defs/Digest" },
+        "composition_digest": { "$ref": "apxm.contract-common.v1#/$defs/Digest" },
+        "target_generation": { "type": "integer", "minimum": 0 },
+        "deployment_generation": { "type": "integer", "minimum": 0 },
+        "binding_generation": { "type": "integer", "minimum": 0 },
+        "composition_generation": { "type": "integer", "minimum": 0 },
+        "generation_cohort_digest": { "$ref": "apxm.contract-common.v1#/$defs/Digest" },
+        "commit_digest": { "$ref": "apxm.contract-common.v1#/$defs/Digest" },
+        "state": {
+          "type": "string",
+          "enum": [
+            "committed",
+            "moving",
+            "stale",
+            "dirty",
+            "mixed_generation",
+            "ambiguous"
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

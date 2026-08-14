@@ -35,9 +35,9 @@ fn digest(c: char) -> String {
 
 fn request(scope: &str) -> ExecutionRequest {
     let air = serde_json::from_value::<AirModule>(json!({
-        "schema_version": "apxm.air.v2",
+        "schema_version": "apxm.air",
         "semantic_operations": [
-            {"node_id": "node.model", "op": "model.call", "parent_region_id": "loop.main", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.model.request", "type_ref": "ModelRequest"}], "result": {"value_id": "value.model.output", "type_ref": "ModelOutput"}},
+            {"node_id": "node.model", "op": "model.call", "parent_region_id": "loop.main", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.model.request", "type_ref": "ModelRequest"}], "result": {"value_id": "value.model.output", "type_ref": "ModelOutput"}},
             {"node_id": "node.await", "op": "await.event", "parent_region_id": "loop.main", "execution_order": 1, "operands": [{"slot": "event_ref", "value_id": "evt-atomic", "type_ref": "EventRef"}], "result": {"value_id": "value.event.output", "type_ref": "EventOutput"}},
             {"node_id": "node.capability", "op": "capability.invoke", "parent_region_id": "loop.main", "execution_order": 2, "operands": [{"slot": "capability_ref", "value_id": "cap.finish", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "value.capability.arguments", "type_ref": "CapabilityArguments"}], "result": {"value_id": "value.capability.output", "type_ref": "CapabilityOutput"}}
         ],
@@ -47,7 +47,7 @@ fn request(scope: &str) -> ExecutionRequest {
         ],
         "value_assemblies": [{"value_id": "value.capability.arguments", "expression": {"kind": "object", "fields": [{"name": "status", "value": {"kind": "string", "value": "completed"}}]}}],
         "context_flow": [],
-        "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": [{"region_id": "loop.main", "annotation": "structural_loop"}]}
+        "source_map": {"schema_version": "apxm.source-map", "source_language": "python", "node_spans": [], "region_annotations": [{"region_id": "loop.main", "annotation": "structural_loop"}]}
     }))
     .expect("canonical AIR");
     assert!(air.verify().is_accepted());
@@ -83,7 +83,7 @@ fn request(scope: &str) -> ExecutionRequest {
         hook_bindings: Vec::new(),
         model_admission: ModelBindingAdmission::new(ResolvedModelBinding::from_target_commitment(
             InferenceTargetCommitment::commit(
-                "model.target.v1",
+                "model.target",
                 digest('9'),
                 "deployment.default",
                 digest('a'),
@@ -257,38 +257,38 @@ fn ports(commit: Arc<Commit>) -> ExecutionPorts {
     let spec = PortBundleSpec::new(vec![
         (
             PortSlot::ExecutionCommit,
-            contract("apxm.execution-commit.v1"),
+            contract("apxm.execution-commit"),
         ),
         (
             PortSlot::ModelInference,
-            contract("apxm.model-inference.v1"),
+            contract("apxm.model-inference"),
         ),
         (
             PortSlot::Capability,
-            contract("apxm.capability-invocation.v1"),
+            contract("apxm.capability-invocation"),
         ),
         (
             PortSlot::ExternalAgentCapability,
-            contract("apxm.external-agent.v1"),
+            contract("apxm.external-agent"),
         ),
     ]);
     let kernel_bundle = PortBundle::construct(
         &spec,
         vec![
             (
-                binding(PortSlot::ExecutionCommit, "apxm.execution-commit.v1"),
+                binding(PortSlot::ExecutionCommit, "apxm.execution-commit"),
                 PortImplementation::ExecutionCommit(commit),
             ),
             (
-                binding(PortSlot::ModelInference, "apxm.model-inference.v1"),
+                binding(PortSlot::ModelInference, "apxm.model-inference"),
                 PortImplementation::ModelInference(Arc::new(Model)),
             ),
             (
-                binding(PortSlot::Capability, "apxm.capability-invocation.v1"),
+                binding(PortSlot::Capability, "apxm.capability-invocation"),
                 PortImplementation::Capability(Arc::new(Capability)),
             ),
             (
-                binding(PortSlot::ExternalAgentCapability, "apxm.external-agent.v1"),
+                binding(PortSlot::ExternalAgentCapability, "apxm.external-agent"),
                 PortImplementation::ExternalAgentCapability(Arc::new(External)),
             ),
         ],
@@ -296,11 +296,11 @@ fn ports(commit: Arc<Commit>) -> ExecutionPorts {
     .expect("test ports satisfy the admitted bundle");
     let bundle = ExecutionPortBundle::construct(
         Arc::new(kernel_bundle),
-        contract("apxm.durable-event.v1"),
-        binding(PortSlot::DurableEvent, "apxm.durable-event.v1"),
+        contract("apxm.durable-event"),
+        binding(PortSlot::DurableEvent, "apxm.durable-event"),
         Arc::new(Events),
-        contract("apxm.program-composition.v1"),
-        binding(PortSlot::ProgramComposition, "apxm.program-composition.v1"),
+        contract("apxm.program-composition"),
+        binding(PortSlot::ProgramComposition, "apxm.program-composition"),
         Arc::new(Composition),
     )
     .expect("driver ports satisfy their exact admitted bindings");
@@ -447,14 +447,14 @@ async fn structural_yield_binds_delivered_input_without_overwriting_context() {
     let commit = Arc::new(Commit::default());
     let mut yielded = request("instance.yield-input");
     yielded.air = serde_json::from_value(json!({
-        "schema_version": "apxm.air.v2",
+        "schema_version": "apxm.air",
         "semantic_operations": [{
             "node_id": "node.after-yield",
             "op": "model.call",
             "parent_region_id": "region.root",
             "execution_order": 1,
             "operands": [
-                {"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"},
+                {"slot": "model_ref", "value_id": "model.target", "type_ref": "ModelTargetRef"},
                 {"slot": "request", "value_id": "value.resume.input", "type_ref": "ConversationInput"}
             ],
             "result": {"value_id": "value.model.output", "type_ref": "ModelOutput"}
@@ -465,7 +465,7 @@ async fn structural_yield_binds_delivered_input_without_overwriting_context() {
             {"region_id": "return.done", "kind": "return", "parent_region_id": "region.root", "execution_order": 2}
         ],
         "context_flow": [],
-        "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
+        "source_map": {"schema_version": "apxm.source-map", "source_language": "python", "node_spans": [], "region_annotations": []}
     }))
     .expect("yield-resume AIR");
     yielded.initial_values.clear();
@@ -514,7 +514,7 @@ async fn branch_decision_survives_an_await_inside_the_selected_arm() {
     let commit = Arc::new(Commit::default());
     let mut branched = request("instance.branch-await");
     branched.air = serde_json::from_value(json!({
-        "schema_version": "apxm.air.v2",
+        "schema_version": "apxm.air",
         "semantic_operations": [{
             "node_id": "node.branch.await",
             "op": "await.event",
@@ -532,7 +532,7 @@ async fn branch_decision_survives_an_await_inside_the_selected_arm() {
             {"region_id": "return.done", "kind": "return", "parent_region_id": "region.root", "execution_order": 1}
         ],
         "context_flow": [],
-        "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
+        "source_map": {"schema_version": "apxm.source-map", "source_language": "python", "node_spans": [], "region_annotations": []}
     }))
     .expect("branch-await AIR");
     branched.initial_values = BTreeMap::from([("value.condition".into(), json!(true))]);
@@ -568,7 +568,7 @@ async fn resumed_input_cannot_become_a_capability_argument() {
     let commit = Arc::new(Commit::default());
     let mut yielded = request("instance.resume-capability-input");
     yielded.air = serde_json::from_value(json!({
-        "schema_version": "apxm.air.v2",
+        "schema_version": "apxm.air",
         "semantic_operations": [{
             "node_id": "node.capability",
             "op": "capability.invoke",
@@ -586,7 +586,7 @@ async fn resumed_input_cannot_become_a_capability_argument() {
             {"region_id": "return.done", "kind": "return", "parent_region_id": "region.root", "execution_order": 2}
         ],
         "context_flow": [],
-        "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
+        "source_map": {"schema_version": "apxm.source-map", "source_language": "python", "node_spans": [], "region_annotations": []}
     }))
     .expect("resume capability AIR");
     yielded.initial_values.clear();
@@ -657,9 +657,9 @@ async fn nested_loop_park_restores_exact_stack_without_duplicate_work() {
     let commit = Arc::new(Commit::default());
     let mut nested = request("instance.nested");
     nested.air = serde_json::from_value(json!({
-        "schema_version": "apxm.air.v2",
+        "schema_version": "apxm.air",
         "semantic_operations": [
-            {"node_id": "node.outer.before", "op": "model.call", "parent_region_id": "loop.outer", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.outer.request", "type_ref": "ModelRequest"}], "result": {"value_id": "value.outer.output", "type_ref": "ModelOutput"}},
+            {"node_id": "node.outer.before", "op": "model.call", "parent_region_id": "loop.outer", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.outer.request", "type_ref": "ModelRequest"}], "result": {"value_id": "value.outer.output", "type_ref": "ModelOutput"}},
             {"node_id": "node.inner.await", "op": "await.event", "parent_region_id": "loop.inner", "execution_order": 0, "operands": [{"slot": "event_ref", "value_id": "evt-atomic", "type_ref": "EventRef"}], "result": {"value_id": "value.event.output", "type_ref": "EventOutput"}},
             {"node_id": "node.outer.after", "op": "capability.invoke", "parent_region_id": "loop.outer", "execution_order": 2, "operands": [{"slot": "capability_ref", "value_id": "cap.finish", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "value.capability.arguments", "type_ref": "CapabilityArguments"}], "result": {"value_id": "value.capability.output", "type_ref": "CapabilityOutput"}}
         ],
@@ -671,7 +671,7 @@ async fn nested_loop_park_restores_exact_stack_without_duplicate_work() {
         "value_assemblies": [{"value_id": "value.capability.arguments", "expression": {"kind": "object", "fields": [{"name": "status", "value": {"kind": "string", "value": "completed"}}]}}],
         "context_flow": [],
         "source_map": {
-            "schema_version": "apxm.source-map.v1",
+            "schema_version": "apxm.source-map",
             "source_language": "python",
             "node_spans": [],
             "region_annotations": [

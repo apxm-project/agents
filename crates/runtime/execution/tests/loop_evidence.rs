@@ -50,7 +50,7 @@ fn write_set() -> AtomicWriteSet {
 fn admission() -> ModelBindingAdmission {
     ModelBindingAdmission::new(ResolvedModelBinding::from_target_commitment(
         InferenceTargetCommitment::commit(
-            "model.target.v1",
+            "model.target",
             digest('9'),
             "deployment.default",
             digest('a'),
@@ -92,7 +92,7 @@ fn decode_air(value: Value) -> AirModule {
 fn example_artifact(artifact: &str) -> (AirModule, Vec<HookBinding>) {
     let value: Value = serde_json::from_str(artifact).expect("example-built executable artifact");
     assert_eq!(
-        value["schema_version"], "apxm.executable-artifact.v1",
+        value["schema_version"], "apxm.executable-artifact",
         "runtime proof consumes the immutable artifact, not handwritten AIR",
     );
     (
@@ -103,13 +103,13 @@ fn example_artifact(artifact: &str) -> (AirModule, Vec<HookBinding>) {
 
 fn conversational_python_example() -> (AirModule, Vec<HookBinding>) {
     example_artifact(include_str!(
-        "../../../machine/program/tests/fixtures/example-artifacts/conversational-python.v2.json"
+        "../../../machine/program/tests/fixtures/example-artifacts/conversational-python.json"
     ))
 }
 
 fn conversational_typescript_example() -> (AirModule, Vec<HookBinding>) {
     example_artifact(include_str!(
-        "../../../machine/program/tests/fixtures/example-artifacts/conversational-typescript.v2.json"
+        "../../../machine/program/tests/fixtures/example-artifacts/conversational-typescript.json"
     ))
 }
 
@@ -182,7 +182,7 @@ fn request(air: AirModule, commit_id: &str) -> ExecutionRequest {
 
 fn source_map(loop_ids: &[&str]) -> Value {
     json!({
-        "schema_version": "apxm.source-map.v1",
+        "schema_version": "apxm.source-map",
         "source_language": "python",
         "node_spans": [],
         "region_annotations": loop_ids
@@ -194,14 +194,14 @@ fn source_map(loop_ids: &[&str]) -> Value {
 
 fn nested_sibling_air() -> AirModule {
     decode_air(json!({
-        "schema_version": "apxm.air.v2",
+        "schema_version": "apxm.air",
         "semantic_operations": [
             {
                 "node_id": "node.outer.before",
                 "op": "model.call",
                 "parent_region_id": "loop.outer",
                 "execution_order": 0,
-                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.outer.before.request", "type_ref": "ModelRequest"}],
+                "operands": [{"slot": "model_ref", "value_id": "model.target", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.outer.before.request", "type_ref": "ModelRequest"}],
                 "result": {"value_id": "value.outer.before.output", "type_ref": "ModelOutput"}
             },
             {
@@ -209,7 +209,7 @@ fn nested_sibling_air() -> AirModule {
                 "op": "model.call",
                 "parent_region_id": "loop.inner",
                 "execution_order": 0,
-                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.inner.request", "type_ref": "ModelRequest"}],
+                "operands": [{"slot": "model_ref", "value_id": "model.target", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.inner.request", "type_ref": "ModelRequest"}],
                 "result": {"value_id": "value.inner.output", "type_ref": "ModelOutput"}
             },
             {
@@ -217,7 +217,7 @@ fn nested_sibling_air() -> AirModule {
                 "op": "model.call",
                 "parent_region_id": "loop.outer",
                 "execution_order": 2,
-                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.outer.after.request", "type_ref": "ModelRequest"}],
+                "operands": [{"slot": "model_ref", "value_id": "model.target", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.outer.after.request", "type_ref": "ModelRequest"}],
                 "result": {"value_id": "value.outer.after.output", "type_ref": "ModelOutput"}
             },
             {
@@ -225,7 +225,7 @@ fn nested_sibling_air() -> AirModule {
                 "op": "model.call",
                 "parent_region_id": "loop.sibling",
                 "execution_order": 0,
-                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.sibling.request", "type_ref": "ModelRequest"}],
+                "operands": [{"slot": "model_ref", "value_id": "model.target", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.sibling.request", "type_ref": "ModelRequest"}],
                 "result": {"value_id": "value.sibling.output", "type_ref": "ModelOutput"}
             }
         ],
@@ -257,14 +257,14 @@ fn nested_sibling_air() -> AirModule {
 
 fn two_node_loop_air() -> AirModule {
     decode_air(json!({
-        "schema_version": "apxm.air.v2",
+        "schema_version": "apxm.air",
         "semantic_operations": [
             {
                 "node_id": "node.first",
                 "op": "model.call",
                 "parent_region_id": "loop.main",
                 "execution_order": 0,
-                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.first.request", "type_ref": "ModelRequest"}],
+                "operands": [{"slot": "model_ref", "value_id": "model.target", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.first.request", "type_ref": "ModelRequest"}],
                 "result": {"value_id": "value.first.output", "type_ref": "ModelOutput"}
             },
             {
@@ -272,7 +272,7 @@ fn two_node_loop_air() -> AirModule {
                 "op": "model.call",
                 "parent_region_id": "loop.main",
                 "execution_order": 1,
-                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.second.request", "type_ref": "ModelRequest"}],
+                "operands": [{"slot": "model_ref", "value_id": "model.target", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.second.request", "type_ref": "ModelRequest"}],
                 "result": {"value_id": "value.second.output", "type_ref": "ModelOutput"}
             }
         ],
@@ -318,19 +318,19 @@ fn interrupted_loop_air(interrupt_kind: &str) -> AirModule {
             "op": "model.call",
             "parent_region_id": "loop.main",
             "execution_order": 2,
-            "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.after.request", "type_ref": "ModelRequest"}],
+            "operands": [{"slot": "model_ref", "value_id": "model.target", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.after.request", "type_ref": "ModelRequest"}],
             "result": {"value_id": "value.after.output", "type_ref": "ModelOutput"}
         })
     };
     decode_air(json!({
-        "schema_version": "apxm.air.v2",
+        "schema_version": "apxm.air",
         "semantic_operations": [
             {
                 "node_id": "node.before",
                 "op": "model.call",
                 "parent_region_id": "loop.main",
                 "execution_order": 0,
-                "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.before.request", "type_ref": "ModelRequest"}],
+                "operands": [{"slot": "model_ref", "value_id": "model.target", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.before.request", "type_ref": "ModelRequest"}],
                 "result": {"value_id": "value.before.output", "type_ref": "ModelOutput"}
             },
             operation
@@ -557,38 +557,38 @@ fn ports_with_hooks(
     let spec = PortBundleSpec::new(vec![
         (
             PortSlot::ExecutionCommit,
-            contract("apxm.execution-commit.v1"),
+            contract("apxm.execution-commit"),
         ),
         (
             PortSlot::ModelInference,
-            contract("apxm.model-inference.v1"),
+            contract("apxm.model-inference"),
         ),
         (
             PortSlot::Capability,
-            contract("apxm.capability-invocation.v1"),
+            contract("apxm.capability-invocation"),
         ),
         (
             PortSlot::ExternalAgentCapability,
-            contract("apxm.external-agent.v1"),
+            contract("apxm.external-agent"),
         ),
     ]);
     let kernel_bundle = PortBundle::construct(
         &spec,
         vec![
             (
-                binding(PortSlot::ExecutionCommit, "apxm.execution-commit.v1"),
+                binding(PortSlot::ExecutionCommit, "apxm.execution-commit"),
                 PortImplementation::ExecutionCommit(commit),
             ),
             (
-                binding(PortSlot::ModelInference, "apxm.model-inference.v1"),
+                binding(PortSlot::ModelInference, "apxm.model-inference"),
                 PortImplementation::ModelInference(model),
             ),
             (
-                binding(PortSlot::Capability, "apxm.capability-invocation.v1"),
+                binding(PortSlot::Capability, "apxm.capability-invocation"),
                 PortImplementation::Capability(Arc::new(Capability)),
             ),
             (
-                binding(PortSlot::ExternalAgentCapability, "apxm.external-agent.v1"),
+                binding(PortSlot::ExternalAgentCapability, "apxm.external-agent"),
                 PortImplementation::ExternalAgentCapability(Arc::new(ExternalAgent)),
             ),
         ],
@@ -596,11 +596,11 @@ fn ports_with_hooks(
     .expect("test ports satisfy the admitted bundle");
     let bundle = ExecutionPortBundle::construct(
         Arc::new(kernel_bundle),
-        contract("apxm.durable-event.v1"),
-        binding(PortSlot::DurableEvent, "apxm.durable-event.v1"),
+        contract("apxm.durable-event"),
+        binding(PortSlot::DurableEvent, "apxm.durable-event"),
         Arc::new(Events { park: park_event }),
-        contract("apxm.program-composition.v1"),
-        binding(PortSlot::ProgramComposition, "apxm.program-composition.v1"),
+        contract("apxm.program-composition"),
+        binding(PortSlot::ProgramComposition, "apxm.program-composition"),
         Arc::new(Composition),
     )
     .expect("driver ports satisfy their exact admitted bindings");

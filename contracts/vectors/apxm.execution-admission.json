@@ -1,0 +1,122 @@
+[
+  {
+    "name": "valid_signed_admission",
+    "expected_valid": true,
+    "input": {
+      "schema_version": "apxm.execution-admission",
+      "admission_ref": "admission.1",
+      "admission_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "artifact_ref": "artifact.1",
+      "artifact_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "invocation_ref": "invocation.1",
+      "context_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "resource_ceilings": {
+        "max_wall_ms": 60000,
+        "max_memory_bytes": 67108864,
+        "max_effect_bytes": 1048576
+      },
+      "port_bindings": [
+        {
+          "slot": "execution_commit",
+          "port_contract_schema_id": "apxm.execution-commit",
+          "port_contract_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "binding_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "proof_digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        },
+        {
+          "slot": "confinement",
+          "port_contract_schema_id": "apxm.confinement",
+          "port_contract_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "binding_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "proof_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+        }
+      ],
+      "confinement": {
+        "confinement_type": "NATIVE-SANDBOX",
+        "sandbox_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+        "policy_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+      },
+      "expires_at_ms": 4102444800000,
+      "nonce": "nonce.1",
+      "issuer": "issuer.1",
+      "audience": "runtime.1",
+      "caller_correlations": {
+        "trace.ref": "opaque-correlation-1"
+      },
+      "signature": {
+        "algorithm": "ed25519",
+        "key_ref": "issuer-key.1",
+        "signature": "dGVzdA=="
+      }
+    }
+  },
+  {
+    "name": "rejects_unknown_field",
+    "expected_valid": false,
+    "input": {
+      "schema_version": "apxm.execution-admission",
+      "admission_ref": "admission.1",
+      "admission_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "artifact_ref": "artifact.1",
+      "artifact_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "invocation_ref": "invocation.1",
+      "context_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "resource_ceilings": {
+        "max_wall_ms": 60000,
+        "max_memory_bytes": 67108864,
+        "max_effect_bytes": 1048576
+      },
+      "port_bindings": [],
+      "confinement": {
+        "confinement_type": "NATIVE-SANDBOX",
+        "sandbox_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+        "policy_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+      },
+      "expires_at_ms": 4102444800000,
+      "nonce": "nonce.1",
+      "issuer": "issuer.1",
+      "audience": "runtime.1",
+      "caller_correlations": {},
+      "signature": {
+        "algorithm": "ed25519",
+        "key_ref": "issuer-key.1",
+        "signature": "dGVzdA=="
+      },
+      "fallback_binding": "best-available"
+    }
+  },
+  {
+    "name": "rejects_unconfined_type",
+    "expected_valid": false,
+    "input": {
+      "schema_version": "apxm.execution-admission",
+      "admission_ref": "admission.1",
+      "admission_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "artifact_ref": "artifact.1",
+      "artifact_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "invocation_ref": "invocation.1",
+      "context_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "resource_ceilings": {
+        "max_wall_ms": 60000,
+        "max_memory_bytes": 67108864,
+        "max_effect_bytes": 1048576
+      },
+      "port_bindings": [],
+      "confinement": {
+        "confinement_type": "unconfined",
+        "sandbox_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+        "policy_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+      },
+      "expires_at_ms": 4102444800000,
+      "nonce": "nonce.1",
+      "issuer": "issuer.1",
+      "audience": "runtime.1",
+      "caller_correlations": {},
+      "signature": {
+        "algorithm": "ed25519",
+        "key_ref": "issuer-key.1",
+        "signature": "dGVzdA=="
+      }
+    }
+  }
+]

@@ -32,7 +32,7 @@ use crate::confinement::{
 };
 
 /// Frozen schema id for the product-neutral Execution Admission envelope.
-pub const EXECUTION_ADMISSION_SCHEMA: &str = "apxm.execution-admission.v1";
+pub const EXECUTION_ADMISSION_SCHEMA: &str = "apxm.execution-admission";
 
 /// Frozen schema id for the product-neutral host-to-runtime invocation record.
 ///
@@ -40,16 +40,16 @@ pub const EXECUTION_ADMISSION_SCHEMA: &str = "apxm.execution-admission.v1";
 /// composition root. It is verified against the exact artifact, release,
 /// provenance, Port bindings, resource ceilings, and confinement descriptors
 /// before the immutable runtime bundle is constructed.
-pub const INVOCATION_ADMISSION_SCHEMA: &str = "apxm.invocation-admission.v1";
+pub const INVOCATION_ADMISSION_SCHEMA: &str = "apxm.invocation-admission";
 
 /// Closed Port Contract schema IDs accepted by the runtime admission boundary.
-pub const EXECUTION_COMMIT_PORT_SCHEMA: &str = "apxm.execution-commit.v1";
-pub const CONFINEMENT_PORT_SCHEMA: &str = "apxm.confinement.v1";
-pub const MODEL_INFERENCE_PORT_SCHEMA: &str = "apxm.model-inference.v1";
-pub const CAPABILITY_PORT_SCHEMA: &str = "apxm.capability-invocation.v1";
-pub const EXTERNAL_AGENT_PORT_SCHEMA: &str = "apxm.external-agent.v1";
-pub const DURABLE_EVENT_PORT_SCHEMA: &str = "apxm.durable-event.v1";
-pub const PROGRAM_COMPOSITION_PORT_SCHEMA: &str = "apxm.program-composition.v1";
+pub const EXECUTION_COMMIT_PORT_SCHEMA: &str = "apxm.execution-commit";
+pub const CONFINEMENT_PORT_SCHEMA: &str = "apxm.confinement";
+pub const MODEL_INFERENCE_PORT_SCHEMA: &str = "apxm.model-inference";
+pub const CAPABILITY_PORT_SCHEMA: &str = "apxm.capability-invocation";
+pub const EXTERNAL_AGENT_PORT_SCHEMA: &str = "apxm.external-agent";
+pub const DURABLE_EVENT_PORT_SCHEMA: &str = "apxm.durable-event";
+pub const PROGRAM_COMPOSITION_PORT_SCHEMA: &str = "apxm.program-composition";
 
 /// Exact product-neutral authority supplied by an APXM host transport.
 ///

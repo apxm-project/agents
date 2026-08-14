@@ -8,10 +8,10 @@ import sys
 from apxm_program import Agent, Capability, Context, Event, Hook, Model, TaskGroup, Tool
 
 
-ParityModel = Model[object, object]("parity.model.v1")
-ParityTool = Tool[object, object]("parity.tool.v1")
-ParityCapability = Capability[object, object]("parity.capability.v1")
-ParityEvent = Event("parity.event.v1")
+ParityModel = Model[object, object]("parity.model")
+ParityTool = Tool[object, object]("parity.tool")
+ParityCapability = Capability[object, object]("parity.capability")
+ParityEvent = Event("parity.event")
 
 
 @Context

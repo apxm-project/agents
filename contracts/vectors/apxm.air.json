@@ -1,0 +1,188 @@
+[
+  {
+    "name": "valid-air-five-semantic-ops-and-structural-ir",
+    "input": {
+      "schema_version": "apxm.air",
+      "semantic_operations": [
+        {
+          "node_id": "node.model.1",
+          "op": "model.call",
+          "parent_region_id": "region.loop.1",
+          "execution_order": 0,
+          "operands": [
+            { "slot": "model_ref", "value_id": "value.model.ref", "type_ref": "ModelRef" },
+            { "slot": "request", "value_id": "value.request", "type_ref": "ModelRequest" }
+          ],
+          "result": { "value_id": "value.model.out", "type_ref": "ModelResponse" }
+        },
+        {
+          "node_id": "node.cap.1",
+          "op": "capability.invoke",
+          "parent_region_id": "region.loop.1",
+          "execution_order": 1,
+          "operands": [
+            { "slot": "capability_ref", "value_id": "value.cap.ref", "type_ref": "CapabilityRef" },
+            { "slot": "arguments", "value_id": "value.model.out", "type_ref": "SearchArguments" }
+          ],
+          "result": { "value_id": "value.cap.out", "type_ref": "SearchResult" }
+        },
+        {
+          "node_id": "node.new.1",
+          "op": "program.new",
+          "parent_region_id": "region.loop.1",
+          "execution_order": 2,
+          "operands": [
+            { "slot": "program_ref", "value_id": "value.program.ref", "type_ref": "ProgramRef" }
+          ],
+          "result": { "value_id": "value.instance", "type_ref": "ProgramInstanceRef" }
+        },
+        {
+          "node_id": "node.invoke.1",
+          "op": "program.invoke",
+          "parent_region_id": "region.loop.1",
+          "execution_order": 3,
+          "operands": [
+            { "slot": "receiver", "value_id": "value.instance", "type_ref": "ProgramInstanceRef" },
+            { "slot": "input", "value_id": "value.child.input", "type_ref": "ChildInput" }
+          ],
+          "result": { "value_id": "value.child.output", "type_ref": "ChildOutput" }
+        },
+        {
+          "node_id": "node.await.1",
+          "op": "await.event",
+          "parent_region_id": "region.loop.1",
+          "execution_order": 4,
+          "operands": [
+            { "slot": "event_ref", "value_id": "value.event.ref", "type_ref": "EventRef" }
+          ],
+          "result": { "value_id": "value.event.output", "type_ref": "EventOutput" }
+        }
+      ],
+      "structural_ir": [
+        {
+          "region_id": "region.root",
+          "kind": "region",
+          "execution_order": 0,
+          "block_arguments": [
+            { "value_id": "value.request", "type_ref": "ModelRequest" },
+            { "value_id": "value.child.input", "type_ref": "ChildInput" }
+          ]
+        },
+        {
+          "region_id": "region.loop.1",
+          "kind": "ais.loop",
+          "parent_region_id": "region.root",
+          "execution_order": 0,
+          "block_arguments": [
+            { "value_id": "value.carried.ctx", "type_ref": "SpecialistContext" }
+          ],
+          "operands": [
+            { "slot": "initial", "value_id": "value.carried.ctx", "type_ref": "SpecialistContext" },
+            { "slot": "carried", "value_id": "value.carried.ctx", "type_ref": "SpecialistContext" }
+          ]
+        },
+        {
+          "region_id": "region.yield.1",
+          "kind": "yield",
+          "parent_region_id": "region.root",
+          "execution_order": 1
+        },
+        {
+          "region_id": "region.return.1",
+          "kind": "return",
+          "parent_region_id": "region.root",
+          "execution_order": 2
+        }
+      ],
+      "context_flow": [],
+      "source_map": {
+        "schema_version": "apxm.source-map",
+        "source_language": "python",
+        "node_spans": [],
+        "region_annotations": [
+          {
+            "region_id": "region.loop.1",
+            "annotation": "structural_loop"
+          }
+        ]
+      }
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "structural-op-as-public-semantic-op-rejected",
+    "input": {
+      "schema_version": "apxm.air",
+      "semantic_operations": [
+        {
+          "node_id": "node.loop.1",
+          "op": "loop"
+        }
+      ],
+      "structural_ir": [],
+      "source_map": {
+        "schema_version": "apxm.source-map",
+        "source_language": "python",
+        "node_spans": [],
+        "region_annotations": []
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "yield-as-public-semantic-op-rejected",
+    "input": {
+      "schema_version": "apxm.air",
+      "semantic_operations": [
+        {
+          "node_id": "node.yield.1",
+          "op": "yield"
+        }
+      ],
+      "structural_ir": [],
+      "source_map": {
+        "schema_version": "apxm.source-map",
+        "source_language": "python",
+        "node_spans": [],
+        "region_annotations": []
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "serialized-nop-structural-node-rejected",
+    "input": {
+      "schema_version": "apxm.air",
+      "semantic_operations": [],
+      "structural_ir": [
+        {
+          "region_id": "region.nop.1",
+          "kind": "nop"
+        }
+      ],
+      "source_map": {
+        "schema_version": "apxm.source-map",
+        "source_language": "python",
+        "node_spans": [],
+        "region_annotations": []
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "incompatible-air-v1-schema-version-rejected",
+    "input": {
+      "schema_version": "apxm.air.v1",
+      "semantic_operations": [],
+      "structural_ir": [],
+      "context_flow": [],
+      "source_map": {
+        "schema_version": "apxm.source-map",
+        "source_language": "python",
+        "node_spans": [],
+        "region_annotations": []
+      }
+    },
+    "expected_valid": false
+  }
+]

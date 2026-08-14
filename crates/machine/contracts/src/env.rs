@@ -1,13 +1,9 @@
 //! Process-level helpers for reading the user's environment.
 //!
-//! Centralizes lookups (HOME, APXM_HOME, APXM_SERVER_URL) that were previously
-//! open-coded across handlers and tools, with subtle drift each time.
+//! Centralizes lookups (HOME, APXM_HOME) that were previously open-coded
+//! across handlers and tools, with subtle drift each time.
 
-use crate::constants::defaults::DEFAULT_SERVER_URL;
 use std::path::PathBuf;
-
-/// Environment variable name for the APXM server URL override.
-pub const APXM_SERVER_URL: &str = "APXM_SERVER_URL";
 
 /// Environment variable name overriding the global APXM home directory.
 pub const APXM_HOME: &str = "APXM_HOME";
@@ -53,10 +49,4 @@ pub fn state_home() -> PathBuf {
         return PathBuf::from(path);
     }
     apxm_home()
-}
-
-/// Resolve the APXM server URL, honoring `APXM_SERVER_URL` and falling back to
-/// the canonical default (`http://127.0.0.1:18800`).
-pub fn server_url() -> String {
-    std::env::var(APXM_SERVER_URL).unwrap_or_else(|_| DEFAULT_SERVER_URL.to_string())
 }

@@ -11,7 +11,7 @@ use crate::target::{InferenceTargetCommitment, TargetCommitmentError};
 use apxm_program::grammar::is_digest;
 
 /// Schema identity for the frozen driver-binding contract.
-pub const INFERENCE_DRIVER_BINDING_SCHEMA: &str = "apxm.inference-driver-binding.v1";
+pub const INFERENCE_DRIVER_BINDING_SCHEMA: &str = "apxm.inference-driver-binding";
 
 /// Explicit availability of one exact inference driver binding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

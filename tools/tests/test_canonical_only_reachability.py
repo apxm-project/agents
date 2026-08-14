@@ -22,6 +22,11 @@ RETIRED_FILES = (
     Path("crates/compiler/frontend/python/apxm_program/gao.py"),
     Path("crates/compiler/frontend/native/typescript/js/conversational.ts"),
     Path("crates/compiler/frontend/native/typescript/js/gao.ts"),
+    # ADR-0019: no Agents crate holds a durable timer, wall-clock firing
+    # schedule, persisted schedule lifecycle, or process-global wake bridge.
+    Path("crates/runtime/capability/src/builtins/schedule.rs"),
+    Path("crates/runtime/capability/src/builtins/store.rs"),
+    Path("crates/runtime/capability-iface/src/host.rs"),
 )
 PACKAGE_HANDLER_ROOTS = (
     Path("crates/machine/ais/src"),
@@ -50,8 +55,8 @@ FORBIDDEN_NAMED_SEMANTICS = (
     "conversational_loop",
 )
 EXAMPLE_RUNTIME_PROOF_FIXTURES = (
-    Path("crates/machine/program/tests/fixtures/example-artifacts/conversational-python.v2.json"),
-    Path("crates/machine/program/tests/fixtures/example-artifacts/conversational-typescript.v2.json"),
+    Path("crates/machine/program/tests/fixtures/example-artifacts/conversational-python.json"),
+    Path("crates/machine/program/tests/fixtures/example-artifacts/conversational-typescript.json"),
 )
 RETIRED_OPERATION_MARKERS = (
     "prototype_retired",
@@ -135,7 +140,7 @@ class CanonicalOnlyReachabilityTests(unittest.TestCase):
             fixture = REPOSITORY_ROOT / path
             self.assertTrue(fixture.is_file(), f"missing example runtime-proof fixture: {path}")
             text = fixture.read_text()
-            self.assertIn('"schema_version":"apxm.executable-artifact.v1"', text)
+            self.assertIn('"schema_version":"apxm.executable-artifact"', text)
             self.assertIn('"kind":"ais.loop"', text)
             self.assertNotIn("conversational_loop", text)
 
@@ -191,7 +196,7 @@ class CanonicalOnlyReachabilityTests(unittest.TestCase):
 
     def test_no_named_product_semantic_path_exists(self) -> None:
         op_spec = (
-            REPOSITORY_ROOT / "crates/machine/ais/generated/op-spec.v1.json"
+            REPOSITORY_ROOT / "crates/machine/ais/generated/op-spec.json"
         ).read_text()
         for marker in ('"gao"', '"conversation"', '"turn"'):
             self.assertNotIn(marker, op_spec.lower())

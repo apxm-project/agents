@@ -1,4 +1,4 @@
-// AUTO-GENERATED from apxm.core-event.v1; DO NOT EDIT.
+// AUTO-GENERATED from apxm.core-event; DO NOT EDIT.
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

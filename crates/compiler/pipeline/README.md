@@ -6,9 +6,9 @@ not own product routing, deployment, prompt optimization, or a second runtime.
 ## Pipeline
 
 ```text
-FrontendGraph v2
+FrontendGraph
   -> Rust verification and lowering
-  -> AIR v2
+  -> AIR
   -> deterministic registered AIS MLIR
   -> verified immutable artifact
 ```

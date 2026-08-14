@@ -12,7 +12,7 @@ use crate::identity::{ModelDeploymentRef, ModelTargetRef, ResolvedModelBinding};
 use apxm_program::grammar::is_digest;
 
 /// Schema identity for the driver-owned target commitment.
-pub const INFERENCE_TARGET_COMMITMENT_SCHEMA: &str = "apxm.inference-target-commitment.v1";
+pub const INFERENCE_TARGET_COMMITMENT_SCHEMA: &str = "apxm.inference-target-commitment";
 
 /// Closed state vocabulary for a target snapshot presented to admission.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

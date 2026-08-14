@@ -7,7 +7,7 @@
 //!
 //! # Overview
 //!
-//! The compiler lowers canonical `apxm.air.v2` modules to the AIS MLIR
+//! The compiler lowers canonical `apxm.air` modules to the AIS MLIR
 //! dialect text through the C++ FFI bridge, then verifies the result.
 //!
 //! # Components

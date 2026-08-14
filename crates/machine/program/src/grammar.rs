@@ -20,18 +20,25 @@ pub fn is_identifier(value: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '/' | '@' | '-'))
 }
 
-/// `^apxm\.[a-z0-9]+(?:-[a-z0-9]+)*\.v[0-9]+$`
+/// `^apxm\.[a-z0-9]+(?:-[a-z0-9]+)*(?:\.v[0-9]+)?$`
+///
+/// Agents-owned ids carry no version suffix. The suffix stays optional because
+/// ids owned by another party (the Contracts owner's `apxm.contract-common.v1`,
+/// the vLLM owner's `apxm.vllm-inference.v1`) keep theirs, and this grammar
+/// validates `required_port_contract.schema_id` for both.
 #[must_use]
 pub fn is_schema_id(value: &str) -> bool {
     let Some(rest) = value.strip_prefix("apxm.") else {
         return false;
     };
-    let Some((body, version)) = rest.rsplit_once(".v") else {
-        return false;
+    let body = match rest.rsplit_once(".v") {
+        Some((body, version))
+            if !version.is_empty() && version.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            body
+        }
+        _ => rest,
     };
-    if version.is_empty() || !version.bytes().all(|b| b.is_ascii_digit()) {
-        return false;
-    }
     if body.is_empty() {
         return false;
     }
@@ -71,8 +78,11 @@ mod tests {
 
     #[test]
     fn schema_id_grammar() {
-        assert!(is_schema_id("apxm.air.v2"));
-        assert!(is_schema_id("apxm.model-context-envelope.v1"));
+        assert!(is_schema_id("apxm.air"));
+        assert!(is_schema_id("apxm.model-context-envelope"));
+        // Foreign owners keep their version suffix; the grammar still admits it.
+        assert!(is_schema_id("apxm.contract-common.v1"));
+        assert!(is_schema_id("apxm.vllm-inference.v1"));
         assert!(!is_schema_id("apxm.Air.v1"));
         assert!(!is_schema_id("apxm.a.b.v1"));
         assert!(!is_schema_id("air.v1"));

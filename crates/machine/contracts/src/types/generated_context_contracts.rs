@@ -150,7 +150,7 @@ pub struct SelectedSkillContext {
     pub dependency_digests: Vec<String>,
 }
 
-pub const ACTIVE_SKILL_CONTEXT_SCHEMA_VERSION: &str = "apxm.active-skill-context.v1";
+pub const ACTIVE_SKILL_CONTEXT_SCHEMA_VERSION: &str = "apxm.active-skill-context";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -213,7 +213,7 @@ pub struct RoutingConstraints {
     pub strict: Option<bool>,
 }
 
-pub const AGENT_INVOCATION_ENVELOPE_SCHEMA_VERSION: &str = "apxm.agent-invocation-envelope.v1";
+pub const AGENT_INVOCATION_ENVELOPE_SCHEMA_VERSION: &str = "apxm.agent-invocation-envelope";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -246,7 +246,7 @@ pub struct AgentInvocationEnvelope {
 }
 
 pub const AUTHENTICATED_PRINCIPAL_CLAIMS_SCHEMA_VERSION: &str =
-    "apxm.authenticated-principal-attestation.v1";
+    "apxm.authenticated-principal-attestation";
 pub const AUTHENTICATED_PRINCIPAL_CLAIMS_AUDIENCE: &str = "apxm.server";
 pub const AUTHENTICATED_PRINCIPAL_CLAIMS_KEY_ID: &str = "auth-server-v1";
 
@@ -291,7 +291,7 @@ pub struct SelectedSkillDelegation {
     pub instruction_digest: String,
 }
 
-pub const CHILD_EXECUTION_ENVELOPE_SCHEMA_VERSION: &str = "apxm.child-execution-envelope.v1";
+pub const CHILD_EXECUTION_ENVELOPE_SCHEMA_VERSION: &str = "apxm.child-execution-envelope";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -343,7 +343,7 @@ pub struct ContextHookPolicy {
     pub trusted_instruction_hook_policy_ref: String,
 }
 
-pub const CONTEXT_ASSEMBLY_POLICY_SCHEMA_VERSION: &str = "apxm.context-assembly-policy.v1";
+pub const CONTEXT_ASSEMBLY_POLICY_SCHEMA_VERSION: &str = "apxm.context-assembly-policy";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -397,7 +397,7 @@ pub struct ToolSchema {
     pub schema_ref: String,
 }
 
-pub const MODEL_CONTEXT_ENVELOPE_SCHEMA_VERSION: &str = "apxm.model-context-envelope.v1";
+pub const MODEL_CONTEXT_ENVELOPE_SCHEMA_VERSION: &str = "apxm.model-context-envelope";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

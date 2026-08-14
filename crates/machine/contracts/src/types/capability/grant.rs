@@ -9,7 +9,7 @@ use super::common::{
 use super::permission::{PermissionOperation, PermissionScope, ResourceHandle};
 use super::policy::{PromptPolicy, SubjectContext};
 
-pub const CAPABILITY_GRANT_SCHEMA_V1: &str = "apxm.capability-grant.v1";
+pub const CAPABILITY_GRANT_SCHEMA_V1: &str = "apxm.capability-grant";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -180,7 +180,7 @@ mod tests {
                 max_uses: Some(1),
             },
             provenance: GrantProvenance {
-                minted_by: "apxm-server".to_string(),
+                minted_by: "composition-root".to_string(),
                 policy_version: "capability-policy.v1".to_string(),
                 request_id: "req_123".to_string(),
             },
@@ -269,7 +269,7 @@ mod tests {
             "prompt_policy": {"default": "confirm"},
             "delegability": "attenuate_only",
             "lifecycle": {"bound": "task", "expires_at": "2026-06-24T21:00:00Z"},
-            "provenance": {"minted_by": "apxm-server", "policy_version": "capability-policy.v1", "request_id": "req_123"},
+            "provenance": {"minted_by": "composition-root", "policy_version": "capability-policy.v1", "request_id": "req_123"},
             "status": "active",
             "old_name": "github.create_issue"
         });

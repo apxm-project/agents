@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use apxm_program::grammar::is_digest;
 
 /// Schema identity for the vLLM conformance join record.
-pub const VLLM_CONFORMANCE_JOIN_SCHEMA: &str = "apxm.vllm-conformance-join.v1";
+pub const VLLM_CONFORMANCE_JOIN_SCHEMA: &str = "apxm.vllm-conformance-join";
 
 /// Current released-or-candidate vLLM port-contract digest published by the
 /// vLLM owner descriptor. G4 joins against this exact digest; a future vLLM
@@ -165,7 +165,7 @@ impl VllmConformanceJoin {
         }
         Ok(Self {
             schema_version: VLLM_CONFORMANCE_JOIN_SCHEMA.to_string(),
-            agents_driver_contract_id: "apxm.inference-driver-binding.v1".to_string(),
+            agents_driver_contract_id: "apxm.inference-driver-binding".to_string(),
             vllm_port_contract_id: "apxm.vllm-inference.v1".to_string(),
             vllm_port_contract_digest,
             joined_vector_digests,
@@ -209,7 +209,7 @@ impl VllmConformanceJoin {
     /// Validate a deserialized join record against the exact cross-owner pins.
     pub fn validate(&self) -> Result<(), JoinError> {
         if self.schema_version != VLLM_CONFORMANCE_JOIN_SCHEMA
-            || self.agents_driver_contract_id != "apxm.inference-driver-binding.v1"
+            || self.agents_driver_contract_id != "apxm.inference-driver-binding"
             || self.vllm_port_contract_id != "apxm.vllm-inference.v1"
         {
             return Err(JoinError::InvalidDigest("schema_or_contract_id"));

@@ -1,4 +1,4 @@
-//! Runtime capability-grant metadata exchanged between apxm-server and apxm-runtime.
+//! Runtime capability-grant metadata exchanged with the APXM runtime.
 
 use serde::{Deserialize, Serialize};
 
@@ -94,7 +94,7 @@ mod tests {
                 max_uses: Some(1),
             },
             provenance: GrantProvenance {
-                minted_by: "apxm-server".to_string(),
+                minted_by: "composition-root".to_string(),
                 policy_version: "capability-policy.v1".to_string(),
                 request_id: "req_123".to_string(),
             },

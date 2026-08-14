@@ -16,10 +16,10 @@ import { staticSource } from "./static-source.js";
 type ParityContext = { iterations: number };
 type ParityProgram = ReturnType<typeof Agent<unknown, unknown, ParityContext>>;
 
-const ParityModel = Model<unknown, unknown>("parity.model.v1");
-const ParityTool = Tool<unknown, unknown>("parity.tool.v1");
-const ParityCapability = Capability<unknown, unknown>("parity.capability.v1");
-const ParityEvent = Event<unknown>("parity.event.v1");
+const ParityModel = Model<unknown, unknown>("parity.model");
+const ParityTool = Tool<unknown, unknown>("parity.tool");
+const ParityCapability = Capability<unknown, unknown>("parity.capability");
+const ParityEvent = Event<unknown>("parity.event");
 const ParityContext: ReturnType<typeof Context> = Context<ParityContext>(
   { iterations: 0 },
   "ParityContext",

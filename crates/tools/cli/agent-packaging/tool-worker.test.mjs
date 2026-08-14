@@ -25,7 +25,7 @@ test("the worker rejects a handler result that bypasses Tool.answer", async () =
     "});",
   ].join("\n");
   const manifest = {
-    version: "apxm.handler-manifest.v1",
+    version: "apxm.handler-manifest",
     handlers: [{
       kind: "tool",
       handler_id: handlerId,
@@ -81,7 +81,7 @@ test("the worker unwraps a typed Tool.answer only at its private boundary", asyn
     "});",
   ].join("\n");
   const manifest = {
-    version: "apxm.handler-manifest.v1",
+    version: "apxm.handler-manifest",
     handlers: [{
       kind: "tool",
       handler_id: handlerId,

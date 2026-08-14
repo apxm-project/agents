@@ -8,13 +8,11 @@ pub mod attrs;
 pub mod capabilities;
 pub mod chat;
 pub mod defaults;
-pub mod memory;
 pub mod operations;
 pub mod passes;
 pub mod types;
 pub mod validation;
 
-pub use memory::MemoryTier;
 pub use operations::tablegen::generate_tablegen;
 pub use operations::{
     AIS_OPERATIONS, AISOperationType, ARTIFACT_OPERATION_KIND_CASES_FILE,

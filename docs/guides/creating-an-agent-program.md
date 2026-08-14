@@ -62,7 +62,7 @@ names rather than infer behavior from text.
 
 The frontend parses the complete source, binds and type-checks it into an
 immutable semantic tree, and deterministically traverses that tree into
-`apxm.frontend-graph.v2`. It does not execute the Agent to trace one path, and
+`apxm.frontend-graph`. It does not execute the Agent to trace one path, and
 authors do not construct graph nodes.
 
 ```text
@@ -81,7 +81,7 @@ typed FrontendGraph intent
 Rust validation, CFG/SSA construction, and AIS selection
         |
         v
-AIR v2 -> registered AIS verification -> executable artifact
+AIR -> registered AIS verification -> executable artifact
         -> admission -> generic runtime
 ```
 
@@ -112,7 +112,7 @@ and the repository example boundary.
 ```python
 from apxm_program import Agent, Model
 
-SummarizerModel = Model[object, object]("model.summarizer.v1")
+SummarizerModel = Model[object, object]("model.summarizer")
 
 
 @Agent(input="SummaryRequest", output="Summary")
@@ -134,8 +134,8 @@ class Conversation:
     messages: tuple[Message, ...] = ()
 
 
-SearchWeb = Tool[SearchRequest, SearchResult]("capability.search-web.v1")
-SupportModel = Model[ModelRequest, ModelResponse]("model.support.v1")
+SearchWeb = Tool[SearchRequest, SearchResult]("capability.search-web")
+SupportModel = Model[ModelRequest, ModelResponse]("model.support")
 
 
 @Agent(
@@ -178,7 +178,7 @@ from apxm_program import Tool
 
 
 NormalizeAddress = Tool[AddressInput, NormalizedAddress](
-    "capability.normalize-address.v1"
+    "capability.normalize-address"
 )
 ```
 
@@ -216,7 +216,7 @@ type SummaryRequest = { readonly text: string };
 type Summary = { readonly text: string };
 
 const SummarizerModel = Model<SummaryRequest, Summary>(
-  "model.summarizer.v1",
+  "model.summarizer",
 );
 const source = staticSource(import.meta.url);
 
@@ -244,8 +244,8 @@ type Conversation = {
 };
 
 const ConversationContext = Context<Conversation>({ messages: [] });
-const SearchWeb = Tool<SearchRequest, SearchResult>("capability.search-web.v1");
-const SupportModel = Model<ModelRequest, ModelResponse>("model.support.v1");
+const SearchWeb = Tool<SearchRequest, SearchResult>("capability.search-web");
+const SupportModel = Model<ModelRequest, ModelResponse>("model.support");
 const source = staticSource(import.meta.url);
 
 export const Support = Agent<
@@ -299,7 +299,7 @@ export const NormalizeAddress = Tool.define({
 ```
 
 This declaration lives in a package handler module. The Agent Program itself
-uses `Tool<AddressInput, NormalizedAddress>("capability.normalize-address.v1")`
+uses `Tool<AddressInput, NormalizedAddress>("capability.normalize-address")`
 from `@apxm/frontend` as a static reference. The packaging helper generates the
 Rust-owned handler manifest; it is not a frontend runtime or an authority path.
 Authors never write the manifest, JSON Schema, or worker protocol.

@@ -58,7 +58,7 @@ ModelRequest: TypeAlias = InitialModelRequest | ToolResultModelRequest
 ModelResponse: TypeAlias = FinalModelResponse | ToolModelResponse
 
 SearchWeb = Tool[SearchWebRequest, SearchWebResult]("cap.search")
-SupportModel = Model[ModelRequest, ModelResponse]("model.target.v1")
+SupportModel = Model[ModelRequest, ModelResponse]("model.target")
 
 
 @Context

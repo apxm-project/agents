@@ -1,4 +1,4 @@
-//! Conformance: the published `apxm.handler-manifest.v1` schema is the sole
+//! Conformance: the published `apxm.handler-manifest` schema is the sole
 //! authority for handler manifests. The checked-in vectors, the Rust decode and
 //! validation path, and every manifest a repository producer emits are all held
 //! against the same published schema bytes, so the three cannot diverge without
@@ -19,7 +19,7 @@ use serde_json::Value;
 /// and `name`, so it is supplied to the validator rather than restated here.
 fn manifest_schema() -> jsonschema::JSONSchema {
     compile_schema(
-        "schemas/apxm.handler-manifest.v1.json",
+        "schemas/apxm.handler-manifest.json",
         &["schemas/contract-common.v1.json"],
     )
 }
@@ -43,7 +43,7 @@ fn handler_manifest_vectors_match_schema_and_decode_path() {
         name,
         input,
         expected_valid,
-    } in load_vectors("apxm.handler-manifest.v1.json")
+    } in load_vectors("apxm.handler-manifest.json")
     {
         let by_schema = schema.is_valid(&input);
         assert_eq!(
@@ -63,7 +63,7 @@ fn handler_manifest_vectors_match_schema_and_decode_path() {
 
 #[test]
 fn valid_vector_round_trips_byte_for_byte() {
-    let vector = load_vectors("apxm.handler-manifest.v1.json")
+    let vector = load_vectors("apxm.handler-manifest.json")
         .into_iter()
         .find(|v| v.name == "valid-tool-and-hook-manifest")
         .expect("named vector present");
@@ -130,7 +130,7 @@ fn schema_constraints_are_each_enforced_by_the_decode_path() {
             "mode": "observe"
         })
     };
-    let manifest = |descriptor: Value| serde_json::json!({"version": "apxm.handler-manifest.v1", "handlers": [descriptor]});
+    let manifest = |descriptor: Value| serde_json::json!({"version": "apxm.handler-manifest", "handlers": [descriptor]});
     // Apply one field mutation; a JSON null removes the field.
     let with = |mut descriptor: Value, field: &str, value: Value| {
         if value.is_null() {
@@ -151,7 +151,7 @@ fn schema_constraints_are_each_enforced_by_the_decode_path() {
         // `version` is a schema `const`.
         (
             "manifest version not the published constant",
-            serde_json::json!({"version": "apxm.handler-manifest.v2", "handlers": []}),
+            serde_json::json!({"version": "apxm.handler-manifest-unpublished", "handlers": []}),
             false,
         ),
         (
@@ -163,7 +163,7 @@ fn schema_constraints_are_each_enforced_by_the_decode_path() {
         (
             "undeclared top-level field",
             serde_json::json!({
-                "version": "apxm.handler-manifest.v1",
+                "version": "apxm.handler-manifest",
                 "handlers": [],
                 "runtime_profile": "server"
             }),
@@ -351,7 +351,7 @@ fn schema_constraints_are_each_enforced_by_the_decode_path() {
 /// schema text that defines it, so changing either side alone fails.
 #[test]
 fn manifest_constants_are_read_from_the_published_schema() {
-    let schema = load_contract("schemas/apxm.handler-manifest.v1.json");
+    let schema = load_contract("schemas/apxm.handler-manifest.json");
 
     assert_eq!(
         schema["properties"]["version"]["const"].as_str(),

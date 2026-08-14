@@ -6,7 +6,7 @@ use crate::constants::graph::attrs::PromptInputRole;
 use crate::types::{NodeId, PermissionOperation};
 
 /// Versioned artifact section for compiler-produced optimization evidence.
-pub const OPTIMIZATION_SUMMARY_ARTIFACT_SECTION: &str = "apxm.optimization-summary.v1";
+pub const OPTIMIZATION_SUMMARY_ARTIFACT_SECTION: &str = "apxm.optimization-summary";
 /// Wire version for [`OptimizationSummaryV1`].
 pub const OPTIMIZATION_SUMMARY_VERSION: u16 = 1;
 

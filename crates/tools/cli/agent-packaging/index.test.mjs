@@ -23,7 +23,7 @@ test("Tool.define generates a closed input schema and typed answer", () => {
     additionalProperties: false,
   });
   assert.deepEqual(Echo.fn({ message: "hello" }), {
-    kind: "apxm.tool-answer.v1",
+    kind: "apxm.tool-answer",
     value: { message: "hello" },
   });
   assert.equal(isToolAnswer(Echo.fn({ message: "hello" })), true);
@@ -44,7 +44,7 @@ test("Tool.define rejects raw schema and an untyped answer", () => {
   assert.equal(isToolAnswer({ value: { message: "plain" } }), false);
   assert.throws(() => Tool.answer(new Date()), /plain answer object/);
   assert.equal(
-    isToolAnswer({ kind: "apxm.tool-answer.v1", value: new Date() }),
+    isToolAnswer({ kind: "apxm.tool-answer", value: new Date() }),
     false,
   );
 });

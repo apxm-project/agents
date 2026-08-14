@@ -1,4 +1,4 @@
-"""Capture one submitted Python source text into `apxm.frontend-graph.v2`.
+"""Capture one submitted Python source text into `apxm.frontend-graph`.
 
 The port embeds this harness and runs it as the program text of an isolated
 interpreter. It reads `{"frontend_root", "entrypoint", "source"}` on stdin and

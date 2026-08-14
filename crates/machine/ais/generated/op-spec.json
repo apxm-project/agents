@@ -1,0 +1,172 @@
+{
+  "schema_version": "apxm.op-spec",
+  "generated_from": "crates/machine/ais/src/operations/definitions.rs",
+  "total_operations": 5,
+  "pseudo_op_count": 0,
+  "public_semantic_operation_count": 5,
+  "operations": [
+    {
+      "op": "model.call",
+      "rust_variant": "ModelCall",
+      "name": "ModelCall",
+      "category": "semantic",
+      "description": "Invoke an admitted model with explicit request and options",
+      "long_description": "Portable runtime effect that invokes exactly one admitted model binding. Returns typed model output; operational evidence is recorded separately. Does not mutate context or execute tool loops.",
+      "latency": "medium",
+      "wire_index": 0,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "model_ref",
+          "required": true,
+          "description": "Exact admitted model target reference",
+          "ref_type": "model"
+        },
+        {
+          "name": "request",
+          "required": true,
+          "description": "Typed model request payload",
+          "ref_type": null
+        },
+        {
+          "name": "options",
+          "required": false,
+          "description": "Explicit model call options",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"node_id\":\"model_1\",\"op\":\"model.call\",\"operands\":{\"model_ref\":\"summarizer_model\",\"request\":{\"messages\":[]},\"options\":{\"temperature\":0.2}}}"
+    },
+    {
+      "op": "capability.invoke",
+      "rust_variant": "CapabilityInvoke",
+      "name": "CapabilityInvoke",
+      "category": "semantic",
+      "description": "Invoke one admitted Capability through the authority/effect chokepoint",
+      "long_description": "The only executable Capability chokepoint. Admission, grant validation, effect identity, retry, cancellation, and audit apply here.",
+      "latency": "medium",
+      "wire_index": 1,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "capability_ref",
+          "required": true,
+          "description": "Exact admitted capability reference",
+          "ref_type": "capability"
+        },
+        {
+          "name": "arguments",
+          "required": true,
+          "description": "Typed capability input payload",
+          "ref_type": null
+        },
+        {
+          "name": "context_projection",
+          "required": false,
+          "description": "Optional typed context projection for the capability call",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"node_id\":\"cap_1\",\"op\":\"capability.invoke\",\"operands\":{\"capability_ref\":\"search_docs\",\"arguments\":{\"query\":\"release checklist\"}}}"
+    },
+    {
+      "op": "program.new",
+      "rust_variant": "ProgramNew",
+      "name": "ProgramNew",
+      "category": "semantic",
+      "description": "Create a stateful Program Instance from an exact Program reference",
+      "long_description": "Records logical Program Instance creation against an exact imported ProgramRef and optional typed initial context.",
+      "latency": "low",
+      "wire_index": 2,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "program_ref",
+          "required": true,
+          "description": "Exact imported program reference",
+          "ref_type": "program reference"
+        },
+        {
+          "name": "initial_context",
+          "required": false,
+          "description": "Typed initial Program Context when the program requires construction",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"node_id\":\"new_1\",\"op\":\"program.new\",\"operands\":{\"program_ref\":\"specialist\",\"initial_context\":{\"domain\":\"security\"}}}"
+    },
+    {
+      "op": "program.invoke",
+      "rust_variant": "ProgramInvoke",
+      "name": "ProgramInvoke",
+      "category": "semantic",
+      "description": "Invoke a ProgramRef one-shot or a ProgramInstanceRef statefully",
+      "long_description": "Receiver union selects one-shot versus stateful semantics. The only caller-data operand is typed input `I`.",
+      "latency": "medium",
+      "wire_index": 3,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "receiver",
+          "required": true,
+          "description": "ProgramRef or ProgramInstanceRef receiver union",
+          "ref_type": null
+        },
+        {
+          "name": "input",
+          "required": true,
+          "description": "Typed invocation input",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"node_id\":\"invoke_1\",\"op\":\"program.invoke\",\"operands\":{\"receiver\":{\"program_instance_ref\":\"specialist_inst\"},\"input\":{\"question\":\"status?\"}}}"
+    },
+    {
+      "op": "await.event",
+      "rust_variant": "AwaitEvent",
+      "name": "AwaitEvent",
+      "category": "semantic",
+      "description": "Suspend on a typed durable external event or approval signal",
+      "long_description": "Parks the current Program Invocation until a typed EventRef terminal value is available. Does not commit an invocation boundary.",
+      "latency": "high",
+      "wire_index": 4,
+      "is_pseudo_op": false,
+      "min_inputs": 0,
+      "produces_output": true,
+      "needs_submission": true,
+      "fields": [
+        {
+          "name": "event_ref",
+          "required": true,
+          "description": "Typed durable event reference",
+          "ref_type": "event reference"
+        },
+        {
+          "name": "timeout_ms",
+          "required": false,
+          "description": "Optional await timeout in milliseconds",
+          "ref_type": null
+        },
+        {
+          "name": "cancellation",
+          "required": false,
+          "description": "Optional cancellation scope bound to the await occurrence",
+          "ref_type": null
+        }
+      ],
+      "example_json": "{\"node_id\":\"await_1\",\"op\":\"await.event\",\"operands\":{\"event_ref\":\"approval_42\",\"timeout_ms\":300000}}"
+    }
+  ]
+}

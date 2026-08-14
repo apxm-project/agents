@@ -31,7 +31,6 @@ def test_coder_declares_only_read_only_capabilities() -> None:
     assert agent["capabilities"] == ["edit", "read", "test"]
     assert all(entry["read_only"] is True for entry in capabilities.values())
     assert all(entry == {"capability": name, "decision": "allow"} for name, entry in permissions.items())
-    assert set(agent["runtime"]) == {"memory_space", "session_prefix"}
     assert "hooks" not in agent
 
 

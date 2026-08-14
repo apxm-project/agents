@@ -49,7 +49,7 @@ fn reaching_program(frontend: Frontend, import: &str, reach: &str) -> String {
              \n\
              {reach}\n\
              \n\
-             ReviewModel = Model[object, object](\"review.model.v1\")\n\
+             ReviewModel = Model[object, object](\"review.model\")\n\
              \n\
              \n\
              @Agent(input=\"ReviewRequest\", output=\"Review\")\n\
@@ -63,7 +63,7 @@ fn reaching_program(frontend: Frontend, import: &str, reach: &str) -> String {
              \n\
              {reach}\n\
              \n\
-             const ReviewModel = Model<object, object>(\"review.model.v1\");\n\
+             const ReviewModel = Model<object, object>(\"review.model\");\n\
              \n\
              export const Reviewer = Agent<object, object>({{\n\
              \x20 name: \"Reviewer\",\n\

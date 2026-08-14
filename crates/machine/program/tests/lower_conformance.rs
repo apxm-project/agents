@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 fn generic_graph_value() -> Value {
     json!({
-        "schema_version": "apxm.frontend-graph.v2",
+        "schema_version": "apxm.frontend-graph",
         "source_language": "python",
         "program_definitions": [{
             "program_id": "Worker",
@@ -22,11 +22,11 @@ fn generic_graph_value() -> Value {
         "imported_program_refs": [],
         "declarations": [
             {
-                "decl_id": "decl.model.target.v1",
+                "decl_id": "decl.model.target",
                 "decl_kind": "model_binding",
                 "input_type_ref": "ModelRequest",
                 "output_type_ref": "ModelResponse",
-                "target_ref": "model.target.v1"
+                "target_ref": "model.target"
             },
             {
                 "decl_id": "decl.cap.search",
@@ -71,7 +71,7 @@ fn generic_graph_value() -> Value {
                 "intent_kind": "model_invocation",
                 "parent_region_id": "loop.main",
                 "execution_order": 0,
-                "binding_ref": "decl.model.target.v1",
+                "binding_ref": "decl.model.target",
                 "operand_values": ["value.input"],
                 "result_value": "value.model.out"
             },
@@ -100,9 +100,9 @@ fn generic_graph_value() -> Value {
         }],
         "hook_bindings": [],
         "capability_requirements": [{"capability_ref": "cap.search"}],
-        "model_requirements": [{"model_target_ref": "model.target.v1"}],
+        "model_requirements": [{"model_target_ref": "model.target"}],
         "source_map": {
-            "schema_version": "apxm.source-map.v1",
+            "schema_version": "apxm.source-map",
             "source_language": "python",
             "node_spans": [],
             "region_annotations": [
@@ -136,7 +136,7 @@ fn generic_graph_lowers_and_carries_source_map() {
     assert!(model.operands.iter().any(|operand| {
         operand.slot == "model_ref"
             && operand.type_ref == "ModelTargetRef"
-            && operand.value_id == "model.target.v1"
+            && operand.value_id == "model.target"
     }));
     assert_eq!(
         model.result.as_ref().map(|r| r.value_id.as_str()),
@@ -155,7 +155,7 @@ fn generic_graph_lowers_and_carries_source_map() {
 #[test]
 fn frontend_graph_rejects_an_air_model_ref_before_lowering() {
     let mut value = generic_graph_value();
-    value["model_requirements"][0]["model_ref"] = json!("model.target.v1");
+    value["model_requirements"][0]["model_ref"] = json!("model.target");
     let error = serde_json::from_value::<FrontendGraph>(value)
         .expect_err("FrontendGraph has no AIR model_ref field");
     assert!(error.to_string().contains("model_ref"));

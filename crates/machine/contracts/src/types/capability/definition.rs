@@ -8,8 +8,8 @@ use super::common::{
 };
 use super::policy::PromptPolicy;
 
-pub const CAPABILITY_TEMPLATE_SCHEMA_V1: &str = "apxm.capability-template.v1";
-pub const CAPABILITY_DEFINITION_SCHEMA_V1: &str = "apxm.capability-definition.v1";
+pub const CAPABILITY_TEMPLATE_SCHEMA_V1: &str = "apxm.capability-template";
+pub const CAPABILITY_DEFINITION_SCHEMA_V1: &str = "apxm.capability-definition";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -24,7 +24,6 @@ pub mod system;
 pub mod team;
 pub mod template;
 pub mod tokenize;
-pub mod tool;
 
 pub use cli::*;
 
@@ -44,7 +43,6 @@ pub use system::*;
 pub use team::*;
 pub use template::*;
 pub use tokenize::*;
-pub use tool::*;
 
 #[derive(Debug)]
 pub struct OutputAlreadyEmitted;

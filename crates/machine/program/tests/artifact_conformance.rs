@@ -14,12 +14,15 @@ fn artifact_vectors_match_validator() {
         name,
         input,
         expected_valid,
-    } in load_vectors("apxm.executable-artifact.v1.json")
+    } in load_vectors("apxm.executable-artifact.json")
     {
-        let accepted = validate_artifact_json(&input).is_accepted();
+        let verdict = validate_artifact_json(&input);
+        let accepted = verdict.is_accepted();
         assert_eq!(
-            accepted, expected_valid,
-            "vector '{name}' expected valid={expected_valid} but validator returned {accepted}",
+            accepted,
+            expected_valid,
+            "vector '{name}' expected valid={expected_valid} but validator returned {accepted}: {:?}",
+            verdict.diagnostics(),
         );
     }
 }
@@ -28,7 +31,7 @@ fn artifact_vectors_match_validator() {
 fn only_artifact_semantic_requirements_pass() {
     // The non-artifact-semantic vectors are rejected specifically because of the
     // scope rule, not only the decode boundary.
-    let vectors = load_vectors("apxm.executable-artifact.v1.json");
+    let vectors = load_vectors("apxm.executable-artifact.json");
     for name in [
         "abstraction-deployment-infrastructure-requirement-rejected",
         "abstraction-invocation-authority-requirement-rejected",
@@ -49,7 +52,7 @@ fn only_artifact_semantic_requirements_pass() {
 
 #[test]
 fn codec_round_trips_valid_artifact() {
-    let vector = load_vectors("apxm.executable-artifact.v1.json")
+    let vector = load_vectors("apxm.executable-artifact.json")
         .into_iter()
         .find(|v| v.name == "valid-artifact-emits-only-artifact-semantic-requirements")
         .expect("named vector present");
@@ -71,7 +74,7 @@ fn example_artifacts_carry_no_field_the_schema_rejects() {
     // hook_bindings drift class: a field serialized by artifact.rs but absent
     // from the schema would be silently accepted by the serde validator yet
     // rejected by any strict JSON-schema consumer.
-    let schema = load_contract("schemas/apxm.executable-artifact.v1.json");
+    let schema = load_contract("schemas/apxm.executable-artifact.json");
     assert_eq!(
         schema["additionalProperties"],
         serde_json::Value::Bool(false),
@@ -85,8 +88,8 @@ fn example_artifacts_carry_no_field_the_schema_rejects() {
         .collect();
 
     for fixture in [
-        "../crates/machine/program/tests/fixtures/example-artifacts/conversational-python.v2.json",
-        "../crates/machine/program/tests/fixtures/example-artifacts/conversational-typescript.v2.json",
+        "../crates/machine/program/tests/fixtures/example-artifacts/conversational-python.json",
+        "../crates/machine/program/tests/fixtures/example-artifacts/conversational-typescript.json",
     ] {
         let artifact = load_contract(fixture);
         for key in artifact.as_object().expect("artifact object").keys() {
@@ -102,8 +105,8 @@ fn example_artifacts_carry_no_field_the_schema_rejects() {
 #[test]
 fn conversational_example_artifacts_pin_typed_tool_control_and_hooks() {
     for fixture in [
-        "../crates/machine/program/tests/fixtures/example-artifacts/conversational-python.v2.json",
-        "../crates/machine/program/tests/fixtures/example-artifacts/conversational-typescript.v2.json",
+        "../crates/machine/program/tests/fixtures/example-artifacts/conversational-python.json",
+        "../crates/machine/program/tests/fixtures/example-artifacts/conversational-typescript.json",
     ] {
         let artifact = load_contract(fixture);
         let hooks = artifact["hook_bindings"]

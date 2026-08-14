@@ -37,7 +37,7 @@ pub fn vectors_for_tier(tier: HostTier) -> &'static [&'static str] {
 
 /// Signed conformance report produced by a host-sdk conformance harness.
 ///
-/// Implements `apxm.conformance-report.v1`: passed vector ids are flat strings;
+/// Implements `apxm.conformance-report`: passed vector ids are flat strings;
 /// failures are structured by vector name and reason.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConformanceReport {
@@ -63,7 +63,7 @@ pub struct FailedVector {
 
 impl ConformanceReport {
     pub fn schema_v1() -> &'static str {
-        "apxm.conformance-report.v1"
+        "apxm.conformance-report"
     }
 }
 

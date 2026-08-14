@@ -3,7 +3,7 @@
 - Status: canonical APXM v1 contract
 - Owner: APXM `agents`
 - Decisions: [ADR-0008](../adr/0008-agent-programs-compose-through-new-and-invoke.md), [ADR-0009](../adr/0009-air-has-five-public-semantic-operations.md), [ADR-0010](../adr/0010-agent-program-source-owns-context-hooks-and-conversational-loops.md), and [ADR-0011](../adr/0011-agent-program-execution-is-one-end-to-end-spine.md)
-- Canonical contracts: `apxm.frontend-graph.v2`, `apxm.air.v2`, `apxm.executable-artifact.v1`, `apxm.runtime-evidence.v1`
+- Canonical contracts: `apxm.frontend-graph`, `apxm.air`, `apxm.executable-artifact`, `apxm.runtime-evidence`
 
 This document is the normative APXM v1 contract for composing, compiling,
 and executing Agent Programs. It is intentionally target-only. The key words
@@ -94,8 +94,8 @@ class Conversation:
     messages: tuple[Message, ...] = ()
 
 
-SearchWeb = Tool[SearchRequest, SearchResult]("capability.search-web.v1")
-SupportModel = Model[ModelRequest, ModelResponse]("model.support.v1")
+SearchWeb = Tool[SearchRequest, SearchResult]("capability.search-web")
+SupportModel = Model[ModelRequest, ModelResponse]("model.support")
 
 
 @Agent(input=ConversationInput, output=ConversationOutput, context=Conversation)
@@ -118,8 +118,8 @@ import "@apxm/frontend/node";
 import { staticSource } from "./static-source.js";
 
 const ConversationContext = Context<Conversation>({ messages: [] });
-const SearchWeb = Tool<SearchRequest, SearchResult>("capability.search-web.v1");
-const SupportModel = Model<ModelRequest, ModelResponse>("model.support.v1");
+const SearchWeb = Tool<SearchRequest, SearchResult>("capability.search-web");
+const SupportModel = Model<ModelRequest, ModelResponse>("model.support");
 const source = staticSource(import.meta.url);
 
 export const Support = Agent<ConversationInput, ConversationOutput, Conversation>({
@@ -374,9 +374,9 @@ author any desired recursion, whose admitted depth limits still apply.
 - Agent, Node, Model, and Capability scopes MAY all have Hooks; a Capability
   Hook cannot bypass Capability admission.
 
-## 7. FrontendGraph v2
+## 7. FrontendGraph
 
-`apxm.frontend-graph.v2` is a language-neutral typed value. At minimum it
+`apxm.frontend-graph` is a language-neutral typed value. At minimum it
 contains:
 
 ```text
@@ -616,7 +616,7 @@ change v1 composition or add AIR operations.
 
 ## 11. Execution evidence
 
-`apxm.runtime-evidence.v1` records, at minimum:
+`apxm.runtime-evidence` records, at minimum:
 
 ```text
 program/artifact/entrypoint identity

@@ -22,7 +22,7 @@ fn digest(c: char) -> String {
 
 fn commit_contract() -> SchemaDigestRef {
     SchemaDigestRef {
-        schema_id: "apxm.execution-commit.v1".into(),
+        schema_id: "apxm.execution-commit".into(),
         digest: digest('e'),
     }
 }
@@ -147,7 +147,7 @@ fn unexpected_slot_is_rejected_not_discovered() {
 #[test]
 fn contract_digest_mismatch_fails_closed() {
     let wrong = SchemaDigestRef {
-        schema_id: "apxm.execution-commit.v1".into(),
+        schema_id: "apxm.execution-commit".into(),
         digest: digest('f'),
     };
     let err = PortBundle::construct(
@@ -346,7 +346,7 @@ fn capability_slot_rejects_missing_unexpected_mismatched_and_wrong_contract_bind
     );
 
     let wrong_contract = SchemaDigestRef {
-        schema_id: "apxm.capability-invocation.v1".into(),
+        schema_id: "apxm.capability-invocation".into(),
         digest: digest('f'),
     };
     let mismatch = PortBundle::construct(

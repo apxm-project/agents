@@ -22,6 +22,7 @@ apxm-core.workspace = true
 apxm-ais.workspace = true
 apxm-backends.workspace = true
 apxm-program.workspace = true
+apxm-capability.workspace = true
 apxm-execution.workspace = true
 apxm-inference.workspace = true
 apxm-kernel.workspace = true
