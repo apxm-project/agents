@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional, Union
 
+from ._generated.frontend_records import CallIntent, ControlIntent
 from ._generated.permissions import Permission
 
 
@@ -78,32 +79,94 @@ class BoundPredicate:
 
 @dataclass(frozen=True, slots=True)
 class BoundCall:
-    """A resolved effectful call: model, tool, capability, agent, or event."""
+    """A resolved effectful call: model, tool, capability, agent, or event.
 
-    node_id: str
-    intent_kind: str  # model_invocation | tool_invocation | capability_invocation | agent_creation | agent_invocation | event_wait
-    parent_region_id: str
-    execution_order: int
-    binding_ref: Optional[str]
-    operands: tuple[BoundOperand, ...]
-    result_value: Optional[str]
+    Carries a generated ``CallIntent`` contract record plus the authoring-time
+    extras the contract does not state: a source ``span`` and typed
+    ``operands`` with consumer-slot identity (the contract instead carries
+    ``operand_values`` and leaves slot identity to ``data_edges``). The flat
+    properties below read through to ``contract`` so every other reader of a
+    ``BoundCall`` is unaffected by this split.
+    """
+
+    contract: CallIntent
     span: Optional[Span]
-    receiver_kind: Optional[str] = None  # program_ref | program_instance_ref
+    operands: tuple[BoundOperand, ...]
+
+    @property
+    def node_id(self) -> str:
+        return self.contract.node_id
+
+    @property
+    def intent_kind(self) -> str:
+        return self.contract.intent_kind
+
+    @property
+    def parent_region_id(self) -> str:
+        return self.contract.parent_region_id
+
+    @property
+    def execution_order(self) -> int:
+        return self.contract.execution_order
+
+    @property
+    def binding_ref(self) -> Optional[str]:
+        return self.contract.binding_ref
+
+    @property
+    def receiver_kind(self) -> Optional[str]:
+        return self.contract.receiver_kind
+
+    @property
+    def result_value(self) -> Optional[str]:
+        return self.contract.result_value
 
 
 @dataclass(frozen=True, slots=True)
 class BoundControl:
-    """A resolved structural construct: branch, loop, task group, try, yield, return."""
+    """A resolved structural construct: branch, loop, task group, try, yield, return.
 
-    node_id: str
-    control_kind: str  # conditional | switch | loop | task_group | try_catch | throw | yield | return
-    parent_region_id: str
-    execution_order: int
-    body_region_ids: tuple[str, ...]
-    predicate: Optional[BoundPredicate]
-    operands: tuple[BoundOperand, ...]
-    result_value: Optional[str]
+    Carries a generated ``ControlIntent`` contract record plus the
+    authoring-time extras the contract does not state: a source ``span`` and
+    typed ``operands`` with consumer-slot identity. ``predicate`` is kept as
+    its own field rather than populated on ``contract``: the generated
+    ``ControlIntent.predicate`` is typed as the generated ``ControlPredicate``
+    union, whose ``EqualsPredicate``/``NotEqualsPredicate`` branches carry a
+    generated ``PredicateLiteral``, and threading capture's predicate
+    construction through those generated types is out of this change's scope
+    (see the frontend-vocabulary-generation design note, §4 item 2). The flat
+    properties below read through to ``contract`` so every other reader of a
+    ``BoundControl`` is unaffected by this split.
+    """
+
+    contract: ControlIntent
     span: Optional[Span]
+    operands: tuple[BoundOperand, ...]
+    predicate: Optional[BoundPredicate]
+
+    @property
+    def node_id(self) -> str:
+        return self.contract.node_id
+
+    @property
+    def control_kind(self) -> str:
+        return self.contract.control_kind
+
+    @property
+    def parent_region_id(self) -> str:
+        return self.contract.parent_region_id
+
+    @property
+    def execution_order(self) -> int:
+        return self.contract.execution_order
+
+    @property
+    def body_region_ids(self) -> tuple[str, ...]:
+        return self.contract.body_region_ids or ()
+
+    @property
+    def result_value(self) -> Optional[str]:
+        return self.contract.result_value
 
 
 @dataclass(frozen=True, slots=True)

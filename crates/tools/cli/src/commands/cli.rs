@@ -317,6 +317,14 @@ pub enum CodegenAction {
         #[arg(long)]
         check: bool,
     },
+    /// Generate the FrontendGraph contract record types into both authoring
+    /// frontends
+    FrontendRecords {
+        /// Check that the generated record files are up to date without
+        /// writing them
+        #[arg(long)]
+        check: bool,
+    },
     /// Generate the authoring diagnostic codes into both authoring frontends
     Diagnostics {
         /// Check that the generated diagnostic files are up to date without
