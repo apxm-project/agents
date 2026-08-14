@@ -1,61 +1,55 @@
 // Source-first TypeScript authoring produces the typed FrontendGraph.
 
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 
-import "../src/node.ts";
+import { source } from "../src/node.ts";
 import { Agent, Capability, Context, Event, Hook, Model, TaskGroup, Tool } from "../src/index.ts";
 import { CaptureError, captureProgram } from "../src/capture.ts";
+import { declaredSoFar } from "../src/declared.ts";
 import { decodeFact } from "../src/generated/runtime-evidence.ts";
 import { stableDigest } from "../src/markers.ts";
 import { Allow, Ask } from "../src/permissions.ts";
 
-const sourceFile = fileURLToPath(import.meta.url);
-const source = { fileName: sourceFile, text: readFileSync(sourceFile, "utf8") };
+source(import.meta.url);
 
-const SummarizerModel = Model("summarizer.model");
+type Input = any;
+type Output = any;
+type Messages = { messages: string[] };
 
-const Summarizer = Agent({
+const SummarizerModel = Model<Input, Output>("summarizer.model");
+
+const Summarizer = Agent<Input, Output>({
   name: "Summarizer",
-  source,
-  use: { SummarizerModel },
   async run(agent, request) {
     return await SummarizerModel(request);
   },
 });
 
-const ConversationCtx = Context({ messages: [] as string[] });
-const SearchWeb = Tool("search.web.capability");
-const SupportModel = Model("support.model");
-const InitialCtx = Context({ messages: [] as string[] });
-const InitialModel = Model("initial.model");
+const ConversationCtx = Context<Messages>({ messages: [] });
+const SearchWeb = Tool<Input, Output>("search.web.capability");
+const SupportModel = Model<Input, Output>("support.model");
+const InitialCtx = Context<Messages>({ messages: [] });
+const InitialModel = Model<Input, Output>("initial.model");
 
-const InitialContextAgent = Agent({
+const InitialContextAgent = Agent<Input, Output, Messages>({
   name: "InitialContextAgent",
-  source,
   context: InitialCtx,
-  use: { InitialModel },
   async run(agent, incoming) {
     agent.context = { messages: [] };
     return await InitialModel(incoming);
   },
 });
 
-const Specialist = Agent({
+const Specialist = Agent<Input, Output>({
   name: "Specialist",
-  source,
-  use: { SearchWeb },
   async run(_agent, request) {
     return await SearchWeb(request);
   },
 });
 
-const Support = Agent({
+const Support = Agent<Input, Output, Messages>({
   name: "Support",
-  source,
   context: ConversationCtx,
-  use: { SearchWeb, Specialist, SupportModel },
   async run(agent, incoming) {
     while (true) {
       let research = null;
@@ -73,16 +67,14 @@ const Support = Agent({
   },
 });
 
-const AuditCapability = Capability("cap.audit", { permission: Allow });
-const AuditModel = Model("audit.model");
-const AuditTool = Tool("cap.audit", {
+const AuditCapability = Capability<Input, Output>("cap.audit", { permission: Allow });
+const AuditModel = Model<Input, Output>("audit.model");
+const AuditTool = Tool<Input, Output>("cap.audit", {
   permission: Ask("Reads whatever the model asks for."),
 });
 
-const Auditor = Agent({
+const Auditor = Agent<Input, Output>({
   name: "Auditor",
-  source,
-  use: { AuditCapability, AuditModel, AuditTool },
   async run(_agent, request) {
     const findings = await AuditTool(request);
     const archived = await AuditCapability(findings);
@@ -90,7 +82,7 @@ const Auditor = Agent({
   },
 });
 
-const SupportPolicy = Hook.before({
+const SupportPolicy = Hook.before<Messages>({
   agent: Support,
   target: SupportModel,
   scope: "model",
@@ -135,16 +127,16 @@ type Graph = {
   source_map: { node_spans: Array<{ source_file: string }> };
 };
 
-const NestedOuterModel = Model("nested.outer.model");
-const NestedInnerTool = Tool("nested.inner.capability");
-const NestedAudit = Tool("nested.audit.capability");
-const NestedCtx = Context({ depth: 0 });
+type Depth = { depth: number };
 
-const NestedLoops = Agent({
+const NestedOuterModel = Model<Input, Output>("nested.outer.model");
+const NestedInnerTool = Tool<Input, Output>("nested.inner.capability");
+const NestedAudit = Tool<Input, Output>("nested.audit.capability");
+const NestedCtx = Context<Depth>({ depth: 0 });
+
+const NestedLoops = Agent<Input, Output, Depth>({
   name: "NestedLoops",
-  source,
   context: NestedCtx,
-  use: { NestedOuterModel, NestedInnerTool, NestedAudit },
   async run(agent, incoming) {
     while (true) {
       const reply = await NestedOuterModel(incoming);
@@ -156,7 +148,7 @@ const NestedLoops = Agent({
   },
 });
 
-const AuditInnerIteration = Hook.before({
+const AuditInnerIteration = Hook.before<Depth>({
   agent: NestedLoops,
   target: NestedInnerTool,
   scope: "loop",
@@ -250,7 +242,7 @@ describe("source-first TypeScript authoring", () => {
       }),
     ]);
     expect(graph.declarations).toContainEqual(
-      expect.objectContaining({ decl_id: "decl.context.Context" }),
+      expect.objectContaining({ decl_id: "decl.context.ConversationCtx" }),
     );
     expect(graph.imported_program_refs).toEqual([
       expect.objectContaining({ program_ref: "Specialist" }),
@@ -328,20 +320,17 @@ describe("source-first TypeScript authoring", () => {
   });
 
   it("redacts source tokens that escape the author workspace", () => {
+    void Model<Input, Output>("summarizer.model");
     const graph = captureProgram({
       programId: "EscapingSource",
       entrypoint: "run",
-      inputTypeRef: "Input",
-      outputTypeRef: "Output",
-      hasDefaultContext: false,
-      bindings: new Map([["SummarizerModel", SummarizerModel]]),
-      bindingDeclIds: new Map([["SummarizerModel", "decl.model.SummarizerModel"]]),
+      declared: declaredSoFar(),
       source: {
         fileName: "../../outside-workspace/agent.ts",
         text: `
           import { Agent, Model } from "@apxm/frontend";
-          const SummarizerModel = Model("summarizer.model");
-          const EscapingSource = Agent({
+          const SummarizerModel = Model<Input, Output>("summarizer.model");
+          const EscapingSource = Agent<Input, Output>({
             async run(agent, input) {
               return await SummarizerModel(input);
             },
@@ -358,9 +347,9 @@ describe("source-first TypeScript authoring", () => {
     const shadowedSource = {
       fileName: "shadowed-agent.ts",
       text: `
-        import { Agent } from "@apxm/frontend";
-        const BoundModel = undefined;
-        const Shadowed = Agent({
+        import { Agent, Model } from "@apxm/frontend";
+        const BoundModel = Model<Input, Output>("shadowed.model");
+        const Shadowed = Agent<Input, Output>({
           name: "Shadowed",
           async run(agent, input) {
             const BoundModel = async (value) => value;
@@ -369,36 +358,29 @@ describe("source-first TypeScript authoring", () => {
         });
       `,
     };
+    void Model<Input, Output>("shadowed.model");
     expect(() => captureProgram({
       programId: "Shadowed",
       entrypoint: "run",
-      inputTypeRef: "Input",
-      outputTypeRef: "Output",
-      hasDefaultContext: false,
-      bindings: new Map([["BoundModel", Model("shadowed.model")]]),
-      bindingDeclIds: new Map([["BoundModel", "decl.model.BoundModel"]]),
+      declared: declaredSoFar(),
       source: shadowedSource,
     })).toThrow(CaptureError);
   });
 
   it("rejects an unresolved or effectful call standing in a value position", () => {
-    const captureValuePosition = (body: string) =>
-      captureProgram({
+    const captureValuePosition = (body: string) => {
+      void Model<Input, Output>("value.position.model");
+      return captureProgram({
         programId: "ValuePosition",
         entrypoint: "run",
-        inputTypeRef: "Input",
-        outputTypeRef: "Output",
-        hasDefaultContext: false,
-        bindings: new Map([["BoundModel", Model("value.position.model")]]),
-        bindingDeclIds: new Map([["BoundModel", "decl.model.BoundModel"]]),
+        declared: declaredSoFar(),
         source: {
           fileName: "value-position-agent.ts",
           text: `
             import { Agent, Model } from "@apxm/frontend";
-            const BoundModel = Model("value.position.model");
-            const ValuePosition = Agent({
+            const BoundModel = Model<Input, Output>("value.position.model");
+            const ValuePosition = Agent<Input, Output>({
               name: "ValuePosition",
-              use: { BoundModel },
               async run(agent, input) {
                 ${body}
               },
@@ -406,6 +388,7 @@ describe("source-first TypeScript authoring", () => {
           `,
         },
       });
+    };
 
     // A returned call the frontend cannot resolve was previously dropped, so
     // the graph silently lost the author's whole result expression.
@@ -428,16 +411,12 @@ describe("source-first TypeScript authoring", () => {
     expect(() => captureProgram({
       programId: "UnsafeIntegerPredicate",
       entrypoint: "run",
-      inputTypeRef: "Input",
-      outputTypeRef: "Output",
-      hasDefaultContext: false,
-      bindings: new Map(),
-      bindingDeclIds: new Map(),
+      declared: declaredSoFar(),
       source: {
         fileName: "unsafe-integer-agent.ts",
         text: `
           import { Agent } from "@apxm/frontend";
-          const UnsafeIntegerPredicate = Agent({
+          const UnsafeIntegerPredicate = Agent<Input, Output>({
             name: "UnsafeIntegerPredicate",
             async run(agent, input) {
               if (input.count === 9007199254740992) return input;
@@ -450,20 +429,17 @@ describe("source-first TypeScript authoring", () => {
   });
 
   it("preserves negative authored integer expressions at the safe boundary", () => {
+    void Model<Input, Output>("negative.value.model");
     const graph = captureProgram({
       programId: "NegativeIntegerValue",
       entrypoint: "run",
-      inputTypeRef: "Input",
-      outputTypeRef: "Output",
-      hasDefaultContext: false,
-      bindings: new Map([["BoundModel", Model("negative.value.model")]]),
-      bindingDeclIds: new Map([["BoundModel", "decl.model.BoundModel"]]),
+      declared: declaredSoFar(),
       source: {
         fileName: "negative-value-agent.ts",
         text: `
           import { Agent, Model } from "@apxm/frontend";
-          const BoundModel = Model("negative.value.model");
-          const NegativeIntegerValue = Agent({
+          const BoundModel = Model<Input, Output>("negative.value.model");
+          const NegativeIntegerValue = Agent<Input, Output>({
             name: "NegativeIntegerValue",
             async run(agent, input) {
               return await BoundModel(-9007199254740991);
@@ -477,20 +453,17 @@ describe("source-first TypeScript authoring", () => {
   });
 
   it("rejects effect calls that would silently discard authored operands", () => {
+    void Model<Input, Output>("multiple.operands.model");
     expect(() => captureProgram({
       programId: "MultipleOperands",
       entrypoint: "run",
-      inputTypeRef: "Input",
-      outputTypeRef: "Output",
-      hasDefaultContext: false,
-      bindings: new Map([["BoundModel", Model("multiple.operands.model")]]),
-      bindingDeclIds: new Map([["BoundModel", "decl.model.BoundModel"]]),
+      declared: declaredSoFar(),
       source: {
         fileName: "multiple-operands-agent.ts",
         text: `
           import { Agent, Model } from "@apxm/frontend";
-          const BoundModel = Model("multiple.operands.model");
-          const MultipleOperands = Agent({
+          const BoundModel = Model<Input, Output>("multiple.operands.model");
+          const MultipleOperands = Agent<Input, Output>({
             name: "MultipleOperands",
             async run(agent, input) {
               return await BoundModel(input, input);

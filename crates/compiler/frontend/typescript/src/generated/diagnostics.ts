@@ -23,6 +23,9 @@ export type DiagnosticCode =
   | "ToolCredentialInSource"
   | "CapabilityRefNotExact"
   | "CapabilityDisplayNameRejected"
+  | "CapabilityHandlerUntypedSchema"
+  | "CapabilityHandlerOpenObject"
+  | "CapabilityHandlerReadOnlyUndeclared"
   | "HookTargetUnresolved"
   | "HookDynamicRegistration"
   | "HookOrderAmbiguous"
@@ -46,6 +49,9 @@ export const TOOL_DISPLAY_NAME_REJECTED = "ToolDisplayNameRejected" satisfies Di
 export const TOOL_CREDENTIAL_IN_SOURCE = "ToolCredentialInSource" satisfies DiagnosticCode;
 export const CAPABILITY_REF_NOT_EXACT = "CapabilityRefNotExact" satisfies DiagnosticCode;
 export const CAPABILITY_DISPLAY_NAME_REJECTED = "CapabilityDisplayNameRejected" satisfies DiagnosticCode;
+export const CAPABILITY_HANDLER_UNTYPED_SCHEMA = "CapabilityHandlerUntypedSchema" satisfies DiagnosticCode;
+export const CAPABILITY_HANDLER_OPEN_OBJECT = "CapabilityHandlerOpenObject" satisfies DiagnosticCode;
+export const CAPABILITY_HANDLER_READ_ONLY_UNDECLARED = "CapabilityHandlerReadOnlyUndeclared" satisfies DiagnosticCode;
 export const HOOK_TARGET_UNRESOLVED = "HookTargetUnresolved" satisfies DiagnosticCode;
 export const HOOK_DYNAMIC_REGISTRATION = "HookDynamicRegistration" satisfies DiagnosticCode;
 export const HOOK_ORDER_AMBIGUOUS = "HookOrderAmbiguous" satisfies DiagnosticCode;
@@ -70,6 +76,9 @@ export const DIAGNOSTIC_CODES = [
   TOOL_CREDENTIAL_IN_SOURCE,
   CAPABILITY_REF_NOT_EXACT,
   CAPABILITY_DISPLAY_NAME_REJECTED,
+  CAPABILITY_HANDLER_UNTYPED_SCHEMA,
+  CAPABILITY_HANDLER_OPEN_OBJECT,
+  CAPABILITY_HANDLER_READ_ONLY_UNDECLARED,
   HOOK_TARGET_UNRESOLVED,
   HOOK_DYNAMIC_REGISTRATION,
   HOOK_ORDER_AMBIGUOUS,

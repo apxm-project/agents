@@ -2,8 +2,9 @@
 
 import { Agent, Capability, Context, Hook, Model, Tool } from "@apxm/frontend";
 import { COUNT_TOKENS, SEARCH_WEB } from "@apxm/frontend/capabilities";
-import "@apxm/frontend/node";
-import { staticSource } from "./static-source.js";
+import { source } from "@apxm/frontend/node";
+
+source(import.meta.url);
 
 type ConversationInput = { message: string };
 type ConversationOutput = { message: string };
@@ -13,7 +14,7 @@ type ConversationMessage = {
 };
 type CountTokensRequest = { messages: readonly ConversationMessage[] };
 type CountTokensResult = { total: number };
-type ConversationState = {
+type ConversationContext = {
   messages: readonly ConversationMessage[];
   last_reply: string;
   context_budget: CountTokensResult | null;
@@ -37,7 +38,7 @@ type ModelResponse =
   | { kind: "final"; reply: ConversationOutput }
   | { kind: "tool_request"; tool_request: SearchWebToolRequest };
 type ConversationalProgram = ReturnType<
-  typeof Agent<ConversationInput, ConversationOutput, ConversationState>
+  typeof Agent<ConversationInput, ConversationOutput, ConversationContext>
 >;
 
 // Measuring the model-visible conversation is a Capability, not host code, so
@@ -47,23 +48,20 @@ const CountTokens = Capability<CountTokensRequest, CountTokensResult>(
 );
 const SearchWeb = Tool<SearchWebRequest, SearchWebResult>(SEARCH_WEB);
 const SupportModel = Model<ModelRequest, ModelResponse>("model.target");
-const ConversationContext = Context<ConversationState>(
-  { messages: [], last_reply: "", context_budget: null, last_tool: "" },
-  "ConversationContext",
-);
-const source = staticSource(import.meta.url);
+const ConversationContext: ReturnType<typeof Context> = Context<ConversationContext>({
+  messages: [],
+  last_reply: "",
+  context_budget: null,
+  last_tool: "",
+});
 
 export const ConversationalExample: ConversationalProgram = Agent<
   ConversationInput,
   ConversationOutput,
-  ConversationState
+  ConversationContext
 >({
   name: "ConversationalExample",
-  input: "ConversationInput",
-  output: "ConversationOutput",
-  source,
   context: ConversationContext,
-  use: { CountTokens, SearchWeb, SupportModel },
   async run(agent, incoming) {
     while (incoming.message !== "") {
       let response = await SupportModel({
@@ -101,7 +99,7 @@ export const ConversationalExample: ConversationalProgram = Agent<
 });
 
 // Measure the model-visible conversation before the Tool runs.
-const PrepareSearchContext = Hook.before<ConversationState>({
+const PrepareSearchContext = Hook.before<ConversationContext>({
   agent: ConversationalExample,
   target: SearchWeb,
   scope: "capability",
@@ -117,7 +115,7 @@ const PrepareSearchContext = Hook.before<ConversationState>({
 });
 
 // Record which Capability the conversation last dispatched.
-const RecordSearchContext = Hook.after<ConversationState>({
+const RecordSearchContext = Hook.after<ConversationContext>({
   agent: ConversationalExample,
   target: SearchWeb,
   scope: "capability",

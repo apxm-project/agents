@@ -105,8 +105,8 @@ async def RecordSearchContext(agent) -> None:
 
 
 @Agent(
-    input="ConversationInput",
-    output="ConversationOutput",
+    input=ConversationInput,
+    output=ConversationOutput,
     context=ConversationContext,
 )
 async def ConversationalExample(agent, incoming):

@@ -1,20 +1,19 @@
 // Defines Coder's read-only structured edit proposal Tool.
 import { Tool } from "@apxm/agent-packaging";
 
-interface EditArgs {
-  file_path: string;
-  before: string;
-  after: string;
-}
-
 /** Prepare a before/after proposal without mutating a file. */
 export const proposeEdit = Tool.define({
   name: "edit",
   description: "Return a structured before/after proposal without changing a file.",
-  input: Tool.object<EditArgs>({
-    file_path: Tool.text({ minLength: 1 }),
-    before: Tool.text({ minLength: 1 }),
-    after: Tool.text({ minLength: 1 }),
+  // The handler states this about itself; nothing else in the package does.
+  readOnly: true,
+  input: Tool.object({
+    additionalProperties: false,
+    properties: {
+      file_path: Tool.text({ required: true, minLength: 1 }),
+      before: Tool.text({ required: true, minLength: 1 }),
+      after: Tool.text({ required: true, minLength: 1 }),
+    },
   }),
   run(args) {
     const file_path = args.file_path.trim();

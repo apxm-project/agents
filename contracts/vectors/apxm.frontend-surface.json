@@ -2,7 +2,7 @@
   "schema_version": "apxm.frontend-surface",
   "surface_version": "apxm.frontend-graph",
   "everyday": ["Agent", "agent", "Context", "Tool", "Model"],
-  "advanced": ["Capability", "Event", "Hook", "TaskGroup"],
+  "advanced": ["Capability", "capability", "Event", "Hook", "TaskGroup"],
   "non_public": [
     "AgentProgram",
     "AgentFacade",
@@ -30,17 +30,68 @@
     "AgentLoop",
     "Loop"
   ],
+  "languages": [
+    {
+      "id": "python",
+      "authoring_root": "crates/compiler/frontend/python/apxm_program/__init__.py",
+      "generated_diagnostics": "crates/compiler/frontend/python/apxm_program/_generated/diagnostics.py"
+    },
+    {
+      "id": "typescript",
+      "authoring_root": "crates/compiler/frontend/typescript/src/index.ts",
+      "generated_diagnostics": "crates/compiler/frontend/typescript/src/generated/diagnostics.ts"
+    }
+  ],
   "declarations": [
     {
       "concept": "Agent definition",
       "tier": "everyday",
-      "python_projection": "@Agent(input=..., output=..., context=...) on one async def",
-      "typescript_projection": "Agent<I, O, C>({ context?, async run(agent, input) })",
       "bound_semantic_node": "AgentDecl",
+      "projections": {
+        "python": {
+          "module": "crates/compiler/frontend/python/apxm_program/_agent.py",
+          "symbol": "Agent",
+          "exported_from_root": true,
+          "signature": "@Agent(input=InputType, output=OutputType, context=ContextType) on one async def"
+        },
+        "typescript": {
+          "module": "crates/compiler/frontend/typescript/src/agent.ts",
+          "symbol": "Agent",
+          "exported_from_root": true,
+          "signature": "Agent<Input, Output, Context>({ name?, context?, async run(agent, input) })"
+        }
+      },
       "arguments": [
-        { "name": "input", "accepts": "type_ref", "required": true },
-        { "name": "output", "accepts": "type_ref", "required": true },
-        { "name": "context", "accepts": "type_ref", "required": false }
+        {
+          "name": "input",
+          "accepts": "type_ref",
+          "required": true,
+          "projected_as": { "python": ["keyword"], "typescript": ["type_parameter"] }
+        },
+        {
+          "name": "output",
+          "accepts": "type_ref",
+          "required": true,
+          "projected_as": { "python": ["keyword"], "typescript": ["type_parameter"] }
+        },
+        {
+          "name": "context",
+          "accepts": "type_ref",
+          "required": false,
+          "projected_as": { "python": ["keyword"], "typescript": ["type_parameter", "option_field"] }
+        },
+        {
+          "name": "name",
+          "accepts": "literal",
+          "required": false,
+          "projected_as": { "python": ["inferred"], "typescript": ["option_field"] }
+        },
+        {
+          "name": "run",
+          "accepts": "callback_body",
+          "required": true,
+          "projected_as": { "python": ["decorated_function"], "typescript": ["option_field"] }
+        }
       ],
       "produces_intent": "none",
       "diagnostics": ["AgentBodyNotAsync", "AgentMissingInputOutput", "AgentDynamicArgument", "AgentFacadeImported"]
@@ -48,11 +99,34 @@
     {
       "concept": "Context schema/default",
       "tier": "everyday",
-      "python_projection": "@Context on one typed class",
-      "typescript_projection": "Context<C>(initial)",
       "bound_semantic_node": "ContextDecl",
+      "projections": {
+        "python": {
+          "module": "crates/compiler/frontend/python/apxm_program/_markers.py",
+          "symbol": "Context",
+          "exported_from_root": true,
+          "signature": "@Context on one typed class whose field defaults are the initial Context"
+        },
+        "typescript": {
+          "module": "crates/compiler/frontend/typescript/src/markers.ts",
+          "symbol": "Context",
+          "exported_from_root": true,
+          "signature": "Context<Schema>(initial)"
+        }
+      },
       "arguments": [
-        { "name": "initial", "accepts": "typed_default", "required": false }
+        {
+          "name": "schema",
+          "accepts": "type_ref",
+          "required": true,
+          "projected_as": { "python": ["parameter"], "typescript": ["type_parameter"] }
+        },
+        {
+          "name": "initial",
+          "accepts": "typed_default",
+          "required": false,
+          "projected_as": { "python": ["inferred"], "typescript": ["parameter"] }
+        }
       ],
       "produces_intent": "none",
       "diagnostics": ["ContextNotTyped", "ContextMutableGlobal", "ContextDynamicDefault"]
@@ -60,11 +134,40 @@
     {
       "concept": "Exact Model binding",
       "tier": "everyday",
-      "python_projection": "Model[I, O](ref)",
-      "typescript_projection": "Model<I, O>(ref)",
       "bound_semantic_node": "ModelBinding",
+      "projections": {
+        "python": {
+          "module": "crates/compiler/frontend/python/apxm_program/_markers.py",
+          "symbol": "Model",
+          "exported_from_root": true,
+          "signature": "Model[Input, Output](ref)"
+        },
+        "typescript": {
+          "module": "crates/compiler/frontend/typescript/src/markers.ts",
+          "symbol": "Model",
+          "exported_from_root": true,
+          "signature": "Model<Input, Output>(ref)"
+        }
+      },
       "arguments": [
-        { "name": "ref", "accepts": "exact_reference", "required": true }
+        {
+          "name": "input",
+          "accepts": "type_ref",
+          "required": true,
+          "projected_as": { "python": ["type_parameter"], "typescript": ["type_parameter"] }
+        },
+        {
+          "name": "output",
+          "accepts": "type_ref",
+          "required": true,
+          "projected_as": { "python": ["type_parameter"], "typescript": ["type_parameter"] }
+        },
+        {
+          "name": "ref",
+          "accepts": "exact_reference",
+          "required": true,
+          "projected_as": { "python": ["parameter"], "typescript": ["parameter"] }
+        }
       ],
       "produces_intent": "model_invocation",
       "diagnostics": ["ModelRefNotExact", "ModelDisplayNameRejected", "ModelUntypedSchema"]
@@ -72,12 +175,46 @@
     {
       "concept": "Imported Tool binding",
       "tier": "everyday",
-      "python_projection": "Tool[I, O](capability_ref, permission=...)",
-      "typescript_projection": "Tool<I, O>(capabilityRef, { permission })",
       "bound_semantic_node": "ToolBinding",
+      "projections": {
+        "python": {
+          "module": "crates/compiler/frontend/python/apxm_program/_markers.py",
+          "symbol": "Tool",
+          "exported_from_root": true,
+          "signature": "Tool[Input, Output](capability_ref, permission=...)"
+        },
+        "typescript": {
+          "module": "crates/compiler/frontend/typescript/src/markers.ts",
+          "symbol": "Tool",
+          "exported_from_root": true,
+          "signature": "Tool<Input, Output>(capabilityRef, { permission })"
+        }
+      },
       "arguments": [
-        { "name": "capability_ref", "accepts": "exact_reference", "required": true },
-        { "name": "permission", "accepts": "closed_option", "required": false }
+        {
+          "name": "input",
+          "accepts": "type_ref",
+          "required": true,
+          "projected_as": { "python": ["type_parameter"], "typescript": ["type_parameter"] }
+        },
+        {
+          "name": "output",
+          "accepts": "type_ref",
+          "required": true,
+          "projected_as": { "python": ["type_parameter"], "typescript": ["type_parameter"] }
+        },
+        {
+          "name": "capability_ref",
+          "accepts": "exact_reference",
+          "required": true,
+          "projected_as": { "python": ["parameter"], "typescript": ["parameter"] }
+        },
+        {
+          "name": "permission",
+          "accepts": "permission",
+          "required": false,
+          "projected_as": { "python": ["keyword"], "typescript": ["option_field"] }
+        }
       ],
       "produces_intent": "tool_invocation",
       "diagnostics": ["ToolRefNotCapability", "ToolDisplayNameRejected", "ToolCredentialInSource"]
@@ -85,25 +222,168 @@
     {
       "concept": "Imported Capability",
       "tier": "advanced",
-      "python_projection": "Capability[I, O](ref, permission=...)",
-      "typescript_projection": "Capability<I, O>(ref, { permission })",
       "bound_semantic_node": "CapabilityBinding",
+      "projections": {
+        "python": {
+          "module": "crates/compiler/frontend/python/apxm_program/_markers.py",
+          "symbol": "Capability",
+          "exported_from_root": true,
+          "signature": "Capability[Input, Output](ref, permission=...)"
+        },
+        "typescript": {
+          "module": "crates/compiler/frontend/typescript/src/markers.ts",
+          "symbol": "Capability",
+          "exported_from_root": true,
+          "signature": "Capability<Input, Output>(ref, { permission })"
+        }
+      },
       "arguments": [
-        { "name": "ref", "accepts": "exact_reference", "required": true },
-        { "name": "permission", "accepts": "closed_option", "required": false }
+        {
+          "name": "input",
+          "accepts": "type_ref",
+          "required": true,
+          "projected_as": { "python": ["type_parameter"], "typescript": ["type_parameter"] }
+        },
+        {
+          "name": "output",
+          "accepts": "type_ref",
+          "required": true,
+          "projected_as": { "python": ["type_parameter"], "typescript": ["type_parameter"] }
+        },
+        {
+          "name": "ref",
+          "accepts": "exact_reference",
+          "required": true,
+          "projected_as": { "python": ["parameter"], "typescript": ["parameter"] }
+        },
+        {
+          "name": "permission",
+          "accepts": "permission",
+          "required": false,
+          "projected_as": { "python": ["keyword"], "typescript": ["option_field"] }
+        }
       ],
       "produces_intent": "capability_invocation",
       "diagnostics": ["CapabilityRefNotExact", "CapabilityDisplayNameRejected"]
     },
     {
+      "concept": "Shipped Capability handler",
+      "tier": "advanced",
+      "bound_semantic_node": "CapabilityHandlerDecl",
+      "projections": {
+        "python": {
+          "module": "crates/compiler/frontend/python/apxm_program/handlers.py",
+          "symbol": "capability",
+          "exported_from_root": false,
+          "signature": "capability({ name, description, read_only, input, run }) -> CapabilityId"
+        },
+        "typescript": {
+          "module": "crates/tools/cli/agent-packaging/index.d.ts",
+          "symbol": "Tool",
+          "member": "define",
+          "exported_from_root": false,
+          "signature": "Tool.define({ name, description, readOnly, input, run }) -> CapabilityId"
+        }
+      },
+      "arguments": [
+        {
+          "name": "name",
+          "accepts": "exact_reference",
+          "required": true,
+          "projected_as": { "python": ["option_field"], "typescript": ["option_field"] }
+        },
+        {
+          "name": "description",
+          "accepts": "literal",
+          "required": true,
+          "projected_as": { "python": ["option_field"], "typescript": ["option_field"] }
+        },
+        {
+          "name": "read_only",
+          "accepts": "closed_option",
+          "required": true,
+          "projected_as": { "python": ["option_field"], "typescript": ["option_field"] }
+        },
+        {
+          "name": "input",
+          "accepts": "object_schema",
+          "required": true,
+          "projected_as": {
+            "python": ["option_field"],
+            "typescript": ["option_field", "type_parameter"]
+          }
+        },
+        {
+          "name": "run",
+          "accepts": "callback_body",
+          "required": true,
+          "projected_as": { "python": ["option_field"], "typescript": ["option_field"] }
+        }
+      ],
+      "produces_intent": "none",
+      "diagnostics": [
+        "CapabilityHandlerUntypedSchema",
+        "CapabilityHandlerOpenObject",
+        "CapabilityHandlerReadOnlyUndeclared"
+      ]
+    },
+    {
       "concept": "Static Hook",
       "tier": "advanced",
-      "python_projection": "@Hook.before(...) / @Hook.after(...)",
-      "typescript_projection": "Hook.before({...}) / Hook.after({...})",
       "bound_semantic_node": "HookDecl",
+      "projections": {
+        "python": {
+          "module": "crates/compiler/frontend/python/apxm_program/_advanced.py",
+          "symbol": "Hook",
+          "member": "before",
+          "exported_from_root": true,
+          "signature": "@Hook.before(target=..., scope=...) / @Hook.after(target=..., scope=...)"
+        },
+        "typescript": {
+          "module": "crates/compiler/frontend/typescript/src/advanced.ts",
+          "symbol": "Hook",
+          "member": "before",
+          "exported_from_root": true,
+          "signature": "Hook.before({ agent, target, scope?, run }) / Hook.after({ ... })"
+        }
+      },
       "arguments": [
-        { "name": "target_selector", "accepts": "selector", "required": true },
-        { "name": "phase", "accepts": "phase", "required": true }
+        {
+          "name": "phase",
+          "accepts": "phase",
+          "required": true,
+          "projected_as": { "python": ["method_name"], "typescript": ["method_name"] }
+        },
+        {
+          "name": "target",
+          "accepts": "selector",
+          "required": true,
+          "projected_as": { "python": ["keyword"], "typescript": ["option_field"] }
+        },
+        {
+          "name": "scope",
+          "accepts": "closed_option",
+          "required": false,
+          "projected_as": { "python": ["keyword"], "typescript": ["option_field"] }
+        },
+        {
+          "name": "agent",
+          "accepts": "exact_reference",
+          "required": true,
+          "projected_as": { "python": ["inferred"], "typescript": ["option_field"] }
+        },
+        {
+          "name": "context",
+          "accepts": "type_ref",
+          "required": false,
+          "projected_as": { "python": ["inferred"], "typescript": ["type_parameter"] }
+        },
+        {
+          "name": "run",
+          "accepts": "callback_body",
+          "required": true,
+          "projected_as": { "python": ["decorated_function"], "typescript": ["option_field"] }
+        }
       ],
       "produces_intent": "none",
       "diagnostics": ["HookTargetUnresolved", "HookDynamicRegistration", "HookOrderAmbiguous"]
@@ -111,11 +391,34 @@
     {
       "concept": "Durable Event value",
       "tier": "advanced",
-      "python_projection": "Event[T], then await event.wait(...)",
-      "typescript_projection": "Event<T>, then await event.wait(...)",
       "bound_semantic_node": "EventType",
+      "projections": {
+        "python": {
+          "module": "crates/compiler/frontend/python/apxm_program/_markers.py",
+          "symbol": "Event",
+          "exported_from_root": true,
+          "signature": "Event[Payload](ref), then await event.wait()"
+        },
+        "typescript": {
+          "module": "crates/compiler/frontend/typescript/src/markers.ts",
+          "symbol": "Event",
+          "exported_from_root": true,
+          "signature": "Event<Payload>(ref), then await event.wait()"
+        }
+      },
       "arguments": [
-        { "name": "T", "accepts": "type_ref", "required": true }
+        {
+          "name": "payload",
+          "accepts": "type_ref",
+          "required": true,
+          "projected_as": { "python": ["type_parameter"], "typescript": ["type_parameter"] }
+        },
+        {
+          "name": "ref",
+          "accepts": "exact_reference",
+          "required": true,
+          "projected_as": { "python": ["parameter"], "typescript": ["parameter"] }
+        }
       ],
       "produces_intent": "event_wait",
       "diagnostics": ["EventNotTyped", "EventWaitOutsideBody"]
@@ -123,10 +426,30 @@
     {
       "concept": "Structured task scope",
       "tier": "advanced",
-      "python_projection": "async with TaskGroup()",
-      "typescript_projection": "TaskGroup.run(...)",
       "bound_semantic_node": "TaskScope",
-      "arguments": [],
+      "projections": {
+        "python": {
+          "module": "crates/compiler/frontend/python/apxm_program/_advanced.py",
+          "symbol": "TaskGroup",
+          "exported_from_root": true,
+          "signature": "async with TaskGroup()"
+        },
+        "typescript": {
+          "module": "crates/compiler/frontend/typescript/src/advanced.ts",
+          "symbol": "TaskGroup",
+          "member": "run",
+          "exported_from_root": true,
+          "signature": "TaskGroup.run(async () => { ... })"
+        }
+      },
+      "arguments": [
+        {
+          "name": "body",
+          "accepts": "callback_body",
+          "required": true,
+          "projected_as": { "python": ["context_manager_block"], "typescript": ["parameter"] }
+        }
+      ],
       "produces_intent": "none",
       "diagnostics": ["TaskGroupMissingJoin", "TaskGroupDetachedWork", "TaskGroupRawCoroutine"]
     }

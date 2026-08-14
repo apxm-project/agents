@@ -5,9 +5,22 @@
 // authored body to discover the graph, and they carry no credential, grant,
 // endpoint, or runtime object.
 
+import { recordDeclaration } from "./declared.js";
 import type { Permission } from "./generated/permissions.js";
 
 const FORBIDDEN_DISPLAY_NAMES = new Set(["default", "model.default", "support", "search-web", ""]);
+
+/**
+ * A Capability reference is either an exact catalogue id or the handler that
+ * implements one. Accepting the handler itself is what makes referencing one
+ * capability while implementing another unrepresentable rather than merely
+ * checked: there is no second place to spell the id.
+ */
+export type CapabilityReference = string | { readonly capabilityId: string };
+
+function capabilityIdOf(reference: CapabilityReference): string {
+  return typeof reference === "string" ? reference : reference?.capabilityId;
+}
 
 function rejectDisplayName(value: unknown, marker: string): void {
   if (typeof value !== "string" || FORBIDDEN_DISPLAY_NAMES.has(value)) {
@@ -142,61 +155,65 @@ function uncallable(marker: string): never {
   throw new Error(`a ${marker} is invoked inside a compiled Agent body`);
 }
 
-export function Model<I, O>(ref: string): ModelBinding<I, O> {
+export function Model<Input, Output>(ref: string): ModelBinding<Input, Output> {
   rejectDisplayName(ref, "Model");
   const binding = () => uncallable("Model");
-  return Object.assign(binding, {
+  return recordDeclaration(Object.assign(binding, {
     kind: "model_binding" as const,
     targetRef: ref,
     inputTypeRef: "ModelRequest",
     outputTypeRef: "ModelResponse",
-  });
+  }));
 }
 
-export function Tool<I, O>(
-  targetRef: string,
+export function Tool<Input, Output>(
+  capabilityRef: CapabilityReference,
   options: { readonly permission?: Permission } = {},
-): ToolBinding<I, O> {
+): ToolBinding<Input, Output> {
   const binding = () => uncallable("Tool");
+  const targetRef = capabilityIdOf(capabilityRef);
   rejectDisplayName(targetRef, "Tool");
-  return Object.assign(binding, {
+  return recordDeclaration(Object.assign(binding, {
     kind: "tool_binding" as const,
     targetRef,
     inputTypeRef: "ToolInput",
     outputTypeRef: "ToolOutput",
     permission: options.permission,
-  });
+  }));
 }
 
-export function Capability<I, O>(
-  targetRef: string,
+export function Capability<Input, Output>(
+  ref: CapabilityReference,
   options: { readonly permission?: Permission } = {},
-): CapabilityBinding<I, O> {
+): CapabilityBinding<Input, Output> {
   const binding = () => uncallable("Capability");
+  const targetRef = capabilityIdOf(ref);
   rejectDisplayName(targetRef, "Capability");
-  return Object.assign(binding, {
+  return recordDeclaration(Object.assign(binding, {
     kind: "capability_binding" as const,
     targetRef,
     inputTypeRef: "CapabilityInput",
     outputTypeRef: "CapabilityOutput",
     permission: options.permission,
+  }));
+}
+
+export function Event<Payload>(ref: string): EventTypeBinding<Payload> {
+  rejectDisplayName(ref, "Event");
+  return recordDeclaration({
+    kind: "event_type" as const,
+    typeRef: "Event",
+    targetRef: ref,
+    wait: () => uncallable("Event"),
   });
 }
 
-export function Event<T>(targetRef: string, typeRef = "Event"): EventTypeBinding<T> {
-  rejectDisplayName(targetRef, "Event");
-  return {
-    kind: "event_type",
-    typeRef,
-    targetRef,
-    wait: () => uncallable("Event"),
-  };
-}
-
-export function Context<C>(initial?: C, typeRef = "Context"): ContextSchema {
-  return {
-    kind: "context",
-    typeRef,
+export function Context<Schema>(initial?: Schema): ContextSchema {
+  return recordDeclaration({
+    kind: "context" as const,
+    // The Context type identity is read off `Context<Schema>` in the authored
+    // source, exactly as Python reads it off the decorated class.
+    typeRef: "Context",
     defaultPresent: initial !== undefined,
-  };
+  });
 }

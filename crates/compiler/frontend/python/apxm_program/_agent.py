@@ -127,13 +127,26 @@ def Agent(
 
 
 def _type_ref(annotation: Any) -> str:
-    if annotation is None:
-        return "None"
-    if isinstance(annotation, str):
-        return annotation
+    """Resolve one typed Agent interface declaration to its type reference.
+
+    The declaration is the type, never a string naming it: a renamed type
+    renames its reference, and a reference to a type that does not exist is a
+    NameError at the definition site rather than a graph that disagrees with the
+    source. TypeScript reads the same three off `Agent<Input, Output, Context>`.
+    """
     if isinstance(annotation, ContextSchema):
         return annotation.type_ref
-    return getattr(annotation, "__name__", str(annotation))
+    if isinstance(annotation, str):
+        raise TypeError(
+            "an Agent input, output, and Context are the typed declarations "
+            f"themselves, not the string {annotation!r} naming one"
+        )
+    name = getattr(annotation, "__name__", None)
+    if name is None:
+        raise TypeError(
+            f"an Agent input, output, and Context are typed declarations; got {annotation!r}"
+        )
+    return name
 
 
 def _resolve_bindings(func: Callable[..., Any]) -> dict[str, Any]:

@@ -23,10 +23,12 @@ def test_coder_is_two_manifests_plus_the_handlers_it_ships() -> None:
     ]
     # The capability surface is the handlers the package ships, not an
     # inventory file restating them.
-    shipped = sorted(
-        path.parent.name for path in CODER_ROOT.glob("capabilities/*/handler.ts")
-    )
+    handlers = sorted(CODER_ROOT.glob("capabilities/*/handler.ts"))
+    shipped = sorted(path.parent.name for path in handlers)
     assert shipped == ["edit", "test"]
+    # Whether a shipped handler mutates state outside itself is stated on the
+    # handler, which is the only surviving surface that could state it.
+    assert all("readOnly: true" in path.read_text() for path in handlers)
     assert not list(CODER_ROOT.glob("capabilities/**/*.toml"))
     # Every decision Coder makes is the default one, so it states none.
     assert "permissions" not in agent
@@ -40,6 +42,8 @@ def test_coder_tools_are_typed_and_non_mutating() -> None:
     tools_by_name = {entry["name"]: entry for entry in manifest["handlers"]}
 
     assert set(tools_by_name) == {"edit", "test"}
+    # `read_only` reaches the manifest from the handler's own declaration.
+    assert all(entry["read_only"] is True for entry in tools_by_name.values())
     # `requires_approval` is the resolved permission decision, carried from the
     # one place a package states permissions.
     assert all(entry["requires_approval"] is False for entry in tools_by_name.values())

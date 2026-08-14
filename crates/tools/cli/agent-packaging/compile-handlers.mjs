@@ -86,6 +86,9 @@ export async function compileHandlers(entryPaths, options = {}) {
         source: await bundledSource(absolute, handler_id),
         description: value.description,
         schema: value.schema,
+        // The handler declares whether it mutates state outside itself; the
+        // manifest carries that declaration rather than inventing one.
+        read_only: value.read_only,
       });
     }
   }

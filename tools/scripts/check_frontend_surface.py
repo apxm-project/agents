@@ -1,5 +1,32 @@
 #!/usr/bin/env python3
-"""Check authoring exports and examples against the surface manifest."""
+"""`dekk agents check-frontend-surface` — frontend-surface conformance gate.
+
+The surface manifest, `contracts/vectors/apxm.frontend-surface.json`, states
+every public authoring declaration once: its concept, the semantic node it
+binds, the arguments it accepts, and — for each registered language — where that
+language projects it and what form each argument takes there.
+
+This gate proves the manifest true against the real sources. It does not compare
+identifier names: for every declaration and every registered language it
+extracts the projection's *argument shape* from that language's own source and
+requires it to be the shape the manifest declares, argument by argument, in the
+form the manifest says that language projects it, with the same required-ness.
+
+Two failures are named, because they are the two ways the surface stops being
+one surface:
+
+* ``FrontendSurfaceIncomplete{language, declaration}`` — a registered language
+  has no projection for a declaration, or its projection is missing an argument
+  the manifest declares. Every frontend must implement the whole surface; a
+  language that implements part of it is not a conforming implementation, and
+  that is an error rather than an omission nobody notices.
+* ``FrontendSurfaceUnsynced{artifact}`` — a generated artifact has drifted from
+  the manifest it is generated from.
+
+Adding a third language is adding one entry to `languages`, one projection per
+declaration, and one `SurfaceLanguage` subclass below. Everything else — the
+declarations, the arguments, the diagnostics, the example scan — is inherited.
+"""
 
 from __future__ import annotations
 
@@ -7,13 +34,14 @@ import ast
 import json
 import re
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = REPO_ROOT / "contracts" / "vectors" / "apxm.frontend-surface.json"
-PYTHON_ROOT = REPO_ROOT / "crates" / "compiler" / "frontend" / "python" / "apxm_program" / "__init__.py"
-TYPESCRIPT_ROOT = REPO_ROOT / "crates" / "compiler" / "frontend" / "typescript" / "src" / "index.ts"
+SCHEMA = REPO_ROOT / "contracts" / "schemas" / "apxm.frontend-surface.json"
 AUTHORING_SAMPLES = (
     *sorted((REPO_ROOT / "examples").glob("**/*.md")),
     REPO_ROOT / "crates" / "compiler" / "frontend" / "python" / "README.md",
@@ -21,105 +49,917 @@ AUTHORING_SAMPLES = (
 )
 
 
-def public_names() -> set[str]:
-    """Load the concrete public authoring declarations from the manifest."""
-    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
-    return (set(manifest["everyday"]) | set(manifest["advanced"])) - {"agent"}
+class SurfaceFailure(Exception):
+    """One reported surface failure, rendered as its own closed reason."""
+
+    def __str__(self) -> str:  # pragma: no cover - formatting only
+        return self.args[0]
 
 
-def python_exports(path: Path) -> tuple[set[str], set[str]]:
-    """Return the declared Python surface and every root-bound name."""
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    exported: set[str] = set()
-    root_names: set[str] = set()
-    for statement in tree.body:
-        if isinstance(statement, ast.ImportFrom):
-            root_names.update(alias.asname or alias.name for alias in statement.names)
-        elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            root_names.add(statement.name)
-        elif isinstance(statement, ast.Assign):
-            for target in statement.targets:
-                if isinstance(target, ast.Name):
-                    root_names.add(target.id)
-                    if target.id == "__all__" and isinstance(statement.value, (ast.List, ast.Tuple)):
+def incomplete(language: str, declaration: str, detail: str) -> str:
+    """Render the failure a language that does not implement the surface raises."""
+    return f"FrontendSurfaceIncomplete{{language={language}, declaration={declaration!r}}}: {detail}"
+
+
+def unsynced(artifact: str, detail: str) -> str:
+    """Render the failure a generated artifact that has drifted raises."""
+    return f"FrontendSurfaceUnsynced{{artifact={artifact}}}: {detail}"
+
+
+def canonical(name: str) -> str:
+    """Fold one argument spelling onto the manifest's argument identity.
+
+    `capabilityRef`, `capability_ref`, and `CapabilityRef` are one argument. A
+    leading underscore marks an unused parameter, not a different argument.
+    """
+    stripped = name.lstrip("_")
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", stripped).lower()
+
+
+@dataclass(frozen=True)
+class Argument:
+    """One accepted argument in one language, with its required-ness."""
+
+    name: str
+    required: bool
+
+
+@dataclass
+class ProjectionShape:
+    """The argument shape one language's projection of a declaration accepts."""
+
+    type_parameters: list[Argument] = field(default_factory=list)
+    parameters: list[Argument] = field(default_factory=list)
+    keywords: list[Argument] = field(default_factory=list)
+    option_fields: list[Argument] = field(default_factory=list)
+    members: set[str] = field(default_factory=set)
+    returns_decorator: bool = False
+    context_manager: bool = False
+
+    def by_kind(self, kind: str) -> Optional[list[Argument]]:
+        return {
+            "type_parameter": self.type_parameters,
+            "parameter": self.parameters,
+            "keyword": self.keywords,
+            "option_field": self.option_fields,
+        }.get(kind)
+
+    def accepted_names(self) -> set[str]:
+        """Every argument name this projection accepts, in any form."""
+        return {
+            argument.name
+            for group in (
+                self.type_parameters,
+                self.parameters,
+                self.keywords,
+                self.option_fields,
+            )
+            for argument in group
+        }
+
+
+class SurfaceLanguage:
+    """One registered language's local extraction layer.
+
+    A subclass answers four questions about its own sources. Everything the gate
+    decides from the answers — conformance, completeness, drift — is shared.
+    """
+
+    id = ""
+
+    def __init__(self, registration: dict) -> None:
+        self.registration = registration
+        self.authoring_root = REPO_ROOT / registration["authoring_root"]
+        self.generated_diagnostics = REPO_ROOT / registration["generated_diagnostics"]
+
+    def root_exports(self) -> set[str]:
+        """The names the authoring root publishes."""
+        raise NotImplementedError
+
+    def root_bound_names(self) -> set[str]:
+        """Every name bound in the authoring root's namespace."""
+        raise NotImplementedError
+
+    def shape(self, projection: dict) -> Optional[ProjectionShape]:
+        """The argument shape of one projection, or None when it is absent."""
+        raise NotImplementedError
+
+    def diagnostic_codes(self) -> list[str]:
+        """The diagnostic codes the generated module projects, in order."""
+        raise NotImplementedError
+
+    def import_patterns(self) -> tuple[str, ...]:
+        """Regexes matching an authoring import in documentation and examples."""
+        return ()
+
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+
+
+class PythonLanguage(SurfaceLanguage):
+    """Reads argument shape out of the Python frontend with `ast`."""
+
+    id = "python"
+
+    @staticmethod
+    def _module(path: Path) -> ast.Module:
+        return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+    def root_exports(self) -> set[str]:
+        exported: set[str] = set()
+        for statement in self._module(self.authoring_root).body:
+            if isinstance(statement, ast.Assign):
+                for target in statement.targets:
+                    if (
+                        isinstance(target, ast.Name)
+                        and target.id == "__all__"
+                        and isinstance(statement.value, (ast.List, ast.Tuple))
+                    ):
                         exported.update(
-                            value.value
-                            for value in statement.value.elts
-                            if isinstance(value, ast.Constant) and isinstance(value.value, str)
+                            element.value
+                            for element in statement.value.elts
+                            if isinstance(element, ast.Constant)
+                            and isinstance(element.value, str)
                         )
-    return exported, root_names
+        return exported
 
+    def root_bound_names(self) -> set[str]:
+        bound: set[str] = set()
+        for statement in self._module(self.authoring_root).body:
+            if isinstance(statement, (ast.Import, ast.ImportFrom)):
+                bound.update(alias.asname or alias.name for alias in statement.names)
+            elif isinstance(
+                statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            ):
+                bound.add(statement.name)
+            elif isinstance(statement, ast.Assign):
+                bound.update(
+                    target.id
+                    for target in statement.targets
+                    if isinstance(target, ast.Name)
+                )
+        return bound - {"__all__", "annotations"}
 
-def typescript_exports(path: Path) -> set[str]:
-    """Extract root re-exports without depending on a TypeScript runtime."""
-    text = path.read_text(encoding="utf-8")
-    names: set[str] = set()
-    for group in re.findall(r"export\s*\{(?P<body>.*?)\}\s*from", text, flags=re.DOTALL):
-        for entry in group.split(","):
-            name = entry.strip()
-            if not name:
+    def shape(self, projection: dict) -> Optional[ProjectionShape]:
+        module = self._module(REPO_ROOT / projection["module"])
+        classes = {
+            node.name: node for node in module.body if isinstance(node, ast.ClassDef)
+        }
+        functions = {
+            node.name: node
+            for node in module.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+
+        symbol = projection["symbol"]
+        shape = ProjectionShape()
+        declaration: ast.ClassDef | None = None
+
+        if symbol in functions:
+            callable_node = functions[symbol]
+        elif symbol in classes:
+            declaration = classes[symbol]
+        else:
+            instance = self._factory_class(module, symbol)
+            declaration = classes.get(instance or "")
+        if declaration is not None:
+            callable_node = self._describe_class(declaration, shape, projection)
+            # A class-shaped projection such as `TaskGroup` carries no callable
+            # signature of its own; its class-level facts are the whole shape.
+            if callable_node is None:
+                return shape
+        elif symbol not in functions:
+            return None
+
+        self._read_signature(callable_node, shape, module, classes)
+        shape.returns_decorator = self._returns_decorator(callable_node, classes)
+        return shape
+
+    @staticmethod
+    def _factory_class(module: ast.Module, symbol: str) -> Optional[str]:
+        """Resolve `Model = _ModelFactory()` onto the class that implements it."""
+        for statement in module.body:
+            if not isinstance(statement, ast.Assign):
                 continue
-            name = re.sub(r"^type\s+", "", name)
-            names.add(name.split(" as ")[-1].strip())
-    return names
+            for target in statement.targets:
+                if (
+                    isinstance(target, ast.Name)
+                    and target.id == symbol
+                    and isinstance(statement.value, ast.Call)
+                    and isinstance(statement.value.func, ast.Name)
+                ):
+                    return statement.value.func.id
+        return None
 
+    def _describe_class(
+        self, node: ast.ClassDef, shape: ProjectionShape, projection: dict
+    ) -> Optional[ast.AST]:
+        """Fill in the class-level facts and return the node carrying arguments."""
+        methods = {
+            child.name: child
+            for child in node.body
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        shape.members = {name for name in methods if not name.startswith("__")}
+        shape.context_manager = "__aenter__" in methods and "__aexit__" in methods
+        for child in node.body:
+            if isinstance(child, ast.Assign):
+                for target in child.targets:
+                    if (
+                        isinstance(target, ast.Name)
+                        and target.id == "_type_parameters"
+                        and isinstance(child.value, (ast.Tuple, ast.List))
+                    ):
+                        shape.type_parameters = [
+                            Argument(canonical(element.value), True)
+                            for element in child.value.elts
+                            if isinstance(element, ast.Constant)
+                        ]
+        member = projection.get("member")
+        if member is not None:
+            return methods.get(member)
+        return methods.get("__call__")
 
-def imported_names(text: str, path: Path) -> list[str]:
-    """Return authoring imports in examples, with their source path."""
-    violations: list[str] = []
-    patterns = (
-        r"from\s+apxm_program\s+import\s+([^\n]+)",
-        r"import\s*\{([^}]+)\}\s*from\s*[\"']@apxm/frontend[\"']",
-    )
-    allowed = public_names()
-    for match in re.finditer(r"^\s*(?:from|import)\s+apxm(?:\.|\s|$)", text, flags=re.MULTILINE):
-        violations.append(
-            f"{path.relative_to(REPO_ROOT)} imports the retired `apxm` package: {match.group(0).strip()!r}"
+    def _read_signature(
+        self,
+        node: ast.FunctionDef | ast.AsyncFunctionDef,
+        shape: ProjectionShape,
+        module: ast.Module,
+        classes: dict[str, ast.ClassDef],
+    ) -> None:
+        args = node.args
+        positional = list(args.posonlyargs) + list(args.args)
+        if positional and positional[0].arg in {"self", "cls"}:
+            positional = positional[1:]
+        defaults = list(args.defaults)
+        required_positional = len(positional) - len(defaults)
+        for index, argument in enumerate(positional):
+            expanded = self._expand_typed_dict(argument, module, classes)
+            if expanded is not None:
+                shape.option_fields.extend(expanded)
+                continue
+            shape.parameters.append(
+                Argument(canonical(argument.arg), index < required_positional)
+            )
+        for argument, default in zip(args.kwonlyargs, args.kw_defaults):
+            shape.keywords.append(Argument(canonical(argument.arg), default is None))
+
+    @staticmethod
+    def _expand_typed_dict(
+        argument: ast.arg, module: ast.Module, classes: dict[str, ast.ClassDef]
+    ) -> Optional[list[Argument]]:
+        """Expand a parameter annotated with a local TypedDict into its fields.
+
+        A definition object is one argument in the source and many in the
+        contract; the fields are what the manifest declares, so they are what
+        this gate compares.
+        """
+        annotation = argument.annotation
+        if not isinstance(annotation, ast.Name) or annotation.id not in classes:
+            return None
+        declaration = classes[annotation.id]
+        if not any(
+            isinstance(base, ast.Name) and base.id == "TypedDict"
+            for base in declaration.bases
+        ):
+            return None
+        fields: list[Argument] = []
+        for child in declaration.body:
+            if isinstance(child, ast.AnnAssign) and isinstance(child.target, ast.Name):
+                required = not (
+                    isinstance(child.annotation, ast.Subscript)
+                    and isinstance(child.annotation.value, ast.Name)
+                    and child.annotation.value.id == "NotRequired"
+                )
+                fields.append(Argument(canonical(child.target.id), required))
+        return fields
+
+    @staticmethod
+    def _returns_decorator(
+        node: ast.FunctionDef | ast.AsyncFunctionDef, classes: dict[str, ast.ClassDef]
+    ) -> bool:
+        """Whether calling this projection yields something applied to a `def`."""
+        returns = node.returns
+        if returns is None:
+            return False
+        if isinstance(returns, ast.Subscript) and isinstance(returns.value, ast.Name):
+            return returns.value.id == "Callable"
+        name = returns.id if isinstance(returns, ast.Name) else None
+        if name is None and isinstance(returns, ast.Constant):
+            name = returns.value if isinstance(returns.value, str) else None
+        declaration = classes.get(name or "")
+        return declaration is not None and any(
+            isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and child.name == "__call__"
+            for child in declaration.body
         )
-    for pattern in patterns:
-        for match in re.finditer(pattern, text):
-            names = [name.strip().split(" as ")[0].strip() for name in match.group(1).split(",")]
-            for name in names:
-                if name and name not in allowed:
-                    violations.append(f"{path.relative_to(REPO_ROOT)} imports non-manifest name {name!r}")
-    return violations
+
+    def diagnostic_codes(self) -> list[str]:
+        text = self.generated_diagnostics.read_text(encoding="utf-8")
+        block = re.search(r"DiagnosticCode: TypeAlias = Literal\[(.*?)\]", text, re.S)
+        if block is None:
+            return []
+        return re.findall(r'"([^"]+)"', block.group(1))
+
+    def import_patterns(self) -> tuple[str, ...]:
+        return (r"from\s+apxm_program\s+import\s+([^\n]+)",)
+
+
+# ---------------------------------------------------------------------------
+# TypeScript
+# ---------------------------------------------------------------------------
+
+
+def split_top_level(text: str, separator: str = ",") -> list[str]:
+    """Split on a separator that is not nested inside brackets or a string."""
+    parts: list[str] = []
+    depth = 0
+    quote: str | None = None
+    current: list[str] = []
+    for character in text:
+        if quote is not None:
+            current.append(character)
+            if character == quote:
+                quote = None
+            continue
+        if character in "\"'`":
+            quote = character
+            current.append(character)
+            continue
+        if character in "([{<":
+            depth += 1
+        elif character in ")]}>":
+            depth -= 1
+        if character == separator and depth == 0:
+            parts.append("".join(current))
+            current = []
+            continue
+        current.append(character)
+    tail = "".join(current)
+    if tail.strip():
+        parts.append(tail)
+    return [part for part in parts if part.strip()]
+
+
+def split_default(entry: str) -> tuple[str, str]:
+    """Split a parameter on its default, which `=>` in a function type is not."""
+    depth = 0
+    for index, character in enumerate(entry):
+        if character in "([{<":
+            depth += 1
+        elif character in ")]}>":
+            depth -= 1
+        elif character == "=" and depth == 0:
+            following = entry[index + 1 : index + 2]
+            previous = entry[index - 1 : index]
+            if following not in {">", "="} and previous not in {"=", "!", "<", ">"}:
+                return entry[:index], entry[index + 1 :]
+    return entry, ""
+
+
+def matching_bracket(text: str, start: int) -> int:
+    """Index just past the bracket group opened at `start`."""
+    openers = "([{<"
+    closers = ")]}>"
+    pair = dict(zip(openers, closers))
+    opener = text[start]
+    closer = pair[opener]
+    depth = 0
+    quote: str | None = None
+    for index in range(start, len(text)):
+        character = text[index]
+        if quote is not None:
+            if character == quote:
+                quote = None
+            continue
+        if character in "\"'`":
+            quote = character
+            continue
+        if character == opener:
+            depth += 1
+        elif character == closer:
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    raise SurfaceFailure(f"unbalanced {opener!r} in a TypeScript declaration")
+
+
+class TypeScriptLanguage(SurfaceLanguage):
+    """Reads argument shape out of the TypeScript frontend's declarations."""
+
+    id = "typescript"
+
+    @staticmethod
+    def _strip_comments(text: str) -> str:
+        text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+        return re.sub(r"^\s*//.*$", "", text, flags=re.M)
+
+    def _source(self, path: Path) -> str:
+        return self._strip_comments(path.read_text(encoding="utf-8"))
+
+    def root_exports(self) -> set[str]:
+        text = self._source(self.authoring_root)
+        names: set[str] = set()
+        for group in re.findall(r"export\s*\{(.*?)\}\s*from", text, flags=re.S):
+            for entry in split_top_level(group):
+                name = re.sub(r"^\s*type\s+", "", entry.strip())
+                if name:
+                    names.add(name.split(" as ")[-1].strip())
+        return names
+
+    def root_bound_names(self) -> set[str]:
+        return self.root_exports()
+
+    def shape(self, projection: dict) -> Optional[ProjectionShape]:
+        text = self._source(REPO_ROOT / projection["module"])
+        symbol = projection["symbol"]
+        member = projection.get("member")
+        shape = ProjectionShape()
+
+        body = self._object_body(text, symbol)
+        if body is not None:
+            shape.members = set(re.findall(r"^\s*(\w+)\s*[<(]", body, flags=re.M))
+            if member is None:
+                return shape
+            signature = self._member_signature(body, member)
+        else:
+            signature = self._function_signature(text, symbol)
+            if signature is not None and member is not None:
+                signature = None
+        if signature is None:
+            return None
+
+        type_parameters, parameters = signature
+        shape.type_parameters = [
+            Argument(canonical(name), not has_default)
+            for name, has_default in type_parameters
+        ]
+        for name, optional, annotation in parameters:
+            expanded = self._expand_object_type(text, annotation)
+            if expanded is not None:
+                shape.option_fields.extend(expanded)
+                continue
+            shape.parameters.append(Argument(canonical(name), not optional))
+        shape.returns_decorator = False
+        return shape
+
+    def _object_body(self, text: str, symbol: str) -> Optional[str]:
+        """The body of `export const X = { ... }` or `declare const X: Readonly<{...}>`."""
+        for pattern in (
+            rf"export\s+(?:declare\s+)?const\s+{re.escape(symbol)}\s*(?::[^=]*?)?=\s*(?:Object\.freeze\()?\s*",
+            rf"export\s+declare\s+const\s+{re.escape(symbol)}\s*:\s*Readonly\s*<\s*",
+        ):
+            match = re.search(pattern, text)
+            if match is None:
+                continue
+            index = text.find("{", match.end() - 1)
+            if index == -1:
+                continue
+            return text[index + 1 : matching_bracket(text, index) - 1]
+        return None
+
+    def _function_signature(self, text: str, symbol: str):
+        match = re.search(
+            rf"export\s+(?:declare\s+)?function\s+{re.escape(symbol)}\s*",
+            text,
+        )
+        if match is None:
+            return None
+        return self._read_signature(text, match.end())
+
+    def _member_signature(self, body: str, member: str):
+        match = re.search(rf"(?:^|[;,{{\s]){re.escape(member)}\s*(?=[<(])", body)
+        if match is None:
+            return None
+        return self._read_signature(body, match.end())
+
+    def _read_signature(self, text: str, cursor: int):
+        """Read `<type params>(params)` starting at `cursor`."""
+        while cursor < len(text) and text[cursor].isspace():
+            cursor += 1
+        type_parameters: list[tuple[str, bool]] = []
+        if cursor < len(text) and text[cursor] == "<":
+            end = matching_bracket(text, cursor)
+            for entry in split_top_level(text[cursor + 1 : end - 1]):
+                name, _, default = entry.partition("=")
+                name = name.split(" extends ")[0].strip()
+                if name:
+                    type_parameters.append((name, bool(default.strip())))
+            cursor = end
+        while cursor < len(text) and text[cursor].isspace():
+            cursor += 1
+        if cursor >= len(text) or text[cursor] != "(":
+            return None
+        end = matching_bracket(text, cursor)
+        parameters: list[tuple[str, bool, str]] = []
+        for entry in split_top_level(text[cursor + 1 : end - 1]):
+            entry = entry.strip()
+            declaration, default = split_default(entry)
+            name, _, annotation = declaration.partition(":")
+            name = name.strip()
+            optional = name.endswith("?") or bool(default.strip())
+            parameters.append((name.rstrip("?"), optional, annotation.strip()))
+        return type_parameters, parameters
+
+    def _expand_object_type(self, text: str, annotation: str) -> Optional[list[Argument]]:
+        """Expand an options object — inline or named in the same module — into fields."""
+        annotation = annotation.strip()
+        if annotation.startswith("{"):
+            return self._object_fields(annotation[1 : matching_bracket(annotation, 0) - 1])
+        name = annotation.split("<")[0].strip()
+        if not re.fullmatch(r"\w+", name):
+            return None
+        match = re.search(
+            rf"(?:export\s+)?(?:type|interface)\s+{re.escape(name)}\s*", text
+        )
+        if match is None:
+            return None
+        cursor = match.end()
+        if cursor < len(text) and text[cursor] == "<":
+            cursor = matching_bracket(text, cursor)
+        while cursor < len(text) and text[cursor] in " \t\r\n=":
+            cursor += 1
+        if cursor >= len(text) or text[cursor] != "{":
+            return None
+        return self._object_fields(text[cursor + 1 : matching_bracket(text, cursor) - 1])
+
+    @staticmethod
+    def _object_fields(body: str) -> list[Argument]:
+        fields: list[Argument] = []
+        for entry in split_top_level(body, ";"):
+            for member in split_top_level(entry):
+                member = member.strip()
+                if not member:
+                    continue
+                match = re.match(r"(?:readonly\s+)?(\w+)(\??)\s*[<(:]", member)
+                if match is None:
+                    continue
+                fields.append(Argument(canonical(match.group(1)), match.group(2) != "?"))
+        return fields
+
+    def diagnostic_codes(self) -> list[str]:
+        text = self.generated_diagnostics.read_text(encoding="utf-8")
+        block = re.search(r"export type DiagnosticCode =(.*?);", text, re.S)
+        if block is None:
+            return []
+        return re.findall(r'"([^"]+)"', block.group(1))
+
+    def import_patterns(self) -> tuple[str, ...]:
+        return (r"import\s*\{([^}]+)\}\s*from\s*[\"']@apxm/frontend[\"']",)
+
+
+LANGUAGE_LAYERS: dict[str, type[SurfaceLanguage]] = {
+    PythonLanguage.id: PythonLanguage,
+    TypeScriptLanguage.id: TypeScriptLanguage,
+}
+
+
+# ---------------------------------------------------------------------------
+# The conformance check
+# ---------------------------------------------------------------------------
+
+
+def check_declaration(
+    language: SurfaceLanguage, declaration: dict, failures: list[str]
+) -> None:
+    """Prove one language projects one declaration with the declared shape."""
+    concept = declaration["concept"]
+    projection = declaration["projections"].get(language.id)
+    if projection is None:
+        failures.append(
+            incomplete(
+                language.id,
+                concept,
+                "the manifest registers this language but the declaration names no projection for it",
+            )
+        )
+        return
+
+    module = REPO_ROOT / projection["module"]
+    if not module.exists():
+        failures.append(
+            incomplete(
+                language.id,
+                concept,
+                f"the projection names {projection['module']}, which does not exist",
+            )
+        )
+        return
+
+    shape = language.shape(projection)
+    if shape is None:
+        member = f".{projection['member']}" if "member" in projection else ""
+        failures.append(
+            incomplete(
+                language.id,
+                concept,
+                f"{projection['module']} declares no `{projection['symbol']}{member}`",
+            )
+        )
+        return
+
+    declared: set[str] = set()
+    for argument in declaration["arguments"]:
+        name = argument["name"]
+        kinds = argument["projected_as"].get(language.id)
+        if kinds is None:
+            failures.append(
+                incomplete(
+                    language.id,
+                    concept,
+                    f"argument {name!r} does not say how this language projects it",
+                )
+            )
+            continue
+        declared.add(name)
+        for kind in kinds:
+            check_argument(language, concept, projection, shape, argument, kind, failures)
+
+    extra = sorted(shape.accepted_names() - declared)
+    if extra:
+        failures.append(
+            f"{language.id} projection of {concept!r} accepts undeclared arguments {extra}; "
+            "the manifest is the surface, so an argument the manifest does not state is not one"
+        )
+
+
+def check_argument(
+    language: SurfaceLanguage,
+    concept: str,
+    projection: dict,
+    shape: ProjectionShape,
+    argument: dict,
+    kind: str,
+    failures: list[str],
+) -> None:
+    """Prove one argument takes the form the manifest says it takes here."""
+    name = argument["name"]
+    required = argument["required"]
+
+    if kind == "inferred":
+        if name in shape.accepted_names():
+            failures.append(
+                f"{language.id} projection of {concept!r} accepts {name!r}, which the "
+                "manifest says this language infers rather than accepts"
+            )
+        return
+
+    if kind == "method_name":
+        member = projection.get("member")
+        if member is None or member not in shape.members or len(shape.members) < 2:
+            failures.append(
+                incomplete(
+                    language.id,
+                    concept,
+                    f"{name!r} is projected as a method name, so `{projection['symbol']}` "
+                    f"must expose more than one member and include {member!r}; it exposes "
+                    f"{sorted(shape.members)}",
+                )
+            )
+        return
+
+    if kind == "context_manager_block":
+        if not shape.context_manager:
+            failures.append(
+                incomplete(
+                    language.id,
+                    concept,
+                    f"{name!r} is projected as a context-manager block, so "
+                    f"`{projection['symbol']}` must define __aenter__ and __aexit__",
+                )
+            )
+        return
+
+    if kind == "decorated_function":
+        if not shape.returns_decorator:
+            failures.append(
+                incomplete(
+                    language.id,
+                    concept,
+                    f"{name!r} is projected as a decorated function, so "
+                    f"`{projection['symbol']}` must return something applied to a def",
+                )
+            )
+        return
+
+    group = shape.by_kind(kind)
+    if group is None:
+        failures.append(f"unknown projected_as kind {kind!r} on {concept!r}")
+        return
+    found = next((entry for entry in group if entry.name == name), None)
+    if found is None:
+        failures.append(
+            incomplete(
+                language.id,
+                concept,
+                f"no {kind} named {name!r}; this projection accepts "
+                f"{[entry.name for entry in group]}",
+            )
+        )
+        return
+    if found.required != required:
+        expected = "required" if required else "optional"
+        actual = "required" if found.required else "optional"
+        failures.append(
+            f"{language.id} projection of {concept!r} makes {kind} {name!r} {actual}, "
+            f"but the surface declares it {expected}"
+        )
+
+
+def check_generated_diagnostics(
+    language: SurfaceLanguage, manifest: dict, failures: list[str]
+) -> None:
+    """Prove the generated diagnostic vocabulary still matches the manifest."""
+    expected: list[str] = []
+    for declaration in manifest["declarations"]:
+        for code in declaration["diagnostics"]:
+            if code not in expected:
+                expected.append(code)
+    artifact = language.registration["generated_diagnostics"]
+    if not language.generated_diagnostics.exists():
+        failures.append(unsynced(artifact, "the generated module is missing"))
+        return
+    actual = language.diagnostic_codes()
+    if actual != expected:
+        missing = [code for code in expected if code not in actual]
+        stale = [code for code in actual if code not in expected]
+        detail = (
+            f"missing {missing}, stale {stale}"
+            if missing or stale
+            else "the codes are ordered differently than the manifest states them"
+        )
+        failures.append(
+            unsynced(artifact, f"{detail}; run `dekk agents codegen-diagnostics`")
+        )
+
+
+def check_schema_alignment(manifest: dict, failures: list[str]) -> None:
+    """Prove the manifest still says what its own schema allows it to say."""
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+    definitions = schema["$defs"]
+    allowed_languages = set(definitions["LanguageId"]["enum"])
+    argument_schema = definitions["SurfaceDeclaration"]["properties"]["arguments"][
+        "items"
+    ]["properties"]
+    allowed_accepts = set(argument_schema["accepts"]["enum"])
+    allowed_kinds = set(definitions["ProjectedAs"]["items"]["enum"])
+    allowed_nodes = set(
+        definitions["SurfaceDeclaration"]["properties"]["bound_semantic_node"]["enum"]
+    )
+
+    for key in ("everyday", "advanced", "non_public"):
+        expected = schema["properties"][key]["const"]
+        if manifest[key] != expected:
+            failures.append(
+                f"manifest {key} differs from the schema's frozen list: "
+                f"expected {expected}, got {manifest[key]}"
+            )
+
+    for registration in manifest["languages"]:
+        if registration["id"] not in allowed_languages:
+            failures.append(f"unregistered language id {registration['id']!r}")
+
+    for declaration in manifest["declarations"]:
+        if declaration["bound_semantic_node"] not in allowed_nodes:
+            failures.append(
+                f"{declaration['concept']!r} binds unknown semantic node "
+                f"{declaration['bound_semantic_node']!r}"
+            )
+        for argument in declaration["arguments"]:
+            if argument["accepts"] not in allowed_accepts:
+                failures.append(
+                    f"{declaration['concept']!r} argument {argument['name']!r} accepts "
+                    f"unknown kind {argument['accepts']!r}"
+                )
+            for language_id, kinds in argument["projected_as"].items():
+                if language_id not in allowed_languages:
+                    failures.append(
+                        f"{declaration['concept']!r} argument {argument['name']!r} names "
+                        f"unregistered language {language_id!r}"
+                    )
+                for kind in kinds:
+                    if kind not in allowed_kinds:
+                        failures.append(
+                            f"{declaration['concept']!r} argument {argument['name']!r} is "
+                            f"projected as unknown form {kind!r}"
+                        )
+
+
+def check_tiers(manifest: dict, failures: list[str]) -> None:
+    """Every projected symbol is a name the surface tiers actually publish."""
+    tiered = set(manifest["everyday"]) | set(manifest["advanced"])
+    for declaration in manifest["declarations"]:
+        for language_id, projection in declaration["projections"].items():
+            if projection["symbol"] not in tiered:
+                failures.append(
+                    f"{language_id} projects {declaration['concept']!r} as "
+                    f"{projection['symbol']!r}, which no surface tier names"
+                )
+
+
+def check_roots(
+    language: SurfaceLanguage, manifest: dict, failures: list[str]
+) -> None:
+    """The authoring root publishes exactly the declarations that claim it."""
+    expected = {
+        declaration["projections"][language.id]["symbol"]
+        for declaration in manifest["declarations"]
+        if language.id in declaration["projections"]
+        and declaration["projections"][language.id]["exported_from_root"]
+    }
+    exports = language.root_exports()
+    if exports != expected:
+        failures.append(
+            f"{language.id} authoring root exports {sorted(exports)}, but the surface "
+            f"declares {sorted(expected)}"
+        )
+    leaked = language.root_bound_names() - expected
+    if leaked:
+        failures.append(
+            f"{language.id} authoring root binds non-surface names {sorted(leaked)}"
+        )
+
+
+def check_samples(
+    languages: list[SurfaceLanguage], allowed: set[str], failures: list[str]
+) -> None:
+    """No documented example imports a name the surface does not publish."""
+    patterns = tuple(
+        pattern for language in languages for pattern in language.import_patterns()
+    )
+    for sample in AUTHORING_SAMPLES:
+        if not sample.exists():
+            continue
+        text = sample.read_text(encoding="utf-8")
+        relative = sample.relative_to(REPO_ROOT)
+        for match in re.finditer(
+            r"^\s*(?:from|import)\s+apxm(?:\.|\s|$)", text, flags=re.MULTILINE
+        ):
+            failures.append(
+                f"{relative} imports the retired `apxm` package: {match.group(0).strip()!r}"
+            )
+        for pattern in patterns:
+            for match in re.finditer(pattern, text):
+                for entry in match.group(1).split(","):
+                    name = entry.strip().split(" as ")[0].strip()
+                    if name and name not in allowed:
+                        failures.append(
+                            f"{relative} imports non-manifest name {name!r}"
+                        )
 
 
 def check() -> list[str]:
-    """Return every manifest-alignment failure."""
-    expected = public_names()
+    """Return every surface-conformance failure, in reporting order."""
+    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     failures: list[str] = []
+    check_schema_alignment(manifest, failures)
+    check_tiers(manifest, failures)
 
-    python_surface, python_root = python_exports(PYTHON_ROOT)
-    if python_surface != expected:
-        failures.append(
-            f"Python __all__ differs from manifest: expected {sorted(expected)}, got {sorted(python_surface)}"
-        )
-    leaked_python = python_root - expected - {"__all__", "annotations"}
-    if leaked_python:
-        failures.append(f"Python root binds non-manifest names: {sorted(leaked_python)}")
+    languages: list[SurfaceLanguage] = []
+    for registration in manifest["languages"]:
+        layer = LANGUAGE_LAYERS.get(registration["id"])
+        if layer is None:
+            failures.append(
+                f"the manifest registers language {registration['id']!r}, which has no "
+                "extraction layer in this gate"
+            )
+            continue
+        languages.append(layer(registration))
 
-    ts_surface = typescript_exports(TYPESCRIPT_ROOT)
-    if ts_surface != expected:
-        failures.append(
-            f"TypeScript root exports differ from manifest: expected {sorted(expected)}, got {sorted(ts_surface)}"
-        )
+    for language in languages:
+        for declaration in manifest["declarations"]:
+            check_declaration(language, declaration, failures)
+        check_generated_diagnostics(language, manifest, failures)
+        check_roots(language, manifest, failures)
 
-    for sample in AUTHORING_SAMPLES:
-        if sample.exists():
-            failures.extend(imported_names(sample.read_text(encoding="utf-8"), sample))
+    allowed = {
+        projection["symbol"]
+        for declaration in manifest["declarations"]
+        for projection in declaration["projections"].values()
+        if projection["exported_from_root"]
+    }
+    check_samples(languages, allowed, failures)
     return failures
 
 
 def main() -> int:
-    """Print a compact surface-alignment report."""
-    failures = check()
+    """Print a compact surface-conformance report."""
+    try:
+        failures = check()
+    except SurfaceFailure as error:
+        print(f"Frontend surface conformance failed:\n  {error}", file=sys.stderr)
+        return 1
     if failures:
-        print("Frontend surface manifest alignment failed:", file=sys.stderr)
+        print("Frontend surface conformance failed:", file=sys.stderr)
         for failure in failures:
             print(f"  {failure}", file=sys.stderr)
         return 1
-    print("OK: frontend exports and authoring examples match apxm.frontend-surface.")
+    print(
+        "OK: every registered frontend projects every surface declaration with the "
+        "declared argument shape."
+    )
     return 0
 
 

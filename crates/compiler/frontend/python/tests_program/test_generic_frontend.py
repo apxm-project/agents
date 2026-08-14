@@ -11,10 +11,53 @@ from apxm_program._generated.runtime_evidence import (
 )
 from apxm_program.permissions import Allow, Ask
 
+class AuditReport:
+    """A typed declaration one test program states its interface with."""
+
+class AuditRequest:
+    """A typed declaration one test program states its interface with."""
+
+class ConversationInput:
+    """A typed declaration one test program states its interface with."""
+
+class ConversationOutput:
+    """A typed declaration one test program states its interface with."""
+
+class InitialInput:
+    """A typed declaration one test program states its interface with."""
+
+class InitialOutput:
+    """A typed declaration one test program states its interface with."""
+
+class Input:
+    """A typed declaration one test program states its interface with."""
+
+class NestedInput:
+    """A typed declaration one test program states its interface with."""
+
+class NestedOutput:
+    """A typed declaration one test program states its interface with."""
+
+class Output:
+    """A typed declaration one test program states its interface with."""
+
+class Review:
+    """A typed declaration one test program states its interface with."""
+
+class ReviewRequest:
+    """A typed declaration one test program states its interface with."""
+
+class Summary:
+    """A typed declaration one test program states its interface with."""
+
+class SummaryRequest:
+    """A typed declaration one test program states its interface with."""
+
+
 SummarizerModel = Model[object, object]("summarizer.model")
 
 
-@Agent(input="SummaryRequest", output="Summary")
+@Agent(input=SummaryRequest, output=Summary)
 async def Summarizer(agent, request):
     return await SummarizerModel(request)
 
@@ -36,13 +79,13 @@ class InitialContext:
 InitialModel = Model[object, object]("initial.model")
 
 
-@Agent(input="InitialInput", output="InitialOutput", context=InitialContext)
+@Agent(input=InitialInput, output=InitialOutput, context=InitialContext)
 async def InitialContextAgent(agent, incoming):
     agent.context = InitialContext()
     return await InitialModel(incoming)
 
 
-@Agent(input="ConversationInput", output="ConversationOutput", context=Conversation)
+@Agent(input=ConversationInput, output=ConversationOutput, context=Conversation)
 async def Support(agent, incoming):
     while True:
         research = None
@@ -60,7 +103,7 @@ AuditTool = Tool[object, object](
 )
 
 
-@Agent(input="AuditRequest", output="AuditReport")
+@Agent(input=AuditRequest, output=AuditReport)
 async def Auditor(agent, request):
     findings = await AuditTool(request)
     archived = await AuditCapability(findings)
@@ -76,7 +119,7 @@ ReviewModel = Model[object, object]("review.model")
 Approval = Event[object]("approval.event")
 
 
-@Agent(input="ReviewRequest", output="Review", context=ReviewContext)
+@Agent(input=ReviewRequest, output=Review, context=ReviewContext)
 async def Specialist(agent, request):
     return await ReviewModel(request)
 
@@ -86,7 +129,7 @@ async def RecordModelStart(agent) -> None:
     return None
 
 
-@Agent(input="ReviewRequest", output="Review", context=ReviewContext)
+@Agent(input=ReviewRequest, output=Review, context=ReviewContext)
 async def Coordinator(agent, request):
     while True:
         specialist = Specialist.new(context=ReviewContext())
@@ -326,7 +369,7 @@ def test_value_position_rejects_an_unresolved_or_effectful_call() -> None:
     # the graph silently lost the author's whole result expression.
     try:
 
-        @Agent(input="Input", output="Output")
+        @Agent(input=Input, output=Output)
         async def ReturnsUnresolved(agent, request):
             return Unresolved(request)  # noqa: F821 - unresolved on purpose
 
@@ -339,7 +382,7 @@ def test_value_position_rejects_an_unresolved_or_effectful_call() -> None:
     # untyped literal operand, hiding it from lowering and from admission.
     try:
 
-        @Agent(input="Input", output="Output")
+        @Agent(input=Input, output=Output)
         async def OperandUnresolved(agent, request):
             return await ValuePositionModel(Unresolved(request))  # noqa: F821
 
@@ -352,7 +395,7 @@ def test_value_position_rejects_an_unresolved_or_effectful_call() -> None:
     # await must not degrade it to data.
     try:
 
-        @Agent(input="Input", output="Output")
+        @Agent(input=Input, output=Output)
         async def EffectAsValue(agent, request):
             return ValuePositionModel(request)
 
@@ -365,7 +408,7 @@ def test_value_position_rejects_an_unresolved_or_effectful_call() -> None:
 def test_predicate_integer_rejects_values_outside_shared_safe_domain() -> None:
     try:
 
-        @Agent(input="Input", output="Output")
+        @Agent(input=Input, output=Output)
         async def UnsafeIntegerPredicate(agent, request):
             if request["count"] == 9_007_199_254_740_992:
                 return request
@@ -380,7 +423,7 @@ def test_predicate_integer_rejects_values_outside_shared_safe_domain() -> None:
 def test_value_integer_accepts_the_negative_shared_safe_boundary() -> None:
     NegativeValueModel = Model[object, object]("negative.value.model")
 
-    @Agent(input="Input", output="Output")
+    @Agent(input=Input, output=Output)
     async def NegativeValue(agent, request):
         return await NegativeValueModel(-9_007_199_254_740_991)
 
@@ -396,7 +439,7 @@ def test_effect_call_rejects_extra_authored_operands() -> None:
 
     try:
 
-        @Agent(input="Input", output="Output")
+        @Agent(input=Input, output=Output)
         async def ExtraOperands(agent, request):
             return await ExtraOperandModel(request, request)
 
@@ -492,7 +535,7 @@ async def AuditInnerIteration(agent) -> None:
     await NestedAudit(agent.context.depth)
 
 
-@Agent(input="NestedInput", output="NestedOutput", context=NestedContext)
+@Agent(input=NestedInput, output=NestedOutput, context=NestedContext)
 async def NestedLoops(agent, incoming):
     while True:
         reply = await NestedOuterModel(incoming)

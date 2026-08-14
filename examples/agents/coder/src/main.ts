@@ -1,6 +1,7 @@
 import { Agent, Model, Tool } from "@apxm/frontend";
-import "@apxm/frontend/node";
-import { staticSource } from "./static-source.js";
+import { source } from "@apxm/frontend/node";
+
+source(import.meta.url);
 
 type CoderInput = { file_path: string; task: string };
 type EditProposal = { file_path: string; before: string; after: string };
@@ -8,7 +9,6 @@ type PreparedEdit = EditProposal & { mutates: false };
 type EditDraft = { after: string; test_command: string };
 type CoderOutput = { summary: string };
 
-const source = staticSource(import.meta.url);
 const ReadSource = Tool<{ file_path: string }, string>("read");
 const ProposeEdit = Tool<EditProposal, PreparedEdit>("edit");
 const PrepareTest = Tool<{ command: string }, { command: string; executes: false; mutates: false }>("test");
@@ -20,8 +20,6 @@ const ReviewModel = Model<
 
 export const Coder = Agent<CoderInput, CoderOutput>({
   name: "Coder",
-  source,
-  use: { ReadSource, ProposeEdit, PrepareTest, DraftEdit, ReviewModel },
   async run(agent, input) {
     const currentSource = await ReadSource({ file_path: input.file_path });
     const draft = await DraftEdit({ request: input, source: currentSource });

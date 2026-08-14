@@ -83,35 +83,51 @@ class ContextSchema:
     default_present: bool
 
 
-class _ModelFactory:
-    def __getitem__(self, _types: Any) -> "_ModelFactory":
+class _TypedFactory:
+    """A marker whose type parameters are supplied by subscription.
+
+    ``_type_parameters`` names them in order. It is the Python spelling of the
+    same arity a TypeScript marker states as ``<Input, Output>``, which is what
+    lets the surface conformance gate compare the two by argument shape rather
+    than by trusting that a subscript exists.
+    """
+
+    _type_parameters: tuple[str, ...] = ()
+
+    def __getitem__(self, types: Any) -> "_TypedFactory":
+        supplied = types if isinstance(types, tuple) else (types,)
+        if len(supplied) != len(self._type_parameters):
+            expected = ", ".join(self._type_parameters)
+            raise TypeError(f"{type(self).__name__} takes [{expected}]")
         return self
 
-    def __call__(self, target_ref: str) -> ModelBinding:
-        _require_exact_reference(target_ref, "Model")
-        return ModelBinding(target_ref=target_ref)
+
+class _ModelFactory(_TypedFactory):
+    _type_parameters = ("input", "output")
+
+    def __call__(self, ref: str) -> ModelBinding:
+        _require_exact_reference(ref, "Model")
+        return ModelBinding(target_ref=ref)
 
 
-class _ToolFactory:
-    def __getitem__(self, _types: Any) -> "_ToolFactory":
-        return self
+class _ToolFactory(_TypedFactory):
+    _type_parameters = ("input", "output")
 
     def __call__(
-        self, target_ref: str, *, permission: Optional[Permission] = None
+        self, capability_ref: str, *, permission: Optional[Permission] = None
     ) -> ToolBinding:
-        _require_exact_reference(target_ref, "Tool")
-        return ToolBinding(target_ref=target_ref, permission=permission)
+        _require_exact_reference(capability_ref, "Tool")
+        return ToolBinding(target_ref=capability_ref, permission=permission)
 
 
-class _CapabilityFactory:
-    def __getitem__(self, _types: Any) -> "_CapabilityFactory":
-        return self
+class _CapabilityFactory(_TypedFactory):
+    _type_parameters = ("input", "output")
 
     def __call__(
-        self, target_ref: str, *, permission: Optional[Permission] = None
+        self, ref: str, *, permission: Optional[Permission] = None
     ) -> CapabilityBinding:
-        _require_exact_reference(target_ref, "Capability")
-        return CapabilityBinding(target_ref=target_ref, permission=permission)
+        _require_exact_reference(ref, "Capability")
+        return CapabilityBinding(target_ref=ref, permission=permission)
 
 
 class _TypedEventFactory:
@@ -120,28 +136,31 @@ class _TypedEventFactory:
     def __init__(self, type_ref: str) -> None:
         self._type_ref = type_ref
 
-    def __call__(self, target_ref: str) -> EventType:
-        _require_exact_reference(target_ref, "Event")
-        return EventType(type_ref=self._type_ref, target_ref=target_ref)
+    def __call__(self, ref: str) -> EventType:
+        _require_exact_reference(ref, "Event")
+        return EventType(type_ref=self._type_ref, target_ref=ref)
 
 
-class _EventFactory:
-    def __getitem__(self, type_arg: Any) -> _TypedEventFactory:
-        return _TypedEventFactory(_type_name(type_arg, "Event"))
+class _EventFactory(_TypedFactory):
+    _type_parameters = ("payload",)
 
-    def __call__(self, target_ref: str) -> EventType:
-        _require_exact_reference(target_ref, "Event")
-        return EventType(type_ref="Event", target_ref=target_ref)
+    def __getitem__(self, types: Any) -> _TypedEventFactory:
+        super().__getitem__(types)
+        return _TypedEventFactory(_type_name(types, "Event"))
+
+    def __call__(self, ref: str) -> EventType:
+        _require_exact_reference(ref, "Event")
+        return EventType(type_ref="Event", target_ref=ref)
 
 
-def Context(cls: Any) -> ContextSchema:
+def Context(schema: Any) -> ContextSchema:
     """Declare a typed Program Context schema from one typed class."""
-    if not isinstance(cls, type):
+    if not isinstance(schema, type):
         raise TypeError("Context decorates one typed class")
     default_present = any(
-        not name.startswith("__") for name in getattr(cls, "__annotations__", {})
+        not name.startswith("__") for name in getattr(schema, "__annotations__", {})
     )
-    return ContextSchema(type_ref=cls.__name__, default_present=default_present)
+    return ContextSchema(type_ref=schema.__name__, default_present=default_present)
 
 
 def _require_exact_reference(value: Any, marker: str) -> None:

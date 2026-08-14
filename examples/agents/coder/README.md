@@ -17,6 +17,10 @@ apply one. The final model call summarizes those three explicit results.
 The two package-local tools use `Tool.define`, `Tool.object`, and
 `Tool.answer`. Their input schemas and handler manifest are generated from that
 typed definition, so a tool author never writes protocol frames or JSON schema.
+Each argument states on itself whether it is required, each schema states
+whether it accepts undeclared arguments, and each handler states whether it is
+read-only — the manifest carries all three from the handler rather than
+deciding any of them.
 The TypeScript helper only builds the Rust-owned handler manifest; it never
 becomes Coder's runtime.
 

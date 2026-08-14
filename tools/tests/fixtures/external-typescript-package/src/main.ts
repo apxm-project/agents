@@ -1,19 +1,17 @@
 import { Agent, Model, TaskGroup, Tool } from "@apxm/frontend";
-import "@apxm/frontend/node";
-import { staticSource } from "./static-source.js";
+import { source } from "@apxm/frontend/node";
+
+source(import.meta.url);
 
 type Input = { request: string };
 type Output = { answer: string };
 
 const Lookup = Tool<Input, { facts: string }>("fixture.lookup");
 const Answer = Model<{ request: string }, Output>("fixture.answer");
-const source = staticSource(import.meta.url);
 type FixtureProgram = ReturnType<typeof Agent<Input, Output>>;
 
 export const ExternalFixture: FixtureProgram = Agent<Input, Output>({
   name: "ExternalFixture",
-  source,
-  use: { Lookup, Answer },
   async run(agent, input) {
     while (true) {
       let facts = "";

@@ -49,8 +49,9 @@ raise. ADR-0015 §7 (`docs/adr/0015-source-first-agent-frontend-vocabulary.md:18
 freezes that manifest as the one machine-readable statement of the authoring
 surface, "the diagnostics it can raise" included; the ADR names the schema
 (`contracts/schemas/apxm.frontend-surface.json`, which types `diagnostics` as an
-array of strings) and `tools/scripts/check_frontend_surface.py:14` reads the
-instance under `contracts/vectors/`.
+array of strings) and `tools/scripts/check_frontend_surface.py` reads the
+instance under `contracts/vectors/` and holds each frontend's generated
+diagnostic module to it.
 
 A Rust enum was considered for the diagnostic codes and rejected: no Rust code
 raises them. They are source-capture rejections raised in Python and TypeScript,

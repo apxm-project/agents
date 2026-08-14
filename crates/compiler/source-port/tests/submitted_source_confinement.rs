@@ -49,26 +49,38 @@ fn reaching_program(frontend: Frontend, import: &str, reach: &str) -> String {
              \n\
              {reach}\n\
              \n\
-             ReviewModel = Model[object, object](\"review.model\")\n\
+             \n\
+             class ReviewRequest:\n\
+             \x20   pass\n\
              \n\
              \n\
-             @Agent(input=\"ReviewRequest\", output=\"Review\")\n\
+             class Review:\n\
+             \x20   pass\n\
+             \n\
+             \n\
+             ReviewModel = Model[ReviewRequest, Review](\"review.model\")\n\
+             \n\
+             \n\
+             @Agent(input=ReviewRequest, output=Review)\n\
              async def Reviewer(agent, request):\n\
              \x20   return await ReviewModel(request)\n"
         ),
         Frontend::Typescript => format!(
             "{import}\n\
              import {{ Agent, Model }} from \"@apxm/frontend\";\n\
-             import {{ staticSource }} from \"apxm:source\";\n\
+             import {{ source }} from \"@apxm/frontend/node\";\n\
+             \n\
+             source(import.meta.url);\n\
              \n\
              {reach}\n\
              \n\
-             const ReviewModel = Model<object, object>(\"review.model\");\n\
+             type ReviewRequest = object;\n\
+             type Review = object;\n\
              \n\
-             export const Reviewer = Agent<object, object>({{\n\
+             const ReviewModel = Model<ReviewRequest, Review>(\"review.model\");\n\
+             \n\
+             export const Reviewer = Agent<ReviewRequest, Review>({{\n\
              \x20 name: \"Reviewer\",\n\
-             \x20 source: staticSource(),\n\
-             \x20 use: {{ ReviewModel }},\n\
              \x20 async run(agent, request) {{\n\
              \x20   return await ReviewModel(request);\n\
              \x20 }},\n\

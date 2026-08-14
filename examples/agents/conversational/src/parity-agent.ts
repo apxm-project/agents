@@ -10,47 +10,32 @@ import {
   TaskGroup,
   Tool,
 } from "@apxm/frontend";
-import "@apxm/frontend/node";
-import { staticSource } from "./static-source.js";
+import { source } from "@apxm/frontend/node";
 
+source(import.meta.url);
+
+type Input = unknown;
+type Output = unknown;
 type ParityContext = { iterations: number };
-type ParityProgram = ReturnType<typeof Agent<unknown, unknown, ParityContext>>;
+type ParityProgram = ReturnType<typeof Agent<Input, Output, ParityContext>>;
 
-const ParityModel = Model<unknown, unknown>("parity.model");
-const ParityTool = Tool<unknown, unknown>("parity.tool");
-const ParityCapability = Capability<unknown, unknown>("parity.capability");
-const ParityEvent = Event<unknown>("parity.event");
-const ParityContext: ReturnType<typeof Context> = Context<ParityContext>(
-  { iterations: 0 },
-  "ParityContext",
-);
-const source = staticSource(import.meta.url);
+const ParityModel = Model<Input, Output>("parity.model");
+const ParityTool = Tool<Input, Output>("parity.tool");
+const ParityCapability = Capability<Input, Output>("parity.capability");
+const ParityEvent = Event<Output>("parity.event");
+const ParityContext: ReturnType<typeof Context> = Context<ParityContext>({ iterations: 0 });
 
-const ParityChild = Agent<unknown, unknown, ParityContext>({
+const ParityChild = Agent<Input, Output, ParityContext>({
   name: "ParityChild",
-  input: "Input",
-  output: "Output",
-  source,
   context: ParityContext,
-  use: { ParityModel },
   async run(_agent, request) {
     return await ParityModel(request);
   },
 });
 
-export const ParityCorpus: ParityProgram = Agent<unknown, unknown, ParityContext>({
+export const ParityCorpus: ParityProgram = Agent<Input, Output, ParityContext>({
   name: "ParityCorpus",
-  input: "Input",
-  output: "Output",
-  source,
   context: ParityContext,
-  use: {
-    ParityCapability,
-    ParityChild,
-    ParityEvent,
-    ParityModel,
-    ParityTool,
-  },
   async run(agent, request) {
     while (true) {
       let toolResult: unknown = null;
@@ -75,7 +60,7 @@ export const ParityCorpus: ParityProgram = Agent<unknown, unknown, ParityContext
   },
 });
 
-const RecordParityModelStart = Hook.before({
+const RecordParityModelStart = Hook.before<ParityContext>({
   agent: ParityCorpus,
   target: ParityModel,
   scope: "model",

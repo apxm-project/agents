@@ -50,13 +50,16 @@ the [Python frontend](../../crates/compiler/frontend/python/README.md) and
 ### 1.2 Authoring conventions
 
 Declare Models, Tools, Capabilities, Events, Context, and composed Agents at
-module scope. Python capture reads the decorated function source directly.
-TypeScript capture receives a static `{ fileName, text }` token and, for Node
-compilation, imports `@apxm/frontend/node`; the repository examples provide a
-small `static-source.ts` helper for this. Pass every binding used by an Agent in
-its TypeScript `use` object. This keeps symbol resolution exact, makes source
-maps portable, and lets the frontend reject dynamic lookup or shadowed marker
-names rather than infer behavior from text.
+module scope: the declarations a module makes are its Agents' declarations, in
+both languages, and an author never lists again the names their own body already
+names. Python capture reads the decorated function source directly. A TypeScript
+module states its own source once with `source(import.meta.url)` from
+`@apxm/frontend/node`. This keeps symbol resolution exact, makes source maps
+portable, and lets the frontend reject dynamic lookup or shadowed marker names
+rather than infer behavior from text.
+
+A program's typed interface is the types themselves — `@Agent(input=Request,
+output=Reply)` and `Agent<Request, Reply>` — never strings naming them.
 
 ## 2. What the frontend does
 
@@ -112,10 +115,10 @@ and the repository example boundary.
 ```python
 from apxm_program import Agent, Model
 
-SummarizerModel = Model[object, object]("model.summarizer")
+SummarizerModel = Model[SummaryRequest, Summary]("model.summarizer")
 
 
-@Agent(input="SummaryRequest", output="Summary")
+@Agent(input=SummaryRequest, output=Summary)
 async def Summarizer(agent, request):
     return await SummarizerModel(request)
 ```
@@ -185,9 +188,13 @@ NormalizeAddress = Tool[AddressInput, NormalizedAddress](
 The Python frontend records this typed Capability reference; it never runs a
 handler while compiling and grants no permission. Calling
 `NormalizeAddress(...)` from an Agent emits one typed Capability intent into
-FrontendGraph; execution still requires admission. Python package-local Tool
-handlers are not an authoring surface until their deterministic bundler and
-admitted adapter exist. See
+FrontendGraph; execution still requires admission.
+
+A Python package declares the handlers it ships with `capability(...)` from
+`apxm_program.handlers`, in the same shape `Tool.define` uses in TypeScript, and
+gets back the exact Capability id it implements. What Python still lacks is the
+other half: a deterministic bundler and an admitted worker adapter, so a Python
+handler is declarable but not yet executable through the runtime. See
 [ADR-0016](../adr/0016-tool-authoring-and-handler-execution-are-separate.md).
 
 ### 3.4 Compose Agents
@@ -209,8 +216,9 @@ Agent definition is one-shot; invoking the returned instance is stateful.
 
 ```typescript
 import { Agent, Model } from "@apxm/frontend";
-import "@apxm/frontend/node";
-import { staticSource } from "./static-source.js";
+import { source } from "@apxm/frontend/node";
+
+source(import.meta.url);
 
 type SummaryRequest = { readonly text: string };
 type Summary = { readonly text: string };
@@ -218,12 +226,9 @@ type Summary = { readonly text: string };
 const SummarizerModel = Model<SummaryRequest, Summary>(
   "model.summarizer",
 );
-const source = staticSource(import.meta.url);
 
 export const Summarizer = Agent<SummaryRequest, Summary>({
   name: "Summarizer",
-  source,
-  use: { SummarizerModel },
   async run(agent, request) {
     return await SummarizerModel(request);
   },
@@ -236,8 +241,9 @@ The callback parameter is inferred. Authors do not import `AgentFacade`.
 
 ```typescript
 import { Agent, Context, Model, Tool } from "@apxm/frontend";
-import "@apxm/frontend/node";
-import { staticSource } from "./static-source.js";
+import { source } from "@apxm/frontend/node";
+
+source(import.meta.url);
 
 type Conversation = {
   messages: readonly Message[];
@@ -246,7 +252,6 @@ type Conversation = {
 const ConversationContext = Context<Conversation>({ messages: [] });
 const SearchWeb = Tool<SearchRequest, SearchResult>("capability.search-web");
 const SupportModel = Model<ModelRequest, ModelResponse>("model.support");
-const source = staticSource(import.meta.url);
 
 export const Support = Agent<
   ConversationInput,
@@ -254,9 +259,7 @@ export const Support = Agent<
   Conversation
 >({
   name: "Support",
-  source,
   context: ConversationContext,
-  use: { SearchWeb, SupportModel },
   async run(agent, incoming) {
     for (;;) {
       const research = incoming.searchQuery === undefined

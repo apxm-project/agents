@@ -26,6 +26,9 @@ DiagnosticCode: TypeAlias = Literal[
     "ToolCredentialInSource",
     "CapabilityRefNotExact",
     "CapabilityDisplayNameRejected",
+    "CapabilityHandlerUntypedSchema",
+    "CapabilityHandlerOpenObject",
+    "CapabilityHandlerReadOnlyUndeclared",
     "HookTargetUnresolved",
     "HookDynamicRegistration",
     "HookOrderAmbiguous",
@@ -50,6 +53,9 @@ TOOL_DISPLAY_NAME_REJECTED: Final[DiagnosticCode] = "ToolDisplayNameRejected"
 TOOL_CREDENTIAL_IN_SOURCE: Final[DiagnosticCode] = "ToolCredentialInSource"
 CAPABILITY_REF_NOT_EXACT: Final[DiagnosticCode] = "CapabilityRefNotExact"
 CAPABILITY_DISPLAY_NAME_REJECTED: Final[DiagnosticCode] = "CapabilityDisplayNameRejected"
+CAPABILITY_HANDLER_UNTYPED_SCHEMA: Final[DiagnosticCode] = "CapabilityHandlerUntypedSchema"
+CAPABILITY_HANDLER_OPEN_OBJECT: Final[DiagnosticCode] = "CapabilityHandlerOpenObject"
+CAPABILITY_HANDLER_READ_ONLY_UNDECLARED: Final[DiagnosticCode] = "CapabilityHandlerReadOnlyUndeclared"
 HOOK_TARGET_UNRESOLVED: Final[DiagnosticCode] = "HookTargetUnresolved"
 HOOK_DYNAMIC_REGISTRATION: Final[DiagnosticCode] = "HookDynamicRegistration"
 HOOK_ORDER_AMBIGUOUS: Final[DiagnosticCode] = "HookOrderAmbiguous"
@@ -74,6 +80,9 @@ DIAGNOSTIC_CODES: Final[tuple[DiagnosticCode, ...]] = (
     TOOL_CREDENTIAL_IN_SOURCE,
     CAPABILITY_REF_NOT_EXACT,
     CAPABILITY_DISPLAY_NAME_REJECTED,
+    CAPABILITY_HANDLER_UNTYPED_SCHEMA,
+    CAPABILITY_HANDLER_OPEN_OBJECT,
+    CAPABILITY_HANDLER_READ_ONLY_UNDECLARED,
     HOOK_TARGET_UNRESOLVED,
     HOOK_DYNAMIC_REGISTRATION,
     HOOK_ORDER_AMBIGUOUS,
@@ -101,6 +110,9 @@ __all__ = [
     "TOOL_CREDENTIAL_IN_SOURCE",
     "CAPABILITY_REF_NOT_EXACT",
     "CAPABILITY_DISPLAY_NAME_REJECTED",
+    "CAPABILITY_HANDLER_UNTYPED_SCHEMA",
+    "CAPABILITY_HANDLER_OPEN_OBJECT",
+    "CAPABILITY_HANDLER_READ_ONLY_UNDECLARED",
     "HOOK_TARGET_UNRESOLVED",
     "HOOK_DYNAMIC_REGISTRATION",
     "HOOK_ORDER_AMBIGUOUS",

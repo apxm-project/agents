@@ -1,8 +1,8 @@
 // Static capture of an authored Agent callback into the bound tree.
 //
-// Parses the callback with the TypeScript compiler API, binds the declaration
-// markers by the names visible at the definition site, and folds the supported
-// control-flow subset into an immutable BoundProgram. It never executes the
+// Parses the callback with the TypeScript compiler API, binds the declarations
+// the module made above the Agent, and folds the supported control-flow subset
+// into an immutable BoundProgram. It never executes the
 // callback body: behavior is read from syntax and resolved declarations. Stable
 // node and region identities come from the program identity plus lexical
 // preorder, matching the Python frontend so paired goldens converge.
@@ -27,6 +27,7 @@ import type {
   BoundValue,
   Span,
 } from "./bound-tree.js";
+import type { AuthoredSource } from "./authored-source.js";
 import { emitFrontendGraph } from "./emit.js";
 import { type Json } from "./contract.js";
 import {
@@ -83,25 +84,55 @@ function sameRequestedPermission(
   return left.decision === right.decision && left.reason === right.reason;
 }
 
-/** Source text registered by the host compiler bridge before Agent capture. */
-export type StaticSource = {
-  readonly fileName: string;
-  readonly text: string;
-  readonly line?: number;
-};
+/** Source text an Agent capture reads the authored callback back from. */
+export type StaticSource = AuthoredSource;
 
-/** Bound Agent declaration inputs consumed by the static AST capture pass. */
+/**
+ * Bound Agent declaration inputs consumed by the static AST capture pass.
+ *
+ * Only the identity an Agent states and the declarations its module has already
+ * created are inputs. Type references, bindings, and their declaration ids are
+ * read out of the authored source, exactly as the Python frontend reads them
+ * out of the decorated function and its module globals.
+ */
 export type CaptureInput = {
   programId: string;
   entrypoint: string;
-  inputTypeRef: string;
-  outputTypeRef: string;
-  contextTypeRef?: string;
-  hasDefaultContext: boolean;
-  bindings: Map<string, Binding>;
-  bindingDeclIds: Map<string, string>;
+  contextSchema?: ContextSchema;
+  declared: readonly object[];
   source: StaticSource;
 };
+
+/** The module-scope factories whose calls declare a binding an Agent can use. */
+const MARKER_FACTORIES = ["Model", "Tool", "Capability", "Event", "Context", "Agent"] as const;
+
+/** The binding each factory produces, so a resolved pairing can be checked. */
+const MARKER_BINDING_KINDS: Readonly<Record<string, Binding["kind"]>> = {
+  Model: "model_binding",
+  Tool: "tool_binding",
+  Capability: "capability_binding",
+  Event: "event_type",
+  Context: "context",
+  Agent: "agent_definition",
+};
+
+/** The stable declaration identity a bound name carries into the graph. */
+function declarationIdFor(name: string, binding: Binding): string {
+  switch (binding.kind) {
+    case "model_binding":
+      return `decl.model.${name}`;
+    case "tool_binding":
+      return `decl.tool.${name}`;
+    case "capability_binding":
+      return `decl.capability.${name}`;
+    case "event_type":
+      return `decl.event.${name}`;
+    case "context":
+      return `decl.context.${name}`;
+    case "agent_definition":
+      return binding.programId;
+  }
+}
 
 /** Source diagnostic raised when an Agent construct is outside the closed subset. */
 export class CaptureError extends Error {}
@@ -138,6 +169,16 @@ class Capture {
   private facadeSymbol: ts.Symbol | undefined;
   private checker!: ts.TypeChecker;
 
+  /** Module-scope declarations this Agent's source binds, resolved by name. */
+  private readonly bindings = new Map<string, Binding>();
+  private readonly bindingDeclIds = new Map<string, string>();
+  /** Names the captured callback and the module's Hook bodies actually load. */
+  private referencedNames = new Set<string>();
+  private contextBindingName: string | undefined;
+  private inputTypeRef = "Input";
+  private outputTypeRef = "Output";
+  private contextTypeRef: string | undefined;
+
   constructor(private readonly input: CaptureInput) {
     this.bodyRegionId = `${input.programId}.body`;
   }
@@ -157,18 +198,23 @@ class Capture {
    * Declare bindings in sorted-name order, which is also the order the Python
    * frontend declares them in. Every collection this fills — declarations,
    * model requirements, capability requirements — is compared across the two
-   * languages, so the order is fixed here rather than left to how an author
-   * happened to write the `use` object.
+   * languages, so the order is fixed here rather than left to the order the
+   * module happened to declare them in.
    */
   private declareBindings(): void {
-    const declared = [...this.input.bindings.entries()].sort(([left], [right]) =>
+    const declared = [...this.bindings.entries()].sort(([left], [right]) =>
       left < right ? -1 : left > right ? 1 : 0,
     );
     for (const [name, binding] of declared) {
-      const declId = this.input.bindingDeclIds.get(name);
-      if (declId === undefined) {
+      // A declaration the body never loads is not this program's declaration,
+      // even though it is in scope. The Agent's own Context is the exception:
+      // it is stated on the Agent, so it is declared whether the body reads it
+      // or not. This is the rule the Python frontend applies to module globals.
+      if (!this.referencedNames.has(name) && name !== this.contextBindingName) {
         continue;
       }
+      const declId = declarationIdFor(name, binding);
+      this.bindingDeclIds.set(name, declId);
       if (binding.kind === "model_binding") {
         this.declarations.push({
           decl_id: declId,
@@ -254,12 +300,15 @@ class Capture {
   }
 
   capture(): BoundProgram {
-    this.declareBindings();
     const { checker, source } = createBoundSource(this.input.source);
     this.checker = checker;
-    this.bindDeclaredSymbols(source);
     const definition = this.findAgentDefinition(source);
     const fn = definition.callback;
+    this.readTypeArguments(definition.call);
+    this.resolveModuleDeclarations(source, definition.call);
+    this.collectReferencedNames(source, fn);
+    this.declareBindings();
+    this.bindDeclaredSymbols(source);
     this.programBindingSymbol = definition.bindingName === undefined
       ? undefined
       : this.symbolForTopLevelName(source, definition.bindingName);
@@ -280,7 +329,7 @@ class Capture {
     });
     this.values.push({
       value_id: inputValueId,
-      type_ref: this.input.inputTypeRef,
+      type_ref: this.inputTypeRef,
       origin: "parameter",
       origin_id: this.input.entrypoint,
     });
@@ -301,6 +350,7 @@ class Capture {
   }
 
   private findAgentDefinition(source: ts.SourceFile): {
+    call: ts.CallExpression;
     callback: ts.FunctionLikeDeclarationBase;
     bindingName?: string;
   } {
@@ -345,7 +395,155 @@ class Capture {
     if (selected === undefined) {
       throw new CaptureError("Agent requires a statically declared run callback");
     }
-    return { callback: selected.callback, bindingName: selected.bindingName };
+    return {
+      call: selected.call,
+      callback: selected.callback,
+      bindingName: selected.bindingName,
+    };
+  }
+
+  /**
+   * Read the program's typed interface off `Agent<Input, Output, Context>`.
+   *
+   * The type arguments are the types, not strings naming them: an author who
+   * renames a type renames its reference, and a reference to a type that does
+   * not exist does not compile. Python reads the same three off the real
+   * classes passed to `@Agent`.
+   */
+  private readTypeArguments(call: ts.CallExpression): void {
+    const typeArguments = call.typeArguments;
+    if (typeArguments === undefined || typeArguments.length < 2) {
+      // JavaScript has no type arguments to read, so a `.mjs` program keeps the
+      // closed default identities. TypeScript source has them, so omitting them
+      // there would leave the program's typed interface unstated.
+      if (/\.[cm]?tsx?$/.test(this.input.source.fileName)) {
+        throw new CaptureError(
+          "an Agent states its typed interface as Agent<Input, Output> or Agent<Input, Output, Context>",
+        );
+      }
+      return;
+    }
+    this.inputTypeRef = typeArguments[0].getText().trim();
+    this.outputTypeRef = typeArguments[1].getText().trim();
+  }
+
+  /**
+   * Bind every marker the module declared above this Agent.
+   *
+   * A module's declarations are its Agent's declarations — the frontend does
+   * not ask an author to list again, in a `use` map, the names their own body
+   * already names. JavaScript cannot enumerate a module scope, so the source
+   * supplies the names in lexical order and the frontend supplies the values in
+   * the order the module created them; the two are the same order, and every
+   * pairing is checked against the marker the source actually called.
+   */
+  private resolveModuleDeclarations(
+    source: ts.SourceFile,
+    agentCall: ts.CallExpression,
+  ): void {
+    const stop = agentCall.getStart(source);
+    const declared: Array<{ name: string; factory: string; typeArgument?: string }> = [];
+    for (const statement of source.statements) {
+      if (statement.getEnd() >= stop) {
+        break;
+      }
+      if (!ts.isVariableStatement(statement)) {
+        continue;
+      }
+      for (const declaration of statement.declarationList.declarations) {
+        const initializer = declaration.initializer;
+        if (
+          !ts.isIdentifier(declaration.name) ||
+          initializer === undefined ||
+          !ts.isCallExpression(initializer) ||
+          !ts.isIdentifier(initializer.expression)
+        ) {
+          continue;
+        }
+        const factory = MARKER_FACTORIES.find((name) =>
+          this.isFrontendMarker(initializer.expression as ts.Identifier, name),
+        );
+        if (factory === undefined) {
+          continue;
+        }
+        declared.push({
+          name: declaration.name.text,
+          factory,
+          typeArgument: initializer.typeArguments?.[0]?.getText().trim(),
+        });
+      }
+    }
+
+    const values = this.input.declared.slice(
+      this.input.declared.length - declared.length,
+    );
+    for (const [index, entry] of declared.entries()) {
+      const value = values[index] as Binding | undefined;
+      const expected = MARKER_BINDING_KINDS[entry.factory];
+      if (value === undefined || value.kind !== expected) {
+        throw new CaptureError(
+          `'${entry.name}' is declared by ${entry.factory} at module scope but the ` +
+            "frontend resolved a different declaration; declare markers at module " +
+            "scope, unconditionally, above the Agent that uses them",
+        );
+      }
+      if (value.kind === "context") {
+        const bound: ContextSchema = {
+          ...value,
+          typeRef: entry.typeArgument ?? value.typeRef,
+        };
+        if (value === this.input.contextSchema) {
+          this.contextBindingName = entry.name;
+          this.contextTypeRef = bound.typeRef;
+        }
+        this.bindings.set(entry.name, bound);
+        continue;
+      }
+      this.bindings.set(entry.name, value);
+    }
+  }
+
+  /**
+   * Collect the names the captured callback and the module's Hook bodies load.
+   *
+   * A Hook body is captured source too, so the Models and Capabilities it calls
+   * have to be declared alongside the ones the Agent body calls.
+   */
+  private collectReferencedNames(
+    source: ts.SourceFile,
+    callback: ts.FunctionLikeDeclarationBase,
+  ): void {
+    const bodies: ts.Node[] = [callback];
+    const visitForHooks = (node: ts.Node): void => {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        this.isFrontendMarker(node.expression.expression, "Hook")
+      ) {
+        const options = node.arguments[0];
+        if (options !== undefined && ts.isObjectLiteralExpression(options)) {
+          const run = functionProperty(options, "run");
+          if (run !== undefined) {
+            bodies.push(run);
+          }
+        }
+      }
+      ts.forEachChild(node, visitForHooks);
+    };
+    ts.forEachChild(source, visitForHooks);
+
+    const names = new Set<string>();
+    const collect = (node: ts.Node): void => {
+      if (ts.isIdentifier(node)) {
+        names.add(node.text);
+      }
+      ts.forEachChild(node, collect);
+    };
+    for (const body of bodies) {
+      collect(body);
+    }
+    this.referencedNames = names;
   }
 
   private bindDeclaredSymbols(source: ts.SourceFile): void {
@@ -354,7 +552,10 @@ class Capture {
         continue;
       }
       for (const declaration of statement.declarationList.declarations) {
-        if (!ts.isIdentifier(declaration.name) || !this.input.bindings.has(declaration.name.text)) {
+        if (
+          !ts.isIdentifier(declaration.name) ||
+          !this.bindings.has(declaration.name.text)
+        ) {
           continue;
         }
         const symbol = this.symbolAt(declaration.name);
@@ -509,7 +710,7 @@ class Capture {
         const expression = this.valueExpressionFor(expr.right);
         this.values.push({
           value_id: contextNode,
-          type_ref: this.input.contextTypeRef ?? "Context",
+          type_ref: this.contextTypeRef ?? "Context",
           origin: "context_value",
           expression,
         });
@@ -606,7 +807,7 @@ class Capture {
       if (method === "invoke") {
         const binding = bindingName === undefined
           ? undefined
-          : this.input.bindings.get(bindingName);
+          : this.bindings.get(bindingName);
         if (binding?.kind === "agent_definition") {
           return {
             intent: "agent_invocation",
@@ -656,10 +857,10 @@ class Capture {
       const bindingName = this.bindingNameFor(callee);
       const binding = bindingName === undefined
         ? undefined
-        : this.input.bindings.get(bindingName);
+        : this.bindings.get(bindingName);
       const declId = bindingName === undefined
         ? undefined
-        : this.input.bindingDeclIds.get(bindingName);
+        : this.bindingDeclIds.get(bindingName);
       if (binding?.kind === "model_binding") {
         return { intent: "model_invocation", bindingRef: declId, slot: "request" };
       }
@@ -684,14 +885,14 @@ class Capture {
     if (name === undefined) {
       return undefined;
     }
-    return this.input.bindingDeclIds.get(name) ?? name;
+    return this.bindingDeclIds.get(name) ?? name;
   }
 
   private programRefOfBinding(name: string | undefined): string | undefined {
     if (name === undefined) {
       return undefined;
     }
-    const binding = this.input.bindings.get(name);
+    const binding = this.bindings.get(name);
     return binding?.kind === "agent_definition" ? binding.programId : undefined;
   }
 
@@ -701,7 +902,7 @@ class Capture {
         return decl.output_type_ref;
       }
     }
-    return this.input.outputTypeRef;
+    return this.outputTypeRef;
   }
 
   // A value expression stands for data, not for an effect. The only call a
@@ -730,7 +931,7 @@ class Capture {
     const bindingName = this.bindingNameFor(callee);
     const binding = bindingName === undefined
       ? undefined
-      : this.input.bindings.get(bindingName);
+      : this.bindings.get(bindingName);
     if (binding?.kind === "context") {
       return;
     }
@@ -942,7 +1143,7 @@ class Capture {
       ts.isPropertyAccessExpression(call.expression) &&
         ts.isIdentifier(call.expression.expression) &&
       call.expression.name.text === "new" &&
-      this.input.bindings.get(
+      this.bindings.get(
         this.bindingNameFor(call.expression.expression) ?? "",
       )?.kind === "agent_definition"
     );
@@ -993,7 +1194,7 @@ class Capture {
     const resultValue = this.next("resume");
     this.values.push({
       value_id: resultValue,
-      type_ref: this.input.inputTypeRef,
+      type_ref: this.inputTypeRef,
       origin: "resume_input",
       origin_id: nodeId,
     });
@@ -1078,7 +1279,7 @@ class Capture {
       this.contextEdges.push({
         from_node: pending.source,
         to_node: nodeId,
-        context_type_ref: this.input.contextTypeRef ?? "Context",
+        context_type_ref: this.contextTypeRef ?? "Context",
         value_id: pending.valueId,
       });
       this.pendingContextByRegion.delete(regionId);
@@ -1447,7 +1648,7 @@ class Capture {
         handler_digest: stableDigest(run.getText(source)),
         input_type_ref: "AgentFacade",
         output_type_ref:
-          assigned === undefined ? "Unit" : (this.input.contextTypeRef ?? "Context"),
+          assigned === undefined ? "Unit" : (this.contextTypeRef ?? "Context"),
         return_mode:
           assigned === undefined
             ? HOOK_RETURN_MODE_OBSERVE
@@ -1616,10 +1817,10 @@ class Capture {
     return {
       program_id: this.input.programId,
       entrypoint: this.input.entrypoint,
-      input_type_ref: this.input.inputTypeRef,
-      output_type_ref: this.input.outputTypeRef,
-      has_default_context: this.input.hasDefaultContext,
-      context_type_ref: this.input.contextTypeRef,
+      input_type_ref: this.inputTypeRef,
+      output_type_ref: this.outputTypeRef,
+      has_default_context: (this.input.contextSchema?.defaultPresent ?? false),
+      context_type_ref: this.contextTypeRef,
       parameters: [
         {
           value_id: `${this.input.programId}.param.agent`,
@@ -1628,7 +1829,7 @@ class Capture {
         },
         {
           value_id: `${this.input.programId}.param.input`,
-          type_ref: this.input.inputTypeRef,
+          type_ref: this.inputTypeRef,
           role: "input",
         },
       ],

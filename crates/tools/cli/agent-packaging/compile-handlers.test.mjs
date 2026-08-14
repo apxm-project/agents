@@ -140,7 +140,9 @@ test("a compiled handler manifest satisfies the published schema", { skip }, asy
       "export const echo = Tool.define({",
       '  name: "echo",',
       '  description: "Return an input message without executing a runtime effect.",',
-      "  input: Tool.object({ message: Tool.text({ minLength: 1 }) }),",
+      '  readOnly: true,',
+      '  readOnly: true,',
+      "  input: Tool.object({ additionalProperties: false, properties: { message: Tool.text({ required: true, minLength: 1 }) } }),",
       "  run({ message }) { return Tool.answer({ message }); },",
       "});",
     ].join("\n"),
@@ -151,6 +153,9 @@ test("a compiled handler manifest satisfies the published schema", { skip }, asy
   const [handler] = manifest.handlers;
   assert.equal(handler.kind, "tool");
   assert.equal(handler.language, "typescript");
+  // The handler's own read-only declaration reaches the manifest; the manifest
+  // does not decide it, and nothing else states it.
+  assert.equal(handler.read_only, true);
   // The producer content-addresses the handler by module and qualname; recompute
   // that identity from the same inputs rather than pinning a literal digest.
   assert.equal(handler.handler_id, makeHandlerId(handler.module, handler.qualname));

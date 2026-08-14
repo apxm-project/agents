@@ -114,19 +114,17 @@ summary = await Summarizer.invoke(SummaryInput(answer=answer))
 
 ```typescript
 import { Agent, Context, Model, Tool } from "@apxm/frontend";
-import "@apxm/frontend/node";
-import { staticSource } from "./static-source.js";
+import { source } from "@apxm/frontend/node";
+
+source(import.meta.url);
 
 const ConversationContext = Context<Conversation>({ messages: [] });
 const SearchWeb = Tool<SearchRequest, SearchResult>("capability.search-web");
 const SupportModel = Model<ModelRequest, ModelResponse>("model.support");
-const source = staticSource(import.meta.url);
 
 export const Support = Agent<ConversationInput, ConversationOutput, Conversation>({
   name: "Support",
-  source,
   context: ConversationContext,
-  use: { SearchWeb, SupportModel, Specialist, Summarizer },
   async run(agent, incoming) {
     const specialist = Specialist.new({ context: { domain: "security" } });
     const answer = await specialist.invoke({ question: incoming.question });
@@ -135,9 +133,10 @@ export const Support = Agent<ConversationInput, ConversationOutput, Conversation
 });
 ```
 
-The TypeScript example uses the portable `static-source.ts` helper shown in
-[Create Your First APXM Agent](first-agent.md). Every module-scope binding read
-by the Agent body appears in `use`.
+The TypeScript module states its own source once with `source(import.meta.url)`,
+as shown in [Create Your First APXM Agent](first-agent.md). Every module-scope
+binding the Agent body reads is that Agent's declaration; neither language asks
+an author to list them a second time.
 
 Both examples MUST record semantically equivalent `FrontendGraph` values. The
 exact Python decorator/TypeScript factory matrix is frozen by ADR-0015 §4.

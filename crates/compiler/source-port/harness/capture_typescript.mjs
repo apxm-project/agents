@@ -17,8 +17,8 @@
 //   an in-memory compiler host and evaluated through in-memory module hooks, so
 //   no directory, no symlink, and no temporary file is created for it.
 // * Its module specifiers resolve through a closed table: the declared frontend
-//   package and the harness-provided static-source module. Every other specifier
-//   is rejected, so the submitted text reaches no Node builtin and no package.
+//   package and its Node host bridge. Every other specifier is rejected, so the
+//   submitted text reaches no Node builtin and no package.
 // * The typecheck runs first and rejects before any evaluation, so a source that
 //   does not typecheck never executes.
 // * The process runs under Node's permission model with read access to the
@@ -45,10 +45,7 @@ const REASON_ENTRYPOINT = "entrypoint_not_an_agent_program";
 /** In-memory identities. Nothing on disk carries any of these names. */
 const ROOT = "/apxm-submitted";
 const ENTRY_FILE = `${ROOT}/submitted_source.ts`;
-const SOURCE_DECLARATION = `${ROOT}/apxm-source.d.ts`;
 const ENTRY_URL = "apxm-submitted:///submitted_source.js";
-const SOURCE_URL = "apxm-submitted:///apxm-source.js";
-const SOURCE_SPECIFIER = "apxm:source";
 const FRONTEND_SPECIFIER = "@apxm/frontend";
 const FRONTEND_NODE_SPECIFIER = "@apxm/frontend/node";
 
@@ -114,16 +111,6 @@ const frontendNodeModule = new URL(
   "file:///",
 ).href;
 
-// The frontend reads the authored callback back from a static source token. The
-// harness supplies that token from the submitted text it already holds, so the
-// evaluated module never reads a file to recover its own source.
-const sourceModuleText =
-  `export function staticSource() { return { fileName: ${JSON.stringify(
-    path.basename(ENTRY_FILE),
-  )}, text: ${JSON.stringify(source)} }; }\n`;
-const sourceDeclarationText =
-  "export declare function staticSource(): { fileName: string; text: string };\n";
-
 const options = {
   module: ts.ModuleKind.ESNext,
   moduleResolution: ts.ModuleResolutionKind.Bundler,
@@ -134,14 +121,11 @@ const options = {
   baseUrl: ROOT,
   paths: {
     [FRONTEND_SPECIFIER]: [frontendTypes],
-    [SOURCE_SPECIFIER]: [SOURCE_DECLARATION],
+    [FRONTEND_NODE_SPECIFIER]: [path.join(frontendPackage, "dist", "node.d.ts")],
   },
 };
 
-const memory = new Map([
-  [ENTRY_FILE, source],
-  [SOURCE_DECLARATION, sourceDeclarationText],
-]);
+const memory = new Map([[ENTRY_FILE, source]]);
 
 let base;
 try {
@@ -205,14 +189,11 @@ try {
 // `registerHooks` is not, so the hooks are carried by a data URL loader.
 const loader = `
 const ENTRY_URL = ${JSON.stringify(ENTRY_URL)};
-const SOURCE_URL = ${JSON.stringify(SOURCE_URL)};
 const FRONTEND_SPECIFIER = ${JSON.stringify(FRONTEND_SPECIFIER)};
 const FRONTEND_NODE_SPECIFIER = ${JSON.stringify(FRONTEND_NODE_SPECIFIER)};
-const SOURCE_SPECIFIER = ${JSON.stringify(SOURCE_SPECIFIER)};
 const frontendModule = ${JSON.stringify(frontendModule)};
 const frontendNodeModule = ${JSON.stringify(frontendNodeModule)};
 const transpiled = ${JSON.stringify(transpiled)};
-const sourceModuleText = ${JSON.stringify(sourceModuleText)};
 
 export function resolve(specifier, context, next) {
   if (context.parentURL === ENTRY_URL) {
@@ -222,11 +203,8 @@ export function resolve(specifier, context, next) {
     if (specifier === FRONTEND_NODE_SPECIFIER) {
       return { url: frontendNodeModule, shortCircuit: true };
     }
-    if (specifier === SOURCE_SPECIFIER) {
-      return { url: SOURCE_URL, shortCircuit: true };
-    }
     throw new Error(
-      \`the submitted source may not import '\${specifier}'; only the authoring frontend and its static source token are reachable\`,
+      \`the submitted source may not import '\${specifier}'; only the authoring frontend and its Node host bridge are reachable\`,
     );
   }
   return next(specifier, context);
@@ -236,16 +214,17 @@ export function load(url, context, next) {
   if (url === ENTRY_URL) {
     return { format: "module", source: transpiled, shortCircuit: true };
   }
-  if (url === SOURCE_URL) {
-    return { format: "module", source: sourceModuleText, shortCircuit: true };
-  }
   return next(url, context);
 }
 `;
 register(`data:text/javascript,${encodeURIComponent(loader)}`, import.meta.url);
 
+// The frontend reads the authored callback back from the module's own source
+// text. The harness supplies that text from the submission it already holds, so
+// the evaluated module never reads a file to recover its own source.
 try {
-  await import(frontendNodeModule);
+  const bridge = await import(frontendNodeModule);
+  bridge.submitAuthoredSource({ fileName: path.basename(ENTRY_FILE), text: source });
 } catch (error) {
   reject(
     REASON_FRONTEND,

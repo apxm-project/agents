@@ -20,7 +20,8 @@ test("the worker rejects a handler result that bypasses Tool.answer", async () =
     "export const plainResult = Tool.define({",
     '  name: "plain_result",',
     '  description: "Invalid private worker fixture.",',
-    "  input: Tool.object({ message: Tool.text({ minLength: 1 }) }),",
+    "  readOnly: true,",
+    "  input: Tool.object({ additionalProperties: false, properties: { message: Tool.text({ required: true, minLength: 1 }) } }),",
     "  run({ message }) { return { message }; },",
     "});",
   ].join("\n");
@@ -76,7 +77,8 @@ test("the worker unwraps a typed Tool.answer only at its private boundary", asyn
     "export const typedAnswer = Tool.define({",
     '  name: "typed_answer",',
     '  description: "Private worker fixture.",',
-    "  input: Tool.object({ message: Tool.text({ minLength: 1 }) }),",
+    "  readOnly: true,",
+    "  input: Tool.object({ additionalProperties: false, properties: { message: Tool.text({ required: true, minLength: 1 }) } }),",
     "  run({ message }) { return Tool.answer({ message }); },",
     "});",
   ].join("\n");

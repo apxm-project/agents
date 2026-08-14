@@ -8,9 +8,17 @@ import sys
 from apxm_program import Agent, Capability, Context, Event, Hook, Model, TaskGroup, Tool
 
 
-ParityModel = Model[object, object]("parity.model")
-ParityTool = Tool[object, object]("parity.tool")
-ParityCapability = Capability[object, object]("parity.capability")
+class Input:
+    """The paired program's opaque typed input."""
+
+
+class Output:
+    """The paired program's opaque typed output."""
+
+
+ParityModel = Model[Input, Output]("parity.model")
+ParityTool = Tool[Input, Output]("parity.tool")
+ParityCapability = Capability[Input, Output]("parity.capability")
 ParityEvent = Event("parity.event")
 
 
@@ -19,7 +27,7 @@ class ParityContext:
     iterations: int = 0
 
 
-@Agent(input="Input", output="Output", context=ParityContext)
+@Agent(input=Input, output=Output, context=ParityContext)
 async def ParityChild(agent, request):
     return await ParityModel(request)
 
@@ -29,7 +37,7 @@ async def RecordParityModelStart(agent) -> None:
     return None
 
 
-@Agent(input="Input", output="Output", context=ParityContext)
+@Agent(input=Input, output=Output, context=ParityContext)
 async def ParityCorpus(agent, request):
     while True:
         try:

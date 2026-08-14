@@ -8,7 +8,13 @@
     "outDir": "dist",
     "rootDir": "src",
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ],
+    "sourceMap": true,
+    "inlineSources": true
   },
-  "include": ["src/**/*.ts"]
+  "include": [
+    "src/**/*.ts"
+  ]
 }

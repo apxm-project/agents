@@ -23,26 +23,37 @@ use crate::common::{ENTRYPOINT, FRONTENDS, drivers, frontend_present, roots};
 
 const PYTHON_PROGRAM: &str = r#"from apxm_program import Agent, Model, Tool
 
-ReviewModel = Model[object, object]("@MODEL@")
-SearchWeb = Tool[object, object]("search.web.capability")
+
+class ReviewRequest:
+    pass
 
 
-@Agent(input="ReviewRequest", output="Review")
+class Review:
+    pass
+
+
+ReviewModel = Model[ReviewRequest, Review]("@MODEL@")
+SearchWeb = Tool[ReviewRequest, Review]("search.web.capability")
+
+
+@Agent(input=ReviewRequest, output=Review)
 async def Reviewer(agent, request):
 @BODY@
 "#;
 
 const TYPESCRIPT_PROGRAM: &str = r#"import { Agent, Model, Tool } from "@apxm/frontend";
-import { staticSource } from "apxm:source";
+import { source } from "@apxm/frontend/node";
 
-const source = staticSource();
-const ReviewModel = Model<object, object>("@MODEL@");
-const SearchWeb = Tool<object, object>("search.web.capability");
+source(import.meta.url);
 
-export const Reviewer = Agent<object, object>({
+type ReviewRequest = object;
+type Review = object;
+
+const ReviewModel = Model<ReviewRequest, Review>("@MODEL@");
+const SearchWeb = Tool<ReviewRequest, Review>("search.web.capability");
+
+export const Reviewer = Agent<ReviewRequest, Review>({
   name: "Reviewer",
-  source,
-  use: { ReviewModel, SearchWeb },
   async run(agent, request) {
 @BODY@
   },

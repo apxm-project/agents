@@ -12,12 +12,23 @@ are focused advanced declarations. Graph builders, AIR text, node ids, and
 ## Python
 
 ```python
+from typing import TypedDict
+
 from apxm_program import Agent, Model
 
-SummaryModel = Model[object, object]("model.summary")
+
+class SummaryRequest(TypedDict):
+    text: str
 
 
-@Agent(input="SummaryRequest", output="Summary")
+class Summary(TypedDict):
+    text: str
+
+
+SummaryModel = Model[SummaryRequest, Summary]("model.summary")
+
+
+@Agent(input=SummaryRequest, output=Summary)
 async def summarize(agent, request):
     return await SummaryModel(request)
 ```
@@ -26,19 +37,17 @@ async def summarize(agent, request):
 
 ```typescript
 import { Agent, Model } from "@apxm/frontend";
-import "@apxm/frontend/node";
-import { staticSource } from "./static-source.js";
+import { source } from "@apxm/frontend/node";
+
+source(import.meta.url);
 
 type SummaryRequest = { readonly text: string };
 type Summary = { readonly text: string };
 
-const source = staticSource(import.meta.url);
 const SummaryModel = Model<SummaryRequest, Summary>("model.summary");
 
 export const Summarizer = Agent<SummaryRequest, Summary>({
   name: "Summarizer",
-  source,
-  use: { SummaryModel },
   async run(agent, request) {
     return await SummaryModel(request);
   },
@@ -49,33 +58,27 @@ Both forms are semantically equivalent. The callback parameter is inferred;
 authors use `agent.context` and `agent.yield_(...)` when their program carries
 context across stateful invocations.
 
-The TypeScript compiler needs a static source token. Define it once beside the
-Agent source when compiling in Node:
+Both forms state the program's typed interface as the types themselves —
+`@Agent(input=SummaryRequest, ...)` and `Agent<SummaryRequest, Summary>` — never
+as strings naming them.
 
-```typescript
-// static-source.ts
-import { readFileSync } from "node:fs";
-import { relative } from "node:path";
-import { fileURLToPath } from "node:url";
+A TypeScript module states its own source once, above its Agent definitions,
+with `source(import.meta.url)` from `@apxm/frontend/node`. Python recovers the
+authored text through `inspect`; JavaScript has no equivalent, so the module
+supplies it.
 
-export function staticSource(url: string) {
-  const absoluteFileName = fileURLToPath(url);
-  return {
-    fileName: relative(process.cwd(), absoluteFileName),
-    text: readFileSync(absoluteFileName, "utf8"),
-  };
-}
-```
-
-Keep bindings at module scope, include every binding used by an Agent in its
-`use` object, and use exact references such as `model.summary` or
-`capability.search`. The frontend rejects dynamic marker lookup and local
-shadowing instead of guessing what an Agent means.
+Keep bindings at module scope and use exact references such as `model.summary`
+or `capability.search`. The declarations a module makes are its Agents'
+declarations — an author does not list again the names their own body already
+names. The frontend rejects dynamic marker lookup and local shadowing instead of
+guessing what an Agent means.
 
 `Tool` in an Agent Program is a typed reference to an admitted Capability; it
-does not implement or execute a runtime tool. A package-local TypeScript
-handler, when one is needed, uses `Tool.define` and `Tool.answer` in a separate
-handler module. Its generated manifest is Rust-validated, and Rust owns the
+does not implement or execute a runtime tool. A package-local handler, when one is
+needed, uses `Tool.define`/`Tool.answer` in TypeScript or `capability(...)` from
+`apxm_program.handlers` in Python, in a separate handler module. Either returns
+the Capability id it implements, so the reference and the implementation are one
+object. Its generated manifest is Rust-validated, and Rust owns the
 admitted Capability execution boundary. See
 [ADR-0016](../adr/0016-tool-authoring-and-handler-execution-are-separate.md).
 

@@ -6,12 +6,25 @@
     "strict": true,
     "skipLibCheck": true,
     "outDir": "dist",
-    "types": ["node"],
-    "typeRoots": ["../../../crates/compiler/frontend/typescript/node_modules/@types"],
+    "types": [
+      "node"
+    ],
+    "typeRoots": [
+      "../../../crates/compiler/frontend/typescript/node_modules/@types"
+    ],
     "paths": {
-      "@apxm/frontend": ["../../../crates/compiler/frontend/typescript/dist/index.d.ts"],
-      "@apxm/agent-packaging": ["../../../crates/tools/cli/agent-packaging/index.d.ts"]
-    }
+      "@apxm/frontend": [
+        "../../../crates/compiler/frontend/typescript/dist/index.d.ts"
+      ],
+      "@apxm/agent-packaging": [
+        "../../../crates/tools/cli/agent-packaging/index.d.ts"
+      ]
+    },
+    "sourceMap": true,
+    "inlineSources": true
   },
-  "include": ["src/**/*.ts", "capabilities/**/*.ts"]
+  "include": [
+    "src/**/*.ts",
+    "capabilities/**/*.ts"
+  ]
 }

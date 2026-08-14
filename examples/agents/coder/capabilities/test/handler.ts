@@ -1,16 +1,17 @@
 // Defines Coder's read-only test-command proposal Tool.
 import { Tool } from "@apxm/agent-packaging";
 
-interface TestArgs {
-  command: string;
-}
-
 /** Prepare a test command without executing it. */
 export const prepareTest = Tool.define({
   name: "test",
   description: "Prepare a single-line test command for review without executing it.",
-  input: Tool.object<TestArgs>({
-    command: Tool.text({ minLength: 1 }),
+  // The handler states this about itself; nothing else in the package does.
+  readOnly: true,
+  input: Tool.object({
+    additionalProperties: false,
+    properties: {
+      command: Tool.text({ required: true, minLength: 1 }),
+    },
   }),
   run(args) {
     const command = args.command.trim();

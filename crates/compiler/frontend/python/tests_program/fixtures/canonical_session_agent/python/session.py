@@ -10,8 +10,16 @@ from __future__ import annotations
 
 from apxm_program import Agent, Context, Event, Model
 
-SessionModel = Model[object, object]("model.target")
-SessionInput = Event[object]("event.session.input")
+class SessionRequest:
+    """The typed message one session turn accepts."""
+
+
+class SessionReply:
+    """The typed message one session turn produces."""
+
+
+SessionModel = Model[SessionRequest, SessionReply]("model.target")
+SessionInput = Event[SessionRequest]("event.session.input")
 
 
 @Context
@@ -19,7 +27,7 @@ class SessionContext:
     messages: tuple = ()
 
 
-@Agent(input="SessionInput", output="SessionOutput", context=SessionContext)
+@Agent(input=SessionRequest, output=SessionReply, context=SessionContext)
 async def SessionAgent(agent, incoming):
     while True:
         reply = await SessionModel(incoming)

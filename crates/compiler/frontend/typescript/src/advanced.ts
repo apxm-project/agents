@@ -38,16 +38,17 @@ export type HookOptions<C = unknown> = {
  * subset, because the local is not a value the capture can resolve.
  */
 export const Hook = {
-  before<C = unknown>(options: HookOptions<C>): HookDecl {
+  before<Context = unknown>(options: HookOptions<Context>): HookDecl {
     return { phase: HOOK_PHASE_BEFORE, scope: options.scope ?? HOOK_SCOPE_NODE };
   },
-  after<C = unknown>(options: HookOptions<C>): HookDecl {
+  after<Context = unknown>(options: HookOptions<Context>): HookDecl {
     return { phase: HOOK_PHASE_AFTER, scope: options.scope ?? HOOK_SCOPE_NODE };
   },
 };
 
 export const TaskGroup = {
-  run(_scope: (group: unknown) => Promise<void> | void): Promise<void> {
+  run(body: (group: unknown) => Promise<void> | void): Promise<void> {
+    void body;
     throw new Error("TaskGroup is a compiled structured scope in an Agent body");
   },
 };

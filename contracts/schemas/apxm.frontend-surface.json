@@ -2,9 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "apxm.frontend-surface",
   "title": "FrontendSurfaceManifest",
-  "description": "The single machine-readable manifest of the public source-first authoring surface. Public-export scans, documentation-alignment checks, and generated reference docs derive from this one manifest. A guide, README, generated doc, or package export that names a symbol absent here fails the alignment check. This manifest carries no AIR/AIS operation string and no lowering identity.",
+  "description": "The single machine-readable manifest of the public source-first authoring surface. Public-export scans, documentation-alignment checks, and generated reference docs derive from this one manifest. Every declaration must carry a projection for every registered language, and the projection is checked by argument shape rather than by name: a language with no projection for a declaration is not a conforming implementation of the surface. This manifest carries no AIR/AIS operation string and no lowering identity.",
   "type": "object",
-  "required": ["schema_version", "surface_version", "everyday", "advanced", "non_public", "declarations"],
+  "required": ["schema_version", "surface_version", "everyday", "advanced", "non_public", "languages", "declarations"],
   "properties": {
     "schema_version": { "const": "apxm.frontend-surface" },
     "surface_version": { "const": "apxm.frontend-graph" },
@@ -16,9 +16,9 @@
     },
     "advanced": {
       "type": "array",
-      "description": "The four advanced names imported only when their behavior is needed.",
+      "description": "The advanced names imported only when their behavior is needed. `capability` declares a handler a package ships, as against `Capability`, which references one.",
       "items": { "type": "string" },
-      "const": ["Capability", "Event", "Hook", "TaskGroup"]
+      "const": ["Capability", "capability", "Event", "Hook", "TaskGroup"]
     },
     "non_public": {
       "type": "array",
@@ -52,38 +52,126 @@
         "Loop"
       ]
     },
+    "languages": {
+      "type": "array",
+      "description": "Every language that implements the surface. Registration is what makes conformance mechanical: a declaration missing a projection for a registered language is FrontendSurfaceIncomplete. Adding a language means adding an entry here and one language-local extraction layer in the conformance gate; every declaration, argument, and diagnostic is inherited.",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/SurfaceLanguage" }
+    },
     "declarations": {
       "type": "array",
-      "description": "Every public declaration/marker: its two language projections, the bound semantic node, its accepted arguments, its inferred/produced types, and the diagnostics it can raise.",
+      "description": "Every public declaration/marker: its per-language projections, the bound semantic node, its accepted arguments and how each language projects them, its produced intent, and the diagnostics it can raise.",
       "items": { "$ref": "#/$defs/SurfaceDeclaration" }
     }
   },
   "additionalProperties": false,
   "$defs": {
+    "LanguageId": {
+      "type": "string",
+      "enum": ["python", "typescript"]
+    },
+    "SurfaceLanguage": {
+      "type": "object",
+      "required": ["id", "authoring_root", "generated_diagnostics"],
+      "properties": {
+        "id": { "$ref": "#/$defs/LanguageId" },
+        "authoring_root": {
+          "type": "string",
+          "description": "Repository-relative module whose public exports are exactly the declarations this language marks `exported_from_root`."
+        },
+        "generated_diagnostics": {
+          "type": "string",
+          "description": "Repository-relative generated module projecting `declarations[].diagnostics`. Drift against this manifest is FrontendSurfaceUnsynced."
+        }
+      },
+      "additionalProperties": false
+    },
+    "SurfaceProjection": {
+      "type": "object",
+      "description": "How one language projects one declaration: the module that defines it, the exported symbol, the optional member the arguments are taken from, whether the authoring root exports it, and the author-facing signature.",
+      "required": ["module", "symbol", "exported_from_root", "signature"],
+      "properties": {
+        "module": { "type": "string" },
+        "symbol": { "type": "string" },
+        "member": { "type": "string" },
+        "exported_from_root": { "type": "boolean" },
+        "signature": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "ProjectedAs": {
+      "type": "array",
+      "description": "The closed set of forms an argument can take in a language. `inferred` means the language derives the argument rather than accepting it, and the gate proves the projection does not accept it as a parameter.",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "type_parameter",
+          "parameter",
+          "keyword",
+          "option_field",
+          "method_name",
+          "decorated_function",
+          "context_manager_block",
+          "inferred"
+        ]
+      }
+    },
     "SurfaceDeclaration": {
       "type": "object",
-      "required": ["concept", "tier", "python_projection", "typescript_projection", "bound_semantic_node", "arguments", "diagnostics"],
+      "required": ["concept", "tier", "projections", "bound_semantic_node", "arguments", "diagnostics"],
       "properties": {
         "concept": { "type": "string" },
         "tier": { "type": "string", "enum": ["everyday", "advanced"] },
-        "python_projection": { "type": "string" },
-        "typescript_projection": { "type": "string" },
+        "projections": {
+          "type": "object",
+          "description": "One projection per registered language. A registered language absent here is FrontendSurfaceIncomplete.",
+          "propertyNames": { "$ref": "#/$defs/LanguageId" },
+          "additionalProperties": { "$ref": "#/$defs/SurfaceProjection" }
+        },
         "bound_semantic_node": {
           "type": "string",
-          "enum": ["AgentDecl", "ContextDecl", "ModelBinding", "ToolBinding", "CapabilityBinding", "HookDecl", "EventType", "EventWait", "TaskScope"]
+          "enum": [
+            "AgentDecl",
+            "ContextDecl",
+            "ModelBinding",
+            "ToolBinding",
+            "CapabilityBinding",
+            "CapabilityHandlerDecl",
+            "HookDecl",
+            "EventType",
+            "EventWait",
+            "TaskScope"
+          ]
         },
         "arguments": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["name", "accepts", "required"],
+            "required": ["name", "accepts", "required", "projected_as"],
             "properties": {
               "name": { "type": "string" },
               "accepts": {
                 "type": "string",
-                "enum": ["type_ref", "exact_reference", "closed_option", "literal", "typed_default", "callback_body", "selector", "phase"]
+                "enum": [
+                  "type_ref",
+                  "exact_reference",
+                  "closed_option",
+                  "literal",
+                  "typed_default",
+                  "callback_body",
+                  "object_schema",
+                  "permission",
+                  "selector",
+                  "phase"
+                ]
               },
-              "required": { "type": "boolean" }
+              "required": { "type": "boolean" },
+              "projected_as": {
+                "type": "object",
+                "propertyNames": { "$ref": "#/$defs/LanguageId" },
+                "additionalProperties": { "$ref": "#/$defs/ProjectedAs" }
+              }
             },
             "additionalProperties": false
           }

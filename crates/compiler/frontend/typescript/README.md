@@ -5,19 +5,17 @@ callback types:
 
 ```typescript
 import { Agent, Model } from "@apxm/frontend";
-import "@apxm/frontend/node";
-import { staticSource } from "./static-source.js";
+import { source } from "@apxm/frontend/node";
+
+source(import.meta.url);
 
 type SummaryRequest = { readonly text: string };
 type Summary = { readonly text: string };
 
-const source = staticSource(import.meta.url);
 const SummarizerModel = Model<SummaryRequest, Summary>("model.summary");
 
 export const Summarizer = Agent<SummaryRequest, Summary>({
   name: "Summarizer",
-  source,
-  use: { SummarizerModel },
   async run(agent, request) {
     return await SummarizerModel(request);
   },
@@ -30,27 +28,20 @@ TypeScript uses the compiler AST, symbols, and TypeChecker to build an immutable
 frontend-internal typed source tree, then deterministically traverses it into
 FrontendGraph. It never executes the Agent or prints AIR or MLIR.
 
-For Node compilation, give every Agent a portable static source token. Keep
-this helper beside the Agent source:
+`Agent<Input, Output, Context>` states the program's typed interface: the types
+themselves, never strings naming them. Python states the same three the same way,
+as the real classes passed to `@Agent`.
 
-```typescript
-// static-source.ts
-import { readFileSync } from "node:fs";
-import { relative } from "node:path";
-import { fileURLToPath } from "node:url";
+A module states its own source once, above its Agent definitions, with
+`source(import.meta.url)` from `@apxm/frontend/node`. Python recovers the
+authored text through `inspect`; JavaScript has no equivalent, so the module
+supplies it — but it is a fact about where the Agent was written, not an argument
+its author passes.
 
-export function staticSource(url: string) {
-  const absoluteFileName = fileURLToPath(url);
-  return {
-    fileName: relative(process.cwd(), absoluteFileName),
-    text: readFileSync(absoluteFileName, "utf8"),
-  };
-}
-```
-
-Declare Models, Tools, Context, Events, and composed Agents at module scope.
-Pass every binding used in an Agent body through `use`; the frontend resolves
-those bindings by symbol identity and rejects dynamic lookup or shadowing.
+Declare Models, Tools, Context, Events, and composed Agents at module scope. The
+declarations a module makes are its Agents' declarations: an author does not list
+again the names their own body already names. The frontend resolves those
+bindings by symbol identity and rejects dynamic lookup or shadowing.
 
 ## Compilation contract
 

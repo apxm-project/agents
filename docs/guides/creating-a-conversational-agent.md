@@ -46,7 +46,7 @@ class ConversationContext:
     last_reply: str = ""
 
 
-@Agent(input="ConversationInput", output="ConversationOutput",
+@Agent(input=ConversationInput, output=ConversationOutput,
        context=ConversationContext)
 async def ConversationalExample(agent, incoming):
     while incoming["message"]:
