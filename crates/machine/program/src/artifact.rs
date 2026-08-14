@@ -267,7 +267,11 @@ impl ExecutableArtifact {
             air_digest,
             air: air.clone(),
             source_bundle_digest,
-            hook_bindings: graph.hook_bindings.clone(),
+            // The AIR's sequence, not the authoring sequence: `hook_execution_order`
+            // places each Hook body, so AIR order is the schedule. The authored
+            // order is still bound verbatim by the source bundle above, and each
+            // binding carries its own `declaration_order`, so nothing is lost.
+            hook_bindings: air_hook_bindings(air),
             source_map: air.source_map.clone(),
             entrypoints,
             artifact_semantic_requirements,
@@ -289,18 +293,21 @@ impl ExecutableArtifact {
     /// Derive the canonical `apxm.executable-artifact` for a compiled
     /// `apxm.air` module when no FrontendGraph is available.
     ///
-    /// Requirements are inferred only from embedded `model.call` operands. Prefer
-    /// [`Self::from_frontend_graph`] for complete source-bundle and requirement
-    /// binding.
+    /// On this path the module is the whole authority: requirements are inferred
+    /// from the embedded typed operand slots and Hook bindings are read off the
+    /// regions that carry them. Prefer [`Self::from_frontend_graph`] for complete
+    /// source-bundle and requirement binding.
     ///
     /// # Errors
     ///
-    /// Returns [`CodecError`] when the module or artifact cannot be serialized
-    /// for digesting.
-    pub fn from_air(air: &AirModule) -> Result<Self, CodecError> {
-        let air_bytes = serde_json::to_vec(air).map_err(CodecError)?;
+    /// Returns [`ArtifactBuildError::Codec`] when the module or artifact cannot
+    /// be serialized for digesting, and [`ArtifactBuildError::Validation`] when
+    /// the derived artifact does not satisfy [`Self::validate`].
+    pub fn from_air(air: &AirModule) -> Result<Self, ArtifactBuildError> {
+        let codec = |error| ArtifactBuildError::Codec(CodecError(error));
+        let air_bytes = serde_json::to_vec(air).map_err(codec)?;
         let air_digest = sha256_digest(&air_bytes);
-        let source_map_bytes = serde_json::to_vec(&air.source_map).map_err(CodecError)?;
+        let source_map_bytes = serde_json::to_vec(&air.source_map).map_err(codec)?;
         let source_bundle_digest = sha256_digest(&source_map_bytes);
 
         let entrypoints = vec![Entrypoint {
@@ -319,14 +326,26 @@ impl ExecutableArtifact {
             air_digest,
             air: air.clone(),
             source_bundle_digest,
-            hook_bindings: Vec::new(),
+            // Read from the AIR, not hardcoded empty. An empty vector here was
+            // the original inert-Hook bug through a second door: the artifact
+            // would seal a digest declaring no Hooks over an AIR that carries
+            // them, and validation would then have to choose which copy to
+            // believe. With no graph in hand the AIR is the only authority.
+            hook_bindings: air_hook_bindings(air),
             source_map: air.source_map.clone(),
             entrypoints,
             artifact_semantic_requirements,
             integrity_algorithm: IntegrityAlgorithm::Sha256,
         };
-        let content = serde_json::to_vec(&artifact).map_err(CodecError)?;
+        let content = serde_json::to_vec(&artifact).map_err(codec)?;
         artifact.artifact_digest = sha256_digest(&content);
+        // Same producer-side gate `from_graph_and_air` runs: a module whose
+        // operand slots, source map, or Hooks do not satisfy the artifact
+        // contract does not become a digest-sealed artifact.
+        let verdict = artifact.validate();
+        if !verdict.is_accepted() {
+            return Err(ArtifactBuildError::Validation(verdict));
+        }
         Ok(artifact)
     }
 
@@ -535,22 +554,14 @@ fn air_operand_refs(
     ordered_operand_refs(air, op, slot).into_iter().collect()
 }
 
-/// Hold the graph's declared requirements against the operands the lowered AIR
-/// actually names, in both directions.
-///
-/// A requirement no operand names is an authority the program never exercises;
-/// an operand no requirement covers is an effect with no declared requirement
-/// behind it, which is exactly how an unresolvable Capability reference used to
-/// reach a running artifact. Neither is a warning: an artifact whose
-/// requirement set and effect set disagree has no single answer to "what does
-/// this program need", so it is not built at all.
 /// Hold an artifact's `hook_bindings` and its own AIR to one story.
 ///
 /// The two used to be independent copies: lowering kept four of a binding's ten
 /// fields and the artifact re-attached the rest straight from the graph, so a
 /// binding could name a scope, a handler, or a return mode that the executable
 /// structure did not carry, and nothing would notice. Every Hook the AIR holds
-/// is now the binding the artifact declares, field for field, in the same order.
+/// is now the binding the artifact declares, field for field, once per
+/// `hook_id`, and in the same order.
 fn reconcile_hook_bindings(
     verdict: &mut Verdict,
     hook_bindings: &[crate::frontend_graph::HookBinding],
@@ -562,7 +573,15 @@ fn reconcile_hook_bindings(
         .filter_map(|node| node.hook.as_ref())
         .collect();
 
+    let mut declared_once = std::collections::BTreeSet::new();
     for binding in hook_bindings {
+        if !declared_once.insert(binding.hook_id.as_str()) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                binding.hook_id.clone(),
+                "an artifact declares the same hook_id more than once",
+            ));
+        }
         match carried
             .iter()
             .find(|candidate| candidate.hook_id == binding.hook_id)
@@ -580,7 +599,7 @@ fn reconcile_hook_bindings(
             )),
         }
     }
-    for binding in carried {
+    for binding in &carried {
         if !hook_bindings
             .iter()
             .any(|declared| declared.hook_id == binding.hook_id)
@@ -592,8 +611,45 @@ fn reconcile_hook_bindings(
             ));
         }
     }
+
+    // Order, which the two loops above cannot see: they match by `hook_id`, so a
+    // declared list naming the same Hooks in a different sequence used to pass
+    // while this comment claimed otherwise. AIR order is the schedule
+    // (`lower::hook_execution_order` places each body), so a reordered
+    // declaration is a second, disagreeing answer to when a Hook runs.
+    let declared_sequence: Vec<&str> = hook_bindings
+        .iter()
+        .map(|binding| binding.hook_id.as_str())
+        .collect();
+    let carried_sequence: Vec<&str> = carried
+        .iter()
+        .map(|binding| binding.hook_id.as_str())
+        .collect();
+    if declared_sequence != carried_sequence
+        && declared_sequence
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            == carried_sequence
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+    {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::SchemaViolation,
+            "hook_bindings".to_string(),
+            "declared Hook bindings are in a different order than the artifact's AIR carries them",
+        ));
+    }
 }
 
+/// Hold the graph's declared requirements against the operands the lowered AIR
+/// actually names, in both directions.
+///
+/// A requirement no operand names is an authority the program never exercises;
+/// an operand no requirement covers is an effect with no declared requirement
+/// behind it, which is exactly how an unresolvable Capability reference used to
+/// reach a running artifact. Neither is a warning: an artifact whose
+/// requirement set and effect set disagree has no single answer to "what does
+/// this program need", so it is not built at all.
 fn reconcile_requirements_with_air(
     graph: &FrontendGraph,
     air: &AirModule,
@@ -819,6 +875,134 @@ mod from_air_tests {
             }
         }))
         .expect("valid canonical AIR")
+    }
+
+    /// One carried Hook binding, riding on the region holding its captured body.
+    fn carried_hook(hook_id: &str, phase: &str, declaration_order: u32) -> serde_json::Value {
+        serde_json::json!({
+            "hook_id": hook_id,
+            "scope": "capability",
+            "phase": phase,
+            "target_selector": "node.cap",
+            "declaration_order": declaration_order,
+            "handler_ref": format!("handlers.{hook_id}"),
+            "handler_digest":
+                "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "input_type_ref": "HookContext",
+            "output_type_ref": "Unit",
+            "return_mode": "observe",
+            "body_region_id": format!("{hook_id}.body")
+        })
+    }
+
+    /// AIR that declares two Hooks around one `capability.invoke`, in schedule
+    /// order: the before-Hook's body region precedes the after-Hook's.
+    fn hooked_air() -> AirModule {
+        serde_json::from_value(serde_json::json!({
+            "schema_version": "apxm.air",
+            "semantic_operations": [{
+                "node_id": "node.cap",
+                "op": "capability.invoke",
+                "parent_region_id": "region.body",
+                "execution_order": 2,
+                "operands": [
+                    {
+                        "slot": "capability_ref",
+                        "value_id": "cap.search",
+                        "type_ref": "CapabilityRef"
+                    }
+                ]
+            }],
+            "structural_ir": [
+                { "region_id": "region.body", "kind": "region", "execution_order": 0 },
+                {
+                    "region_id": "hook.before.body",
+                    "kind": "region",
+                    "parent_region_id": "region.body",
+                    "execution_order": 1,
+                    "hook": carried_hook("hook.before", "before", 0)
+                },
+                {
+                    "region_id": "hook.after.body",
+                    "kind": "region",
+                    "parent_region_id": "region.body",
+                    "execution_order": 3,
+                    "hook": carried_hook("hook.after", "after", 1)
+                },
+                {
+                    "region_id": "region.return",
+                    "kind": "return",
+                    "parent_region_id": "region.body",
+                    "execution_order": 4
+                }
+            ],
+            "context_flow": [],
+            "source_map": {
+                "schema_version": "apxm.source-map",
+                "source_language": "python",
+                "node_spans": [],
+                "region_annotations": []
+            }
+        }))
+        .expect("valid canonical AIR carrying Hook bindings")
+    }
+
+    /// The second door onto the inert-Hook bug: `from_air` used to hardcode an
+    /// empty `hook_bindings`, so AIR that carried Hooks became a digest-sealed
+    /// artifact declaring none.
+    #[test]
+    fn from_air_declares_the_hook_bindings_its_air_carries() {
+        let air = hooked_air();
+        let artifact = ExecutableArtifact::from_air(&air).expect("from_air");
+
+        assert_eq!(
+            artifact
+                .hook_bindings
+                .iter()
+                .map(|binding| binding.hook_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["hook.before", "hook.after"],
+            "an artifact built from Hook-carrying AIR declares those Hooks, in AIR order"
+        );
+        assert_eq!(artifact.hook_bindings, air_hook_bindings(&air));
+        assert!(
+            artifact.validate().is_accepted(),
+            "{:?}",
+            artifact.validate()
+        );
+    }
+
+    /// The producer runs the consumer's validation. A module whose typed operand
+    /// slot is not a contract identifier has no valid artifact, so none is minted.
+    #[test]
+    fn from_air_refuses_a_module_whose_artifact_would_not_validate() {
+        let error = ExecutableArtifact::from_air(&air(&["model target"]))
+            .expect_err("a model target that is not a contract identifier is not an artifact");
+        assert!(
+            matches!(error, ArtifactBuildError::Validation(_)),
+            "expected a validation refusal, got {error}"
+        );
+    }
+
+    /// Hook order is the schedule, so reordering the declared list is a real
+    /// disagreement with the AIR even though every binding is still present.
+    #[test]
+    fn a_reordered_hook_declaration_does_not_validate() {
+        let mut artifact = ExecutableArtifact::from_air(&hooked_air()).expect("from_air");
+        artifact.hook_bindings.reverse();
+        assert!(
+            !artifact.validate().is_accepted(),
+            "declared Hook order must match the order the AIR carries"
+        );
+    }
+
+    /// Two bindings under one `hook_id` make every by-id lookup answer for
+    /// whichever copy is found first.
+    #[test]
+    fn a_duplicated_declared_hook_id_does_not_validate() {
+        let mut artifact = ExecutableArtifact::from_air(&hooked_air()).expect("from_air");
+        artifact.hook_bindings[1].hook_id = artifact.hook_bindings[0].hook_id.clone();
+        assert!(!artifact.validate().is_accepted());
     }
 
     #[test]

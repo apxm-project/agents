@@ -451,6 +451,52 @@ fn an_unclaimed_captured_hook_body_is_refused() {
     assert!(!graph.verify().is_accepted());
 }
 
+/// `hook_id` is the name every consumer resolves a Hook by — evidence, handler
+/// resolution, and artifact/AIR reconciliation all key on it — so two bindings
+/// sharing one id make those lookups answer for whichever is found first. Only
+/// `body_region_id` uniqueness was enforced; the ids here are distinct bodies.
+#[test]
+fn two_hook_bindings_cannot_declare_the_same_hook_id() {
+    let mut value = generic_graph_value();
+    let regions = value["regions"].as_array_mut().expect("regions array");
+    for (order, body) in ["hook.first.body", "hook.second.body"]
+        .into_iter()
+        .enumerate()
+    {
+        regions.push(json!({
+            "region_id": body,
+            "region_role": "hook_body",
+            "parent_region_id": "loop.main",
+            "execution_order": order + 7
+        }));
+    }
+    let binding = |order: u32, body: &str| {
+        json!({
+            "hook_id": "hook.before.model",
+            "scope": "model",
+            "phase": "before",
+            "target_selector": "node.model",
+            "declaration_order": order,
+            "handler_ref": "hooks.before_model",
+            "handler_digest":
+                "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "input_type_ref": "ModelContext",
+            "output_type_ref": "Unit",
+            "return_mode": "observe",
+            "body_region_id": body
+        })
+    };
+    value["hook_bindings"] = json!([
+        binding(0, "hook.first.body"),
+        binding(1, "hook.second.body"),
+    ]);
+    let graph: FrontendGraph = serde_json::from_value(value).expect("duplicate hook id graph");
+    assert!(
+        !graph.verify().is_accepted(),
+        "two Hook bindings under one hook_id is not a verifiable graph"
+    );
+}
+
 /// An observing Hook that names an assigned Context value is claiming to mutate
 /// nothing while pointing at the mutation.
 #[test]

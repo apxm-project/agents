@@ -1733,8 +1733,20 @@ fn validate_call_intent(
 /// unclaimed captured body cannot smuggle effects into a program either.
 fn collect_hook_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph) {
     let mut claimed_bodies: HashSet<&str> = HashSet::new();
+    let mut declared_ids: HashSet<&str> = HashSet::new();
     for hook in &graph.hook_bindings {
         check_identifier(verdict, &hook.hook_id, "hook_id");
+        // `hook_id` is how every downstream consumer names one Hook — evidence,
+        // artifact/AIR reconciliation, and handler resolution all key on it — so
+        // two bindings sharing one id make those lookups answer for whichever
+        // binding happens to be found first.
+        if !declared_ids.insert(hook.hook_id.as_str()) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                hook.hook_id.clone(),
+                "two Hook bindings declare the same hook_id",
+            ));
+        }
         check_identifier(verdict, &hook.handler_ref, "hook handler_ref");
         check_digest(verdict, &hook.handler_digest, &hook.hook_id);
         check_identifier(verdict, &hook.body_region_id, "hook body_region_id");
