@@ -7,8 +7,9 @@
   `contracts/vectors/apxm.frontend-surface.json` and held to both frontends'
   own sources by `dekk agents check-frontend-surface`
   (`tools/scripts/check_frontend_surface.py`). That gate reads the frontend
-  packages and the sample Markdown under `examples/`, not this guide, so the
-  snippets here are held to it by review rather than by CI.
+  packages and every authoring document, this guide included, so a snippet
+  here that imports a name the surface does not publish, or binds a capability
+  reference no catalogue mints, fails CI rather than review.
 - Implementation contract:
   [Agent Program composition and AIR](../agents/agent-program-composition-and-air-contract.md)
 - Audience: Python and TypeScript authors
@@ -41,16 +42,26 @@ has no equally direct standalone-function decorator form.
 
 `Model`, `Tool`, and `Capability` are binding factories in both languages,
 never decorators, because they bind an exact external reference rather than
-decorate a local body:
+decorate a local body. A Capability a *package ships* is a different thing
+again, and it is not spelled with those markers at all — see
+[§3.3](#33-a-tool-reference-and-a-shipped-handler).
 
-| Concept | Python | TypeScript |
-| --- | --- | --- |
-| Exact Model binding | `Model[I, O](ref)` | `Model<I, O>(ref)` |
-| Imported Tool binding | `Tool[I, O](capability_ref, permission=...)` | `Tool<I, O>(capabilityRef, { permission })` |
-| Imported Capability | `Capability[I, O](ref, permission=...)` | `Capability<I, O>(ref, { permission })` |
+The whole declaration surface, in the form each language projects it:
 
-A Capability a *package ships* is a fourth thing again, and it is not spelled
-with these markers at all — see [§3.3](#33-a-tool-reference-and-a-shipped-handler).
+<!-- BEGIN DECLARATION SURFACE -->
+| Declaration | Tier | Python | TypeScript |
+| --- | --- | --- | --- |
+| Agent definition | `everyday` | `@Agent(input=InputType, output=OutputType, context=ContextType) on one async def` | `Agent<Input, Output, Context>({ name?, context?, async run(agent, input) })` |
+| Context schema/default | `everyday` | `@Context on one typed class whose field defaults are the initial Context` | `Context<Schema>(initial)` |
+| Exact Model binding | `everyday` | `Model[Input, Output](ref)` | `Model<Input, Output>(ref)` |
+| Imported Tool binding | `everyday` | `Tool[Input, Output](capability_ref, permission=...)` | `Tool<Input, Output>(capabilityRef, { permission })` |
+| Imported Capability | `advanced` | `Capability[Input, Output](ref, permission=...)` | `Capability<Input, Output>(ref, { permission })` |
+| Shipped Capability handler | `advanced` | `capability({ name, description, read_only, input, run }) -> CapabilityId` | `Tool.define({ name, description, readOnly, input, run }) -> CapabilityId` |
+| Static Hook | `advanced` | `@Hook.before(target=..., scope=...) / @Hook.after(target=..., scope=...)` | `Hook.before({ agent, target, scope?, run }) / Hook.after({ ... })` |
+| Durable Event value | `advanced` | `Event[Payload](ref), then await event.wait()` | `Event<Payload>(ref), then await event.wait()` |
+| Declared Agent Skill | `advanced` | `Skill(skill_id, entry=...) or Skill(skill_id, text=...), then await skill.load()` | `Skill(skillId, { entry }) or Skill(skillId, { text }), then await skill.load()` |
+| Structured task scope | `advanced` | `async with TaskGroup()` | `TaskGroup.run(async () => { ... })` |
+<!-- END DECLARATION SURFACE -->
 
 Markers are statically recognized by imported symbol identity. Compiling does
 not execute the decorator, declaration factory callback, Agent body, or handler
@@ -60,9 +71,33 @@ argument form per declaration, and `dekk agents check-frontend-surface` extracts
 the real shape from
 [Python](../../crates/compiler/frontend/python/README.md) and
 [TypeScript](../../crates/compiler/frontend/typescript/README.md) and holds them
-to it.
+to it. The table above is generated from that manifest by
+`dekk agents codegen-docs`, so a marker that gains an argument gains it here
+rather than waiting for someone to notice.
 
-### 1.2 Authoring conventions
+### 1.2 What a declaration can refuse
+
+A rejection carries a code, so a build can branch on the reason rather than on
+the message text. The codes are the manifest's, projected into both frontends by
+`dekk agents codegen-diagnostics` and into this table by
+`dekk agents codegen-docs`:
+
+<!-- BEGIN DIAGNOSTIC CODES -->
+| Declaration | Rejection reasons |
+| --- | --- |
+| Agent definition | `AgentBodyNotAsync`, `AgentMissingInputOutput`, `AgentDynamicArgument`, `AgentFacadeImported` |
+| Context schema/default | `ContextNotTyped`, `ContextMutableGlobal`, `ContextDynamicDefault` |
+| Exact Model binding | `ModelRefNotExact`, `ModelDisplayNameRejected`, `ModelUntypedSchema` |
+| Imported Tool binding | `ToolRefNotCapability`, `ToolDisplayNameRejected`, `ToolCredentialInSource` |
+| Imported Capability | `CapabilityRefNotExact`, `CapabilityDisplayNameRejected` |
+| Shipped Capability handler | `CapabilityHandlerUntypedSchema`, `CapabilityHandlerOpenObject`, `CapabilityHandlerReadOnlyUndeclared` |
+| Static Hook | `HookTargetUnresolved`, `HookDynamicRegistration`, `HookOrderAmbiguous` |
+| Durable Event value | `EventNotTyped`, `EventWaitOutsideBody` |
+| Declared Agent Skill | `SkillIdNotExact`, `SkillSourceMissing`, `SkillSourceAmbiguous`, `SkillEntryPathNotCanonical`, `SkillInstructionsOverlong`, `SkillLoadOutsideBody` |
+| Structured task scope | `TaskGroupMissingJoin`, `TaskGroupDetachedWork`, `TaskGroupRawCoroutine` |
+<!-- END DIAGNOSTIC CODES -->
+
+### 1.3 Authoring conventions
 
 Declare Models, Tools, Capabilities, Events, Context, and composed Agents at
 module scope: the declarations a module makes are its Agents' declarations, in

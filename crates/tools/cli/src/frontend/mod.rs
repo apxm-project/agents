@@ -1,6 +1,7 @@
 pub mod codegen;
 pub mod codegen_capabilities;
 pub mod codegen_diagnostics;
+pub mod codegen_docs;
 pub mod codegen_event_kinds;
 pub mod codegen_frontend_conformance;
 pub mod codegen_frontend_records;

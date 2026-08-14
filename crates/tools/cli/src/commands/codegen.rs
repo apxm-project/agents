@@ -340,6 +340,42 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
                 json_output,
             )
         }
+        CodegenAction::Docs { check } => {
+            use crate::frontend::codegen_docs;
+
+            // Unlike every other arm, the output is a hand-written file with a
+            // generated region inside it, so the rendered text is the whole
+            // document — current content with each region respliced — and the
+            // drift check is the same byte comparison as everywhere else.
+            let mut files = Vec::new();
+            for document in codegen_docs::documents() {
+                let path = repo_root().join(document);
+                let current = fs::read_to_string(&path).map_err(|error| {
+                    anyhow::anyhow!(
+                        "{document} carries a generated region but cannot be read: {error}"
+                    )
+                })?;
+                let rendered = codegen_docs::render_document(document, &current)
+                    .map_err(|error| anyhow::anyhow!("{error}"))?;
+                if check {
+                    if current != rendered {
+                        bail!(
+                            "docs generated output is stale: rerun `apxm codegen docs` for {document}"
+                        );
+                    }
+                } else if current != rendered {
+                    fs::write(&path, rendered)?;
+                }
+                files.push(document.to_string());
+            }
+            report_pair(
+                "docs",
+                "documentation reference tables",
+                files,
+                check,
+                json_output,
+            )
+        }
         CodegenAction::OpSpec { output_dir, check } => {
             let output_dir = output_dir.unwrap_or_else(default_op_spec_codegen_dir);
             let rendered = apxm_ais::render_op_spec_files();
@@ -533,6 +569,11 @@ fn check_generated_named_files(
         }
     }
     Ok(())
+}
+
+/// The repository root, which the documentation regions are addressed from.
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
 }
 
 /// The one directory every generated Python frontend module lands in.

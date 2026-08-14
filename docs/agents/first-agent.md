@@ -4,10 +4,14 @@ An Agent Program is ordinary Python or TypeScript source. The frontend reads
 that source statically into `apxm.frontend-graph`; Rust alone validates it,
 constructs CFG/SSA and AIR, and produces the artifact admitted by the host.
 
-The public authoring vocabulary is `Agent`, `Context`, `Tool`, `Model`, and
-ordinary language control flow. `Capability`, `Event`, `Hook`, and `TaskGroup`
-are focused advanced declarations. Graph builders, AIR text, node ids, and
-`AgentFacade` are not author APIs.
+<!-- BEGIN AUTHORING VOCABULARY -->
+The everyday authoring vocabulary is `Agent`, `agent`, `Context`, `Tool`, `Model`, plus ordinary language control flow.
+`Capability`, `capability`, `Event`, `Hook`, `TaskGroup`, `Skill` are focused advanced declarations.
+<!-- END AUTHORING VOCABULARY -->
+
+Graph builders, AIR text, node ids, and `AgentFacade` are not author APIs. The
+two tiers above are generated from `contracts/vectors/apxm.frontend-surface.json`
+by `dekk agents codegen-docs`; edit the manifest, not this list.
 
 ## Python
 
@@ -89,6 +93,7 @@ The catalogue is generated from `crates/machine/ais/src/capabilities.rs`, so a
 misspelled symbol fails at import, while a misspelled string survives until
 `dekk agents compile-service-canonical` holds every reference against the
 granted set. The marker itself refuses a mutable display name on sight:
+<!-- frontend-surface:quoted search-web the display name the marker refuses, quoted to show the refusal rather than taught as a reference to write -->
 `Tool("search-web")` raises "Tool accepts an exact typed reference, not a
 display name 'search-web'" in both languages, because the id is `search_web`.
 That is the `ToolDisplayNameRejected` case the surface manifest declares for the

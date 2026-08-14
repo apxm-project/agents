@@ -148,16 +148,35 @@ A package declares no capability inventory of its own. What it can supply is
 the union of two sets, computed by `granted_capability_ids` in `agent.rs`:
 
 1. **The builtin catalogue** — `apxm_ais::capabilities::BUILTINS` in
-   `crates/machine/ais/src/capabilities.rs`: `bash`, `read`, `write`,
-   `search_web`, `http_get`, `http_post`, `count_tokens`, `list_skills`,
-   `search_skills`, `read_skill`, `mcp.call`, `provider.call`, `schedule`.
-   That same set is projected into both frontends by `apxm codegen
-   capabilities`, so an Agent Program imports the id from
-   `apxm_program.capabilities` or `@apxm/frontend/capabilities` instead of
-   retyping it.
+   `crates/machine/ais/src/capabilities.rs`, tabulated below. That same set
+   is projected into both frontends by `apxm codegen capabilities`, so an
+   Agent Program imports the id from `apxm_program.capabilities` or
+   `@apxm/frontend/capabilities` instead of retyping it.
 2. **Every id the package ships a handler for** — any subdirectory of
    `capabilities/` that contains a `handler.ts`. The directory name *is*
    the capability id.
+
+<!-- BEGIN CAPABILITY CATALOGUE -->
+| Capability id | Registered by `register_standard_tools` |
+| --- | --- |
+| `bash` | yes |
+| `read` | yes |
+| `write` | yes |
+| `search_web` | yes |
+| `http_get` | yes |
+| `http_post` | yes |
+| `count_tokens` | yes |
+| `list_skills` | yes |
+| `search_skills` | yes |
+| `read_skill` | yes |
+| `mcp.call` | no — a declared pack entry or a durable-backend profile registers it |
+| `provider.call` | no — a declared pack entry or a durable-backend profile registers it |
+| `schedule` | no — a declared pack entry or a durable-backend profile registers it |
+
+The `builtin_group` values a grouped entry may name are `skills`, `discovery`.
+<!-- END CAPABILITY CATALOGUE -->
+
+The table is generated from `capabilities.rs` by `dekk agents codegen-docs`.
 
 The handler's existence is the declaration. There is no second file that
 restates "this package supplies `edit`" — the presence of
@@ -181,10 +200,26 @@ it, and never invent a decision for a capability nothing grants. This is
 write = { decision = "ask", reason = "Writes files on the host." }
 ```
 
-The decision vocabulary is closed to three values — `allow`, `ask`, `deny`
-— and can be written as a bare string (`write = "ask"`) or as an object
-carrying a `reason`. Both forms round-trip identically when there is no
-reason to state.
+The decision vocabulary is closed, and a decision can be written as a bare
+string (`write = "ask"`) or as an object carrying a `reason`. Both forms
+round-trip identically when there is no reason to state. The lattice and the
+layer stack below are generated from `crates/machine/ais/src/permissions.rs`
+by `dekk agents codegen-docs`; the narrowing column is what
+`PermissionDecision::tightens_to` answers, not a reading of the decision order.
+
+<!-- BEGIN PERMISSION LATTICE -->
+| Decision | Restriction | May be narrowed to |
+| --- | --- | --- |
+| `allow` | 0 | `allow`, `ask`, `deny` |
+| `ask` | 1 | `ask`, `deny` |
+| `deny` | 2 | `deny` |
+
+| Layer | Precedence | States |
+| --- | --- | --- |
+| `code` | 10 | the program's own `permission=` request |
+| `package` | 20 | the shipping package's `agent.toml [permissions]` |
+| `deployment` | 30 | nothing in this tree today |
+<!-- END PERMISSION LATTICE -->
 
 Two ways this fails closed:
 

@@ -26,6 +26,17 @@ one surface:
 Adding a third language is adding one entry to `languages`, one projection per
 declaration, and one `SurfaceLanguage` subclass below. Everything else — the
 declarations, the arguments, the diagnostics, the example scan — is inherited.
+
+The sample scan reads every authoring document — `examples/`, `docs/`, and both
+frontend READMEs — because a guide that teaches a name the surface does not
+publish is wrong in exactly the way an example that imports one is, and the
+guides are the copy authors actually copy.
+
+A document that *quotes* a name rather than teaching it — the marker's own
+rejection message, or an accepted ADR recording the signature it decided before
+a later ADR superseded it — says so with `<!-- frontend-surface:quoted NAME
+reason -->`. See `quoted_exemptions` for why that is a per-name marker and not a
+path exclusion.
 """
 
 from __future__ import annotations
@@ -42,11 +53,29 @@ from typing import Optional
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = REPO_ROOT / "contracts" / "vectors" / "apxm.frontend-surface.json"
 SCHEMA = REPO_ROOT / "contracts" / "schemas" / "apxm.frontend-surface.json"
-AUTHORING_SAMPLES = (
-    *sorted((REPO_ROOT / "examples").glob("**/*.md")),
-    REPO_ROOT / "crates" / "compiler" / "frontend" / "python" / "README.md",
-    REPO_ROOT / "crates" / "compiler" / "frontend" / "typescript" / "README.md",
-)
+def authoring_samples() -> tuple[Path, ...]:
+    """Every document that teaches the authoring surface.
+
+    `node_modules` is excluded because a vendored package's README is not this
+    repository's teaching material and nothing here can fix one.
+    """
+    documents = [
+        path
+        for root in ("examples", "docs")
+        for path in sorted((REPO_ROOT / root).glob("**/*.md"))
+        if "node_modules" not in path.parts
+    ]
+    frontends = REPO_ROOT / "crates" / "compiler" / "frontend"
+    documents.append(frontends / "python" / "README.md")
+    documents.append(frontends / "typescript" / "README.md")
+    return tuple(documents)
+
+
+AUTHORING_SAMPLES = authoring_samples()
+
+#: `<!-- frontend-surface:quoted NAME reason -->` — one name this document
+#: quotes rather than teaches, and why.
+QUOTED = re.compile(r"<!--\s*frontend-surface:quoted\s+(\S+)\s+(.+?)\s*-->", re.S)
 
 
 class SurfaceFailure(Exception):
@@ -127,10 +156,18 @@ class SurfaceLanguage:
 
     id = ""
 
+    #: The generated capability catalogue this language's authors import ids
+    #: from. It is not a manifest field: the manifest states the *surface*, and
+    #: the catalogue is a generated vocabulary the surface refers to, so where
+    #: it lands is a fact about this language's package layout and belongs in
+    #: this language's own extraction layer.
+    generated_capabilities = ""
+
     def __init__(self, registration: dict) -> None:
         self.registration = registration
         self.authoring_root = REPO_ROOT / registration["authoring_root"]
         self.generated_diagnostics = REPO_ROOT / registration["generated_diagnostics"]
+        self.capability_catalogue = REPO_ROOT / self.generated_capabilities
 
     def root_exports(self) -> set[str]:
         """The names the authoring root publishes."""
@@ -152,6 +189,18 @@ class SurfaceLanguage:
         """Regexes matching an authoring import in documentation and examples."""
         return ()
 
+    def catalogue_import_patterns(self) -> tuple[str, ...]:
+        """Regexes matching a capability-catalogue import in documentation."""
+        return ()
+
+    def catalogue_symbols(self) -> set[str]:
+        """The names the generated capability catalogue publishes."""
+        raise NotImplementedError
+
+    def catalogue_ids(self) -> set[str]:
+        """The capability ids the generated catalogue mints."""
+        raise NotImplementedError
+
 
 # ---------------------------------------------------------------------------
 # Python
@@ -162,14 +211,17 @@ class PythonLanguage(SurfaceLanguage):
     """Reads argument shape out of the Python frontend with `ast`."""
 
     id = "python"
+    generated_capabilities = (
+        "crates/compiler/frontend/python/apxm_program/_generated/capabilities.py"
+    )
 
     @staticmethod
     def _module(path: Path) -> ast.Module:
         return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
-    def root_exports(self) -> set[str]:
+    def _exported_names(self, path: Path) -> set[str]:
         exported: set[str] = set()
-        for statement in self._module(self.authoring_root).body:
+        for statement in self._module(path).body:
             if isinstance(statement, ast.Assign):
                 for target in statement.targets:
                     if (
@@ -184,6 +236,20 @@ class PythonLanguage(SurfaceLanguage):
                             and isinstance(element.value, str)
                         )
         return exported
+
+    def root_exports(self) -> set[str]:
+        return self._exported_names(self.authoring_root)
+
+    def catalogue_symbols(self) -> set[str]:
+        return self._exported_names(self.capability_catalogue)
+
+    def catalogue_ids(self) -> set[str]:
+        text = self.capability_catalogue.read_text(encoding="utf-8")
+        block = re.search(r"CapabilityId: TypeAlias = Literal\[(.*?)\]", text, re.S)
+        return set(re.findall(r'"([^"]+)"', block.group(1))) if block else set()
+
+    def catalogue_import_patterns(self) -> tuple[str, ...]:
+        return (r"from\s+apxm_program\.capabilities\s+import\s+([^\n]+)",)
 
     def root_bound_names(self) -> set[str]:
         bound: set[str] = set()
@@ -450,6 +516,9 @@ class TypeScriptLanguage(SurfaceLanguage):
     """Reads argument shape out of the TypeScript frontend's declarations."""
 
     id = "typescript"
+    generated_capabilities = (
+        "crates/compiler/frontend/typescript/src/generated/capabilities.ts"
+    )
 
     @staticmethod
     def _strip_comments(text: str) -> str:
@@ -608,6 +677,20 @@ class TypeScriptLanguage(SurfaceLanguage):
 
     def import_patterns(self) -> tuple[str, ...]:
         return (r"import\s*\{([^}]+)\}\s*from\s*[\"']@apxm/frontend[\"']",)
+
+    def catalogue_symbols(self) -> set[str]:
+        text = self._source(self.capability_catalogue)
+        names = set(re.findall(r"^export\s+const\s+(\w+)", text, flags=re.M))
+        names.update(re.findall(r"^export\s+type\s+(\w+)", text, flags=re.M))
+        return names
+
+    def catalogue_ids(self) -> set[str]:
+        text = self._source(self.capability_catalogue)
+        block = re.search(r"export type CapabilityId =(.*?);", text, re.S)
+        return set(re.findall(r'"([^"]+)"', block.group(1))) if block else set()
+
+    def catalogue_import_patterns(self) -> tuple[str, ...]:
+        return (r"import\s*\{([^}]+)\}\s*from\s*[\"']@apxm/frontend/capabilities[\"']",)
 
 
 LANGUAGE_LAYERS: dict[str, type[SurfaceLanguage]] = {
@@ -882,32 +965,140 @@ def check_roots(
         )
 
 
+#: A `Tool`/`Capability` marker bound to a string literal rather than to an
+#: imported catalogue symbol, in either language's spelling.
+LITERAL_REFERENCE = re.compile(
+    r"\b(?:Tool|Capability)(?:\[[^\]]*\]|<[^>]*>)?\(\s*[\"']([^\"']+)[\"']"
+)
+
+
+def fold_reference(value: str) -> str:
+    """Fold one written capability reference onto the id it is trying to name.
+
+    A display name (`search-web`), a dotted-namespace spelling
+    (`capability.search_web`), and the id itself all fold together, so a
+    reference that *means* a catalogue id but is not spelled as one is
+    recognisable as the near-miss it is rather than passing for an id of some
+    package's own.
+    """
+    folded = value.strip().lower().replace("-", "_").replace(".", "_")
+    prefix = "capability_"
+    return folded[len(prefix) :] if folded.startswith(prefix) else folded
+
+
+def quoted_exemptions(text: str, relative: Path, failures: list[str]) -> dict[str, str]:
+    """The names this document declares it quotes rather than teaches.
+
+    The exemption is per name and carries its reason, rather than being a path
+    exclusion, because the two documents that need one here are not one kind of
+    file. `docs/agents/first-agent.md` is a current-pattern tutorial that quotes
+    the display name the marker *refuses*, and an accepted ADR is a frozen
+    record of a signature a later ADR superseded — `docs/adr/` would exclude the
+    second and miss the first, while excluding thirteen ADRs that are checkable
+    and should stay checked. Naming the exemption also keeps the rest of the
+    document under the gate, which a whole-file exclusion would not.
+
+    A declared name that nothing in the document would have failed on is itself
+    a failure: an exemption list is a generated artifact's twin and rots the
+    same way.
+    """
+    declared: dict[str, str] = {}
+    for match in QUOTED.finditer(text):
+        name, reason = match.group(1), " ".join(match.group(2).split())
+        if not reason:
+            failures.append(
+                f"{relative} exempts {name!r} without saying why it is quoted "
+                "rather than taught"
+            )
+        declared[name] = reason
+    return declared
+
+
 def check_samples(
     languages: list[SurfaceLanguage], allowed: set[str], failures: list[str]
 ) -> None:
-    """No documented example imports a name the surface does not publish."""
-    patterns = tuple(
+    """No authoring document teaches a name the surface does not publish.
+
+    Three ways a document stops being true: it imports from the retired package,
+    it imports a name no frontend publishes, or it writes a capability reference
+    that folds onto a catalogue id without being one. The last is what turned
+    the guides stale before: an id no catalogue mints looks like authoring code
+    and compiles into nothing.
+    """
+    surface_patterns = tuple(
         pattern for language in languages for pattern in language.import_patterns()
     )
+    catalogue_patterns = tuple(
+        (pattern, language.catalogue_symbols())
+        for language in languages
+        for pattern in language.catalogue_import_patterns()
+    )
+    catalogue_ids = {
+        identifier for language in languages for identifier in language.catalogue_ids()
+    }
+    folded_ids = {fold_reference(identifier): identifier for identifier in catalogue_ids}
+
     for sample in AUTHORING_SAMPLES:
         if not sample.exists():
             continue
         text = sample.read_text(encoding="utf-8")
         relative = sample.relative_to(REPO_ROOT)
+        exempt = quoted_exemptions(text, relative, failures)
+        used: set[str] = set()
+
+        def report(name: str, detail: str) -> None:
+            if name in exempt:
+                used.add(name)
+                return
+            failures.append(f"{relative} {detail}")
+
         for match in re.finditer(
             r"^\s*(?:from|import)\s+apxm(?:\.|\s|$)", text, flags=re.MULTILINE
         ):
-            failures.append(
-                f"{relative} imports the retired `apxm` package: {match.group(0).strip()!r}"
+            report(
+                "apxm",
+                f"imports the retired `apxm` package: {match.group(0).strip()!r}",
             )
-        for pattern in patterns:
+        for pattern in surface_patterns:
             for match in re.finditer(pattern, text):
-                for entry in match.group(1).split(","):
-                    name = entry.strip().split(" as ")[0].strip()
-                    if name and name not in allowed:
-                        failures.append(
-                            f"{relative} imports non-manifest name {name!r}"
+                for name in imported_names(match.group(1)):
+                    if name not in allowed:
+                        report(name, f"imports non-manifest name {name!r}")
+        for pattern, symbols in catalogue_patterns:
+            for match in re.finditer(pattern, text):
+                for name in imported_names(match.group(1)):
+                    if name not in symbols:
+                        report(
+                            name,
+                            f"imports {name!r} from the capability catalogue, which "
+                            "the generated catalogue does not publish",
                         )
+        for match in LITERAL_REFERENCE.finditer(text):
+            written = match.group(1)
+            minted = folded_ids.get(fold_reference(written))
+            if minted is not None and written != minted:
+                report(
+                    written,
+                    f"binds the capability reference {written!r}, which no catalogue "
+                    f"mints; the id is {minted!r} and the symbol naming it is what an "
+                    "Agent Program imports",
+                )
+
+        for name, reason in exempt.items():
+            if name not in used:
+                failures.append(
+                    f"{relative} declares {name!r} quoted ({reason}), but nothing in "
+                    "the document quotes it; remove the stale exemption"
+                )
+
+
+def imported_names(clause: str) -> list[str]:
+    """The names one import clause binds, with any `as` alias resolved away."""
+    return [
+        name
+        for entry in clause.split(",")
+        if (name := entry.strip().split(" as ")[0].strip())
+    ]
 
 
 def check() -> list[str]:

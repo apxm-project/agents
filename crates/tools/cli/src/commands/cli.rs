@@ -348,6 +348,13 @@ pub enum CodegenAction {
         #[arg(long)]
         check: bool,
     },
+    /// Generate the reference tables the authoring documentation carries
+    Docs {
+        /// Check that the generated documentation regions are up to date
+        /// without writing them
+        #[arg(long)]
+        check: bool,
+    },
     /// Generate the op-spec AIS operation catalog + vectors fixture
     OpSpec {
         /// Output directory for the generated catalog + vectors files
