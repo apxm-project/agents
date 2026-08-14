@@ -12,7 +12,6 @@ members = [
 	# ── Runtime (Execution + Backend) ─────────────
 	"crates/runtime/capability-iface",
 	"crates/runtime/capability",
-	"crates/runtime/memory",
 	"crates/runtime/backends",
 	"crates/runtime/backend-registry",
 	"crates/runtime/inference",
@@ -49,7 +48,6 @@ apxm-compiler = { version = "0.1.0", path = "crates/compiler/pipeline" }
 apxm-source-port = { version = "0.1.0", path = "crates/compiler/source-port" }
 apxm-capability-iface = { version = "0.1.0", path = "crates/runtime/capability-iface" }
 apxm-capability = { version = "0.1.0", path = "crates/runtime/capability" }
-apxm-memory = { version = "0.1.0", path = "crates/runtime/memory" }
 apxm-backends = { version = "0.1.0", path = "crates/runtime/backends" }
 apxm-backend-registry = { version = "0.1.0", path = "crates/runtime/backend-registry" }
 apxm-inference = { version = "0.1.0", path = "crates/runtime/inference" }

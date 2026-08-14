@@ -12,12 +12,6 @@ pub mod read;
 pub mod web_search;
 pub mod write;
 
-// Durable scheduling tools require the `sqlite` feature for persistence.
-#[cfg(feature = "sqlite")]
-pub mod schedule;
-#[cfg(feature = "sqlite")]
-pub mod store;
-
 pub use bash::{BashCapability, BashConfig};
 pub use count_tokens::CountTokensCapability;
 pub use http::{HttpGetCapability, HttpPostCapability, guard_url_ssrf, guard_url_ssrf_pinned};
@@ -27,11 +21,6 @@ pub use provider_call::ProviderCallCapability;
 pub use read::{ReadCapability, ReadConfig};
 pub use web_search::{SearchDepth, SearchWebCapability, SearchWebConfig};
 pub use write::{WriteCapability, WriteConfig};
-
-#[cfg(feature = "sqlite")]
-pub use schedule::{FiredSchedule, OnFire, ScheduleCapability, fire_due, spawn_firer};
-#[cfg(feature = "sqlite")]
-pub use store::{ScheduleRow, ToolsStore};
 
 use crate::CapabilitySystem;
 use apxm_core::{error::RuntimeError, types::Value};
@@ -162,6 +151,13 @@ pub fn register_standard_tools(
             config.search_web.clone(),
         )))?;
     }
+    // `http_get` / `http_post` have no `enabled` toggle in `ToolsConfig` (unlike
+    // their siblings above): they carry no local state or filesystem/process
+    // access to gate, only the SSRF guard every call already goes through, so
+    // there is no config shape to hang a per-tool flag on. Registered
+    // unconditionally, same as `count_tokens` below.
+    capability_system.register(Arc::new(HttpGetCapability::new()))?;
+    capability_system.register(Arc::new(HttpPostCapability::new()))?;
     // `count_tokens` is pure/read-only and host-independent; register it on
     // non-server runtimes too so in-program compaction (count_tokens → guard →
     // summarize) has transport parity with the server path (constitution #1).

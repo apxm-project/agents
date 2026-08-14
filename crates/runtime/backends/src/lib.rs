@@ -1,33 +1,31 @@
-//! APXM Backends - LLM providers, storage backends, and prompt templates.
+//! APXM Backends - LLM providers and prompt templates.
 //!
-//! This crate consolidates three backend systems:
+//! This crate consolidates two backend systems:
 //!
 //! - **`llm`**: Unified LLM provider integration (OpenAI, Anthropic, Google, Ollama, vLLM, mock)
-//! - **`storage`**: Pluggable storage backends (in-memory, SQLite, embedded KV)
 //! - **`prompts`**: Compile-time embedded prompt templates with MiniJinja
 //!
 //! # Architecture
 //!
 //! ```text
-//!                      ┌─────────────────┐
-//!                      │  apxm-backends  │
-//!                      └────────┬────────┘
-//!                               │
-//!        ┌──────────────────────┼──────────────────────┐
-//!        ▼                      ▼                      ▼
-//!   ┌─────────┐           ┌──────────┐           ┌──────────┐
-//!   │   llm   │           │  storage │           │ prompts  │
-//!   │ OpenAI  │           │  SQLite  │           │ MiniJinja│
-//!   │Anthropic│           │  Memory  │           │ Templates│
-//!   │ Google  │           │  Redb    │           │          │
-//!   │ Ollama  │           │          │           │          │
-//!   └─────────┘           └──────────┘           └──────────┘
+//!                  ┌─────────────────┐
+//!                  │  apxm-backends  │
+//!                  └────────┬────────┘
+//!                           │
+//!            ┌──────────────┴──────────────┐
+//!            ▼                             ▼
+//!       ┌─────────┐                   ┌──────────┐
+//!       │   llm   │                   │ prompts  │
+//!       │ OpenAI  │                   │ MiniJinja│
+//!       │Anthropic│                   │ Templates│
+//!       │ Google  │                   │          │
+//!       │ Ollama  │                   │          │
+//!       └─────────┘                   └──────────┘
 //! ```
 
 // Module declarations
 pub mod llm;
 pub mod prompts;
-pub mod storage;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // LLM Re-exports
@@ -102,28 +100,6 @@ pub use llm::{
     resolve_builtin_provider,
     resolve_provider_spec,
 };
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Storage Re-exports
-// ═══════════════════════════════════════════════════════════════════════════
-
-pub use storage::{
-    // Backend trait and types
-    BackendStats,
-    // Embeddings
-    Embedder,
-    // Implementations
-    InMemoryBackend,
-    RedbBackend,
-    SearchResult,
-    SqliteBackend,
-    StorageBackend,
-    StorageResult,
-    cosine_similarity,
-};
-
-#[cfg(feature = "embeddings")]
-pub use storage::LocalEmbedder;
 
 pub use prompts::{list_prompts, render_inline, render_prompt};
 
