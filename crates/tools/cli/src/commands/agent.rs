@@ -11,9 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
-use apxm_ais::permissions::{
-    LayerDecisions, PermissionDecision, PermissionLayer, PermissionResolution,
-};
+use apxm_ais::permissions::{LayerDecisions, PermissionDecision, PermissionResolution};
 use apxm_core::types::{HandlerKind, HandlerLanguage, HandlerManifest};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -1112,14 +1110,10 @@ fn check_permission_resolution(pkg: &LoadedAgent) -> Vec<String> {
                 .map(|decision| (entry.capability.clone(), decision))
         })
         .collect();
-    let layers = BTreeMap::from([
-        (PermissionLayer::Code, declared),
-        (
-            PermissionLayer::Package,
-            pkg.agent.permissions.clone().into_iter().collect(),
-        ),
-    ]);
-    match PermissionResolution::resolve(&layers) {
+    match PermissionResolution::resolve_code_over_package(
+        declared,
+        pkg.agent.permissions.clone().into_iter().collect(),
+    ) {
         Ok(_) => Vec::new(),
         Err(error) => vec![format!("agent.toml [permissions]: {error}")],
     }
