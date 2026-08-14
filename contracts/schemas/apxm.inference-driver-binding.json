@@ -54,6 +54,10 @@
     },
     "target_commitment": {
       "$ref": "#/$defs/TargetCommitment"
+    },
+    "graph_hint_capability_digest": {
+      "description": "Content address of the graph-hint capability surface this binding was admitted with. Optional: a binding admitted without a graph-hint capability claim omits it, and a claim appearing later is capability drift rather than in-place widening.",
+      "$ref": "apxm.contract-common.v1#/$defs/Digest"
     }
   },
   "additionalProperties": false,

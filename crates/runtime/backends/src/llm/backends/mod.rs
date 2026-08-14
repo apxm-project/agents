@@ -15,6 +15,7 @@ pub mod traits;
 pub mod anthropic;
 pub mod configuration;
 pub mod google;
+pub mod graph_hint_dispatch;
 pub(crate) mod http;
 pub mod llama_cpp;
 pub mod mock;

@@ -1,9 +1,17 @@
 //! Graph-aware vLLM backend.
 //!
-//! This backend wraps the OpenAI-compatible vLLM server and adds APXM graph
-//! hints to every request. It also provides methods to register, inspect, and
-//! release graphs on the server side for graph-aware scheduling state.
+//! This backend wraps an `apxm`-branch vLLM server and projects APXM graph
+//! hints onto its request mechanisms. It also provides methods to register,
+//! inspect, and release graphs on the server side for graph-aware scheduling
+//! state.
+//!
+//! Every vLLM mechanism name this adapter uses lives in `graph_meta`, never in
+//! the common contract crate.
 
+use super::graph_meta::mechanisms;
+use crate::llm::backends::graph_hint_dispatch::{
+    record_graph_hint_evidence, stream_with_graph_hint_evidence,
+};
 use crate::llm::backends::http::llm_http_client;
 use crate::llm::backends::openai::OpenAIBackend;
 use crate::llm::backends::openai::backend::validate_provider_dispatch;
@@ -15,12 +23,11 @@ use crate::llm::{ProviderProtocol, normalize_endpoint_for_protocol};
 use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
 use apxm_core::constants::llm::apxm as apxm_llm;
-use apxm_core::constants::llm::apxm::graph_hints as hint_keys;
 use apxm_core::types::{
     BackendGraphCapabilities, BackendMechanismRef, EvidenceKind, GraphHintCapabilities,
-    GraphHintField, GraphHintFieldCapability, GraphHintPlan, GraphHintProjector,
-    GraphLifecycleCapability, GraphMetadata, GraphStatusSnapshot, ModelCapabilities, ModelInfo,
-    OptimizationObjective, ProjectionOutcome,
+    GraphHintDispatchProjection, GraphHintField, GraphHintFieldCapability, GraphHintPlan,
+    GraphHintProjector, GraphLifecycleCapability, GraphMetadata, GraphStatusSnapshot,
+    ModelCapabilities, ModelInfo, OptimizationObjective, ProjectionOutcome, ReasonCode,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -50,39 +57,52 @@ fn apxm_disable_hints() -> bool {
 
 /// Env var selecting a single APXM mechanism for isolation experiments.
 /// Values: `priority`, `prefix`, `registration`. Unset (the default) leaves the
-/// full envelope untouched, so normal runs are unaffected.
+/// full capability surface in place, so normal runs are unaffected.
 const ISOLATE_ENV: &str = "APXM_ISOLATE";
 
-fn apxm_isolate() -> Option<String> {
-    static MODE: OnceLock<Option<String>> = OnceLock::new();
-    MODE.get_or_init(|| {
-        std::env::var(ISOLATE_ENV)
-            .ok()
-            .map(|s| s.trim().to_ascii_lowercase())
-            .filter(|s| matches!(s.as_str(), "priority" | "prefix" | "registration"))
-    })
-    .clone()
+/// Which hint families an isolation experiment keeps. Isolation withholds a
+/// lowering this binding otherwise supports, so it is planned as
+/// `OmittedByProfile` and shows up in projection evidence rather than being
+/// quietly stripped out of an already rendered document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IsolateMode {
+    Priority,
+    Prefix,
+    Registration,
 }
 
-/// Drop the hint-field families not selected by `mode` from a rendered
-/// `ApxmGraphHints` object so one mechanism can be measured in isolation.
-/// Registration fields (graph/execution/node ids) and structural fields
-/// (schema_version, downstream_nodes, compiler_hints) are always retained; the
-/// `registration` control mode keeps only those.
-fn prune_isolated_hints(value: serde_json::Value, mode: &str) -> serde_json::Value {
-    let serde_json::Value::Object(mut map) = value else {
-        return value;
-    };
-    let drop: &[&str] = match mode {
-        "priority" => &[hint_keys::INTENTS],
-        "prefix" => &[hint_keys::FACTS],
-        "registration" => &[hint_keys::FACTS, hint_keys::INTENTS],
-        _ => &[],
-    };
-    for key in drop {
-        map.remove(*key);
+impl IsolateMode {
+    fn withholds(self, field: GraphHintField) -> bool {
+        let intent = matches!(
+            field,
+            GraphHintField::Objective
+                | GraphHintField::ReusePreference
+                | GraphHintField::AffinityRef
+                | GraphHintField::BenefitHorizonMs
+                | GraphHintField::ExpectedUses
+        );
+        match self {
+            Self::Priority => intent,
+            Self::Prefix => !intent && field != GraphHintField::Scope,
+            Self::Registration => field != GraphHintField::Scope,
+        }
     }
-    serde_json::Value::Object(map)
+}
+
+fn apxm_isolate() -> Option<IsolateMode> {
+    static MODE: OnceLock<Option<IsolateMode>> = OnceLock::new();
+    *MODE.get_or_init(|| {
+        match std::env::var(ISOLATE_ENV)
+            .ok()
+            .map(|s| s.trim().to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("priority") => Some(IsolateMode::Priority),
+            Some("prefix") => Some(IsolateMode::Prefix),
+            Some("registration") => Some(IsolateMode::Registration),
+            _ => None,
+        }
+    })
 }
 
 mod request_keys {
@@ -110,10 +130,14 @@ impl From<bool> for VllmRequestPriority {
 impl From<VllmRequestPriority> for u8 {
     fn from(value: VllmRequestPriority) -> Self {
         match value {
-            VllmRequestPriority::CriticalPath => 0,
-            VllmRequestPriority::Default => 5,
+            VllmRequestPriority::CriticalPath => mechanisms::PRIORITY_CRITICAL_PATH,
+            VllmRequestPriority::Default => mechanisms::PRIORITY_DEFAULT,
         }
     }
+}
+
+fn mechanism(name: &str) -> BackendMechanismRef {
+    BackendMechanismRef::new(name).expect("adapter-owned mechanism names are well formed")
 }
 
 /// Response from `POST /v1/apxm/graphs/register`.
@@ -179,8 +203,9 @@ pub struct SchedulerInfoResponse {
 
 /// Graph-aware vLLM backend.
 ///
-/// Wraps an OpenAI-compatible vLLM server and injects APXM graph hints
-/// into each request via `vllm_xargs.apxm`.
+/// Wraps an `apxm`-branch vLLM server. Its `GraphHintProjector` impl decides
+/// field by field what this binding can carry and renders exactly that into
+/// `vllm_xargs.apxm`; a field it does not declare never reaches the request.
 pub struct GraphAwareVllmBackend {
     /// Inner OpenAI-compatible backend for actual requests.
     inner: OpenAIBackend,
@@ -275,9 +300,9 @@ impl GraphAwareVllmBackend {
     }
 
     /// Probe `/v1/apxm/scheduler` and warn loudly once if the fork is not in
-    /// priority mode. Hints are still sent so the per-request `vllm_xargs.apxm`
-    /// payload (graph_id, pin_policy, etc.) keeps reaching the scheduler — only
-    /// the priority field is inert under FCFS, which the operator needs to know.
+    /// priority mode. The envelope this binding declares still reaches the
+    /// scheduler; only the derived queue value is withheld under any other
+    /// policy, which the projection reports as `MechanismNotAdmitted`.
     async fn probe_scheduler_policy(&self) {
         // Cheap short-circuit: once we've warned, don't re-probe every health tick.
         if self.scheduler_policy_warned.load(Ordering::Relaxed) {
@@ -472,8 +497,17 @@ impl GraphAwareVllmBackend {
             .context("Failed to parse graph status response")
     }
 
-    /// Inject graph-aware vLLM request shaping into the provider-neutral request.
-    fn inject_hints(&self, mut request: LLMRequest) -> LLMRequest {
+    /// Shape one provider request through the projector.
+    ///
+    /// The graph-hint path here is exactly `project_graph_hints`: nothing else
+    /// in this adapter may write a hint-derived field. Everything the plan did
+    /// not authorize is absent from the request, and the projection evidence
+    /// travels back to the caller for the response record.
+    pub(crate) fn inject_hints(
+        &self,
+        mut request: LLMRequest,
+        attempt: u32,
+    ) -> Result<(LLMRequest, Option<GraphHintDispatchProjection>)> {
         let mut extra = request
             .extra_body
             .take()
@@ -481,58 +515,16 @@ impl GraphAwareVllmBackend {
 
         if !extra.is_object() {
             request.extra_body = Some(extra);
-            return request;
+            return Ok((request, None));
         }
 
-        if let serde_json::Value::Object(ref mut map) = extra {
-            if !apxm_disable_hints()
-                && let Some(ref hints) = request.apxm_hints
-            {
-                let vllm_xargs = map
-                    .entry(super::graph_meta::REQUEST_XARGS.to_owned())
-                    .or_insert_with(|| serde_json::json!({}));
-                if let serde_json::Value::Object(vllm_xargs_map) = vllm_xargs {
-                    let rendered_hints = serde_json::to_value(hints).unwrap_or_default();
-                    // Mechanism-isolation experiments (APXM_ISOLATE) keep only one
-                    // hint family; unset leaves the full envelope unchanged.
-                    let rendered_hints = match apxm_isolate() {
-                        Some(mode) => prune_isolated_hints(rendered_hints, &mode),
-                        None => rendered_hints,
-                    };
-                    match vllm_xargs_map.get_mut(apxm_llm::HINTS_FIELD) {
-                        Some(existing) => match (existing, rendered_hints) {
-                            (
-                                serde_json::Value::Object(existing_map),
-                                serde_json::Value::Object(rendered_map),
-                            ) => {
-                                for (key, value) in rendered_map {
-                                    existing_map.insert(key, value);
-                                }
-                            }
-                            (slot, rendered_hints) => {
-                                *slot = rendered_hints;
-                            }
-                        },
-                        None => {
-                            vllm_xargs_map.insert(apxm_llm::HINTS_FIELD.to_owned(), rendered_hints);
-                        }
-                    }
-                }
+        let projected = self
+            .project_graph_hints(request.apxm_hints.as_ref(), attempt)
+            .map_err(|error| anyhow::anyhow!("vLLM graph-hint projection rejected: {error}"))?;
 
-                if !map.contains_key(apxm_llm::REQUEST_PRIORITY)
-                    && apxm_isolate().is_none_or(|m| m == "priority")
-                    && hints.facts.critical_path == Some(true)
-                    && !matches!(
-                        hints.intents.objective,
-                        Some(OptimizationObjective::MaximizeThroughput)
-                    )
-                {
-                    let priority = u8::from(VllmRequestPriority::from(true));
-                    map.insert(
-                        apxm_llm::REQUEST_PRIORITY.to_owned(),
-                        serde_json::json!(priority),
-                    );
-                }
+        if let serde_json::Value::Object(ref mut map) = extra {
+            for (key, value) in projected.provider_fields.clone() {
+                map.entry(key).or_insert(value);
             }
 
             if self.structured_outputs_supported
@@ -571,7 +563,7 @@ impl GraphAwareVllmBackend {
         }
 
         request.extra_body = Some(extra);
-        request
+        Ok((request, Some(projected)))
     }
 }
 
@@ -579,8 +571,9 @@ impl GraphAwareVllmBackend {
 impl LLMBackend for GraphAwareVllmBackend {
     async fn generate(&self, request: LLMRequest) -> Result<LLMResponse> {
         validate_provider_dispatch(&request)?;
-        let injected_request = self.inject_hints(request);
-        self.inner.generate(injected_request).await
+        let (injected_request, projected) = self.inject_hints(request, 0)?;
+        let response = self.inner.generate(injected_request).await?;
+        Ok(record_graph_hint_evidence(response, projected.as_ref()))
     }
 
     fn generate_stream(
@@ -590,8 +583,14 @@ impl LLMBackend for GraphAwareVllmBackend {
         if let Err(error) = validate_provider_dispatch(&request) {
             return Box::pin(tokio_stream::iter(vec![Err(error)]));
         }
-        let request = self.inject_hints(request);
-        self.inner.generate_stream(request)
+        let (request, projected) = match self.inject_hints(request, 0) {
+            Ok(injected) => injected,
+            Err(error) => return Box::pin(tokio_stream::iter(vec![Err(error)])),
+        };
+        Box::pin(stream_with_graph_hint_evidence(
+            self.inner.generate_stream(request),
+            projected,
+        ))
     }
 
     fn name(&self) -> &str {
@@ -736,33 +735,16 @@ impl LLMBackend for GraphAwareVllmBackend {
         // A registered GraphAwareVllmBackend is guaranteed to have passed
         // the synchronous /v1/apxm/* probe in `health_check`. If the fork
         // process later drops the routes, health_check downgrades the backend
-        // instead of silently degrading the capability surface.
-        let scheduler_is_priority = self
-            .scheduler_policy
-            .read()
-            .as_deref()
-            .is_some_and(|policy| policy == super::graph_meta::SCHEDULER_POLICY_PRIORITY);
-        // If the fork advertises a `dispatch_ir_version`,
-        // gate `supports_dispatch_ir_v1_internal` on the tag matching
-        // `DISPATCH_IR_V1_VERSION_TAG` exactly. Older fork builds omit
-        // the field; for those, "registration succeeded" is the gating
-        // signal (the synchronous probe already proved /v1/apxm/* exist).
-        let dispatch_ir_v1_supported = match self.dispatch_ir_version.read().as_deref() {
-            Some(tag) => tag == DISPATCH_IR_V1_VERSION_TAG,
-            None => true,
-        };
+        // instead of silently degrading the capability surface. Which graph
+        // hints this binding can carry is `graph_hint_capabilities`, not this
+        // coarse transport summary.
         BackendGraphCapabilities {
             supports_graph_registration: true,
             supports_request_hints: true,
-            supports_priority: scheduler_is_priority,
-            supports_prefix_cohorts: true,
-            supports_pin_release: true,
             supports_structured_outputs: self.structured_outputs_supported,
             supports_backend_queue_state: false,
             supports_backend_cache_state: true,
             supports_cancel_groups: false,
-            supports_dispatch_ir_v1_internal: dispatch_ir_v1_supported,
-            supports_admin_reset_prefix_cache: true,
         }
     }
 
@@ -804,14 +786,43 @@ impl LLMBackend for GraphAwareVllmBackend {
     ) -> anyhow::Result<Option<GraphStatusSnapshot>> {
         match self.get_graph_status_typed(graph_id).await {
             Ok(status) => Ok(Some(
-                GraphStatusSnapshot::graph_aware(status.graph_id)
+                GraphStatusSnapshot::registered(status.graph_id)
                     .with_registered(status.registered)
-                    .with_pin_counts(status.pinned_handles, status.pinned_blocks)
+                    .with_adapter_observation(
+                        mechanisms::OBSERVED_PINNED_HANDLES,
+                        status.pinned_handles,
+                    )
+                    .with_adapter_observation(
+                        mechanisms::OBSERVED_PINNED_BLOCKS,
+                        status.pinned_blocks,
+                    )
                     .with_shape(status.node_count, status.critical_path_length),
             )),
             Err(err) => Err(err),
         }
     }
+}
+
+impl GraphAwareVllmBackend {
+    /// The fork rewrites request priority only under the priority policy, so a
+    /// binding running any other policy does not carry critical-path intent.
+    fn scheduler_admits_priority(&self) -> bool {
+        self.scheduler_policy
+            .read()
+            .as_deref()
+            .is_some_and(|policy| policy == super::graph_meta::SCHEDULER_POLICY_PRIORITY)
+    }
+
+    /// The fields this binding carries inside the APXM envelope.
+    const ENVELOPE_FIELDS: &'static [GraphHintField] = &[
+        GraphHintField::Scope,
+        GraphHintField::SuccessorRefs,
+        GraphHintField::RemainingPathLen,
+        GraphHintField::StageIndex,
+        GraphHintField::Objective,
+        GraphHintField::AffinityRef,
+        GraphHintField::BenefitHorizonMs,
+    ];
 }
 
 impl GraphHintProjector for GraphAwareVllmBackend {
@@ -827,17 +838,10 @@ impl GraphHintProjector for GraphAwareVllmBackend {
             .into_iter()
             .collect(),
         };
-        for field in [
-            GraphHintField::Scope,
+        for field in Self::ENVELOPE_FIELDS.iter().copied().chain([
             GraphHintField::CriticalPath,
-            GraphHintField::SuccessorRefs,
-            GraphHintField::RemainingPathLen,
-            GraphHintField::StageIndex,
-            GraphHintField::Objective,
             GraphHintField::ReusePreference,
-            GraphHintField::AffinityRef,
-            GraphHintField::BenefitHorizonMs,
-        ] {
+        ]) {
             fields.insert(field, derived.clone());
         }
         GraphHintCapabilities {
@@ -850,37 +854,102 @@ impl GraphHintProjector for GraphAwareVllmBackend {
         &self,
         hints: Option<&apxm_core::types::ApxmGraphHints>,
     ) -> Result<GraphHintPlan, String> {
+        let capabilities = self.graph_hint_capabilities();
         let Some(hints) = hints else {
-            return Ok(GraphHintPlan {
-                outcomes: Default::default(),
-            });
+            return Ok(GraphHintPlan::absent(&capabilities));
         };
         hints.validate()?;
-        let mut outcomes = GraphHintPlan::omitted_unsupported().outcomes;
-        outcomes.insert(
-            GraphHintField::Scope,
-            ProjectionOutcome::Applied {
-                mechanism_ref: BackendMechanismRef::VllmApxmXargs,
+        let mut plan = GraphHintPlan::omitted_unsupported(hints, &capabilities);
+        if apxm_disable_hints() {
+            // The flat-HTTP control arm withholds every lowering; the report
+            // still names each field so the arm is legible in evidence.
+            for field in GraphHintField::ALL {
+                plan = plan.with_outcome(
+                    *field,
+                    ProjectionOutcome::OmittedByProfile {
+                        reason: ReasonCode::ProfileWithholdsMechanism,
+                    },
+                );
+            }
+            return Ok(plan);
+        }
+        let isolate = apxm_isolate();
+        let withheld = |field: GraphHintField| isolate.is_some_and(|mode| mode.withholds(field));
+
+        for field in Self::ENVELOPE_FIELDS {
+            plan = plan.with_outcome(
+                *field,
+                if withheld(*field) {
+                    ProjectionOutcome::OmittedByProfile {
+                        reason: ReasonCode::ProfileWithholdsMechanism,
+                    }
+                } else {
+                    ProjectionOutcome::Applied {
+                        mechanism_ref: mechanism(mechanisms::APXM_XARGS),
+                    }
+                },
+            );
+        }
+
+        // Critical-path work becomes a queue value only under the admitted
+        // scheduler policy, and never when the objective asks for throughput.
+        let critical_path_outcome = if withheld(GraphHintField::CriticalPath) {
+            ProjectionOutcome::OmittedByProfile {
+                reason: ReasonCode::ProfileWithholdsMechanism,
+            }
+        } else if !self.scheduler_admits_priority() {
+            ProjectionOutcome::OmittedByProfile {
+                reason: ReasonCode::MechanismNotAdmitted,
+            }
+        } else if matches!(
+            hints.intents.objective,
+            Some(OptimizationObjective::MaximizeThroughput)
+        ) {
+            ProjectionOutcome::OmittedByProfile {
+                reason: ReasonCode::ProfileWithholdsMechanism,
+            }
+        } else {
+            ProjectionOutcome::Approximated {
+                mechanism_ref: mechanism(mechanisms::REQUEST_PRIORITY_MECHANISM),
+                reason: ReasonCode::ApproximatedByRelatedMechanism,
+            }
+        };
+        plan = plan.with_outcome(GraphHintField::CriticalPath, critical_path_outcome);
+
+        plan = plan.with_outcome(
+            GraphHintField::ReusePreference,
+            if withheld(GraphHintField::ReusePreference) {
+                ProjectionOutcome::OmittedByProfile {
+                    reason: ReasonCode::ProfileWithholdsMechanism,
+                }
+            } else {
+                ProjectionOutcome::Approximated {
+                    mechanism_ref: mechanism(mechanisms::PREFIX_PIN),
+                    reason: ReasonCode::ApproximatedByRelatedMechanism,
+                }
             },
         );
-        if hints.facts.critical_path == Some(true) {
-            outcomes.insert(
-                GraphHintField::CriticalPath,
-                ProjectionOutcome::Approximated {
-                    mechanism_ref: BackendMechanismRef::VllmRequestPriority,
-                    reason: hint_keys::CRITICAL_PATH.into(),
-                },
+        Ok(plan)
+    }
+
+    fn render_graph_hint_fields(
+        &self,
+        hints: &apxm_core::types::ApxmGraphHints,
+        plan: &GraphHintPlan,
+    ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+        let mut fields = serde_json::Map::new();
+        if let Some(envelope) = hints.project_envelope(plan) {
+            fields.insert(
+                mechanisms::REQUEST_XARGS.to_owned(),
+                serde_json::json!({ apxm_llm::HINTS_FIELD: envelope }),
             );
         }
-        if hints.prefers_reuse() {
-            outcomes.insert(
-                GraphHintField::ReusePreference,
-                ProjectionOutcome::Approximated {
-                    mechanism_ref: BackendMechanismRef::VllmPrefixPin,
-                    reason: hint_keys::PREFER_WHEN_BENEFICIAL.into(),
-                },
+        if plan.projects(GraphHintField::CriticalPath) && hints.facts.critical_path == Some(true) {
+            fields.insert(
+                mechanisms::REQUEST_PRIORITY.to_owned(),
+                serde_json::json!(u8::from(VllmRequestPriority::from(true))),
             );
         }
-        Ok(GraphHintPlan { outcomes })
+        Ok(fields)
     }
 }

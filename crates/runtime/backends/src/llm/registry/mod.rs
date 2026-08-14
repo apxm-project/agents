@@ -22,7 +22,6 @@ use futures::stream::{Stream, StreamExt};
 use std::collections::{BTreeSet, HashMap};
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 mod health;
@@ -52,34 +51,36 @@ pub struct LLMRegistry {
     metrics: crate::llm::MetricsTracker,
     /// Rate limiter
     rate_limiter: Arc<RateLimiter<SystemClock>>,
-    /// graph_id → (handles_peak, blocks_peak), populated by `start_pin_polling`
-    /// and read by `pre_release_status_all`.
-    #[allow(clippy::type_complexity)]
-    pin_peaks: Arc<DashMap<String, (Arc<AtomicU64>, Arc<AtomicU64>)>>,
+    /// graph_id → adapter-observation name → peak value. The names are the
+    /// adapter's, so the registry tracks peaks without knowing what any
+    /// provider's resource units mean.
+    observation_peaks: Arc<DashMap<String, Arc<DashMap<String, u64>>>>,
 }
 
-/// Atomically bump an `AtomicU64` slot to the larger of its current value and `val`.
-fn bump_max(slot: &AtomicU64, val: u64) {
-    let mut prev = slot.load(Ordering::Relaxed);
-    while val > prev {
-        match slot.compare_exchange_weak(prev, val, Ordering::Relaxed, Ordering::Relaxed) {
-            Ok(_) => break,
-            Err(p) => prev = p,
-        }
-    }
+/// Raise one observation's recorded peak.
+fn bump_max(peaks: &DashMap<String, u64>, name: &str, value: u64) {
+    peaks
+        .entry(name.to_owned())
+        .and_modify(|peak| *peak = (*peak).max(value))
+        .or_insert(value);
 }
 
-/// RAII wrapper around the pin-polling background task.
+/// The peak of an observation is recorded under this suffixed name.
+fn peak_observation_name(name: &str) -> String {
+    format!("{name}_peak")
+}
+
+/// RAII wrapper around the observation-polling background task.
 ///
 /// Aborts the task on `Drop` so a polling loop cannot outlive the executor
 /// scope that started it (e.g. on a panic or early-return code path).
 /// Call [`Self::abort`] explicitly when ordering matters, e.g. before
 /// `pre_release_status_all` so the final fold sees the full peak.
-pub struct PinPollHandle {
+pub struct ObservationPollHandle {
     inner: Option<tokio::task::JoinHandle<()>>,
 }
 
-impl PinPollHandle {
+impl ObservationPollHandle {
     /// Abort the background polling task immediately.
     pub fn abort(mut self) {
         if let Some(handle) = self.inner.take() {
@@ -88,7 +89,7 @@ impl PinPollHandle {
     }
 }
 
-impl Drop for PinPollHandle {
+impl Drop for ObservationPollHandle {
     fn drop(&mut self) {
         if let Some(handle) = self.inner.take() {
             handle.abort();
@@ -241,7 +242,7 @@ impl LLMRegistry {
             #[cfg(feature = "metrics")]
             metrics: crate::llm::MetricsTracker::new(),
             rate_limiter: Arc::new(rate_limiter),
-            pin_peaks: Arc::new(DashMap::new()),
+            observation_peaks: Arc::new(DashMap::new()),
         })
     }
 
@@ -931,8 +932,9 @@ impl LLMRegistry {
 
     /// Collect graph status from all graph-aware backends before releasing.
     ///
-    /// Folds in pin peaks recorded by `start_pin_polling` for the same
-    /// `graph_id` if any are present. Failures are logged and skipped.
+    /// Folds in adapter-observation peaks recorded by
+    /// `start_adapter_observation_polling` for the same `graph_id` if any are
+    /// present. Failures are logged and skipped.
     pub async fn pre_release_status_all(
         &self,
         graph_id: &str,
@@ -952,13 +954,19 @@ impl LLMRegistry {
                 }
             }
         }
-        if let Some((_, (h_peak, b_peak))) = self.pin_peaks.remove(graph_id) {
-            let h = h_peak.load(Ordering::Relaxed);
-            let b = b_peak.load(Ordering::Relaxed);
-            if h > 0 || b > 0 {
+        if let Some((_, peaks)) = self.observation_peaks.remove(graph_id) {
+            let peaks: Vec<(String, u64)> = peaks
+                .iter()
+                .map(|entry| (peak_observation_name(entry.key()), *entry.value()))
+                .collect();
+            if !peaks.is_empty() {
                 results = results
                     .into_iter()
-                    .map(|s| s.with_pin_peaks(h, b))
+                    .map(|snapshot| {
+                        peaks.iter().fold(snapshot, |snapshot, (name, value)| {
+                            snapshot.with_adapter_observation(name, *value)
+                        })
+                    })
                     .collect();
             }
         }
@@ -966,26 +974,23 @@ impl LLMRegistry {
     }
 
     /// Spawn a background task that polls every graph-aware backend at
-    /// `interval`, recording peak `pinned_handles` / `pinned_blocks` for
-    /// `graph_id`. Returns `None` if no graph-aware backends are registered
-    /// (no point waking a no-op poll loop). The returned [`PinPollHandle`]
-    /// aborts the task on `Drop`, so callers cannot leak it; explicit
-    /// `.abort()` before `pre_release_status_all` is still preferred for
-    /// ordering clarity.
-    pub fn start_pin_polling(
+    /// `interval`, recording the peak of every adapter observation the backend
+    /// reports for `graph_id`. Returns `None` if no graph-aware backends are
+    /// registered (no point waking a no-op poll loop). The returned
+    /// [`ObservationPollHandle`] aborts the task on `Drop`, so callers cannot
+    /// leak it; explicit `.abort()` before `pre_release_status_all` is still
+    /// preferred for ordering clarity.
+    pub fn start_adapter_observation_polling(
         self: &Arc<Self>,
         graph_id: String,
         interval: Duration,
-    ) -> Option<PinPollHandle> {
+    ) -> Option<ObservationPollHandle> {
         if self.find_graph_aware_backends().is_empty() {
             return None;
         }
-        let handles_peak = Arc::new(AtomicU64::new(0));
-        let blocks_peak = Arc::new(AtomicU64::new(0));
-        self.pin_peaks.insert(
-            graph_id.clone(),
-            (handles_peak.clone(), blocks_peak.clone()),
-        );
+        let peaks = Arc::new(DashMap::new());
+        self.observation_peaks
+            .insert(graph_id.clone(), peaks.clone());
         let registry = Arc::clone(self);
         let inner = tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
@@ -995,14 +1000,15 @@ impl LLMRegistry {
             loop {
                 ticker.tick().await;
                 for (_name, backend) in registry.find_graph_aware_backends() {
-                    if let Ok(Some(snap)) = backend.get_graph_status(&graph_id).await {
-                        bump_max(&handles_peak, snap.pinned_handles());
-                        bump_max(&blocks_peak, snap.pinned_blocks());
+                    if let Ok(Some(snapshot)) = backend.get_graph_status(&graph_id).await {
+                        for (name, value) in &snapshot.adapter_observations {
+                            bump_max(&peaks, name, *value);
+                        }
                     }
                 }
             }
         });
-        Some(PinPollHandle { inner: Some(inner) })
+        Some(ObservationPollHandle { inner: Some(inner) })
     }
 
     /// Build a `BackendMetricsSource` from the tracker's aggregates and

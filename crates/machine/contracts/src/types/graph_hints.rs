@@ -1,19 +1,98 @@
 //! APXM-owned graph facts and advisory intents.
 //!
-//! Provider mechanisms (pins, slots, queue priority, `vllm_xargs`) do not
-//! belong here. Adapters project this contract onto an `apxm` server branch.
+//! Provider mechanisms (pins, slots, queue priority, provider extension
+//! envelopes) do not belong here. An adapter *projects* this contract: it
+//! decides, field by field, what it can carry, renders only those fields, and
+//! reports the rest as an explicit omission. A field an adapter does not
+//! support never reaches a provider request.
 
 use crate::constants::llm::apxm::graph_hints as hint_keys;
 use crate::types::values::Value;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::{Map, Value as Json};
+use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::str::FromStr;
 
 pub const GRAPH_HINTS_SCHEMA: &str = hint_keys::SCHEMA;
 
+/// Longest accepted opaque reference, in bytes.
+pub const MAX_OPAQUE_REF_LEN: usize = 512;
+/// Most direct successors one node hint may enumerate.
+pub const MAX_SUCCESSOR_REFS: usize = 128;
+/// Largest accepted planner token estimate.
+pub const MAX_ESTIMATED_TOKENS: u32 = 16_777_216;
+/// Largest accepted remaining-path and stage coordinate.
+pub const MAX_PATH_COORDINATE: u32 = 65_535;
+/// Largest accepted reuse-benefit horizon (24 hours, in milliseconds).
+pub const MAX_BENEFIT_HORIZON_MS: u32 = 86_400_000;
+/// Largest accepted expected-uses estimate.
+pub const MAX_EXPECTED_USES: u32 = 1_048_576;
+
+/// Domain separator so a hint digest can never collide with another
+/// canonical-JSON digest computed elsewhere in the machine.
+const HINTS_DIGEST_DOMAIN: &[u8] = b"apxm.inference-graph-hints\0";
+const CAPABILITY_DIGEST_DOMAIN: &[u8] = b"apxm.graph-hint-capabilities\0";
+const PLAN_DIGEST_DOMAIN: &[u8] = b"apxm.graph-hint-plan\0";
+const PROJECTED_REQUEST_DIGEST_DOMAIN: &[u8] = b"apxm.graph-hint-projected-request\0";
+
+/// Canonical JSON: object keys sorted, arrays order-preserving, absent values
+/// absent. Two semantically identical documents canonicalize byte-for-byte
+/// identically regardless of how they were built.
+fn canonicalize(value: Json) -> Json {
+    match value {
+        Json::Array(values) => Json::Array(values.into_iter().map(canonicalize).collect()),
+        Json::Object(values) => {
+            let mut entries: Vec<(String, Json)> = values.into_iter().collect();
+            entries.sort_by(|left, right| left.0.cmp(&right.0));
+            let mut canonical = Map::new();
+            for (key, value) in entries {
+                canonical.insert(key, canonicalize(value));
+            }
+            Json::Object(canonical)
+        }
+        scalar => scalar,
+    }
+}
+
+/// The exact bytes a digest is taken over.
+fn canonical_bytes(value: &impl Serialize) -> Vec<u8> {
+    let json = serde_json::to_value(value).unwrap_or(Json::Null);
+    serde_json::to_vec(&canonicalize(json)).unwrap_or_default()
+}
+
+fn domain_digest(domain: &[u8], bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(domain);
+    hasher.update(bytes);
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+fn require_opaque_ref(name: &str, value: &str) -> Result<(), String> {
+    if value.trim().is_empty() {
+        return Err(format!("{name} must be a non-empty opaque reference"));
+    }
+    if value.len() > MAX_OPAQUE_REF_LEN {
+        return Err(format!(
+            "{name} exceeds the {MAX_OPAQUE_REF_LEN}-byte opaque reference limit"
+        ));
+    }
+    Ok(())
+}
+
+fn require_at_most(name: &str, value: Option<u32>, maximum: u32) -> Result<(), String> {
+    match value {
+        Some(value) if value > maximum => {
+            Err(format!("{name} exceeds its published maximum of {maximum}"))
+        }
+        _ => Ok(()),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GraphHintScope {
     pub graph_ref: String,
     pub graph_execution_ref: String,
@@ -29,9 +108,7 @@ impl GraphHintScope {
             (hint_keys::NODE_REF, &self.node_ref),
             (hint_keys::NODE_EXECUTION_REF, &self.node_execution_ref),
         ] {
-            if value.trim().is_empty() {
-                return Err(format!("{name} must be a non-empty opaque reference"));
-            }
+            require_opaque_ref(name, value)?;
         }
         Ok(())
     }
@@ -85,6 +162,7 @@ impl<'de> Deserialize<'de> for WorkClass {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct NodeGraphFacts {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub critical_path: Option<bool>,
@@ -108,6 +186,52 @@ pub struct NodeGraphFacts {
     pub pipeline_eligible: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub coexecution_group_ref: Option<String>,
+}
+
+impl NodeGraphFacts {
+    /// Every numeric estimate is bounded and every reference list is capped.
+    /// An out-of-range value is a rejection, never a clamped value.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.successor_refs.len() > MAX_SUCCESSOR_REFS {
+            return Err(format!(
+                "{} exceeds the {MAX_SUCCESSOR_REFS}-entry limit",
+                hint_keys::SUCCESSOR_REFS
+            ));
+        }
+        for successor in &self.successor_refs {
+            require_opaque_ref(hint_keys::SUCCESSOR_REFS, successor)?;
+        }
+        if let Some(group) = &self.coexecution_group_ref {
+            require_opaque_ref(hint_keys::COEXECUTION_GROUP_REF, group)?;
+        }
+        require_at_most(
+            hint_keys::REMAINING_PATH_LEN,
+            self.remaining_path_len,
+            MAX_PATH_COORDINATE,
+        )?;
+        require_at_most(
+            hint_keys::STAGE_INDEX,
+            self.stage_index,
+            MAX_PATH_COORDINATE,
+        )?;
+        for (name, value) in [
+            (
+                hint_keys::ESTIMATED_INPUT_TOKENS,
+                self.estimated_input_tokens,
+            ),
+            (
+                hint_keys::ESTIMATED_OUTPUT_TOKENS,
+                self.estimated_output_tokens,
+            ),
+            (
+                hint_keys::EXPECTED_SHARED_PREFIX_TOKENS,
+                self.expected_shared_prefix_tokens,
+            ),
+        ] {
+            require_at_most(name, value, MAX_ESTIMATED_TOKENS)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -198,60 +322,143 @@ impl<'de> Deserialize<'de> for ReusePreference {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum BackendMechanismRef {
-    VllmApxmXargs,
-    VllmRequestPriority,
-    VllmPrefixPin,
-    LlamaApxmEnvelope,
-    LlamaCachePrompt,
+/// Why a projector approximated or withheld a field it otherwise understands.
+///
+/// The set is closed: a free-form sentence cannot be joined, compared across
+/// attempts, or held against a capability table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ReasonCode {
+    /// The exact binding declares no mechanism with this semantic effect.
+    NoEquivalentMechanism,
+    /// A mechanism exists but only approximates the common semantics.
+    ApproximatedByRelatedMechanism,
+    /// The value is outside the range the provider mechanism accepts.
+    ValueOutsideMechanismRange,
+    /// The admitted runtime profile withholds an otherwise supported lowering.
+    ProfileWithholdsMechanism,
+    /// The admitted scheduler or server contract does not enable the mechanism.
+    MechanismNotAdmitted,
 }
 
-impl BackendMechanismRef {
+impl ReasonCode {
+    pub const ALL: &'static [Self] = &[
+        Self::NoEquivalentMechanism,
+        Self::ApproximatedByRelatedMechanism,
+        Self::ValueOutsideMechanismRange,
+        Self::ProfileWithholdsMechanism,
+        Self::MechanismNotAdmitted,
+    ];
+
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::VllmApxmXargs => hint_keys::MECHANISM_VLLM_APXM_XARGS,
-            Self::VllmRequestPriority => hint_keys::MECHANISM_VLLM_REQUEST_PRIORITY,
-            Self::VllmPrefixPin => hint_keys::MECHANISM_VLLM_PREFIX_PIN,
-            Self::LlamaApxmEnvelope => hint_keys::MECHANISM_LLAMA_APXM_ENVELOPE,
-            Self::LlamaCachePrompt => hint_keys::MECHANISM_LLAMA_CACHE_PROMPT,
+            Self::NoEquivalentMechanism => hint_keys::REASON_NO_EQUIVALENT_MECHANISM,
+            Self::ApproximatedByRelatedMechanism => {
+                hint_keys::REASON_APPROXIMATED_BY_RELATED_MECHANISM
+            }
+            Self::ValueOutsideMechanismRange => hint_keys::REASON_VALUE_OUTSIDE_MECHANISM_RANGE,
+            Self::ProfileWithholdsMechanism => hint_keys::REASON_PROFILE_WITHHOLDS_MECHANISM,
+            Self::MechanismNotAdmitted => hint_keys::REASON_MECHANISM_NOT_ADMITTED,
         }
+    }
+}
+
+impl fmt::Display for ReasonCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ReasonCode {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|code| code.as_str() == value)
+            .ok_or_else(|| format!("unknown projection reason code: {value}"))
+    }
+}
+
+impl Serialize for ReasonCode {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ReasonCode {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::from_str(&String::deserialize(deserializer)?).map_err(D::Error::custom)
+    }
+}
+
+/// A closed, adapter-owned mechanism identifier such as `llama.cache_prompt`.
+///
+/// The *shape* is common; the *names* are owned by the adapter that implements
+/// the mechanism, which is why no provider mechanism name is spelled in this
+/// module. A mechanism reference is a label for evidence: it never carries a
+/// secret, a slot coordinate, a filename, or a value.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BackendMechanismRef(String);
+
+impl BackendMechanismRef {
+    /// Accept `<adapter>.<mechanism>` in lowercase snake segments.
+    pub fn new(value: impl Into<String>) -> Result<Self, String> {
+        let value = value.into();
+        let mut segments = value.split('.');
+        let (Some(adapter), Some(mechanism), None) =
+            (segments.next(), segments.next(), segments.next())
+        else {
+            return Err(format!(
+                "mechanism reference {value:?} must be exactly <adapter>.<mechanism>"
+            ));
+        };
+        for segment in [adapter, mechanism] {
+            let valid = !segment.is_empty()
+                && segment.starts_with(|c: char| c.is_ascii_lowercase())
+                && segment
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+            if !valid {
+                return Err(format!(
+                    "mechanism reference {value:?} segment {segment:?} is not lowercase snake case"
+                ));
+            }
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
 impl fmt::Display for BackendMechanismRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
+        f.write_str(&self.0)
     }
 }
 
 impl FromStr for BackendMechanismRef {
     type Err = String;
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            hint_keys::MECHANISM_VLLM_APXM_XARGS => Ok(Self::VllmApxmXargs),
-            hint_keys::MECHANISM_VLLM_REQUEST_PRIORITY => Ok(Self::VllmRequestPriority),
-            hint_keys::MECHANISM_VLLM_PREFIX_PIN => Ok(Self::VllmPrefixPin),
-            hint_keys::MECHANISM_LLAMA_APXM_ENVELOPE => Ok(Self::LlamaApxmEnvelope),
-            hint_keys::MECHANISM_LLAMA_CACHE_PROMPT => Ok(Self::LlamaCachePrompt),
-            _ => Err(format!("unknown backend mechanism: {value}")),
-        }
+        Self::new(value)
     }
 }
 
 impl Serialize for BackendMechanismRef {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.as_str())
+        serializer.serialize_str(&self.0)
     }
 }
 
 impl<'de> Deserialize<'de> for BackendMechanismRef {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Self::from_str(&String::deserialize(deserializer)?).map_err(D::Error::custom)
+        Self::new(String::deserialize(deserializer)?).map_err(D::Error::custom)
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReusableContextIntent {
     pub preference: ReusePreference,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -262,7 +469,26 @@ pub struct ReusableContextIntent {
     pub expected_uses: Option<u32>,
 }
 
+impl ReusableContextIntent {
+    pub fn validate(&self) -> Result<(), String> {
+        if let Some(affinity_ref) = &self.affinity_ref {
+            require_opaque_ref(hint_keys::AFFINITY_REF, affinity_ref)?;
+        }
+        require_at_most(
+            hint_keys::BENEFIT_HORIZON_MS,
+            self.benefit_horizon_ms,
+            MAX_BENEFIT_HORIZON_MS,
+        )?;
+        require_at_most(
+            hint_keys::EXPECTED_USES,
+            self.expected_uses,
+            MAX_EXPECTED_USES,
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct GraphExecutionIntents {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub objective: Option<OptimizationObjective>,
@@ -270,7 +496,17 @@ pub struct GraphExecutionIntents {
     pub reusable_context: Option<ReusableContextIntent>,
 }
 
+impl GraphExecutionIntents {
+    pub fn validate(&self) -> Result<(), String> {
+        match &self.reusable_context {
+            Some(intent) => intent.validate(),
+            None => Ok(()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ApxmGraphHints {
     pub schema: String,
     pub scope: GraphHintScope,
@@ -281,11 +517,30 @@ pub struct ApxmGraphHints {
 }
 
 impl ApxmGraphHints {
+    /// Admit the envelope or fail closed. Unknown fields are rejected by the
+    /// decode path; this rejects unknown schemas, blank references, and every
+    /// out-of-range estimate.
     pub fn validate(&self) -> Result<(), String> {
         if self.schema != GRAPH_HINTS_SCHEMA {
             return Err(format!("unknown graph-hints schema: {}", self.schema));
         }
-        self.scope.validate()
+        self.scope.validate()?;
+        self.facts.validate()?;
+        self.intents.validate()
+    }
+
+    /// The exact canonical bytes the hint digest commits to.
+    pub fn canonical_json(&self) -> String {
+        String::from_utf8(canonical_bytes(self)).unwrap_or_default()
+    }
+
+    /// A stable digest over the canonical form.
+    ///
+    /// Two semantically identical hint sets digest identically regardless of
+    /// how they were constructed, and any change to a present field, an absent
+    /// field, or a reference list changes the digest.
+    pub fn digest(&self) -> String {
+        domain_digest(HINTS_DIGEST_DOMAIN, &canonical_bytes(self))
     }
 
     pub fn has_graph_context(&self) -> bool {
@@ -331,6 +586,156 @@ impl ApxmGraphHints {
         )
     }
 
+    /// Render exactly the fields a plan projects.
+    ///
+    /// This is the only place the common envelope becomes a document bound for
+    /// a provider. A field whose outcome is an omission is absent from the
+    /// result — not null, not defaulted, absent. `None` means the plan projects
+    /// nothing and the provider request must stay unchanged.
+    pub fn project_envelope(&self, plan: &GraphHintPlan) -> Option<Json> {
+        let mut facts = Map::new();
+        fn set(
+            facts: &mut Map<String, Json>,
+            plan: &GraphHintPlan,
+            field: GraphHintField,
+            key: &str,
+            value: Option<Json>,
+        ) {
+            if let (true, Some(value)) = (plan.projects(field), value) {
+                facts.insert(key.to_owned(), value);
+            }
+        }
+        let mut set = |field, key: &str, value| set(&mut facts, plan, field, key, value);
+        set(
+            GraphHintField::CriticalPath,
+            hint_keys::CRITICAL_PATH,
+            self.facts.critical_path.map(Json::from),
+        );
+        set(
+            GraphHintField::SuccessorRefs,
+            hint_keys::SUCCESSOR_REFS,
+            (!self.facts.successor_refs.is_empty())
+                .then(|| Json::from(self.facts.successor_refs.clone())),
+        );
+        set(
+            GraphHintField::RemainingPathLen,
+            hint_keys::REMAINING_PATH_LEN,
+            self.facts.remaining_path_len.map(Json::from),
+        );
+        set(
+            GraphHintField::StageIndex,
+            hint_keys::STAGE_INDEX,
+            self.facts.stage_index.map(Json::from),
+        );
+        set(
+            GraphHintField::WorkClass,
+            hint_keys::WORK_CLASS,
+            self.facts
+                .work_class
+                .map(|class| Json::from(class.as_str())),
+        );
+        set(
+            GraphHintField::EstimatedInputTokens,
+            hint_keys::ESTIMATED_INPUT_TOKENS,
+            self.facts.estimated_input_tokens.map(Json::from),
+        );
+        set(
+            GraphHintField::EstimatedOutputTokens,
+            hint_keys::ESTIMATED_OUTPUT_TOKENS,
+            self.facts.estimated_output_tokens.map(Json::from),
+        );
+        set(
+            GraphHintField::ExpectedSharedPrefixTokens,
+            hint_keys::EXPECTED_SHARED_PREFIX_TOKENS,
+            self.facts.expected_shared_prefix_tokens.map(Json::from),
+        );
+        set(
+            GraphHintField::PrefixWarmupEligible,
+            hint_keys::PREFIX_WARMUP_ELIGIBLE,
+            self.facts.prefix_warmup_eligible.map(Json::from),
+        );
+        set(
+            GraphHintField::PipelineEligible,
+            hint_keys::PIPELINE_ELIGIBLE,
+            self.facts.pipeline_eligible.map(Json::from),
+        );
+        set(
+            GraphHintField::CoexecutionGroupRef,
+            hint_keys::COEXECUTION_GROUP_REF,
+            self.facts.coexecution_group_ref.clone().map(Json::from),
+        );
+
+        let mut intents = Map::new();
+        if plan.projects(GraphHintField::Objective)
+            && let Some(objective) = self.intents.objective
+        {
+            intents.insert(
+                hint_keys::OBJECTIVE.to_owned(),
+                Json::from(objective.as_str()),
+            );
+        }
+        // `preference` is the required member of a reusable-context intent, so
+        // an adapter that cannot carry the preference carries no affinity,
+        // horizon, or use estimate either.
+        if plan.projects(GraphHintField::ReusePreference)
+            && let Some(reuse) = &self.intents.reusable_context
+        {
+            let mut context = Map::new();
+            context.insert(
+                hint_keys::PREFERENCE.to_owned(),
+                Json::from(reuse.preference.as_str()),
+            );
+            if plan.projects(GraphHintField::AffinityRef)
+                && let Some(affinity_ref) = &reuse.affinity_ref
+            {
+                context.insert(
+                    hint_keys::AFFINITY_REF.to_owned(),
+                    Json::from(affinity_ref.clone()),
+                );
+            }
+            if plan.projects(GraphHintField::BenefitHorizonMs)
+                && let Some(horizon) = reuse.benefit_horizon_ms
+            {
+                context.insert(
+                    hint_keys::BENEFIT_HORIZON_MS.to_owned(),
+                    Json::from(horizon),
+                );
+            }
+            if plan.projects(GraphHintField::ExpectedUses)
+                && let Some(uses) = reuse.expected_uses
+            {
+                context.insert(hint_keys::EXPECTED_USES.to_owned(), Json::from(uses));
+            }
+            intents.insert(
+                hint_keys::REUSABLE_CONTEXT.to_owned(),
+                Json::Object(context),
+            );
+        }
+
+        let scope = plan
+            .projects(GraphHintField::Scope)
+            .then(|| serde_json::to_value(&self.scope).unwrap_or(Json::Object(Map::new())));
+        if scope.is_none() && facts.is_empty() && intents.is_empty() {
+            return None;
+        }
+
+        let mut envelope = Map::new();
+        envelope.insert(
+            hint_keys::SCHEMA_FIELD.to_owned(),
+            Json::from(GRAPH_HINTS_SCHEMA),
+        );
+        if let Some(scope) = scope {
+            envelope.insert(hint_keys::SCOPE.to_owned(), scope);
+        }
+        if !facts.is_empty() {
+            envelope.insert(hint_keys::FACTS.to_owned(), Json::Object(facts));
+        }
+        if !intents.is_empty() {
+            envelope.insert(hint_keys::INTENTS.to_owned(), Json::Object(intents));
+        }
+        Some(canonicalize(Json::Object(envelope)))
+    }
+
     pub fn from_node_attrs(
         graph_id: String,
         node_label: String,
@@ -349,8 +754,8 @@ impl ApxmGraphHints {
         use crate::constants::graph::metadata as graph_meta;
 
         let critical_path = attrs_map.get(attrs::PRIORITY).and_then(|value| {
-            let priority = value.as_i64()?;
-            Some(priority >= graph_meta::CRITICAL_PATH_PRIORITY_THRESHOLD)
+            let ordinal = value.as_i64()?;
+            Some(ordinal >= graph_meta::CRITICAL_PATH_ATTR_THRESHOLD)
         });
 
         let successor_refs = attrs_map
@@ -479,6 +884,12 @@ pub enum GraphHintFieldCapability {
     Unsupported,
 }
 
+impl GraphHintFieldCapability {
+    pub const fn is_supported(&self) -> bool {
+        !matches!(self, Self::Unsupported)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GraphLifecycleCapability {
@@ -494,6 +905,8 @@ pub struct GraphHintCapabilities {
 }
 
 impl GraphHintCapabilities {
+    /// A conforming implementation that supports nothing. Supporting zero
+    /// fields is honest; claiming support silently is not.
     pub fn none() -> Self {
         Self {
             fields: GraphHintField::ALL
@@ -502,6 +915,18 @@ impl GraphHintCapabilities {
                 .collect(),
             lifecycle: GraphLifecycleCapability::NotNeeded,
         }
+    }
+
+    /// Content address of the declared capability surface. Binding evidence
+    /// carries this digest so a health probe cannot widen support mid-effect.
+    pub fn digest(&self) -> String {
+        domain_digest(CAPABILITY_DIGEST_DOMAIN, &canonical_bytes(self))
+    }
+
+    pub fn supports(&self, field: GraphHintField) -> bool {
+        self.fields
+            .get(&field)
+            .is_some_and(GraphHintFieldCapability::is_supported)
     }
 }
 
@@ -513,28 +938,166 @@ pub enum ProjectionOutcome {
     },
     Approximated {
         mechanism_ref: BackendMechanismRef,
-        reason: String,
+        reason: ReasonCode,
     },
     OmittedUnsupported,
     OmittedByProfile {
-        reason: String,
+        reason: ReasonCode,
     },
 }
 
+impl ProjectionOutcome {
+    /// Whether this outcome authorizes the field to reach the provider request.
+    pub const fn is_projected(&self) -> bool {
+        matches!(self, Self::Applied { .. } | Self::Approximated { .. })
+    }
+
+    pub const fn mechanism_ref(&self) -> Option<&BackendMechanismRef> {
+        match self {
+            Self::Applied { mechanism_ref } | Self::Approximated { mechanism_ref, .. } => {
+                Some(mechanism_ref)
+            }
+            Self::OmittedUnsupported | Self::OmittedByProfile { .. } => None,
+        }
+    }
+}
+
+/// The per-dispatch field-by-field projection report.
+///
+/// A plan over present hints always covers the whole closed field set, so
+/// "what happened to every field" is answerable without inspecting the wire.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphHintPlan {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph_hints_digest: Option<String>,
+    pub capability_digest: String,
     pub outcomes: BTreeMap<GraphHintField, ProjectionOutcome>,
 }
 
 impl GraphHintPlan {
-    pub fn omitted_unsupported() -> Self {
+    /// The plan for a dispatch that carries no hints: no digest, no outcomes,
+    /// and therefore nothing added to the provider request.
+    pub fn absent(capabilities: &GraphHintCapabilities) -> Self {
         Self {
+            graph_hints_digest: None,
+            capability_digest: capabilities.digest(),
+            outcomes: BTreeMap::new(),
+        }
+    }
+
+    /// The complete explicit report of a zero-capability projector.
+    pub fn omitted_unsupported(
+        hints: &ApxmGraphHints,
+        capabilities: &GraphHintCapabilities,
+    ) -> Self {
+        Self {
+            graph_hints_digest: Some(hints.digest()),
+            capability_digest: capabilities.digest(),
             outcomes: GraphHintField::ALL
                 .iter()
                 .map(|field| (*field, ProjectionOutcome::OmittedUnsupported))
                 .collect(),
         }
     }
+
+    /// Start from the complete omitted report and record the exceptions.
+    pub fn with_outcome(mut self, field: GraphHintField, outcome: ProjectionOutcome) -> Self {
+        self.outcomes.insert(field, outcome);
+        self
+    }
+
+    pub fn projects(&self, field: GraphHintField) -> bool {
+        self.outcomes
+            .get(&field)
+            .is_some_and(ProjectionOutcome::is_projected)
+    }
+
+    pub fn projects_any(&self) -> bool {
+        self.outcomes.values().any(ProjectionOutcome::is_projected)
+    }
+
+    pub fn digest(&self) -> String {
+        domain_digest(PLAN_DIGEST_DOMAIN, &canonical_bytes(self))
+    }
+
+    /// Hold the plan against the capability table it claims to come from.
+    ///
+    /// A projector cannot claim a mechanism for a field it declares
+    /// unsupported, and a plan over present hints must cover every field.
+    pub fn validate_against(&self, capabilities: &GraphHintCapabilities) -> Result<(), String> {
+        if self.capability_digest != capabilities.digest() {
+            return Err(
+                "graph-hint capability digest changed between declaration and planning".to_owned(),
+            );
+        }
+        if self.graph_hints_digest.is_none() {
+            return if self.outcomes.is_empty() {
+                Ok(())
+            } else {
+                Err("a plan without hints cannot carry projection outcomes".to_owned())
+            };
+        }
+        for field in GraphHintField::ALL {
+            let Some(outcome) = self.outcomes.get(field) else {
+                return Err(format!(
+                    "graph-hint plan omits an outcome for {}",
+                    serde_json::to_string(field).unwrap_or_default()
+                ));
+            };
+            if outcome.is_projected() && !capabilities.supports(*field) {
+                return Err(format!(
+                    "graph-hint plan projects {} through a mechanism the binding declares unsupported",
+                    serde_json::to_string(field).unwrap_or_default()
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// One attempt's realized projection. It commits to the exact provider fields
+/// emitted for that attempt by digest and never carries the fields themselves.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphHintProjection {
+    pub plan_digest: String,
+    pub attempt: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mechanism_bindings: Vec<BackendMechanismRef>,
+    pub projected_request_digest: String,
+}
+
+/// What a projector produced for one attempt: the report, the attempt-local
+/// projection evidence, and the provider fields the plan authorized.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphHintDispatchProjection {
+    pub plan: GraphHintPlan,
+    pub projection: GraphHintProjection,
+    pub provider_fields: Map<String, Json>,
+}
+
+impl GraphHintDispatchProjection {
+    /// Evidence for the runtime record: digests and closed vocabulary only,
+    /// never the provider body.
+    pub fn to_evidence_json(&self) -> Json {
+        serde_json::json!({
+            hint_keys::PLAN: self.plan,
+            hint_keys::PROJECTION: self.projection,
+        })
+    }
+}
+
+/// The closed set of measurements comparable across providers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MeasurementName {
+    /// Input tokens the provider reports as served from reusable context.
+    ReusedInputTokens,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphHintMeasurement {
+    pub name: MeasurementName,
+    pub value: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -551,28 +1114,118 @@ pub struct FieldRealization {
     pub acknowledgement: Acknowledgement,
 }
 
+/// What the provider actually reported back, joined to one projection.
+///
+/// `NotReported` is not "not honored", and a measurement of zero is a measured
+/// zero rather than proof a control was ignored.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphHintRealization {
+    pub projection_digest: String,
     pub fields: BTreeMap<GraphHintField, FieldRealization>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub measurements: Vec<(String, i64)>,
+    pub measurements: Vec<GraphHintMeasurement>,
 }
 
+impl GraphHintRealization {
+    /// The realization every projected field starts from: projected, and not
+    /// yet acknowledged by anyone.
+    pub fn unacknowledged(projection: &GraphHintProjection, plan: &GraphHintPlan) -> Self {
+        Self {
+            projection_digest: domain_digest(
+                PROJECTED_REQUEST_DIGEST_DOMAIN,
+                &canonical_bytes(projection),
+            ),
+            fields: plan
+                .outcomes
+                .iter()
+                .map(|(field, outcome)| {
+                    (
+                        *field,
+                        FieldRealization {
+                            projected: outcome.is_projected(),
+                            acknowledgement: Acknowledgement::NotReported,
+                        },
+                    )
+                })
+                .collect(),
+            measurements: Vec::new(),
+        }
+    }
+}
+
+/// The one seam between APXM graph semantics and a provider request.
+///
+/// An adapter declares what it can carry, plans field by field, and renders
+/// only the fields its own plan authorized. Everything else the machine knows
+/// stays in runtime evidence and never reaches the provider.
 pub trait GraphHintProjector {
+    /// Declared per exact driver/profile/binding, not per provider brand.
     fn graph_hint_capabilities(&self) -> GraphHintCapabilities {
         GraphHintCapabilities::none()
     }
 
+    /// Pure, deterministic field-by-field planning. The default is the
+    /// complete explicit zero-capability report.
     fn plan_graph_hints(&self, hints: Option<&ApxmGraphHints>) -> Result<GraphHintPlan, String> {
+        let capabilities = self.graph_hint_capabilities();
         match hints {
-            None => Ok(GraphHintPlan {
-                outcomes: BTreeMap::new(),
-            }),
+            None => Ok(GraphHintPlan::absent(&capabilities)),
             Some(hints) => {
                 hints.validate()?;
-                Ok(GraphHintPlan::omitted_unsupported())
+                Ok(GraphHintPlan::omitted_unsupported(hints, &capabilities))
             }
         }
+    }
+
+    /// Render exactly the provider request fields the plan authorized.
+    ///
+    /// The default renders nothing, so a backend with no graph capabilities
+    /// receives an otherwise unchanged model request.
+    fn render_graph_hint_fields(
+        &self,
+        _hints: &ApxmGraphHints,
+        _plan: &GraphHintPlan,
+    ) -> Result<Map<String, Json>, String> {
+        Ok(Map::new())
+    }
+
+    /// Plan, check the plan against the declared capabilities, render, and
+    /// seal the rendered fields by digest. This is the only path from graph
+    /// hints to a provider request.
+    fn project_graph_hints(
+        &self,
+        hints: Option<&ApxmGraphHints>,
+        attempt: u32,
+    ) -> Result<GraphHintDispatchProjection, String> {
+        let capabilities = self.graph_hint_capabilities();
+        let plan = self.plan_graph_hints(hints)?;
+        plan.validate_against(&capabilities)?;
+        let provider_fields = match hints {
+            Some(hints) if plan.projects_any() => self.render_graph_hint_fields(hints, &plan)?,
+            _ => Map::new(),
+        };
+        let mut mechanism_bindings: Vec<BackendMechanismRef> = plan
+            .outcomes
+            .values()
+            .filter_map(ProjectionOutcome::mechanism_ref)
+            .cloned()
+            .collect();
+        mechanism_bindings.sort();
+        mechanism_bindings.dedup();
+        let projection = GraphHintProjection {
+            plan_digest: plan.digest(),
+            attempt,
+            mechanism_bindings,
+            projected_request_digest: domain_digest(
+                PROJECTED_REQUEST_DIGEST_DOMAIN,
+                &canonical_bytes(&Json::Object(provider_fields.clone())),
+            ),
+        };
+        Ok(GraphHintDispatchProjection {
+            plan,
+            projection,
+            provider_fields,
+        })
     }
 }
 
@@ -591,57 +1244,10 @@ pub enum GraphLifecycleOutcome {
 pub struct BackendGraphCapabilities {
     pub supports_graph_registration: bool,
     pub supports_request_hints: bool,
-    pub supports_priority: bool,
-    pub supports_prefix_cohorts: bool,
-    pub supports_pin_release: bool,
     pub supports_structured_outputs: bool,
     pub supports_backend_queue_state: bool,
     pub supports_backend_cache_state: bool,
     pub supports_cancel_groups: bool,
-    pub supports_dispatch_ir_v1_internal: bool,
-    pub supports_admin_reset_prefix_cache: bool,
-}
-
-impl BackendGraphCapabilities {
-    pub fn unsupported_dispatch_fields<'a>(
-        &self,
-        fields_sent: impl IntoIterator<Item = &'a str>,
-    ) -> Vec<String> {
-        fields_sent
-            .into_iter()
-            .filter(|field| !self.field_supported(field))
-            .map(ToOwned::to_owned)
-            .collect()
-    }
-
-    pub fn dispatch_fields_capability_supported<'a>(
-        &self,
-        fields_sent: impl IntoIterator<Item = &'a str>,
-    ) -> Vec<String> {
-        fields_sent
-            .into_iter()
-            .filter(|field| self.field_supported(field))
-            .map(ToOwned::to_owned)
-            .collect()
-    }
-
-    fn field_supported(&self, field: &str) -> bool {
-        use crate::constants::llm::apxm::dispatch_fields as df;
-        match field {
-            df::GRAPH_REGISTRATION => self.supports_graph_registration,
-            df::REQUEST_HINTS => self.supports_request_hints,
-            df::PRIORITY => self.supports_priority,
-            df::PREFIX_COHORTS => self.supports_prefix_cohorts,
-            df::PIN_RELEASE => self.supports_pin_release,
-            df::STRUCTURED_OUTPUTS => self.supports_structured_outputs,
-            df::BACKEND_QUEUE_STATE => self.supports_backend_queue_state,
-            df::BACKEND_CACHE_STATE => self.supports_backend_cache_state,
-            df::CANCEL_GROUPS => self.supports_cancel_groups,
-            df::DISPATCH_IR_V1_INTERNAL => self.supports_dispatch_ir_v1_internal,
-            df::ADMIN_RESET_PREFIX_CACHE => self.supports_admin_reset_prefix_cache,
-            _ => false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -694,6 +1300,10 @@ impl GraphMetadata {
     }
 }
 
+/// Common lifecycle state plus whatever the adapter observed.
+///
+/// Resource units are adapter vocabulary: the common record keeps them in an
+/// opaque observation map keyed by adapter-owned names.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphStatusSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -720,22 +1330,8 @@ impl GraphStatusSnapshot {
         }
     }
 
-    pub fn graph_aware(graph_id: impl Into<String>) -> Self {
-        Self::new(graph_id).with_registered(true)
-    }
-
-    pub fn pinned_handles(&self) -> u64 {
-        self.adapter_observations
-            .get("vllm.pinned_handles")
-            .copied()
-            .unwrap_or(0)
-    }
-
-    pub fn pinned_blocks(&self) -> u64 {
-        self.adapter_observations
-            .get("vllm.pinned_blocks")
-            .copied()
-            .unwrap_or(0)
+    pub fn registered(graph_ref: impl Into<String>) -> Self {
+        Self::new(graph_ref).with_registered(true)
     }
 
     pub fn with_registered(mut self, registered: bool) -> Self {
@@ -748,19 +1344,9 @@ impl GraphStatusSnapshot {
         self
     }
 
-    pub fn with_pin_counts(mut self, handles: u64, blocks: u64) -> Self {
-        self.adapter_observations
-            .insert("vllm.pinned_handles".into(), handles);
-        self.adapter_observations
-            .insert("vllm.pinned_blocks".into(), blocks);
-        self
-    }
-
-    pub fn with_pin_peaks(mut self, handles_peak: u64, blocks_peak: u64) -> Self {
-        self.adapter_observations
-            .insert("vllm.pinned_handles_peak".into(), handles_peak);
-        self.adapter_observations
-            .insert("vllm.pinned_blocks_peak".into(), blocks_peak);
+    /// Record one adapter-owned observation under its adapter-owned name.
+    pub fn with_adapter_observation(mut self, name: impl Into<String>, value: u64) -> Self {
+        self.adapter_observations.insert(name.into(), value);
         self
     }
 
@@ -783,39 +1369,212 @@ impl GraphStatusSnapshot {
 mod tests {
     use super::*;
 
+    fn scoped() -> ApxmGraphHints {
+        ApxmGraphHints::critical_path("g", "gx", "n", "nx", vec!["s".into()])
+    }
+
     #[test]
     fn empty_scope_refs_fail_closed() {
-        let hints = ApxmGraphHints {
-            schema: GRAPH_HINTS_SCHEMA.into(),
-            scope: GraphHintScope {
-                graph_ref: " ".into(),
-                graph_execution_ref: "gex".into(),
-                node_ref: "n".into(),
-                node_execution_ref: "nex".into(),
-            },
-            facts: NodeGraphFacts::default(),
-            intents: GraphExecutionIntents::default(),
-        };
+        let mut hints = scoped();
+        hints.scope.graph_ref = " ".into();
         assert!(hints.validate().is_err());
     }
 
     #[test]
-    fn zero_capability_plan_omits_every_field() {
+    fn out_of_range_estimates_fail_closed() {
+        for (label, mutate) in [
+            (
+                "estimated_input_tokens",
+                Box::new(|h: &mut ApxmGraphHints| {
+                    h.facts.estimated_input_tokens = Some(MAX_ESTIMATED_TOKENS + 1)
+                }) as Box<dyn Fn(&mut ApxmGraphHints)>,
+            ),
+            (
+                "estimated_output_tokens",
+                Box::new(|h: &mut ApxmGraphHints| {
+                    h.facts.estimated_output_tokens = Some(MAX_ESTIMATED_TOKENS + 1)
+                }),
+            ),
+            (
+                "expected_shared_prefix_tokens",
+                Box::new(|h: &mut ApxmGraphHints| {
+                    h.facts.expected_shared_prefix_tokens = Some(MAX_ESTIMATED_TOKENS + 1)
+                }),
+            ),
+            (
+                "remaining_path_len",
+                Box::new(|h: &mut ApxmGraphHints| {
+                    h.facts.remaining_path_len = Some(MAX_PATH_COORDINATE + 1)
+                }),
+            ),
+            (
+                "stage_index",
+                Box::new(|h: &mut ApxmGraphHints| {
+                    h.facts.stage_index = Some(MAX_PATH_COORDINATE + 1)
+                }),
+            ),
+            (
+                "successor_refs",
+                Box::new(|h: &mut ApxmGraphHints| {
+                    h.facts.successor_refs =
+                        (0..=MAX_SUCCESSOR_REFS).map(|i| format!("n{i}")).collect()
+                }),
+            ),
+            (
+                "benefit_horizon_ms",
+                Box::new(|h: &mut ApxmGraphHints| {
+                    if let Some(reuse) = h.intents.reusable_context.as_mut() {
+                        reuse.benefit_horizon_ms = Some(MAX_BENEFIT_HORIZON_MS + 1);
+                    }
+                }),
+            ),
+            (
+                "expected_uses",
+                Box::new(|h: &mut ApxmGraphHints| {
+                    if let Some(reuse) = h.intents.reusable_context.as_mut() {
+                        reuse.expected_uses = Some(MAX_EXPECTED_USES + 1);
+                    }
+                }),
+            ),
+        ] {
+            let mut hints = scoped();
+            mutate(&mut hints);
+            assert!(
+                hints.validate().is_err(),
+                "{label} above its maximum must fail closed"
+            );
+        }
+    }
+
+    #[test]
+    fn boundary_values_are_admitted() {
+        let mut hints = scoped();
+        hints.facts.estimated_input_tokens = Some(MAX_ESTIMATED_TOKENS);
+        hints.facts.remaining_path_len = Some(MAX_PATH_COORDINATE);
+        hints.facts.successor_refs = (0..MAX_SUCCESSOR_REFS).map(|i| format!("n{i}")).collect();
+        hints.validate().expect("published maxima are admitted");
+    }
+
+    #[test]
+    fn unknown_wire_fields_are_rejected_before_send() {
+        let mut value = serde_json::to_value(scoped()).expect("serialize");
+        value["facts"]["pin_policy"] = serde_json::json!("prefix");
+        assert!(serde_json::from_value::<ApxmGraphHints>(value).is_err());
+    }
+
+    /// Phase A exit gate: the construction path does not matter.
+    #[test]
+    fn independently_constructed_identical_hints_share_one_digest() {
+        let built = scoped();
+        let decoded: ApxmGraphHints = serde_json::from_str(
+            r#"{
+                "intents": {
+                    "reusable_context": {"preference": "prefer_when_beneficial"},
+                    "objective": "minimize_graph_completion_time"
+                },
+                "facts": {"successor_refs": ["s"], "critical_path": true},
+                "scope": {
+                    "node_execution_ref": "nx",
+                    "graph_ref": "g",
+                    "node_ref": "n",
+                    "graph_execution_ref": "gx"
+                },
+                "schema": "apxm.inference-graph-hints"
+            }"#,
+        )
+        .expect("decode a differently ordered document");
+        assert_eq!(built, decoded);
+        assert_eq!(built.digest(), decoded.digest());
+        assert_eq!(built.canonical_json(), decoded.canonical_json());
+        assert!(built.digest().starts_with("sha256:"));
+
+        let mut changed = built.clone();
+        changed.facts.stage_index = Some(1);
+        assert_ne!(built.digest(), changed.digest());
+    }
+
+    #[test]
+    fn zero_capability_plan_omits_every_field_and_renders_nothing() {
         struct Zero;
         impl GraphHintProjector for Zero {}
-        let hints = ApxmGraphHints::critical_path("g", "gx", "n", "nx", vec![]);
-        let plan = Zero.plan_graph_hints(Some(&hints)).expect("plan");
-        assert_eq!(plan.outcomes.len(), GraphHintField::ALL.len());
+        let hints = scoped();
+        let projected = Zero.project_graph_hints(Some(&hints), 0).expect("project");
+        assert_eq!(projected.plan.outcomes.len(), GraphHintField::ALL.len());
         assert!(
-            plan.outcomes
+            projected
+                .plan
+                .outcomes
                 .values()
                 .all(|outcome| matches!(outcome, ProjectionOutcome::OmittedUnsupported))
+        );
+        assert!(projected.provider_fields.is_empty());
+        assert!(hints.project_envelope(&projected.plan).is_none());
+        assert_eq!(
+            projected.plan.graph_hints_digest.as_deref(),
+            Some(hints.digest().as_str())
         );
     }
 
     #[test]
+    fn a_plan_cannot_project_a_field_its_binding_declares_unsupported() {
+        let capabilities = GraphHintCapabilities::none();
+        let hints = scoped();
+        let plan = GraphHintPlan::omitted_unsupported(&hints, &capabilities).with_outcome(
+            GraphHintField::ReusePreference,
+            ProjectionOutcome::Applied {
+                mechanism_ref: BackendMechanismRef::new("test.reuse").expect("mechanism"),
+            },
+        );
+        assert!(plan.validate_against(&capabilities).is_err());
+    }
+
+    #[test]
+    fn projected_envelope_carries_only_the_projected_fields() {
+        let mut capabilities = GraphHintCapabilities::none();
+        capabilities.fields.insert(
+            GraphHintField::ReusePreference,
+            GraphHintFieldCapability::Direct {
+                evidence: [EvidenceKind::AdapterProjection].into_iter().collect(),
+            },
+        );
+        let hints = scoped();
+        let plan = GraphHintPlan::omitted_unsupported(&hints, &capabilities).with_outcome(
+            GraphHintField::ReusePreference,
+            ProjectionOutcome::Applied {
+                mechanism_ref: BackendMechanismRef::new("test.reuse").expect("mechanism"),
+            },
+        );
+        plan.validate_against(&capabilities).expect("honest plan");
+        let envelope = hints.project_envelope(&plan).expect("a projected envelope");
+        let rendered = envelope.to_string();
+        assert!(rendered.contains(hint_keys::PREFER_WHEN_BENEFICIAL));
+        for absent in [
+            hint_keys::SUCCESSOR_REFS,
+            hint_keys::CRITICAL_PATH,
+            hint_keys::SCOPE,
+            hint_keys::OBJECTIVE,
+        ] {
+            assert!(
+                !rendered.contains(absent),
+                "unsupported field {absent} reached the provider document"
+            );
+        }
+    }
+
+    #[test]
+    fn mechanism_refs_are_adapter_namespaced() {
+        assert!(BackendMechanismRef::new("llama.cache_prompt").is_ok());
+        for invalid in ["cache_prompt", "Llama.CachePrompt", "vllm.", "a.b.c", ""] {
+            assert!(
+                BackendMechanismRef::new(invalid).is_err(),
+                "{invalid:?} must not be a mechanism reference"
+            );
+        }
+    }
+
+    #[test]
     fn envelope_uses_owned_hint_keys() {
-        let hints = ApxmGraphHints::critical_path("g", "gx", "n", "nx", vec!["s".into()]);
+        let hints = scoped();
         let value = serde_json::to_value(&hints).expect("serialize");
         assert_eq!(value[hint_keys::SCHEMA_FIELD], hint_keys::SCHEMA);
         assert!(value.get(hint_keys::SCOPE).is_some());
@@ -825,9 +1584,13 @@ mod tests {
             value[hint_keys::INTENTS][hint_keys::REUSABLE_CONTEXT][hint_keys::PREFERENCE],
             hint_keys::PREFER_WHEN_BENEFICIAL
         );
-        assert_eq!(
-            BackendMechanismRef::LlamaCachePrompt.as_str(),
-            hint_keys::MECHANISM_LLAMA_CACHE_PROMPT
-        );
+    }
+
+    #[test]
+    fn reason_codes_round_trip_through_their_closed_wire_names() {
+        for code in ReasonCode::ALL {
+            assert_eq!(ReasonCode::from_str(code.as_str()), Ok(*code));
+        }
+        assert!(ReasonCode::from_str("because").is_err());
     }
 }

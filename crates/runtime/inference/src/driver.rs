@@ -36,6 +36,12 @@ pub struct InferenceDriverBinding {
     pub composition_digest: String,
     pub availability: DriverAvailability,
     pub target_commitment: InferenceTargetCommitment,
+    /// Content address of the graph-hint capability surface this binding was
+    /// admitted with. Absent means the binding was admitted without a
+    /// graph-hint capability claim; present means a change to what the adapter
+    /// says it can carry is detectable before a send rather than after.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_hint_capability_digest: Option<String>,
 }
 
 /// Why an exact driver binding cannot be used. Every variant fails closed.
@@ -54,6 +60,10 @@ pub enum DriverBindingError {
     Unavailable {
         driver_id: String,
         inference_profile_ref: String,
+    },
+    GraphHintCapabilityDrift {
+        admitted: String,
+        observed: String,
     },
     UnknownField,
 }
@@ -84,6 +94,10 @@ impl std::fmt::Display for DriverBindingError {
             } => write!(
                 f,
                 "inference driver {driver_id} profile {inference_profile_ref} is unavailable"
+            ),
+            Self::GraphHintCapabilityDrift { admitted, observed } => write!(
+                f,
+                "graph-hint capability digest drifted from admitted {admitted} to observed {observed}"
             ),
             Self::UnknownField => write!(f, "driver binding rejected unknown wire fields"),
         }
@@ -119,6 +133,7 @@ impl InferenceDriverBinding {
             composition_digest: resolved.composition_digest.clone(),
             availability: DriverAvailability::Available,
             target_commitment,
+            graph_hint_capability_digest: None,
         };
         binding.validate_shape()?;
         Ok(binding)
@@ -145,6 +160,7 @@ impl InferenceDriverBinding {
             composition_digest: target_commitment.composition_digest.clone(),
             availability: DriverAvailability::Available,
             target_commitment,
+            graph_hint_capability_digest: None,
         };
         binding.validate_shape()?;
         Ok(binding)
@@ -155,6 +171,53 @@ impl InferenceDriverBinding {
     pub fn unavailable(mut self) -> Self {
         self.availability = DriverAvailability::Unavailable;
         self
+    }
+
+    /// Bind the adapter's declared graph-hint capability surface into this
+    /// binding's evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DriverBindingError::InvalidDigest`] when the value is not a
+    /// `sha256:` digest.
+    pub fn with_graph_hint_capability_digest(
+        mut self,
+        digest: impl Into<String>,
+    ) -> Result<Self, DriverBindingError> {
+        let digest = digest.into();
+        if !is_digest(&digest) {
+            return Err(DriverBindingError::InvalidDigest(
+                "graph_hint_capability_digest",
+            ));
+        }
+        self.graph_hint_capability_digest = Some(digest);
+        Ok(self)
+    }
+
+    /// Hold an adapter's current graph-hint capability digest against the one
+    /// this binding was admitted with.
+    ///
+    /// A binding admitted without a capability claim accepts no claim at
+    /// dispatch: widening in place is exactly the drift this rejects.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DriverBindingError::GraphHintCapabilityDrift`] when the two
+    /// disagree, so the change is caught before a send.
+    pub fn authorize_graph_hint_capabilities(
+        &self,
+        observed_digest: Option<&str>,
+    ) -> Result<(), DriverBindingError> {
+        if self.graph_hint_capability_digest.as_deref() == observed_digest {
+            return Ok(());
+        }
+        Err(DriverBindingError::GraphHintCapabilityDrift {
+            admitted: self
+                .graph_hint_capability_digest
+                .clone()
+                .unwrap_or_else(|| "absent".to_string()),
+            observed: observed_digest.unwrap_or("absent").to_string(),
+        })
     }
 
     /// Validate wire shape without checking authored-target membership.
@@ -184,6 +247,13 @@ impl InferenceDriverBinding {
             if !is_digest(digest) {
                 return Err(DriverBindingError::InvalidDigest(field));
             }
+        }
+        if let Some(digest) = &self.graph_hint_capability_digest
+            && !is_digest(digest)
+        {
+            return Err(DriverBindingError::InvalidDigest(
+                "graph_hint_capability_digest",
+            ));
         }
         self.target_commitment.validate()?;
         for (field, commitment_value, binding_value) in [

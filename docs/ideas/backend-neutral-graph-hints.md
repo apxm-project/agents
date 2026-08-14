@@ -53,20 +53,24 @@ common source contract does not turn provider transports into one protocol.
 
 ## 2. Why the current surface needs to change
 
-The current type is already named `ApxmGraphHints`, and part of it is genuinely
-portable: graph/execution/node identity, downstream nodes, compiler estimates,
-fan-out, remaining path length, and stage information. The same type also owns
-`PinMode`, `PinPolicy`, `PriorityClass`, a default pin TTL, and graph status in
-units of pinned handles and blocks. Those are realizations of graph intent, not
-portable graph semantics. See
-`crates/machine/contracts/src/types/graph_hints.rs:14-147`,
-`:258-454`, and `:456-535`.
+The common type is `ApxmGraphHints` and is genuinely portable:
+graph/execution/node identity, successors, compiler estimates, remaining path
+length, and stage information. It previously also owned `PinMode`, `PinPolicy`,
+`PriorityClass`, a default pin TTL, and graph status in units of pinned handles
+and blocks. Those are realizations of graph intent, not portable graph
+semantics, and they are gone from
+`crates/machine/contracts/src/types/graph_hints.rs`. Provider resource
+observations now travel in the adapter-keyed
+`GraphStatusSnapshot::adapter_observations` map.
 
-The vLLM adapter currently serializes the common object directly into
-`vllm_xargs.apxm` and separately derives a numerical request priority from it.
-That makes the common shape double as a vLLM wire shape instead of making vLLM
-an explicit lowering target. See
-`crates/runtime/backends/src/llm/backends/vllm/backend.rs:476-532`.
+The vLLM adapter previously serialized the common object directly into
+`vllm_xargs.apxm` and separately derived a numerical request priority from it,
+which made the common shape double as a vLLM wire shape. Both adapters now
+render only what their own plan authorized
+(`GraphHintProjector::render_graph_hint_fields` in
+`crates/runtime/backends/src/llm/backends/vllm/backend.rs` and
+`.../llama_cpp/mod.rs`), and `ApxmGraphHints::project_envelope` is the single
+place the common envelope becomes a provider-bound document.
 
 Graph lifecycle is currently broadcast to every registered backend on a
 best-effort basis. Default backend implementations return success for graph
@@ -617,6 +621,13 @@ shape and moving all wire rendering behind projectors.
 
 ## 12. Implementation plan
 
+Phases A, B, and F have landed. Phase C's projector exists but its provider
+wire has not been re-attested against an `apxm` vLLM branch. Phases D and E are
+not started: there are no llama.cpp conformance vectors, no cached-token
+measurement, and no fenced slot lease. Graph lifecycle
+(`register_graph`/`release_graph`) still has no caller anywhere in the
+repository, so the exact-binding lifecycle of section 7 is unexercised.
+
 ### Phase A — freeze semantics and vectors
 
 1. Turn this proposal into an ADR and canonical contract after review.
@@ -629,6 +640,13 @@ shape and moving all wire rendering behind projectors.
 Exit gate: two backend-independent vectors produce the same canonical hint
 digest, and unknown fields/invalid references fail closed.
 
+Landed as `contracts/schemas/apxm.inference-graph-hints.json` and its vectors,
+`ApxmGraphHints::{canonical_json, digest}`, the closed `ReasonCode` enum, and
+the numeric/reference limits published in both the schema and the type. The
+frontend-origination rule is enforced by
+`tools/tests/test_canonical_only_reachability.py`
+(`test_graph_hints_cannot_originate_in_authored_source`).
+
 ### Phase B — common projection seam
 
 1. Replace mixed graph-hint types in the contracts crate.
@@ -640,6 +658,12 @@ digest, and unknown fields/invalid references fail closed.
 
 Exit gate: a backend with zero capabilities returns a complete explicit
 projection report and receives an otherwise unchanged model request.
+
+Landed except step 5: `GraphHintProjector::project_graph_hints` is the only
+path from hints to a provider request, the capability digest is optional
+evidence on `InferenceDriverBinding` with a pre-send drift check, and plan,
+projection, and realization are recorded in response metadata by digest. The
+registry still broadcasts graph registration.
 
 ### Phase C — migrate vLLM without changing its provider contract
 
@@ -692,6 +716,12 @@ vectors pass before llama.cpp advertises affinity or lifecycle support.
 
 Exit gate: repository search finds `pin`, `slot`, `vllm_xargs`, and provider
 priority fields only under provider adapters, tests, or provider-specific docs.
+
+Landed. `vllm_xargs`, the provider priority key and its queue values, and the
+pinned-resource observation names live in
+`crates/runtime/backends/src/llm/backends/vllm/graph_meta.rs`; `cache_prompt`
+lives in `.../llama_cpp/mod.rs`. `test_common_contracts_name_no_provider_mechanism`
+holds the four common contract crates against a forbidden-name list.
 
 ## 13. Required conformance tests
 

@@ -1,0 +1,753 @@
+[
+  {
+    "name": "valid-scope-only-envelope",
+    "expected_valid": true,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "scope": {
+        "graph_ref": "graph.1",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "node.1",
+        "node_execution_ref": "node-execution.1"
+      }
+    }
+  },
+  {
+    "name": "valid-full-facts-and-intents",
+    "expected_valid": true,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "scope": {
+        "graph_ref": "graph.1",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "node.1",
+        "node_execution_ref": "node-execution.1"
+      },
+      "facts": {
+        "critical_path": true,
+        "successor_refs": [
+          "node.2",
+          "node.3"
+        ],
+        "remaining_path_len": 4,
+        "stage_index": 1,
+        "work_class": "medium",
+        "estimated_input_tokens": 2048,
+        "estimated_output_tokens": 512,
+        "expected_shared_prefix_tokens": 1024,
+        "prefix_warmup_eligible": true,
+        "pipeline_eligible": false,
+        "coexecution_group_ref": "coexecution-group.1"
+      },
+      "intents": {
+        "objective": "minimize_graph_completion_time",
+        "reusable_context": {
+          "preference": "prefer_when_beneficial",
+          "affinity_ref": "affinity.1",
+          "benefit_horizon_ms": 60000,
+          "expected_uses": 8
+        }
+      }
+    }
+  },
+  {
+    "name": "valid-unproven-facts-stay-absent",
+    "expected_valid": true,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "scope": {
+        "graph_ref": "graph.1",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "node.1",
+        "node_execution_ref": "node-execution.1"
+      },
+      "facts": {
+        "successor_refs": []
+      },
+      "intents": {}
+    }
+  },
+  {
+    "name": "valid-boundary-estimates-at-the-published-maxima",
+    "expected_valid": true,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "scope": {
+        "graph_ref": "graph.1",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "node.1",
+        "node_execution_ref": "node-execution.1"
+      },
+      "facts": {
+        "remaining_path_len": 65535,
+        "stage_index": 65535,
+        "estimated_input_tokens": 16777216,
+        "estimated_output_tokens": 16777216,
+        "expected_shared_prefix_tokens": 16777216,
+        "successor_refs": [
+          "node.0",
+          "node.1",
+          "node.2",
+          "node.3",
+          "node.4",
+          "node.5",
+          "node.6",
+          "node.7",
+          "node.8",
+          "node.9",
+          "node.10",
+          "node.11",
+          "node.12",
+          "node.13",
+          "node.14",
+          "node.15",
+          "node.16",
+          "node.17",
+          "node.18",
+          "node.19",
+          "node.20",
+          "node.21",
+          "node.22",
+          "node.23",
+          "node.24",
+          "node.25",
+          "node.26",
+          "node.27",
+          "node.28",
+          "node.29",
+          "node.30",
+          "node.31",
+          "node.32",
+          "node.33",
+          "node.34",
+          "node.35",
+          "node.36",
+          "node.37",
+          "node.38",
+          "node.39",
+          "node.40",
+          "node.41",
+          "node.42",
+          "node.43",
+          "node.44",
+          "node.45",
+          "node.46",
+          "node.47",
+          "node.48",
+          "node.49",
+          "node.50",
+          "node.51",
+          "node.52",
+          "node.53",
+          "node.54",
+          "node.55",
+          "node.56",
+          "node.57",
+          "node.58",
+          "node.59",
+          "node.60",
+          "node.61",
+          "node.62",
+          "node.63",
+          "node.64",
+          "node.65",
+          "node.66",
+          "node.67",
+          "node.68",
+          "node.69",
+          "node.70",
+          "node.71",
+          "node.72",
+          "node.73",
+          "node.74",
+          "node.75",
+          "node.76",
+          "node.77",
+          "node.78",
+          "node.79",
+          "node.80",
+          "node.81",
+          "node.82",
+          "node.83",
+          "node.84",
+          "node.85",
+          "node.86",
+          "node.87",
+          "node.88",
+          "node.89",
+          "node.90",
+          "node.91",
+          "node.92",
+          "node.93",
+          "node.94",
+          "node.95",
+          "node.96",
+          "node.97",
+          "node.98",
+          "node.99",
+          "node.100",
+          "node.101",
+          "node.102",
+          "node.103",
+          "node.104",
+          "node.105",
+          "node.106",
+          "node.107",
+          "node.108",
+          "node.109",
+          "node.110",
+          "node.111",
+          "node.112",
+          "node.113",
+          "node.114",
+          "node.115",
+          "node.116",
+          "node.117",
+          "node.118",
+          "node.119",
+          "node.120",
+          "node.121",
+          "node.122",
+          "node.123",
+          "node.124",
+          "node.125",
+          "node.126",
+          "node.127"
+        ]
+      },
+      "intents": {
+        "reusable_context": {
+          "preference": "prefer_when_beneficial",
+          "benefit_horizon_ms": 86400000,
+          "expected_uses": 1048576
+        }
+      }
+    }
+  },
+  {
+    "name": "reject-unknown-schema-identity",
+    "expected_valid": false,
+    "input": {
+      "schema": "apxm.graph-hints.v1",
+      "scope": {
+        "graph_ref": "graph.1",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "node.1",
+        "node_execution_ref": "node-execution.1"
+      }
+    }
+  },
+  {
+    "name": "reject-missing-scope",
+    "expected_valid": false,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "facts": {
+        "critical_path": true
+      }
+    }
+  },
+  {
+    "name": "reject-blank-scope-reference",
+    "expected_valid": false,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "scope": {
+        "graph_ref": "   ",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "node.1",
+        "node_execution_ref": "node-execution.1"
+      }
+    }
+  },
+  {
+    "name": "reject-empty-scope-reference",
+    "expected_valid": false,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "scope": {
+        "graph_ref": "graph.1",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "node.1",
+        "node_execution_ref": ""
+      }
+    }
+  },
+  {
+    "name": "reject-overlong-scope-reference",
+    "expected_valid": false,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "scope": {
+        "graph_ref": "graph.1",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "node_execution_ref": "node-execution.1"
+      }
+    }
+  },
+  {
+    "name": "reject-unknown-envelope-field",
+    "expected_valid": false,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "scope": {
+        "graph_ref": "graph.1",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "node.1",
+        "node_execution_ref": "node-execution.1"
+      },
+      "backend_options": {
+        "pin": true
+      }
+    }
+  },
+  {
+    "name": "reject-unknown-fact-field",
+    "expected_valid": false,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "scope": {
+        "graph_ref": "graph.1",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "node.1",
+        "node_execution_ref": "node-execution.1"
+      },
+      "facts": {
+        "pin_policy": "prefix"
+      }
+    }
+  },
+  {
+    "name": "reject-unknown-intent-field",
+    "expected_valid": false,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "scope": {
+        "graph_ref": "graph.1",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "node.1",
+        "node_execution_ref": "node-execution.1"
+      },
+      "intents": {
+        "priority": 0
+      }
+    }
+  },
+  {
+    "name": "reject-unknown-scope-field",
+    "expected_valid": false,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "scope": {
+        "graph_ref": "graph.1",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "node.1",
+        "node_execution_ref": "node-execution.1",
+        "node_name": "planner"
+      }
+    }
+  },
+  {
+    "name": "reject-estimated-input-tokens-above-maximum",
+    "expected_valid": false,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "scope": {
+        "graph_ref": "graph.1",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "node.1",
+        "node_execution_ref": "node-execution.1"
+      },
+      "facts": {
+        "estimated_input_tokens": 16777217
+      }
+    }
+  },
+  {
+    "name": "reject-estimated-output-tokens-above-maximum",
+    "expected_valid": false,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "scope": {
+        "graph_ref": "graph.1",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "node.1",
+        "node_execution_ref": "node-execution.1"
+      },
+      "facts": {
+        "estimated_output_tokens": 33554432
+      }
+    }
+  },
+  {
+    "name": "reject-expected-shared-prefix-tokens-above-maximum",
+    "expected_valid": false,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "scope": {
+        "graph_ref": "graph.1",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "node.1",
+        "node_execution_ref": "node-execution.1"
+      },
+      "facts": {
+        "expected_shared_prefix_tokens": 16777217
+      }
+    }
+  },
+  {
+    "name": "reject-remaining-path-len-above-maximum",
+    "expected_valid": false,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "scope": {
+        "graph_ref": "graph.1",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "node.1",
+        "node_execution_ref": "node-execution.1"
+      },
+      "facts": {
+        "remaining_path_len": 65536
+      }
+    }
+  },
+  {
+    "name": "reject-stage-index-above-maximum",
+    "expected_valid": false,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "scope": {
+        "graph_ref": "graph.1",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "node.1",
+        "node_execution_ref": "node-execution.1"
+      },
+      "facts": {
+        "stage_index": 65536
+      }
+    }
+  },
+  {
+    "name": "reject-successor-refs-above-the-published-cap",
+    "expected_valid": false,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "scope": {
+        "graph_ref": "graph.1",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "node.1",
+        "node_execution_ref": "node-execution.1"
+      },
+      "facts": {
+        "successor_refs": [
+          "node.0",
+          "node.1",
+          "node.2",
+          "node.3",
+          "node.4",
+          "node.5",
+          "node.6",
+          "node.7",
+          "node.8",
+          "node.9",
+          "node.10",
+          "node.11",
+          "node.12",
+          "node.13",
+          "node.14",
+          "node.15",
+          "node.16",
+          "node.17",
+          "node.18",
+          "node.19",
+          "node.20",
+          "node.21",
+          "node.22",
+          "node.23",
+          "node.24",
+          "node.25",
+          "node.26",
+          "node.27",
+          "node.28",
+          "node.29",
+          "node.30",
+          "node.31",
+          "node.32",
+          "node.33",
+          "node.34",
+          "node.35",
+          "node.36",
+          "node.37",
+          "node.38",
+          "node.39",
+          "node.40",
+          "node.41",
+          "node.42",
+          "node.43",
+          "node.44",
+          "node.45",
+          "node.46",
+          "node.47",
+          "node.48",
+          "node.49",
+          "node.50",
+          "node.51",
+          "node.52",
+          "node.53",
+          "node.54",
+          "node.55",
+          "node.56",
+          "node.57",
+          "node.58",
+          "node.59",
+          "node.60",
+          "node.61",
+          "node.62",
+          "node.63",
+          "node.64",
+          "node.65",
+          "node.66",
+          "node.67",
+          "node.68",
+          "node.69",
+          "node.70",
+          "node.71",
+          "node.72",
+          "node.73",
+          "node.74",
+          "node.75",
+          "node.76",
+          "node.77",
+          "node.78",
+          "node.79",
+          "node.80",
+          "node.81",
+          "node.82",
+          "node.83",
+          "node.84",
+          "node.85",
+          "node.86",
+          "node.87",
+          "node.88",
+          "node.89",
+          "node.90",
+          "node.91",
+          "node.92",
+          "node.93",
+          "node.94",
+          "node.95",
+          "node.96",
+          "node.97",
+          "node.98",
+          "node.99",
+          "node.100",
+          "node.101",
+          "node.102",
+          "node.103",
+          "node.104",
+          "node.105",
+          "node.106",
+          "node.107",
+          "node.108",
+          "node.109",
+          "node.110",
+          "node.111",
+          "node.112",
+          "node.113",
+          "node.114",
+          "node.115",
+          "node.116",
+          "node.117",
+          "node.118",
+          "node.119",
+          "node.120",
+          "node.121",
+          "node.122",
+          "node.123",
+          "node.124",
+          "node.125",
+          "node.126",
+          "node.127",
+          "node.128"
+        ]
+      }
+    }
+  },
+  {
+    "name": "reject-blank-successor-reference",
+    "expected_valid": false,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "scope": {
+        "graph_ref": "graph.1",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "node.1",
+        "node_execution_ref": "node-execution.1"
+      },
+      "facts": {
+        "successor_refs": [
+          "node.2",
+          " "
+        ]
+      }
+    }
+  },
+  {
+    "name": "reject-blank-coexecution-group-reference",
+    "expected_valid": false,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "scope": {
+        "graph_ref": "graph.1",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "node.1",
+        "node_execution_ref": "node-execution.1"
+      },
+      "facts": {
+        "coexecution_group_ref": ""
+      }
+    }
+  },
+  {
+    "name": "reject-unknown-work-class",
+    "expected_valid": false,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "scope": {
+        "graph_ref": "graph.1",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "node.1",
+        "node_execution_ref": "node-execution.1"
+      },
+      "facts": {
+        "work_class": "enormous"
+      }
+    }
+  },
+  {
+    "name": "reject-unknown-objective",
+    "expected_valid": false,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "scope": {
+        "graph_ref": "graph.1",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "node.1",
+        "node_execution_ref": "node-execution.1"
+      },
+      "intents": {
+        "objective": "minimize_cost"
+      }
+    }
+  },
+  {
+    "name": "reject-unknown-reuse-preference",
+    "expected_valid": false,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "scope": {
+        "graph_ref": "graph.1",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "node.1",
+        "node_execution_ref": "node-execution.1"
+      },
+      "intents": {
+        "reusable_context": {
+          "preference": "always"
+        }
+      }
+    }
+  },
+  {
+    "name": "reject-reusable-context-without-preference",
+    "expected_valid": false,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "scope": {
+        "graph_ref": "graph.1",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "node.1",
+        "node_execution_ref": "node-execution.1"
+      },
+      "intents": {
+        "reusable_context": {
+          "affinity_ref": "affinity.1"
+        }
+      }
+    }
+  },
+  {
+    "name": "reject-blank-affinity-reference",
+    "expected_valid": false,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "scope": {
+        "graph_ref": "graph.1",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "node.1",
+        "node_execution_ref": "node-execution.1"
+      },
+      "intents": {
+        "reusable_context": {
+          "preference": "prefer_when_beneficial",
+          "affinity_ref": "  "
+        }
+      }
+    }
+  },
+  {
+    "name": "reject-benefit-horizon-above-maximum",
+    "expected_valid": false,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "scope": {
+        "graph_ref": "graph.1",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "node.1",
+        "node_execution_ref": "node-execution.1"
+      },
+      "intents": {
+        "reusable_context": {
+          "preference": "prefer_when_beneficial",
+          "benefit_horizon_ms": 86400001
+        }
+      }
+    }
+  },
+  {
+    "name": "reject-expected-uses-above-maximum",
+    "expected_valid": false,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "scope": {
+        "graph_ref": "graph.1",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "node.1",
+        "node_execution_ref": "node-execution.1"
+      },
+      "intents": {
+        "reusable_context": {
+          "preference": "prefer_when_beneficial",
+          "expected_uses": 1048577
+        }
+      }
+    }
+  },
+  {
+    "name": "reject-negative-estimate",
+    "expected_valid": false,
+    "input": {
+      "schema": "apxm.inference-graph-hints",
+      "scope": {
+        "graph_ref": "graph.1",
+        "graph_execution_ref": "graph-execution.1",
+        "node_ref": "node.1",
+        "node_execution_ref": "node-execution.1"
+      },
+      "facts": {
+        "estimated_input_tokens": -1
+      }
+    }
+  }
+]

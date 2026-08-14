@@ -627,6 +627,10 @@ impl LLMBackend for MockLLMBackend {
     }
 }
 
+/// The generic adapter supports no graph hint. Declaring zero support
+/// explicitly is a conforming implementation; claiming support silently is not.
+impl apxm_core::types::GraphHintProjector for MockLLMBackend {}
+
 #[cfg(test)]
 mod tests {
     use super::super::request::Role;

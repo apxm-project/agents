@@ -155,12 +155,6 @@ pub mod env {
     }
 }
 
-/// JSON keys used inside OpenAI-compatible `extra_body` payloads carrying APXM hints.
-pub mod extra_body {
-    pub const CACHE_SALT_KEY: &str = "cache_salt";
-    pub const REUSE_GROUP_KEY: &str = "reuse_group";
-}
-
 pub mod inner_plan {
     /// Payload key for AIR text in structured inner-plan outputs.
     pub const AIR_PAYLOAD: &str = "air";
@@ -176,14 +170,11 @@ pub mod graph {
         pub const GENERATED_GRAPH_ID_PREFIX: &str = "dag-";
         /// Prefix for generated node display names when a node has no metadata name.
         pub const GENERATED_NODE_NAME_PREFIX: &str = "node_";
-        /// Priority value at or above which graph-aware backends should treat a
-        /// node as critical-path work.
-        pub const CRITICAL_PATH_PRIORITY_THRESHOLD: i64 = 70;
-    }
-
-    pub mod backend_kind {
-        pub const GRAPH_AWARE: &str = "graph_aware";
-        pub const GENERIC: &str = "generic";
+        /// Ordinal of the AIS-owned graph node attribute at or above which
+        /// analysis treats a node as critical-path work. This is a graph
+        /// coordinate, not a provider queue value: it decides one APXM fact
+        /// (`critical_path`) and never reaches a provider request.
+        pub const CRITICAL_PATH_ATTR_THRESHOLD: i64 = 70;
     }
 
     pub mod attrs {
@@ -431,7 +422,6 @@ pub mod llm {
         pub const OBJECT_GRAPH_STATUS: &str = "apxm.graph.status";
         pub const OBJECT_GRAPH_RELEASE: &str = "apxm.graph.release";
         pub const OBJECT: &str = "object";
-        pub const REQUEST_PRIORITY: &str = "priority";
         /// Common envelope object on every `apxm` server request.
         pub const HINTS_FIELD: &str = graph_hints::ENVELOPE;
         pub const SCHEMA_VERSION: &str = "schema_version";
@@ -442,9 +432,6 @@ pub mod llm {
         pub const PRIORITY_CLASS: &str = graph_hints::CRITICAL_PATH;
         pub const DOWNSTREAM_NODES: &str = graph_hints::SUCCESSOR_REFS;
         pub const REUSE_GROUP: &str = graph_hints::AFFINITY_REF;
-        pub const PIN_POLICY: &str = "pin_policy";
-        pub const PIN_POLICY_MODE: &str = "mode";
-        pub const PIN_POLICY_TTL_MS: &str = "ttl_ms";
         pub const COMPILER_HINTS: &str = "compiler_hints";
         pub const SHARED_PREFIX_EST_TOKENS: &str = graph_hints::EXPECTED_SHARED_PREFIX_TOKENS;
         pub const WARMUP_CANDIDATE: &str = graph_hints::PREFIX_WARMUP_ELIGIBLE;
@@ -491,72 +478,31 @@ pub mod llm {
             pub const WORK_MEDIUM: &str = "medium";
             pub const WORK_LONG: &str = "long";
 
-            pub const VLLM_REQUEST_XARGS: &str = "vllm_xargs";
-            pub const LLAMA_CACHE_PROMPT: &str = "cache_prompt";
+            /// Runtime-evidence keys for the two projection layers. Each holds
+            /// digests and closed vocabulary only, never a provider body.
+            pub const PLAN: &str = "graph_hint_plan";
+            pub const PROJECTION: &str = "graph_hint_projection";
+            pub const REALIZATION: &str = "graph_hint_realization";
 
-            pub const MECHANISM_VLLM_APXM_XARGS: &str = "vllm.apxm_xargs";
-            pub const MECHANISM_VLLM_REQUEST_PRIORITY: &str = "vllm.request_priority";
-            pub const MECHANISM_VLLM_PREFIX_PIN: &str = "vllm.prefix_pin";
-            pub const MECHANISM_LLAMA_APXM_ENVELOPE: &str = "llama.apxm_envelope";
-            pub const MECHANISM_LLAMA_CACHE_PROMPT: &str = "llama.cache_prompt";
+            /// The closed reason vocabulary a projector may cite when it
+            /// approximates or withholds a field it otherwise understands.
+            pub const REASON_NO_EQUIVALENT_MECHANISM: &str = "no_equivalent_mechanism";
+            pub const REASON_APPROXIMATED_BY_RELATED_MECHANISM: &str =
+                "approximated_by_related_mechanism";
+            pub const REASON_VALUE_OUTSIDE_MECHANISM_RANGE: &str = "value_outside_mechanism_range";
+            pub const REASON_PROFILE_WITHHOLDS_MECHANISM: &str = "profile_withholds_mechanism";
+            pub const REASON_MECHANISM_NOT_ADMITTED: &str = "mechanism_not_admitted";
         }
         pub const REGISTERED_NODES: &str = "registered_nodes";
         pub const CRITICAL_PATH_LENGTH: &str = "critical_path_length";
         pub const MAX_PARALLELISM: &str = "max_parallelism";
-        pub const DEFAULT_PIN_TTL_MS: &str = "default_pin_ttl_ms";
-        pub const RELEASED_HANDLES: &str = "released_handles";
-        pub const RELEASED_BLOCKS: &str = "released_blocks";
-        pub const REMAINING_HANDLES: &str = "remaining_handles";
-        pub const REMAINING_BLOCKS: &str = "remaining_blocks";
-
-        pub const PRIORITY_CRITICAL_PATH: &str = graph_hints::CRITICAL_PATH;
-        pub const PRIORITY_PARALLEL: &str = "parallel";
-
-        pub const PIN_MODE_PREFIX: &str = "prefix";
-        pub const PIN_MODE_NONE: &str = "none";
-
-        /// Wire names for the dispatch-IR hint fields a backend can
-        /// honor or drop. These are the single source of truth for
-        /// the runtime to collect `fields_sent` (apxm-runtime
-        /// `dispatch::v1::mod`) and by `BackendGraphCapabilities` to
-        /// classify each into `dispatch_fields_honored` /
-        /// `unsupported_dispatch_fields`. Adding a new dispatch hint
-        /// means adding a constant here AND a `supports_*` flag on
-        /// `BackendGraphCapabilities` — keep the two in lockstep.
-        pub mod dispatch_fields {
-            pub const GRAPH_REGISTRATION: &str = "graph_registration";
-            pub const REQUEST_HINTS: &str = "request_hints";
-            pub const PRIORITY: &str = "priority";
-            pub const PREFIX_COHORTS: &str = "prefix_cohorts";
-            pub const PIN_RELEASE: &str = "pin_release";
-            pub const STRUCTURED_OUTPUTS: &str = "structured_outputs";
-            pub const BACKEND_QUEUE_STATE: &str = "backend_queue_state";
-            pub const BACKEND_CACHE_STATE: &str = "backend_cache_state";
-            pub const CANCEL_GROUPS: &str = "cancel_groups";
-            pub const DISPATCH_IR_V1_INTERNAL: &str = "dispatch_ir_v1_internal";
-            pub const ADMIN_RESET_PREFIX_CACHE: &str = "admin_reset_prefix_cache";
-        }
-
-        /// Wire names for the metrics + telemetry surface APXM declares
-        /// in `BackendCapabilityRequirements.optional` /
-        /// `TelemetryContract.requested_metrics`. Adding a metric the
-        /// runtime asks the backend to expose means adding a constant
-        /// here so producer + consumer share a single source of truth.
-        pub mod telemetry_metrics {
-            pub const SCHEDULER_POLICY: &str = "scheduler_policy";
-            pub const GRAPH_STATUS: &str = "graph_status";
-            pub const PINNED_BLOCKS_PEAK: &str =
-                crate::types::metrics::GraphStatusKey::PinnedBlocksPeak.as_str();
-        }
 
         /// HTTP response-header contract for per-request runtime
-        /// evidence from the vLLM fork. The fork-side emitter is
-        /// covered by the fork-side header emitter; the APXM-side ingestion path
-        /// (apxm-backends `vllm::backend` response handler) reads this
+        /// evidence from an `apxm` server branch. The APXM-side ingestion
+        /// path (apxm-backends `vllm::backend` response handler) reads this
         /// header and populates `fields_honored` in the per-node
-        /// dispatch record. Distinct from
-        /// `BackendGraphCapabilities::dispatch_fields_capability_supported`
-        /// which is a static capability table, not runtime evidence.
+        /// dispatch record. This is runtime evidence, distinct from the
+        /// static `GraphHintCapabilities` table an adapter declares.
         pub const APXM_FIELDS_HONORED_HEADER: &str = "x-apxm-fields-honored";
 
         /// Per-request honor record key surfaced in
@@ -750,10 +696,7 @@ pub mod session {
             pub const BACKEND_NAME: &str = GraphStatusKey::BackendName.as_str();
             pub const GRAPH_ID: &str = GraphStatusKey::GraphId.as_str();
             pub const REGISTERED: &str = GraphStatusKey::Registered.as_str();
-            pub const PINNED_BLOCKS: &str = GraphStatusKey::PinnedBlocks.as_str();
-            pub const PINNED_HANDLES: &str = GraphStatusKey::PinnedHandles.as_str();
-            pub const PINNED_BLOCKS_PEAK: &str = GraphStatusKey::PinnedBlocksPeak.as_str();
-            pub const PINNED_HANDLES_PEAK: &str = GraphStatusKey::PinnedHandlesPeak.as_str();
+            pub const ADAPTER_OBSERVATIONS: &str = GraphStatusKey::AdapterObservations.as_str();
             pub const CRITICAL_PATH_LENGTH: &str = GraphStatusKey::CriticalPathLength.as_str();
             pub const NODE_COUNT: &str = GraphStatusKey::NodeCount.as_str();
             /// Object-tag value emitted by the fork.

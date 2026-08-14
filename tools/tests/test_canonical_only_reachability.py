@@ -54,6 +54,55 @@ FORBIDDEN_NAMED_SEMANTICS = (
     "TurnSpec",
     "conversational_loop",
 )
+COMMON_CONTRACT_ROOTS = (
+    Path("crates/machine/ais/src"),
+    Path("crates/machine/contracts/src"),
+    Path("crates/machine/program/src"),
+    Path("crates/runtime/inference/src"),
+)
+# ADR-0021: the common graph-hint contract owns facts and intents. A backend's
+# scheduler, cache representation, queue, worker, slot, block, handle, or
+# extension envelope is owned by the adapter that implements it, so none of
+# these names may reappear in a common contract module.
+FORBIDDEN_PROVIDER_MECHANISM_SEMANTICS = (
+    "vllm_xargs",
+    "id_slot",
+    "pin_policy",
+    "pinned_handles",
+    "pinned_blocks",
+    "PinMode",
+    "PinPolicy",
+    "PriorityClass",
+    "supports_priority",
+    "supports_pin_release",
+    "REQUEST_PRIORITY",
+    "MECHANISM_VLLM",
+    "MECHANISM_LLAMA",
+    "cache_salt",
+)
+# §12A.4: graph hints are compiler/runtime metadata about an admitted graph,
+# never authored program structure. An authoring frontend that could name them
+# would let a program request backend behavior, which is precisely what makes
+# hints advisory rather than authority-bearing.
+AUTHORING_SURFACE_ROOTS = (
+    Path("crates/compiler/frontend/python/apxm_program"),
+    Path("crates/compiler/frontend/typescript/src"),
+    Path("crates/compiler/frontend/native"),
+    Path("examples"),
+)
+FORBIDDEN_AUTHORED_GRAPH_HINT_SEMANTICS = (
+    "apxm.inference-graph-hints",
+    "ApxmGraphHints",
+    "apxm_hints",
+    "graph_hints",
+    "graphHints",
+    "successor_refs",
+    "affinity_ref",
+    "coexecution_group_ref",
+    "prefix_warmup_eligible",
+    "benefit_horizon_ms",
+    "expected_shared_prefix_tokens",
+)
 EXAMPLE_RUNTIME_PROOF_FIXTURES = (
     Path("crates/machine/program/tests/fixtures/example-artifacts/conversational-python.json"),
     Path("crates/machine/program/tests/fixtures/example-artifacts/conversational-typescript.json"),
@@ -64,6 +113,20 @@ RETIRED_OPERATION_MARKERS = (
     "get_all_legacy_operations",
     "get_legacy_operation_spec",
 )
+
+
+def buildable_source(text: str) -> str:
+    """The part of a Rust source file that ships.
+
+    Unit tests may name a provider mechanism to prove it is rejected, and a doc
+    comment may cite one as an example, so both are dropped before the scan.
+    """
+    shipped, _, _ = text.partition("#[cfg(test)]")
+    return "\n".join(
+        line
+        for line in shipped.splitlines()
+        if not line.lstrip().startswith(("//", "#"))
+    )
 
 
 class CanonicalOnlyReachabilityTests(unittest.TestCase):
@@ -133,6 +196,47 @@ class CanonicalOnlyReachabilityTests(unittest.TestCase):
                 markers = [marker for marker in FORBIDDEN_NAMED_SEMANTICS if marker in text]
                 if markers:
                     offenders.append(f"{path.relative_to(REPOSITORY_ROOT)}: {', '.join(markers)}")
+        self.assertEqual(offenders, [], "\n".join(offenders))
+
+    def test_common_contracts_name_no_provider_mechanism(self) -> None:
+        """ADR-0021 Phase F: mechanisms live with the adapter that owns them."""
+        offenders: list[str] = []
+        for root in COMMON_CONTRACT_ROOTS:
+            for path in (REPOSITORY_ROOT / root).rglob("*.rs"):
+                text = buildable_source(path.read_text(errors="ignore"))
+                markers = [
+                    marker
+                    for marker in FORBIDDEN_PROVIDER_MECHANISM_SEMANTICS
+                    if marker in text
+                ]
+                if markers:
+                    offenders.append(
+                        f"{path.relative_to(REPOSITORY_ROOT)}: {', '.join(markers)}"
+                    )
+        self.assertEqual(offenders, [], "\n".join(offenders))
+
+    def test_graph_hints_cannot_originate_in_authored_source(self) -> None:
+        """Graph hints are compiler/runtime metadata, never authored structure."""
+        offenders: list[str] = []
+        for root in AUTHORING_SURFACE_ROOTS:
+            root_path = REPOSITORY_ROOT / root
+            if not root_path.exists():
+                continue
+            for path in root_path.rglob("*"):
+                if not path.is_file() or path.suffix not in {".py", ".ts", ".rs", ".json"}:
+                    continue
+                if "node_modules" in path.parts or "dist" in path.parts:
+                    continue
+                text = path.read_text(errors="ignore")
+                markers = [
+                    marker
+                    for marker in FORBIDDEN_AUTHORED_GRAPH_HINT_SEMANTICS
+                    if marker in text
+                ]
+                if markers:
+                    offenders.append(
+                        f"{path.relative_to(REPOSITORY_ROOT)}: {', '.join(markers)}"
+                    )
         self.assertEqual(offenders, [], "\n".join(offenders))
 
     def test_examples_have_immutable_generic_runtime_proof_fixtures(self) -> None:

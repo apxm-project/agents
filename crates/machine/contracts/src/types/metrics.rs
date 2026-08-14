@@ -37,9 +37,9 @@ impl MetricsLevel {
         }
     }
 
-    /// Pin-poll cadence for the executor's `start_pin_polling` task.
-    /// `None` disables polling.
-    pub const fn pin_poll_interval(self) -> Option<Duration> {
+    /// Adapter-observation poll cadence for the executor's
+    /// `start_adapter_observation_polling` task. `None` disables polling.
+    pub const fn adapter_observation_poll_interval(self) -> Option<Duration> {
         match self {
             Self::Basic => None,
             Self::Detailed => Some(Duration::from_millis(50)),
@@ -79,10 +79,9 @@ pub enum GraphStatusKey {
     BackendName,
     GraphId,
     Registered,
-    PinnedHandles,
-    PinnedBlocks,
-    PinnedHandlesPeak,
-    PinnedBlocksPeak,
+    /// Adapter-owned observations, keyed by adapter-owned names. Provider
+    /// resource units live inside this map, never as common wire keys.
+    AdapterObservations,
     NodeCount,
     CriticalPathLength,
 }
@@ -95,10 +94,7 @@ impl GraphStatusKey {
             Self::BackendName => "backend_name",
             Self::GraphId => "graph_id",
             Self::Registered => "registered",
-            Self::PinnedHandles => "pinned_handles",
-            Self::PinnedBlocks => "pinned_blocks",
-            Self::PinnedHandlesPeak => "pinned_handles_peak",
-            Self::PinnedBlocksPeak => "pinned_blocks_peak",
+            Self::AdapterObservations => "adapter_observations",
             Self::NodeCount => "node_count",
             Self::CriticalPathLength => "critical_path_length",
         }

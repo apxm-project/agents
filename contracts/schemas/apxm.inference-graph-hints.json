@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.inference-graph-hints",
+  "title": "ApxmGraphHints",
+  "description": "One closed APXM-owned envelope of graph facts and advisory optimization intents for a single node execution. Hints never select a model, change sampling, tools, schemas, budgets, or authority. The envelope describes no backend scheduler, cache representation, queue, worker, slot, block, handle, endpoint, or extension map: every provider mechanism is owned by the adapter that projects this contract.",
+  "type": "object",
+  "required": [
+    "schema",
+    "scope"
+  ],
+  "properties": {
+    "schema": {
+      "const": "apxm.inference-graph-hints"
+    },
+    "scope": {
+      "$ref": "#/$defs/GraphHintScope"
+    },
+    "facts": {
+      "$ref": "#/$defs/NodeGraphFacts"
+    },
+    "intents": {
+      "$ref": "#/$defs/GraphExecutionIntents"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "OpaqueRef": {
+      "description": "An opaque, runtime-supplied correlation reference. It carries no authority, no content, and no human-readable name.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "\\S"
+    },
+    "GraphHintScope": {
+      "description": "Where this node execution sits. All four references are opaque and required.",
+      "type": "object",
+      "required": [
+        "graph_ref",
+        "graph_execution_ref",
+        "node_ref",
+        "node_execution_ref"
+      ],
+      "properties": {
+        "graph_ref": { "$ref": "#/$defs/OpaqueRef" },
+        "graph_execution_ref": { "$ref": "#/$defs/OpaqueRef" },
+        "node_ref": { "$ref": "#/$defs/OpaqueRef" },
+        "node_execution_ref": { "$ref": "#/$defs/OpaqueRef" }
+      },
+      "additionalProperties": false
+    },
+    "NodeGraphFacts": {
+      "description": "Facts the compiler or runtime proved about this node. An unproven fact is absent; it is never a guessed zero, false, or group.",
+      "type": "object",
+      "properties": {
+        "critical_path": { "type": "boolean" },
+        "successor_refs": {
+          "type": "array",
+          "maxItems": 128,
+          "items": { "$ref": "#/$defs/OpaqueRef" }
+        },
+        "remaining_path_len": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "stage_index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "work_class": {
+          "type": "string",
+          "enum": [
+            "short",
+            "medium",
+            "long"
+          ]
+        },
+        "estimated_input_tokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16777216
+        },
+        "estimated_output_tokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16777216
+        },
+        "expected_shared_prefix_tokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16777216
+        },
+        "prefix_warmup_eligible": { "type": "boolean" },
+        "pipeline_eligible": { "type": "boolean" },
+        "coexecution_group_ref": { "$ref": "#/$defs/OpaqueRef" }
+      },
+      "additionalProperties": false
+    },
+    "GraphExecutionIntents": {
+      "description": "Advisory preferences whose omission may cost performance and can never cost correctness, authority, target identity, or output typing.",
+      "type": "object",
+      "properties": {
+        "objective": {
+          "type": "string",
+          "enum": [
+            "minimize_graph_completion_time",
+            "balanced",
+            "maximize_throughput"
+          ]
+        },
+        "reusable_context": { "$ref": "#/$defs/ReusableContextIntent" }
+      },
+      "additionalProperties": false
+    },
+    "ReusableContextIntent": {
+      "description": "An expectation that reuse is beneficial. Omission means no preference, not a cache-disable policy.",
+      "type": "object",
+      "required": [
+        "preference"
+      ],
+      "properties": {
+        "preference": {
+          "type": "string",
+          "enum": [
+            "prefer_when_beneficial"
+          ]
+        },
+        "affinity_ref": { "$ref": "#/$defs/OpaqueRef" },
+        "benefit_horizon_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 86400000
+        },
+        "expected_uses": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1048576
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
