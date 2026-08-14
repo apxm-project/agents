@@ -99,18 +99,6 @@ pub enum RuntimeError {
         backend: Option<String>,
     },
 
-    /// Memory system error.
-    #[error(
-        "Memory error{space}: {message}",
-        space = Self::memory_space_suffix(.space.as_ref())
-    )]
-    Memory {
-        /// Error message describing the memory failure.
-        message: String,
-        /// Optional memory space identifier.
-        space: Option<String>,
-    },
-
     /// Security error (wraps SecurityError).
     #[error("Security error: {0}")]
     Security(#[from] SecurityError),
@@ -152,13 +140,6 @@ impl RuntimeError {
         }
     }
 
-    fn memory_space_suffix(space: Option<&String>) -> String {
-        match space {
-            Some(s) => format!(" (space: {})", s),
-            None => String::new(),
-        }
-    }
-
     /// The serialized `kind` discriminant this error records itself under.
     ///
     /// This is the single place a variant's wire name is written, and the
@@ -176,7 +157,6 @@ impl RuntimeError {
             RuntimeError::OperationParked { .. } => "operation_parked",
             RuntimeError::Capability { .. } => "capability",
             RuntimeError::LLM { .. } => "llm",
-            RuntimeError::Memory { .. } => "memory",
             RuntimeError::Security(_) => "security",
             RuntimeError::Timeout { .. } => "timeout",
             RuntimeError::Serialization(_) => "serialization",
@@ -233,9 +213,6 @@ impl RuntimeError {
             RuntimeError::LLM { message, backend } => {
                 (message.clone(), serde_json::json!({ "backend": backend }))
             }
-            RuntimeError::Memory { message, space } => {
-                (message.clone(), serde_json::json!({ "space": space }))
-            }
             RuntimeError::Security(sec) => (format!("{}", sec), serde_json::Value::Null),
             RuntimeError::Timeout { op_id, timeout } => (
                 format!("Operation {:?} exceeded timeout {:?}", op_id, timeout),
@@ -279,14 +256,6 @@ impl RuntimeError {
                     .get("details")
                     .and_then(|d| d.get("backend"))
                     .and_then(|b| b.as_str())
-                    .map(|s| s.to_string()),
-            },
-            "memory" => RuntimeError::Memory {
-                message,
-                space: value
-                    .get("details")
-                    .and_then(|d| d.get("space"))
-                    .and_then(|s| s.as_str())
                     .map(|s| s.to_string()),
             },
             "serialization" => RuntimeError::Serialization(message),
@@ -344,10 +313,6 @@ mod tests {
                 message: "m".to_string(),
                 backend: None,
             },
-            RuntimeError::Memory {
-                message: "m".to_string(),
-                space: None,
-            },
             RuntimeError::Security(SecurityError::SandboxError {
                 message: "m".to_string(),
             }),
@@ -380,7 +345,7 @@ mod tests {
         let variants = every_runtime_error_variant();
         assert_eq!(
             variants.len(),
-            17,
+            16,
             "the guard must scan every RuntimeError variant, not a hand-picked subset"
         );
 

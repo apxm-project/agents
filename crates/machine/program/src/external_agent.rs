@@ -1,4 +1,4 @@
-//! `apxm.external-agent-session.v1` and `apxm.external-agent-evidence.v1` —
+//! `apxm.external-agent-session` and `apxm.external-agent-evidence` —
 //! closed consumer types and verification.
 //!
 //! An External Agent connection is reached over the agent client protocol and
@@ -17,7 +17,7 @@ use crate::grammar::is_identifier;
 /// The single accepted `schema_version` for an External Agent session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ExternalAgentSessionVersion {
-    #[serde(rename = "apxm.external-agent-session.v1")]
+    #[serde(rename = "apxm.external-agent-session")]
     V1,
 }
 
@@ -83,7 +83,7 @@ impl ExternalAgentSession {
 /// The single accepted `schema_version` for External Agent evidence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ExternalAgentEvidenceVersion {
-    #[serde(rename = "apxm.external-agent-evidence.v1")]
+    #[serde(rename = "apxm.external-agent-evidence")]
     V1,
 }
 

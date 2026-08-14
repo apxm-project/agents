@@ -1,9 +1,0 @@
-[
-  {
-    "name": "retired-air-v1-is-rejected-exactly",
-    "input": {
-      "schema_version": "apxm.air.v1"
-    },
-    "expected_valid": false
-  }
-]

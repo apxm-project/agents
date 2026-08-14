@@ -1,10 +1,10 @@
-//! Typed permission vocabulary (`apxm.permission-policy.v1` building blocks).
+//! Typed permission vocabulary (`apxm.permission-policy` building blocks).
 
 use serde::{Deserialize, Serialize};
 
 use super::common::CapabilitySchemaError;
 
-pub const PERMISSION_POLICY_SCHEMA_V1: &str = "apxm.permission-policy.v1";
+pub const PERMISSION_POLICY_SCHEMA_V1: &str = "apxm.permission-policy";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

@@ -1,4 +1,4 @@
-//! `apxm.source-map.v1` — closed consumer types and verification.
+//! `apxm.source-map` — closed consumer types and verification.
 //!
 //! A source map is a non-executable mapping from operations and regions back to
 //! authored spans. It carries no runtime placement, endpoint, or credential:
@@ -12,7 +12,7 @@ use crate::grammar::is_identifier;
 /// The single accepted `schema_version` for a source map.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SourceMapVersion {
-    #[serde(rename = "apxm.source-map.v1")]
+    #[serde(rename = "apxm.source-map")]
     V1,
 }
 

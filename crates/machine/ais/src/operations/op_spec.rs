@@ -1,12 +1,12 @@
-//! `op-spec.v1` catalog generation for the five public semantic operations.
+//! `op-spec` catalog generation for the five public semantic operations.
 
 use super::definitions::{AIS_OPERATIONS, SemanticOpKind, WIRE_INDEXED_OPERATIONS};
 use serde::Serialize;
 
-pub const OP_SPEC_SCHEMA_VERSION: &str = "apxm.op-spec.v1";
-pub const OP_SPEC_VECTORS_SCHEMA_VERSION: &str = "apxm.op-spec-vectors.v1";
-pub const OP_SPEC_CATALOG_FILE: &str = "op-spec.v1.json";
-pub const OP_SPEC_VECTORS_FILE: &str = "op-spec.vectors.v1.json";
+pub const OP_SPEC_SCHEMA_VERSION: &str = "apxm.op-spec";
+pub const OP_SPEC_VECTORS_SCHEMA_VERSION: &str = "apxm.op-spec-vectors";
+pub const OP_SPEC_CATALOG_FILE: &str = "op-spec.json";
+pub const OP_SPEC_VECTORS_FILE: &str = "op-spec.vectors.json";
 
 fn wire_index_for(op: SemanticOpKind) -> Option<u32> {
     WIRE_INDEXED_OPERATIONS
@@ -170,7 +170,7 @@ mod drift_gate {
         let fresh = generate_op_spec_catalog();
         assert_eq!(
             committed, fresh,
-            "op-spec.v1.json is stale relative to AIS_OPERATIONS in definitions.rs"
+            "op-spec.json is stale relative to AIS_OPERATIONS in definitions.rs"
         );
     }
 
@@ -186,7 +186,7 @@ mod drift_gate {
         let fresh = generate_op_spec_vectors();
         assert_eq!(
             committed, fresh,
-            "op-spec.vectors.v1.json is stale relative to AIS_OPERATIONS in definitions.rs"
+            "op-spec.vectors.json is stale relative to AIS_OPERATIONS in definitions.rs"
         );
     }
 

@@ -119,7 +119,6 @@ async fn run_cli(cli: Cli) -> Result<()> {
         }
         Commands::Doctor => doctor_command(cli.config, cli.json),
         Commands::Backend { action } => backend_command(action, cli.json).await,
-        Commands::Tool { action } => tool_command(action, cli.json),
         Commands::Team { action } => team_command(action, cli.json),
         Commands::Agent { action } => agent_command(action, cli.json),
         Commands::Org { action } => org_command(action, cli.json),
@@ -157,7 +156,6 @@ async fn run_cli_no_driver(cli: Cli) -> Result<()> {
                 .await
         }
         Commands::Doctor => doctor_command(cli.config, cli.json),
-        Commands::Tool { action } => tool_command(action, cli.json),
         Commands::Team { action } => team_command(action, cli.json),
         Commands::Agent { action } => agent_command(action, cli.json),
         Commands::Org { action } => org_command(action, cli.json),

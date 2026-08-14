@@ -12,7 +12,7 @@ use crate::target::InferenceTargetCommitment;
 use apxm_program::grammar::is_digest;
 
 /// Schema identity for the frozen usage-lineage contract.
-pub const INFERENCE_USAGE_LINEAGE_SCHEMA: &str = "apxm.inference-usage-lineage.v1";
+pub const INFERENCE_USAGE_LINEAGE_SCHEMA: &str = "apxm.inference-usage-lineage";
 
 /// One sealed usage lineage record.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

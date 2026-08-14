@@ -8,7 +8,7 @@ import { build } from "esbuild";
 
 import { isFunctionTool, makeHandlerId } from "./index.mjs";
 
-const MANIFEST_VERSION = "apxm.handler-manifest.v1";
+const MANIFEST_VERSION = "apxm.handler-manifest";
 const SOURCE_DIRECTORY = "handlers";
 const HANDLER_ID_PREFIX = "sha256:";
 const PACKAGE_ROOT = path.dirname(fileURLToPath(import.meta.url));

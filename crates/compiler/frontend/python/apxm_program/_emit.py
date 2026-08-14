@@ -1,7 +1,7 @@
 """Deterministic traversal from the bound tree to the FrontendGraph contract.
 
 One visitor folds an immutable :class:`BoundProgram` into the language-neutral
-``apxm.frontend-graph.v2`` value. Every reachable bound node produces exactly one
+``apxm.frontend-graph`` value. Every reachable bound node produces exactly one
 graph record and every emitted value carries one typed origin. The visitor reads
 the frozen tree only; it never executes authored code.
 """

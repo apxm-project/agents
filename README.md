@@ -12,7 +12,7 @@ bind to these contracts from outside.
 
 ```text
 Python / TypeScript source
-  -> FrontendGraph v2
+  -> FrontendGraph
   -> Rust verification and AIR lowering
   -> registered AIS MLIR
   -> immutable artifact

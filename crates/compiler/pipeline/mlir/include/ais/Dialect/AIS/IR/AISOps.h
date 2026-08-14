@@ -1,14 +1,8 @@
 /**
  * @file  AISOps.h
- * @brief Resource declarations and operation class prototypes for the AIS dialect.
+ * @brief Operation class prototypes for the AIS dialect.
  *
- * The four resource types (`BeliefResource`, `GoalResource`, ...) allow
- * operations to declare fine-grained memory effects without falling back to
- * the generic `MemoryEffects::Effect` instance.  They are declared here
- * instead of inside the TableGen file so that C++ code (passes, folders,
- * etc.) can reference them directly.
- *
- * The header ends by pulling in the generated operation classes through
+ * The header pulls in the generated operation classes through
  * `GET_OP_CLASSES`; the matching `#undef` keeps the macro from leaking
  * into later includes.
  */
@@ -26,38 +20,6 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Support/TypeID.h"
 #include "llvm/ADT/StringRef.h"
-
-namespace mlir::ais {
-
-struct BeliefResource : public SideEffects::Resource::Base<BeliefResource> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(BeliefResource)
-  StringRef getName() final {
-    return "Beliefs";
-  }
-};
-
-struct GoalResource : public SideEffects::Resource::Base<GoalResource> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(GoalResource)
-  StringRef getName() final {
-    return "Goals";
-  }
-};
-
-struct CapabilityResource : public SideEffects::Resource::Base<CapabilityResource> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(CapabilityResource)
-  StringRef getName() final {
-    return "Capabilities";
-  }
-};
-
-struct EpisodicResource : public SideEffects::Resource::Base<EpisodicResource> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(EpisodicResource)
-  StringRef getName() final {
-    return "Episodic";
-  }
-};
-
-}  // namespace mlir::ais
 
 #define GET_OP_CLASSES
 #include "ais/Dialect/AIS/IR/AISOps.h.inc"

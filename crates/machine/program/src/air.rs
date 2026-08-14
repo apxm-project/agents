@@ -1,4 +1,4 @@
-//! `apxm.air.v2` — closed consumer types and the AIR verifier.
+//! `apxm.air` — closed consumer types and the AIR verifier.
 //!
 //! AIR exposes exactly five public semantic operations. Branch, loop, task,
 //! try, yield, and return are compiler-owned structural IR; a NOP is transient
@@ -23,7 +23,7 @@ pub use apxm_ais::{SemanticOpKind, StructuralOpKind};
 /// The single accepted `schema_version` for AIR.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AirVersion {
-    #[serde(rename = "apxm.air.v2")]
+    #[serde(rename = "apxm.air")]
     V2,
 }
 

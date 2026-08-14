@@ -11,8 +11,8 @@ ordinary control flow. Python and TypeScript are equivalent source projections.
 ## Compilation
 
 The frontend captures source without executing effects and emits one
-`apxm.frontend-graph.v2` document. Rust verifies and lowers it to
-`apxm.air.v2`, then emits a digest-bound executable artifact and source map.
+`apxm.frontend-graph` document. Rust verifies and lowers it to
+`apxm.air`, then emits a digest-bound executable artifact and source map.
 
 The public semantic operation family is closed:
 

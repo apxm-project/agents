@@ -1,4 +1,4 @@
-//! The runtime's atomic commit projects a valid `apxm.execution-commit.v1`
+//! The runtime's atomic commit projects a valid `apxm.execution-commit`
 //! object — the exact five-member write set, no split field — accepted by the
 //! owned contract verifier.
 

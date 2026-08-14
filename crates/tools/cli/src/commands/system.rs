@@ -14,7 +14,7 @@ use super::implementations::{
 };
 
 const DOCTOR_FRONTEND_GRAPH_PROBE: &str = r#"{
-  "schema_version": "apxm.frontend-graph.v2",
+  "schema_version": "apxm.frontend-graph",
   "source_language": "python",
   "program_definitions": [
     {
@@ -53,7 +53,7 @@ const DOCTOR_FRONTEND_GRAPH_PROBE: &str = r#"{
   "capability_requirements": [],
   "model_requirements": [],
   "source_map": {
-    "schema_version": "apxm.source-map.v1",
+    "schema_version": "apxm.source-map",
     "source_language": "python",
     "node_spans": [],
     "region_annotations": []

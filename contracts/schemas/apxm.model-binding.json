@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.model-binding",
+  "title": "ResolvedModelBinding",
+  "description": "The immutable admission-verifier-materialized proof joining one model.call target to exactly one predeclared Model Deployment and Exact Port Binding reference for one model effect. It references the exact port binding by digest and carries no adapter or provider selection of its own; it is never a route policy, runtime selection, or fallback result.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "model_target_ref",
+    "model_deployment_ref",
+    "exact_port_binding_ref",
+    "exact_port_binding_digest"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "apxm.model-binding"
+    },
+    "model_target_ref": {
+      "$ref": "apxm.contract-common.v1#/$defs/TypedRef"
+    },
+    "model_deployment_ref": {
+      "$ref": "apxm.contract-common.v1#/$defs/TypedRef"
+    },
+    "exact_port_binding_ref": {
+      "$ref": "apxm.contract-common.v1#/$defs/TypedRef"
+    },
+    "exact_port_binding_digest": {
+      "$ref": "apxm.contract-common.v1#/$defs/Digest"
+    }
+  },
+  "additionalProperties": false
+}

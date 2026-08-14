@@ -45,14 +45,14 @@ fn identity() -> ProgramIdentity {
 
 fn contract() -> SchemaDigestRef {
     SchemaDigestRef {
-        schema_id: "apxm.execution-commit.v1".into(),
+        schema_id: "apxm.execution-commit".into(),
         digest: digest('e'),
     }
 }
 
 fn acp_contract() -> SchemaDigestRef {
     SchemaDigestRef {
-        schema_id: "apxm.external-agent-session.v1".into(),
+        schema_id: "apxm.external-agent-session".into(),
         digest: digest('f'),
     }
 }

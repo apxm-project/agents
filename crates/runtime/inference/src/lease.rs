@@ -11,7 +11,7 @@ use crate::identity::ModelTargetRef;
 use apxm_program::grammar::is_digest;
 
 /// Schema identity for the public lease identity contract.
-pub const INFERENCE_CREDENTIAL_LEASE_SCHEMA: &str = "apxm.inference-credential-lease.v1";
+pub const INFERENCE_CREDENTIAL_LEASE_SCHEMA: &str = "apxm.inference-credential-lease";
 
 /// Closed lease purpose vocabulary for inference.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -10,7 +10,7 @@ from apxm_program._generated.runtime_evidence import (
     decode_fact,
 )
 
-SummarizerModel = Model[object, object]("summarizer.model.v1")
+SummarizerModel = Model[object, object]("summarizer.model")
 
 
 @Agent(input="SummaryRequest", output="Summary")
@@ -23,8 +23,8 @@ class Conversation:
     messages: tuple = ()
 
 
-SearchWeb = Tool[object, object]("search.web.capability.v1")
-SupportModel = Model[object, object]("support.model.v1")
+SearchWeb = Tool[object, object]("search.web.capability")
+SupportModel = Model[object, object]("support.model")
 
 
 @Context
@@ -32,7 +32,7 @@ class InitialContext:
     messages: tuple = ()
 
 
-InitialModel = Model[object, object]("initial.model.v1")
+InitialModel = Model[object, object]("initial.model")
 
 
 @Agent(input="InitialInput", output="InitialOutput", context=InitialContext)
@@ -57,8 +57,8 @@ class ReviewContext:
     completed: bool = False
 
 
-ReviewModel = Model[object, object]("review.model.v1")
-Approval = Event[object]("approval.event.v1")
+ReviewModel = Model[object, object]("review.model")
+Approval = Event[object]("approval.event")
 
 
 @Agent(input="ReviewRequest", output="Review", context=ReviewContext)
@@ -85,11 +85,11 @@ async def Coordinator(agent, request):
 
 def test_minimal_one_shot_agent_binds_model_and_verifies() -> None:
     graph = Summarizer.frontend_graph()
-    assert graph["schema_version"] == "apxm.frontend-graph.v2"
+    assert graph["schema_version"] == "apxm.frontend-graph"
     assert graph["program_definitions"][0]["program_id"] == "Summarizer"
     assert [d["decl_kind"] for d in graph["declarations"]] == ["model_binding"]
     assert [c["intent_kind"] for c in graph["call_intents"]] == ["model_invocation"]
-    assert graph["model_requirements"] == [{"model_target_ref": "summarizer.model.v1"}]
+    assert graph["model_requirements"] == [{"model_target_ref": "summarizer.model"}]
     assert all(
         not span["source_file"].startswith("/")
         and "/home/" not in span["source_file"]
@@ -112,7 +112,7 @@ def test_minimal_agent_lowers_to_registered_model_call() -> None:
         operand["value_id"]
         for operand in air["semantic_operations"][0]["operands"]
         if operand["slot"] == "model_ref"
-    ) == "summarizer.model.v1"
+    ) == "summarizer.model"
 
 
 def test_initial_context_assignment_is_bound_to_the_region_entry() -> None:
@@ -151,8 +151,8 @@ def test_static_bindings_reject_display_names_callables_and_bare_event_factories
 
     bare_typed_factory = Event[object]
     assert not hasattr(bare_typed_factory, "wait")
-    event = bare_typed_factory("event.session.input.v1")
-    assert event.target_ref == "event.session.input.v1"
+    event = bare_typed_factory("event.session.input")
+    assert event.target_ref == "event.session.input"
 
 
 def test_contextual_agent_binds_context_tool_and_loop() -> None:
@@ -172,7 +172,7 @@ def test_contextual_agent_binds_context_tool_and_loop() -> None:
         "return",
     }
     assert graph["capability_requirements"] == [
-        {"capability_ref": "search.web.capability.v1", "tool_schema_present": True}
+        {"capability_ref": "search.web.capability", "tool_schema_present": True}
     ]
     assert Support.diagnostics() is None
 
@@ -253,7 +253,7 @@ def test_advanced_constructs_bind_without_executing_the_agent_body() -> None:
     )
     assert _value(graph, event_wait["result_value"])["origin"] == "call_result"
     assert _value(graph, yield_control["result_value"])["origin"] == "resume_input"
-    assert event_declaration["target_ref"] == "approval.event.v1"
+    assert event_declaration["target_ref"] == "approval.event"
     assert graph["context_flow"] == [
         {
             "from_node": task_group["node_id"],
@@ -305,7 +305,7 @@ def test_hook_decorator_resolves_a_static_call_target() -> None:
 
 
 def test_value_position_rejects_an_unresolved_or_effectful_call() -> None:
-    ValuePositionModel = Model[object, object]("value.position.model.v1")
+    ValuePositionModel = Model[object, object]("value.position.model")
 
     # A returned call the frontend cannot resolve was previously dropped, so
     # the graph silently lost the author's whole result expression.
@@ -363,7 +363,7 @@ def test_predicate_integer_rejects_values_outside_shared_safe_domain() -> None:
 
 
 def test_value_integer_accepts_the_negative_shared_safe_boundary() -> None:
-    NegativeValueModel = Model[object, object]("negative.value.model.v1")
+    NegativeValueModel = Model[object, object]("negative.value.model")
 
     @Agent(input="Input", output="Output")
     async def NegativeValue(agent, request):
@@ -377,7 +377,7 @@ def test_value_integer_accepts_the_negative_shared_safe_boundary() -> None:
 
 
 def test_effect_call_rejects_extra_authored_operands() -> None:
-    ExtraOperandModel = Model[object, object]("extra.operand.model.v1")
+    ExtraOperandModel = Model[object, object]("extra.operand.model")
 
     try:
 

@@ -1,6 +1,6 @@
 //! `apxm org new|lint|install` — the toolchain for the canonical
-//! organization-package folder format (`apxm.org-package.v1` /
-//! `apxm.org-topology.v1`).
+//! organization-package folder format (`apxm.org-package` /
+//! `apxm.org-topology`).
 //!
 //! This module is the org-level sibling of [`super::agent`]: same
 //! module organization, same manifest-projection-from-schema approach (hand
@@ -77,7 +77,7 @@ pub struct MemberEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capability_mask: Option<CapabilityMaskToml>,
     /// Snapshot of the referenced agent's own `hierarchy.toml`
-    /// (`apxm.agent.v1#/properties/hierarchy`, 's
+    /// (`apxm.agent#/properties/hierarchy`, 's
     /// `AgentDefinition.hierarchy`). Reused verbatim from
     /// [`super::agent::HierarchyToml`] — same shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -100,7 +100,7 @@ pub struct CapabilityMaskToml {
     pub deny: Vec<String>,
 }
 
-/// Projection of `topology.toml`, conforming to `apxm.org-topology.v1`.
+/// Projection of `topology.toml`, conforming to `apxm.org-topology`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TopologyToml {
     pub tree: TreeToml,
@@ -221,11 +221,11 @@ fn org_new(
     )?;
 
     // agents/members.toml — empty by default; author adds [[member]] blocks
-    // that reference real, installed apxm.agent.v1 agents.
+    // that reference real, installed apxm.agent agents.
     write_new_file(
         &root.join("agents/members.toml"),
         "# One [[member]] per org member, by reference to an installed\n\
-         # agent (apxm.agent.v1). No agent code lives here.\n\
+         # agent (apxm.agent). No agent code lives here.\n\
          #\n\
          # [[member]]\n\
          # id = \"root-agent\"\n\

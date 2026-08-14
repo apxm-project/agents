@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 
 fn nested_sibling_graph() -> Value {
     json!({
-        "schema_version": "apxm.frontend-graph.v2",
+        "schema_version": "apxm.frontend-graph",
         "source_language": "python",
         "program_definitions": [{
             "program_id": "NestedLoops",
@@ -51,7 +51,7 @@ fn nested_sibling_graph() -> Value {
         "capability_requirements": [],
         "model_requirements": [],
         "source_map": {
-            "schema_version": "apxm.source-map.v1",
+            "schema_version": "apxm.source-map",
             "source_language": "python",
             "node_spans": [],
             "region_annotations": []

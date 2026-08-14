@@ -229,7 +229,7 @@ impl ExecutionCommitRequest {
 }
 
 /// The typed result of an atomic commit. Mirrors the closed
-/// `apxm.execution-commit.v1` `commit_result` set.
+/// `apxm.execution-commit` `commit_result` set.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExecutionCommitResult {
     Committed {
@@ -256,13 +256,13 @@ impl ExecutionCommitResult {
 }
 
 impl ExecutionCommitRequest {
-    /// Project this request and its result as an exact `apxm.execution-commit.v1`
+    /// Project this request and its result as an exact `apxm.execution-commit`
     /// object, including the constant atomic write set. No per-member split field
     /// is ever emitted.
     #[must_use]
     pub fn to_contract_json(&self, result: &ExecutionCommitResult) -> Value {
         let mut object = json!({
-            "schema_version": "apxm.execution-commit.v1",
+            "schema_version": "apxm.execution-commit",
             "commit_id": self.commit_id,
             "program_instance_ref": {
                 "ref_type": "ProgramInstanceRef",

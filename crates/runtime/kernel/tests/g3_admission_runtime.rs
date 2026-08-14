@@ -466,7 +466,7 @@ fn invalid_binding_does_not_consume_nonce_and_contract_slot_is_closed() {
     let keyring = IssuerKeyring::from_keys([signer.enrollment(u64::MAX, false)]).expect("keyring");
     let ledger = NonceLedger::new();
     let mut bindings = minimal_port_bindings();
-    bindings[0].port_contract_schema_id = "apxm.capability-invocation.v1".into();
+    bindings[0].port_contract_schema_id = "apxm.capability-invocation".into();
     let invalid = signer.seal_admission(unsigned_admission_skeleton(
         "invocation.binding.invalid",
         "nonce.binding.1",
@@ -511,7 +511,7 @@ fn optional_model_target_is_still_exact_and_closed() {
     let mut bindings = minimal_port_bindings();
     bindings.push(AdmittedPortBinding {
         slot: "model_inference".into(),
-        port_contract_schema_id: "apxm.model-inference.v1".into(),
+        port_contract_schema_id: "apxm.model-inference".into(),
         port_contract_digest: digest_char('7'),
         binding_digest: digest_char('8'),
         proof_digest: digest_char('9'),
@@ -829,14 +829,14 @@ async fn boundary_busy_instance_and_missing_port_fail_closed() {
 
     // SchemaDigestRef unused guard for clarity of contract digests in bindings.
     let _ = SchemaDigestRef {
-        schema_id: "apxm.execution-commit.v1".into(),
+        schema_id: "apxm.execution-commit".into(),
         digest: digest_char('e'),
     };
     let _ = RuntimeEvidenceVersion::V1;
     let _ = ExactPortBinding {
         slot: PortSlot::ExecutionCommit,
         port_contract: SchemaDigestRef {
-            schema_id: "apxm.execution-commit.v1".into(),
+            schema_id: "apxm.execution-commit".into(),
             digest: digest_char('e'),
         },
         binding_digest: digest_char('b'),

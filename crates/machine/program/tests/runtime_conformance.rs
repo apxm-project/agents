@@ -27,28 +27,28 @@ fn check(file: &str, verify: impl Fn(&Value) -> bool) {
 
 #[test]
 fn runtime_evidence_vectors_match_verifier() {
-    check("apxm.runtime-evidence.v1.json", |v| {
+    check("apxm.runtime-evidence.json", |v| {
         verify_runtime_evidence_json(v).is_accepted()
     });
 }
 
 #[test]
 fn execution_commit_vectors_match_verifier() {
-    check("apxm.execution-commit.v1.json", |v| {
+    check("apxm.execution-commit.json", |v| {
         verify_execution_commit_json(v).is_accepted()
     });
 }
 
 #[test]
 fn external_agent_session_vectors_match_verifier() {
-    check("apxm.external-agent-session.v1.json", |v| {
+    check("apxm.external-agent-session.json", |v| {
         verify_external_agent_session_json(v).is_accepted()
     });
 }
 
 #[test]
 fn external_agent_evidence_vectors_match_verifier() {
-    check("apxm.external-agent-evidence.v1.json", |v| {
+    check("apxm.external-agent-evidence.json", |v| {
         verify_external_agent_evidence_json(v).is_accepted()
     });
 }

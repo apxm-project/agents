@@ -28,7 +28,7 @@ compiling.
 
 ```python
 SearchWeb = Tool[SearchWebRequest, SearchWebResult]("cap.search")
-SupportModel = Model[ModelRequest, ModelResponse]("model.target.v1")
+SupportModel = Model[ModelRequest, ModelResponse]("model.target")
 
 
 @Context

@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-MANIFEST = REPO_ROOT / "contracts" / "vectors" / "apxm.frontend-surface.v1.json"
+MANIFEST = REPO_ROOT / "contracts" / "vectors" / "apxm.frontend-surface.json"
 PYTHON_ROOT = REPO_ROOT / "crates" / "compiler" / "frontend" / "python" / "apxm_program" / "__init__.py"
 TYPESCRIPT_ROOT = REPO_ROOT / "crates" / "compiler" / "frontend" / "typescript" / "src" / "index.ts"
 AUTHORING_SAMPLES = (
@@ -119,7 +119,7 @@ def main() -> int:
         for failure in failures:
             print(f"  {failure}", file=sys.stderr)
         return 1
-    print("OK: frontend exports and authoring examples match apxm.frontend-surface.v1.")
+    print("OK: frontend exports and authoring examples match apxm.frontend-surface.")
     return 0
 
 

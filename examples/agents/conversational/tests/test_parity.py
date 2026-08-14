@@ -372,8 +372,8 @@ def _complete_frontend_shape(graph: dict) -> dict:
 def test_conversational_examples_lower_equivalently() -> None:
     python = python_air()
     typescript = typescript_air()
-    assert python["schema_version"] == "apxm.air.v2"
-    assert typescript["schema_version"] == "apxm.air.v2"
+    assert python["schema_version"] == "apxm.air"
+    assert typescript["schema_version"] == "apxm.air"
     assert _canonical_shape(python) == _canonical_shape(typescript)
     assert _conversational_semantics(python) == _conversational_semantics(typescript), json.dumps(
         {

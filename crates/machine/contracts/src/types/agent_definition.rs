@@ -1,4 +1,4 @@
-//! Canonical agent definition (`apxm.agent-definition.v1`).
+//! Canonical agent definition (`apxm.agent-definition`).
 //!
 //! Implements `workspace/contracts/schemas/agent-definition.v1.json`, the
 //! normative schema for "what an agent is": identity, entry point, prompts,
@@ -20,7 +20,7 @@ use thiserror::Error;
 
 use super::execution::{Agent, AgentMetadata, CapabilityDeclaration};
 
-pub const AGENT_DEFINITION_SCHEMA_V1: &str = "apxm.agent-definition.v1";
+pub const AGENT_DEFINITION_SCHEMA_V1: &str = "apxm.agent-definition";
 
 /// Canonical agent definition. See module docs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,11 +41,6 @@ pub struct AgentDefinition {
     pub hierarchy: Option<AgentHierarchy>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub triggers: Vec<AgentTrigger>,
-    /// `[runtime]` from `agent.toml`: generic package settings such as
-    /// memory_space and session_prefix. Program control flow belongs only in
-    /// the compiled ProgramPackage entry.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime: Option<AgentRuntime>,
     /// `[[hooks]]` from `agent.toml`: manifest-declared lifecycle
     /// hooks, lowered the same way whether the package has a custom entry
     /// (where entry code may add MORE hooks, but must never contradict
@@ -53,20 +48,6 @@ pub struct AgentDefinition {
     /// these are the agent's only hooks).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hooks: Vec<AgentHook>,
-}
-
-/// `[runtime]` package settings.
-///
-/// This is deliberately a closed contract. Program behavior belongs to the
-/// immutable entry flow, so a package cannot introduce unreviewed runtime
-/// controls through manifest keys.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AgentRuntime {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub memory_space: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_prefix: Option<String>,
 }
 
 /// One `[[hooks]]` entry: a manifest-declared binding of a lifecycle event to
@@ -218,7 +199,6 @@ impl From<&Agent> for AgentDefinition {
                 .collect(),
             hierarchy: None,
             triggers: Vec::new(),
-            runtime: None,
             hooks: Vec::new(),
         }
     }
@@ -248,10 +228,6 @@ mod tests {
                 kind: "webhook".to_string(),
                 config: None,
             }],
-            runtime: Some(AgentRuntime {
-                memory_space: Some("stm".to_string()),
-                session_prefix: Some("demo".to_string()),
-            }),
             hooks: vec![AgentHook {
                 event: "pre_cap".to_string(),
                 r#match: "*".to_string(),
@@ -269,12 +245,12 @@ mod tests {
     #[test]
     fn rejects_wrong_schema_version() {
         let mut def = sample();
-        def.schema_version = "apxm.agent-definition.v0".to_string();
+        def.schema_version = "apxm.agent-definition-unpublished".to_string();
         assert_eq!(
             def.validate(),
             Err(AgentDefinitionError::InvalidSchemaVersion {
                 expected: AGENT_DEFINITION_SCHEMA_V1,
-                actual: "apxm.agent-definition.v0".to_string(),
+                actual: "apxm.agent-definition-unpublished".to_string(),
             })
         );
     }
@@ -337,15 +313,5 @@ mod tests {
         let json = serde_json::to_string(&def).expect("serialize");
         let back: AgentDefinition = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(def, back);
-    }
-
-    #[test]
-    fn runtime_rejects_unknown_controls() {
-        let error = serde_json::from_value::<AgentRuntime>(serde_json::json!({
-            "memory_space": "stm",
-            "compaction_policy": "legacy"
-        }))
-        .expect_err("runtime controls must be declared by the closed contract");
-        assert!(error.to_string().contains("compaction_policy"));
     }
 }

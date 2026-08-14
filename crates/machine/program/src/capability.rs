@@ -1,4 +1,4 @@
-//! `apxm.capability-invocation.v1` — the request contract at the exact
+//! `apxm.capability-invocation` — the request contract at the exact
 //! non-model Capability Port boundary.
 //!
 //! Application arguments are canonical typed data. Auth-owned identity and
@@ -92,7 +92,7 @@ impl std::error::Error for CapabilityRequestError {}
 /// The single accepted capability-invocation request schema.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CapabilityInvocationVersion {
-    #[serde(rename = "apxm.capability-invocation.v1")]
+    #[serde(rename = "apxm.capability-invocation")]
     V1,
 }
 
@@ -590,7 +590,7 @@ pub fn capability_effect_id(
     require_identifier("correlation.program_invocation_ref", program_invocation_ref)?;
     require_identifier("correlation.node_execution_id", node_execution_id)?;
     let mut hasher = Sha256::new();
-    hasher.update(b"apxm.capability-effect.v1\0");
+    hasher.update(b"apxm.capability-effect\0");
     hasher.update(program_invocation_ref.as_bytes());
     hasher.update(b"\0");
     hasher.update(node_execution_id.as_bytes());
@@ -627,7 +627,7 @@ pub fn capability_request_digest(
         return Err(CapabilityRequestError::EffectIdMismatch);
     }
     let identity = CapabilityRequestIdentity {
-        schema_version: "apxm.capability-request-identity.v1",
+        schema_version: "apxm.capability-request-identity",
         capability_ref: input.capability_ref,
         arguments: input.arguments,
         correlation: input.correlation,
@@ -846,11 +846,11 @@ mod tests {
 
         assert_eq!(
             request.effect().effect_id,
-            "capability-effect.9b3e87bae20196a18df6675dc0c16806bd54ef328c002a0465a21aca5e78284b"
+            "capability-effect.56d03aaa5f4b2354a41124d1c393be3bf3f08a5ac805e75853f8528daaa6b09e"
         );
         assert_eq!(
             request.effect().request_digest,
-            "sha256:4efb35bfeb410d86cd72a35d4210f442a44cb7d0fc4dc676785184bc4be39fe6"
+            "sha256:b625f55e331713397b51a07ca27481fea80566c679058cf9cac4cc66c92ccfd5"
         );
         let digest_input = CapabilityRequestDigestInput {
             capability_ref: request.capability_ref(),
@@ -862,7 +862,7 @@ mod tests {
         assert_eq!(
             capability_request_digest_sha256_hex(&digest_input)
                 .expect("valid bare digest representation"),
-            "4efb35bfeb410d86cd72a35d4210f442a44cb7d0fc4dc676785184bc4be39fe6"
+            "b625f55e331713397b51a07ca27481fea80566c679058cf9cac4cc66c92ccfd5"
         );
     }
 

@@ -13,8 +13,8 @@ from typing import Any
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_ROOT = REPOSITORY_ROOT / "crates/machine/program/tests/fixtures/example-artifacts"
-CONVERSATIONAL_PYTHON_OUTPUT = FIXTURE_ROOT / "conversational-python.v2.json"
-CONVERSATIONAL_TYPESCRIPT_OUTPUT = FIXTURE_ROOT / "conversational-typescript.v2.json"
+CONVERSATIONAL_PYTHON_OUTPUT = FIXTURE_ROOT / "conversational-python.json"
+CONVERSATIONAL_TYPESCRIPT_OUTPUT = FIXTURE_ROOT / "conversational-typescript.json"
 
 
 def run_json(command: list[str], *, cwd: Path, env: dict[str, str]) -> dict[str, Any]:
@@ -34,8 +34,8 @@ def run_json(command: list[str], *, cwd: Path, env: dict[str, str]) -> dict[str,
             f"stderr:\n{completed.stderr}"
         )
     value = json.loads(completed.stdout)
-    if value.get("schema_version") != "apxm.executable-artifact.v1":
-        raise ValueError("example compiler did not emit apxm.executable-artifact.v1")
+    if value.get("schema_version") != "apxm.executable-artifact":
+        raise ValueError("example compiler did not emit apxm.executable-artifact")
     return value
 
 

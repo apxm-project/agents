@@ -90,7 +90,8 @@ struct BackendConfigFile {
 /// (default `~/.apxm/config.toml`). The home directory is resolved through
 /// [`apxm_core::env::apxm_home`], so setting `APXM_HOME` redirects the
 /// entire backend roster — this is the multi-instance contract that lets
-/// two `apxm-server` processes own distinct backend configurations.
+/// two processes, each pointed at a distinct `APXM_HOME`, own distinct
+/// backend configurations.
 ///
 /// Stores backend registrations as a hierarchical Backend → Model → Endpoint
 /// structure.
@@ -107,7 +108,7 @@ impl BackendStore {
     /// single source of truth for the global home directory. Project-local
     /// `.apxm/` directories are intentionally ignored: backend registrations
     /// are a per-instance concern, not a per-checkout concern, and the
-    /// multi-instance contract is "one `APXM_HOME` per `apxm-server`".
+    /// multi-instance contract is "one `APXM_HOME` per process instance".
     pub fn open() -> Result<Self, BackendError> {
         let dir = apxm_home();
         let config_path = dir.join(CONFIG_FILENAME);

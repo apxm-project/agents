@@ -391,9 +391,8 @@ pub mod capabilities {
     //! these here; add new capability ids in `apxm_ais::capabilities`.
     pub use apxm_ais::capabilities::groups;
     pub use apxm_ais::capabilities::{
-        AGENT_MANAGEMENT_BUILTINS, BASH, BUILTINS, CAPABILITY_DISCOVERY, HTTP_GET, HTTP_POST,
-        LIST_LOCAL_SKILLS, MANAGE_TASK, READ, READ_LOCAL_SKILL, SCHEDULE, SEARCH_SKILLS,
-        SEARCH_WEB, STANDARD_BUILTINS, WRITE,
+        AGENT_MANAGEMENT_BUILTINS, BASH, BUILTINS, COUNT_TOKENS, HTTP_GET, HTTP_POST, MANAGE_TASK,
+        MCP_CALL, PROVIDER_CALL, READ, SCHEDULE, SEARCH_WEB, STANDARD_BUILTINS, WRITE,
     };
 }
 
@@ -814,8 +813,8 @@ pub mod mlir {
 }
 
 pub mod defaults {
-    // URLs / output budget re-exported from `apxm-ais` (single source of truth).
-    pub use apxm_ais::defaults::{DEFAULT_OS_URL, DEFAULT_OUTPUT_TOKEN_BUDGET, DEFAULT_SERVER_URL};
+    // Output budget re-exported from `apxm-ais` (single source of truth).
+    pub use apxm_ais::defaults::DEFAULT_OUTPUT_TOKEN_BUDGET;
     pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
     pub const DEFAULT_MEMORY_LIMIT: u64 = 10;
     pub const DEFAULT_MAX_RETRIES: u32 = 3;

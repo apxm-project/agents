@@ -546,7 +546,7 @@ struct CanonicalModelRequestEnvelope<'a> {
 
 fn model_effect_identity(program_invocation_id: &str, node_execution_id: &str) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(b"apxm.model-effect.v1\0");
+    hasher.update(b"apxm.model-effect\0");
     hasher.update(program_invocation_id.as_bytes());
     hasher.update(b"\0");
     hasher.update(node_execution_id.as_bytes());
@@ -561,7 +561,7 @@ fn model_request_digest(
     authored_request: &Value,
 ) -> String {
     let envelope = CanonicalModelRequestEnvelope {
-        schema_version: "apxm.model-request-identity.v1",
+        schema_version: "apxm.model-request-identity",
         program_invocation_id,
         node_execution_id,
         operation,
@@ -2764,7 +2764,7 @@ mod loop_evidence_tests {
 
     fn loop_air() -> AirModule {
         serde_json::from_value(json!({
-            "schema_version": "apxm.air.v2",
+            "schema_version": "apxm.air",
             "semantic_operations": [],
             "structural_ir": [
                 {
@@ -2775,7 +2775,7 @@ mod loop_evidence_tests {
             ],
             "context_flow": [],
             "source_map": {
-                "schema_version": "apxm.source-map.v1",
+                "schema_version": "apxm.source-map",
                 "source_language": "python",
                 "node_spans": [],
                 "region_annotations": [
@@ -2858,7 +2858,7 @@ mod loop_evidence_tests {
     #[test]
     fn resume_input_dependency_is_rejected_before_capability_dispatch() {
         let air: AirModule = serde_json::from_value(json!({
-            "schema_version": "apxm.air.v2",
+            "schema_version": "apxm.air",
             "semantic_operations": [{
                 "node_id": "node.capability",
                 "op": "capability.invoke",
@@ -2876,7 +2876,7 @@ mod loop_evidence_tests {
             }],
             "structural_ir": [],
             "context_flow": [],
-            "source_map": {"schema_version": "apxm.source-map.v1", "source_language": "python", "node_spans": [], "region_annotations": []}
+            "source_map": {"schema_version": "apxm.source-map", "source_language": "python", "node_spans": [], "region_annotations": []}
         }))
         .expect("resume dependency AIR");
 

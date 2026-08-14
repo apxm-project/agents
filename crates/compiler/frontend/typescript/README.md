@@ -12,7 +12,7 @@ type SummaryRequest = { readonly text: string };
 type Summary = { readonly text: string };
 
 const source = staticSource(import.meta.url);
-const SummarizerModel = Model<SummaryRequest, Summary>("model.summary.v1");
+const SummarizerModel = Model<SummaryRequest, Summary>("model.summary");
 
 export const Summarizer = Agent<SummaryRequest, Summary>({
   name: "Summarizer",

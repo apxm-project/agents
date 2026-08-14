@@ -31,7 +31,7 @@ implemented; it is retained only as migration evidence.
 ## Instruction Categories
 
 The AIS operation catalog is generated from Rust-owned definitions and published
-as `crates/machine/ais/generated/op-spec.v1.json`. Run `dekk agents ops list`
+as `crates/machine/ais/generated/op-spec.json`. Run `dekk agents ops list`
 for the complete current operation set instead of copying a static list into
 docs or frontend code. For per-operation details and examples, see the
 [apxm-ais README](../../crates/machine/ais/README.md).

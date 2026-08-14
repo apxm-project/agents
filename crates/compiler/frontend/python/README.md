@@ -5,7 +5,7 @@ Author an Agent in ordinary Python with decorators and typed values:
 ```python
 from apxm_program import Agent, Model
 
-SummarizerModel = Model[object, object]("model.summary.v1")
+SummarizerModel = Model[object, object]("model.summary")
 
 
 @Agent(input="SummaryRequest", output="Summary")

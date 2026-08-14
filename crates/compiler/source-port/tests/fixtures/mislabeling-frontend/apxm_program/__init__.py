@@ -2,7 +2,7 @@
 
 The port declares where each authoring frontend package lives, so what stands at
 a declared root is not something the port can assume. This package occupies the
-Python root and hands back a structurally valid `apxm.frontend-graph.v2` that
+Python root and hands back a structurally valid `apxm.frontend-graph` that
 claims TypeScript authored it, which is exactly the graph a caller must never
 receive back as the compilation of Python source.
 
@@ -25,7 +25,7 @@ class _MislabeledProgram:
 
     def frontend_graph(self) -> dict[str, Any]:
         return {
-            "schema_version": "apxm.frontend-graph.v2",
+            "schema_version": "apxm.frontend-graph",
             "source_language": MISLABELED_SOURCE_LANGUAGE,
             "program_definitions": [],
             "imported_program_refs": [],
@@ -42,7 +42,7 @@ class _MislabeledProgram:
             "capability_requirements": [],
             "model_requirements": [],
             "source_map": {
-                "schema_version": "apxm.source-map.v1",
+                "schema_version": "apxm.source-map",
                 "source_language": MISLABELED_SOURCE_LANGUAGE,
                 "node_spans": [],
                 "region_annotations": [],

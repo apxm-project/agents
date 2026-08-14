@@ -1,0 +1,271 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.air",
+  "title": "AgentIR",
+  "description": "Canonical Agent IR with exactly five public semantic operations (model.call, capability.invoke, program.new, program.invoke, await.event) and the closed AIS-owned compiler-emitted structural family. ais.loop is structural, never a sixth public semantic operation; a transient NOP is compiler machinery that is never serialized.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "semantic_operations",
+    "structural_ir",
+    "context_flow",
+    "source_map"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "apxm.air"
+    },
+    "semantic_operations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SemanticOp"
+      }
+    },
+    "value_assemblies": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": { "$ref": "#/$defs/ValueAssembly" }
+    },
+    "structural_ir": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/StructuralNode"
+      }
+    },
+    "context_flow": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ContextEdge"
+      }
+    },
+    "source_map": {
+      "$ref": "apxm.source-map#/$defs/SourceMapBody"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "ValueAssembly": {
+      "type": "object",
+      "required": ["value_id", "expression"],
+      "properties": {
+        "value_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "expression": { "$ref": "apxm.frontend-graph#/$defs/ValueExpression" }
+      },
+      "additionalProperties": false
+    },
+    "SemanticOp": {
+      "type": "object",
+      "description": "One public semantic operation with typed SSA operands and result selected by Rust from a FrontendGraph call intent. `operands` names each typed input slot (per the AIS operand catalogue) and binds it to a produced value id; the untyped operand bag is retired.",
+      "required": [
+        "node_id",
+        "op",
+        "parent_region_id",
+        "execution_order"
+      ],
+      "properties": {
+        "node_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "model.call",
+            "capability.invoke",
+            "program.new",
+            "program.invoke",
+            "await.event"
+          ]
+        },
+        "parent_region_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "execution_order": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "operands": {
+          "type": "array",
+          "description": "Ordered typed SSA operands. Each names a slot from the AIS operand catalogue for this op and references a value id.",
+          "items": { "$ref": "#/$defs/Operand" }
+        },
+        "result": {
+          "$ref": "#/$defs/SsaValue",
+          "description": "The typed SSA value this operation produces, if any."
+        }
+      },
+      "additionalProperties": false
+    },
+    "Operand": {
+      "type": "object",
+      "required": ["slot", "value_id", "type_ref"],
+      "properties": {
+        "slot": {
+          "type": "string",
+          "description": "Named typed input slot from the AIS operand catalogue (e.g. model_ref, request, options, capability_ref, arguments, receiver, input, event_ref, timeout_ms, condition, carried)."
+        },
+        "value_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "type_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" }
+      },
+      "additionalProperties": false
+    },
+    "SsaValue": {
+      "type": "object",
+      "required": ["value_id", "type_ref"],
+      "properties": {
+        "value_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "type_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" }
+      },
+      "additionalProperties": false
+    },
+    "StructuralNode": {
+      "type": "object",
+      "description": "One structural IR node. Carries typed block arguments and region-carried values so Rust can encode CFG joins, loop-carried Context, and yield/resume as SSA rather than flat tokens.",
+      "required": [
+        "region_id",
+        "kind",
+        "execution_order"
+      ],
+      "properties": {
+        "region_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "function",
+            "region",
+            "block",
+            "value",
+            "branch",
+            "switch",
+            "ais.loop",
+            "parallel_join",
+            "try",
+            "throw",
+            "catch",
+            "return",
+            "yield"
+          ]
+        },
+        "parent_region_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "execution_order": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "block_arguments": {
+          "type": "array",
+          "description": "Typed SSA block arguments (join values, loop-carried values, resume input).",
+          "items": { "$ref": "#/$defs/SsaValue" }
+        },
+        "operands": {
+          "type": "array",
+          "description": "Typed SSA operands consumed by this structural node (branch condition, switch scrutinee, carried inputs, yielded/returned value).",
+          "items": { "$ref": "#/$defs/Operand" }
+        },
+        "predicate": {
+          "$ref": "#/$defs/ControlPredicate",
+          "description": "Closed typed predicate evaluated from a prior SSA result."
+        }
+      },
+      "additionalProperties": false
+    },
+    "ControlPredicate": {
+      "oneOf": [
+        { "$ref": "#/$defs/TruthyPredicate" },
+        { "$ref": "#/$defs/EqualsPredicate" },
+        { "$ref": "#/$defs/NotEqualsPredicate" }
+      ]
+    },
+    "TruthyPredicate": {
+      "type": "object",
+      "required": ["root_value_id", "property_path", "comparator"],
+      "properties": {
+        "root_value_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "property_path": { "$ref": "#/$defs/PropertyPath" },
+        "comparator": { "const": "truthy" }
+      },
+      "additionalProperties": false
+    },
+    "EqualsPredicate": {
+      "type": "object",
+      "required": ["root_value_id", "property_path", "comparator", "literal"],
+      "properties": {
+        "root_value_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "property_path": { "$ref": "#/$defs/PropertyPath" },
+        "comparator": { "const": "equals" },
+        "literal": { "$ref": "#/$defs/PredicateLiteral" }
+      },
+      "additionalProperties": false
+    },
+    "NotEqualsPredicate": {
+      "type": "object",
+      "required": ["root_value_id", "property_path", "comparator", "literal"],
+      "properties": {
+        "root_value_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+        "property_path": { "$ref": "#/$defs/PropertyPath" },
+        "comparator": { "const": "not_equals" },
+        "literal": { "$ref": "#/$defs/PredicateLiteral" }
+      },
+      "additionalProperties": false
+    },
+    "PropertyPath": {
+      "type": "array",
+      "maxItems": 16,
+      "items": { "type": "string", "pattern": "^[A-Za-z0-9_]{1,128}$" }
+    },
+    "PredicateLiteral": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["scalar_type", "value"],
+          "properties": { "scalar_type": { "const": "boolean" }, "value": { "type": "boolean" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["scalar_type", "value"],
+          "properties": { "scalar_type": { "const": "string" }, "value": { "type": "string" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["scalar_type", "value"],
+          "properties": { "scalar_type": { "const": "integer" }, "value": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["scalar_type"],
+          "properties": { "scalar_type": { "const": "null" } },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ContextEdge": {
+      "type": "object",
+      "required": [
+        "from_node",
+        "to_node",
+        "context_type_ref",
+        "value_id"
+      ],
+      "properties": {
+        "from_node": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "to_node": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "context_type_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "value_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

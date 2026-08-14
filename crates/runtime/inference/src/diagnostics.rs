@@ -13,7 +13,7 @@ use crate::target::InferenceTargetCommitment;
 use apxm_program::grammar::is_digest;
 
 /// Schema identity for diagnostic correlation.
-pub const DIAGNOSTIC_CORRELATION_SCHEMA: &str = "apxm.diagnostic-correlation.v1";
+pub const DIAGNOSTIC_CORRELATION_SCHEMA: &str = "apxm.diagnostic-correlation";
 
 /// Closed agreement vocabulary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

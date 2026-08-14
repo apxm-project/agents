@@ -649,7 +649,7 @@ mod tests {
             idempotency_key: "effect-1".into(),
             category: HostEffectRejectionCategory::Conflict,
             failure: HostTypedPayload {
-                schema_id: "apxm.example-effect-failure.v1".into(),
+                schema_id: "apxm.example-effect-failure".into(),
                 value: serde_json::json!({"code": "example.effect.conflict"}),
                 digest: format!("sha256:{}", "b".repeat(64)),
             },
@@ -661,7 +661,7 @@ mod tests {
         assert_eq!(rejection.category, HostEffectRejectionCategory::Conflict);
         assert_eq!(
             rejection.failure.schema_id,
-            "apxm.example-effect-failure.v1"
+            "apxm.example-effect-failure"
         );
     }
 

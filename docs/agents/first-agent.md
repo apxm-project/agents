@@ -1,7 +1,7 @@
 # Create Your First APXM Agent
 
 An Agent Program is ordinary Python or TypeScript source. The frontend reads
-that source statically into `apxm.frontend-graph.v2`; Rust alone validates it,
+that source statically into `apxm.frontend-graph`; Rust alone validates it,
 constructs CFG/SSA and AIR, and produces the artifact admitted by the host.
 
 The public authoring vocabulary is `Agent`, `Context`, `Tool`, `Model`, and
@@ -14,7 +14,7 @@ are focused advanced declarations. Graph builders, AIR text, node ids, and
 ```python
 from apxm_program import Agent, Model
 
-SummaryModel = Model[object, object]("model.summary.v1")
+SummaryModel = Model[object, object]("model.summary")
 
 
 @Agent(input="SummaryRequest", output="Summary")
@@ -33,7 +33,7 @@ type SummaryRequest = { readonly text: string };
 type Summary = { readonly text: string };
 
 const source = staticSource(import.meta.url);
-const SummaryModel = Model<SummaryRequest, Summary>("model.summary.v1");
+const SummaryModel = Model<SummaryRequest, Summary>("model.summary");
 
 export const Summarizer = Agent<SummaryRequest, Summary>({
   name: "Summarizer",
@@ -68,8 +68,8 @@ export function staticSource(url: string) {
 ```
 
 Keep bindings at module scope, include every binding used by an Agent in its
-`use` object, and use exact references such as `model.summary.v1` or
-`capability.search.v1`. The frontend rejects dynamic marker lookup and local
+`use` object, and use exact references such as `model.summary` or
+`capability.search`. The frontend rejects dynamic marker lookup and local
 shadowing instead of guessing what an Agent means.
 
 `Tool` in an Agent Program is a typed reference to an admitted Capability; it

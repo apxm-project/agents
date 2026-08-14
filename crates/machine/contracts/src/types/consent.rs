@@ -76,7 +76,7 @@ pub struct PermissionPrompt {
 pub struct SignedApproval {
     pub signer_subject: String,
     pub signer_display: Option<String>,
-    /// Ed25519 signature over canonical apxm.prompt-approval.v1.
+    /// Ed25519 signature over canonical apxm.prompt-approval.
     pub signature: String,
     /// RFC3339 timestamp when the approval was issued.
     pub signed_at: String,

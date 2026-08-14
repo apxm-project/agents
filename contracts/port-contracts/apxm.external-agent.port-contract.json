@@ -1,0 +1,24 @@
+{
+  "schema_version": "apxm.port-contract",
+  "port_contract_id": "apxm.external-agent",
+  "port_contract_digest": "sha256:237d71fe2eedbfe6dc854db861737d9c5c7f13ca1d06d12579a8ae9968d5b6e7",
+  "semantic_owner": "agents",
+  "primary_responsibility": "run one exact admitted External Agent Profile as one outer Capability effect while preserving standard ACP lifecycle, reverse-request authority, attributed peer evidence, cancellation, and outcome uncertainty",
+  "request_schema": {
+    "schema_id": "apxm.external-agent-request",
+    "digest": "sha256:9124c0ca9bfb6f8812e89fca32939d985159498981c5b42bd3330e776920239e"
+  },
+  "result_schema": {
+    "schema_id": "apxm.external-agent-outcome",
+    "digest": "sha256:161ccca27e3fe34c9b68b450ecf1d5eb3d6a16ac201a31f76cfd5f8ed75dfefd"
+  },
+  "failure_schema": {
+    "schema_id": "apxm.external-agent-outcome",
+    "digest": "sha256:161ccca27e3fe34c9b68b450ecf1d5eb3d6a16ac201a31f76cfd5f8ed75dfefd"
+  },
+  "lifecycle_digest": "sha256:16d30ce6d08ec2ccdf5d9998ae1a59f9d5d815a37db68f943ad8aea28e70fa8a",
+  "authority_data_classification_digest": "sha256:51eaf7b6627cfc161a04b41948dab11595e5e44d33bcad7b9fb3f3bbf3304684",
+  "feature_vocabulary_digest": "sha256:c4efeb3195fdaa670f285fae44536db3115aaec92b9d10623cd5937b4ad106eb",
+  "configuration_contract_digest": "sha256:f639949b4ee7ad4a0f4b7d6416634e3507650bde4fd460f28c7eb06c4ddb2ef4",
+  "conformance_vector_digest": "sha256:a217da81eec05f103144387fe850e7a8a6b664d0c55c54e4930e840590f6cc03"
+}

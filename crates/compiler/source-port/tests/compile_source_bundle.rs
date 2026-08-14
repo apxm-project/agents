@@ -24,7 +24,7 @@ use crate::common::{ENTRYPOINT, FRONTENDS, drivers, frontend_present, roots};
 const PYTHON_PROGRAM: &str = r#"from apxm_program import Agent, Model, Tool
 
 ReviewModel = Model[object, object]("@MODEL@")
-SearchWeb = Tool[object, object]("search.web.capability.v1")
+SearchWeb = Tool[object, object]("search.web.capability")
 
 
 @Agent(input="ReviewRequest", output="Review")
@@ -37,7 +37,7 @@ import { staticSource } from "apxm:source";
 
 const source = staticSource();
 const ReviewModel = Model<object, object>("@MODEL@");
-const SearchWeb = Tool<object, object>("search.web.capability.v1");
+const SearchWeb = Tool<object, object>("search.web.capability");
 
 export const Reviewer = Agent<object, object>({
   name: "Reviewer",
@@ -80,7 +80,7 @@ fn accepted_body(frontend: Frontend) -> &'static str {
 
 /// The accepted program for a selector.
 fn accepted(frontend: Frontend) -> SourceBundleRequest {
-    request(frontend, "review.model.v1", accepted_body(frontend))
+    request(frontend, "review.model", accepted_body(frontend))
 }
 
 /// The accepted body with its returned call replaced, keeping the preceding Tool
@@ -281,7 +281,7 @@ fn the_frontend_emits_no_air_and_only_rust_lowering_produces_it() {
         "program.invoke",
         "await.event",
         "ais.",
-        "apxm.air.v2",
+        "apxm.air",
         "module {",
         "func.func @",
     ];
@@ -308,7 +308,7 @@ fn the_frontend_emits_no_air_and_only_rust_lowering_produces_it() {
         // not about a graph that happened to be empty.
         let lowered = serde_json::to_string(&compiled.air).expect("lowered AIR serializes");
         assert!(
-            lowered.contains("apxm.air.v2"),
+            lowered.contains("apxm.air"),
             "{} lowering produces an AIR document",
             frontend.wire()
         );
@@ -343,7 +343,7 @@ fn invalid_syntax_rejects_with_no_graph() {
         assert_rejects(
             frontend,
             "invalid syntax",
-            &request(frontend, "review.model.v1", body),
+            &request(frontend, "review.model", body),
             SourceDiagnosticCode::SourceRejected,
         );
     }
@@ -364,7 +364,7 @@ fn a_raw_ais_spelling_rejects_with_no_graph() {
         assert_rejects(
             frontend,
             "a raw AIS spelling",
-            &request(frontend, "review.model.v1", body),
+            &request(frontend, "review.model", body),
             SourceDiagnosticCode::SourceRejected,
         );
     }
@@ -385,7 +385,7 @@ fn a_raw_structural_ais_spelling_rejects_with_no_graph() {
         assert_rejects(
             frontend,
             "a raw structural AIS spelling",
-            &request(frontend, "review.model.v1", body),
+            &request(frontend, "review.model", body),
             SourceDiagnosticCode::SourceRejected,
         );
     }
@@ -420,7 +420,7 @@ fn an_unresolved_tool_reference_rejects_with_no_graph() {
             "an unresolved Tool reference",
             &request(
                 frontend,
-                "review.model.v1",
+                "review.model",
                 &body_with_return(frontend, "UnboundTool"),
             ),
             SourceDiagnosticCode::SourceRejected,

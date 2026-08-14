@@ -167,7 +167,7 @@ impl NodeExecutionId {
     }
 }
 
-/// A reference to an already-sealed `apxm.model-context-envelope.v1` instance.
+/// A reference to an already-sealed `apxm.model-context-envelope` instance.
 ///
 /// The inference request carries only this identity and digest; it never copies
 /// or assembles model-visible context.

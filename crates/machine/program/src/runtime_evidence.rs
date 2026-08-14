@@ -1,4 +1,4 @@
-//! `apxm.runtime-evidence.v1` — closed consumer types and verification.
+//! `apxm.runtime-evidence` — closed consumer types and verification.
 //!
 //! Runtime evidence is an append-only sequence of monotonic authoritative facts.
 //! Lifecycle truth is reconstructed from the latest scoped state fact; a trace,
@@ -19,7 +19,7 @@ type SeenNodeExecutions<'a> = HashMap<&'a str, (&'a str, &'a str, HashSet<(&'a s
 /// The single accepted `schema_version`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RuntimeEvidenceVersion {
-    #[serde(rename = "apxm.runtime-evidence.v1")]
+    #[serde(rename = "apxm.runtime-evidence")]
     V1,
 }
 

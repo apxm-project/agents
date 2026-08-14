@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.external-agent-session",
+  "title": "ExternalAgentSession",
+  "description": "Opaque scoped session reference for one admitted External Agent connection reached over the agent client protocol: its lifecycle, cancellation, close, and terminal outcome. The session_ref is the only handle retained in explicit Context; it carries no peer transport, credential, or native model identity.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "session_ref",
+    "profile_ref",
+    "lifecycle"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "apxm.external-agent-session"
+    },
+    "session_ref": {
+      "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+    },
+    "profile_ref": {
+      "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+    },
+    "lifecycle": {
+      "type": "string",
+      "enum": [
+        "uninitialized",
+        "initialized",
+        "authenticated",
+        "session_open",
+        "closed"
+      ]
+    },
+    "cancellation_requested": {
+      "type": "boolean"
+    },
+    "terminal_outcome": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "cancelled",
+        "failed",
+        "outcome_unknown"
+      ]
+    },
+    "stop_reason": {
+      "type": "string",
+      "maxLength": 256
+    }
+  },
+  "additionalProperties": false
+}

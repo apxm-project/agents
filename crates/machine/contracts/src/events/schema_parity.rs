@@ -1,4 +1,4 @@
-//! Terminal-classification drift gate for `apxm.event.v1`
+//! Terminal-classification drift gate for `apxm.event`
 //! (workspace/contracts/schemas/event.v1.json).
 //!
 //! `workspace/contracts` owns the public schema; its generator writes the

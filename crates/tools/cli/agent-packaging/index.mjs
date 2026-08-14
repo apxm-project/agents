@@ -2,9 +2,9 @@
 
 import { createHash } from "node:crypto";
 
-const ANSWER_KIND = "apxm.tool-answer.v1";
-const FIELD_KIND = Symbol("apxm.tool-field.v1");
-const INPUT_KIND = Symbol("apxm.tool-input.v1");
+const ANSWER_KIND = "apxm.tool-answer";
+const FIELD_KIND = Symbol("apxm.tool-field");
+const INPUT_KIND = Symbol("apxm.tool-input");
 
 function handlerModule() {
   return process.env.APXM_HANDLER_MODULE ?? "__unknown__";

@@ -1,4 +1,4 @@
-//! `apxm.execution-commit.v1` — closed consumer types and verification.
+//! `apxm.execution-commit` — closed consumer types and verification.
 //!
 //! One atomic idempotent compare-and-commit publishes the exact five-member
 //! write set — state/continuation, checkpoint/effect outcomes, canonical
@@ -16,7 +16,7 @@ use crate::grammar::is_digest;
 /// The single accepted `schema_version`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ExecutionCommitVersion {
-    #[serde(rename = "apxm.execution-commit.v1")]
+    #[serde(rename = "apxm.execution-commit")]
     V1,
 }
 

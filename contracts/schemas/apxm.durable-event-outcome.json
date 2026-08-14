@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.durable-event-outcome",
+  "title": "DurableEventOutcome",
+  "description": "The closed outcome of waiting for one exact durable Event Reference.",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["fulfilled"],
+      "properties": {
+        "fulfilled": {
+          "type": "object",
+          "required": ["event_ref", "payload"],
+          "properties": {
+            "event_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
+            "payload": { "type": "string", "maxLength": 1048576 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    { "const": "parked" },
+    { "const": "expired" },
+    { "const": "cancelled" },
+    {
+      "type": "object",
+      "required": ["mismatched"],
+      "properties": {
+        "mismatched": {
+          "type": "object",
+          "required": ["delivered_event_ref"],
+          "properties": { "delivered_event_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" } },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  ]
+}

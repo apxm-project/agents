@@ -10,7 +10,7 @@ use serde::Deserialize;
 
 use super::agent::{CompileToml, FrontendLanguage};
 
-/// Compile a canonical-authored agent package to canonical `apxm.air.v2` JSON.
+/// Compile a canonical-authored agent package to canonical `apxm.air` JSON.
 pub fn compile_service_canonical_command(
     agent_dir: PathBuf,
     config: Option<PathBuf>,
@@ -49,7 +49,7 @@ pub(crate) fn emit_canonical_air_from_agent(
     let _module: apxm_program::air::AirModule =
         serde_json::from_str(&air_json).with_context(|| {
             format!(
-                "canonical entry {} did not emit valid apxm.air.v2 AIR JSON on stdout",
+                "canonical entry {} did not emit valid apxm.air AIR JSON on stdout",
                 entry.display()
             )
         })?;

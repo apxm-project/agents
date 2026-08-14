@@ -12,7 +12,6 @@ use super::common::{CapabilitySchemaError, validate_non_empty};
 pub enum CapabilityBindingHandler {
     RustExecutor,
     TypeScriptHandler,
-    PackHandler,
     McpBridge,
     Builtin,
     Host,
@@ -105,7 +104,6 @@ mod tests {
         const ALL: &[CapabilityBindingHandler] = &[
             CapabilityBindingHandler::RustExecutor,
             CapabilityBindingHandler::TypeScriptHandler,
-            CapabilityBindingHandler::PackHandler,
             CapabilityBindingHandler::McpBridge,
             CapabilityBindingHandler::Builtin,
             CapabilityBindingHandler::Host,
@@ -115,7 +113,6 @@ mod tests {
             match handler {
                 CapabilityBindingHandler::RustExecutor => "rust_executor",
                 CapabilityBindingHandler::TypeScriptHandler => "type_script_handler",
-                CapabilityBindingHandler::PackHandler => "pack_handler",
                 CapabilityBindingHandler::McpBridge => "mcp_bridge",
                 CapabilityBindingHandler::Builtin => "builtin",
                 CapabilityBindingHandler::Host => "host",
@@ -141,8 +138,8 @@ mod tests {
         // rather than adding one; this catches that.
         assert_eq!(
             ALL.len(),
-            6,
-            "the closed handler set is six kinds; changing it is a contract change"
+            5,
+            "the closed handler set is five kinds; changing it is a contract change"
         );
     }
 }

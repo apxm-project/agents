@@ -1,4 +1,4 @@
-//! `apxm.frontend-graph.v2` — closed consumer types and verification.
+//! `apxm.frontend-graph` — closed consumer types and verification.
 //!
 //! The FrontendGraph is the language-neutral typed source graph recorded
 //! equivalently by the Python and TypeScript source-first frontends. It records
@@ -23,7 +23,7 @@ use crate::source_map::{SourceLanguage, SourceMap};
 /// The single accepted `schema_version` for a FrontendGraph.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FrontendGraphVersion {
-    #[serde(rename = "apxm.frontend-graph.v2")]
+    #[serde(rename = "apxm.frontend-graph")]
     V2,
 }
 

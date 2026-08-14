@@ -1,4 +1,4 @@
-//! `apxm.executable-artifact.v1` and `apxm.port-requirement.v1` — closed
+//! `apxm.executable-artifact` and `apxm.port-requirement.v1` — closed
 //! consumer types, a canonical codec, and the artifact/binding validation API.
 //!
 //! An executable artifact pins the AIR, source bundle, source map, and
@@ -19,12 +19,12 @@ use crate::lower::frontend_graph_to_air;
 use crate::source_map::SourceMap;
 
 /// The canonical model-target Port contract an artifact's `model.call` binds to.
-const MODEL_TARGET_PORT_CONTRACT: &str = "apxm.model-target.v1";
+const MODEL_TARGET_PORT_CONTRACT: &str = "apxm.model-target";
 
 /// The canonical Capability Port contract an artifact's `capability.invoke` binds to.
-const CAPABILITY_PORT_CONTRACT: &str = "apxm.capability-invocation.v1";
+const CAPABILITY_PORT_CONTRACT: &str = "apxm.capability-invocation";
 const CAPABILITY_PORT_CONTRACT_DESCRIPTOR: &[u8] = include_bytes!(
-    "../../../../contracts/port-contracts/apxm.capability-invocation.port-contract.v1.json"
+    "../../../../contracts/port-contracts/apxm.capability-invocation.port-contract.json"
 );
 
 /// Lowercase `sha256:<hex>` digest of `bytes`, matching the contract Digest
@@ -82,7 +82,7 @@ impl SourceBundle {
 /// The single accepted `schema_version` for an executable artifact.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ArtifactVersion {
-    #[serde(rename = "apxm.executable-artifact.v1")]
+    #[serde(rename = "apxm.executable-artifact")]
     V1,
 }
 
@@ -266,8 +266,8 @@ impl ExecutableArtifact {
         Ok(artifact)
     }
 
-    /// Derive the canonical `apxm.executable-artifact.v1` for a compiled
-    /// `apxm.air.v2` module when no FrontendGraph is available.
+    /// Derive the canonical `apxm.executable-artifact` for a compiled
+    /// `apxm.air` module when no FrontendGraph is available.
     ///
     /// Requirements are inferred only from embedded `model.call` operands. Prefer
     /// [`Self::from_frontend_graph`] for complete source-bundle and requirement
@@ -352,10 +352,14 @@ impl ExecutableArtifact {
         check_digest(&mut verdict, &self.air_digest, "air_digest");
         match serde_json::to_vec(&self.air) {
             Ok(air_bytes) if sha256_digest(&air_bytes) == self.air_digest => {}
-            Ok(_) => verdict.push(Diagnostic::new(
+            Ok(air_bytes) => verdict.push(Diagnostic::new(
                 DiagnosticCode::SchemaViolation,
                 "air_digest",
-                "embedded AIR bytes match air_digest",
+                format!(
+                    "embedded AIR bytes match air_digest: computed {} but artifact declares {}",
+                    sha256_digest(&air_bytes),
+                    self.air_digest
+                ),
             )),
             Err(error) => verdict.push(Diagnostic::new(
                 DiagnosticCode::SchemaViolation,
@@ -420,7 +424,7 @@ impl ExecutableArtifact {
     }
 }
 
-/// Compile serialized `apxm.frontend-graph.v2` into one complete executable
+/// Compile serialized `apxm.frontend-graph` into one complete executable
 /// artifact containing the exact structural AIR the artifact digest binds.
 pub fn compile_frontend_graph_artifact_json(graph_json: &str) -> Result<String, String> {
     let graph: FrontendGraph =
@@ -459,7 +463,7 @@ fn entrypoint_from_definition(program: &crate::frontend_graph::ProgramDefinition
 }
 
 /// Build the `artifact_semantic` Port Requirement a `model.call` declares for
-/// its model target, bound to the `apxm.model-target.v1` port contract.
+/// its model target, bound to the `apxm.model-target` port contract.
 fn model_target_requirement(target: &str) -> PortRequirement {
     port_requirement(
         target,
@@ -567,7 +571,7 @@ mod from_air_tests {
             })))
             .collect();
         serde_json::from_value(serde_json::json!({
-            "schema_version": "apxm.air.v2",
+            "schema_version": "apxm.air",
             "semantic_operations": ops,
             "structural_ir": [
                 { "region_id": "region.body", "kind": "region", "execution_order": 0 },
@@ -580,7 +584,7 @@ mod from_air_tests {
             ],
             "context_flow": [],
             "source_map": {
-                "schema_version": "apxm.source-map.v1",
+                "schema_version": "apxm.source-map",
                 "source_language": "python",
                 "node_spans": [],
                 "region_annotations": []
@@ -591,7 +595,7 @@ mod from_air_tests {
 
     #[test]
     fn from_air_produces_a_validating_digest_bound_artifact() {
-        let artifact = ExecutableArtifact::from_air(&air(&["model.target.v1"])).expect("from_air");
+        let artifact = ExecutableArtifact::from_air(&air(&["model.target"])).expect("from_air");
         assert_eq!(artifact.schema_version, ArtifactVersion::V1);
         assert_eq!(artifact.integrity_algorithm, IntegrityAlgorithm::Sha256);
         assert!(is_digest(&artifact.artifact_digest));
@@ -608,8 +612,8 @@ mod from_air_tests {
     #[test]
     fn from_air_emits_one_artifact_semantic_requirement_per_distinct_model_target() {
         let artifact = ExecutableArtifact::from_air(&air(&[
-            "model.target.v1",
-            "model.target.v1",
+            "model.target",
+            "model.target",
             "model.fast",
         ]))
         .expect("from_air");
@@ -627,13 +631,13 @@ mod from_air_tests {
             .iter()
             .map(|r| r.typed_port_slot.as_str())
             .collect();
-        assert!(slots.contains(&"model.target.v1") && slots.contains(&"model.fast"));
+        assert!(slots.contains(&"model.target") && slots.contains(&"model.fast"));
     }
 
     #[test]
     fn from_air_is_deterministic_and_content_addressed() {
-        let a = ExecutableArtifact::from_air(&air(&["model.target.v1"])).expect("from_air");
-        let b = ExecutableArtifact::from_air(&air(&["model.target.v1"])).expect("from_air");
+        let a = ExecutableArtifact::from_air(&air(&["model.target"])).expect("from_air");
+        let b = ExecutableArtifact::from_air(&air(&["model.target"])).expect("from_air");
         assert_eq!(a, b, "from_air is a deterministic content address");
         let c = ExecutableArtifact::from_air(&air(&["model.other"])).expect("from_air");
         assert_ne!(a.artifact_digest, c.artifact_digest);
@@ -654,7 +658,7 @@ mod from_graph_tests {
 
     fn specialist_graph() -> FrontendGraph {
         serde_json::from_value(serde_json::json!({
-            "schema_version": "apxm.frontend-graph.v2",
+            "schema_version": "apxm.frontend-graph",
             "source_language": "python",
             "program_definitions": [{
                 "program_id": "Specialist",
@@ -672,11 +676,11 @@ mod from_graph_tests {
             }],
             "declarations": [
                 {
-                    "decl_id": "decl.model.target.v1",
+                    "decl_id": "decl.model.target",
                     "decl_kind": "model_binding",
                     "input_type_ref": "ModelRequest",
                     "output_type_ref": "ModelResponse",
-                    "target_ref": "model.target.v1"
+                    "target_ref": "model.target"
                 },
                 {
                     "decl_id": "decl.cap.search",
@@ -720,7 +724,7 @@ mod from_graph_tests {
                     "intent_kind": "model_invocation",
                     "parent_region_id": "region.loop.1",
                     "execution_order": 0,
-                    "binding_ref": "decl.model.target.v1",
+                    "binding_ref": "decl.model.target",
                     "operand_values": ["value.input"],
                     "result_value": "value.model.out"
                 },
@@ -744,9 +748,9 @@ mod from_graph_tests {
             "context_flow": [],
             "hook_bindings": [],
             "capability_requirements": [{ "capability_ref": "cap.search" }],
-            "model_requirements": [{ "model_target_ref": "model.target.v1" }],
+            "model_requirements": [{ "model_target_ref": "model.target" }],
             "source_map": {
-                "schema_version": "apxm.source-map.v1",
+                "schema_version": "apxm.source-map",
                 "source_language": "python",
                 "node_spans": [],
                 "region_annotations": [
@@ -805,8 +809,8 @@ mod from_graph_tests {
                 schema_version: PortRequirementVersion::V1,
                 typed_port_slot: "deployment".to_string(),
                 required_port_contract: SchemaDigestRef {
-                    schema_id: "apxm.execution-commit.v1".to_string(),
-                    digest: sha256_digest(b"apxm.execution-commit.v1"),
+                    schema_id: "apxm.execution-commit".to_string(),
+                    digest: sha256_digest(b"apxm.execution-commit"),
                 },
                 required_feature_set: Vec::new(),
                 semantic_limits_digest: sha256_digest(b""),

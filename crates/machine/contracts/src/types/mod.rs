@@ -37,7 +37,7 @@ pub mod source_format;
 
 pub use agent_definition::{
     AGENT_DEFINITION_SCHEMA_V1, AgentDefinition, AgentDefinitionError, AgentEntry, AgentHierarchy,
-    AgentHook, AgentRuntime, AgentTrigger,
+    AgentHook, AgentTrigger,
 };
 pub use capability::{
     AuthMethod, CAPABILITY_DEFINITION_SCHEMA_V1, CAPABILITY_GRANT_SCHEMA_V1,
@@ -112,5 +112,3 @@ pub use source_format::{ApxmPathFormat, ArtifactFormat, GraphSourceFormat};
 pub use values::{Number, Token, TokenId, TokenStatus, Value};
 
 pub use config::InstructionConfig;
-
-pub use apxm_ais::memory::{MemoryTier, MemoryTierParseError};

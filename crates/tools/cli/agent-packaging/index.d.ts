@@ -14,7 +14,7 @@ export interface ToolInput<T extends object> {
 
 /** One typed business result from a package-local Tool. */
 export interface ToolAnswer<T extends object> {
-  readonly kind: "apxm.tool-answer.v1";
+  readonly kind: "apxm.tool-answer";
   readonly value: T;
 }
 

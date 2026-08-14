@@ -1,0 +1,132 @@
+{
+  "schema_version": "apxm.frontend-surface",
+  "surface_version": "apxm.frontend-graph",
+  "everyday": ["Agent", "agent", "Context", "Tool", "Model"],
+  "advanced": ["Capability", "Event", "Hook", "TaskGroup"],
+  "non_public": [
+    "AgentProgram",
+    "AgentFacade",
+    "FrontendGraph",
+    "model.call",
+    "capability.invoke",
+    "program.new",
+    "program.invoke",
+    "await.event",
+    "ais.loop",
+    "ais.model_call",
+    "ais.capability_invoke",
+    "ais.program_new",
+    "ais.program_invoke",
+    "ais.await_event",
+    "OP_MODEL_CALL",
+    "OP_CAPABILITY_INVOKE",
+    "OP_PROGRAM_NEW",
+    "OP_PROGRAM_INVOKE",
+    "OP_AWAIT_EVENT",
+    "FIVE_OPS",
+    "SEMANTIC_MODEL_CALL",
+    "STRUCTURAL_AIS_LOOP",
+    "AgentInstance",
+    "AgentLoop",
+    "Loop"
+  ],
+  "declarations": [
+    {
+      "concept": "Agent definition",
+      "tier": "everyday",
+      "python_projection": "@Agent(input=..., output=..., context=...) on one async def",
+      "typescript_projection": "Agent<I, O, C>({ context?, async run(agent, input) })",
+      "bound_semantic_node": "AgentDecl",
+      "arguments": [
+        { "name": "input", "accepts": "type_ref", "required": true },
+        { "name": "output", "accepts": "type_ref", "required": true },
+        { "name": "context", "accepts": "type_ref", "required": false }
+      ],
+      "produces_intent": "none",
+      "diagnostics": ["AgentBodyNotAsync", "AgentMissingInputOutput", "AgentDynamicArgument", "AgentFacadeImported"]
+    },
+    {
+      "concept": "Context schema/default",
+      "tier": "everyday",
+      "python_projection": "@Context on one typed class",
+      "typescript_projection": "Context<C>(initial)",
+      "bound_semantic_node": "ContextDecl",
+      "arguments": [
+        { "name": "initial", "accepts": "typed_default", "required": false }
+      ],
+      "produces_intent": "none",
+      "diagnostics": ["ContextNotTyped", "ContextMutableGlobal", "ContextDynamicDefault"]
+    },
+    {
+      "concept": "Exact Model binding",
+      "tier": "everyday",
+      "python_projection": "Model[I, O](ref)",
+      "typescript_projection": "Model<I, O>(ref)",
+      "bound_semantic_node": "ModelBinding",
+      "arguments": [
+        { "name": "ref", "accepts": "exact_reference", "required": true }
+      ],
+      "produces_intent": "model_invocation",
+      "diagnostics": ["ModelRefNotExact", "ModelDisplayNameRejected", "ModelUntypedSchema"]
+    },
+    {
+      "concept": "Imported Tool binding",
+      "tier": "everyday",
+      "python_projection": "Tool[I, O](capability_ref)",
+      "typescript_projection": "Tool<I, O>(capabilityRef)",
+      "bound_semantic_node": "ToolBinding",
+      "arguments": [
+        { "name": "capability_ref", "accepts": "exact_reference", "required": true }
+      ],
+      "produces_intent": "tool_invocation",
+      "diagnostics": ["ToolRefNotCapability", "ToolDisplayNameRejected", "ToolCredentialInSource"]
+    },
+    {
+      "concept": "Imported Capability",
+      "tier": "advanced",
+      "python_projection": "Capability[I, O](ref)",
+      "typescript_projection": "Capability<I, O>(ref)",
+      "bound_semantic_node": "CapabilityBinding",
+      "arguments": [
+        { "name": "ref", "accepts": "exact_reference", "required": true }
+      ],
+      "produces_intent": "capability_invocation",
+      "diagnostics": ["CapabilityRefNotExact", "CapabilityDisplayNameRejected"]
+    },
+    {
+      "concept": "Static Hook",
+      "tier": "advanced",
+      "python_projection": "@Hook.before(...) / @Hook.after(...)",
+      "typescript_projection": "Hook.before({...}) / Hook.after({...})",
+      "bound_semantic_node": "HookDecl",
+      "arguments": [
+        { "name": "target_selector", "accepts": "selector", "required": true },
+        { "name": "phase", "accepts": "phase", "required": true }
+      ],
+      "produces_intent": "none",
+      "diagnostics": ["HookTargetUnresolved", "HookDynamicRegistration", "HookOrderAmbiguous"]
+    },
+    {
+      "concept": "Durable Event value",
+      "tier": "advanced",
+      "python_projection": "Event[T], then await event.wait(...)",
+      "typescript_projection": "Event<T>, then await event.wait(...)",
+      "bound_semantic_node": "EventType",
+      "arguments": [
+        { "name": "T", "accepts": "type_ref", "required": true }
+      ],
+      "produces_intent": "event_wait",
+      "diagnostics": ["EventNotTyped", "EventWaitOutsideBody"]
+    },
+    {
+      "concept": "Structured task scope",
+      "tier": "advanced",
+      "python_projection": "async with TaskGroup()",
+      "typescript_projection": "TaskGroup.run(...)",
+      "bound_semantic_node": "TaskScope",
+      "arguments": [],
+      "produces_intent": "none",
+      "diagnostics": ["TaskGroupMissingJoin", "TaskGroupDetachedWork", "TaskGroupRawCoroutine"]
+    }
+  ]
+}

@@ -1,0 +1,114 @@
+[
+  {
+    "name": "valid-joined-with-external-release-evidence",
+    "expected_valid": true,
+    "input": {
+      "schema_version": "apxm.vllm-conformance-join",
+      "agents_driver_contract_id": "apxm.inference-driver-binding",
+      "vllm_port_contract_id": "apxm.vllm-inference.v1",
+      "vllm_port_contract_digest": "sha256:118ad96d04eea06b729f8ad1ab898b072f7fab7b561f04427dd1c808e39f268c",
+      "joined_vector_digests": [
+        "sha256:7add76f8f7df341785ef45ff51b38e979a309299509b32e76b311268cc93ea32",
+        "sha256:00a8657980dfd3f49859d05f62955e430d15dd50125c91605d676830abf08bfa",
+        "sha256:96914ff1d56cc2d1e74fda3a063287615392cb0197bcc1c853cb1a18a5e7e8c3",
+        "sha256:5e7abcccf5c7f7276b9398ccd2c255671f23a6914eb23287b44518b30b8c7723",
+        "sha256:1e9a389b24f08411738594ca3646bbcbeb18a77c398c6b07933d04903bd9be39"
+      ],
+      "join_status": "joined",
+      "release_attestation": {
+        "release_id": "apxm-vllm-863e2bfcd2d3",
+        "owner_revision": "863e2bfcd2d3ab52b2a93e830fcea239139764ad",
+        "manifest_digest": "sha256:49c3085e7a971cba4529566ac640c86a3684c7fd7d4c037b210a9959b88e4e69",
+        "port_contract_digest": "sha256:118ad96d04eea06b729f8ad1ab898b072f7fab7b561f04427dd1c808e39f268c",
+        "vector_digests": [
+          "sha256:7add76f8f7df341785ef45ff51b38e979a309299509b32e76b311268cc93ea32",
+          "sha256:00a8657980dfd3f49859d05f62955e430d15dd50125c91605d676830abf08bfa",
+          "sha256:96914ff1d56cc2d1e74fda3a063287615392cb0197bcc1c853cb1a18a5e7e8c3",
+          "sha256:5e7abcccf5c7f7276b9398ccd2c255671f23a6914eb23287b44518b30b8c7723",
+          "sha256:1e9a389b24f08411738594ca3646bbcbeb18a77c398c6b07933d04903bd9be39"
+        ]
+      }
+    }
+  },
+  {
+    "name": "valid-candidate-conformance-join",
+    "expected_valid": true,
+    "input": {
+      "schema_version": "apxm.vllm-conformance-join",
+      "agents_driver_contract_id": "apxm.inference-driver-binding",
+      "vllm_port_contract_id": "apxm.vllm-inference.v1",
+      "vllm_port_contract_digest": "sha256:118ad96d04eea06b729f8ad1ab898b072f7fab7b561f04427dd1c808e39f268c",
+      "joined_vector_digests": ["sha256:7add76f8f7df341785ef45ff51b38e979a309299509b32e76b311268cc93ea32"],
+      "join_status": "candidate_awaiting_vllm_release"
+    }
+  },
+  {
+    "name": "reject-unknown-join-status",
+    "expected_valid": false,
+    "input": {
+      "schema_version": "apxm.vllm-conformance-join",
+      "agents_driver_contract_id": "apxm.inference-driver-binding",
+      "vllm_port_contract_id": "apxm.vllm-inference.v1",
+      "vllm_port_contract_digest": "sha256:118ad96d04eea06b729f8ad1ab898b072f7fab7b561f04427dd1c808e39f268c",
+      "joined_vector_digests": ["sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"],
+      "join_status": "released"
+    }
+  },
+  {
+    "name": "reject-joined-without-release-evidence",
+    "expected_valid": false,
+    "input": {
+      "schema_version": "apxm.vllm-conformance-join",
+      "agents_driver_contract_id": "apxm.inference-driver-binding",
+      "vllm_port_contract_id": "apxm.vllm-inference.v1",
+      "vllm_port_contract_digest": "sha256:118ad96d04eea06b729f8ad1ab898b072f7fab7b561f04427dd1c808e39f268c",
+      "joined_vector_digests": ["sha256:7add76f8f7df341785ef45ff51b38e979a309299509b32e76b311268cc93ea32"],
+      "join_status": "joined"
+    }
+  },
+  {
+    "name": "valid-candidate-pinned-vector-set",
+    "expected_valid": true,
+    "input": {
+      "schema_version": "apxm.vllm-conformance-join",
+      "agents_driver_contract_id": "apxm.inference-driver-binding",
+      "vllm_port_contract_id": "apxm.vllm-inference.v1",
+      "vllm_port_contract_digest": "sha256:118ad96d04eea06b729f8ad1ab898b072f7fab7b561f04427dd1c808e39f268c",
+      "joined_vector_digests": [
+        "sha256:7add76f8f7df341785ef45ff51b38e979a309299509b32e76b311268cc93ea32",
+        "sha256:00a8657980dfd3f49859d05f62955e430d15dd50125c91605d676830abf08bfa",
+        "sha256:96914ff1d56cc2d1e74fda3a063287615392cb0197bcc1c853cb1a18a5e7e8c3",
+        "sha256:5e7abcccf5c7f7276b9398ccd2c255671f23a6914eb23287b44518b30b8c7723",
+        "sha256:1e9a389b24f08411738594ca3646bbcbeb18a77c398c6b07933d04903bd9be39"
+      ],
+      "join_status": "candidate_awaiting_vllm_release"
+    }
+  },
+  {
+    "name": "reject-unpinned-vector-digest",
+    "expected_valid": false,
+    "input": {
+      "schema_version": "apxm.vllm-conformance-join",
+      "agents_driver_contract_id": "apxm.inference-driver-binding",
+      "vllm_port_contract_id": "apxm.vllm-inference.v1",
+      "vllm_port_contract_digest": "sha256:118ad96d04eea06b729f8ad1ab898b072f7fab7b561f04427dd1c808e39f268c",
+      "joined_vector_digests": ["sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"],
+      "join_status": "candidate_awaiting_vllm_release"
+    }
+  },
+  {
+    "name": "reject-duplicate-vector-digest",
+    "expected_valid": false,
+    "input": {
+      "schema_version": "apxm.vllm-conformance-join",
+      "agents_driver_contract_id": "apxm.inference-driver-binding",
+      "vllm_port_contract_id": "apxm.vllm-inference.v1",
+      "vllm_port_contract_digest": "sha256:118ad96d04eea06b729f8ad1ab898b072f7fab7b561f04427dd1c808e39f268c",
+      "joined_vector_digests": [
+        "sha256:7add76f8f7df341785ef45ff51b38e979a309299509b32e76b311268cc93ea32",
+        "sha256:7add76f8f7df341785ef45ff51b38e979a309299509b32e76b311268cc93ea32"
+      ],
+      "join_status": "candidate_awaiting_vllm_release"
+    }
+  }
+]

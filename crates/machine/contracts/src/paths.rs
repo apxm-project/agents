@@ -40,7 +40,7 @@ pub struct ApxmPaths {
 impl ApxmPaths {
     /// Discover paths based on current working directory and environment.
     ///
-    /// Validates the read-write state root against the `apxm.state-layout.v1`
+    /// Validates the read-write state root against the `apxm.state-layout`
     /// contract (see `contracts/schemas/state-layout.v1.json`) before
     /// returning: a state root that already exists but has the wrong entry
     /// kind (e.g. a plain file sitting where `sessions/` should be a
@@ -270,7 +270,7 @@ pub fn session_node_dir_name(node_id: u64, node_name: &str) -> String {
 }
 
 /// A layout entry this service owns under the state root, per
-/// `apxm.state-layout.v1`.
+/// `apxm.state-layout`.
 struct LayoutEntry {
     /// Path relative to the state root.
     relative_path: &'static str,
@@ -305,7 +305,7 @@ const AGENTS_STATE_LAYOUT: &[LayoutEntry] = &[
 ];
 
 /// Validate the on-disk state root against the `agents`-owned entries of
-/// `apxm.state-layout.v1`.
+/// `apxm.state-layout`.
 ///
 /// This is a boot-time check, not a migration: it never creates or moves
 /// anything. It only rejects a state root where an existing path has the

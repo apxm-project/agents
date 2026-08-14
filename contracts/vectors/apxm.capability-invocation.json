@@ -1,0 +1,210 @@
+[
+  {
+    "name": "complete-capability-request-keeps-arguments-separate-from-authority",
+    "input": {
+      "schema_version": "apxm.capability-invocation",
+      "capability_ref": "cap.search",
+      "arguments": {
+        "type_ref": "SearchArguments",
+        "canonical_json": "{\"query\":\"release checklist\"}",
+        "digest": "sha256:c6e600ff35c368b052454de5d2bd12acd885144c19995a2b60f1cf9cd5fb432f"
+      },
+      "correlation": {
+        "program_invocation_ref": {
+          "ref_type": "ProgramInvocationRef",
+          "ref": "invocation.1"
+        },
+        "node_execution_id": "node-execution.invocation.1.cap.search.4"
+      },
+      "authority": {
+        "acting_principal_ref": {
+          "ref_type": "ActingPrincipalRef",
+          "ref": "principal.user.1"
+        },
+        "agent_identity_ref": {
+          "ref_type": "AgentIdentityRef",
+          "ref": "agent.gao.1"
+        },
+        "capability_grant_ref": {
+          "ref_type": "CapabilityGrantRef",
+          "ref": "grant.search.1"
+        },
+        "approval_refs": [
+          {
+            "ref_type": "ApprovalRef",
+            "ref": "approval.search.1"
+          }
+        ]
+      },
+      "effect": {
+        "effect_id": "capability-effect.56d03aaa5f4b2354a41124d1c393be3bf3f08a5ac805e75853f8528daaa6b09e",
+        "request_digest": "sha256:b625f55e331713397b51a07ca27481fea80566c679058cf9cac4cc66c92ccfd5",
+        "idempotency_key": {
+          "key_id": "capability-effect.56d03aaa5f4b2354a41124d1c393be3bf3f08a5ac805e75853f8528daaa6b09e",
+          "scope_ref": "invocation.1",
+          "request_digest": "sha256:b625f55e331713397b51a07ca27481fea80566c679058cf9cac4cc66c92ccfd5"
+        }
+      }
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "mutated-effect-id-is-rejected",
+    "input": {
+      "schema_version": "apxm.capability-invocation",
+      "capability_ref": "cap.search",
+      "arguments": {
+        "type_ref": "SearchArguments",
+        "canonical_json": "{\"query\":\"release checklist\"}",
+        "digest": "sha256:c6e600ff35c368b052454de5d2bd12acd885144c19995a2b60f1cf9cd5fb432f"
+      },
+      "correlation": {
+        "program_invocation_ref": {
+          "ref_type": "ProgramInvocationRef",
+          "ref": "invocation.1"
+        },
+        "node_execution_id": "node-execution.invocation.1.cap.search.4"
+      },
+      "authority": {
+        "acting_principal_ref": {
+          "ref_type": "ActingPrincipalRef",
+          "ref": "principal.user.1"
+        },
+        "agent_identity_ref": {
+          "ref_type": "AgentIdentityRef",
+          "ref": "agent.gao.1"
+        },
+        "capability_grant_ref": {
+          "ref_type": "CapabilityGrantRef",
+          "ref": "grant.search.1"
+        },
+        "approval_refs": [
+          {
+            "ref_type": "ApprovalRef",
+            "ref": "approval.search.1"
+          }
+        ]
+      },
+      "effect": {
+        "effect_id": "capability-effect.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "request_digest": "sha256:b625f55e331713397b51a07ca27481fea80566c679058cf9cac4cc66c92ccfd5",
+        "idempotency_key": {
+          "key_id": "capability-effect.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "scope_ref": "invocation.1",
+          "request_digest": "sha256:b625f55e331713397b51a07ca27481fea80566c679058cf9cac4cc66c92ccfd5"
+        }
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "mutated-request-digest-is-rejected",
+    "input": {
+      "schema_version": "apxm.capability-invocation",
+      "capability_ref": "cap.search",
+      "arguments": {
+        "type_ref": "SearchArguments",
+        "canonical_json": "{\"query\":\"release checklist\"}",
+        "digest": "sha256:c6e600ff35c368b052454de5d2bd12acd885144c19995a2b60f1cf9cd5fb432f"
+      },
+      "correlation": {
+        "program_invocation_ref": {
+          "ref_type": "ProgramInvocationRef",
+          "ref": "invocation.1"
+        },
+        "node_execution_id": "node-execution.invocation.1.cap.search.4"
+      },
+      "authority": {
+        "acting_principal_ref": {
+          "ref_type": "ActingPrincipalRef",
+          "ref": "principal.user.1"
+        },
+        "agent_identity_ref": {
+          "ref_type": "AgentIdentityRef",
+          "ref": "agent.gao.1"
+        },
+        "capability_grant_ref": {
+          "ref_type": "CapabilityGrantRef",
+          "ref": "grant.search.1"
+        },
+        "approval_refs": [
+          {
+            "ref_type": "ApprovalRef",
+            "ref": "approval.search.1"
+          }
+        ]
+      },
+      "effect": {
+        "effect_id": "capability-effect.56d03aaa5f4b2354a41124d1c393be3bf3f08a5ac805e75853f8528daaa6b09e",
+        "request_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "idempotency_key": {
+          "key_id": "capability-effect.56d03aaa5f4b2354a41124d1c393be3bf3f08a5ac805e75853f8528daaa6b09e",
+          "scope_ref": "invocation.1",
+          "request_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "authority-cannot-be-omitted-and-smuggled-through-arguments",
+    "input": {
+      "schema_version": "apxm.capability-invocation",
+      "capability_ref": "cap.search",
+      "arguments": {
+        "type_ref": "SearchArguments",
+        "canonical_json": "{\"acting_principal\":\"principal.user.1\"}",
+        "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+      },
+      "correlation": {
+        "program_invocation_ref": {
+          "ref_type": "ProgramInvocationRef",
+          "ref": "invocation.1"
+        },
+        "node_execution_id": "node-execution.invocation.1.cap.search.4"
+      },
+      "effect": {
+        "effect_id": "capability-effect.1111111111111111111111111111111111111111111111111111111111111111",
+        "request_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "idempotency_key": {
+          "key_id": "capability-effect.1111111111111111111111111111111111111111111111111111111111111111",
+          "scope_ref": "invocation.1",
+          "request_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+        }
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "non-canonical-argument-json-is-rejected",
+    "input": {
+      "schema_version": "apxm.capability-invocation",
+      "capability_ref": "cap.search",
+      "arguments": {
+        "type_ref": "SearchArguments",
+        "canonical_json": "{ \"query\": \"release checklist\" }",
+        "digest": "sha256:c6e600ff35c368b052454de5d2bd12acd885144c19995a2b60f1cf9cd5fb432f"
+      },
+      "correlation": {
+        "program_invocation_ref": {"ref_type": "ProgramInvocationRef", "ref": "invocation.1"},
+        "node_execution_id": "node-execution.invocation.1.cap.search.4"
+      },
+      "authority": {
+        "acting_principal_ref": {"ref_type": "ActingPrincipalRef", "ref": "principal.user.1"},
+        "agent_identity_ref": {"ref_type": "AgentIdentityRef", "ref": "agent.gao.1"},
+        "capability_grant_ref": {"ref_type": "CapabilityGrantRef", "ref": "grant.search.1"},
+        "approval_refs": []
+      },
+      "effect": {
+        "effect_id": "capability-effect.1111111111111111111111111111111111111111111111111111111111111111",
+        "request_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "idempotency_key": {
+          "key_id": "capability-effect.1111111111111111111111111111111111111111111111111111111111111111",
+          "scope_ref": "invocation.1",
+          "request_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+        }
+      }
+    },
+    "expected_valid": false
+  }
+]

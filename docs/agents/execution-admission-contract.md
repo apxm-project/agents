@@ -13,7 +13,7 @@ may seal admissions; APXM verifies them and never depends on product schema.
 
 ## 2. Schema
 
-- Schema id: `apxm.execution-admission.v1`
+- Schema id: `apxm.execution-admission`
 - Rust owner: `apxm_kernel::admission::ExecutionAdmission`
 - Signature algorithm: `ed25519` only
 - Digest form: `sha256:` + 64 lowercase hex

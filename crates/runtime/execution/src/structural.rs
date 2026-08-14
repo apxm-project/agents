@@ -341,7 +341,7 @@ mod tests {
     #[test]
     fn non_loop_yield_is_not_scheduled_as_a_committed_back_edge() {
         let air: AirModule = serde_json::from_value(json!({
-            "schema_version": "apxm.air.v2",
+            "schema_version": "apxm.air",
             "semantic_operations": [],
             "structural_ir": [
                 {
@@ -352,7 +352,7 @@ mod tests {
             ],
             "context_flow": [],
             "source_map": {
-                "schema_version": "apxm.source-map.v1",
+                "schema_version": "apxm.source-map",
                 "source_language": "python",
                 "node_spans": [],
                 "region_annotations": []
@@ -374,14 +374,14 @@ mod tests {
     #[test]
     fn sibling_and_nested_loops_have_independent_ordered_back_edges() {
         let air: AirModule = serde_json::from_value(json!({
-            "schema_version": "apxm.air.v2",
+            "schema_version": "apxm.air",
             "semantic_operations": [
                 {
                     "node_id": "node.outer.before",
                     "op": "model.call",
                     "parent_region_id": "loop.outer",
                     "execution_order": 0,
-                    "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.outer.before.request", "type_ref": "ModelRequest"}],
+                    "operands": [{"slot": "model_ref", "value_id": "model.target", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.outer.before.request", "type_ref": "ModelRequest"}],
                     "result": {"value_id": "value.outer.before.output", "type_ref": "ModelOutput"}
                 },
                 {
@@ -397,7 +397,7 @@ mod tests {
                     "op": "model.call",
                     "parent_region_id": "loop.outer",
                     "execution_order": 2,
-                    "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.outer.after.request", "type_ref": "ModelRequest"}],
+                    "operands": [{"slot": "model_ref", "value_id": "model.target", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.outer.after.request", "type_ref": "ModelRequest"}],
                     "result": {"value_id": "value.outer.after.output", "type_ref": "ModelOutput"}
                 },
                 {
@@ -405,7 +405,7 @@ mod tests {
                     "op": "model.call",
                     "parent_region_id": "loop.sibling",
                     "execution_order": 0,
-                    "operands": [{"slot": "model_ref", "value_id": "model.target.v1", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.sibling.request", "type_ref": "ModelRequest"}],
+                    "operands": [{"slot": "model_ref", "value_id": "model.target", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.sibling.request", "type_ref": "ModelRequest"}],
                     "result": {"value_id": "value.sibling.output", "type_ref": "ModelOutput"}
                 }
             ],
@@ -442,7 +442,7 @@ mod tests {
             "value_assemblies": [{"value_id": "value.inner.arguments", "expression": {"kind": "object", "fields": [{"name": "query", "value": {"kind": "string", "value": "nested"}}]}}],
             "context_flow": [],
             "source_map": {
-                "schema_version": "apxm.source-map.v1",
+                "schema_version": "apxm.source-map",
                 "source_language": "python",
                 "node_spans": [],
                 "region_annotations": [
@@ -493,7 +493,7 @@ mod tests {
     #[test]
     fn multiple_context_edges_to_one_consumer_are_all_scheduled() {
         let air: AirModule = serde_json::from_value(json!({
-            "schema_version": "apxm.air.v2",
+            "schema_version": "apxm.air",
             "semantic_operations": [{
                 "node_id": "node.consumer",
                 "op": "model.call",
@@ -520,7 +520,7 @@ mod tests {
                 }
             ],
             "source_map": {
-                "schema_version": "apxm.source-map.v1",
+                "schema_version": "apxm.source-map",
                 "source_language": "python",
                 "node_spans": [],
                 "region_annotations": []
