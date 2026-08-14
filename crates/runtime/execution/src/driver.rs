@@ -46,8 +46,8 @@ use apxm_program::air::{
 use apxm_program::capability::{CapabilityInvocationAuthority, CapabilityRequestError};
 use apxm_program::common::TypedRef;
 use apxm_program::external_agent::ExternalAgentEvidence;
-use apxm_program::frontend_graph::HookBinding;
 use apxm_program::frontend_graph::ValueExpression;
+use apxm_program::frontend_graph::{HookBinding, HookReturnMode};
 use apxm_program::runtime_evidence::{
     Fact, FactKind, HookPhase as EvidenceHookPhase, HookScope as EvidenceHookScope, InstanceState,
     InvocationState, LoopIterationCompletedFact, LoopMembership, ModelAttemptRecordedFact,
@@ -164,35 +164,63 @@ pub struct StaticHookExecutionError {
     pub message: String,
 }
 
-/// Execute the exact digest-pinned handler named by a compiled Hook binding.
+/// One Hook's turn to act, after its captured body has already run.
+pub struct StaticHookInvocation<'a> {
+    pub binding: &'a HookBinding,
+    pub context: &'a Value,
+    pub result: &'a Value,
+    /// The Context value the Hook's captured body assigned, materialized from
+    /// the Hook's own AIR region. `None` when the body assigns nothing.
+    pub captured_context: Option<Value>,
+}
+
+/// Apply one compiled Hook binding's declared return contract.
 ///
-/// The execution port receives the artifact binding directly. It cannot discover
-/// a Hook by event name or register callbacks dynamically.
+/// The port receives the artifact binding directly. It cannot discover a Hook by
+/// event name or register callbacks dynamically, and it never performs the
+/// Hook's effects: those are captured operations in the Hook's own AIR region
+/// and have already been dispatched through the ordinary admitted ports.
 #[async_trait]
 pub trait StaticHookHandlerPort: Send + Sync {
     async fn execute(
         &self,
-        binding: &HookBinding,
-        context: &Value,
-        result: &Value,
+        invocation: StaticHookInvocation<'_>,
     ) -> Result<StaticHookResult, StaticHookExecutionError>;
 }
 
-/// A no-op handler implementation for programs with no static Hook bindings.
-pub struct NoopStaticHookHandler;
+/// The canonical handler for Hooks whose bodies are captured as AIR.
+///
+/// A captured Hook has no hidden behavior left to run, so the whole contract is
+/// the one the compiler derived from the body: an observing Hook changes
+/// nothing, and a replacing Hook installs exactly the Context value its body
+/// assigned. Nothing here can perform an effect the artifact does not declare —
+/// which is the point of capturing bodies instead of resolving opaque handlers.
+pub struct CapturedHookBodyHandler;
 
 #[async_trait]
-impl StaticHookHandlerPort for NoopStaticHookHandler {
+impl StaticHookHandlerPort for CapturedHookBodyHandler {
     async fn execute(
         &self,
-        _binding: &HookBinding,
-        _context: &Value,
-        _result: &Value,
+        invocation: StaticHookInvocation<'_>,
     ) -> Result<StaticHookResult, StaticHookExecutionError> {
-        Err(StaticHookExecutionError {
-            hook_id: _binding.hook_id.clone(),
-            message: "no static Hook executor is installed".to_string(),
-        })
+        match invocation.binding.return_mode {
+            HookReturnMode::Observe => Ok(StaticHookResult::Keep {
+                assigned_context: None,
+            }),
+            HookReturnMode::ReplaceResult => {
+                let assigned_context =
+                    invocation
+                        .captured_context
+                        .ok_or_else(|| StaticHookExecutionError {
+                            hook_id: invocation.binding.hook_id.clone(),
+                            message: "a replacing Hook's captured body assigned no Context value"
+                                .to_string(),
+                        })?;
+                Ok(StaticHookResult::Keep {
+                    assigned_context: Some(assigned_context),
+                })
+            }
+        }
     }
 }
 
@@ -362,6 +390,7 @@ pub enum NodeOutcome {
     Capability {
         node_id: String,
         outcome: CapabilityOutcome,
+        replaced: bool,
     },
     ExternalAgent {
         node_id: String,
@@ -1230,7 +1259,7 @@ async fn drive_from(
         let step = &schedule[schedule_position];
         match step {
             ScheduleStep::HookBefore { binding } => {
-                let (before, after) = apply_static_hook(&mut state, ports, binding).await?;
+                let (before, after) = apply_static_hook(&mut state, ports, air, binding).await?;
                 state.seq += 1;
                 let mut fact = fact(
                     &state.program_invocation_id,
@@ -1262,7 +1291,7 @@ async fn drive_from(
             }
             ScheduleStep::HookAfter { binding } => {
                 if state.last_operation_succeeded {
-                    let (before, after) = apply_static_hook(&mut state, ports, binding).await?;
+                    let (before, after) = apply_static_hook(&mut state, ports, air, binding).await?;
                     state.seq += 1;
                     let mut fact = fact(
                         &state.program_invocation_id,
@@ -1714,6 +1743,7 @@ async fn drive_from(
                             state.node_outcomes.push(NodeOutcome::Capability {
                                 node_id: op.node_id.clone(),
                                 outcome,
+                                replaced: false,
                             });
                         }
                     }
@@ -2009,14 +2039,50 @@ fn context_transition_fact(program_invocation_id: &str, seq: u64) -> Fact {
 async fn apply_static_hook(
     state: &mut DriveState,
     ports: &ExecutionPorts,
+    air: &AirModule,
     binding: &HookBinding,
 ) -> Result<(Value, Value), ExecutionError> {
     let before = state.context.clone();
+    let captured_context = match binding.assigned_context_value_id.as_deref() {
+        Some(value_id) => Some(materialize_ssa_value(
+            air,
+            state,
+            &binding.body_region_id,
+            value_id,
+            &mut BTreeSet::new(),
+        )?),
+        None => None,
+    };
     let outcome = ports
         .hook_handlers
-        .execute(binding, &state.context, &state.last_result)
+        .execute(StaticHookInvocation {
+            binding,
+            context: &state.context,
+            result: &state.last_result,
+            captured_context,
+        })
         .await
         .map_err(ExecutionError::StaticHook)?;
+
+    // The one authority bit a Hook binding carries about itself is its return
+    // mode, and it used to be read nowhere: a Hook declared `observe` whose
+    // handler replaced the result replaced it anyway. An observing Hook now
+    // mutates nothing, whatever the injected port hands back.
+    if binding.return_mode == HookReturnMode::Observe
+        && !matches!(
+            outcome,
+            StaticHookResult::Keep {
+                assigned_context: None
+            }
+        )
+    {
+        return Err(ExecutionError::StaticHook(StaticHookExecutionError {
+            hook_id: binding.hook_id.clone(),
+            message: "an observing Hook returned a replacement for Context or the target result"
+                .to_string(),
+        }));
+    }
+
     match outcome {
         StaticHookResult::Keep { assigned_context } => {
             if let Some(context) = assigned_context {
@@ -2034,18 +2100,41 @@ async fn apply_static_hook(
             if let Some(value_id) = &state.last_result_value_id {
                 state.values.insert(value_id.clone(), result.clone());
             }
-            if let Some(NodeOutcome::Model {
-                result: model_result,
-                replaced,
-                ..
-            }) = state.node_outcomes.last_mut()
-            {
-                *model_result = result;
-                *replaced = true;
+            // A replacement has to reach the node outcome the evidence records,
+            // or a Capability-scope Hook would replace the value the program
+            // goes on to use while the committed outcome still reported the
+            // original — two different answers to one question.
+            match state.node_outcomes.last_mut() {
+                Some(NodeOutcome::Model {
+                    result: model_result,
+                    replaced,
+                    ..
+                }) => {
+                    *model_result = result;
+                    *replaced = true;
+                }
+                Some(NodeOutcome::Capability {
+                    outcome, replaced, ..
+                }) => {
+                    *outcome = CapabilityOutcome::Completed {
+                        result: render_replacement(&result),
+                    };
+                    *replaced = true;
+                }
+                _ => {}
             }
         }
     }
     Ok((before, state.context.clone()))
+}
+
+/// Render a Hook's replacement value as the string a Capability outcome
+/// carries, without inventing a JSON wrapper around an already-textual result.
+fn render_replacement(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
+    }
 }
 
 /// Perform the one atomic commit for a completed run and build its report. The

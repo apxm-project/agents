@@ -10,28 +10,30 @@ from typing import Any, Callable, Optional
 from ._generated.frontend_graph import (
     HOOK_PHASE_AFTER,
     HOOK_PHASE_BEFORE,
-    HOOK_RETURN_MODE_OBSERVE,
-    HOOK_RETURN_MODE_REPLACE_RESULT,
     HOOK_SCOPE_NODE,
     HOOK_SCOPES,
     HookPhase,
-    HookReturnMode,
     HookScope,
 )
 
 
 @dataclass(frozen=True, slots=True)
 class HookDecl:
-    """A static before/after Hook binding over a declared scope."""
+    """A static before/after Hook binding over a declared scope.
+
+    The decorated handler is retained, unexecuted, because a Hook's body is
+    captured as ordinary Agent Program structure: its Capability and Model calls
+    become the same typed intents an Agent body records. Nothing about a Hook is
+    an opaque handler the artifact only names.
+    """
 
     phase: HookPhase
     target_selector: str
     scope: HookScope = HOOK_SCOPE_NODE
-    return_mode: HookReturnMode = HOOK_RETURN_MODE_OBSERVE
+    handler: Optional[Callable[..., Any]] = None
     handler_ref: Optional[str] = None
     handler_digest: Optional[str] = None
     input_type_ref: str = "AgentFacade"
-    output_type_ref: str = "HookResult"
 
     def __call__(self, handler: Callable[..., Any]) -> "HookDecl":
         """Bind one handler without invoking its authored behavior."""
@@ -39,19 +41,15 @@ class HookDecl:
             raise TypeError("a Hook decorates one async def")
         return replace(
             self,
+            handler=handler,
             handler_ref=handler.__name__,
             handler_digest=_digest(handler),
             input_type_ref=_first_parameter_type(handler),
-            output_type_ref=(
-                "Unit"
-                if self.return_mode == HOOK_RETURN_MODE_OBSERVE
-                else _return_type(handler)
-            ),
         )
 
 
 def _digest(handler: Callable[..., Any]) -> str:
-    """Return the content digest used by the separate Hook handler bundle."""
+    """Return the content digest pinning the source the body was captured from."""
     try:
         source = inspect.getsource(handler)
     except (OSError, TypeError):
@@ -75,39 +73,28 @@ def _first_parameter_type(handler: Callable[..., Any]) -> str:
     return "AgentFacade"
 
 
-def _return_type(handler: Callable[..., Any]) -> str:
-    """Resolve the Hook callback result type without evaluating the callback."""
-    return _type_name(inspect.signature(handler).return_annotation, "HookResult")
-
-
 class _Hook:
     """The Hook declaration surface exposing before/after bindings."""
 
-    def before(
-        self, *, target: str, scope: str = HOOK_SCOPE_NODE, replace: bool = False
-    ) -> HookDecl:
-        return _declare(HOOK_PHASE_BEFORE, target, scope, replace)
+    def before(self, *, target: str, scope: str = HOOK_SCOPE_NODE) -> HookDecl:
+        return _declare(HOOK_PHASE_BEFORE, target, scope)
 
-    def after(
-        self, *, target: str, scope: str = HOOK_SCOPE_NODE, replace: bool = False
-    ) -> HookDecl:
-        return _declare(HOOK_PHASE_AFTER, target, scope, replace)
+    def after(self, *, target: str, scope: str = HOOK_SCOPE_NODE) -> HookDecl:
+        return _declare(HOOK_PHASE_AFTER, target, scope)
 
 
-def _declare(phase: HookPhase, target: str, scope: str, replace: bool) -> HookDecl:
-    """Fail closed unless a Hook uses one closed static binding shape."""
+def _declare(phase: HookPhase, target: str, scope: str) -> HookDecl:
+    """Fail closed unless a Hook uses one closed static binding shape.
+
+    There is no ``replace`` argument: whether a Hook observes or replaces is
+    read off its captured body, so the declaration cannot claim one thing while
+    the body does another.
+    """
     if not isinstance(target, str) or not target:
         raise TypeError("a Hook target is one non-empty static source selector")
     if scope not in HOOK_SCOPES:
         raise ValueError(f"a Hook scope is one of {', '.join(HOOK_SCOPES)}")
-    return HookDecl(
-        phase=phase,
-        target_selector=target,
-        scope=scope,
-        return_mode=(
-            HOOK_RETURN_MODE_REPLACE_RESULT if replace else HOOK_RETURN_MODE_OBSERVE
-        ),
-    )
+    return HookDecl(phase=phase, target_selector=target, scope=scope)
 
 
 class TaskGroup:

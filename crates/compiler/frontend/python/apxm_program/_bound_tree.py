@@ -174,14 +174,14 @@ class BoundRegion:
     """One lexical region owning ordered children."""
 
     region_id: str
-    region_role: str  # function_body | conditional_arm | loop_body | task_scope | task_child | try_body | catch_body
+    region_role: str  # one of RegionRole in _generated.frontend_graph
     parent_region_id: Optional[str]
     execution_order: int
 
 
 @dataclass(frozen=True, slots=True)
 class BoundHook:
-    """A static before/after Hook binding."""
+    """A static before/after Hook binding and its captured body region."""
 
     hook_id: str
     scope: str
@@ -193,6 +193,8 @@ class BoundHook:
     input_type_ref: str
     output_type_ref: str
     return_mode: str
+    body_region_id: str
+    assigned_context_value_id: Optional[str] = None
 
 
 @dataclass(frozen=True, slots=True)

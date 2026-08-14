@@ -142,6 +142,12 @@
           "region_role": "loop_body",
           "parent_region_id": "region.body",
           "execution_order": 0
+        },
+        {
+          "region_id": "hook.before.model.body",
+          "region_role": "hook_body",
+          "parent_region_id": "region.loop.1",
+          "execution_order": 5
         }
       ],
       "data_edges": [
@@ -246,8 +252,9 @@
           "handler_ref": "hooks.before_model",
           "handler_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "input_type_ref": "ModelContext",
-          "output_type_ref": "ModelContext",
-          "return_mode": "observe"
+          "output_type_ref": "Unit",
+          "return_mode": "observe",
+          "body_region_id": "hook.before.model.body"
         }
       ],
       "capability_requirements": [

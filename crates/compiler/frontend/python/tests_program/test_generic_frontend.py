@@ -475,3 +475,71 @@ def test_generated_runtime_evidence_binding_is_closed() -> None:
         pass
     else:
         raise AssertionError("unknown fact kind must fail closed")
+
+
+NestedOuterModel = Model[object, object]("nested.outer.model")
+NestedInnerTool = Tool[object, object]("nested.inner.capability")
+NestedAudit = Tool[object, object]("nested.audit.capability")
+
+
+@Context
+class NestedContext:
+    depth: int = 0
+
+
+@Hook.before(target="NestedInnerTool", scope="loop")
+async def AuditInnerIteration(agent) -> None:
+    await NestedAudit(agent.context.depth)
+
+
+@Agent(input="NestedInput", output="NestedOutput", context=NestedContext)
+async def NestedLoops(agent, incoming):
+    while True:
+        reply = await NestedOuterModel(incoming)
+        while True:
+            found = await NestedInnerTool(reply)
+            incoming = await agent.yield_(found)
+
+
+def test_loop_hook_targets_the_inner_loop_the_author_named() -> None:
+    """A loop is not a name an author can write.
+
+    Resolving a loop Hook through something inside the loop is what lets an
+    authored target reach the inner loop; the previous first-loop fallback could
+    only ever name the outer one.
+    """
+    graph = NestedLoops.frontend_graph()
+    loops = [
+        control["body_region_ids"][0]
+        for control in graph["control_intents"]
+        if control["control_kind"] == "loop"
+    ]
+    inner_call = next(
+        call
+        for call in graph["call_intents"]
+        if call["binding_ref"] == "decl.tool.NestedInnerTool"
+    )
+    hook = graph["hook_bindings"][0]
+
+    assert len(loops) == 2
+    assert hook["target_selector"] == inner_call["parent_region_id"]
+    assert hook["target_selector"] != loops[0]
+    assert hook["return_mode"] == "observe"
+
+    # The Hook's own Capability call is ordinary AIR inside the Hook's region,
+    # and that region is a child of the inner loop, so it runs per iteration.
+    air = json.loads(NestedLoops.canonical_air())
+    body = next(
+        node
+        for node in air["structural_ir"]
+        if node["region_id"] == hook["body_region_id"]
+    )
+    audited = next(
+        operation
+        for operation in air["semantic_operations"]
+        if operation["parent_region_id"] == hook["body_region_id"]
+    )
+    assert body["parent_region_id"] == hook["target_selector"]
+    assert body["hook"]["hook_id"] == hook["hook_id"]
+    assert audited["op"] == "capability.invoke"
+    assert NestedLoops.diagnostics() is None

@@ -48,9 +48,12 @@ pub enum HookPhase {
     After,
 }
 
-/// The closed Hook return-mode set. A Hook either observes or returns a
-/// statically declared replacement result; implicit context mutation is not a
-/// return mode.
+/// The closed Hook return-mode set.
+///
+/// This is derived from the captured Hook body, not asserted by the author: a
+/// body that assigns Context is [`HookReturnMode::ReplaceResult`], a body that
+/// mutates nothing is [`HookReturnMode::Observe`]. Execution enforces it — an
+/// observing Hook whose handler returns a replacement is refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HookReturnMode {
@@ -104,6 +107,10 @@ pub enum RegionRole {
     TaskChild,
     TryBody,
     CatchBody,
+    /// The captured body of one static Hook. A Hook is executable Agent Program
+    /// structure, so its body is ordinary captured source held in its own
+    /// region rather than an opaque handler the artifact never describes.
+    HookBody,
 }
 
 /// The closed set of discriminated typed effect intents. Rust selects exactly one
@@ -366,6 +373,12 @@ pub struct ContextEdge {
 }
 
 /// One statically compiled Hook binding.
+///
+/// `body_region_id` names the region holding the Hook's captured body. A Hook's
+/// `CountTokens` or `Compactor` call is an ordinary `capability.invoke` or
+/// `model.call` inside that region, so context assembly, token budgets, and
+/// compaction stay measurable workflow structure. Nothing here is a digest
+/// reference the runtime resolves out of band.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HookBinding {
@@ -379,6 +392,11 @@ pub struct HookBinding {
     pub input_type_ref: String,
     pub output_type_ref: String,
     pub return_mode: HookReturnMode,
+    pub body_region_id: String,
+    /// The typed Context value the captured body assigns, carried exactly when
+    /// `return_mode` is [`HookReturnMode::ReplaceResult`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assigned_context_value_id: Option<String>,
 }
 
 /// One declared Capability requirement.
@@ -526,11 +544,7 @@ impl FrontendGraph {
             check_digest(&mut verdict, &import.artifact_digest, &import.program_ref);
         }
 
-        for hook in &self.hook_bindings {
-            check_identifier(&mut verdict, &hook.hook_id, "hook_id");
-            check_identifier(&mut verdict, &hook.handler_ref, "hook handler_ref");
-            check_digest(&mut verdict, &hook.handler_digest, &hook.hook_id);
-        }
+        collect_hook_diagnostics(&mut verdict, self);
 
         self.source_map.collect(&mut verdict);
         verdict.finish()
@@ -1847,6 +1861,90 @@ fn validate_call_intent(
             intent.node_id.clone(),
             "effect intent result_value does not resolve to its call-result value",
         ));
+    }
+}
+
+/// Verify that every Hook binding is backed by the captured body region it
+/// names, and that its return mode is the one that body actually implies.
+///
+/// Without this a binding and the structure it claims to describe are two
+/// independent copies: the fields would still decode, the AIR would still
+/// lower, and a Hook declared `observe` could carry a body that rewrites
+/// Context. Every `hook_body` region belongs to exactly one binding, so an
+/// unclaimed captured body cannot smuggle effects into a program either.
+fn collect_hook_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph) {
+    let mut claimed_bodies: HashSet<&str> = HashSet::new();
+    for hook in &graph.hook_bindings {
+        check_identifier(verdict, &hook.hook_id, "hook_id");
+        check_identifier(verdict, &hook.handler_ref, "hook handler_ref");
+        check_digest(verdict, &hook.handler_digest, &hook.hook_id);
+        check_identifier(verdict, &hook.body_region_id, "hook body_region_id");
+
+        let body = graph
+            .regions
+            .iter()
+            .find(|region| region.region_id == hook.body_region_id);
+        match body {
+            Some(region) if region.region_role == RegionRole::HookBody => {}
+            Some(_) => verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                hook.hook_id.clone(),
+                "hook body_region_id names a region that is not a captured Hook body",
+            )),
+            None => verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                hook.hook_id.clone(),
+                "hook body_region_id does not reference a declared region",
+            )),
+        }
+        if !claimed_bodies.insert(hook.body_region_id.as_str()) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                hook.hook_id.clone(),
+                "two Hook bindings claim the same captured body region",
+            ));
+        }
+
+        let assigned = hook.assigned_context_value_id.as_deref();
+        match (hook.return_mode, assigned) {
+            (HookReturnMode::Observe, None) => {}
+            (HookReturnMode::ReplaceResult, Some(value_id)) => {
+                let assigns_context = graph.values.iter().any(|value| {
+                    value.value_id == value_id && value.origin == ValueOrigin::ContextValue
+                });
+                if !assigns_context {
+                    verdict.push(Diagnostic::new(
+                        DiagnosticCode::SchemaViolation,
+                        hook.hook_id.clone(),
+                        "hook assigned_context_value_id does not reference a typed Context value",
+                    ));
+                }
+            }
+            (HookReturnMode::Observe, Some(_)) => verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                hook.hook_id.clone(),
+                "an observing Hook assigns no Context value",
+            )),
+            (HookReturnMode::ReplaceResult, None) => verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                hook.hook_id.clone(),
+                "a replacing Hook names the Context value its captured body assigns",
+            )),
+        }
+    }
+
+    for region in graph
+        .regions
+        .iter()
+        .filter(|region| region.region_role == RegionRole::HookBody)
+    {
+        if !claimed_bodies.contains(region.region_id.as_str()) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                region.region_id.clone(),
+                "captured Hook body region is claimed by no Hook binding",
+            ));
+        }
     }
 }
 

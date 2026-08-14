@@ -272,9 +272,61 @@ fn an_authored_permission_reason_must_say_something() {
     assert!(!graph.verify().is_accepted());
 }
 
+/// One Hook, captured whole: the binding places the body around its target and
+/// the body's own operations are ordinary AIR inside the Hook's region. Before
+/// bodies were captured a Hook lowered to a childless region and the artifact
+/// re-attached the binding from the graph, so the artifact's Hooks and its AIR
+/// were two copies nothing compared.
 #[test]
-fn hook_wrapper_is_a_non_colliding_sibling_of_its_call_target() {
+fn a_captured_hook_body_is_air_inside_the_region_the_binding_names() {
     let mut value = generic_graph_value();
+    value["regions"]
+        .as_array_mut()
+        .expect("regions array")
+        .push(json!({
+            "region_id": "hook.before.model.body",
+            "region_role": "hook_body",
+            "parent_region_id": "loop.main",
+            "execution_order": 2
+        }));
+    value["values"]
+        .as_array_mut()
+        .expect("values array")
+        .push(json!({
+            "value_id": "value.hook.budget",
+            "type_ref": "SearchResult",
+            "origin": "call_result",
+            "origin_id": "node.hook.count"
+        }));
+    value["values"]
+        .as_array_mut()
+        .expect("values array")
+        .push(json!({
+            "value_id": "value.hook.arguments",
+            "type_ref": "SearchArguments",
+            "origin": "literal",
+            "expression": {"kind": "string", "value": "count"}
+        }));
+    value["data_edges"]
+        .as_array_mut()
+        .expect("data edge array")
+        .push(json!({
+            "from_value": "value.hook.arguments",
+            "to_consumer": "node.hook.count",
+            "consumer_slot": "arguments"
+        }));
+    value["call_intents"]
+        .as_array_mut()
+        .expect("call intent array")
+        .push(json!({
+            "node_id": "node.hook.count",
+            "intent_kind": "capability_invocation",
+            "parent_region_id": "hook.before.model.body",
+            "execution_order": 0,
+            "binding_ref": "decl.cap.search",
+            "operand_values": ["value.hook.arguments"],
+            "result_value": "value.hook.budget"
+        }));
     value["hook_bindings"] = json!([{
         "hook_id": "hook.before.model",
         "scope": "model",
@@ -284,24 +336,95 @@ fn hook_wrapper_is_a_non_colliding_sibling_of_its_call_target() {
         "handler_ref": "hooks.before_model",
         "handler_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "input_type_ref": "ModelContext",
-        "output_type_ref": "ModelContext",
-        "return_mode": "observe"
+        "output_type_ref": "Unit",
+        "return_mode": "observe",
+        "body_region_id": "hook.before.model.body"
     }]);
     let graph: FrontendGraph = serde_json::from_value(value).expect("hook graph");
     let air = frontend_graph_to_air(&graph).expect("lower hook graph");
-    let wrapper = air
+    let body = air
         .structural_ir
         .iter()
-        .find(|node| node.region_id == "hook.before.model")
-        .expect("hook wrapper");
+        .find(|node| node.region_id == "hook.before.model.body")
+        .expect("captured Hook body region");
     let model = air
         .semantic_operations
         .iter()
         .find(|operation| operation.node_id == "node.model")
         .expect("model operation");
-    assert_eq!(wrapper.parent_region_id.as_deref(), Some("loop.main"));
-    assert!(wrapper.execution_order < model.execution_order);
+    let captured = air
+        .semantic_operations
+        .iter()
+        .find(|operation| operation.node_id == "node.hook.count")
+        .expect("captured Hook operation");
+
+    assert_eq!(body.parent_region_id.as_deref(), Some("loop.main"));
+    assert!(body.execution_order < model.execution_order);
+    assert_eq!(captured.parent_region_id, "hook.before.model.body");
+    assert_eq!(captured.op, apxm_program::air::SemanticOpKind::CapabilityInvoke);
+    assert_eq!(body.hook.as_ref().map(|hook| hook.hook_id.as_str()), Some("hook.before.model"));
+    assert_eq!(body.hook.as_ref(), graph.hook_bindings.first());
     assert!(air.verify().is_accepted());
+
+    let artifact = ExecutableArtifact::from_frontend_graph(&graph).expect("hook artifact");
+    assert!(artifact.validate().is_accepted());
+
+    // The declared binding and the binding the AIR carries are one fact: change
+    // either alone and the artifact stops validating.
+    let mut drifted = artifact.clone();
+    drifted.hook_bindings[0].return_mode =
+        apxm_program::frontend_graph::HookReturnMode::ReplaceResult;
+    assert!(!drifted.validate().is_accepted());
+}
+
+/// A Hook body no binding claims would be structure the artifact executes and
+/// never described.
+#[test]
+fn an_unclaimed_captured_hook_body_is_refused() {
+    let mut value = generic_graph_value();
+    value["regions"]
+        .as_array_mut()
+        .expect("regions array")
+        .push(json!({
+            "region_id": "hook.orphan.body",
+            "region_role": "hook_body",
+            "parent_region_id": "loop.main",
+            "execution_order": 1
+        }));
+    let graph: FrontendGraph = serde_json::from_value(value).expect("orphan hook body graph");
+    assert!(!graph.verify().is_accepted());
+}
+
+/// An observing Hook that names an assigned Context value is claiming to mutate
+/// nothing while pointing at the mutation.
+#[test]
+fn an_observing_hook_cannot_name_an_assigned_context_value() {
+    let mut value = generic_graph_value();
+    value["regions"]
+        .as_array_mut()
+        .expect("regions array")
+        .push(json!({
+            "region_id": "hook.before.model.body",
+            "region_role": "hook_body",
+            "parent_region_id": "loop.main",
+            "execution_order": 1
+        }));
+    value["hook_bindings"] = json!([{
+        "hook_id": "hook.before.model",
+        "scope": "model",
+        "phase": "before",
+        "target_selector": "node.model",
+        "declaration_order": 0,
+        "handler_ref": "hooks.before_model",
+        "handler_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "input_type_ref": "ModelContext",
+        "output_type_ref": "Unit",
+        "return_mode": "observe",
+        "body_region_id": "hook.before.model.body",
+        "assigned_context_value_id": "value.context"
+    }]);
+    let graph: FrontendGraph = serde_json::from_value(value).expect("observing hook graph");
+    assert!(!graph.verify().is_accepted());
 }
 
 #[test]

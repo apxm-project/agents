@@ -197,17 +197,37 @@ def _canonical_shape(air: dict) -> dict:
 
 
 def _closed_semantics(air: dict) -> dict:
-    """Return executable AIR semantics with language-local source maps removed.
+    """Return executable AIR semantics with language-local provenance removed.
 
-    Source maps intentionally differ by language (paths, spans, source_language).
-    Closed program meaning is the remaining AIR: operations, structural IR,
-    context flow, and stable value/type identities.
+    Source maps intentionally differ by language (paths, spans, source_language),
+    and a Hook's ``handler_digest`` is the same kind of fact: it pins the host
+    source text its captured body came from, so Python and TypeScript spellings
+    of one program digest differently by construction. What must agree is the
+    captured body itself — the operations, structural IR, context flow, and
+    stable value/type identities that remain.
     """
     return {
-        key: value
+        key: _without_handler_digests(value)
         for key, value in air.items()
         if key != "source_map"
     }
+
+
+def _without_handler_digests(value: object) -> object:
+    """Drop the host-source digest from any Hook binding carried in AIR."""
+    if not isinstance(value, list):
+        return value
+    projected = []
+    for node in value:
+        if isinstance(node, dict) and isinstance(node.get("hook"), dict):
+            node = dict(node)
+            node["hook"] = {
+                key: field
+                for key, field in node["hook"].items()
+                if key != "handler_digest"
+            }
+        projected.append(node)
+    return projected
 
 
 def _conversational_semantics(air: dict) -> dict:
@@ -466,8 +486,11 @@ def test_conversational_tool_dispatch_is_model_directed_and_closed() -> None:
         }
         # The declared requirement is a catalogue id, not an opaque name: this
         # is the assertion that used to pin the three namespaces disagreeing.
+        # A Hook's own Capability is declared exactly like the Agent body's, so
+        # a measurement made inside a Hook is a requirement the artifact states.
         assert graph["capability_requirements"] == [
-            {"capability_ref": "search_web", "tool_schema_present": True}
+            {"capability_ref": "count_tokens", "tool_schema_present": False},
+            {"capability_ref": "search_web", "tool_schema_present": True},
         ]
 
 
@@ -507,27 +530,47 @@ def test_conversational_artifacts_bind_and_schedule_hooks_deterministically() ->
         tool_call = next(
             operation
             for operation in air["semantic_operations"]
-            if operation["op"] == "capability.invoke"
+            if operation["operands"][0]["value_id"] == "search_web"
         )
-        wrappers = {
+        bodies = {
             node["region_id"]: node
             for node in air["structural_ir"]
             if node["region_id"]
-            in {"hook.PrepareSearchContext", "hook.RecordSearchContext"}
+            in {"hook.PrepareSearchContext.body", "hook.RecordSearchContext.body"}
         }
-        assert wrappers.keys() == {
-            "hook.PrepareSearchContext",
-            "hook.RecordSearchContext",
+        assert bodies.keys() == {
+            "hook.PrepareSearchContext.body",
+            "hook.RecordSearchContext.body",
         }
         assert (
-            wrappers["hook.PrepareSearchContext"]["execution_order"]
+            bodies["hook.PrepareSearchContext.body"]["execution_order"]
             < tool_call["execution_order"]
-            < wrappers["hook.RecordSearchContext"]["execution_order"]
+            < bodies["hook.RecordSearchContext.body"]["execution_order"]
         )
         assert {
-            wrappers["hook.PrepareSearchContext"]["parent_region_id"],
-            wrappers["hook.RecordSearchContext"]["parent_region_id"],
+            bodies["hook.PrepareSearchContext.body"]["parent_region_id"],
+            bodies["hook.RecordSearchContext.body"]["parent_region_id"],
         } == {tool_call["parent_region_id"]}
+
+        # The binding the artifact declares and the binding its own AIR carries
+        # are one fact, and the Hook's measurement is an ordinary operation
+        # inside the Hook's region rather than behaviour behind a digest.
+        assert [body["hook"] for body in bodies.values()] == [
+            hook
+            for hook in hooks
+            if hook["body_region_id"] in bodies
+        ]
+        measured = next(
+            operation
+            for operation in air["semantic_operations"]
+            if operation["parent_region_id"] == "hook.PrepareSearchContext.body"
+        )
+        assert measured["op"] == "capability.invoke"
+        assert measured["operands"][0]["value_id"] == "count_tokens"
+        assert [hook["return_mode"] for hook in hooks] == [
+            "replace_result",
+            "replace_result",
+        ]
 
 
 def test_conversational_context_update_precedes_yield_and_resume() -> None:

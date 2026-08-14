@@ -1138,7 +1138,7 @@ use apxm_ais::permissions::{LayerDecisions, PermissionDecision, PermissionResolu
 use apxm_execution::{
     CapabilityGrantSet, CapabilityInvocationAdmission, CapabilityOutcome, CompositionOutcome,
     CompositionPort, CompositionReceiver, CompositionRequest, EventAwait, EventOutcome, EventPort,
-    ExecutionRequest, NodeOutcome, NoopStaticHookHandler, RuntimeProfile,
+    ExecutionRequest, NodeOutcome, CapturedHookBodyHandler, RuntimeProfile,
 };
 #[cfg(test)]
 use apxm_execution::{ExecutionPortBundle, ExecutionPorts, RuntimeProfileError, execute};
@@ -1296,11 +1296,19 @@ impl CanonicalRuntime {
             .find(|binding| binding.slot == PortSlot::ModelInference.as_str())
             .map(|binding| binding.binding_digest.clone())
             .ok_or_else(|| anyhow::anyhow!("reference runtime model binding is absent"))?;
+        // The Hooks the admitted program declares, read off the AIR that was
+        // just verified. Dropping them here is what made every compiled Hook
+        // inert: the schedule can only run a Hook it was handed, and an empty
+        // vector silently means "this program declares none" rather than "the
+        // bindings were lost on the way in". Artifact validation holds an
+        // artifact's `hook_bindings` to exactly these, so reading them from AIR
+        // is reading the artifact's own Hooks.
+        let hook_bindings = apxm_program::air_hook_bindings(&air);
         let request = ExecutionRequest {
             model_admission: model_admission(&air, &model_binding_digest),
             initial_values: initial_model_request_values(&air),
             air,
-            hook_bindings: Vec::new(),
+            hook_bindings,
             capability_invocations,
             program_instance_ref: ProgramInstanceRef::new("canonical.instance"),
             program_invocation_ref: ProgramInvocationRef::new(admission.invocation_id.clone()),
@@ -1938,7 +1946,7 @@ fn dev_ports(
     Ok(ExecutionPorts::from_admitted_bundle(
         &bundle,
         model_call_request_metadata,
-        Arc::new(NoopStaticHookHandler),
+        Arc::new(CapturedHookBodyHandler),
     )?)
 }
 
@@ -1977,7 +1985,7 @@ async fn runtime_profile_from_invocation(
     RuntimeProfile::from_fully_admitted(
         runtime_admission,
         model_call_request_metadata,
-        Arc::new(NoopStaticHookHandler),
+        Arc::new(CapturedHookBodyHandler),
     )
     .map_err(|error| anyhow::anyhow!(error))
 }
@@ -2027,10 +2035,15 @@ fn node_outcome_json(outcome: &NodeOutcome) -> Value {
             "result": result,
             "replaced": replaced,
         }),
-        NodeOutcome::Capability { node_id, outcome } => json!({
+        NodeOutcome::Capability {
+            node_id,
+            outcome,
+            replaced,
+        } => json!({
             "node_id": node_id,
             "kind": "capability.invoke",
             "outcome": capability_outcome_json(outcome),
+            "replaced": replaced,
         }),
         NodeOutcome::ExternalAgent { node_id, evidence } => json!({
             "node_id": node_id,
@@ -2867,7 +2880,9 @@ mod tests {
             .node_outcomes
             .iter()
             .filter_map(|outcome| match outcome {
-                NodeOutcome::Capability { node_id, outcome } => Some((node_id.as_str(), outcome)),
+                NodeOutcome::Capability {
+                    node_id, outcome, ..
+                } => Some((node_id.as_str(), outcome)),
                 _ => None,
             })
             .collect::<BTreeMap<_, _>>();

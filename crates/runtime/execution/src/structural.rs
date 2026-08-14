@@ -2,8 +2,8 @@
 
 use std::collections::BTreeMap;
 
-use apxm_program::air::{AirModule, ControlPredicate, SemanticOpKind, StructuralOpKind};
-use apxm_program::frontend_graph::{HookBinding, HookPhase, HookScope};
+use apxm_program::air::{AirModule, ControlPredicate, StructuralOpKind};
+use apxm_program::frontend_graph::{HookBinding, HookPhase};
 
 /// One runtime step derived from structural AIR plus the flat semantic op list.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -62,6 +62,13 @@ pub enum ScheduleStep {
 }
 
 /// Build the deterministic execution schedule for `air`.
+///
+/// Hook placement is read off structural AIR rather than recomputed here. Each
+/// Hook's captured body is a region lowering already positioned by scope, phase,
+/// and declaration order, so walking that region runs the body's operations and
+/// then applies the Hook's declared return contract. A Hook whose binding is
+/// not supplied contributes its body but no Hook step, which is what makes
+/// passing an artifact's `hook_bindings` the thing that brings Hooks to life.
 #[must_use]
 pub fn build_schedule(air: &AirModule, hook_bindings: &[HookBinding]) -> Vec<ScheduleStep> {
     let context_edges: BTreeMap<&str, Vec<(&str, &str)>> =
@@ -74,31 +81,18 @@ pub fn build_schedule(air: &AirModule, hook_bindings: &[HookBinding]) -> Vec<Sch
                     .push((edge.from_node.as_str(), edge.value_id.as_str()));
                 edges
             });
+    let hooks: BTreeMap<&str, &HookBinding> = hook_bindings
+        .iter()
+        .map(|binding| (binding.body_region_id.as_str(), binding))
+        .collect();
     let mut schedule = Vec::new();
-
-    for binding in ordered_hooks(hook_bindings, HookPhase::Before, |hook| {
-        hook.scope == HookScope::Agent
-    }) {
-        schedule.push(ScheduleStep::HookBefore {
-            binding: binding.clone(),
-        });
-    }
-
-    emit_children(air, hook_bindings, &context_edges, None, &[], &mut schedule);
-
-    for binding in ordered_hooks(hook_bindings, HookPhase::After, |hook| {
-        hook.scope == HookScope::Agent
-    }) {
-        schedule.push(ScheduleStep::HookAfter {
-            binding: binding.clone(),
-        });
-    }
+    emit_children(air, &hooks, &context_edges, None, &[], &mut schedule);
     schedule
 }
 
 fn emit_children(
     air: &AirModule,
-    hook_bindings: &[HookBinding],
+    hooks: &BTreeMap<&str, &HookBinding>,
     context_edges: &BTreeMap<&str, Vec<(&str, &str)>>,
     parent_region_id: Option<&str>,
     loop_path: &[String],
@@ -127,14 +121,7 @@ fn emit_children(
     for (_, child) in children {
         match child {
             Child::Semantic(index) => {
-                emit_semantic(
-                    air,
-                    hook_bindings,
-                    context_edges,
-                    index,
-                    loop_path,
-                    schedule,
-                );
+                emit_semantic(air, context_edges, index, loop_path, schedule);
             }
             Child::Structural(index) => {
                 let region = &air.structural_ir[index];
@@ -145,32 +132,16 @@ fn emit_children(
                             static_loop_id: region.region_id.clone(),
                             predicate: region.predicate.clone(),
                         });
-                        for binding in ordered_hooks(hook_bindings, HookPhase::Before, |hook| {
-                            hook.scope == HookScope::Loop
-                                && hook.target_selector == region.region_id
-                        }) {
-                            schedule.push(ScheduleStep::HookBefore {
-                                binding: binding.clone(),
-                            });
-                        }
                         let mut nested_path = loop_path.to_vec();
                         nested_path.push(region.region_id.clone());
                         emit_children(
                             air,
-                            hook_bindings,
+                            hooks,
                             context_edges,
                             Some(&region.region_id),
                             &nested_path,
                             schedule,
                         );
-                        for binding in ordered_hooks(hook_bindings, HookPhase::After, |hook| {
-                            hook.scope == HookScope::Loop
-                                && hook.target_selector == region.region_id
-                        }) {
-                            schedule.push(ScheduleStep::HookAfter {
-                                binding: binding.clone(),
-                            });
-                        }
                         schedule.push(ScheduleStep::LoopBackEdge {
                             static_loop_id: region.region_id.clone(),
                         });
@@ -208,7 +179,7 @@ fn emit_children(
                             });
                             emit_children(
                                 air,
-                                hook_bindings,
+                                hooks,
                                 context_edges,
                                 Some(&arm.region_id),
                                 loop_path,
@@ -228,14 +199,17 @@ fn emit_children(
                     | StructuralOpKind::Block
                     | StructuralOpKind::ParallelJoin
                     | StructuralOpKind::Try
-                    | StructuralOpKind::Catch => emit_children(
-                        air,
-                        hook_bindings,
-                        context_edges,
-                        Some(&region.region_id),
-                        loop_path,
-                        schedule,
-                    ),
+                    | StructuralOpKind::Catch => {
+                        emit_children(
+                            air,
+                            hooks,
+                            context_edges,
+                            Some(&region.region_id),
+                            loop_path,
+                            schedule,
+                        );
+                        emit_hook_step(hooks, &region.region_id, schedule);
+                    }
                     StructuralOpKind::Value => {}
                 }
             }
@@ -245,7 +219,6 @@ fn emit_children(
 
 fn emit_semantic(
     air: &AirModule,
-    hook_bindings: &[HookBinding],
     context_edges: &BTreeMap<&str, Vec<(&str, &str)>>,
     index: usize,
     loop_path: &[String],
@@ -253,24 +226,28 @@ fn emit_semantic(
 ) {
     let operation = &air.semantic_operations[index];
     emit_context_before(context_edges, &operation.node_id, schedule);
-    for binding in ordered_hooks(hook_bindings, HookPhase::Before, |hook| {
-        hook_targets_operation(hook, &operation.node_id, operation.op)
-    }) {
-        schedule.push(ScheduleStep::HookBefore {
-            binding: binding.clone(),
-        });
-    }
     schedule.push(ScheduleStep::Semantic {
         index,
         loop_path: loop_path.to_vec(),
     });
-    for binding in ordered_hooks(hook_bindings, HookPhase::After, |hook| {
-        hook_targets_operation(hook, &operation.node_id, operation.op)
-    }) {
-        schedule.push(ScheduleStep::HookAfter {
-            binding: binding.clone(),
-        });
-    }
+}
+
+/// Apply one Hook's declared return contract immediately after its captured
+/// body has run, so a Hook never claims to have executed before its own
+/// operations did.
+fn emit_hook_step(
+    hooks: &BTreeMap<&str, &HookBinding>,
+    region_id: &str,
+    schedule: &mut Vec<ScheduleStep>,
+) {
+    let Some(binding) = hooks.get(region_id) else {
+        return;
+    };
+    let binding = (*binding).clone();
+    schedule.push(match binding.phase {
+        HookPhase::Before => ScheduleStep::HookBefore { binding },
+        HookPhase::After => ScheduleStep::HookAfter { binding },
+    });
 }
 
 fn emit_context_before(
@@ -286,49 +263,6 @@ fn emit_context_before(
                 value_id: (*value_id).to_string(),
             });
         }
-    }
-}
-
-fn ordered_hooks(
-    bindings: &[HookBinding],
-    phase: HookPhase,
-    predicate: impl Fn(&HookBinding) -> bool,
-) -> Vec<&HookBinding> {
-    let mut hooks: Vec<_> = bindings
-        .iter()
-        .filter(|hook| hook.phase == phase && predicate(hook))
-        .collect();
-    hooks.sort_by(|left, right| {
-        scope_rank(left.scope)
-            .cmp(&scope_rank(right.scope))
-            .then_with(|| left.declaration_order.cmp(&right.declaration_order))
-            .then_with(|| left.hook_id.cmp(&right.hook_id))
-    });
-    if phase == HookPhase::After {
-        hooks.reverse();
-    }
-    hooks
-}
-
-fn hook_targets_operation(binding: &HookBinding, node_id: &str, op: SemanticOpKind) -> bool {
-    if binding.target_selector != node_id {
-        return false;
-    }
-    match binding.scope {
-        HookScope::Node => true,
-        HookScope::Model => op == SemanticOpKind::ModelCall,
-        HookScope::Capability => op == SemanticOpKind::CapabilityInvoke,
-        HookScope::Agent | HookScope::Loop => false,
-    }
-}
-
-const fn scope_rank(scope: HookScope) -> u8 {
-    match scope {
-        HookScope::Agent => 0,
-        HookScope::Loop => 1,
-        HookScope::Node => 2,
-        HookScope::Model => 3,
-        HookScope::Capability => 4,
     }
 }
 
@@ -487,6 +421,92 @@ mod tests {
                 "node:node.sibling:loop.sibling",
                 "back:loop.sibling",
             ]
+        );
+    }
+
+    /// A loop Hook belongs to the loop it names. Its captured body is a child of
+    /// that loop's region, so it is scheduled between that loop's entry and its
+    /// back edge — once per iteration of the inner loop, not once around the
+    /// outer one.
+    #[test]
+    fn a_loop_hook_body_runs_inside_the_loop_it_names() {
+        let air: AirModule = serde_json::from_value(json!({
+            "schema_version": "apxm.air",
+            "semantic_operations": [
+                {"node_id": "node.inner", "op": "capability.invoke", "parent_region_id": "loop.inner", "execution_order": 500000, "operands": [{"slot": "capability_ref", "value_id": "capability.inner", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "value.inner.arguments", "type_ref": "CapabilityArguments"}], "result": {"value_id": "value.inner.output", "type_ref": "CapabilityOutput"}},
+                {"node_id": "node.audit", "op": "capability.invoke", "parent_region_id": "hook.audit.body", "execution_order": 500000, "operands": [{"slot": "capability_ref", "value_id": "capability.audit", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "value.inner.arguments", "type_ref": "CapabilityArguments"}], "result": {"value_id": "value.audit.output", "type_ref": "CapabilityOutput"}}
+            ],
+            "structural_ir": [
+                {"region_id": "region.root", "kind": "region", "execution_order": 0},
+                {"region_id": "loop.outer", "kind": "ais.loop", "parent_region_id": "region.root", "execution_order": 500000},
+                {"region_id": "loop.inner", "kind": "ais.loop", "parent_region_id": "loop.outer", "execution_order": 1500000},
+                {"region_id": "hook.audit.body", "kind": "region", "parent_region_id": "loop.inner", "execution_order": 0}
+            ],
+            "value_assemblies": [{"value_id": "value.inner.arguments", "expression": {"kind": "string", "value": "audit"}}],
+            "context_flow": [],
+            "source_map": {
+                "schema_version": "apxm.source-map",
+                "source_language": "python",
+                "node_spans": [],
+                "region_annotations": [
+                    {"region_id": "loop.outer", "annotation": "structural_loop"},
+                    {"region_id": "loop.inner", "annotation": "structural_loop"}
+                ]
+            }
+        }))
+        .expect("nested loop AIR with a Hook on the inner loop");
+        assert!(air.verify().is_accepted());
+
+        let binding: HookBinding = serde_json::from_value(json!({
+            "hook_id": "hook.audit",
+            "scope": "loop",
+            "phase": "before",
+            "target_selector": "loop.inner",
+            "declaration_order": 0,
+            "handler_ref": "AuditInnerIteration",
+            "handler_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "input_type_ref": "AgentFacade",
+            "output_type_ref": "Unit",
+            "return_mode": "observe",
+            "body_region_id": "hook.audit.body"
+        }))
+        .expect("loop Hook binding");
+
+        let trace: Vec<String> = build_schedule(&air, std::slice::from_ref(&binding))
+            .iter()
+            .filter_map(|step| match step {
+                ScheduleStep::EnterLoop { static_loop_id, .. } => {
+                    Some(format!("enter:{static_loop_id}"))
+                }
+                ScheduleStep::LoopBackEdge { static_loop_id } => {
+                    Some(format!("back:{static_loop_id}"))
+                }
+                ScheduleStep::Semantic { index, .. } => {
+                    Some(format!("node:{}", air.semantic_operations[*index].node_id))
+                }
+                ScheduleStep::HookBefore { binding } => Some(format!("hook:{}", binding.hook_id)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            trace,
+            [
+                "enter:loop.outer",
+                "enter:loop.inner",
+                "node:node.audit",
+                "hook:hook.audit",
+                "node:node.inner",
+                "back:loop.inner",
+                "back:loop.outer",
+            ]
+        );
+
+        // Without the binding the body still runs, but nothing claims a Hook
+        // executed: the schedule only knows a Hook it was handed.
+        assert!(
+            build_schedule(&air, &[])
+                .iter()
+                .all(|step| !matches!(step, ScheduleStep::HookBefore { .. }))
         );
     }
 

@@ -405,7 +405,11 @@ def serialize_hook_binding(record: HookBinding) -> dict[str, Any]:
         "input_type_ref": _field(record, "input_type_ref"),
         "output_type_ref": _field(record, "output_type_ref"),
         "return_mode": _field(record, "return_mode"),
+        "body_region_id": _field(record, "body_region_id"),
     }
+    assigned_context_value_id = _field(record, "assigned_context_value_id")
+    if assigned_context_value_id is not None:
+        emitted["assigned_context_value_id"] = assigned_context_value_id
     return emitted
 
 

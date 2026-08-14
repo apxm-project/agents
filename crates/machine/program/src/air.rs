@@ -14,7 +14,7 @@ use apxm_ais::{SLOT_CARRIED, SLOT_INITIAL, get_operation_spec};
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Verdict, schema_violation};
-use crate::frontend_graph::ValueExpression;
+use crate::frontend_graph::{HookBinding, ValueExpression};
 use crate::grammar::is_identifier;
 use crate::source_map::{RegionAnnotationKind, SourceMap};
 
@@ -112,6 +112,14 @@ pub struct StructuralNode {
     pub operands: Vec<Operand>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub predicate: Option<ControlPredicate>,
+    /// Present only on the `region` node holding one Hook's captured body.
+    ///
+    /// Lowering used to keep four of a binding's fields and let the artifact
+    /// re-attach the rest from the graph, which left an artifact's Hooks and
+    /// its AIR as two copies nothing reconciled. Carrying the binding on the
+    /// node it describes makes them one fact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hook: Option<HookBinding>,
 }
 
 /// One explicit typed Context edge retained in AIR.
@@ -238,6 +246,7 @@ impl AirModule {
             }
             validate_control_predicate(&mut verdict, region);
             validate_loop_signature(&mut verdict, region);
+            validate_hook_node(&mut verdict, region);
         }
         for assembly in &self.value_assemblies {
             let mut references = Vec::new();
@@ -773,6 +782,28 @@ fn collect_expression_references(expression: &ValueExpression, out: &mut Vec<Str
         | ValueExpression::Integer { .. }
         | ValueExpression::Boolean { .. }
         | ValueExpression::Null => {}
+    }
+}
+
+/// A carried Hook binding describes the node it rides on and nothing else: it
+/// belongs to a plain region, and that region is the binding's captured body.
+fn validate_hook_node(verdict: &mut Verdict, region: &StructuralNode) {
+    let Some(hook) = &region.hook else {
+        return;
+    };
+    if region.kind != StructuralOpKind::Region {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::SchemaViolation,
+            region.region_id.clone(),
+            "a Hook binding rides on the plain region holding its captured body",
+        ));
+    }
+    if hook.body_region_id != region.region_id {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::SchemaViolation,
+            region.region_id.clone(),
+            "carried Hook binding names a different captured body region",
+        ));
     }
 }
 

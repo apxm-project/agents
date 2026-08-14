@@ -10,7 +10,7 @@ use apxm_execution::{
     CapabilityInvocationAdmission, CapabilityOutcome, CapabilityPort, CapabilityRequest,
     CommittedNativeModelUsageOutcome, CompositionOutcome, CompositionPort, CompositionRequest,
     Continuation, EventAwait, EventOutcome, EventPort, EventRef, ExecutionPortBundle,
-    ExecutionPorts, ExecutionRequest, NodeOutcome, NoopStaticHookHandler, RunOutcome,
+    ExecutionPorts, ExecutionRequest, NodeOutcome, CapturedHookBodyHandler, RunOutcome,
     execute_resumable, resume, resume_event,
 };
 use apxm_inference::{
@@ -299,7 +299,7 @@ fn ports(commit: Arc<Commit>) -> ExecutionPorts {
     ExecutionPorts::from_admitted_bundle(
         &bundle,
         Arc::new(TestModelRequestMetadata),
-        Arc::new(NoopStaticHookHandler),
+        Arc::new(CapturedHookBodyHandler),
     )
     .expect("bundle contains every runtime effect port")
 }

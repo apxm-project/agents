@@ -334,14 +334,23 @@ declaration_order
 handler_ref + digest
 input/output types
 return_mode: observe | replace_result
+body_region_id
+assigned_context_value_id (replace_result only)
 ```
 
-Every callback has one argument shape: `async (agent) -> ...`. Its return mode
-is static in the binding, not an ambiguous runtime union: observer callbacks
-return `None`; a result-transforming `after` callback returns exactly the
-target result type `T`. Context is updated through `agent.context = ...`. The
-compiler MUST reject an incompatible return at compile time where knowable and
-admission MUST reject incompatible handler schemas.
+A Hook's body is captured as a region of the same AIR the Agent body lowers to,
+reached through `body_region_id`. Its Model and Capability calls are ordinary
+`model.call` and `capability.invoke` nodes, so context assembly, token budgets,
+and compaction are measurable workflow structure rather than behavior behind a
+digest-referenced handler the artifact only names. A handler run by a host port
+could perform effects the artifact never declared; a captured body cannot.
+
+Every callback has one argument shape: `async (agent) -> ...`. Context is
+updated through `agent.context = ...`, and that assignment is what the return
+mode is derived from: a body that assigns Context is `replace_result` and names
+the assigned value, a body that mutates nothing is `observe`. The mode is not an
+author assertion the compiler takes on trust — execution refuses an observing
+Hook whose handler returns any replacement.
 
 Frontend context assignment and optional result replacement lower to the
 compiler-internal tagged ABI
@@ -371,8 +380,9 @@ author any desired recursion, whose admitted depth limits still apply.
 - Capabilities remain executable actions and require a complete admitted
   Capability Grant. A Program Instance handle, Skill, prompt, or context item
   is never a grant.
-- Agent, Node, Model, and Capability scopes MAY all have Hooks; a Capability
-  Hook cannot bypass Capability admission.
+- Agent, loop, Node, Model, and Capability scopes MAY all have Hooks — the same
+  five the FrontendGraph schema and the runtime evidence `HookScope` carry; a
+  Capability Hook cannot bypass Capability admission.
 
 ## 7. FrontendGraph
 

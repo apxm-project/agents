@@ -3,8 +3,8 @@
 This is the primary APXM authoring reference. Its equivalent
 [Python](python/agent.py) and
 [TypeScript](src/conversational-agent.ts) sources use only the installed
-generic frontend: `Agent`, `Context`, `Hook`, `Tool`, `Model`, ordinary
-control flow, and `agent.yield_()`.
+generic frontend: `Agent`, `Capability`, `Context`, `Hook`, `Tool`, `Model`,
+ordinary control flow, and `agent.yield_()`.
 
 Each turn makes the complete conversational state machine visible in source:
 
@@ -18,11 +18,18 @@ Each turn makes the complete conversational state machine visible in source:
 7. yield the reply, binding the resume value as the next input without
    replacing committed Context.
 
-Static before/after Hooks bracket the Tool boundary to enforce a persisted
-context window and record Tool-call accounting. They do not choose the Tool,
-grant authority, or hide the core message and dispatch transitions. The next
-Model request directly depends on the Tool-result SSA value, independently of
-any Context change made by those Hooks.
+Static before/after Hooks bracket the Tool boundary. Their bodies are captured
+as ordinary Agent Program structure, not as opaque handlers the artifact only
+names: the before Hook measures the model-visible conversation through the
+declared `count_tokens` Capability and persists that measurement in Context, and
+the after Hook records which Capability the turn last dispatched. The
+measurement is a `capability.invoke` node in the compiled AIR, inside the Hook's
+own region, so a context budget is measurable workflow structure rather than
+host code the compiler cannot see.
+
+The Hooks do not choose the Tool, grant authority, or hide the core message and
+dispatch transitions. The next Model request directly depends on the Tool-result
+SSA value, independently of any Context change made by those Hooks.
 
 Run the focused build, compile, runtime-entrypoint, parity, and regression
 checks from the repository root:

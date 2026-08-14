@@ -392,7 +392,11 @@ export function serializeHookBinding(record: HookBinding): Json {
     input_type_ref: record.input_type_ref,
     output_type_ref: record.output_type_ref,
     return_mode: record.return_mode,
+    body_region_id: record.body_region_id,
   };
+  if (record.assigned_context_value_id !== undefined) {
+    emitted.assigned_context_value_id = record.assigned_context_value_id;
+  }
   return emitted;
 }
 

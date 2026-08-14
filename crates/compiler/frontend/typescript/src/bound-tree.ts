@@ -131,7 +131,7 @@ export type BoundRegion = {
   readonly execution_order: number;
 };
 
-/** A static before/after Hook binding. */
+/** A static before/after Hook binding and its captured body region. */
 export type BoundHook = {
   readonly hook_id: string;
   readonly scope: HookScope;
@@ -143,6 +143,8 @@ export type BoundHook = {
   readonly input_type_ref: string;
   readonly output_type_ref: string;
   readonly return_mode: HookReturnMode;
+  readonly body_region_id: string;
+  readonly assigned_context_value_id?: string;
 };
 
 /** An explicit typed Context transition between two nodes. */

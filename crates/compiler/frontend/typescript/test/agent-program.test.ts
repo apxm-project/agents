@@ -135,6 +135,37 @@ type Graph = {
   source_map: { node_spans: Array<{ source_file: string }> };
 };
 
+const NestedOuterModel = Model("nested.outer.model");
+const NestedInnerTool = Tool("nested.inner.capability");
+const NestedAudit = Tool("nested.audit.capability");
+const NestedCtx = Context({ depth: 0 });
+
+const NestedLoops = Agent({
+  name: "NestedLoops",
+  source,
+  context: NestedCtx,
+  use: { NestedOuterModel, NestedInnerTool, NestedAudit },
+  async run(agent, incoming) {
+    while (true) {
+      const reply = await NestedOuterModel(incoming);
+      while (true) {
+        const found = await NestedInnerTool(reply);
+        incoming = await agent.yield_(found);
+      }
+    }
+  },
+});
+
+const AuditInnerIteration = Hook.before({
+  agent: NestedLoops,
+  target: NestedInnerTool,
+  scope: "loop",
+  async run(agent) {
+    await NestedAudit(agent.context);
+  },
+});
+void AuditInnerIteration;
+
 describe("source-first TypeScript authoring", () => {
   it("emits standard SHA-256 digests without a Node-only root import", () => {
     expect(stableDigest("abc")).toBe(
@@ -483,6 +514,54 @@ describe("source-first TypeScript authoring", () => {
     const structural = air.structural_ir.map((n) => n.kind);
     expect(structural).toContain("ais.loop");
     expect(structural).toContain("branch");
+  });
+
+  // A loop is not a name an author can write. Resolving a loop Hook through
+  // something inside the loop is what lets an authored target reach the inner
+  // loop; the previous branch ignored the authored target entirely and always
+  // returned the first loop, so the inner one was unreachable.
+  it("targets the inner loop the author named", () => {
+    const graph = NestedLoops.frontendGraph() as unknown as {
+      control_intents: Array<{ control_kind: string; body_region_ids?: string[] }>;
+      call_intents: Array<{ binding_ref?: string; parent_region_id: string }>;
+      hook_bindings: Array<{
+        hook_id: string;
+        target_selector: string;
+        return_mode: string;
+        body_region_id: string;
+      }>;
+    };
+    const loops = graph.control_intents
+      .filter((control) => control.control_kind === "loop")
+      .map((control) => control.body_region_ids?.[0]);
+    const innerCall = graph.call_intents.find(
+      (call) => call.binding_ref === "decl.tool.NestedInnerTool",
+    );
+    const hook = graph.hook_bindings[0];
+
+    expect(loops).toHaveLength(2);
+    expect(hook.target_selector).toBe(innerCall?.parent_region_id);
+    expect(hook.target_selector).not.toBe(loops[0]);
+    expect(hook.return_mode).toBe("observe");
+
+    const air = JSON.parse(NestedLoops.canonicalAir()) as {
+      structural_ir: Array<{
+        region_id: string;
+        parent_region_id?: string;
+        hook?: { hook_id: string };
+      }>;
+      semantic_operations: Array<{ op: string; parent_region_id: string }>;
+    };
+    const body = air.structural_ir.find(
+      (node) => node.region_id === hook.body_region_id,
+    );
+    const audited = air.semantic_operations.find(
+      (operation) => operation.parent_region_id === hook.body_region_id,
+    );
+    expect(body?.parent_region_id).toBe(hook.target_selector);
+    expect(body?.hook?.hook_id).toBe(hook.hook_id);
+    expect(audited?.op).toBe("capability.invoke");
+    expect(NestedLoops.diagnostics()).toBeNull();
   });
 
   it("keeps runtime evidence decoding closed", () => {

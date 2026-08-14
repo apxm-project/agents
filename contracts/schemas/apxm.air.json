@@ -185,6 +185,10 @@
         "predicate": {
           "$ref": "#/$defs/ControlPredicate",
           "description": "Closed typed predicate evaluated from a prior SSA result."
+        },
+        "hook": {
+          "$ref": "apxm.frontend-graph#/$defs/HookBinding",
+          "description": "Present only on the `region` node that holds a Hook's captured body. Carrying the whole binding here is what keeps an artifact's hook_bindings and its AIR one fact rather than two unchecked copies: artifact validation refuses any artifact whose hook_bindings do not match the bindings its own AIR carries."
         }
       },
       "additionalProperties": false

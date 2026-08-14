@@ -6,8 +6,8 @@ import json
 import sys
 from typing import Literal, TypeAlias, TypedDict
 
-from apxm_program import Agent, Context, Hook, Model, Tool
-from apxm_program.capabilities import SEARCH_WEB
+from apxm_program import Agent, Capability, Context, Hook, Model, Tool
+from apxm_program.capabilities import COUNT_TOKENS, SEARCH_WEB
 
 
 class ConversationInput(TypedDict):
@@ -29,6 +29,14 @@ class SearchWebRequest(TypedDict):
 
 class SearchWebResult(TypedDict):
     content: str
+
+
+class CountTokensRequest(TypedDict):
+    messages: tuple[ConversationMessage, ...]
+
+
+class CountTokensResult(TypedDict):
+    total: int
 
 
 class SearchWebToolRequest(TypedDict):
@@ -58,6 +66,9 @@ class ToolResultModelRequest(InitialModelRequest):
 ModelRequest: TypeAlias = InitialModelRequest | ToolResultModelRequest
 ModelResponse: TypeAlias = FinalModelResponse | ToolModelResponse
 
+# Measuring the model-visible conversation is a Capability, not host code, so
+# the measurement is an ordinary `capability.invoke` the compiler can see.
+CountTokens = Capability[CountTokensRequest, CountTokensResult](COUNT_TOKENS)
 SearchWeb = Tool[SearchWebRequest, SearchWebResult](SEARCH_WEB)
 SupportModel = Model[ModelRequest, ModelResponse]("model.target")
 
@@ -65,23 +76,31 @@ SupportModel = Model[ModelRequest, ModelResponse]("model.target")
 @Context
 class ConversationContext:
     messages: tuple[ConversationMessage, ...] = ()
-    tool_calls: int = 0
     last_reply: str = ""
+    context_budget: CountTokensResult | None = None
+    last_tool: str = ""
 
 
 @Hook.before(target="SearchWeb", scope="capability")
 async def PrepareSearchContext(agent) -> None:
+    """Measure the model-visible conversation before the Tool runs."""
+    budget = await CountTokens({"messages": agent.context.messages})
     agent.context = ConversationContext(
-        messages=agent.context.messages[-24:],
-        tool_calls=agent.context.tool_calls,
+        messages=agent.context.messages,
+        last_reply=agent.context.last_reply,
+        context_budget=budget,
+        last_tool=agent.context.last_tool,
     )
 
 
 @Hook.after(target="SearchWeb", scope="capability")
 async def RecordSearchContext(agent) -> None:
+    """Record which Capability the conversation last dispatched."""
     agent.context = ConversationContext(
         messages=agent.context.messages,
-        tool_calls=agent.context.tool_calls + 1,
+        last_reply=agent.context.last_reply,
+        context_budget=agent.context.context_budget,
+        last_tool="search_web",
     )
 
 
@@ -114,8 +133,9 @@ async def ConversationalExample(agent, incoming):
 
         agent.context = ConversationContext(
             messages=agent.context.messages,
-            tool_calls=agent.context.tool_calls,
             last_reply=response["reply"]["message"],
+            context_budget=agent.context.context_budget,
+            last_tool=agent.context.last_tool,
         )
         incoming = await agent.yield_(response["reply"])
     raise ValueError("missing conversation input")

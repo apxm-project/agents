@@ -203,6 +203,8 @@ export type HookBinding = {
   readonly input_type_ref: string;
   readonly output_type_ref: string;
   readonly return_mode: HookReturnMode;
+  readonly body_region_id: string;
+  readonly assigned_context_value_id?: string;
 };
 
 export type CapabilityRequirement = {

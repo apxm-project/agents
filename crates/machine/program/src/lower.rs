@@ -13,8 +13,11 @@
 //!   structural AIS nodes carrying typed block arguments (CFG joins, loop-carried
 //!   Context, resume input) and typed operands (branch condition, switch
 //!   scrutinee, carried/yielded/returned values); and
-//! - static Hooks expand into ordered structural wrapper regions around the
-//!   selected target in declaration order, adding no operation.
+//! - each static Hook's captured body becomes one structural region placed by
+//!   phase and declaration order around the selected target, carrying its whole
+//!   binding and holding the body's own typed operations. A Hook adds no
+//!   operation of its own: the calls it makes are the same five semantic AIS
+//!   operations any Agent body records.
 //!
 //! Canonical ordering is a contract field, not an accident: declarations use
 //! canonical source identity, structural siblings and operations use the
@@ -38,11 +41,16 @@ use crate::diagnostic::{Diagnostic, DiagnosticCode, Verdict};
 use crate::frontend_graph::ValueExpression;
 use crate::frontend_graph::{
     CallIntent, ControlIntent, ControlKind, ControlPredicate, FrontendGraph, HookBinding,
-    HookPhase, IntentKind, PredicateComparator, PredicateLiteral, Region, RegionRole, Value,
+    HookPhase, HookScope, IntentKind, PredicateComparator, PredicateLiteral, Region, RegionRole,
+    Value,
 };
 
 const EXECUTION_ORDER_STRIDE: u32 = 1_000_000;
 const STRUCTURAL_ORDER_OFFSET: u32 = 500_000;
+/// The ordering budget reserved for Hooks on one target. It bounds how many
+/// Hook bodies can nest around a single node before their declared order stops
+/// being expressible, which lowering refuses rather than silently collapsing.
+const HOOK_ORDER_SPAN: u32 = 1_024;
 
 /// Lower a FrontendGraph to canonical AIR, failing closed with diagnostics when
 /// verification or lowering preconditions fail.
@@ -519,6 +527,12 @@ fn lower_structural_ir(
         .map(|f| f.body_region_id.as_str());
 
     for region in &graph.regions {
+        // A Hook body is placed by phase around its target below, not by its
+        // lexical position: the source records where the handler was written,
+        // the Hook binding records where it runs.
+        if region.region_role == RegionRole::HookBody {
+            continue;
+        }
         let block_arguments = region_block_arguments(&region.region_id, graph, values);
         if let Some(intent) = loop_body_regions.get(region.region_id.as_str()) {
             // Emit the ais.loop node in place of the body region, parented where
@@ -541,6 +555,7 @@ fn lower_structural_ir(
                 block_arguments,
                 operands,
                 predicate: intent.predicate.as_ref().map(lower_predicate),
+                hook: None,
             });
             continue;
         }
@@ -569,6 +584,7 @@ fn lower_structural_ir(
             block_arguments,
             operands: Vec::new(),
             predicate: None,
+            hook: None,
         });
     }
 
@@ -598,12 +614,14 @@ fn lower_structural_ir(
             block_arguments,
             operands,
             predicate: intent.predicate.as_ref().map(lower_predicate),
+            hook: None,
         });
     }
 
-    // Hook wrappers: one structural region per hook, ordered by declaration
-    // order, hung off the hook's target selector. This adds no operation and no
-    // dynamic registry.
+    // Hook bodies: one structural region per Hook, holding the captured body's
+    // own operations and carrying the whole binding, placed by phase and
+    // declaration order around the selected target. This adds no operation and
+    // no dynamic registry.
     let mut hooks: Vec<&HookBinding> = graph.hook_bindings.iter().collect();
     hooks.sort_by(|a, b| {
         a.target_selector
@@ -611,21 +629,22 @@ fn lower_structural_ir(
             .then(a.declaration_order.cmp(&b.declaration_order))
     });
     for hook in hooks {
-        let (parent_region_id, target_execution_order) = hook_parent_region(graph, hook).expect(
+        let placement = hook_placement(graph, hook).expect(
             "lowering validation resolves every Hook target selector before structural expansion",
         );
         nodes.push(StructuralNode {
-            region_id: hook.hook_id.clone(),
+            region_id: hook.body_region_id.clone(),
             kind: StructuralOpKind::Region,
-            parent_region_id: Some(parent_region_id),
+            parent_region_id: Some(placement.parent_region_id),
             execution_order: hook_execution_order(
                 hook.phase,
-                target_execution_order,
+                placement.anchor,
                 hook.declaration_order,
             ),
-            block_arguments: Vec::new(),
+            block_arguments: region_block_arguments(&hook.body_region_id, graph, values),
             operands: Vec::new(),
             predicate: None,
+            hook: Some(hook.clone()),
         });
     }
 
@@ -640,33 +659,55 @@ fn lower_structural_ir(
     nodes
 }
 
-/// Hook bindings retain their selected node or region in the typed Hook
-/// metadata. Their structural wrapper is a sibling in that selected target's
-/// lexical parent, because a Hook target can be a call node and only regions
-/// may own structural children in AIR.
-fn hook_parent_region(graph: &FrontendGraph, hook: &HookBinding) -> Option<(String, u32)> {
+/// Where one Hook's captured body sits in structural AIR.
+struct HookPlacement {
+    parent_region_id: String,
+    anchor: HookAnchor,
+}
+
+/// Two target shapes place a Hook body two different ways.
+#[derive(Clone, Copy)]
+enum HookAnchor {
+    /// The target is one selected node, so the body is its immediate sibling
+    /// and runs once per execution of that node.
+    Sibling { target_execution_order: u32 },
+    /// The target is a region — the Agent body or a loop body — so the body
+    /// runs *inside* it, first or last among its children. An Agent-scope Hook
+    /// therefore runs within the Agent body, and a loop-scope Hook runs on
+    /// every iteration rather than once around the whole loop.
+    Enclosing,
+}
+
+/// Resolve a Hook's selected target to the structural parent its captured body
+/// hangs from. A Hook target can be a call node, and only regions may own
+/// structural children in AIR, so a node target places the body beside it.
+fn hook_placement(graph: &FrontendGraph, hook: &HookBinding) -> Option<HookPlacement> {
+    let node_anchor = |parent_region_id: &str, execution_order: u32| HookPlacement {
+        parent_region_id: parent_region_id.to_string(),
+        anchor: HookAnchor::Sibling {
+            target_execution_order: execution_order,
+        },
+    };
     graph
         .call_intents
         .iter()
         .find(|intent| intent.node_id == hook.target_selector)
-        .map(|intent| (intent.parent_region_id.clone(), intent.execution_order))
+        .map(|intent| node_anchor(&intent.parent_region_id, intent.execution_order))
         .or_else(|| {
             graph
                 .control_intents
                 .iter()
                 .find(|intent| intent.node_id == hook.target_selector)
-                .map(|intent| (intent.parent_region_id.clone(), intent.execution_order))
+                .map(|intent| node_anchor(&intent.parent_region_id, intent.execution_order))
         })
         .or_else(|| {
             graph
                 .regions
                 .iter()
                 .find(|region| region.region_id == hook.target_selector)
-                .and_then(|region| {
-                    region
-                        .parent_region_id
-                        .clone()
-                        .map(|parent| (parent, region.execution_order))
+                .map(|region| HookPlacement {
+                    parent_region_id: region.region_id.clone(),
+                    anchor: HookAnchor::Enclosing,
                 })
         })
 }
@@ -730,21 +771,32 @@ fn control_block_arguments(
     }
 }
 
-/// Before-hooks wrap ahead of the target region, after-hooks behind it. The
-/// declaration order breaks ties within a phase.
-fn hook_execution_order(
-    phase: HookPhase,
-    target_execution_order: u32,
-    declaration_order: u32,
-) -> u32 {
-    match phase {
-        HookPhase::Before => canonical_execution_order(target_execution_order, declaration_order),
-        HookPhase::After => canonical_execution_order(
+/// Before-Hooks wrap ahead of the target, after-Hooks behind it. Declaration
+/// order breaks ties within a phase, and after-Hooks unwind in reverse: the
+/// first-declared Hook is the outermost wrapper, so it enters first and leaves
+/// last.
+fn hook_execution_order(phase: HookPhase, anchor: HookAnchor, declaration_order: u32) -> u32 {
+    let unwind = HOOK_ORDER_SPAN.saturating_sub(declaration_order.min(HOOK_ORDER_SPAN));
+    match (phase, anchor) {
+        (
+            HookPhase::Before,
+            HookAnchor::Sibling {
+                target_execution_order,
+            },
+        ) => canonical_execution_order(target_execution_order, declaration_order),
+        (
+            HookPhase::After,
+            HookAnchor::Sibling {
+                target_execution_order,
+            },
+        ) => canonical_execution_order(
             target_execution_order,
-            STRUCTURAL_ORDER_OFFSET
-                .saturating_add(1)
-                .saturating_add(declaration_order),
+            STRUCTURAL_ORDER_OFFSET.saturating_add(1).saturating_add(unwind),
         ),
+        (HookPhase::Before, HookAnchor::Enclosing) => declaration_order.min(HOOK_ORDER_SPAN),
+        (HookPhase::After, HookAnchor::Enclosing) => {
+            u32::MAX.saturating_sub(declaration_order.min(HOOK_ORDER_SPAN))
+        }
     }
 }
 
@@ -821,6 +873,46 @@ fn validate_lowering(graph: &FrontendGraph, verdict: &mut Verdict) {
                 DiagnosticCode::SchemaViolation,
                 hook.hook_id.clone(),
                 "hook target_selector does not reference an intent or region",
+            ));
+        }
+        if target == hook.body_region_id {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                hook.hook_id.clone(),
+                "a Hook cannot target its own captured body",
+            ));
+        }
+        if hook.declaration_order > HOOK_ORDER_SPAN {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                hook.hook_id.clone(),
+                "hook declaration_order exceeds the reserved Hook ordering budget",
+            ));
+        }
+        // A scope names what kind of boundary the Hook wraps, so it has to agree
+        // with what the target actually is. The schedule used to re-derive this
+        // at dispatch and silently skip a Hook whose scope did not match; a
+        // disagreement is a compile-time error, not a Hook that quietly never
+        // runs.
+        let target_intent = graph
+            .call_intents
+            .iter()
+            .find(|intent| intent.node_id == target)
+            .map(|intent| intent.intent_kind);
+        let scope_matches_target = match hook.scope {
+            HookScope::Agent | HookScope::Loop => region_ids.contains(target),
+            HookScope::Node => node_ids.contains(target),
+            HookScope::Model => target_intent == Some(IntentKind::ModelInvocation),
+            HookScope::Capability => matches!(
+                target_intent,
+                Some(IntentKind::ToolInvocation | IntentKind::CapabilityInvocation)
+            ),
+        };
+        if !scope_matches_target {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                hook.hook_id.clone(),
+                "hook scope does not match the kind of target it selects",
             ));
         }
     }

@@ -263,6 +263,8 @@ class HookBinding:
     input_type_ref: str
     output_type_ref: str
     return_mode: HookReturnMode
+    body_region_id: str
+    assigned_context_value_id: Optional[str] = None
 
 @dataclass(frozen=True, slots=True)
 class CapabilityRequirement:

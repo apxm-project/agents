@@ -20,7 +20,7 @@ use apxm_program::artifact::SchemaDigestRef;
 
 use crate::bundle::ExecutionPortBundle;
 use crate::driver::{
-    ExecutionError, ExecutionPorts, ExecutionRequest, NoopStaticHookHandler, RunReport,
+    CapturedHookBodyHandler, ExecutionError, ExecutionPorts, ExecutionRequest, RunReport,
     StaticHookHandlerPort, execute,
 };
 use crate::ports::{CompositionPort, EventPort};
@@ -183,25 +183,26 @@ impl RuntimeProfile {
         })
     }
 
-    /// Construct a fully admitted profile without static Hook handlers.
-    pub fn from_fully_admitted_without_hooks(
+    /// Construct a fully admitted profile that runs Hooks from their captured
+    /// bodies.
+    pub fn from_fully_admitted_with_captured_hooks(
         admission: RuntimeAdmission,
         model_call_request_metadata: Arc<dyn ModelCallRequestMetadataPort>,
     ) -> Result<Self, RuntimeProfileError> {
         Self::from_fully_admitted(
             admission,
             model_call_request_metadata,
-            Arc::new(NoopStaticHookHandler),
+            Arc::new(CapturedHookBodyHandler),
         )
     }
 
-    /// Construct a profile for an AIR with no static Hook handlers.
+    /// Construct a profile that runs Hooks from their captured bodies.
     ///
     /// The caller must still provide the exact runtime admission, driver
     /// bindings, and model metadata port. This convenience only supplies the
-    /// canonical no-op handler for the empty-hook case; it does not select an
-    /// implementation or weaken admission.
-    pub fn from_admission_without_hooks(
+    /// canonical captured-body handler; it does not select an implementation or
+    /// weaken admission.
+    pub fn from_admission_with_captured_hooks(
         admission: RuntimeAdmission,
         bindings: RuntimeDriverBindings,
         model_call_request_metadata: Arc<dyn ModelCallRequestMetadataPort>,
@@ -210,7 +211,7 @@ impl RuntimeProfile {
             admission,
             bindings,
             model_call_request_metadata,
-            Arc::new(NoopStaticHookHandler),
+            Arc::new(CapturedHookBodyHandler),
         )
     }
 

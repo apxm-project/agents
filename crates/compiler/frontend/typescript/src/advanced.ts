@@ -3,56 +3,46 @@
 import {
   HOOK_PHASE_AFTER,
   HOOK_PHASE_BEFORE,
-  HOOK_RETURN_MODE_OBSERVE,
-  HOOK_RETURN_MODE_REPLACE_RESULT,
   HOOK_SCOPE_NODE,
   type HookPhase,
-  type HookReturnMode,
 } from "./generated/frontend-graph.js";
-import { stableDigest } from "./markers.js";
 
 type HookAgent<C = unknown> = {
   context: C;
 };
 
+/**
+ * A static before/after Hook declaration.
+ *
+ * It carries no target selector, digest, or return mode of its own: the target
+ * is resolved from the authored `target` and the return mode is read off the
+ * captured `run` body, so the declaration cannot claim one thing while the body
+ * does another. There is no `replace` option for the same reason.
+ */
 export type HookDecl = {
   readonly phase: HookPhase;
-  readonly targetSelector: string;
   readonly scope: string;
-  readonly returnMode: HookReturnMode;
-  readonly handlerDigest: string;
 };
 
 export type HookOptions<C = unknown> = {
   agent: unknown;
   target: unknown;
   scope?: string;
-  replace?: boolean;
   run(agent: HookAgent<C>): Promise<unknown> | unknown;
 };
 
+/**
+ * Both Hook phases take the Agent's Context type, so `agent.context` is typed
+ * inside `run` without an aliasing cast. The cast was not cosmetic: binding
+ * Context to a local is what put a Hook body outside the closed authoring
+ * subset, because the local is not a value the capture can resolve.
+ */
 export const Hook = {
-  before(options: HookOptions): HookDecl {
-    return {
-      phase: HOOK_PHASE_BEFORE,
-      targetSelector: "static_target",
-      scope: options.scope ?? HOOK_SCOPE_NODE,
-      returnMode: options.replace
-        ? HOOK_RETURN_MODE_REPLACE_RESULT
-        : HOOK_RETURN_MODE_OBSERVE,
-      handlerDigest: stableDigest("hook:before"),
-    };
+  before<C = unknown>(options: HookOptions<C>): HookDecl {
+    return { phase: HOOK_PHASE_BEFORE, scope: options.scope ?? HOOK_SCOPE_NODE };
   },
-  after(options: HookOptions): HookDecl {
-    return {
-      phase: HOOK_PHASE_AFTER,
-      targetSelector: "static_target",
-      scope: options.scope ?? HOOK_SCOPE_NODE,
-      returnMode: options.replace
-        ? HOOK_RETURN_MODE_REPLACE_RESULT
-        : HOOK_RETURN_MODE_OBSERVE,
-      handlerDigest: stableDigest("hook:after"),
-    };
+  after<C = unknown>(options: HookOptions<C>): HookDecl {
+    return { phase: HOOK_PHASE_AFTER, scope: options.scope ?? HOOK_SCOPE_NODE };
   },
 };
 

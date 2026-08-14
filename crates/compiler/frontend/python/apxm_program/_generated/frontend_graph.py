@@ -124,6 +124,7 @@ RegionRole: TypeAlias = Literal[
     "task_child",
     "try_body",
     "catch_body",
+    "hook_body",
 ]
 REGION_ROLE_FUNCTION_BODY: Final[RegionRole] = "function_body"
 REGION_ROLE_CONDITIONAL_ARM: Final[RegionRole] = "conditional_arm"
@@ -132,6 +133,7 @@ REGION_ROLE_TASK_SCOPE: Final[RegionRole] = "task_scope"
 REGION_ROLE_TASK_CHILD: Final[RegionRole] = "task_child"
 REGION_ROLE_TRY_BODY: Final[RegionRole] = "try_body"
 REGION_ROLE_CATCH_BODY: Final[RegionRole] = "catch_body"
+REGION_ROLE_HOOK_BODY: Final[RegionRole] = "hook_body"
 REGION_ROLES: Final[tuple[RegionRole, ...]] = (
     REGION_ROLE_FUNCTION_BODY,
     REGION_ROLE_CONDITIONAL_ARM,
@@ -140,6 +142,7 @@ REGION_ROLES: Final[tuple[RegionRole, ...]] = (
     REGION_ROLE_TASK_CHILD,
     REGION_ROLE_TRY_BODY,
     REGION_ROLE_CATCH_BODY,
+    REGION_ROLE_HOOK_BODY,
 )
 
 IntentKind: TypeAlias = Literal[
@@ -323,6 +326,7 @@ __all__ = [
     "REGION_ROLE_TASK_CHILD",
     "REGION_ROLE_TRY_BODY",
     "REGION_ROLE_CATCH_BODY",
+    "REGION_ROLE_HOOK_BODY",
     "REGION_ROLES",
     "IntentKind",
     "INTENT_KIND_MODEL_INVOCATION",

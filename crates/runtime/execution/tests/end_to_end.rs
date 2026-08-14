@@ -81,19 +81,21 @@ fn air() -> AirModule {
         "value_assemblies": [
             {"value_id": "value.model.request", "expression": {"kind": "object", "fields": [{"name": "prompt", "value": {"kind": "string", "value": "test"}}]}},
             {"value_id": "value.cap.arguments", "expression": {"kind": "object", "fields": [{"name": "query", "value": {"kind": "string", "value": "release checklist"}}]}},
-            {"value_id": "session.1", "expression": {"kind": "string", "value": "session.1"}}
+            {"value_id": "session.1", "expression": {"kind": "string", "value": "session.1"}},
+            {"value_id": "value.hook.context", "expression": {"kind": "object", "fields": [{"name": "iterations", "value": {"kind": "integer", "value": 1}}]}}
         ],
         "semantic_operations": [
             {"node_id": "n.model", "op": "model.call", "parent_region_id": "r.fn", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.model.request", "type_ref": "ModelRequest"}], "result": {"value_id": "value.model.output", "type_ref": "ModelOutput"}},
-            {"node_id": "n.cap", "op": "capability.invoke", "parent_region_id": "r.fn", "execution_order": 1, "operands": [{"slot": "capability_ref", "value_id": "cap.search", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "value.cap.arguments", "type_ref": "CapabilityArguments"}], "result": {"value_id": "value.cap.output", "type_ref": "CapabilityOutput"}},
-            {"node_id": "n.acp", "op": "capability.invoke", "parent_region_id": "r.fn", "execution_order": 2, "operands": [{"slot": "capability_ref", "value_id": "external-agent:acp:claude-code", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "session.1", "type_ref": "ExternalAgentSessionRef"}], "result": {"value_id": "value.acp.output", "type_ref": "ExternalAgentOutput"}},
-            {"node_id": "n.new", "op": "program.new", "parent_region_id": "r.fn", "execution_order": 3, "operands": [{"slot": "program_ref", "value_id": "Specialist", "type_ref": "ProgramRef"}], "result": {"value_id": "value.program.instance", "type_ref": "ProgramInstanceRef"}},
-            {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.fn", "execution_order": 4, "operands": [{"slot": "receiver", "value_id": "value.program.instance", "type_ref": "ProgramInstanceRef"}, {"slot": "input", "value_id": "value.program.input", "type_ref": "ProgramInput"}], "result": {"value_id": "value.program.output", "type_ref": "ProgramOutput"}},
-            {"node_id": "n.await", "op": "await.event", "parent_region_id": "r.fn", "execution_order": 5, "operands": [{"slot": "event_ref", "value_id": "evt.done", "type_ref": "EventRef"}], "result": {"value_id": "value.event.output", "type_ref": "EventOutput"}}
+            {"node_id": "n.cap", "op": "capability.invoke", "parent_region_id": "r.fn", "execution_order": 2, "operands": [{"slot": "capability_ref", "value_id": "cap.search", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "value.cap.arguments", "type_ref": "CapabilityArguments"}], "result": {"value_id": "value.cap.output", "type_ref": "CapabilityOutput"}},
+            {"node_id": "n.acp", "op": "capability.invoke", "parent_region_id": "r.fn", "execution_order": 3, "operands": [{"slot": "capability_ref", "value_id": "external-agent:acp:claude-code", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "session.1", "type_ref": "ExternalAgentSessionRef"}], "result": {"value_id": "value.acp.output", "type_ref": "ExternalAgentOutput"}},
+            {"node_id": "n.new", "op": "program.new", "parent_region_id": "r.fn", "execution_order": 4, "operands": [{"slot": "program_ref", "value_id": "Specialist", "type_ref": "ProgramRef"}], "result": {"value_id": "value.program.instance", "type_ref": "ProgramInstanceRef"}},
+            {"node_id": "n.invoke", "op": "program.invoke", "parent_region_id": "r.fn", "execution_order": 5, "operands": [{"slot": "receiver", "value_id": "value.program.instance", "type_ref": "ProgramInstanceRef"}, {"slot": "input", "value_id": "value.program.input", "type_ref": "ProgramInput"}], "result": {"value_id": "value.program.output", "type_ref": "ProgramOutput"}},
+            {"node_id": "n.await", "op": "await.event", "parent_region_id": "r.fn", "execution_order": 6, "operands": [{"slot": "event_ref", "value_id": "evt.done", "type_ref": "EventRef"}], "result": {"value_id": "value.event.output", "type_ref": "EventOutput"}}
         ],
         "structural_ir": [
             {"region_id": "r.fn", "kind": "function", "execution_order": 0},
-            {"region_id": "r.return", "kind": "return", "parent_region_id": "r.fn", "execution_order": 6}
+            {"region_id": "hook.after.model.body", "kind": "region", "parent_region_id": "r.fn", "execution_order": 1},
+            {"region_id": "r.return", "kind": "return", "parent_region_id": "r.fn", "execution_order": 7}
         ],
         "context_flow": [],
         "source_map": {"schema_version": "apxm.source-map", "source_language": "python", "node_spans": [], "region_annotations": []}
@@ -437,11 +439,9 @@ struct StaticHooks;
 impl StaticHookHandlerPort for StaticHooks {
     async fn execute(
         &self,
-        binding: &HookBinding,
-        _context: &Value,
-        _result: &Value,
+        invocation: apxm_execution::StaticHookInvocation<'_>,
     ) -> Result<StaticHookResult, apxm_execution::StaticHookExecutionError> {
-        assert_eq!(binding.handler_ref, "hooks.after_model");
+        assert_eq!(invocation.binding.handler_ref, "hooks.after_model");
         Ok(StaticHookResult::Replace {
             assigned_context: Some(json!({"iterations": 1})),
             result: json!("hooked"),
@@ -679,14 +679,16 @@ fn typed_tool_loop_air() -> AirModule {
         ],
         "semantic_operations": [
             {"node_id": "n.model.initial", "op": "model.call", "parent_region_id": "r.fn", "execution_order": 0, "operands": [{"slot": "model_ref", "value_id": "model.target", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.request.initial", "type_ref": "ModelRequest"}], "result": {"value_id": "value.response.initial", "type_ref": "ModelResponse"}},
-            {"node_id": "n.search", "op": "capability.invoke", "parent_region_id": "r.branch.then", "execution_order": 0, "operands": [{"slot": "capability_ref", "value_id": "cap.search", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "value.search.arguments", "type_ref": "SearchRequest"}], "result": {"value_id": "value.search.result", "type_ref": "SearchResult"}},
-            {"node_id": "n.model.next", "op": "model.call", "parent_region_id": "r.branch.then", "execution_order": 1, "operands": [{"slot": "model_ref", "value_id": "model.target", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.request.next", "type_ref": "ModelRequest"}], "result": {"value_id": "value.response.next", "type_ref": "ModelResponse"}}
+            {"node_id": "n.search", "op": "capability.invoke", "parent_region_id": "r.branch.then", "execution_order": 1, "operands": [{"slot": "capability_ref", "value_id": "cap.search", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "value.search.arguments", "type_ref": "SearchRequest"}], "result": {"value_id": "value.search.result", "type_ref": "SearchResult"}},
+            {"node_id": "n.model.next", "op": "model.call", "parent_region_id": "r.branch.then", "execution_order": 3, "operands": [{"slot": "model_ref", "value_id": "model.target", "type_ref": "ModelTargetRef"}, {"slot": "request", "value_id": "value.request.next", "type_ref": "ModelRequest"}], "result": {"value_id": "value.response.next", "type_ref": "ModelResponse"}}
         ],
         "structural_ir": [
             {"region_id": "r.fn", "kind": "function", "execution_order": 0},
             {"region_id": "r.loop", "kind": "ais.loop", "parent_region_id": "r.fn", "execution_order": 1, "block_arguments": [{"value_id": "value.response.current", "type_ref": "ModelResponse"}], "operands": [{"slot": "initial", "value_id": "value.response.initial", "type_ref": "ModelResponse"}, {"slot": "carried", "value_id": "value.response.next", "type_ref": "ModelResponse"}], "predicate": {"root_value_id": "value.response.current", "property_path": ["kind"], "comparator": "equals", "literal": {"scalar_type": "string", "value": "tool_request"}}},
             {"region_id": "r.branch", "kind": "branch", "parent_region_id": "r.loop", "execution_order": 0, "predicate": {"root_value_id": "value.response.current", "property_path": ["tool_request", "kind"], "comparator": "equals", "literal": {"scalar_type": "string", "value": "search_web"}}},
             {"region_id": "r.branch.then", "kind": "region", "parent_region_id": "r.branch", "execution_order": 0},
+            {"region_id": "hook.before.body", "kind": "region", "parent_region_id": "r.branch.then", "execution_order": 0},
+            {"region_id": "hook.after.body", "kind": "region", "parent_region_id": "r.branch.then", "execution_order": 2},
             {"region_id": "r.branch.else", "kind": "region", "parent_region_id": "r.branch", "execution_order": 1},
             {"region_id": "r.unknown.throw", "kind": "throw", "parent_region_id": "r.branch.else", "execution_order": 0},
             {"region_id": "r.response.branch", "kind": "branch", "parent_region_id": "r.fn", "execution_order": 2, "predicate": {"root_value_id": "value.response.current", "property_path": ["kind"], "comparator": "not_equals", "literal": {"scalar_type": "string", "value": "final"}}},
@@ -755,20 +757,15 @@ struct OrderedToolHooks {
 impl StaticHookHandlerPort for OrderedToolHooks {
     async fn execute(
         &self,
-        binding: &HookBinding,
-        _context: &Value,
-        _result: &Value,
+        invocation: apxm_execution::StaticHookInvocation<'_>,
     ) -> Result<StaticHookResult, apxm_execution::StaticHookExecutionError> {
-        self.calls.lock().unwrap().push(binding.hook_id.clone());
-        if binding.phase == HookPhase::After {
-            Ok(StaticHookResult::Keep {
-                assigned_context: None,
-            })
-        } else {
-            Ok(StaticHookResult::Keep {
-                assigned_context: None,
-            })
-        }
+        self.calls
+            .lock()
+            .unwrap()
+            .push(invocation.binding.hook_id.clone());
+        Ok(StaticHookResult::Keep {
+            assigned_context: None,
+        })
     }
 }
 
@@ -823,6 +820,15 @@ fn tool_hooks() -> Vec<HookBinding> {
             input_type_ref: "SearchResult".into(),
             output_type_ref: "Unit".into(),
             return_mode: HookReturnMode::Observe,
+            body_region_id: format!(
+                "hook.{}.body",
+                if phase == HookPhase::Before {
+                    "before"
+                } else {
+                    "after"
+                }
+            ),
+            assigned_context_value_id: None,
         })
         .collect()
 }
@@ -865,8 +871,13 @@ async fn typed_final_response_skips_the_declared_tool() {
     assert!(hooks.calls.lock().unwrap().is_empty());
 }
 
+/// The canonical handler installs exactly what a Hook's captured body assigned,
+/// so a replacing Hook that assigned nothing has no replacement to install and
+/// stops the invocation instead of silently observing.
 #[tokio::test]
-async fn declared_hook_without_an_executor_fails_closed() {
+async fn a_replacing_hook_whose_body_assigned_nothing_fails_closed() {
+    let mut request = request();
+    request.hook_bindings[0].assigned_context_value_id = None;
     let error = execute(
         &ports_with_model_composition_capability_external_and_hooks(
             Arc::new(FakeCommit::new()),
@@ -874,14 +885,121 @@ async fn declared_hook_without_an_executor_fails_closed() {
             Arc::new(FakeComposition),
             Arc::new(FakeCapability),
             Arc::new(FakeAcpPeer),
-            Arc::new(apxm_execution::NoopStaticHookHandler),
+            Arc::new(apxm_execution::CapturedHookBodyHandler),
         ),
-        request(),
+        request,
         json!({"iterations": 0}),
     )
     .await
-    .expect_err("compiled Hook bindings require a real executor");
+    .expect_err("a replacing Hook names the Context value its body assigned");
     assert!(matches!(error, ExecutionError::StaticHook(_)));
+}
+
+/// The one authority bit a binding carries about itself. An injected port that
+/// hands back a replacement for a Hook the compiler derived as observing is
+/// refused, rather than being applied because the handler said so.
+#[tokio::test]
+async fn an_observing_hook_whose_handler_replaces_fails_closed() {
+    struct ReplacingHandler;
+
+    #[async_trait::async_trait]
+    impl StaticHookHandlerPort for ReplacingHandler {
+        async fn execute(
+            &self,
+            _invocation: apxm_execution::StaticHookInvocation<'_>,
+        ) -> Result<StaticHookResult, apxm_execution::StaticHookExecutionError> {
+            Ok(StaticHookResult::Replace {
+                assigned_context: Some(json!({"iterations": 99})),
+                result: json!("smuggled"),
+            })
+        }
+    }
+
+    let mut request = request();
+    request.hook_bindings[0].return_mode = HookReturnMode::Observe;
+    request.hook_bindings[0].assigned_context_value_id = None;
+    let error = execute(
+        &ports_with_model_composition_capability_external_and_hooks(
+            Arc::new(FakeCommit::new()),
+            Arc::new(FakeModel),
+            Arc::new(FakeComposition),
+            Arc::new(FakeCapability),
+            Arc::new(FakeAcpPeer),
+            Arc::new(ReplacingHandler),
+        ),
+        request,
+        json!({"iterations": 0}),
+    )
+    .await
+    .expect_err("an observing Hook mutates nothing");
+    let ExecutionError::StaticHook(error) = error else {
+        panic!("an observing Hook's replacement is a Hook execution failure");
+    };
+    assert_eq!(error.hook_id, "hook.after.model");
+}
+
+/// A replacement has to reach the outcome the evidence records. It used to
+/// patch a `model.call` outcome only, so a Capability Hook could hand the
+/// program one answer while the committed Capability outcome still reported the
+/// original — two different answers to the same question.
+#[tokio::test]
+async fn a_replacing_capability_hook_patches_the_outcome_the_run_reports() {
+    struct ReplacingCapabilityHook;
+
+    #[async_trait::async_trait]
+    impl StaticHookHandlerPort for ReplacingCapabilityHook {
+        async fn execute(
+            &self,
+            _invocation: apxm_execution::StaticHookInvocation<'_>,
+        ) -> Result<StaticHookResult, apxm_execution::StaticHookExecutionError> {
+            Ok(StaticHookResult::Replace {
+                assigned_context: None,
+                result: json!("redacted"),
+            })
+        }
+    }
+
+    let mut bindings = tool_hooks();
+    bindings.retain(|binding| binding.phase == HookPhase::After);
+    bindings[0].return_mode = HookReturnMode::ReplaceResult;
+
+    let report = execute(
+        &ports_with_model_composition_capability_external_and_hooks(
+            Arc::new(FakeCommit::new()),
+            Arc::new(TypedResponses::new([
+                json!({"kind": "tool_request", "tool_request": {"kind": "search_web", "arguments": {"query": "first query"}}}),
+                json!({"kind": "final", "content": "done"}),
+            ])),
+            Arc::new(FakeComposition),
+            Arc::new(RecordingCapability::with_results(["first"])),
+            Arc::new(FakeAcpPeer),
+            Arc::new(ReplacingCapabilityHook),
+        ),
+        typed_tool_request(typed_tool_loop_air(), bindings),
+        json!({"messages": []}),
+    )
+    .await
+    .expect("a replacing Capability Hook completes the run");
+
+    let capability = report
+        .node_outcomes
+        .iter()
+        .find_map(|outcome| match outcome {
+            NodeOutcome::Capability {
+                node_id,
+                outcome,
+                replaced,
+            } if node_id == "n.search" => Some((outcome, *replaced)),
+            _ => None,
+        })
+        .expect("the Tool node reports an outcome");
+    assert!(capability.1, "the Capability outcome records the replacement");
+    assert_eq!(
+        *capability.0,
+        apxm_program::capability::CapabilityOutcome::Completed {
+            result: "redacted".into()
+        }
+    );
 }
 
 #[tokio::test]
@@ -1004,6 +1122,8 @@ fn request() -> ExecutionRequest {
             input_type_ref: "ModelResult".into(),
             output_type_ref: "ModelResult".into(),
             return_mode: HookReturnMode::ReplaceResult,
+            body_region_id: "hook.after.model.body".into(),
+            assigned_context_value_id: Some("value.hook.context".into()),
         }],
         model_admission: admission(),
         capability_invocations: BTreeMap::from([

@@ -353,7 +353,8 @@
             "task_scope",
             "task_child",
             "try_body",
-            "catch_body"
+            "catch_body",
+            "hook_body"
           ]
         },
         "parent_region_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
@@ -561,7 +562,8 @@
         "handler_digest",
         "input_type_ref",
         "output_type_ref",
-        "return_mode"
+        "return_mode",
+        "body_region_id"
       ],
       "properties": {
         "hook_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
@@ -576,7 +578,19 @@
         "handler_digest": { "$ref": "apxm.contract-common.v1#/$defs/Digest" },
         "input_type_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
         "output_type_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
-        "return_mode": { "type": "string", "enum": ["observe", "replace_result"] }
+        "return_mode": {
+          "type": "string",
+          "enum": ["observe", "replace_result"],
+          "description": "Derived from the captured Hook body, never from an unchecked author assertion: a body that assigns Context is replace_result, a body that mutates nothing is observe. An observe Hook that mutates Context or the target result is refused at execution."
+        },
+        "body_region_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier",
+          "description": "The lexical region holding this Hook's captured body. The body is ordinary captured source — its Model and Capability calls are the same typed intents an Agent body records — so a Hook's effects stay visible at the compiler boundary instead of hiding behind a digest-referenced handler."
+        },
+        "assigned_context_value_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier",
+          "description": "The typed Context value the captured body assigns. Present exactly when return_mode is replace_result."
+        }
       },
       "additionalProperties": false
     },

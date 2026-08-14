@@ -362,6 +362,7 @@ impl ExecutableArtifact {
                 format!("embedded AIR serializes canonically: {error}"),
             )),
         }
+        reconcile_hook_bindings(&mut verdict, &self.hook_bindings, &self.air);
         if self.source_map != self.air.source_map {
             verdict.push(Diagnostic::new(
                 DiagnosticCode::SchemaViolation,
@@ -457,6 +458,21 @@ impl std::fmt::Display for ArtifactBuildError {
     }
 }
 
+/// The Hook bindings a compiled AIR module carries.
+///
+/// Every Hook rides on the region holding its captured body, and artifact
+/// validation refuses any artifact whose declared `hook_bindings` differ from
+/// these, so an execution boundary holding only AIR reads the same Hooks the
+/// artifact declares. Exposed so that derivation exists exactly once, rather
+/// than every caller rediscovering which structural nodes carry a binding.
+#[must_use]
+pub fn air_hook_bindings(air: &AirModule) -> Vec<crate::frontend_graph::HookBinding> {
+    air.structural_ir
+        .iter()
+        .filter_map(|node| node.hook.clone())
+        .collect()
+}
+
 /// The `artifact_semantic` Port Requirements a compiled AIR module states.
 ///
 /// One requirement per distinct model target and per distinct Capability the
@@ -522,6 +538,56 @@ fn air_operand_refs(
 /// reach a running artifact. Neither is a warning: an artifact whose
 /// requirement set and effect set disagree has no single answer to "what does
 /// this program need", so it is not built at all.
+/// Hold an artifact's `hook_bindings` and its own AIR to one story.
+///
+/// The two used to be independent copies: lowering kept four of a binding's ten
+/// fields and the artifact re-attached the rest straight from the graph, so a
+/// binding could name a scope, a handler, or a return mode that the executable
+/// structure did not carry, and nothing would notice. Every Hook the AIR holds
+/// is now the binding the artifact declares, field for field, in the same order.
+fn reconcile_hook_bindings(
+    verdict: &mut Verdict,
+    hook_bindings: &[crate::frontend_graph::HookBinding],
+    air: &AirModule,
+) {
+    let carried: Vec<&crate::frontend_graph::HookBinding> = air
+        .structural_ir
+        .iter()
+        .filter_map(|node| node.hook.as_ref())
+        .collect();
+
+    for binding in hook_bindings {
+        match carried
+            .iter()
+            .find(|candidate| candidate.hook_id == binding.hook_id)
+        {
+            Some(candidate) if **candidate == *binding => {}
+            Some(_) => verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                binding.hook_id.clone(),
+                "declared Hook binding differs from the binding its own AIR carries",
+            )),
+            None => verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                binding.hook_id.clone(),
+                "declared Hook binding has no captured body region in the artifact's AIR",
+            )),
+        }
+    }
+    for binding in carried {
+        if !hook_bindings
+            .iter()
+            .any(|declared| declared.hook_id == binding.hook_id)
+        {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                binding.hook_id.clone(),
+                "artifact AIR carries a Hook the artifact does not declare",
+            ));
+        }
+    }
+}
+
 fn reconcile_requirements_with_air(
     graph: &FrontendGraph,
     air: &AirModule,

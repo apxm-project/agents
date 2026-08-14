@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use apxm_execution::{
     CapabilityInvocationAdmission, CapabilityOutcome, CapabilityPort, CapabilityRequest,
     CompositionOutcome, CompositionPort, CompositionRequest, EventAwait, EventOutcome, EventPort,
-    ExecutionPortBundle, ExecutionPorts, ExecutionRequest, NoopStaticHookHandler, RunOutcome,
+    CapturedHookBodyHandler, ExecutionPortBundle, ExecutionPorts, ExecutionRequest, RunOutcome,
     StaticHookHandlerPort, StaticHookResult, execute, execute_resumable, resume,
 };
 use apxm_inference::{
@@ -384,6 +384,9 @@ impl ModelInferencePort for SequencedModel {
     }
 }
 
+/// The shipped captured-body handler, with the Hook order recorded on the way
+/// through. Recording alone would prove only that Hook steps were scheduled;
+/// delegating proves the captured body's own result reaches Context.
 #[derive(Default)]
 struct ArtifactHooks {
     calls: Mutex<Vec<String>>,
@@ -393,14 +396,13 @@ struct ArtifactHooks {
 impl StaticHookHandlerPort for ArtifactHooks {
     async fn execute(
         &self,
-        binding: &HookBinding,
-        _context: &Value,
-        _result: &Value,
+        invocation: apxm_execution::StaticHookInvocation<'_>,
     ) -> Result<StaticHookResult, apxm_execution::StaticHookExecutionError> {
-        self.calls.lock().unwrap().push(binding.hook_id.clone());
-        Ok(StaticHookResult::Keep {
-            assigned_context: None,
-        })
+        self.calls
+            .lock()
+            .unwrap()
+            .push(invocation.binding.hook_id.clone());
+        CapturedHookBodyHandler.execute(invocation).await
     }
 }
 
@@ -536,7 +538,7 @@ fn ports(
     commit: Arc<RecordingCommit>,
     park_event: bool,
 ) -> ExecutionPorts {
-    ports_with_hooks(model, commit, park_event, Arc::new(NoopStaticHookHandler))
+    ports_with_hooks(model, commit, park_event, Arc::new(CapturedHookBodyHandler))
 }
 
 fn ports_with_hooks(
@@ -653,7 +655,7 @@ async fn repository_example_artifacts_execute_only_generic_structural_semantics(
         let report = execute(
             &ports_with_hooks(model, commit.clone(), false, hooks.clone()),
             execution_request,
-            json!({"messages": [], "tool_calls": 0, "last_reply": ""}),
+            json!({"messages": [], "last_reply": "", "context_budget": null, "last_tool": ""}),
         )
         .await
         .expect("execute example-built artifact");
@@ -714,7 +716,7 @@ async fn repository_example_artifacts_execute_authored_tool_flow_and_real_hooks(
         let report = execute(
             &ports_with_hooks(model.clone(), commit, false, hooks.clone()),
             execution_request,
-            json!({"messages": [], "tool_calls": 0, "last_reply": ""}),
+            json!({"messages": [], "last_reply": "", "context_budget": null, "last_tool": ""}),
         )
         .await
         .expect("real artifact Tool branch executes");
@@ -735,10 +737,20 @@ async fn repository_example_artifacts_execute_authored_tool_flow_and_real_hooks(
             *hooks.calls.lock().unwrap(),
             ["hook.PrepareSearchContext", "hook.RecordSearchContext"],
         );
+        // The before Hook's captured `count_tokens` call ran as an ordinary
+        // operation and its result reached Context; the after Hook recorded the
+        // Capability it wrapped; and the Agent body's own assignment carried
+        // both forward. A Hook whose body was never captured could not have
+        // moved any of this.
         assert_eq!(
             report.final_context,
-            json!({"messages": [], "tool_calls": 0, "last_reply": "done"}),
-            "authored Context assignment executes independently of Hook results",
+            json!({
+                "messages": [],
+                "last_reply": "done",
+                "context_budget": "ok",
+                "last_tool": "search_web"
+            }),
+            "the captured Hook bodies and the authored assignment all commit",
         );
     }
 }
@@ -766,7 +778,7 @@ async fn repository_example_resume_carries_exact_input_and_context_into_next_tur
         execute_resumable(
             &runtime_ports,
             execution_request,
-            json!({"messages": [], "tool_calls": 0, "last_reply": ""}),
+            json!({"messages": [], "last_reply": "", "context_budget": null, "last_tool": ""}),
         )
         .await
         .expect("first turn parks at authored yield"),
@@ -783,7 +795,12 @@ async fn repository_example_resume_carries_exact_input_and_context_into_next_tur
     .expect("typed first continuation");
     assert_eq!(
         first_continuation.context,
-        json!({"messages": [], "tool_calls": 0, "last_reply": "first reply"})
+        json!({
+            "messages": [],
+            "last_reply": "first reply",
+            "context_budget": null,
+            "last_tool": ""
+        })
     );
 
     assert!(matches!(
@@ -814,7 +831,12 @@ async fn repository_example_resume_carries_exact_input_and_context_into_next_tur
     .expect("typed second continuation");
     assert_eq!(
         second_continuation.context,
-        json!({"messages": [], "tool_calls": 0, "last_reply": "second reply"})
+        json!({
+            "messages": [],
+            "last_reply": "second reply",
+            "context_budget": null,
+            "last_tool": ""
+        })
     );
 }
 

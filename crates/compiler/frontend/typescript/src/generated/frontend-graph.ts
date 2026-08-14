@@ -115,7 +115,8 @@ export type RegionRole =
   | "task_scope"
   | "task_child"
   | "try_body"
-  | "catch_body";
+  | "catch_body"
+  | "hook_body";
 export const REGION_ROLE_FUNCTION_BODY = "function_body" satisfies RegionRole;
 export const REGION_ROLE_CONDITIONAL_ARM = "conditional_arm" satisfies RegionRole;
 export const REGION_ROLE_LOOP_BODY = "loop_body" satisfies RegionRole;
@@ -123,6 +124,7 @@ export const REGION_ROLE_TASK_SCOPE = "task_scope" satisfies RegionRole;
 export const REGION_ROLE_TASK_CHILD = "task_child" satisfies RegionRole;
 export const REGION_ROLE_TRY_BODY = "try_body" satisfies RegionRole;
 export const REGION_ROLE_CATCH_BODY = "catch_body" satisfies RegionRole;
+export const REGION_ROLE_HOOK_BODY = "hook_body" satisfies RegionRole;
 export const REGION_ROLES = [
   REGION_ROLE_FUNCTION_BODY,
   REGION_ROLE_CONDITIONAL_ARM,
@@ -131,6 +133,7 @@ export const REGION_ROLES = [
   REGION_ROLE_TASK_CHILD,
   REGION_ROLE_TRY_BODY,
   REGION_ROLE_CATCH_BODY,
+  REGION_ROLE_HOOK_BODY,
 ] as const satisfies readonly RegionRole[];
 
 export type IntentKind =

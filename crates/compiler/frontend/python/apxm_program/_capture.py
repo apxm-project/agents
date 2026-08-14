@@ -32,7 +32,13 @@ from ._bound_tree import (
     Span,
 )
 from ._advanced import HookDecl, TaskGroup
-from ._generated.frontend_graph import HOOK_SCOPE_AGENT, HOOK_SCOPE_LOOP
+from ._generated.frontend_graph import (
+    HOOK_RETURN_MODE_OBSERVE,
+    HOOK_RETURN_MODE_REPLACE_RESULT,
+    HOOK_SCOPE_AGENT,
+    HOOK_SCOPE_LOOP,
+    REGION_ROLE_HOOK_BODY,
+)
 from ._generated.frontend_records import CallIntent, ControlIntent
 from ._markers import (
     CapabilityBinding,
@@ -99,6 +105,8 @@ class _Capture:
         self._last_node_by_region: dict[str, str] = {}
         self._pending_context_by_region: dict[str, tuple[str, str]] = {}
         self._referenced_names: set[str] = set()
+        self._hook_body_regions: set[str] = set()
+        self._hook_context_assignment: dict[str, str] = {}
 
     def _next(self, prefix: str) -> str:
         self._counter += 1
@@ -225,9 +233,22 @@ class _Capture:
                         )
 
     def capture(self, func_ast: ast.AsyncFunctionDef) -> BoundProgram:
+        # A Hook body is captured source too, so the Models and Capabilities it
+        # calls have to be declared alongside the ones the Agent body calls.
+        sources: list[ast.AST] = [func_ast]
+        sources.extend(
+            handler
+            for handler in (
+                _handler_ast(binding)
+                for binding in self.bindings.values()
+                if isinstance(binding, HookDecl)
+            )
+            if handler is not None
+        )
         self._referenced_names = {
             node.id
-            for node in ast.walk(func_ast)
+            for source in sources
+            for node in ast.walk(source)
             if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
         }
         self._declare_bindings()
@@ -328,6 +349,16 @@ class _Capture:
             self._visit_try(stmt, region_id)
         elif isinstance(stmt, (ast.Import, ast.ImportFrom, ast.Pass)):
             return
+        # A docstring is prose about the source, not source intent. TypeScript
+        # carries the same prose as trivia the parser already drops, so refusing
+        # it here would make a documented Python body uncapturable and an
+        # identically documented TypeScript body fine.
+        elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
+            if not isinstance(stmt.value.value, str):
+                raise CaptureError(
+                    "a bare constant is not an Agent source statement", stmt
+                )
+            return
         elif isinstance(stmt, ast.AnnAssign) and stmt.value is None:
             return
         else:
@@ -355,6 +386,13 @@ class _Capture:
                     expression=expression,
                 )
             )
+            # Inside a captured Hook body the assignment *is* the Hook's return
+            # value, so it is carried by the binding rather than wired to the
+            # next node in the region. That is what makes an observing Hook
+            # distinguishable from a replacing one by looking at the body.
+            if region_id in self._hook_body_regions:
+                self._hook_context_assignment[region_id] = value_id
+                return
             # A context replacement before the first effect is anchored to the
             # lexical region entry so it remains executable rather than being
             # silently discarded.
@@ -676,6 +714,8 @@ class _Capture:
         self, call: ast.Call, region_id: str, assign_to: Optional[str]
     ) -> None:
         """Capture the explicit stateful yield boundary and its resume input."""
+        if region_id in self._hook_body_regions:
+            raise CaptureError("a Hook body does not park the Agent invocation", call)
         if assign_to is None:
             raise CaptureError("agent.yield_ assigns its typed resume input", call)
         node_id = self._next("yield")
@@ -1029,6 +1069,19 @@ class _Capture:
             self._visit_block(handler.body, catch_region)
 
     def _visit_return(self, stmt: ast.Return, region_id: str) -> None:
+        # A Hook body is not the Agent body: returning a value from it would
+        # otherwise lower to a program return and end the whole invocation. A
+        # Hook states its replacement by assigning Context, so a bare `return`
+        # is a terminator with nothing to record and a returned value is refused.
+        if region_id in self._hook_body_regions:
+            if stmt.value is not None and not (
+                isinstance(stmt.value, ast.Constant) and stmt.value.value is None
+            ):
+                raise CaptureError(
+                    "a Hook returns its replacement by assigning agent.context",
+                    stmt,
+                )
+            return
         node_id = self._next("return")
         operands: list[BoundOperand] = []
         if isinstance(stmt.value, ast.Await):
@@ -1073,7 +1126,7 @@ class _Capture:
         self._record_node(region_id, node_id)
 
     def _capture_hooks(self) -> None:
-        """Bind Hook decorators after all static source targets are known."""
+        """Bind Hook decorators and capture their bodies as ordinary regions."""
         for name in sorted(self.bindings):
             declaration = self.bindings[name]
             if not isinstance(declaration, HookDecl):
@@ -1086,20 +1139,85 @@ class _Capture:
                 continue
             if declaration.handler_ref is None or declaration.handler_digest is None:
                 raise CaptureError(f"Hook '{name}' is missing its decorated async handler")
+            hook_id = f"hook.{name}"
+            target_selector = self._hook_target(declaration)
+            body_region_id = self._capture_hook_body(hook_id, declaration, target_selector)
+            assigned = self._hook_context_assignment.get(body_region_id)
             self.hooks.append(
                 BoundHook(
-                    hook_id=f"hook.{name}",
+                    hook_id=hook_id,
                     scope=declaration.scope,
                     phase=declaration.phase,
-                    target_selector=self._hook_target(declaration),
+                    target_selector=target_selector,
                     declaration_order=len(self.hooks),
                     handler_ref=declaration.handler_ref,
                     handler_digest=declaration.handler_digest,
                     input_type_ref=declaration.input_type_ref,
-                    output_type_ref=declaration.output_type_ref,
-                    return_mode=declaration.return_mode,
+                    output_type_ref=(
+                        "Unit" if assigned is None else (self.context_type_ref or "Context")
+                    ),
+                    return_mode=(
+                        HOOK_RETURN_MODE_OBSERVE
+                        if assigned is None
+                        else HOOK_RETURN_MODE_REPLACE_RESULT
+                    ),
+                    body_region_id=body_region_id,
+                    assigned_context_value_id=assigned,
                 )
             )
+
+    def _capture_hook_body(
+        self, hook_id: str, declaration: HookDecl, target_selector: str
+    ) -> str:
+        """Fold one Hook handler into its own region of the same bound tree.
+
+        The body is read from syntax exactly like an Agent body, so a Hook's
+        Capability and Model calls become the same typed intents and stay
+        visible to the compiler. Where the region *runs* is decided by scope and
+        phase during lowering, not by where the handler happened to be written.
+        """
+        handler_ast = _handler_ast(declaration)
+        if handler_ast is None:
+            raise CaptureError(f"Hook '{hook_id}' handler source is not readable")
+        parameters = handler_ast.args.args
+        if not parameters:
+            raise CaptureError(f"Hook '{hook_id}' takes the inferred agent facade")
+
+        body_region_id = f"{hook_id}.body"
+        parent_region_id = self._hook_parent_region(target_selector)
+        self.regions.append(
+            BoundRegion(
+                region_id=body_region_id,
+                region_role=REGION_ROLE_HOOK_BODY,
+                parent_region_id=parent_region_id,
+                execution_order=self._order_in(parent_region_id),
+            )
+        )
+        self._hook_body_regions.add(body_region_id)
+
+        outer_facade = self._facade_name
+        self._facade_name = parameters[0].arg
+        try:
+            self._visit_block(handler_ast.body, body_region_id)
+        except CaptureError as error:
+            raise CaptureError(f"in Hook '{hook_id}' body: {error}") from error
+        finally:
+            self._facade_name = outer_facade
+        return body_region_id
+
+    def _hook_parent_region(self, target_selector: str) -> str:
+        """The region a Hook body is lexically held in.
+
+        A node target puts the body beside the node; a region target — the Agent
+        body or a loop body — puts it inside that region.
+        """
+        for call in self.calls:
+            if call.node_id == target_selector:
+                return call.parent_region_id
+        for control in self.controls:
+            if control.node_id == target_selector:
+                return control.parent_region_id
+        return target_selector
 
     def _hook_target(self, declaration: HookDecl) -> str:
         """Resolve a friendly Hook target to one captured intent or region."""
@@ -1112,21 +1230,69 @@ class _Capture:
             return target
         if declaration.scope == HOOK_SCOPE_AGENT and target in {self.program_id, self.entrypoint}:
             return self.body_region_id
-        if declaration.scope == HOOK_SCOPE_LOOP and target in {"loop", self.entrypoint}:
-            for control in self.controls:
-                if control.control_kind == "loop":
-                    if control.body_region_ids:
-                        return control.body_region_ids[0]
-                    raise CaptureError(f"Hook target '{target}' has no loop body region")
         binding_ref = self._declared.get(target)
+        matches = (
+            [call.node_id for call in self.calls if call.binding_ref == binding_ref]
+            if binding_ref is not None
+            else []
+        )
+        if declaration.scope == HOOK_SCOPE_LOOP:
+            # A loop is not a name an author can write, so a loop Hook selects
+            # its loop through something inside it. Falling back to the first
+            # loop only when nothing was named is what lets an authored target
+            # reach an inner loop instead of being silently discarded.
+            if len(matches) > 1:
+                raise CaptureError(f"Hook target '{target}' is ambiguous across invocations")
+            if matches:
+                loop_body = self._enclosing_loop_body(matches[0])
+                if loop_body is None:
+                    raise CaptureError(f"Hook target '{target}' is not inside a static loop")
+                return loop_body
+            if target in {"loop", self.entrypoint}:
+                for control in self.controls:
+                    if control.control_kind == "loop" and control.body_region_ids:
+                        return control.body_region_ids[0]
+                raise CaptureError(f"Hook target '{target}' has no loop body region")
+            raise CaptureError(f"Hook target '{target}' has no captured invocation")
         if binding_ref is not None:
-            matches = [call.node_id for call in self.calls if call.binding_ref == binding_ref]
             if len(matches) == 1:
                 return matches[0]
             if not matches:
                 raise CaptureError(f"Hook target '{target}' has no captured invocation")
             raise CaptureError(f"Hook target '{target}' is ambiguous across invocations")
         raise CaptureError(f"Hook target '{target}' is not a static Agent source target")
+
+    def _enclosing_loop_body(self, node_id: str) -> Optional[str]:
+        """Walk out from one captured node to the loop body region holding it."""
+        loop_bodies = {
+            control.body_region_ids[0]
+            for control in self.controls
+            if control.control_kind == "loop" and control.body_region_ids
+        }
+        parents = {
+            region.region_id: region.parent_region_id for region in self.regions
+        }
+        region_id: Optional[str] = self._hook_parent_region(node_id)
+        while region_id is not None:
+            if region_id in loop_bodies:
+                return region_id
+            region_id = parents.get(region_id)
+        return None
+
+
+def _handler_ast(declaration: HookDecl) -> Optional[ast.AsyncFunctionDef]:
+    """Parse one Hook handler's own ``async def`` without evaluating it."""
+    handler = declaration.handler
+    if handler is None:
+        return None
+    try:
+        source = textwrap.dedent(inspect.getsource(handler))
+    except (OSError, TypeError):
+        return None
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.AsyncFunctionDef):
+            return node
+    return None
 
 
 def capture_program(

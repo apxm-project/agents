@@ -36,6 +36,7 @@ import {
   HOOK_SCOPES,
   HOOK_RETURN_MODE_OBSERVE,
   HOOK_RETURN_MODE_REPLACE_RESULT,
+  REGION_ROLE_HOOK_BODY,
   type HookScope,
   type RegionRole,
 } from "./generated/frontend-graph.js";
@@ -127,6 +128,8 @@ class Capture {
   private readonly bindingSymbols = new Map<ts.Symbol, string>();
   private readonly lastNodeByRegion = new Map<string, string>();
   private readonly pendingContextByRegion = new Map<string, { source: string; valueId: string }>();
+  private readonly hookBodyRegions = new Set<string>();
+  private readonly hookContextAssignment = new Map<string, string>();
   private readonly capabilityRequirements: BoundCapabilityRequirement[] = [];
   private readonly modelRequirements: string[] = [];
   private readonly spans: Array<readonly [string, Span, string]> = [];
@@ -510,6 +513,14 @@ class Capture {
           origin: "context_value",
           expression,
         });
+        // Inside a captured Hook body the assignment *is* the Hook's return
+        // value, so it is carried by the binding rather than wired to the next
+        // node in the region. That is what makes an observing Hook
+        // distinguishable from a replacing one by looking at the body.
+        if (this.hookBodyRegions.has(regionId)) {
+          this.hookContextAssignment.set(regionId, contextNode);
+          return undefined;
+        }
         // Anchor an initial replacement to the lexical region entry so it is
         // executable rather than silently discarded before the first effect.
         const source = this.lastNodeByRegion.get(regionId) ?? regionId;
@@ -1324,6 +1335,17 @@ class Capture {
     regionId: string,
     source: ts.SourceFile,
   ): void {
+    // A Hook body is not the Agent body: returning from it would otherwise
+    // lower to a program return and end the whole invocation. A Hook states its
+    // replacement by assigning Context.
+    if (this.hookBodyRegions.has(regionId)) {
+      if (stmt.expression !== undefined) {
+        throw new CaptureError(
+          "a Hook returns its replacement by assigning agent.context",
+        );
+      }
+      return;
+    }
     if (stmt.expression !== undefined) {
       if (ts.isAwaitExpression(stmt.expression)) {
         this.visitAwait(stmt.expression, regionId, source);
@@ -1407,14 +1429,16 @@ class Capture {
         throw new CaptureError(`Hook scope '${declared}' is not supported`);
       }
       const scope = declared as HookScope;
-      const replace = booleanProperty(hook.options, "replace") ?? false;
       const run = functionProperty(hook.options, "run");
       if (run === undefined) {
         throw new CaptureError("Hook requires a static run callback");
       }
+      const hookId = `hook.${hookName}`;
       const targetSelector = this.resolveHookTarget(target, scope);
+      const bodyRegionId = this.captureHookBody(hookId, targetSelector, run, source);
+      const assigned = this.hookContextAssignment.get(bodyRegionId);
       this.hooks.push({
-        hook_id: `hook.${hookName}`,
+        hook_id: hookId,
         scope,
         phase: hook.phase,
         target_selector: targetSelector,
@@ -1422,35 +1446,158 @@ class Capture {
         handler_ref: hookName,
         handler_digest: stableDigest(run.getText(source)),
         input_type_ref: "AgentFacade",
-        output_type_ref: replace ? this.input.outputTypeRef : "Unit",
-        return_mode: replace
-          ? HOOK_RETURN_MODE_REPLACE_RESULT
-          : HOOK_RETURN_MODE_OBSERVE,
+        output_type_ref:
+          assigned === undefined ? "Unit" : (this.input.contextTypeRef ?? "Context"),
+        return_mode:
+          assigned === undefined
+            ? HOOK_RETURN_MODE_OBSERVE
+            : HOOK_RETURN_MODE_REPLACE_RESULT,
+        body_region_id: bodyRegionId,
+        assigned_context_value_id: assigned,
       });
     }
   }
 
+  /**
+   * Fold one Hook's `run` callback into its own region of the same bound tree.
+   *
+   * The body is read from syntax exactly like an Agent body, so a Hook's
+   * Capability and Model calls become the same typed intents and stay visible
+   * to the compiler. Where the region *runs* is decided by scope and phase
+   * during lowering, not by where the callback happened to be written.
+   */
+  private captureHookBody(
+    hookId: string,
+    targetSelector: string,
+    run: ts.FunctionLikeDeclarationBase,
+    source: ts.SourceFile,
+  ): string {
+    const body = run.body;
+    if (body === undefined || !ts.isBlock(body)) {
+      throw new CaptureError(`Hook '${hookId}' body is one static block`);
+    }
+    const bodyRegionId = `${hookId}.body`;
+    const parentRegionId = this.hookParentRegion(targetSelector);
+    this.addRegion(
+      bodyRegionId,
+      REGION_ROLE_HOOK_BODY,
+      parentRegionId,
+      this.orderIn(parentRegionId),
+    );
+    this.hookBodyRegions.add(bodyRegionId);
+
+    const outerFacade = this.facadeSymbol;
+    const parameter = run.parameters[0];
+    this.facadeSymbol =
+      parameter !== undefined && ts.isIdentifier(parameter.name)
+        ? this.symbolAt(parameter.name)
+        : undefined;
+    try {
+      this.visitBlock(body.statements, bodyRegionId, source);
+    } catch (error) {
+      throw error instanceof CaptureError
+        ? new CaptureError(`in Hook '${hookId}' body: ${error.message}`)
+        : error;
+    } finally {
+      this.facadeSymbol = outerFacade;
+    }
+    return bodyRegionId;
+  }
+
+  /**
+   * The region a Hook body is lexically held in. A node target puts the body
+   * beside the node; a region target — the Agent body or a loop body — puts it
+   * inside that region.
+   */
+  private hookParentRegion(targetSelector: string): string {
+    const call = this.calls.find(
+      (candidate) => candidate.contract.node_id === targetSelector,
+    );
+    if (call !== undefined) {
+      return call.contract.parent_region_id;
+    }
+    const control = this.controls.find(
+      (candidate) => candidate.contract.node_id === targetSelector,
+    );
+    if (control !== undefined) {
+      return control.contract.parent_region_id;
+    }
+    return targetSelector;
+  }
+
   private resolveHookTarget(target: ts.Identifier, scope: HookScope): string {
+    const named = target.text;
+    if (this.regions.some((region) => region.region_id === named)) {
+      return named;
+    }
+    const bindingRef = this.bindingRefOfBinding(this.bindingNameFor(target));
+    const calls = this.calls.filter(
+      (candidate) => candidate.contract.binding_ref === bindingRef,
+    );
+    const namesTheProgram = this.symbolAt(target) === this.programBindingSymbol;
+
     if (scope === HOOK_SCOPE_AGENT) {
+      if (!namesTheProgram && calls.length === 0) {
+        throw new CaptureError(
+          `Hook target '${named}' is not the Agent or a captured region`,
+        );
+      }
       return this.bodyRegionId;
     }
     if (scope === HOOK_SCOPE_LOOP) {
-      const loop = this.controls.find((control) => control.contract.control_kind === "loop");
+      // A loop is not a name an author can write, so a loop Hook selects its
+      // loop through something inside it. Falling back to the first loop only
+      // when nothing was named is what lets an authored target reach an inner
+      // loop instead of being silently discarded.
+      if (calls.length > 1) {
+        throw new CaptureError(`Hook target '${named}' is ambiguous across invocations`);
+      }
+      if (calls.length === 1) {
+        const loopBody = this.enclosingLoopBody(calls[0].contract.node_id);
+        if (loopBody === undefined) {
+          throw new CaptureError(`Hook target '${named}' is not inside a static loop`);
+        }
+        return loopBody;
+      }
+      if (!namesTheProgram) {
+        throw new CaptureError(`Hook target '${named}' has no static invocation`);
+      }
+      const loop = this.controls.find(
+        (control) => control.contract.control_kind === "loop",
+      );
       const region = loop?.contract.body_region_ids?.[0];
       if (region === undefined) {
         throw new CaptureError("a loop Hook requires a static loop in the Agent body");
       }
       return region;
     }
-    const bindingRef = this.bindingRefOfBinding(this.bindingNameFor(target));
-    const calls = this.calls.filter((candidate) => candidate.contract.binding_ref === bindingRef);
     if (calls.length === 0) {
-      throw new CaptureError(`Hook target '${target.text}' has no static invocation`);
+      throw new CaptureError(`Hook target '${named}' has no static invocation`);
     }
     if (calls.length !== 1) {
-      throw new CaptureError(`Hook target '${target.text}' is ambiguous across invocations`);
+      throw new CaptureError(`Hook target '${named}' is ambiguous across invocations`);
     }
     return calls[0].contract.node_id;
+  }
+
+  /** Walk out from one captured node to the loop body region holding it. */
+  private enclosingLoopBody(nodeId: string): string | undefined {
+    const loopBodies = new Set(
+      this.controls
+        .filter((control) => control.contract.control_kind === "loop")
+        .flatMap((control) => control.contract.body_region_ids?.slice(0, 1) ?? []),
+    );
+    const parents = new Map(
+      this.regions.map((region) => [region.region_id, region.parent_region_id]),
+    );
+    let regionId: string | undefined = this.hookParentRegion(nodeId);
+    while (regionId !== undefined) {
+      if (loopBodies.has(regionId)) {
+        return regionId;
+      }
+      regionId = parents.get(regionId);
+    }
+    return undefined;
   }
 
   private visitBodyStatement(
@@ -1673,17 +1820,3 @@ function stringProperty(
   return ts.isStringLiteral(property.initializer) ? property.initializer.text : undefined;
 }
 
-function booleanProperty(
-  object: ts.ObjectLiteralExpression,
-  name: string,
-): boolean | undefined {
-  const property = namedProperty(object, name);
-  if (property === undefined || !ts.isPropertyAssignment(property)) {
-    return undefined;
-  }
-  return property.initializer.kind === ts.SyntaxKind.TrueKeyword
-    ? true
-    : property.initializer.kind === ts.SyntaxKind.FalseKeyword
-      ? false
-      : undefined;
-}
