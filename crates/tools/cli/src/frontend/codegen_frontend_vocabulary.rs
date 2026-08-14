@@ -52,7 +52,7 @@ pub(crate) enum Source {
 /// contract states the set.
 pub(crate) struct Family {
     pub(crate) type_name: &'static str,
-    prefix: &'static str,
+    pub(crate) prefix: &'static str,
     set_name: &'static str,
     pub(crate) source: Source,
 }
@@ -232,6 +232,20 @@ pub(crate) fn family_for_discriminated_const(
     })
 }
 
+/// The vocabulary family a `$defs.<def>.oneOf` discriminates on, with the
+/// discriminant property's name. `codegen_frontend_serializers` resolves a
+/// union's branch constants through this rather than restating which property
+/// the contract discriminates each union on.
+pub(crate) fn family_for_union(def: &str) -> Option<(&'static Family, &'static str)> {
+    FAMILIES.iter().find_map(|family| match &family.source {
+        Source::DiscriminatedConst {
+            def: family_def,
+            discriminant,
+        } if *family_def == def => Some((family, *discriminant)),
+        _ => None,
+    })
+}
+
 /// Resolve one local `#/$defs/...` reference, or return the branch unchanged.
 fn resolve<'a>(schema: &'a Value, branch: &'a Value) -> &'a Value {
     match branch["$ref"].as_str() {
@@ -302,7 +316,7 @@ fn members(family: &Family, schema: &Value) -> Vec<Member> {
 
 /// Uppercase every ASCII alphanumeric and replace everything else with `_`, so
 /// a wire string is a stable identifier in both languages.
-fn screaming_snake(value: &str) -> String {
+pub(crate) fn screaming_snake(value: &str) -> String {
     value
         .chars()
         .map(|ch| {
@@ -315,7 +329,7 @@ fn screaming_snake(value: &str) -> String {
         .collect()
 }
 
-fn quote(value: &str) -> String {
+pub(crate) fn quote(value: &str) -> String {
     serde_json::to_string(value).expect("vocabulary string literal")
 }
 

@@ -4,6 +4,7 @@
 use super::codegen_capabilities::PYTHON_CAPABILITIES_FILE;
 use super::codegen_diagnostics::PYTHON_DIAGNOSTICS_FILE;
 use super::codegen_frontend_records::PYTHON_FRONTEND_RECORDS_FILE;
+use super::codegen_frontend_serializers::PYTHON_FRONTEND_SERIALIZERS_FILE;
 use super::codegen_frontend_vocabulary::PYTHON_FRONTEND_GRAPH_FILE;
 use super::codegen_permissions::PYTHON_PERMISSIONS_FILE;
 
@@ -16,8 +17,8 @@ pub const GENERATED_PACKAGE_PYTHON_FILE: &str = "__init__.py";
 /// runtime-evidence binding and the package init, `capabilities` owns the
 /// capability catalogue, `permissions` owns the permission decision vocabulary,
 /// `frontend-vocabulary` owns the source-graph closed sets, `frontend-records`
-/// owns the FrontendGraph contract record types, and `diagnostics` owns the
-/// rejection-code vocabulary.
+/// owns the FrontendGraph contract record types, `frontend-serializers` owns
+/// their serializers, and `diagnostics` owns the rejection-code vocabulary.
 ///
 /// A hand-written module here would be indistinguishable from a generated one
 /// at a glance and would survive every regeneration; the guard is what makes
@@ -29,6 +30,7 @@ pub const GENERATED_PYTHON_FRONTEND_FILES: &[&str] = &[
     PYTHON_DIAGNOSTICS_FILE,
     PYTHON_FRONTEND_GRAPH_FILE,
     PYTHON_FRONTEND_RECORDS_FILE,
+    PYTHON_FRONTEND_SERIALIZERS_FILE,
     PYTHON_PERMISSIONS_FILE,
     RUNTIME_EVIDENCE_PYTHON_FILE,
 ];

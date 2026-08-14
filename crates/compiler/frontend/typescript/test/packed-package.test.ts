@@ -19,6 +19,8 @@ describe("packed @apxm/frontend", () => {
       "index.ts",
       "agent.ts",
       "capture.ts",
+      "emit.ts",
+      "bound-tree.ts",
       "markers.ts",
       "advanced.ts",
       "contract.ts",

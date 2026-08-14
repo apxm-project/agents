@@ -6,16 +6,33 @@
 // spans. It carries no AIR or AIS operation name, no runtime value, and no
 // mutable recorder state.
 //
-// This file is new (§4 item 3 of the frontend-vocabulary-generation design
-// note): TypeScript has no bound tree today — `capture.ts` builds
-// wire-shaped `Json` objects inline instead. Introducing this file makes the
-// two frontends' parity structural (the same record shapes exist in both
-// languages) rather than only reviewed by inspection. `capture.ts` is not
-// wired to build or consume this tree yet; that fold-restructuring is out of
-// this change's scope (see the design note's §5).
+// `capture.ts` builds this tree and `emit.ts` folds it, exactly as
+// `_capture.py` and `_emit.py` do, which is what makes the two frontends
+// structurally the same below the AST walk rather than only reviewed by
+// inspection.
+//
+// Where `_bound_tree.py` documents a closed set in a trailing comment, this
+// file binds the generated vocabulary type instead — TypeScript can state it
+// and Python cannot until the capture threads its records (design note, §4
+// item 2), so the difference is one of what each language can express, not of
+// what either tree holds.
 
-import type { Json } from "./contract.js";
-import type { CallIntent, ControlIntent } from "./generated/frontend-records.js";
+import type {
+  DeclKind,
+  HookPhase,
+  HookReturnMode,
+  HookScope,
+  ParameterRole,
+  PredicateComparator,
+  RegionRole,
+  ValueOrigin,
+} from "./generated/frontend-graph.js";
+import type {
+  CallIntent,
+  ControlIntent,
+  PredicateLiteral,
+  ValueExpression,
+} from "./generated/frontend-records.js";
 import type { Permission } from "./generated/permissions.js";
 
 /** A source location range for one construct. */
@@ -31,15 +48,13 @@ export type Span = {
 export type BoundParameter = {
   readonly value_id: string;
   readonly type_ref: string;
-  /** agent_facade | input | context | ordinary */
-  readonly role: string;
+  readonly role: ParameterRole;
 };
 
 /** A resolved Context, Model, Tool, Capability, or Event declaration. */
 export type BoundDeclaration = {
   readonly decl_id: string;
-  /** context | model_binding | tool_binding | capability_binding | event_type */
-  readonly decl_kind: string;
+  readonly decl_kind: DeclKind;
   readonly input_type_ref: string;
   readonly output_type_ref: string;
   readonly target_ref?: string;
@@ -50,10 +65,9 @@ export type BoundDeclaration = {
 export type BoundValue = {
   readonly value_id: string;
   readonly type_ref: string;
-  /** parameter | call_result | block_argument | context_value | literal | resume_input */
-  readonly origin: string;
+  readonly origin: ValueOrigin;
   readonly origin_id?: string;
-  readonly expression?: Json;
+  readonly expression?: ValueExpression;
 };
 
 /** A typed use of a value at a named consumer slot. */
@@ -62,13 +76,20 @@ export type BoundOperand = {
   readonly slot: string;
 };
 
-/** A closed structural predicate over one prior typed value. */
+/**
+ * A closed structural predicate over one prior typed value.
+ *
+ * The comparator is carried dynamically rather than as one of the contract's
+ * three `ControlPredicate` branches, mirroring `_bound_tree.BoundPredicate`:
+ * capture decides the branch from the authored comparison operator, and the
+ * generated union serializer dispatches on the same discriminant when the
+ * predicate reaches the graph.
+ */
 export type BoundPredicate = {
   readonly root_value_id: string;
   readonly property_path: readonly string[];
-  /** truthy | equals | not_equals */
-  readonly comparator: string;
-  readonly literal?: Json;
+  readonly comparator: PredicateComparator;
+  readonly literal?: PredicateLiteral;
 };
 
 /**
@@ -91,12 +112,9 @@ export type BoundCall = {
  * Carries a generated `ControlIntent` contract record plus the
  * authoring-time extras the contract does not state: a source `span` and
  * typed `operands` with consumer-slot identity. `predicate` is kept as its
- * own field rather than populated on `contract`: the generated
- * `ControlIntent.predicate` is typed as the generated `ControlPredicate`
- * union, whose `EqualsPredicate`/`NotEqualsPredicate` branches carry a
- * generated `PredicateLiteral`, and threading capture's predicate
- * construction through those generated types is out of this change's scope
- * (see the design note, §4 item 2). Mirrors `_bound_tree.BoundControl`.
+ * own field rather than populated on `contract`, mirroring
+ * `_bound_tree.BoundControl`; `emit.ts` puts it back on the contract record
+ * when it folds the tree.
  */
 export type BoundControl = {
   readonly contract: ControlIntent;
@@ -108,8 +126,7 @@ export type BoundControl = {
 /** One lexical region owning ordered children. */
 export type BoundRegion = {
   readonly region_id: string;
-  /** function_body | conditional_arm | loop_body | task_scope | task_child | try_body | catch_body */
-  readonly region_role: string;
+  readonly region_role: RegionRole;
   readonly parent_region_id?: string;
   readonly execution_order: number;
 };
@@ -117,15 +134,15 @@ export type BoundRegion = {
 /** A static before/after Hook binding. */
 export type BoundHook = {
   readonly hook_id: string;
-  readonly scope: string;
-  readonly phase: string;
+  readonly scope: HookScope;
+  readonly phase: HookPhase;
   readonly target_selector: string;
   readonly declaration_order: number;
   readonly handler_ref: string;
   readonly handler_digest: string;
   readonly input_type_ref: string;
   readonly output_type_ref: string;
-  readonly return_mode: string;
+  readonly return_mode: HookReturnMode;
 };
 
 /** An explicit typed Context transition between two nodes. */

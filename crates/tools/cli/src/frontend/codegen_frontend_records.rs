@@ -26,8 +26,11 @@
 //!
 //! This module implements §4 item 1 only. §4 item 2 (composing `BoundCall` /
 //! `BoundControl` from these records) is hand-written in `_bound_tree.py` and
-//! `bound-tree.ts`; §4 item 3 (`bound-tree.ts` itself) is hand-written; §5
-//! (the emitter) and §6 (diagnostic-code wiring) are not implemented here.
+//! `bound-tree.ts`; §4 item 3 (`bound-tree.ts` itself) is hand-written; §6
+//! (diagnostic-code wiring) is not implemented here. §5's serializers are
+//! generated beside these types by `codegen_frontend_serializers`, which reads
+//! `RECORDS`, `UNIONS`, and `fields_for` from here so one field list serves the
+//! record type and its serializer.
 
 use serde_json::Value;
 
@@ -49,7 +52,7 @@ const PERMISSION_DECISION_REF: &str = "#/$defs/PermissionDecision";
 /// Excludes the three discriminated unions (`ValueExpression`,
 /// `ControlPredicate`, `PredicateLiteral`, handled by `UNIONS`) and
 /// `PermissionDecision` (owned by `codegen_permissions`).
-const RECORDS: &[&str] = &[
+pub(crate) const RECORDS: &[&str] = &[
     "ProgramDefinition",
     "ImportedProgramRef",
     "Declaration",
@@ -83,12 +86,12 @@ const RECORDS: &[&str] = &[
 /// One discriminated union: the `$defs` key stating the `oneOf`, and each
 /// branch either a `$ref` into a `$defs` entry already in `RECORDS`, or (for
 /// `PredicateLiteral` only) an inline schema this generator names.
-struct UnionDef {
-    name: &'static str,
-    branches: &'static [Branch],
+pub(crate) struct UnionDef {
+    pub(crate) name: &'static str,
+    pub(crate) branches: &'static [Branch],
 }
 
-enum Branch {
+pub(crate) enum Branch {
     /// A `oneOf` branch stated as `{ "$ref": "#/$defs/<name>" }`.
     Named(&'static str),
     /// A `oneOf` branch stated as an anonymous inline object, found at
@@ -96,7 +99,7 @@ enum Branch {
     Inline { name: &'static str, index: usize },
 }
 
-const UNIONS: &[UnionDef] = &[
+pub(crate) const UNIONS: &[UnionDef] = &[
     UnionDef {
         name: "ValueExpression",
         branches: &[
@@ -160,7 +163,7 @@ fn discriminant_owner(def: &str) -> &str {
 }
 
 /// One record field's resolved type, independent of language.
-enum FieldKind {
+pub(crate) enum FieldKind {
     Str,
     Int,
     Bool,
@@ -175,10 +178,10 @@ enum FieldKind {
     LocalTuple(String),
 }
 
-struct RecordField {
-    name: String,
-    kind: FieldKind,
-    required: bool,
+pub(crate) struct RecordField {
+    pub(crate) name: String,
+    pub(crate) kind: FieldKind,
+    pub(crate) required: bool,
 }
 
 /// Resolve one property schema to a field type, per §4 item 1's literal rules.
@@ -242,7 +245,7 @@ fn field_kind(
 /// Every field of one object schema (a `$defs` record or a `PredicateLiteral`
 /// branch), required fields first in `required` order, then the rest in
 /// schema-map (alphabetical) order.
-fn fields_for(def_schema: &Value, own_def: &str) -> Vec<RecordField> {
+pub(crate) fn fields_for(def_schema: &Value, own_def: &str) -> Vec<RecordField> {
     let owner = discriminant_owner(own_def);
     let required: Vec<String> = def_schema["required"]
         .as_array()

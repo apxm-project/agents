@@ -1,19 +1,34 @@
-// Static capture of an authored Agent callback into the FrontendGraph.
+// Static capture of an authored Agent callback into the bound tree.
 //
 // Parses the callback with the TypeScript compiler API, binds the declaration
 // markers by the names visible at the definition site, and folds the supported
-// control-flow subset into the language-neutral graph. It never executes the
+// control-flow subset into an immutable BoundProgram. It never executes the
 // callback body: behavior is read from syntax and resolved declarations. Stable
 // node and region identities come from the program identity plus lexical
 // preorder, matching the Python frontend so paired goldens converge.
+//
+// The AST walk and the marker ergonomics live here; turning the captured tree
+// into the language-neutral FrontendGraph is `emit.ts`, exactly as `_capture.py`
+// and `_emit.py` split in the Python frontend.
 
 import ts from "typescript";
 
-import {
-  FRONTEND_GRAPH_VERSION,
-  SOURCE_MAP_VERSION,
-  type Json,
-} from "./contract.js";
+import type {
+  BoundCall,
+  BoundCapabilityRequirement,
+  BoundContextEdge,
+  BoundControl,
+  BoundDeclaration,
+  BoundHook,
+  BoundOperand,
+  BoundPredicate,
+  BoundProgram,
+  BoundRegion,
+  BoundValue,
+  Span,
+} from "./bound-tree.js";
+import { emitFrontendGraph } from "./emit.js";
+import { type Json } from "./contract.js";
 import {
   HOOK_SCOPE_AGENT,
   HOOK_SCOPE_LOOP,
@@ -22,7 +37,13 @@ import {
   HOOK_RETURN_MODE_OBSERVE,
   HOOK_RETURN_MODE_REPLACE_RESULT,
   type HookScope,
+  type RegionRole,
 } from "./generated/frontend-graph.js";
+import type {
+  CallIntent,
+  PredicateLiteral,
+  ValueExpression,
+} from "./generated/frontend-records.js";
 import type { Permission } from "./generated/permissions.js";
 import type {
   CapabilityBinding,
@@ -50,66 +71,15 @@ export type Binding =
   | ContextSchema
   | ProgramBinding;
 
-type CallRecord = {
-  node_id: string;
-  intent_kind: string;
-  parent_region_id: string;
-  execution_order: number;
-  binding_ref?: string;
-  receiver_kind?: string;
-  operand_values?: string[];
-  result_value?: string;
-};
-
-type ControlRecord = {
-  node_id: string;
-  control_kind: string;
-  parent_region_id: string;
-  execution_order: number;
-  body_region_ids?: string[];
-  predicate?: {
-    root_value_id: string;
-    property_path: string[];
-    comparator: "truthy" | "equals" | "not_equals";
-    literal?: { scalar_type: "boolean" | "string" | "integer" | "null"; value?: boolean | string | number };
-  };
-  operand_values?: string[];
-  result_value?: string;
-};
-
-type ValueExpression =
-  | { kind: "ssa"; value_id: string }
-  | { kind: "context"; property_path: string[] }
-  | { kind: "projection"; root: ValueExpression; property_path: string[] }
-  | { kind: "object"; fields: Array<{ name: string; value: ValueExpression }> }
-  | { kind: "array"; items: ValueExpression[] }
-  | { kind: "string"; value: string }
-  | { kind: "integer"; value: number }
-  | { kind: "boolean"; value: boolean }
-  | { kind: "null" };
-
-/**
- * One authored Capability declaration.
- *
- * Declarations are held one per authored binding, never one per
- * `capability_ref`: the same capability declared as both a Tool and a plain
- * Capability is two distinct requirements and both reach the FrontendGraph.
- */
-type CapabilityRequirement = {
-  capability_ref: string;
-  tool_schema_present: boolean;
-  requested_permission?: string | { decision: string; reason: string };
-};
-
 /** Whether two declarations request the very same decision, reason included. */
 function sameRequestedPermission(
-  left: CapabilityRequirement["requested_permission"],
-  right: CapabilityRequirement["requested_permission"],
+  left: Permission | undefined,
+  right: Permission | undefined,
 ): boolean {
-  if (typeof left === "object" && typeof right === "object") {
-    return left.decision === right.decision && left.reason === right.reason;
+  if (left === undefined || right === undefined) {
+    return left === right;
   }
-  return left === right;
+  return left.decision === right.decision && left.reason === right.reason;
 }
 
 /** Source text registered by the host compiler bridge before Agent capture. */
@@ -140,25 +110,26 @@ class Capture {
   private readonly order = new Map<string, number>();
   private inputName = "input";
 
-  private readonly declarations: Json[] = [];
-  private readonly values: Json[] = [];
-  private readonly blocks: Json[] = [];
-  private readonly regions: Json[] = [];
-  private readonly calls: CallRecord[] = [];
-  private readonly controls: ControlRecord[] = [];
-  private readonly dataEdges: Json[] = [];
-  private readonly contextFlow: Json[] = [];
-  private readonly hooks: Json[] = [];
-  private readonly importedProgramRefs = new Map<string, Json>();
+  private readonly declarations: BoundDeclaration[] = [];
+  private readonly values: BoundValue[] = [];
+  private readonly regions: BoundRegion[] = [];
+  private readonly calls: BoundCall[] = [];
+  private readonly controls: BoundControl[] = [];
+  private readonly contextEdges: BoundContextEdge[] = [];
+  private readonly hooks: BoundHook[] = [];
+  private readonly importedPrograms = new Map<
+    string,
+    readonly [string, string, string, string]
+  >();
   private readonly instances = new Map<ts.Symbol, string>();
   /** Named source values resolve to the value ids they produce. */
   private readonly valuesBySymbol = new Map<ts.Symbol, string>();
   private readonly bindingSymbols = new Map<ts.Symbol, string>();
   private readonly lastNodeByRegion = new Map<string, string>();
   private readonly pendingContextByRegion = new Map<string, { source: string; valueId: string }>();
-  private readonly capabilityRequirements: CapabilityRequirement[] = [];
+  private readonly capabilityRequirements: BoundCapabilityRequirement[] = [];
   private readonly modelRequirements: string[] = [];
-  private readonly nodeSpans: Json[] = [];
+  private readonly spans: Array<readonly [string, Span, string]> = [];
   private readonly bodyRegionId: string;
   private programBindingSymbol: ts.Symbol | undefined;
   private facadeSymbol: ts.Symbol | undefined;
@@ -239,12 +210,12 @@ class Capture {
           context_default_present: binding.defaultPresent,
         });
       } else if (binding.kind === "agent_definition") {
-        this.importedProgramRefs.set(binding.programId, {
-          program_ref: binding.programId,
-          artifact_digest: binding.artifactDigest,
-          entrypoint: binding.entrypoint,
-          target_agent_identity_requirement: binding.targetAgentIdentityRequirement,
-        });
+        this.importedPrograms.set(binding.programId, [
+          binding.programId,
+          binding.artifactDigest,
+          binding.entrypoint,
+          binding.targetAgentIdentityRequirement,
+        ]);
       }
     }
   }
@@ -260,17 +231,11 @@ class Capture {
     binding: { targetRef: string; permission?: Permission },
     toolSchemaPresent: boolean,
   ): void {
-    const requirement: CapabilityRequirement = {
+    const requirement: BoundCapabilityRequirement = {
       capability_ref: binding.targetRef,
       tool_schema_present: toolSchemaPresent,
+      requested_permission: binding.permission,
     };
-    if (binding.permission !== undefined) {
-      // A decision that gives no reason is the bare vocabulary string; one
-      // that explains itself carries the reason alongside the decision.
-      const { decision, reason } = binding.permission;
-      requirement.requested_permission =
-        reason === undefined ? decision : { decision, reason };
-    }
     const present = this.capabilityRequirements.some(
       (existing) =>
         existing.capability_ref === requirement.capability_ref &&
@@ -285,7 +250,7 @@ class Capture {
     }
   }
 
-  capture(): Json {
+  capture(): BoundProgram {
     this.declareBindings();
     const { checker, source } = createBoundSource(this.input.source);
     this.checker = checker;
@@ -595,24 +560,17 @@ class Capture {
       origin_id: nodeId,
     });
 
-    const operandValues = this.callOperands(call, nodeId, resolved.slot);
-    const record: CallRecord = {
+    const operands = this.callOperands(call, resolved.slot);
+    const contract: CallIntent = {
       node_id: nodeId,
       intent_kind: resolved.intent,
       parent_region_id: regionId,
       execution_order: this.orderIn(regionId),
+      binding_ref: resolved.bindingRef,
+      receiver_kind: resolved.receiverKind,
+      result_value: resultValue,
     };
-    if (resolved.bindingRef !== undefined) {
-      record.binding_ref = resolved.bindingRef;
-    }
-    if (resolved.receiverKind !== undefined) {
-      record.receiver_kind = resolved.receiverKind;
-    }
-    if (operandValues.length > 0) {
-      record.operand_values = operandValues;
-    }
-    record.result_value = resultValue;
-    this.calls.push(record);
+    this.calls.push({ contract, span: this.spanOf(call, source), operands });
 
     this.recordNode(regionId, nodeId);
     this.recordSpan(nodeId, resolved.intent, call, source);
@@ -620,9 +578,9 @@ class Capture {
   }
 
   private resolveCallTarget(call: ts.CallExpression): {
-    intent: string;
+    intent: CallIntent["intent_kind"];
     bindingRef?: string;
-    receiverKind?: string;
+    receiverKind?: CallIntent["receiver_kind"];
     slot: string;
   } {
     const callee = call.expression;
@@ -729,7 +687,7 @@ class Capture {
   private resultType(bindingRef: string | undefined): string {
     for (const decl of this.declarations) {
       if (decl.decl_id === bindingRef) {
-        return decl.output_type_ref as string;
+        return decl.output_type_ref;
       }
     }
     return this.input.outputTypeRef;
@@ -919,11 +877,7 @@ class Capture {
     return undefined;
   }
 
-  private callOperands(
-    call: ts.CallExpression,
-    nodeId: string,
-    slot: string,
-  ): string[] {
+  private callOperands(call: ts.CallExpression, slot: string): BoundOperand[] {
     if (call.arguments.length === 0) {
       return [];
     }
@@ -951,13 +905,7 @@ class Capture {
         operandExpression = contextProperty.initializer;
       }
     }
-    const valueId = this.valueForExpression(operandExpression);
-    this.dataEdges.push({
-      from_value: valueId,
-      to_consumer: nodeId,
-      consumer_slot: slot,
-    });
-    return [valueId];
+    return [{ value_id: this.valueForExpression(operandExpression), slot }];
   }
 
   private isYield(call: ts.CallExpression): boolean {
@@ -1004,15 +952,18 @@ class Capture {
       origin: "call_result",
       origin_id: nodeId,
     });
-    const operandValues = this.callOperands(call, nodeId, resolved.slot);
+    const operands = this.callOperands(call, resolved.slot);
     this.calls.push({
-      node_id: nodeId,
-      intent_kind: resolved.intent,
-      parent_region_id: regionId,
-      execution_order: this.orderIn(regionId),
-      binding_ref: resolved.bindingRef,
-      operand_values: operandValues,
-      result_value: resultValue,
+      contract: {
+        node_id: nodeId,
+        intent_kind: resolved.intent,
+        parent_region_id: regionId,
+        execution_order: this.orderIn(regionId),
+        binding_ref: resolved.bindingRef,
+        result_value: resultValue,
+      },
+      span: this.spanOf(call, source),
+      operands,
     });
     this.recordNode(regionId, nodeId);
     this.recordSpan(nodeId, "agent_creation", call, source);
@@ -1035,15 +986,17 @@ class Capture {
       origin: "resume_input",
       origin_id: nodeId,
     });
-    this.addBlockArgument(regionId, resultValue);
-    const operandValues = this.callOperands(call, nodeId, "output");
+    const operands = this.callOperands(call, "output");
     this.controls.push({
-      node_id: nodeId,
-      control_kind: "yield",
-      parent_region_id: regionId,
-      execution_order: this.orderIn(regionId),
-      operand_values: operandValues,
-      result_value: resultValue,
+      contract: {
+        node_id: nodeId,
+        control_kind: "yield",
+        parent_region_id: regionId,
+        execution_order: this.orderIn(regionId),
+        result_value: resultValue,
+      },
+      span: this.spanOf(call, source),
+      operands,
     });
     this.recordNode(regionId, nodeId);
     this.recordSpan(nodeId, "yield", call, source);
@@ -1067,11 +1020,15 @@ class Capture {
     // represents the lexical TaskGroup body as `<node>.scope`.
     const childRegion = `${nodeId}.scope`;
     this.controls.push({
-      node_id: nodeId,
-      control_kind: "task_group",
-      parent_region_id: regionId,
-      execution_order: this.orderIn(regionId),
-      body_region_ids: [childRegion],
+      contract: {
+        node_id: nodeId,
+        control_kind: "task_group",
+        parent_region_id: regionId,
+        execution_order: this.orderIn(regionId),
+        body_region_ids: [childRegion],
+      },
+      span: this.spanOf(call, source),
+      operands: [],
     });
     this.recordNode(regionId, nodeId);
     this.addRegion(childRegion, "task_scope", regionId, this.orderIn(regionId));
@@ -1083,31 +1040,31 @@ class Capture {
     this.recordSpan(nodeId, "task_group", call, source);
   }
 
+  private spanOf(node: ts.Node, source: ts.SourceFile): Span {
+    const start = source.getLineAndCharacterOfPosition(node.getStart(source));
+    const end = source.getLineAndCharacterOfPosition(node.getEnd());
+    return {
+      source_file: portableSourceFile(this.input.source.fileName),
+      start_line: start.line + 1,
+      start_column: start.character,
+      end_line: end.line + 1,
+      end_column: end.character,
+    };
+  }
+
   private recordSpan(
     nodeId: string,
     annotation: string,
     node: ts.Node,
     source: ts.SourceFile,
   ): void {
-    const start = source.getLineAndCharacterOfPosition(node.getStart(source));
-    const end = source.getLineAndCharacterOfPosition(node.getEnd());
-    this.nodeSpans.push({
-      node_id: nodeId,
-      source_file: portableSourceFile(this.input.source.fileName),
-      span: {
-        start_line: start.line + 1,
-        start_column: start.character,
-        end_line: end.line + 1,
-        end_column: end.character,
-      },
-      semantic_annotation: annotation,
-    });
+    this.spans.push([nodeId, this.spanOf(node, source), annotation]);
   }
 
   private recordNode(regionId: string, nodeId: string): void {
     const pending = this.pendingContextByRegion.get(regionId);
     if (pending !== undefined && pending.source !== nodeId) {
-      this.contextFlow.push({
+      this.contextEdges.push({
         from_node: pending.source,
         to_node: nodeId,
         context_type_ref: this.input.contextTypeRef ?? "Context",
@@ -1120,7 +1077,7 @@ class Capture {
 
   private addRegion(
     regionId: string,
-    regionRole: string,
+    regionRole: RegionRole,
     parentRegionId: string | undefined,
     executionOrder: number,
   ): void {
@@ -1130,28 +1087,6 @@ class Capture {
       parent_region_id: parentRegionId,
       execution_order: executionOrder,
     });
-
-    const blockId = `${regionId}.block.0`;
-    this.blocks.push({
-      block_id: blockId,
-      region_id: regionId,
-      block_arguments: [],
-      execution_order: 0,
-    });
-  }
-
-  private addBlockArgument(regionId: string, valueId: string): void {
-    const block = this.blocks.find(
-      (candidate) => candidate.block_id === `${regionId}.block.0`,
-    );
-    if (block === undefined) {
-      throw new CaptureError(`region '${regionId}' has no lexical entry block`);
-    }
-    const arguments_ = block.block_arguments;
-    if (!Array.isArray(arguments_)) {
-      throw new CaptureError(`block '${block.block_id}' has invalid block arguments`);
-    }
-    arguments_.push(valueId);
   }
 
   private visitLoop(
@@ -1171,31 +1106,32 @@ class Capture {
         )?.[0];
     const controlIndex = this.controls.length;
     this.controls.push({
-      node_id: nodeId,
-      control_kind: "loop",
-      parent_region_id: regionId,
-      execution_order: this.orderIn(regionId),
-      body_region_ids: [bodyRegion],
-      ...(predicate === undefined ? {} : { predicate }),
+      contract: {
+        node_id: nodeId,
+        control_kind: "loop",
+        parent_region_id: regionId,
+        execution_order: this.orderIn(regionId),
+        body_region_ids: [bodyRegion],
+      },
+      span: this.spanOf(stmt, source),
+      operands: [],
+      predicate,
     });
     this.recordNode(regionId, nodeId);
     this.addRegion(bodyRegion, "loop_body", regionId, this.orderIn(regionId));
-    const operandValues: string[] = [];
+    let operands: BoundOperand[] = [];
     let resultValue: string | undefined;
     let initialValue: string | undefined;
     if (predicate !== undefined && sourceSymbol !== undefined) {
       initialValue = predicate.root_value_id;
       resultValue = this.next("value");
-      const initialRecord = this.values.find((value) =>
-        typeof value === "object" && value !== null && value.value_id === initialValue
-      ) as { type_ref?: string } | undefined;
+      const initialRecord = this.values.find((value) => value.value_id === initialValue);
       this.values.push({
         value_id: resultValue,
         type_ref: initialRecord?.type_ref ?? "ArgumentValue",
         origin: "block_argument",
         origin_id: `${bodyRegion}.block.0`,
       });
-      this.addBlockArgument(bodyRegion, resultValue);
       this.valuesBySymbol.set(sourceSymbol, resultValue);
       predicate = { ...predicate, root_value_id: resultValue };
     }
@@ -1205,23 +1141,25 @@ class Capture {
     if (resultValue !== undefined && initialValue !== undefined && sourceSymbol !== undefined) {
       const carriedValue = this.valuesBySymbol.get(sourceSymbol);
       if (carriedValue !== undefined) {
-        operandValues.push(initialValue, carriedValue);
-        this.dataEdges.push(
-          { from_value: initialValue, to_consumer: nodeId, consumer_slot: "initial" },
-          { from_value: carriedValue, to_consumer: nodeId, consumer_slot: "carried" },
-        );
+        operands = [
+          { value_id: initialValue, slot: "initial" },
+          { value_id: carriedValue, slot: "carried" },
+        ];
       }
       this.valuesBySymbol.set(sourceSymbol, resultValue);
     }
     this.controls[controlIndex] = {
-      node_id: nodeId,
-      control_kind: "loop",
-      parent_region_id: regionId,
-      execution_order: this.orderIn(regionId),
-      body_region_ids: [bodyRegion],
-      ...(predicate === undefined ? {} : { predicate }),
-      ...(operandValues.length === 0 ? {} : { operand_values: operandValues }),
-      ...(resultValue === undefined ? {} : { result_value: resultValue }),
+      contract: {
+        node_id: nodeId,
+        control_kind: "loop",
+        parent_region_id: regionId,
+        execution_order: this.orderIn(regionId),
+        body_region_ids: [bodyRegion],
+        result_value: resultValue,
+      },
+      span: this.spanOf(stmt, source),
+      operands,
+      predicate,
     };
   }
 
@@ -1238,11 +1176,15 @@ class Capture {
     }
     const predicate = this.predicateForExpression(stmt.expression);
     this.controls.push({
-      node_id: nodeId,
-      control_kind: "conditional",
-      parent_region_id: regionId,
-      execution_order: this.orderIn(regionId),
-      body_region_ids: bodyRegions,
+      contract: {
+        node_id: nodeId,
+        control_kind: "conditional",
+        parent_region_id: regionId,
+        execution_order: this.orderIn(regionId),
+        body_region_ids: bodyRegions,
+      },
+      span: this.spanOf(stmt, source),
+      operands: [],
       predicate,
     });
     this.recordNode(regionId, nodeId);
@@ -1285,10 +1227,7 @@ class Capture {
     );
   }
 
-  private predicateLiteral(expression: ts.Expression): {
-    scalar_type: "boolean" | "string" | "integer" | "null";
-    value?: boolean | string | number;
-  } {
+  private predicateLiteral(expression: ts.Expression): PredicateLiteral {
     if (expression.kind === ts.SyntaxKind.TrueKeyword) {
       return { scalar_type: "boolean", value: true };
     }
@@ -1322,7 +1261,7 @@ class Capture {
     throw new CaptureError("predicate equality compares with a scalar literal");
   }
 
-  private predicateForExpression(expression: ts.Expression): NonNullable<ControlRecord["predicate"]> | undefined {
+  private predicateForExpression(expression: ts.Expression): BoundPredicate | undefined {
     if (expression.kind === ts.SyntaxKind.TrueKeyword) {
       return undefined;
     }
@@ -1361,11 +1300,15 @@ class Capture {
       bodyRegions.push(`${nodeId}.catch.1`);
     }
     this.controls.push({
-      node_id: nodeId,
-      control_kind: "try_catch",
-      parent_region_id: regionId,
-      execution_order: this.orderIn(regionId),
-      body_region_ids: bodyRegions,
+      contract: {
+        node_id: nodeId,
+        control_kind: "try_catch",
+        parent_region_id: regionId,
+        execution_order: this.orderIn(regionId),
+        body_region_ids: bodyRegions,
+      },
+      span: this.spanOf(stmt, source),
+      operands: [],
     });
     this.addRegion(tryRegion, "try_body", regionId, this.orderIn(regionId));
     this.visitBlock(stmt.tryBlock.statements, tryRegion, source);
@@ -1390,10 +1333,14 @@ class Capture {
     }
     const nodeId = this.next("return");
     this.controls.push({
-      node_id: nodeId,
-      control_kind: "return",
-      parent_region_id: regionId,
-      execution_order: this.orderIn(regionId),
+      contract: {
+        node_id: nodeId,
+        control_kind: "return",
+        parent_region_id: regionId,
+        execution_order: this.orderIn(regionId),
+      },
+      span: this.spanOf(stmt, source),
+      operands: [],
     });
     this.recordNode(regionId, nodeId);
   }
@@ -1402,10 +1349,13 @@ class Capture {
     this.rejectUnboundCalls(stmt.expression);
     const nodeId = this.next("throw");
     this.controls.push({
-      node_id: nodeId,
-      control_kind: "throw",
-      parent_region_id: regionId,
-      execution_order: this.orderIn(regionId),
+      contract: {
+        node_id: nodeId,
+        control_kind: "throw",
+        parent_region_id: regionId,
+        execution_order: this.orderIn(regionId),
+      },
+      operands: [],
     });
     this.recordNode(regionId, nodeId);
   }
@@ -1452,16 +1402,17 @@ class Capture {
       const hookName = ts.isIdentifier(hook.declaration.name)
         ? hook.declaration.name.text
         : `hook_${order + 1}`;
-      const scope = stringProperty(hook.options, "scope") ?? HOOK_SCOPE_NODE;
-      if (!(HOOK_SCOPES as readonly string[]).includes(scope)) {
-        throw new CaptureError(`Hook scope '${scope}' is not supported`);
+      const declared = stringProperty(hook.options, "scope") ?? HOOK_SCOPE_NODE;
+      if (!(HOOK_SCOPES as readonly string[]).includes(declared)) {
+        throw new CaptureError(`Hook scope '${declared}' is not supported`);
       }
+      const scope = declared as HookScope;
       const replace = booleanProperty(hook.options, "replace") ?? false;
       const run = functionProperty(hook.options, "run");
       if (run === undefined) {
         throw new CaptureError("Hook requires a static run callback");
       }
-      const targetSelector = this.resolveHookTarget(target, scope as HookScope);
+      const targetSelector = this.resolveHookTarget(target, scope);
       this.hooks.push({
         hook_id: `hook.${hookName}`,
         scope,
@@ -1484,22 +1435,22 @@ class Capture {
       return this.bodyRegionId;
     }
     if (scope === HOOK_SCOPE_LOOP) {
-      const loop = this.controls.find((control) => control.control_kind === "loop");
-      const region = loop?.body_region_ids?.[0];
+      const loop = this.controls.find((control) => control.contract.control_kind === "loop");
+      const region = loop?.contract.body_region_ids?.[0];
       if (region === undefined) {
         throw new CaptureError("a loop Hook requires a static loop in the Agent body");
       }
       return region;
     }
     const bindingRef = this.bindingRefOfBinding(this.bindingNameFor(target));
-    const calls = this.calls.filter((candidate) => candidate.binding_ref === bindingRef);
+    const calls = this.calls.filter((candidate) => candidate.contract.binding_ref === bindingRef);
     if (calls.length === 0) {
       throw new CaptureError(`Hook target '${target.text}' has no static invocation`);
     }
     if (calls.length !== 1) {
       throw new CaptureError(`Hook target '${target.text}' is ambiguous across invocations`);
     }
-    return calls[0].node_id;
+    return calls[0].contract.node_id;
   }
 
   private visitBodyStatement(
@@ -1514,74 +1465,38 @@ class Capture {
     }
   }
 
-  private build(): Json {
-    const definition: Json = {
+  private build(): BoundProgram {
+    return {
       program_id: this.input.programId,
       entrypoint: this.input.entrypoint,
       input_type_ref: this.input.inputTypeRef,
       output_type_ref: this.input.outputTypeRef,
       has_default_context: this.input.hasDefaultContext,
-    };
-    if (this.input.contextTypeRef !== undefined) {
-      definition.context_type_ref = this.input.contextTypeRef;
-    }
-
-    const regionAnnotations = this.controls
-      .filter(
-        (control) =>
-          control.control_kind === "loop" &&
-          control.body_region_ids !== undefined &&
-          control.body_region_ids.length > 0,
-      )
-      .map((control) => ({
-        region_id: (control.body_region_ids as string[])[0],
-        annotation: "structural_loop",
-      }));
-
-    return {
-      schema_version: FRONTEND_GRAPH_VERSION,
-      source_language: "typescript",
-      program_definitions: [definition],
-      imported_program_refs: Array.from(this.importedProgramRefs.values()),
-      declarations: this.declarations,
-      functions: [
+      context_type_ref: this.input.contextTypeRef,
+      parameters: [
         {
-          function_id: this.input.entrypoint,
-          parameters: [
-            {
-              value_id: `${this.input.programId}.param.agent`,
-              type_ref: "AgentFacade",
-              role: "agent_facade",
-            },
-            {
-              value_id: `${this.input.programId}.param.input`,
-              type_ref: this.input.inputTypeRef,
-              role: "input",
-            },
-          ],
-          result_type_ref: this.input.outputTypeRef,
-          body_region_id: this.bodyRegionId,
-          is_entrypoint: true,
+          value_id: `${this.input.programId}.param.agent`,
+          type_ref: "AgentFacade",
+          role: "agent_facade",
+        },
+        {
+          value_id: `${this.input.programId}.param.input`,
+          type_ref: this.input.inputTypeRef,
+          role: "input",
         },
       ],
+      body_region_id: this.bodyRegionId,
+      declarations: this.declarations,
       values: this.values,
-      blocks: this.blocks,
       regions: this.regions,
-      data_edges: this.dataEdges,
-      call_intents: this.calls as unknown as Json[],
-      control_intents: this.controls as unknown as Json[],
-      context_flow: this.contextFlow,
-      hook_bindings: this.hooks,
+      calls: this.calls,
+      controls: this.controls,
+      context_edges: this.contextEdges,
+      hooks: this.hooks,
+      imported_programs: [...this.importedPrograms.values()],
       capability_requirements: this.capabilityRequirements,
-      model_requirements: this.modelRequirements.map((ref) => ({
-        model_target_ref: ref,
-      })),
-      source_map: {
-        schema_version: SOURCE_MAP_VERSION,
-        source_language: "typescript",
-        node_spans: this.nodeSpans,
-        region_annotations: regionAnnotations,
-      },
+      model_requirements: this.modelRequirements,
+      spans: this.spans,
     };
   }
 }
@@ -1601,7 +1516,7 @@ function portableSourceFile(fileName: string): string {
 
 /** Capture one statically registered Agent declaration into FrontendGraph. */
 export function captureProgram(input: CaptureInput): Json {
-  return new Capture(input).capture();
+  return emitFrontendGraph(new Capture(input).capture());
 }
 
 function createBoundSource(input: StaticSource): {

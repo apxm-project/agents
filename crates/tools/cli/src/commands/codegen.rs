@@ -251,6 +251,30 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
                 json_output,
             )
         }
+        CodegenAction::FrontendSerializers { check } => {
+            let python_path = default_python_generated_codegen_dir().join(
+                crate::frontend::codegen_frontend_serializers::PYTHON_FRONTEND_SERIALIZERS_FILE,
+            );
+            let typescript_path = default_typescript_frontend_codegen_dir().join(
+                crate::frontend::codegen_frontend_serializers::TYPESCRIPT_FRONTEND_SERIALIZERS_FILE,
+            );
+            let python =
+                crate::frontend::codegen_frontend_serializers::render_frontend_serializers_python();
+            let typescript = crate::frontend::codegen_frontend_serializers::render_frontend_serializers_typescript();
+
+            let files = write_or_check_pair(
+                [(&python_path, &python), (&typescript_path, &typescript)],
+                check,
+                "frontend-serializers",
+            )?;
+            report_pair(
+                "frontend-serializers",
+                "FrontendGraph contract record serializers",
+                files,
+                check,
+                json_output,
+            )
+        }
         CodegenAction::Diagnostics { check } => {
             let python_path = default_python_generated_codegen_dir()
                 .join(crate::frontend::codegen_diagnostics::PYTHON_DIAGNOSTICS_FILE);

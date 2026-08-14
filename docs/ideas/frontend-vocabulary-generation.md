@@ -157,8 +157,12 @@ scope comparisons in `_capture.py`'s `_hook_target` and `capture.ts`'s
 
 ## 4. Design: generating the record types
 
-**Not implemented.** `_bound_tree.py`'s 13 dataclasses and `capture.ts`'s inline
-`CallRecord` / `ControlRecord` types are still hand-written.
+**Landed.** The contract records are generated into
+`_generated/frontend_records.py` and `generated/frontend-records.ts` by
+`codegen_frontend_records.rs`, and `capture.ts`'s inline `CallRecord` /
+`ControlRecord` types are gone. `_bound_tree.py`'s `BoundCall` and
+`BoundControl` compose a generated record with their authoring-time extras;
+the other bound-tree records stay hand-written, as item 2 describes.
 
 The bound tree is not a one-to-one projection of the graph: `BoundCall` carries
 a `span` and `operands` with slot identity, while `$defs/CallIntent` carries
@@ -192,33 +196,50 @@ The split that resolves it:
    languages, and that mirroring is what makes the two frontends' parity
    structural rather than reviewed.
 
-## 5. Design: generating the emitter
+## 5. Generating the emitter
 
-**Not implemented.** `_emit.py` (274 lines) and the emit half of `capture.ts`
-are hand-written.
+Most of the old `_emit.py` was one rule applied once per record: build a dict
+with every required key, then add each optional key if and only if its source
+value is not `None`. `_declaration`, `_value`, `_region`, `_hook`, and
+`_capability_requirement` were five hand-written instances of it. That rule is
+fully determined by the schema's `required` and `properties`, so
+`crates/tools/cli/src/frontend/codegen_frontend_serializers.rs` emits a
+`serialize_<record>` function per record type beside the §4 record types, into
+`apxm_program/_generated/frontend_serializers.py` and
+`typescript/src/generated/frontend-serializers.ts`. Keys land required-first in
+`required` order, then the rest — which pins the ordering to the contract rather
+than to whichever language's dict happened to iterate first.
 
-Most of `_emit.py` is one rule applied fourteen times: build a dict with every
-required key, then add each optional key if and only if its source value is not
-`None`. `_declaration`, `_value`, `_region`, `_hook`, and
-`_capability_requirement` are five hand-written instances of it. That rule is
-fully determined by the schema's `required` and `properties`, so a
-`serialize_<record>` function per record type can be generated beside the record
-types from §4, with keys emitted in schema `properties` order — required first,
-then optional — which pins the ordering rather than leaving it to whichever
-language's dict happens to iterate first.
+A `$defs` entry stated as a `oneOf` gets a dispatcher instead: it reads the
+discriminant the contract states for that union — resolved through the same
+`FAMILIES` table §3.1 projects — and delegates to the branch serializer. Python
+reads a field through a `_field` helper that accepts a generated record or the
+equivalent wire mapping, because the bound tree still spells a value expression
+and a predicate literal as the plain mapping the contract states (§4 item 2).
 
-Two parts of `_emit.py` are frontend policy, not contract projection, and stay
-hand-written:
+Two parts of the emitter are frontend policy, not contract projection, and stay
+hand-written in both languages:
 
-- `_blocks()`, which places a yielded resume value in its enclosing region's
-  block so the continuation boundary is explicit to Rust lowering.
+- `_blocks()` / `blocks()`, which places a yielded resume value in its enclosing
+  region's block so the continuation boundary is explicit to Rust lowering.
 - the `region_annotations` derivation, which marks the first body region of a
   `loop` control intent `structural_loop`.
 
-Splitting `capture.ts` follows: the AST walk and marker ergonomics stay in
-`src/capture.ts`, the fold moves to `src/emit.ts` mirroring `_emit.py`, and both
-languages' folds reduce to calls into the generated serializers plus those two
-policy functions.
+`capture.ts` split to follow: the AST walk and marker ergonomics stay in
+`src/capture.ts`, which now builds the `src/bound-tree.ts` `BoundProgram` that
+§4 item 3 introduced, and the fold moved to `src/emit.ts` mirroring `_emit.py`
+function for function. Both languages' folds are now calls into the generated
+serializers plus those two policy functions.
+
+One ordering changed with the split, in TypeScript only: `data_edges` were
+emitted in AST-walk order, interleaving call and control edges, and are now
+grouped call-edges-then-control-edges as `_emit.py` has always grouped them. The
+set of edges is unchanged, and `test_paired_corpus_covers_every_public_operation_and_structural_family`
+already compared the two languages' complete AIR while those orders differed, so
+the lowering does not read it. The one visible consequence is
+`AgentHandle.artifactDigest`, which is `stableDigest(JSON.stringify(graph))` and
+so moves whenever key order does; it is language-local, and the parity
+projections exclude it for that reason.
 
 ## 6. Design: wiring the diagnostic codes
 
