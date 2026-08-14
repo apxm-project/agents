@@ -15,7 +15,6 @@ use crate::llm::backends::{
 use crate::llm::rate_limit::{RateLimitConfig, RateLimiter, SystemClock};
 use crate::llm::wire::response_metadata;
 use anyhow::{Context as AnyhowContext, Result};
-use apxm_core::types::BackendGraphCapabilities;
 use apxm_core::types::TokenUsage;
 use dashmap::DashMap;
 use futures::stream::{Stream, StreamExt};
@@ -51,50 +50,6 @@ pub struct LLMRegistry {
     metrics: crate::llm::MetricsTracker,
     /// Rate limiter
     rate_limiter: Arc<RateLimiter<SystemClock>>,
-    /// graph_id → adapter-observation name → peak value. The names are the
-    /// adapter's, so the registry tracks peaks without knowing what any
-    /// provider's resource units mean.
-    observation_peaks: Arc<DashMap<String, Arc<DashMap<String, u64>>>>,
-}
-
-/// Raise one observation's recorded peak.
-fn bump_max(peaks: &DashMap<String, u64>, name: &str, value: u64) {
-    peaks
-        .entry(name.to_owned())
-        .and_modify(|peak| *peak = (*peak).max(value))
-        .or_insert(value);
-}
-
-/// The peak of an observation is recorded under this suffixed name.
-fn peak_observation_name(name: &str) -> String {
-    format!("{name}_peak")
-}
-
-/// RAII wrapper around the observation-polling background task.
-///
-/// Aborts the task on `Drop` so a polling loop cannot outlive the executor
-/// scope that started it (e.g. on a panic or early-return code path).
-/// Call [`Self::abort`] explicitly when ordering matters, e.g. before
-/// `pre_release_status_all` so the final fold sees the full peak.
-pub struct ObservationPollHandle {
-    inner: Option<tokio::task::JoinHandle<()>>,
-}
-
-impl ObservationPollHandle {
-    /// Abort the background polling task immediately.
-    pub fn abort(mut self) {
-        if let Some(handle) = self.inner.take() {
-            handle.abort();
-        }
-    }
-}
-
-impl Drop for ObservationPollHandle {
-    fn drop(&mut self) {
-        if let Some(handle) = self.inner.take() {
-            handle.abort();
-        }
-    }
 }
 
 struct StreamingAttempt {
@@ -242,7 +197,6 @@ impl LLMRegistry {
             #[cfg(feature = "metrics")]
             metrics: crate::llm::MetricsTracker::new(),
             rate_limiter: Arc::new(rate_limiter),
-            observation_peaks: Arc::new(DashMap::new()),
         })
     }
 
@@ -876,181 +830,6 @@ impl LLMRegistry {
         }
 
         Ok(bound_backend)
-    }
-
-    /// Snapshot all backends (clones name + Arc pairs out of the lock).
-    fn backend_snapshot(&self) -> Vec<(String, Arc<dyn LLMBackend>)> {
-        self.backends
-            .read()
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect()
-    }
-
-    /// Register graph metadata with the exact bound backend only.
-    pub async fn register_graph(
-        &self,
-        backend_name: &str,
-        metadata: apxm_core::types::GraphMetadata,
-    ) -> anyhow::Result<()> {
-        let backend = self
-            .backend_snapshot()
-            .into_iter()
-            .find(|(name, _)| name == backend_name)
-            .ok_or_else(|| anyhow::anyhow!("unknown backend {backend_name}"))?
-            .1;
-        backend.register_graph(metadata).await
-    }
-
-    /// Release graph from the exact bound backend only.
-    pub async fn release_graph(&self, backend_name: &str, graph_id: &str) -> anyhow::Result<()> {
-        let backend = self
-            .backend_snapshot()
-            .into_iter()
-            .find(|(name, _)| name == backend_name)
-            .ok_or_else(|| anyhow::anyhow!("unknown backend {backend_name}"))?
-            .1;
-        backend.release_graph(graph_id).await
-    }
-
-    /// Snapshot only the backends that opt into graph-aware extensions
-    /// (`LLMBackend::supports_graph_extensions()`).
-    pub fn find_graph_aware_backends(&self) -> Vec<(String, Arc<dyn LLMBackend>)> {
-        self.backend_snapshot()
-            .into_iter()
-            .filter(|(_, b)| b.supports_graph_extensions())
-            .collect()
-    }
-
-    /// Snapshot graph-aware capability evidence for every registered backend.
-    pub fn graph_capabilities(&self) -> HashMap<String, BackendGraphCapabilities> {
-        self.backend_snapshot()
-            .into_iter()
-            .map(|(name, backend)| (name, backend.graph_capabilities()))
-            .collect()
-    }
-
-    /// Collect graph status from all graph-aware backends before releasing.
-    ///
-    /// Folds in adapter-observation peaks recorded by
-    /// `start_adapter_observation_polling` for the same `graph_id` if any are
-    /// present. Failures are logged and skipped.
-    pub async fn pre_release_status_all(
-        &self,
-        graph_id: &str,
-    ) -> Vec<apxm_core::types::GraphStatusSnapshot> {
-        let mut results = Vec::new();
-        for (name, backend) in self.find_graph_aware_backends() {
-            match backend.get_graph_status(graph_id).await {
-                Ok(Some(value)) => results.push(value.with_backend_name(name)),
-                Ok(None) => {}
-                Err(e) => {
-                    tracing::warn!(
-                        backend = %name,
-                        graph_id = %graph_id,
-                        error = %e,
-                        "pre_release_status_all: get_graph_status failed (skipping)"
-                    );
-                }
-            }
-        }
-        if let Some((_, peaks)) = self.observation_peaks.remove(graph_id) {
-            let peaks: Vec<(String, u64)> = peaks
-                .iter()
-                .map(|entry| (peak_observation_name(entry.key()), *entry.value()))
-                .collect();
-            if !peaks.is_empty() {
-                results = results
-                    .into_iter()
-                    .map(|snapshot| {
-                        peaks.iter().fold(snapshot, |snapshot, (name, value)| {
-                            snapshot.with_adapter_observation(name, *value)
-                        })
-                    })
-                    .collect();
-            }
-        }
-        results
-    }
-
-    /// Spawn a background task that polls every graph-aware backend at
-    /// `interval`, recording the peak of every adapter observation the backend
-    /// reports for `graph_id`. Returns `None` if no graph-aware backends are
-    /// registered (no point waking a no-op poll loop). The returned
-    /// [`ObservationPollHandle`] aborts the task on `Drop`, so callers cannot
-    /// leak it; explicit `.abort()` before `pre_release_status_all` is still
-    /// preferred for ordering clarity.
-    pub fn start_adapter_observation_polling(
-        self: &Arc<Self>,
-        graph_id: String,
-        interval: Duration,
-    ) -> Option<ObservationPollHandle> {
-        if self.find_graph_aware_backends().is_empty() {
-            return None;
-        }
-        let peaks = Arc::new(DashMap::new());
-        self.observation_peaks
-            .insert(graph_id.clone(), peaks.clone());
-        let registry = Arc::clone(self);
-        let inner = tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(interval);
-            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            // Skip the immediate first tick so we don't race the register call.
-            ticker.tick().await;
-            loop {
-                ticker.tick().await;
-                for (_name, backend) in registry.find_graph_aware_backends() {
-                    if let Ok(Some(snapshot)) = backend.get_graph_status(&graph_id).await {
-                        for (name, value) in &snapshot.adapter_observations {
-                            bump_max(&peaks, name, *value);
-                        }
-                    }
-                }
-            }
-        });
-        Some(ObservationPollHandle { inner: Some(inner) })
-    }
-
-    /// Build a `BackendMetricsSource` from the tracker's aggregates and
-    /// the supplied vLLM graph status values.
-    #[cfg(feature = "metrics")]
-    pub fn collect_backend_metrics(
-        &self,
-        graph_status_snapshots: Vec<apxm_core::types::GraphStatusSnapshot>,
-    ) -> Option<crate::llm::observability::BackendMetricsSource> {
-        let aggregate = self.metrics.aggregate();
-        let per_backend = self.metrics.aggregate_per_backend();
-        let graph_capabilities = self.graph_capabilities();
-        if aggregate.total_requests == 0
-            && per_backend.is_empty()
-            && graph_status_snapshots.is_empty()
-            && graph_capabilities.is_empty()
-        {
-            return None;
-        }
-        Some(crate::llm::observability::BackendMetricsSource {
-            aggregate,
-            per_backend,
-            graph_status_snapshots,
-            graph_capabilities,
-        })
-    }
-
-    /// Perform health checks on all backends.
-    pub async fn check_all_backends(&self) -> HashMap<String, HealthStatus> {
-        let mut results = HashMap::new();
-
-        for (name, backend) in self.backend_snapshot() {
-            let status = match backend.health_check().await {
-                Ok(()) => HealthStatus::Healthy,
-                Err(_) => HealthStatus::Unhealthy,
-            };
-
-            self.health_monitor.set_status(&name, status);
-            results.insert(name, status);
-        }
-
-        results
     }
 }
 

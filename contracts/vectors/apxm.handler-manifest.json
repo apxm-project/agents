@@ -1,6 +1,6 @@
 [
   {
-    "name": "valid-tool-and-hook-manifest",
+    "name": "valid-tool-manifest",
     "input": {
       "version": "apxm.handler-manifest",
       "handlers": [
@@ -19,28 +19,17 @@
           "schema": {
             "type": "object",
             "properties": {
-              "value": { "type": "string" }
+              "value": {
+                "type": "string"
+              }
             },
-            "required": ["value"],
+            "required": [
+              "value"
+            ],
             "additionalProperties": false
           },
           "read_only": true,
           "requires_approval": false
-        },
-        {
-          "kind": "hook",
-          "language": "typescript",
-          "handler_id": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-          "module": "capabilities/audit/handler",
-          "qualname": "audit",
-          "name": "audit",
-          "source": {
-            "artifact_path": "handlers/2222222222222222222222222222222222222222222222222222222222222222.mjs",
-            "content": "export function audit() {}\n"
-          },
-          "event": "pre_turn",
-          "match": "*",
-          "mode": "observe"
         }
       ]
     },
@@ -68,54 +57,6 @@
     "expected_valid": false
   },
   {
-    "name": "hook-missing-mode-rejected",
-    "input": {
-      "version": "apxm.handler-manifest",
-      "handlers": [
-        {
-          "kind": "hook",
-          "language": "typescript",
-          "handler_id": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
-          "module": "capabilities/audit/handler",
-          "qualname": "audit",
-          "name": "audit",
-          "source": {
-            "artifact_path": "handlers/4444444444444444444444444444444444444444444444444444444444444444.mjs",
-            "content": "export function audit() {}\n"
-          },
-          "event": "pre_turn",
-          "match": "*"
-        }
-      ]
-    },
-    "expected_valid": false
-  },
-  {
-    "name": "tool-carrying-hook-fields-rejected",
-    "input": {
-      "version": "apxm.handler-manifest",
-      "handlers": [
-        {
-          "kind": "tool",
-          "language": "typescript",
-          "handler_id": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
-          "module": "capabilities/echo/handler",
-          "qualname": "echo",
-          "name": "echo",
-          "source": {
-            "artifact_path": "handlers/5555555555555555555555555555555555555555555555555555555555555555.mjs",
-            "content": "export function echo() {}\n"
-          },
-          "schema": { "type": "object" },
-          "event": "pre_turn",
-          "match": "*",
-          "mode": "observe"
-        }
-      ]
-    },
-    "expected_valid": false
-  },
-  {
     "name": "non-sha256-handler-id-rejected",
     "input": {
       "version": "apxm.handler-manifest",
@@ -131,7 +72,9 @@
             "artifact_path": "handlers/echo.mjs",
             "content": "export function echo() {}\n"
           },
-          "schema": { "type": "object" }
+          "schema": {
+            "type": "object"
+          }
         }
       ]
     },
@@ -153,7 +96,9 @@
             "artifact_path": "/build/handler.mjs",
             "content": "export function echo() {}\n"
           },
-          "schema": { "type": "object" }
+          "schema": {
+            "type": "object"
+          }
         }
       ]
     },
@@ -175,7 +120,9 @@
             "artifact_path": "handlers/echo.py",
             "content": "def echo(): pass\n"
           },
-          "schema": { "type": "object" }
+          "schema": {
+            "type": "object"
+          }
         }
       ]
     },
@@ -197,7 +144,9 @@
             "artifact_path": "handlers/echo.mjs",
             "content": "export function echo() {}\n"
           },
-          "schema": { "type": "object" },
+          "schema": {
+            "type": "object"
+          },
           "runtime_profile": "server"
         }
       ]

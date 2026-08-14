@@ -681,27 +681,6 @@ pub mod session {
             pub const RUNTIME_MS: &str = "runtime_ms";
         }
 
-        /// Wire keys for serialized graph-status snapshots in backend metrics.
-        ///
-        /// Each constant is derived from `apxm_core::types::GraphStatusKey`,
-        /// which is the typed source of truth. Prefer the enum at new call
-        /// sites.
-        pub mod graph_status_keys {
-            use crate::types::metrics::GraphStatusKey;
-
-            pub const OBJECT: &str = GraphStatusKey::Object.as_str();
-            pub const BACKEND_KIND: &str = GraphStatusKey::BackendKind.as_str();
-            pub const BACKEND_NAME: &str = GraphStatusKey::BackendName.as_str();
-            pub const GRAPH_ID: &str = GraphStatusKey::GraphId.as_str();
-            pub const REGISTERED: &str = GraphStatusKey::Registered.as_str();
-            pub const ADAPTER_OBSERVATIONS: &str = GraphStatusKey::AdapterObservations.as_str();
-            pub const CRITICAL_PATH_LENGTH: &str = GraphStatusKey::CriticalPathLength.as_str();
-            pub const NODE_COUNT: &str = GraphStatusKey::NodeCount.as_str();
-            /// Object-tag value emitted by the fork.
-            pub const OBJECT_TAG_GRAPH_STATUS: &str =
-                crate::constants::llm::apxm::OBJECT_GRAPH_STATUS;
-        }
-
         /// Top-level meta fields attached to the runtime section by the CLI
         /// (e.g. command-line invocation context).
         pub mod runtime_meta_keys {

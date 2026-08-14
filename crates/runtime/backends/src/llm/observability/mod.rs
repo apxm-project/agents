@@ -3,8 +3,7 @@
 //! Provides request tracing, metrics collection, and performance monitoring.
 
 use apxm_core::constants::session::metrics_keys;
-use apxm_core::metrics::MetricsSource;
-use apxm_core::types::{BackendGraphCapabilities, GraphStatusSnapshot, TokenUsage};
+use apxm_core::types::TokenUsage;
 use dashmap::DashMap;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -273,57 +272,5 @@ impl RequestTracer {
             success,
             self.retry_count,
         )
-    }
-}
-
-/// Collected backend metrics for the unified metrics report.
-pub struct BackendMetricsSource {
-    pub aggregate: AggregatedMetrics,
-    pub per_backend: HashMap<String, AggregatedMetrics>,
-    pub graph_status_snapshots: Vec<GraphStatusSnapshot>,
-    pub graph_capabilities: HashMap<String, BackendGraphCapabilities>,
-}
-
-impl MetricsSource for BackendMetricsSource {
-    fn section_name(&self) -> &'static str {
-        metrics_keys::SECTION_BACKENDS
-    }
-
-    fn collect(&self) -> serde_json::Value {
-        if self.aggregate.total_requests == 0
-            && self.per_backend.is_empty()
-            && self.graph_status_snapshots.is_empty()
-            && self.graph_capabilities.is_empty()
-        {
-            return serde_json::Value::Null;
-        }
-
-        let mut map = serde_json::Map::new();
-        map.insert(
-            metrics_keys::BACKENDS_AGGREGATE.to_owned(),
-            serde_json::to_value(&self.aggregate).unwrap_or_default(),
-        );
-        map.insert(
-            metrics_keys::BACKENDS_PER_BACKEND.to_owned(),
-            serde_json::to_value(&self.per_backend).unwrap_or_default(),
-        );
-        let graph_statuses: Vec<_> = self
-            .graph_status_snapshots
-            .iter()
-            .map(GraphStatusSnapshot::to_metrics_json)
-            .collect();
-        if !graph_statuses.is_empty() {
-            map.insert(
-                metrics_keys::BACKENDS_GRAPHS.to_owned(),
-                serde_json::Value::Array(graph_statuses),
-            );
-        }
-        if !self.graph_capabilities.is_empty() {
-            map.insert(
-                metrics_keys::BACKENDS_GRAPH_CAPABILITIES.to_owned(),
-                serde_json::to_value(&self.graph_capabilities).unwrap_or_default(),
-            );
-        }
-        serde_json::Value::Object(map)
     }
 }

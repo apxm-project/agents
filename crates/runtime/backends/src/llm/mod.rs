@@ -141,61 +141,6 @@ pub mod observability {
             )
         }
     }
-
-    pub struct BackendMetricsSource {
-        pub aggregate: AggregatedMetrics,
-        pub per_backend: std::collections::HashMap<String, AggregatedMetrics>,
-        pub graph_status_snapshots: Vec<apxm_core::types::GraphStatusSnapshot>,
-        pub graph_capabilities:
-            std::collections::HashMap<String, apxm_core::types::BackendGraphCapabilities>,
-    }
-
-    impl apxm_core::metrics::MetricsSource for BackendMetricsSource {
-        fn section_name(&self) -> &'static str {
-            apxm_core::constants::session::metrics_keys::SECTION_BACKENDS
-        }
-
-        fn collect(&self) -> serde_json::Value {
-            use apxm_core::constants::session::metrics_keys;
-            use apxm_core::types::GraphStatusSnapshot;
-
-            if self.aggregate.total_requests == 0
-                && self.per_backend.is_empty()
-                && self.graph_status_snapshots.is_empty()
-                && self.graph_capabilities.is_empty()
-            {
-                return serde_json::Value::Null;
-            }
-
-            let mut map = serde_json::Map::new();
-            map.insert(
-                metrics_keys::BACKENDS_AGGREGATE.to_owned(),
-                serde_json::to_value(&self.aggregate).unwrap_or_default(),
-            );
-            map.insert(
-                metrics_keys::BACKENDS_PER_BACKEND.to_owned(),
-                serde_json::to_value(&self.per_backend).unwrap_or_default(),
-            );
-            let graph_statuses: Vec<_> = self
-                .graph_status_snapshots
-                .iter()
-                .map(GraphStatusSnapshot::to_metrics_json)
-                .collect();
-            if !graph_statuses.is_empty() {
-                map.insert(
-                    metrics_keys::BACKENDS_GRAPHS.to_owned(),
-                    serde_json::Value::Array(graph_statuses),
-                );
-            }
-            if !self.graph_capabilities.is_empty() {
-                map.insert(
-                    metrics_keys::BACKENDS_GRAPH_CAPABILITIES.to_owned(),
-                    serde_json::to_value(&self.graph_capabilities).unwrap_or_default(),
-                );
-            }
-            serde_json::Value::Object(map)
-        }
-    }
 }
 pub mod provider;
 pub mod registration;
@@ -219,9 +164,7 @@ pub use backends::{
     CorrelatedLLMOutcome, CorrelatedLLMRequest, FunctionCall, GenerationConfig, LLMBackend,
     LLMRequest, LLMResponse, Message, Role, StreamChunk, TokenUsage, ToolChoice, ToolDefinition,
 };
-pub use observability::{
-    AggregatedMetrics, BackendMetricsSource, MetricsTracker, RequestMetrics, RequestTracer,
-};
+pub use observability::{AggregatedMetrics, MetricsTracker, RequestMetrics, RequestTracer};
 pub use provider::{Provider, ProviderId, RegisteredProvider};
 pub use rate_limit::{RateLimitConfig, RateLimitConfigError, RateLimitError};
 pub use registration::{BackendRegistration, ModelRegistration};

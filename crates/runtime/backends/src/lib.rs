@@ -41,7 +41,6 @@ pub use llm::{
     BackendConfig,
     BackendConfigurationError,
     BackendFactory,
-    BackendMetricsSource,
     BackendRegistration,
     BackendType,
     BuiltinModelSpec,

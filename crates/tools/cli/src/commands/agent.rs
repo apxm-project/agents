@@ -1691,9 +1691,6 @@ mod tests {
             schema: Some(serde_json::json!({})),
             read_only: None,
             requires_approval: None,
-            event: None,
-            r#match: None,
-            mode: None,
         };
         let mut manifest = HandlerManifest::new(vec![
             descriptor("read_tool", 'a'),

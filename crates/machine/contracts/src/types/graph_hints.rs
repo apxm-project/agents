@@ -1229,17 +1229,6 @@ pub trait GraphHintProjector {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum GraphLifecycleOutcome {
-    Prepared,
-    Released,
-    NotNeeded,
-    Unsupported,
-    FailedBeforeSend,
-    OutcomeUnknown,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct BackendGraphCapabilities {
     pub supports_graph_registration: bool,
@@ -1339,11 +1328,6 @@ impl GraphStatusSnapshot {
         self
     }
 
-    pub fn with_backend_name(mut self, backend_name: impl Into<String>) -> Self {
-        self.backend_name = Some(backend_name.into());
-        self
-    }
-
     /// Record one adapter-owned observation under its adapter-owned name.
     pub fn with_adapter_observation(mut self, name: impl Into<String>, value: u64) -> Self {
         self.adapter_observations.insert(name.into(), value);
@@ -1358,10 +1342,6 @@ impl GraphStatusSnapshot {
         self.node_count = node_count;
         self.critical_path_length = critical_path_length;
         self
-    }
-
-    pub fn to_metrics_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
     }
 }
 

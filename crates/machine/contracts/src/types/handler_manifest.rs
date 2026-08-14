@@ -1,7 +1,7 @@
 //! Portable frontend handler-manifest contract.
 //!
 //! TypeScript package build tooling emits this artifact sidecar for
-//! every packaged tool and hook. The manifest carries only artifact-local
+//! every packaged tool. The manifest carries only artifact-local
 //! source, never a build-host path.
 
 use serde::{Deserialize, Serialize};
@@ -24,8 +24,6 @@ pub const HANDLER_MANIFEST_HANDLER_ID_PREFIX: &str = "sha256:";
 pub const HANDLER_MANIFEST_HANDLER_ID_HEX_LENGTH: usize = 64;
 /// Maximum character count of a `module`, `qualname`, or `name` identifier.
 pub const HANDLER_MANIFEST_IDENTIFIER_MAX_LENGTH: usize = 256;
-/// The closed set of hook dispatch modes.
-pub const HANDLER_MANIFEST_HOOK_MODES: [&str; 2] = ["observe", "gate"];
 
 /// The authoring language for the private package-handler worker.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -36,14 +34,14 @@ pub enum HandlerLanguage {
     TypeScript,
 }
 
-/// The runtime role of a handler.
+/// The runtime role of a handler. Lifecycle hooks are captured bodies in
+/// AIR (`hook_bindings`), not manifest descriptors, so a manifest handler is
+/// always a tool.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HandlerKind {
     /// A capability-addressable tool.
     Tool,
-    /// A lifecycle hook addressed by handler ID.
-    Hook,
 }
 
 /// Source material stored beside a handler descriptor in an artifact.
@@ -56,11 +54,11 @@ pub struct HandlerSource {
     pub content: String,
 }
 
-/// One portable tool or hook descriptor.
+/// One portable tool descriptor.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct HandlerDescriptor {
-    /// Tool versus hook dispatch semantics.
+    /// Handler dispatch role.
     pub kind: HandlerKind,
     /// Language worker that evaluates the source.
     pub language: HandlerLanguage,
@@ -70,7 +68,7 @@ pub struct HandlerDescriptor {
     pub module: String,
     /// Exported callable name inside the module.
     pub qualname: String,
-    /// Capability name for tools or display name for hooks.
+    /// Capability name.
     pub name: String,
     /// Artifact-local executable source.
     pub source: HandlerSource,
@@ -78,7 +76,7 @@ pub struct HandlerDescriptor {
     /// description is never materialized as an empty one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    /// Tool argument schema. Absent for hooks, which carry no argument shape.
+    /// Tool argument schema.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<Value>,
     /// Whether a tool is guaranteed not to mutate external state.
@@ -87,24 +85,15 @@ pub struct HandlerDescriptor {
     /// Whether invoking a tool requires an explicit approval decision.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requires_approval: Option<bool>,
-    /// Hook lifecycle event. Absent for tools.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub event: Option<String>,
-    /// Hook matcher. Absent for tools.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub r#match: Option<String>,
-    /// Hook mode. Absent for tools.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mode: Option<String>,
 }
 
-/// The sole serialized shape for frontend tool and hook metadata.
+/// The sole serialized shape for frontend tool metadata.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct HandlerManifest {
     /// Fixed schema version.
     pub version: String,
-    /// Every tool and hook referenced by the compiled artifact.
+    /// Every tool referenced by the compiled artifact.
     pub handlers: Vec<HandlerDescriptor>,
 }
 
@@ -132,18 +121,9 @@ pub enum HandlerManifestError {
     /// A tool descriptor is missing a JSON object schema.
     #[error("tool '{0}' must carry an object schema")]
     InvalidToolSchema(String),
-    /// A hook descriptor omits an event, matcher, or mode.
-    #[error("hook '{0}' must carry event, match, and mode")]
-    IncompleteHook(String),
     /// A `module`, `qualname`, or `name` is not a contract identifier.
     #[error("handler '{0}' has an invalid {1} '{2}'")]
     InvalidIdentifier(String, &'static str, String),
-    /// A hook mode is outside the closed dispatch set.
-    #[error("hook '{0}' has an unsupported mode '{1}'")]
-    InvalidHookMode(String, String),
-    /// A tool carries hook lifecycle fields, or a hook carries tool fields.
-    #[error("handler '{0}' carries the field '{1}', which belongs only to a {2}")]
-    CrossKindField(String, &'static str, &'static str),
 }
 
 impl HandlerManifest {
@@ -177,8 +157,7 @@ impl HandlerManifest {
                     descriptor.handler_id.clone(),
                 ));
             }
-            if descriptor.kind == HandlerKind::Tool && !tool_names.insert(descriptor.name.as_str())
-            {
+            if !tool_names.insert(descriptor.name.as_str()) {
                 return Err(HandlerManifestError::DuplicateToolName(
                     descriptor.name.clone(),
                 ));
@@ -231,61 +210,12 @@ fn validate_descriptor(descriptor: &HandlerDescriptor) -> Result<(), HandlerMani
         }
     }
 
-    // A descriptor is exactly one of the two closed kinds. Each kind requires
-    // its own fields and forbids the other kind's: a tool carrying lifecycle
-    // fields, or a hook carrying an argument schema or authority flags, is a
-    // shape no consumer may dispatch on.
-    match descriptor.kind {
-        HandlerKind::Tool => {
-            if !descriptor.schema.as_ref().is_some_and(Value::is_object) {
-                return Err(HandlerManifestError::InvalidToolSchema(
-                    descriptor.name.clone(),
-                ));
-            }
-            for (field, present) in [
-                ("event", descriptor.event.is_some()),
-                ("match", descriptor.r#match.is_some()),
-                ("mode", descriptor.mode.is_some()),
-            ] {
-                if present {
-                    return Err(HandlerManifestError::CrossKindField(
-                        descriptor.handler_id.clone(),
-                        field,
-                        "hook",
-                    ));
-                }
-            }
-        }
-        HandlerKind::Hook => {
-            if descriptor.event.as_deref().is_none_or(str::is_empty)
-                || descriptor.r#match.as_deref().is_none_or(str::is_empty)
-                || descriptor.mode.as_deref().is_none_or(str::is_empty)
-            {
-                return Err(HandlerManifestError::IncompleteHook(
-                    descriptor.handler_id.clone(),
-                ));
-            }
-            let mode = descriptor.mode.as_deref().unwrap_or_default();
-            if !HANDLER_MANIFEST_HOOK_MODES.contains(&mode) {
-                return Err(HandlerManifestError::InvalidHookMode(
-                    descriptor.handler_id.clone(),
-                    mode.to_string(),
-                ));
-            }
-            for (field, present) in [
-                ("schema", descriptor.schema.is_some()),
-                ("read_only", descriptor.read_only.is_some()),
-                ("requires_approval", descriptor.requires_approval.is_some()),
-            ] {
-                if present {
-                    return Err(HandlerManifestError::CrossKindField(
-                        descriptor.handler_id.clone(),
-                        field,
-                        "tool",
-                    ));
-                }
-            }
-        }
+    // A tool is addressable only through its argument shape, so an object
+    // schema is required rather than optional.
+    if !descriptor.schema.as_ref().is_some_and(Value::is_object) {
+        return Err(HandlerManifestError::InvalidToolSchema(
+            descriptor.name.clone(),
+        ));
     }
     Ok(())
 }
@@ -329,9 +259,9 @@ fn is_artifact_relative_path(value: &str) -> bool {
 mod tests {
     use super::*;
 
-    fn descriptor(kind: HandlerKind, name: &str) -> HandlerDescriptor {
+    fn descriptor(name: &str) -> HandlerDescriptor {
         HandlerDescriptor {
-            kind,
+            kind: HandlerKind::Tool,
             language: HandlerLanguage::TypeScript,
             handler_id: format!(
                 "{HANDLER_MANIFEST_HANDLER_ID_PREFIX}{}",
@@ -345,43 +275,40 @@ mod tests {
                 content: "export function handler() {}\n".to_string(),
             },
             description: Some("example".to_string()),
-            schema: (kind == HandlerKind::Tool).then(|| Value::Object(serde_json::Map::new())),
-            read_only: (kind == HandlerKind::Tool).then_some(true),
-            requires_approval: (kind == HandlerKind::Tool).then_some(false),
-            event: (kind == HandlerKind::Hook).then(|| "pre_turn".to_string()),
-            r#match: (kind == HandlerKind::Hook).then(|| "*".to_string()),
-            mode: (kind == HandlerKind::Hook).then(|| "observe".to_string()),
+            schema: Some(Value::Object(serde_json::Map::new())),
+            read_only: Some(true),
+            requires_approval: Some(false),
         }
     }
 
     #[test]
-    fn accepts_versioned_tool_and_hook_manifest() {
-        let mut hook = descriptor(HandlerKind::Hook, "hook");
-        hook.handler_id = format!(
+    fn accepts_versioned_tool_manifest() {
+        let mut second = descriptor("audit");
+        second.handler_id = format!(
             "{HANDLER_MANIFEST_HANDLER_ID_PREFIX}{}",
             "b".repeat(HANDLER_MANIFEST_HANDLER_ID_HEX_LENGTH)
         );
-        HandlerManifest::new(vec![descriptor(HandlerKind::Tool, "echo"), hook])
+        HandlerManifest::new(vec![descriptor("echo"), second])
             .validate()
             .expect("manifest is valid");
     }
 
     #[test]
     fn rejects_host_paths_and_duplicate_tool_names() {
-        let mut first = descriptor(HandlerKind::Tool, "echo");
+        let mut first = descriptor("echo");
         first.source.artifact_path = "/tmp/handler.py".to_string();
         assert!(matches!(
             HandlerManifest::new(vec![first]).validate(),
             Err(HandlerManifestError::InvalidArtifactPath(_, _))
         ));
 
-        let mut second = descriptor(HandlerKind::Tool, "echo");
+        let mut second = descriptor("echo");
         second.handler_id = format!(
             "{HANDLER_MANIFEST_HANDLER_ID_PREFIX}{}",
             "b".repeat(HANDLER_MANIFEST_HANDLER_ID_HEX_LENGTH)
         );
         assert!(matches!(
-            HandlerManifest::new(vec![descriptor(HandlerKind::Tool, "echo"), second]).validate(),
+            HandlerManifest::new(vec![descriptor("echo"), second]).validate(),
             Err(HandlerManifestError::DuplicateToolName(_))
         ));
     }

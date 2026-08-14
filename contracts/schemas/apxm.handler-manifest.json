@@ -22,19 +22,8 @@
   "additionalProperties": false,
   "$defs": {
     "HandlerDescriptor": {
-      "description": "One portable tool or hook descriptor. `language` is closed to `typescript`: no Python package-local handler shape is admitted here.",
-      "oneOf": [
-        {
-          "$ref": "#/$defs/ToolHandlerDescriptor"
-        },
-        {
-          "$ref": "#/$defs/HookHandlerDescriptor"
-        }
-      ]
-    },
-    "ToolHandlerDescriptor": {
       "type": "object",
-      "description": "A capability-addressable tool handler. It must carry an object argument schema and must not carry hook lifecycle fields.",
+      "description": "One portable tool descriptor. A capability-addressable tool handler must carry an object argument schema. `language` is closed to `typescript`: no Python package-local handler shape is admitted here.",
       "required": [
         "kind",
         "language",
@@ -78,64 +67,6 @@
         },
         "requires_approval": {
           "type": "boolean"
-        }
-      },
-      "additionalProperties": false
-    },
-    "HookHandlerDescriptor": {
-      "type": "object",
-      "description": "A lifecycle hook addressed by handler ID. It must carry event, match, and mode, and must not carry tool argument schema or authority fields.",
-      "required": [
-        "kind",
-        "language",
-        "handler_id",
-        "module",
-        "qualname",
-        "name",
-        "source",
-        "event",
-        "match",
-        "mode"
-      ],
-      "properties": {
-        "kind": {
-          "const": "hook"
-        },
-        "language": {
-          "$ref": "#/$defs/HandlerLanguage"
-        },
-        "handler_id": {
-          "$ref": "#/$defs/HandlerId"
-        },
-        "module": {
-          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
-        },
-        "qualname": {
-          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
-        },
-        "name": {
-          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
-        },
-        "source": {
-          "$ref": "#/$defs/HandlerSource"
-        },
-        "description": {
-          "type": "string"
-        },
-        "event": {
-          "type": "string",
-          "minLength": 1
-        },
-        "match": {
-          "type": "string",
-          "minLength": 1
-        },
-        "mode": {
-          "type": "string",
-          "enum": [
-            "observe",
-            "gate"
-          ]
         }
       },
       "additionalProperties": false

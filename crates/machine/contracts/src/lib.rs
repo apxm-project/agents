@@ -16,7 +16,6 @@ pub mod env;
 pub mod error;
 pub mod events;
 pub mod logging;
-pub mod metrics;
 pub mod observability;
 pub mod paths;
 pub mod plan;
@@ -33,7 +32,6 @@ pub use error::{
     security::SecurityError,
 };
 
-pub use metrics::{MetricsReport, MetricsSource};
 pub use plan::{InnerPlanPayload, Plan, PlanStep};
 
 pub use types::{

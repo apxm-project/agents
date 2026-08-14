@@ -8,10 +8,9 @@ mod common;
 
 use apxm_core::types::{
     HANDLER_MANIFEST_HANDLER_ID_HEX_LENGTH, HANDLER_MANIFEST_HANDLER_ID_PREFIX,
-    HANDLER_MANIFEST_HOOK_MODES, HANDLER_MANIFEST_VERSION, HandlerLanguage, HandlerManifest,
-    HandlerManifestError,
+    HANDLER_MANIFEST_VERSION, HandlerLanguage, HandlerManifest, HandlerManifestError,
 };
-use common::{Vector, compile_schema, load_contract, load_vectors, schema_enum};
+use common::{Vector, compile_schema, load_contract, load_vectors};
 use serde_json::Value;
 
 /// The published schema, compiled from its checked-in bytes. `Identifier` is
@@ -65,7 +64,7 @@ fn handler_manifest_vectors_match_schema_and_decode_path() {
 fn valid_vector_round_trips_byte_for_byte() {
     let vector = load_vectors("apxm.handler-manifest.json")
         .into_iter()
-        .find(|v| v.name == "valid-tool-and-hook-manifest")
+        .find(|v| v.name == "valid-tool-manifest")
         .expect("named vector present");
     let manifest = rust_admits(&vector.input).expect("the valid vector is admitted");
     let reencoded = serde_json::to_value(&manifest).expect("re-encode manifest");
@@ -95,8 +94,6 @@ fn schema_constraints_are_each_enforced_by_the_decode_path() {
     // they are fixed placeholders chosen only to satisfy that shape.
     const TOOL_ID_FIXTURE: &str =
         "sha256:1111111111111111111111111111111111111111111111111111111111111111";
-    const HOOK_ID_FIXTURE: &str =
-        "sha256:2222222222222222222222222222222222222222222222222222222222222222";
 
     let tool = || {
         serde_json::json!({
@@ -111,23 +108,6 @@ fn schema_constraints_are_each_enforced_by_the_decode_path() {
                 "content": "export function echo() {}\n"
             },
             "schema": {"type": "object"}
-        })
-    };
-    let hook = || {
-        serde_json::json!({
-            "kind": "hook",
-            "language": "typescript",
-            "handler_id": HOOK_ID_FIXTURE,
-            "module": "capabilities/audit/handler",
-            "qualname": "audit",
-            "name": "audit",
-            "source": {
-                "artifact_path": "handlers/audit.mjs",
-                "content": "export function audit() {}\n"
-            },
-            "event": "pre_turn",
-            "match": "*",
-            "mode": "observe"
         })
     };
     let manifest = |descriptor: Value| serde_json::json!({"version": "apxm.handler-manifest", "handlers": [descriptor]});
@@ -145,9 +125,8 @@ fn schema_constraints_are_each_enforced_by_the_decode_path() {
     };
 
     let candidates: Vec<(&str, Value, bool)> = vec![
-        // Baselines: both closed kinds are admitted as published.
+        // Baseline: the published tool descriptor is admitted.
         ("tool baseline", manifest(tool()), true),
-        ("hook baseline", manifest(hook()), true),
         // `version` is a schema `const`.
         (
             "manifest version not the published constant",
@@ -208,7 +187,7 @@ fn schema_constraints_are_each_enforced_by_the_decode_path() {
             ),
             false,
         ),
-        // Required tool and hook fields.
+        // Required tool fields.
         (
             "tool without schema",
             with(tool(), "schema", Value::Null),
@@ -219,48 +198,17 @@ fn schema_constraints_are_each_enforced_by_the_decode_path() {
             with(tool(), "source", Value::Null),
             false,
         ),
+        // Lifecycle hooks are captured bodies in AIR, never manifest
+        // descriptors, so a lifecycle field here is an unknown field.
         (
-            "hook without mode",
-            with(hook(), "mode", Value::Null),
-            false,
-        ),
-        (
-            "hook without event",
-            with(hook(), "event", Value::Null),
-            false,
-        ),
-        (
-            "hook without match",
-            with(hook(), "match", Value::Null),
-            false,
-        ),
-        // The two descriptor kinds are disjoint: `oneOf` rejects a descriptor
-        // that satisfies both branches or carries the other branch's fields.
-        (
-            "tool carrying a hook lifecycle field",
+            "descriptor carrying a lifecycle field",
             with(tool(), "mode", serde_json::json!("observe")),
-            false,
-        ),
-        (
-            "hook carrying a tool argument schema",
-            with(hook(), "schema", serde_json::json!({"type": "object"})),
-            false,
-        ),
-        (
-            "hook carrying a tool authority flag",
-            with(hook(), "read_only", serde_json::json!(true)),
             false,
         ),
         // `HandlerLanguage` is closed to `typescript`.
         (
             "python package-local handler language",
             with(tool(), "language", serde_json::json!("python")),
-            false,
-        ),
-        // `mode` is closed to observe/gate.
-        (
-            "hook mode outside the closed set",
-            with(hook(), "mode", serde_json::json!("decide")),
             false,
         ),
         // `HandlerSource.artifact_path` is artifact-confined and non-empty.
@@ -374,14 +322,6 @@ fn manifest_constants_are_read_from_the_published_schema() {
             "^{HANDLER_MANIFEST_HANDLER_ID_PREFIX}[0-9a-f]{{{HANDLER_MANIFEST_HANDLER_ID_HEX_LENGTH}}}$"
         ),
         "the handler-id prefix or hex width drifted from the schema pattern",
-    );
-
-    let mut modes = HANDLER_MANIFEST_HOOK_MODES.map(String::from).to_vec();
-    modes.sort();
-    assert_eq!(
-        modes,
-        schema_enum(&schema, "HookHandlerDescriptor", "mode"),
-        "the closed hook-mode set drifted from the schema enum",
     );
 
     // The closed language set is read off the Rust enum's own wire form, so a
