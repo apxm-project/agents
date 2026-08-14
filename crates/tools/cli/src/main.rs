@@ -113,9 +113,22 @@ async fn run_cli(cli: Cli) -> Result<()> {
             invocation_admission,
             release,
             provenance,
+            package,
         } => {
-            execute_canonical_command(input, invocation_admission, release, provenance, cli.json)
-                .await
+            let handlers = package
+                .as_deref()
+                .map(commands::agent::admitted_package_handlers)
+                .transpose()?
+                .flatten();
+            execute_canonical_command(
+                input,
+                invocation_admission,
+                release,
+                provenance,
+                handlers,
+                cli.json,
+            )
+            .await
         }
         Commands::Doctor => doctor_command(cli.config, cli.json),
         Commands::Backend { action } => backend_command(action, cli.json).await,
@@ -151,9 +164,22 @@ async fn run_cli_no_driver(cli: Cli) -> Result<()> {
             invocation_admission,
             release,
             provenance,
+            package,
         } => {
-            execute_canonical_command(input, invocation_admission, release, provenance, cli.json)
-                .await
+            let handlers = package
+                .as_deref()
+                .map(commands::agent::admitted_package_handlers)
+                .transpose()?
+                .flatten();
+            execute_canonical_command(
+                input,
+                invocation_admission,
+                release,
+                provenance,
+                handlers,
+                cli.json,
+            )
+            .await
         }
         Commands::Doctor => doctor_command(cli.config, cli.json),
         Commands::Team { action } => team_command(action, cli.json),

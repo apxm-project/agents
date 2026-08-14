@@ -28,7 +28,10 @@ apxm-inference.workspace = true
 apxm-kernel.workspace = true
 apxm-backend-registry.workspace = true
 clap.workspace = true
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net", "io-util"] }
+# `process` and `sync` carry the private package-handler worker adapter: the
+# composition root spawns one long-lived helper over piped stdio and serializes
+# its frames behind an async lock.
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net", "io-util", "process", "sync"] }
 async-trait.workspace = true
 anyhow.workspace = true
 colored.workspace = true

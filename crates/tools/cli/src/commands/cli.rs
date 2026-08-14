@@ -53,6 +53,14 @@ pub enum Commands {
         /// Exact provenance bytes named by the Invocation Admission.
         #[arg(long, value_name = "PATH")]
         provenance: PathBuf,
+        /// Agent package whose own Capability handlers this run may dispatch.
+        ///
+        /// Supplying one is how a composition root binds a package's
+        /// implementations: without it only the built-in surface is
+        /// registered, and an AIR naming a package Capability is refused at
+        /// admission rather than at dispatch.
+        #[arg(long, value_name = "DIR")]
+        package: Option<PathBuf>,
     },
     /// Diagnose compiler/runtime dependencies
     Doctor,
@@ -708,11 +716,13 @@ mod tests {
                 invocation_admission,
                 release,
                 provenance,
+                package,
             } => {
                 assert_eq!(input, PathBuf::from("/tmp/program.air"));
                 assert_eq!(invocation_admission, PathBuf::from("/tmp/admission.json"));
                 assert_eq!(release, PathBuf::from("/tmp/release.json"));
                 assert_eq!(provenance, PathBuf::from("/tmp/provenance.json"));
+                assert_eq!(package, None);
             }
             _ => panic!("expected execute-canonical command"),
         }

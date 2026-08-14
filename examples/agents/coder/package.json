@@ -5,7 +5,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "compile": "node --input-type=module -e \"import { Coder } from './dist/src/main.js'; console.log(Coder.canonicalAir())\"",
-    "run": "node --input-type=module -e \"import { Coder } from './dist/src/main.js'; console.log(JSON.stringify(Coder.frontendGraph()))\""
+    "run": "node --input-type=module -e \"import { Coder } from './dist/src/main.js'; console.log(JSON.stringify(Coder.frontendGraph()))\"",
+    "compile:proposals": "node --input-type=module -e \"import { Proposals } from './dist/tests/proposals.js'; console.log(Proposals.canonicalAir())\""
   },
   "dependencies": {
     "@apxm/agent-packaging": "file:../../../crates/tools/cli/agent-packaging",

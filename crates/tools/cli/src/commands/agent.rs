@@ -541,7 +541,63 @@ pub(crate) fn granted_capability_ids(root: &Path) -> Result<BTreeSet<String>> {
         .collect())
 }
 
+/// Resolve the package-handler implementations one package supplies.
+///
+/// This is the join that makes [`granted_capability_ids`] an honest claim.
+/// The ⊆ gate calls a shipped `capabilities/<id>/handler.ts` grantable, so
+/// this refuses unless the built manifest carries an executable descriptor for
+/// exactly those ids: a handler source with no manifest entry would be a grant
+/// nothing can dispatch, and a manifest entry with no handler source would be
+/// executable code the package never declared.
+///
+/// A package that ships no handler supplies no implementation, which is `None`
+/// rather than an empty binding: the private worker is only resolved when there
+/// is something for it to evaluate.
+///
+/// # Errors
+///
+/// Returns an error when the package fails integrity verification, when its
+/// manifest is absent or non-conforming, when the manifest and the shipped
+/// handler sources disagree, or when the private worker is not installed.
+pub(crate) fn admitted_package_handlers(
+    root: &Path,
+) -> Result<Option<super::canonical_execute::AdmittedPackageHandlers>> {
+    verify_agent_integrity(root)?;
+    let manifest = load_typescript_tools_manifest(root)?;
+    let described: BTreeSet<String> = manifest
+        .handlers
+        .iter()
+        .map(|entry| entry.name.clone())
+        .collect();
+    let shipped = shipped_capability_handler_ids(root)?;
+    if described != shipped {
+        bail!(
+            "agent package '{}' would grant [{}] but ships executable handlers for [{}]; run \
+             'apxm agent build {}' so the ids the grant set claims are exactly the ids the \
+             runtime can dispatch",
+            root.display(),
+            shipped.iter().cloned().collect::<Vec<_>>().join(", "),
+            described.iter().cloned().collect::<Vec<_>>().join(", "),
+            root.display()
+        );
+    }
+    if manifest.handlers.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(super::canonical_execute::AdmittedPackageHandlers {
+        worker_entry: installed_typescript_agent_packaging_entry("tool-worker.mjs")?,
+        manifest,
+    }))
+}
+
 /// The capability ids this package ships a TypeScript handler for.
+///
+/// TypeScript is the only language in this set, and that is the whole of the
+/// Python package-handler story: `apxm_program.handlers.capability` declares a
+/// handler in the manifest's own fields, but no Python bundler or admitted
+/// worker adapter exists, so a Python-declared id is not grantable and a
+/// program referencing one is refused at compile rather than admitted against
+/// an implementation that is not there.
 fn shipped_capability_handler_ids(root: &Path) -> Result<BTreeSet<String>> {
     let caps_dir = root.join("capabilities");
     if !caps_dir.is_dir() {
@@ -1433,6 +1489,71 @@ mod tests {
         let with_handler = granted_capability_ids(&root).unwrap();
         assert!(with_handler.contains("propose_edit"));
         assert_eq!(with_handler.len(), builtins_only.len() + 1);
+    }
+
+    /// A Python-declared handler is not a shipped implementation.
+    ///
+    /// `apxm_program.handlers.capability` states every manifest field a
+    /// handler can state about itself, but no Python bundler and no admitted
+    /// Python worker adapter exist, so nothing can dispatch one. The grant set
+    /// must therefore not name it: a program referencing it is refused where
+    /// the author can see it rather than admitted against an implementation
+    /// that is not there.
+    #[test]
+    fn a_python_declared_handler_is_not_grantable() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("python-handler");
+        scaffold(&root, "python-handler");
+        fs::create_dir_all(root.join("python")).unwrap();
+        fs::write(
+            root.join("python/handlers.py"),
+            "from apxm_program.handlers import capability\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("capabilities/handlers")).unwrap();
+        fs::write(
+            root.join("capabilities/handlers/summarize.py"),
+            "def summarize(): ...\n",
+        )
+        .unwrap();
+
+        let grantable = granted_capability_ids(&root).unwrap();
+        assert!(
+            !grantable.contains("summarize"),
+            "no Python source makes a capability grantable while nothing can run one: {grantable:?}"
+        );
+    }
+
+    /// The grant set and the dispatchable set are the same set, or the
+    /// composition root refuses to bind the package at all.
+    #[cfg(feature = "driver")]
+    #[test]
+    fn a_package_whose_manifest_lost_a_shipped_handler_is_refused() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("drifted");
+        scaffold(&root, "drifted");
+        fs::create_dir_all(root.join("capabilities/propose_edit")).unwrap();
+        fs::write(
+            root.join("capabilities/propose_edit/handler.ts"),
+            "export function proposeEdit() {}\n",
+        )
+        .unwrap();
+        // The handler source is what `granted_capability_ids` reads, so the
+        // grant is already claimed; the manifest that would make it
+        // dispatchable was never built.
+        assert!(
+            granted_capability_ids(&root)
+                .unwrap()
+                .contains("propose_edit")
+        );
+        seal_agent_integrity_for_test(&root).unwrap();
+
+        let error = admitted_package_handlers(&root).expect_err("the drift must be refused");
+        let message = error.to_string();
+        assert!(
+            message.contains("propose_edit") && message.contains("agent build"),
+            "the refusal names the id the grant set claims and how to make it true: {message}"
+        );
     }
 
     /// `agent.toml [permissions]` is the package layer of the resolution stack.

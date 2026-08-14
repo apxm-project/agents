@@ -22,6 +22,18 @@ shape is written, so the handler cannot declare one shape and validate another.
 implementation. A program references the handler it ships by naming the object
 that implements it, so referencing one Capability while implementing another is
 not a mistake this surface can express.
+
+**A Python declaration is not yet a dispatchable implementation.** Executing a
+package handler takes three things beyond the declaration: a deterministic
+bundler that turns the callable into the manifest's artifact-local ``source``,
+a private worker adapter a composition root can be supplied with, and a
+``language`` this manifest admits — and ``apxm.handler-manifest`` admits only
+``typescript`` today. Until all three land, ``apxm agent`` grants a package
+exactly the ids it ships a ``capabilities/<id>/handler.ts`` for, so a program
+naming a Python-declared handler is refused at compile rather than admitted
+against an implementation that is not there. The declaration is honest about
+what it is: the shape a package handler states about itself, in the fields the
+manifest names, waiting on the bundler that can carry it.
 """
 
 from __future__ import annotations

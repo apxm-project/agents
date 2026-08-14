@@ -29,18 +29,28 @@ mod capability_port {
     //!    admits only the capability surface whose own metadata declares it
     //!    read-only. Everything else is denied at the interceptor chokepoint,
     //!    before any argument reaches an implementation.
+    //!
+    //! A package-shipped Capability crosses exactly the same three boundaries.
+    //! It is registered into the same [`CapabilitySystem`] as a builtin, so its
+    //! permission decision, its admission, its schema validation, and its
+    //! evidence are the builtin path rather than a parallel one; the only thing
+    //! that differs is which implementation the registry hands back.
 
     use std::collections::{BTreeSet, HashMap};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     use apxm_capability::CapabilitySystem;
     use apxm_capability::builtins::{
         BashConfig, SkillRootConfig, SkillsConfig, ToolsConfig, register_standard_tools,
     };
+    use apxm_capability::executor::CapabilityExecutor;
     use apxm_capability::interceptor::{CapabilityInterceptor, InterceptDecision};
+    use apxm_capability::metadata::RuntimeCapability;
     use apxm_core::error::RuntimeError;
     use apxm_core::types::values::{Value as CapabilityValue, ValueError};
+    use apxm_core::types::{HandlerDescriptor, HandlerManifest};
     use apxm_execution::{CapabilityOutcome, CapabilityPort, CapabilityRequest};
     use apxm_program::skill::RootTier;
     use async_trait::async_trait;
@@ -132,6 +142,305 @@ mod capability_port {
         }
     }
 
+    /// The private handler-worker adapter for package-shipped Capabilities.
+    ///
+    /// ADR-0016 keeps the execution boundary in Rust and calls a language
+    /// helper process a *private* adapter the Composition Root selects. This is
+    /// that adapter, and its privacy is structural: the worker entry and the
+    /// manifest are both handed in, the process is spawned lazily on the first
+    /// invocation so a run that never invokes a package Capability never starts
+    /// one, and nothing outside this module can address it.
+    ///
+    /// Requests are serialized behind one lock. The frame protocol correlates
+    /// by `req_id` and could pipeline, but a single in-flight request is what
+    /// makes "the reply I read is the reply to the frame I wrote" a property of
+    /// the code rather than of the worker's scheduling.
+    struct PackageHandlerWorker {
+        worker_entry: PathBuf,
+        /// The validated manifest, materialized so the worker evaluates exactly
+        /// the bytes this root admitted rather than re-reading a package path
+        /// that may have changed since verification.
+        manifest_file: tempfile::TempPath,
+        process: tokio::sync::Mutex<Option<WorkerProcess>>,
+        next_request: AtomicU64,
+    }
+
+    /// One live worker process and the two halves of its frame transport.
+    struct WorkerProcess {
+        child: tokio::process::Child,
+        stdin: tokio::process::ChildStdin,
+        stdout: tokio::io::Lines<tokio::io::BufReader<tokio::process::ChildStdout>>,
+    }
+
+    impl PackageHandlerWorker {
+        /// Materialize the admitted manifest beside the selected worker entry.
+        fn new(worker_entry: &Path, manifest: &HandlerManifest) -> Result<Self, RuntimeError> {
+            let mut file = tempfile::NamedTempFile::new().map_err(|error| {
+                RuntimeError::Executor(format!(
+                    "the package handler worker manifest could not be materialized: {error}"
+                ))
+            })?;
+            serde_json::to_writer(&mut file, manifest).map_err(|error| {
+                RuntimeError::Executor(format!(
+                    "the admitted handler manifest is not serializable: {error}"
+                ))
+            })?;
+            Ok(Self {
+                worker_entry: worker_entry.to_path_buf(),
+                manifest_file: file.into_temp_path(),
+                process: tokio::sync::Mutex::new(None),
+                next_request: AtomicU64::new(1),
+            })
+        }
+
+        /// Send one frame and read its reply, starting the worker if needed.
+        async fn invoke(
+            &self,
+            capability: &str,
+            handler_id: &str,
+            args: &serde_json::Value,
+        ) -> Result<serde_json::Value, RuntimeError> {
+            use tokio::io::AsyncWriteExt;
+
+            let failure = |message: String| RuntimeError::Capability {
+                capability: capability.to_string(),
+                message,
+            };
+            let request_id = self
+                .next_request
+                .fetch_add(1, Ordering::Relaxed)
+                .to_string();
+            let frame = serde_json::json!({
+                "v": 1,
+                "req_id": request_id,
+                "tool_id": handler_id,
+                "args": args,
+            });
+            let mut line = serde_json::to_string(&frame).map_err(|error| {
+                failure(format!("the invocation frame is not encodable: {error}"))
+            })?;
+            line.push('\n');
+
+            let mut guard = self.process.lock().await;
+            if guard.is_none() {
+                *guard = Some(self.spawn().map_err(failure)?);
+            }
+            let worker = guard.as_mut().expect("the worker was just started");
+
+            // Anything that goes wrong from here leaves the worker's state
+            // unknown, so it is torn down and the next invocation starts a
+            // clean one rather than reusing a stream mid-frame.
+            let exchange = async {
+                worker
+                    .stdin
+                    .write_all(line.as_bytes())
+                    .await
+                    .map_err(|error| format!("the worker did not accept the request: {error}"))?;
+                worker
+                    .stdin
+                    .flush()
+                    .await
+                    .map_err(|error| format!("the worker did not accept the request: {error}"))?;
+                match worker.stdout.next_line().await {
+                    Ok(Some(reply)) => Ok(reply),
+                    Ok(None) => Err("the worker closed its output before replying".to_string()),
+                    Err(error) => Err(format!("the worker reply could not be read: {error}")),
+                }
+            }
+            .await;
+            let reply = match exchange {
+                Ok(reply) => reply,
+                Err(message) => {
+                    if let Some(mut worker) = guard.take() {
+                        let _ = worker.child.start_kill();
+                    }
+                    // Only a `read_only` handler is ever admitted by this root
+                    // (see `admitted_capability_names`), so a lost reply leaves
+                    // no external effect in doubt: reporting a definite failure
+                    // is accurate here rather than optimistic.
+                    return Err(failure(message));
+                }
+            };
+            drop(guard);
+
+            let reply: WorkerReply = serde_json::from_str(&reply).map_err(|error| {
+                failure(format!("the worker reply is not a result frame: {error}"))
+            })?;
+            if reply.req_id != request_id {
+                return Err(failure(format!(
+                    "the worker replied to request '{}' while '{request_id}' was outstanding",
+                    reply.req_id
+                )));
+            }
+            match (reply.ok, reply.value, reply.error) {
+                (true, Some(value), _) => Ok(value),
+                (true, None, _) => Err(failure(
+                    "the worker reported success without a result value".to_string(),
+                )),
+                (false, _, Some(error)) => Err(failure(error)),
+                (false, _, None) => Err(failure(
+                    "the worker reported failure without a reason".to_string(),
+                )),
+            }
+        }
+
+        /// Start the selected worker over the admitted manifest.
+        fn spawn(&self) -> Result<WorkerProcess, String> {
+            let mut child = tokio::process::Command::new("node")
+                .arg(&self.worker_entry)
+                .arg(&self.manifest_file)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .map_err(|error| {
+                    format!(
+                        "the package handler worker {} could not be started with node: {error}",
+                        self.worker_entry.display()
+                    )
+                })?;
+            let stdin = child.stdin.take().ok_or("the worker has no input stream")?;
+            let stdout = child
+                .stdout
+                .take()
+                .ok_or("the worker has no output stream")?;
+            Ok(WorkerProcess {
+                child,
+                stdin,
+                stdout: tokio::io::AsyncBufReadExt::lines(tokio::io::BufReader::new(stdout)),
+            })
+        }
+    }
+
+    /// The worker's result frame.
+    #[derive(serde::Deserialize)]
+    struct WorkerReply {
+        req_id: String,
+        ok: bool,
+        #[serde(default)]
+        value: Option<serde_json::Value>,
+        #[serde(default)]
+        error: Option<String>,
+    }
+
+    /// One package-shipped Capability, registered like any other implementation.
+    struct PackageHandlerCapability {
+        metadata: RuntimeCapability,
+        handler_id: String,
+        worker: Arc<PackageHandlerWorker>,
+    }
+
+    impl PackageHandlerCapability {
+        /// Project one manifest descriptor onto runtime capability metadata.
+        ///
+        /// Both policy fields are read off the descriptor and neither is
+        /// invented here. `read_only` is what the handler declared about
+        /// itself; `requires_approval` is the permission decision `apxm agent
+        /// sync` resolved and wrote into the manifest. An absent decision is
+        /// not an allow — a manifest that never had one carried through is
+        /// gated, which fails closed at the approval interceptor rather than
+        /// running unapproved.
+        fn new(
+            descriptor: &HandlerDescriptor,
+            worker: Arc<PackageHandlerWorker>,
+        ) -> Result<Self, RuntimeError> {
+            let schema = descriptor
+                .schema
+                .clone()
+                .ok_or_else(|| RuntimeError::Capability {
+                    capability: descriptor.name.clone(),
+                    message: "a package handler is addressable only through its argument schema, \
+                              and this descriptor carries none"
+                        .to_string(),
+                })?;
+            let mut metadata = RuntimeCapability::new(
+                descriptor.name.clone(),
+                descriptor.description.clone().unwrap_or_else(|| {
+                    format!("Capability '{}' shipped by its package.", descriptor.name)
+                }),
+                schema,
+            );
+            if descriptor.read_only == Some(true) {
+                metadata = metadata.with_read_only();
+            }
+            if descriptor.requires_approval != Some(false) {
+                metadata = metadata.with_requires_approval();
+            }
+            Ok(Self {
+                metadata,
+                handler_id: descriptor.handler_id.clone(),
+                worker,
+            })
+        }
+    }
+
+    #[async_trait]
+    impl CapabilityExecutor for PackageHandlerCapability {
+        async fn execute(
+            &self,
+            args: HashMap<String, CapabilityValue>,
+        ) -> Result<CapabilityValue, RuntimeError> {
+            let mut encoded = serde_json::Map::with_capacity(args.len());
+            for (name, value) in args {
+                let json = value.to_json().map_err(|error| RuntimeError::Capability {
+                    capability: self.metadata.name.clone(),
+                    message: format!("argument '{name}' has no canonical JSON form: {error}"),
+                })?;
+                encoded.insert(name, json);
+            }
+            let value = self
+                .worker
+                .invoke(
+                    &self.metadata.name,
+                    &self.handler_id,
+                    &serde_json::Value::Object(encoded),
+                )
+                .await?;
+            CapabilityValue::try_from(value).map_err(|error| RuntimeError::Capability {
+                capability: self.metadata.name.clone(),
+                message: format!("the handler result has no runtime value mapping: {error}"),
+            })
+        }
+
+        fn metadata(&self) -> &RuntimeCapability {
+            &self.metadata
+        }
+    }
+
+    /// Register every Capability the supplied package ships.
+    ///
+    /// Registration happens before the admission policy is captured, so a
+    /// package Capability is in the admitted set on exactly the same terms a
+    /// builtin is: because its own metadata declares it read-only.
+    ///
+    /// A package handler may not take a builtin's name. `register` refuses a
+    /// duplicate, and that refusal is kept rather than softened into a
+    /// replacement: a package that could shadow `read` could change what every
+    /// program in it means by reading.
+    fn register_package_handlers(
+        system: &CapabilitySystem,
+        handlers: &super::AdmittedPackageHandlers,
+    ) -> Result<(), RuntimeError> {
+        let worker = Arc::new(PackageHandlerWorker::new(
+            &handlers.worker_entry,
+            &handlers.manifest,
+        )?);
+        for descriptor in &handlers.manifest.handlers {
+            // Exhaustive rather than ignored. This root was supplied with one
+            // worker and that worker evaluates TypeScript, so a second manifest
+            // language has to select its own adapter here instead of silently
+            // inheriting this one.
+            match descriptor.language {
+                apxm_core::types::HandlerLanguage::TypeScript => {}
+            }
+            system.register(Arc::new(PackageHandlerCapability::new(
+                descriptor,
+                Arc::clone(&worker),
+            )?))?;
+        }
+        Ok(())
+    }
+
     /// The locally admitted capability names: those whose own metadata declares
     /// them read-only.
     fn admitted_capability_names(system: &CapabilitySystem) -> BTreeSet<String> {
@@ -150,15 +459,26 @@ mod capability_port {
 
     impl LocalCapabilityPort {
         /// Build the local capability surface: register the standard tools that can
-        /// run without a sandbox, then gate them behind the read-only admission
-        /// policy.
+        /// run without a sandbox and whatever Capabilities the supplied package
+        /// ships, then gate them all behind the read-only admission policy.
+        ///
+        /// `handlers` is the exact package-handler implementation this root was
+        /// supplied with, or `None` when it was supplied with none. There is no
+        /// discovery step: an AIR naming a package Capability that no supplied
+        /// implementation covers is refused at admission.
         ///
         /// # Errors
         ///
-        /// Returns the registration error if a standard tool cannot be registered.
-        pub fn new() -> Result<Self, RuntimeError> {
+        /// Returns the registration error if a standard tool or a package
+        /// Capability cannot be registered.
+        pub fn new(
+            handlers: Option<&super::AdmittedPackageHandlers>,
+        ) -> Result<Self, RuntimeError> {
             let system = CapabilitySystem::new();
             register_standard_tools(&system, &local_tools_config())?;
+            if let Some(handlers) = handlers {
+                register_package_handlers(&system, handlers)?;
+            }
             system.register_interceptor(Arc::new(LocalAdmissionPolicy {
                 admitted: admitted_capability_names(&system),
             }));
@@ -306,7 +626,7 @@ mod capability_port {
 
         #[test]
         fn the_local_surface_registers_no_capability_that_needs_a_sandbox() {
-            let port = LocalCapabilityPort::new().expect("local capability port");
+            let port = LocalCapabilityPort::new(None).expect("local capability port");
             let registered = port.registered_names();
             assert!(
                 !registered.contains("bash"),
@@ -317,7 +637,7 @@ mod capability_port {
 
         #[test]
         fn only_the_read_only_surface_is_admitted() {
-            let port = LocalCapabilityPort::new().expect("local capability port");
+            let port = LocalCapabilityPort::new(None).expect("local capability port");
             assert!(port.admitted_names().contains("read"));
             assert!(
                 port.registered_names().contains("write"),
@@ -335,7 +655,7 @@ mod capability_port {
             let file = directory.path().join("payload.txt");
             std::fs::write(&file, "canonical capability payload\n").expect("write payload");
 
-            let port = LocalCapabilityPort::new().expect("local capability port");
+            let port = LocalCapabilityPort::new(None).expect("local capability port");
             let outcome = port
                 .invoke(request(
                     "read",
@@ -357,7 +677,7 @@ mod capability_port {
             let directory = tempfile::tempdir().expect("temporary directory");
             let target = directory.path().join("must-not-exist.txt");
 
-            let port = LocalCapabilityPort::new().expect("local capability port");
+            let port = LocalCapabilityPort::new(None).expect("local capability port");
             let outcome = port
                 .invoke(request(
                     "write",
@@ -383,7 +703,7 @@ mod capability_port {
 
         #[tokio::test]
         async fn a_non_object_argument_root_is_a_definite_failure() {
-            let port = LocalCapabilityPort::new().expect("local capability port");
+            let port = LocalCapabilityPort::new(None).expect("local capability port");
             let outcome = port
                 .invoke(request("read", serde_json::json!(["not", "a", "map"])))
                 .await;
@@ -399,13 +719,128 @@ mod capability_port {
 
         #[tokio::test]
         async fn an_unregistered_capability_fails_closed() {
-            let port = LocalCapabilityPort::new().expect("local capability port");
+            let port = LocalCapabilityPort::new(None).expect("local capability port");
             let outcome = port
                 .invoke(request("cap.absent", serde_json::json!({})))
                 .await;
             assert!(
                 matches!(outcome, CapabilityOutcome::Failed { .. }),
                 "an unregistered capability never completes: {outcome:?}"
+            );
+        }
+
+        /// One manifest descriptor, with the two policy fields under test left
+        /// to the caller and everything else fixed at a valid shape.
+        fn descriptor(
+            name: &str,
+            read_only: Option<bool>,
+            requires_approval: Option<bool>,
+        ) -> HandlerDescriptor {
+            HandlerDescriptor {
+                kind: apxm_core::types::HandlerKind::Tool,
+                language: apxm_core::types::HandlerLanguage::TypeScript,
+                handler_id: format!("sha256:{}", "a".repeat(64)),
+                module: format!("capabilities/{name}/handler"),
+                qualname: name.to_string(),
+                name: name.to_string(),
+                source: apxm_core::types::HandlerSource {
+                    artifact_path: format!("handlers/{name}.mjs"),
+                    content: "export const handler = {};\n".to_string(),
+                },
+                description: Some(format!("package handler {name}")),
+                schema: Some(serde_json::json!({
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false,
+                })),
+                read_only,
+                requires_approval,
+            }
+        }
+
+        fn supplied(descriptors: Vec<HandlerDescriptor>) -> super::super::AdmittedPackageHandlers {
+            super::super::AdmittedPackageHandlers {
+                // Never started: every test here stops at admission, which is
+                // the point — a refused package Capability must not reach a
+                // worker any more than a refused builtin reaches its
+                // implementation.
+                worker_entry: PathBuf::from("tool-worker.mjs"),
+                manifest: HandlerManifest::new(descriptors),
+            }
+        }
+
+        #[test]
+        fn a_package_capability_is_admitted_on_the_same_read_only_terms_as_a_builtin() {
+            let handlers = supplied(vec![
+                descriptor("proposal", Some(true), Some(false)),
+                descriptor("apply", Some(false), Some(false)),
+            ]);
+            let port = LocalCapabilityPort::new(Some(&handlers)).expect("local capability port");
+
+            assert!(port.registered_names().contains("proposal"));
+            assert!(
+                port.registered_names().contains("apply"),
+                "a package Capability is registered so its denial is a decision, not a miss"
+            );
+            assert!(port.admitted_names().contains("proposal"));
+            assert!(
+                !port.admitted_names().contains("apply"),
+                "a package handler that does not declare itself read-only is refused by the same \
+                 rule that refuses the write builtin"
+            );
+        }
+
+        #[tokio::test]
+        async fn a_package_capability_the_root_does_not_admit_never_reaches_its_worker() {
+            let handlers = supplied(vec![descriptor("apply", Some(false), Some(false))]);
+            let port = LocalCapabilityPort::new(Some(&handlers)).expect("local capability port");
+
+            let outcome = port.invoke(request("apply", serde_json::json!({}))).await;
+            let CapabilityOutcome::Failed { message } = outcome else {
+                panic!("an unadmitted package Capability must fail: {outcome:?}");
+            };
+            assert!(
+                message.contains("not admitted by canonical local execution"),
+                "the denial is the local admission policy, not a worker error: {message}"
+            );
+        }
+
+        #[tokio::test]
+        async fn a_package_capability_awaiting_approval_fails_before_its_worker() {
+            // `requires_approval` absent is not an allow: a manifest that never
+            // had a resolved decision carried into it is gated, so an unsynced
+            // package cannot run unapproved.
+            for undecided in [None, Some(true)] {
+                let handlers = supplied(vec![descriptor("gated", Some(true), undecided)]);
+                let port =
+                    LocalCapabilityPort::new(Some(&handlers)).expect("local capability port");
+                assert!(
+                    port.admitted_names().contains("gated"),
+                    "the read-only surface still admits it; approval is the separate gate"
+                );
+
+                let outcome = port.invoke(request("gated", serde_json::json!({}))).await;
+                let CapabilityOutcome::Failed { message } = outcome else {
+                    panic!(
+                        "an approval-gated Capability with no consent context must fail closed: {outcome:?}"
+                    );
+                };
+                assert!(
+                    message.contains("requires approval"),
+                    "the refusal is the approval gate every builtin passes through: {message}"
+                );
+            }
+        }
+
+        #[test]
+        fn a_package_handler_may_not_take_a_builtin_name() {
+            let handlers = supplied(vec![descriptor("read", Some(true), Some(false))]);
+            let Err(error) = LocalCapabilityPort::new(Some(&handlers)) else {
+                panic!("a package handler must not shadow a builtin");
+            };
+            assert!(
+                error.to_string().contains("already registered"),
+                "shadowing is refused rather than silently replacing the builtin: {error}"
             );
         }
     }
@@ -1199,11 +1634,27 @@ use apxm_program::external_agent::{AttributedEvent, AttributedEventKind, PeerUsa
 use capability_port::LocalCapabilityPort;
 use model_port::{LocalModelInferencePort, LocalModelRequestMetadata};
 
+/// The exact package-handler implementation a composition root is supplied
+/// with when it binds a package's own Capabilities.
+///
+/// The runtime never discovers a language worker. It is handed one, together
+/// with the manifest that worker may evaluate, exactly as it is handed every
+/// other implementation: `worker_entry` is the private `@apxm/agent-packaging`
+/// worker, and `manifest` is one package's validated `apxm.handler-manifest`.
+#[derive(Debug, Clone)]
+pub struct AdmittedPackageHandlers {
+    /// The private handler-worker entry the composition root selected.
+    pub worker_entry: PathBuf,
+    /// The validated manifest that worker may evaluate, and nothing else.
+    pub manifest: apxm_core::types::HandlerManifest,
+}
+
 pub async fn execute_canonical_command(
     input: PathBuf,
     invocation_admission: PathBuf,
     release: PathBuf,
     provenance: PathBuf,
+    handlers: Option<AdmittedPackageHandlers>,
     json_output: bool,
 ) -> Result<()> {
     let (air, artifact_bytes) = load_canonical_air(&input)?;
@@ -1218,7 +1669,7 @@ pub async fn execute_canonical_command(
         })?;
     let release_bytes = read_exact_bytes(&release, "release")?;
     let provenance_bytes = read_exact_bytes(&provenance, "provenance")?;
-    let output = CanonicalRuntime::new()
+    let output = CanonicalRuntime::with_package_handlers(handlers)
         .execute(
             air,
             &artifact_bytes,
@@ -1240,13 +1691,26 @@ pub async fn execute_canonical_command(
 /// conflict behavior instead of creating a second commit writer.
 pub struct CanonicalRuntime {
     commit: Arc<DevCommit>,
+    /// The package-handler implementations this root was supplied with, or
+    /// `None` when it was supplied with none. They belong to the runtime
+    /// instance rather than to each call: which implementations are bound is a
+    /// property of the composition, not of one execution.
+    handlers: Option<AdmittedPackageHandlers>,
 }
 
 impl CanonicalRuntime {
     #[must_use]
     pub fn new() -> Self {
+        Self::with_package_handlers(None)
+    }
+
+    /// One canonical runtime bound to the Capability implementations a package
+    /// supplies, alongside the built-in surface.
+    #[must_use]
+    pub fn with_package_handlers(handlers: Option<AdmittedPackageHandlers>) -> Self {
         Self {
             commit: Arc::new(DevCommit::default()),
+            handlers,
         }
     }
 
@@ -1284,8 +1748,10 @@ impl CanonicalRuntime {
         provenance_bytes: &[u8],
         model: Arc<LocalModelInferencePort>,
     ) -> Result<Value> {
-        let capability =
-            Arc::new(LocalCapabilityPort::new().map_err(|error| anyhow::anyhow!(error))?);
+        let capability = Arc::new(
+            LocalCapabilityPort::new(self.handlers.as_ref())
+                .map_err(|error| anyhow::anyhow!(error))?,
+        );
         let descriptor = canonical_runtime_descriptor();
         // Report both sides: this fails closed on any reference-profile change,
         // and without the expected digests the only way to re-mint a fixture is
@@ -2197,7 +2663,7 @@ mod tests {
     /// through this rather than passing a hand-written decision list, so a test
     /// can never admit a capability the composition root would refuse.
     fn local_admissions(air: &AirModule) -> BTreeMap<String, CapabilityInvocationAdmission> {
-        let port = LocalCapabilityPort::new().expect("local capability port");
+        let port = LocalCapabilityPort::new(None).expect("local capability port");
         let permissions = local_capability_permissions(air, &port.admitted_names())
             .expect("local permission resolution");
         local_capability_invocation_admissions(
@@ -2244,7 +2710,7 @@ mod tests {
         .expect("test invocation admission");
         runtime_profile_from_invocation(
             commit,
-            Arc::new(LocalCapabilityPort::new().expect("local capability port")),
+            Arc::new(LocalCapabilityPort::new(None).expect("local capability port")),
             Arc::new(LocalModelInferencePort::from_backend_roster().expect("local inference port")),
             Arc::new(LocalModelRequestMetadata),
             verified,
@@ -2491,7 +2957,7 @@ mod tests {
         let commit = Arc::new(DevCommit::default());
         let ports = dev_ports(
             commit,
-            Arc::new(LocalCapabilityPort::new().expect("local capability port")),
+            Arc::new(LocalCapabilityPort::new(None).expect("local capability port")),
             Arc::new(LocalModelInferencePort::from_backend_roster().expect("local inference port")),
             local_model_request_metadata(),
         )
@@ -2548,7 +3014,7 @@ mod tests {
         let commit = Arc::new(DevCommit::default());
         let ports = dev_ports(
             commit,
-            Arc::new(LocalCapabilityPort::new().expect("local capability port")),
+            Arc::new(LocalCapabilityPort::new(None).expect("local capability port")),
             Arc::new(LocalModelInferencePort::from_backend_roster().expect("local inference port")),
             local_model_request_metadata(),
         )
@@ -2802,7 +3268,7 @@ mod tests {
     #[test]
     fn a_capability_the_local_root_does_not_ship_is_never_resolved_to_allow() {
         let air = read_then_write_air("Cargo.toml", "/dev/null");
-        let admitted = LocalCapabilityPort::new()
+        let admitted = LocalCapabilityPort::new(None)
             .expect("local capability port")
             .admitted_names();
         assert!(
@@ -2841,7 +3307,7 @@ mod tests {
         let commit = Arc::new(DevCommit::default());
         let ports = dev_ports(
             commit.clone(),
-            Arc::new(LocalCapabilityPort::new().expect("local capability port")),
+            Arc::new(LocalCapabilityPort::new(None).expect("local capability port")),
             Arc::new(LocalModelInferencePort::from_backend_roster().expect("local inference port")),
             local_model_request_metadata(),
         )
@@ -2961,7 +3427,7 @@ mod tests {
         let commit = Arc::new(DevCommit::default());
         let ports = dev_ports(
             commit.clone(),
-            Arc::new(LocalCapabilityPort::new().expect("local capability port")),
+            Arc::new(LocalCapabilityPort::new(None).expect("local capability port")),
             Arc::new(LocalModelInferencePort::from_backend_roster().expect("local inference port")),
             local_model_request_metadata(),
         )
