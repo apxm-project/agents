@@ -15,8 +15,9 @@ use crate::llm::{ProviderProtocol, normalize_endpoint_for_protocol};
 use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
 use apxm_core::constants::llm::apxm as apxm_llm;
+use apxm_core::constants::llm::apxm::graph_hints as hint_keys;
 use apxm_core::types::{
-    BackendGraphCapabilities, EvidenceKind, GraphHintCapabilities, GraphHintField,
+    BackendGraphCapabilities, BackendMechanismRef, EvidenceKind, GraphHintCapabilities, GraphHintField,
     GraphHintFieldCapability, GraphHintPlan, GraphHintProjector, GraphLifecycleCapability,
     GraphMetadata, GraphStatusSnapshot, ModelCapabilities, ModelInfo, OptimizationObjective,
     ProjectionOutcome,
@@ -73,9 +74,9 @@ fn prune_isolated_hints(value: serde_json::Value, mode: &str) -> serde_json::Val
         return value;
     };
     let drop: &[&str] = match mode {
-        "priority" => &["intents"],
-        "prefix" => &["facts"],
-        "registration" => &["facts", "intents"],
+        "priority" => &[hint_keys::INTENTS],
+        "prefix" => &[hint_keys::FACTS],
+        "registration" => &[hint_keys::FACTS, hint_keys::INTENTS],
         _ => &[],
     };
     for key in drop {
@@ -855,15 +856,15 @@ impl GraphHintProjector for GraphAwareVllmBackend {
         outcomes.insert(
             GraphHintField::Scope,
             ProjectionOutcome::Applied {
-                mechanism_ref: "vllm.apxm_xargs".into(),
+                mechanism_ref: BackendMechanismRef::VllmApxmXargs,
             },
         );
         if hints.facts.critical_path == Some(true) {
             outcomes.insert(
                 GraphHintField::CriticalPath,
                 ProjectionOutcome::Approximated {
-                    mechanism_ref: "vllm.request_priority".into(),
-                    reason: "critical_path".into(),
+                    mechanism_ref: BackendMechanismRef::VllmRequestPriority,
+                    reason: hint_keys::CRITICAL_PATH.into(),
                 },
             );
         }
@@ -871,8 +872,8 @@ impl GraphHintProjector for GraphAwareVllmBackend {
             outcomes.insert(
                 GraphHintField::ReusePreference,
                 ProjectionOutcome::Approximated {
-                    mechanism_ref: "vllm.prefix_pin".into(),
-                    reason: "prefer_when_beneficial".into(),
+                    mechanism_ref: BackendMechanismRef::VllmPrefixPin,
+                    reason: hint_keys::PREFER_WHEN_BENEFICIAL.into(),
                 },
             );
         }

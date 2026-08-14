@@ -3,11 +3,15 @@
 //! Provider mechanisms (pins, slots, queue priority, `vllm_xargs`) do not
 //! belong here. Adapters project this contract onto an `apxm` server branch.
 
+use crate::constants::llm::apxm::graph_hints as hint_keys;
 use crate::types::values::Value;
-use serde::{Deserialize, Serialize};
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fmt;
+use std::str::FromStr;
 
-pub const GRAPH_HINTS_SCHEMA: &str = "apxm.inference-graph-hints";
+pub const GRAPH_HINTS_SCHEMA: &str = hint_keys::SCHEMA;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphHintScope {
@@ -20,10 +24,10 @@ pub struct GraphHintScope {
 impl GraphHintScope {
     pub fn validate(&self) -> Result<(), String> {
         for (name, value) in [
-            ("graph_ref", &self.graph_ref),
-            ("graph_execution_ref", &self.graph_execution_ref),
-            ("node_ref", &self.node_ref),
-            ("node_execution_ref", &self.node_execution_ref),
+            (hint_keys::GRAPH_REF, &self.graph_ref),
+            (hint_keys::GRAPH_EXECUTION_REF, &self.graph_execution_ref),
+            (hint_keys::NODE_REF, &self.node_ref),
+            (hint_keys::NODE_EXECUTION_REF, &self.node_execution_ref),
         ] {
             if value.trim().is_empty() {
                 return Err(format!("{name} must be a non-empty opaque reference"));
@@ -33,12 +37,51 @@ impl GraphHintScope {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WorkClass {
     Short,
     Medium,
     Long,
+}
+
+impl WorkClass {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Short => hint_keys::WORK_SHORT,
+            Self::Medium => hint_keys::WORK_MEDIUM,
+            Self::Long => hint_keys::WORK_LONG,
+        }
+    }
+}
+
+impl fmt::Display for WorkClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for WorkClass {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            hint_keys::WORK_SHORT => Ok(Self::Short),
+            hint_keys::WORK_MEDIUM => Ok(Self::Medium),
+            hint_keys::WORK_LONG => Ok(Self::Long),
+            _ => Err(format!("unknown work class: {value}")),
+        }
+    }
+}
+
+impl Serialize for WorkClass {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for WorkClass {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::from_str(&String::deserialize(deserializer)?).map_err(D::Error::custom)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -67,18 +110,145 @@ pub struct NodeGraphFacts {
     pub coexecution_group_ref: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OptimizationObjective {
     MinimizeGraphCompletionTime,
     Balanced,
     MaximizeThroughput,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+impl OptimizationObjective {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::MinimizeGraphCompletionTime => hint_keys::MINIMIZE_GRAPH_COMPLETION_TIME,
+            Self::Balanced => hint_keys::BALANCED,
+            Self::MaximizeThroughput => hint_keys::MAXIMIZE_THROUGHPUT,
+        }
+    }
+}
+
+impl fmt::Display for OptimizationObjective {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for OptimizationObjective {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            hint_keys::MINIMIZE_GRAPH_COMPLETION_TIME => Ok(Self::MinimizeGraphCompletionTime),
+            hint_keys::BALANCED => Ok(Self::Balanced),
+            hint_keys::MAXIMIZE_THROUGHPUT => Ok(Self::MaximizeThroughput),
+            _ => Err(format!("unknown optimization objective: {value}")),
+        }
+    }
+}
+
+impl Serialize for OptimizationObjective {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for OptimizationObjective {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::from_str(&String::deserialize(deserializer)?).map_err(D::Error::custom)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ReusePreference {
     PreferWhenBeneficial,
+}
+
+impl ReusePreference {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PreferWhenBeneficial => hint_keys::PREFER_WHEN_BENEFICIAL,
+        }
+    }
+}
+
+impl fmt::Display for ReusePreference {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ReusePreference {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            hint_keys::PREFER_WHEN_BENEFICIAL => Ok(Self::PreferWhenBeneficial),
+            _ => Err(format!("unknown reuse preference: {value}")),
+        }
+    }
+}
+
+impl Serialize for ReusePreference {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ReusePreference {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::from_str(&String::deserialize(deserializer)?).map_err(D::Error::custom)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BackendMechanismRef {
+    VllmApxmXargs,
+    VllmRequestPriority,
+    VllmPrefixPin,
+    LlamaApxmEnvelope,
+    LlamaCachePrompt,
+}
+
+impl BackendMechanismRef {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::VllmApxmXargs => hint_keys::MECHANISM_VLLM_APXM_XARGS,
+            Self::VllmRequestPriority => hint_keys::MECHANISM_VLLM_REQUEST_PRIORITY,
+            Self::VllmPrefixPin => hint_keys::MECHANISM_VLLM_PREFIX_PIN,
+            Self::LlamaApxmEnvelope => hint_keys::MECHANISM_LLAMA_APXM_ENVELOPE,
+            Self::LlamaCachePrompt => hint_keys::MECHANISM_LLAMA_CACHE_PROMPT,
+        }
+    }
+}
+
+impl fmt::Display for BackendMechanismRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for BackendMechanismRef {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            hint_keys::MECHANISM_VLLM_APXM_XARGS => Ok(Self::VllmApxmXargs),
+            hint_keys::MECHANISM_VLLM_REQUEST_PRIORITY => Ok(Self::VllmRequestPriority),
+            hint_keys::MECHANISM_VLLM_PREFIX_PIN => Ok(Self::VllmPrefixPin),
+            hint_keys::MECHANISM_LLAMA_APXM_ENVELOPE => Ok(Self::LlamaApxmEnvelope),
+            hint_keys::MECHANISM_LLAMA_CACHE_PROMPT => Ok(Self::LlamaCachePrompt),
+            _ => Err(format!("unknown backend mechanism: {value}")),
+        }
+    }
+}
+
+impl Serialize for BackendMechanismRef {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for BackendMechanismRef {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::from_str(&String::deserialize(deserializer)?).map_err(D::Error::custom)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -108,22 +278,6 @@ pub struct ApxmGraphHints {
     pub facts: NodeGraphFacts,
     #[serde(default)]
     pub intents: GraphExecutionIntents,
-}
-
-impl Default for ApxmGraphHints {
-    fn default() -> Self {
-        Self {
-            schema: GRAPH_HINTS_SCHEMA.to_owned(),
-            scope: GraphHintScope {
-                graph_ref: "graph:unspecified".into(),
-                graph_execution_ref: "graph-execution:unspecified".into(),
-                node_ref: "node:unspecified".into(),
-                node_execution_ref: "node-execution:unspecified".into(),
-            },
-            facts: NodeGraphFacts::default(),
-            intents: GraphExecutionIntents::default(),
-        }
-    }
 }
 
 impl ApxmGraphHints {
@@ -208,7 +362,7 @@ impl ApxmGraphHints {
                     .filter_map(|value| {
                         value
                             .as_u64()
-                            .map(|raw| format!("node:{raw}"))
+                            .map(|raw| raw.to_string())
                             .or_else(|| value.as_string().map(ToOwned::to_owned))
                     })
                     .collect()
@@ -239,10 +393,10 @@ impl ApxmGraphHints {
         let hints = Self {
             schema: GRAPH_HINTS_SCHEMA.to_owned(),
             scope: GraphHintScope {
-                graph_ref: graph_id,
-                graph_execution_ref: "graph-execution:materialize".into(),
+                graph_ref: graph_id.clone(),
+                graph_execution_ref: graph_id,
                 node_ref: node_label.clone(),
-                node_execution_ref: format!("node-execution:{node_label}"),
+                node_execution_ref: node_label,
             },
             facts: NodeGraphFacts {
                 critical_path,
@@ -352,8 +506,11 @@ impl GraphHintCapabilities {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectionOutcome {
-    Applied { mechanism_ref: String },
-    Approximated { mechanism_ref: String, reason: String },
+    Applied { mechanism_ref: BackendMechanismRef },
+    Approximated {
+        mechanism_ref: BackendMechanismRef,
+        reason: String,
+    },
     OmittedUnsupported,
     OmittedByProfile { reason: String },
 }
@@ -640,12 +797,30 @@ mod tests {
     fn zero_capability_plan_omits_every_field() {
         struct Zero;
         impl GraphHintProjector for Zero {}
-        let hints = ApxmGraphHints::default();
+        let hints = ApxmGraphHints::critical_path("g", "gx", "n", "nx", vec![]);
         let plan = Zero.plan_graph_hints(Some(&hints)).expect("plan");
         assert_eq!(plan.outcomes.len(), GraphHintField::ALL.len());
         assert!(plan
             .outcomes
             .values()
             .all(|outcome| matches!(outcome, ProjectionOutcome::OmittedUnsupported)));
+    }
+
+    #[test]
+    fn envelope_uses_owned_hint_keys() {
+        let hints = ApxmGraphHints::critical_path("g", "gx", "n", "nx", vec!["s".into()]);
+        let value = serde_json::to_value(&hints).expect("serialize");
+        assert_eq!(value[hint_keys::SCHEMA_FIELD], hint_keys::SCHEMA);
+        assert!(value.get(hint_keys::SCOPE).is_some());
+        assert!(value.get(hint_keys::FACTS).is_some());
+        assert!(value.get(hint_keys::INTENTS).is_some());
+        assert_eq!(
+            value[hint_keys::INTENTS][hint_keys::REUSABLE_CONTEXT][hint_keys::PREFERENCE],
+            hint_keys::PREFER_WHEN_BENEFICIAL
+        );
+        assert_eq!(
+            BackendMechanismRef::LlamaCachePrompt.as_str(),
+            hint_keys::MECHANISM_LLAMA_CACHE_PROMPT
+        );
     }
 }

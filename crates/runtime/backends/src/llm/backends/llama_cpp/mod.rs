@@ -5,8 +5,9 @@ use super::openai::backend::validate_provider_dispatch;
 use super::traits::StreamChunk;
 use super::{LLMBackend, LLMRequest, LLMResponse};
 use anyhow::Result;
+use apxm_core::constants::llm::apxm::graph_hints as hint_keys;
 use apxm_core::types::{
-    GraphHintCapabilities, GraphHintField, GraphHintPlan, GraphHintProjector,
+    BackendMechanismRef, GraphHintCapabilities, GraphHintField, GraphHintPlan, GraphHintProjector,
     GraphLifecycleCapability, GraphMetadata, GraphStatusSnapshot, ModelCapabilities, ModelInfo,
     ProjectionOutcome,
 };
@@ -34,9 +35,12 @@ impl LlamaCppBackend {
             .take()
             .unwrap_or_else(|| serde_json::json!({}));
         if let serde_json::Value::Object(ref mut map) = extra {
-            map.insert("apxm".into(), serde_json::to_value(&hints).unwrap_or_default());
+            map.insert(
+                hint_keys::ENVELOPE.into(),
+                serde_json::to_value(&hints).unwrap_or_default(),
+            );
             if hints.prefers_reuse() {
-                map.insert("cache_prompt".into(), serde_json::json!(true));
+                map.insert(hint_keys::LLAMA_CACHE_PROMPT.into(), serde_json::json!(true));
             }
         }
         request.extra_body = Some(extra);
@@ -59,7 +63,7 @@ impl LLMBackend for LlamaCppBackend {
     }
 
     fn name(&self) -> &str {
-        "llamacpp"
+        crate::llm::ProviderProtocol::LlamaCpp.as_str()
     }
 
     fn model(&self) -> &str {
@@ -127,14 +131,14 @@ impl GraphHintProjector for LlamaCppBackend {
         outcomes.insert(
             GraphHintField::Scope,
             ProjectionOutcome::Applied {
-                mechanism_ref: "llama.apxm_envelope".into(),
+                mechanism_ref: BackendMechanismRef::LlamaApxmEnvelope,
             },
         );
         if hints.prefers_reuse() {
             outcomes.insert(
                 GraphHintField::ReusePreference,
                 ProjectionOutcome::Applied {
-                    mechanism_ref: "llama.cache_prompt".into(),
+                    mechanism_ref: BackendMechanismRef::LlamaCachePrompt,
                 },
             );
         }
