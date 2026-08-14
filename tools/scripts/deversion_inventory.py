@@ -21,6 +21,7 @@ Two modes:
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -125,19 +126,12 @@ FOREIGN_IDS = (
 # thing under test, so it must survive. After the sweep `is_schema_id` rejects any
 # Agents-owned suffixed id, which keeps every one of these a valid negative case.
 #
-# The two standalone `contracts/vectors/apxm.*.v1-rejection.json` files this set used
-# to name were folded into the de-versioned vector files as named negative cases
-# (`"name": "incompatible-air-v1-schema-version-rejected"`). The entries move with
-# them rather than being dropped: the retired AIR and FrontendGraph coordinates are
-# still under test, just from a new home, and dropping the entries would make --check
-# report them as unswept.
-REJECTION_FIXTURE_PATHS = frozenset(
-    {
-        "tools/tests/test_no_active_program_contract_v1.py",
-        "contracts/vectors/apxm.air.json",
-        "contracts/vectors/apxm.frontend-graph.json",
-    }
-)
+# Only non-vector files are listed here. A whole-file exemption is blunt — it also
+# stops the gate seeing a genuinely unswept id elsewhere in the same file — so the
+# contract vectors, which are uniformly a JSON list of `{name, input, expected_valid}`
+# cases, are exempted per-case by `negative_case_ids` instead. That keeps a positive
+# vector in a file that also holds negative ones fully in scope.
+REJECTION_FIXTURE_PATHS = frozenset({"tools/tests/test_no_active_program_contract_v1.py"})
 
 # Preserved paper history (CLAUDE.md §8). Never swept.
 PRESERVED_PREFIXES = ("docs/pxm/",)
@@ -170,6 +164,32 @@ def deversion_filename(name: str) -> str:
     return re.sub(r"[._-]v[0-9]+(?=[._-]|$)", "", name)
 
 
+def negative_case_ids(rel: str, text: str) -> set[str]:
+    """Ids that appear only inside `expected_valid: false` cases of a contract vector.
+
+    A rejection case must carry the retired coordinate verbatim — that string is
+    what the reader has to refuse — so those occurrences are not unswept ids. This
+    is narrower than exempting the file: an id that also appears in a positive case
+    is not returned here, and so stays a violation.
+    """
+    if not rel.startswith("contracts/vectors/") or not rel.endswith(".json"):
+        return set()
+    try:
+        cases = json.loads(text)
+    except json.JSONDecodeError:
+        return set()
+    if not isinstance(cases, list):
+        return set()
+    negative: set[str] = set()
+    positive: set[str] = set()
+    for case in cases:
+        if not isinstance(case, dict):
+            continue
+        side = negative if case.get("expected_valid") is False else positive
+        side.update(VERSIONED_ID.findall(json.dumps(case)))
+    return negative - positive
+
+
 def scan() -> dict[str, dict[str, int]]:
     """Map each id to {path: occurrence_count}."""
     found: dict[str, dict[str, int]] = {}
@@ -181,7 +201,10 @@ def scan() -> dict[str, dict[str, int]]:
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, FileNotFoundError, IsADirectoryError, OSError):
             continue
+        under_test = negative_case_ids(rel, text)
         for schema_id in VERSIONED_ID.findall(text):
+            if schema_id in under_test:
+                continue
             found.setdefault(schema_id, {}).setdefault(rel, 0)
             found[schema_id][rel] += 1
     return found
