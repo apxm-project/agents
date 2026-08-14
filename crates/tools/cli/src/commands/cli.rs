@@ -333,6 +333,14 @@ pub enum CodegenAction {
         #[arg(long)]
         check: bool,
     },
+    /// Generate the shared frontend-conformance harness into every authoring
+    /// frontend and its test runner
+    FrontendConformance {
+        /// Check that the generated harness files are up to date without
+        /// writing them
+        #[arg(long)]
+        check: bool,
+    },
     /// Generate the authoring diagnostic codes into both authoring frontends
     Diagnostics {
         /// Check that the generated diagnostic files are up to date without

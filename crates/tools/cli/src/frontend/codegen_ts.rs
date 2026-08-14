@@ -5,6 +5,7 @@ use anyhow::Result;
 
 use super::codegen_capabilities::TYPESCRIPT_CAPABILITIES_FILE;
 use super::codegen_diagnostics::TYPESCRIPT_DIAGNOSTICS_FILE;
+use super::codegen_frontend_conformance::TYPESCRIPT_CONFORMANCE_FILE;
 use super::codegen_frontend_records::TYPESCRIPT_FRONTEND_RECORDS_FILE;
 use super::codegen_frontend_serializers::TYPESCRIPT_FRONTEND_SERIALIZERS_FILE;
 use super::codegen_frontend_vocabulary::TYPESCRIPT_FRONTEND_GRAPH_FILE;
@@ -22,10 +23,12 @@ pub const RUNTIME_EVIDENCE_TYPESCRIPT_FILE: &str = "runtime-evidence.ts";
 /// owns the capability catalogue, `permissions` owns the permission decision
 /// vocabulary, `frontend-vocabulary` owns the source-graph closed sets,
 /// `frontend-records` owns the FrontendGraph contract record types,
-/// `frontend-serializers` owns their serializers, and `diagnostics` owns the
-/// rejection-code vocabulary — all seven write here.
+/// `frontend-serializers` owns their serializers, `diagnostics` owns the
+/// rejection-code vocabulary, and `frontend-conformance` owns the shared
+/// conformance corpus harness — all eight write here.
 pub const GENERATED_TYPESCRIPT_FRONTEND_FILES: &[&str] = &[
     TYPESCRIPT_CAPABILITIES_FILE,
+    TYPESCRIPT_CONFORMANCE_FILE,
     TYPESCRIPT_DIAGNOSTICS_FILE,
     TYPESCRIPT_FRONTEND_GRAPH_FILE,
     TYPESCRIPT_FRONTEND_RECORDS_FILE,

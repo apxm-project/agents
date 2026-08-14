@@ -1,0 +1,1253 @@
+{
+  "schema_version": "apxm.frontend-conformance",
+  "surface_version": "apxm.frontend-graph",
+  "type_refs": [
+    "Input",
+    "Output"
+  ],
+  "contexts": [
+    {
+      "name": "Conversation",
+      "fields": [
+        {
+          "name": "messages",
+          "scalar": "list",
+          "default": []
+        }
+      ]
+    },
+    {
+      "name": "InitialContext",
+      "fields": [
+        {
+          "name": "messages",
+          "scalar": "list",
+          "default": []
+        }
+      ]
+    },
+    {
+      "name": "ReviewContext",
+      "fields": [
+        {
+          "name": "completed",
+          "scalar": "boolean",
+          "default": false
+        }
+      ]
+    },
+    {
+      "name": "NestedContext",
+      "fields": [
+        {
+          "name": "depth",
+          "scalar": "integer",
+          "default": 0
+        }
+      ]
+    }
+  ],
+  "vectors": [
+    {
+      "id": "minimal_model_agent",
+      "covers": "A one-shot Agent whose only effect is a Model call, and the model.call it lowers to.",
+      "declarations": [
+        {
+          "name": "SummarizerModel",
+          "marker": "Model",
+          "target_ref": "summarizer.model"
+        }
+      ],
+      "programs": [
+        {
+          "program_id": "Summarizer",
+          "input": "Input",
+          "output": "Output",
+          "body": [
+            {
+              "stmt": "return",
+              "value": {
+                "expr": "effect",
+                "binding": "SummarizerModel",
+                "arguments": [
+                  {
+                    "expr": "name",
+                    "name": "input"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expect": [
+        {
+          "query": "graph:schema_version",
+          "equals": "apxm.frontend-graph"
+        },
+        {
+          "query": "graph:program_definitions[].program_id",
+          "equals": [
+            "Summarizer"
+          ]
+        },
+        {
+          "query": "graph:program_definitions[].input_type_ref",
+          "equals": [
+            "Input"
+          ]
+        },
+        {
+          "query": "graph:program_definitions[].output_type_ref",
+          "equals": [
+            "Output"
+          ]
+        },
+        {
+          "query": "graph:program_definitions[].entrypoint",
+          "equals": [
+            "Summarizer"
+          ]
+        },
+        {
+          "query": "graph:declarations[].decl_kind",
+          "equals": [
+            "model_binding"
+          ]
+        },
+        {
+          "query": "graph:call_intents[].intent_kind",
+          "equals": [
+            "model_invocation"
+          ]
+        },
+        {
+          "query": "graph:model_requirements",
+          "equals": [
+            {
+              "model_target_ref": "summarizer.model"
+            }
+          ]
+        },
+        {
+          "query": "graph:source_map.node_spans[].source_file",
+          "every_matches": "^(?!/)(?!.*/home/)"
+        },
+        {
+          "query": "diagnostics",
+          "equals": null
+        },
+        {
+          "query": "air:semantic_operations[].op",
+          "equals": [
+            "model.call"
+          ]
+        },
+        {
+          "query": "air:semantic_operations[0].operands[].slot",
+          "includes": [
+            "model_ref",
+            "request"
+          ]
+        },
+        {
+          "query": "air:semantic_operations[0].operands[slot=model_ref].value_id",
+          "equals": [
+            "summarizer.model"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "initial_context_assignment",
+      "covers": "A Context assigned before the first effect flows from the region entry, in the graph and in AIR.",
+      "declarations": [
+        {
+          "name": "InitialModel",
+          "marker": "Model",
+          "target_ref": "initial.model"
+        }
+      ],
+      "programs": [
+        {
+          "program_id": "InitialContextAgent",
+          "input": "Input",
+          "output": "Output",
+          "context": "InitialContext",
+          "body": [
+            {
+              "stmt": "set_context",
+              "context": "InitialContext",
+              "values": {}
+            },
+            {
+              "stmt": "return",
+              "value": {
+                "expr": "effect",
+                "binding": "InitialModel",
+                "arguments": [
+                  {
+                    "expr": "name",
+                    "name": "input"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expect": [
+        {
+          "query": "graph:context_flow",
+          "length": 1
+        },
+        {
+          "query": "graph:context_flow[].from_node",
+          "equals": [
+            "InitialContextAgent.body"
+          ]
+        },
+        {
+          "query": "graph:context_flow[].context_type_ref",
+          "equals": [
+            "InitialContext"
+          ]
+        },
+        {
+          "query": "graph:context_flow[0].to_node",
+          "same_as": "graph:call_intents[0].node_id"
+        },
+        {
+          "query": "diagnostics",
+          "equals": null
+        },
+        {
+          "query": "air:context_flow[].from_node",
+          "equals": [
+            "InitialContextAgent.body"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "contextual_tool_loop",
+      "covers": "A Context-carrying loop Agent with a conditional Tool call and a Model call, and the capability.invoke inside ais.loop it lowers to.",
+      "declarations": [
+        {
+          "name": "SearchWeb",
+          "marker": "Tool",
+          "target_ref": "search.web.capability"
+        },
+        {
+          "name": "SupportModel",
+          "marker": "Model",
+          "target_ref": "support.model"
+        }
+      ],
+      "programs": [
+        {
+          "program_id": "Support",
+          "input": "Input",
+          "output": "Output",
+          "context": "Conversation",
+          "body": [
+            {
+              "stmt": "loop_forever",
+              "body": [
+                {
+                  "stmt": "let_null",
+                  "name": "research"
+                },
+                {
+                  "stmt": "if_not_null",
+                  "value": {
+                    "expr": "name",
+                    "name": "input"
+                  },
+                  "body": [
+                    {
+                      "stmt": "bind",
+                      "name": "research",
+                      "value": {
+                        "expr": "effect",
+                        "binding": "SearchWeb",
+                        "arguments": [
+                          {
+                            "expr": "name",
+                            "name": "input"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "stmt": "bind",
+                  "name": "response",
+                  "value": {
+                    "expr": "effect",
+                    "binding": "SupportModel",
+                    "arguments": [
+                      {
+                        "expr": "name",
+                        "name": "input"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "stmt": "set_context",
+                  "context": "Conversation",
+                  "values": {}
+                },
+                {
+                  "stmt": "return",
+                  "value": {
+                    "expr": "name",
+                    "name": "response"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expect": [
+        {
+          "query": "graph:declarations[].decl_kind",
+          "set_equals": [
+            "context",
+            "tool_binding",
+            "model_binding"
+          ]
+        },
+        {
+          "query": "graph:call_intents[].intent_kind",
+          "equals": [
+            "tool_invocation",
+            "model_invocation"
+          ]
+        },
+        {
+          "query": "graph:control_intents[].control_kind",
+          "set_equals": [
+            "loop",
+            "conditional",
+            "return"
+          ]
+        },
+        {
+          "query": "graph:capability_requirements",
+          "equals": [
+            {
+              "capability_ref": "search.web.capability",
+              "tool_schema_present": true
+            }
+          ]
+        },
+        {
+          "query": "graph:declarations[].decl_id",
+          "includes": [
+            "decl.context.Conversation"
+          ]
+        },
+        {
+          "query": "diagnostics",
+          "equals": null
+        },
+        {
+          "query": "air:semantic_operations[].op",
+          "includes": [
+            "capability.invoke",
+            "model.call"
+          ]
+        },
+        {
+          "query": "air:structural_ir[].kind",
+          "includes": [
+            "ais.loop",
+            "branch"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability_declared_twice",
+      "covers": "One capability reference declared as both a Tool and a plain Capability keeps both requirements and the permission each asked for, while binding one Port Requirement.",
+      "declarations": [
+        {
+          "name": "AuditCapability",
+          "marker": "Capability",
+          "target_ref": "cap.audit",
+          "permission": {
+            "decision": "allow"
+          }
+        },
+        {
+          "name": "AuditModel",
+          "marker": "Model",
+          "target_ref": "audit.model"
+        },
+        {
+          "name": "AuditTool",
+          "marker": "Tool",
+          "target_ref": "cap.audit",
+          "permission": {
+            "decision": "ask",
+            "reason": "Reads whatever the model asks for."
+          }
+        }
+      ],
+      "programs": [
+        {
+          "program_id": "Auditor",
+          "input": "Input",
+          "output": "Output",
+          "body": [
+            {
+              "stmt": "bind",
+              "name": "findings",
+              "value": {
+                "expr": "effect",
+                "binding": "AuditTool",
+                "arguments": [
+                  {
+                    "expr": "name",
+                    "name": "input"
+                  }
+                ]
+              }
+            },
+            {
+              "stmt": "bind",
+              "name": "archived",
+              "value": {
+                "expr": "effect",
+                "binding": "AuditCapability",
+                "arguments": [
+                  {
+                    "expr": "name",
+                    "name": "findings"
+                  }
+                ]
+              }
+            },
+            {
+              "stmt": "return",
+              "value": {
+                "expr": "effect",
+                "binding": "AuditModel",
+                "arguments": [
+                  {
+                    "expr": "name",
+                    "name": "archived"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expect": [
+        {
+          "query": "graph:capability_requirements",
+          "equals": [
+            {
+              "capability_ref": "cap.audit",
+              "tool_schema_present": false,
+              "requested_permission": "allow"
+            },
+            {
+              "capability_ref": "cap.audit",
+              "tool_schema_present": true,
+              "requested_permission": {
+                "decision": "ask",
+                "reason": "Reads whatever the model asks for."
+              }
+            }
+          ]
+        },
+        {
+          "query": "diagnostics",
+          "equals": null
+        },
+        {
+          "query": "artifact:artifact_semantic_requirements[typed_port_slot=cap.audit].typed_port_slot",
+          "length": 1
+        }
+      ]
+    },
+    {
+      "id": "composed_agent_event_and_task_group",
+      "covers": "Agent composition, event waiting, a structured task scope, a resumable yield, and a model-scope Hook in one program.",
+      "declarations": [
+        {
+          "name": "ReviewModel",
+          "marker": "Model",
+          "target_ref": "review.model"
+        },
+        {
+          "name": "SpecialistModel",
+          "marker": "Model",
+          "target_ref": "specialist.model"
+        },
+        {
+          "name": "Approval",
+          "marker": "Event",
+          "target_ref": "approval.event"
+        }
+      ],
+      "programs": [
+        {
+          "program_id": "Specialist",
+          "input": "Input",
+          "output": "Output",
+          "context": "ReviewContext",
+          "body": [
+            {
+              "stmt": "return",
+              "value": {
+                "expr": "effect",
+                "binding": "SpecialistModel",
+                "arguments": [
+                  {
+                    "expr": "name",
+                    "name": "input"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "program_id": "Coordinator",
+          "input": "Input",
+          "output": "Output",
+          "context": "ReviewContext",
+          "hooks": [
+            {
+              "name": "RecordModelStart",
+              "phase": "before",
+              "target": "ReviewModel",
+              "scope": "model",
+              "body": []
+            }
+          ],
+          "body": [
+            {
+              "stmt": "loop_forever",
+              "body": [
+                {
+                  "stmt": "new_program",
+                  "name": "specialist",
+                  "program": "Specialist",
+                  "context": "ReviewContext"
+                },
+                {
+                  "stmt": "bind",
+                  "name": "review",
+                  "value": {
+                    "expr": "invoke",
+                    "instance": "specialist",
+                    "arguments": [
+                      {
+                        "expr": "name",
+                        "name": "input"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "stmt": "bind",
+                  "name": "approved",
+                  "value": {
+                    "expr": "await_event",
+                    "event": "Approval"
+                  }
+                },
+                {
+                  "stmt": "task_group",
+                  "body": [
+                    {
+                      "stmt": "bind",
+                      "name": "result",
+                      "value": {
+                        "expr": "effect",
+                        "binding": "ReviewModel",
+                        "arguments": [
+                          {
+                            "expr": "name",
+                            "name": "review"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "stmt": "set_context",
+                  "context": "ReviewContext",
+                  "values": {
+                    "completed": true
+                  }
+                },
+                {
+                  "stmt": "yield",
+                  "name": "input",
+                  "value": {
+                    "expr": "name",
+                    "name": "review"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expect": [
+        {
+          "query": "graph:imported_program_refs[].program_ref",
+          "equals": [
+            "Specialist"
+          ]
+        },
+        {
+          "query": "graph:imported_program_refs[].entrypoint",
+          "equals": [
+            "Specialist"
+          ]
+        },
+        {
+          "query": "graph:imported_program_refs[].target_agent_identity_requirement",
+          "equals": [
+            "Specialist.identity"
+          ]
+        },
+        {
+          "query": "graph:call_intents[].intent_kind",
+          "set_equals": [
+            "agent_creation",
+            "agent_invocation",
+            "event_wait",
+            "model_invocation"
+          ]
+        },
+        {
+          "query": "graph:control_intents[].control_kind",
+          "set_includes": [
+            "loop",
+            "task_group",
+            "yield"
+          ]
+        },
+        {
+          "query": "graph:regions[].region_role",
+          "includes": [
+            "task_scope"
+          ]
+        },
+        {
+          "query": "graph:declarations[decl_kind=event_type].target_ref",
+          "equals": [
+            "approval.event"
+          ]
+        },
+        {
+          "query": "graph:context_flow[].context_type_ref",
+          "equals": [
+            "ReviewContext"
+          ]
+        },
+        {
+          "query": "graph:context_flow[0].from_node",
+          "same_as": "graph:control_intents[control_kind=task_group][0].node_id"
+        },
+        {
+          "query": "graph:context_flow[0].to_node",
+          "same_as": "graph:control_intents[control_kind=yield][0].node_id"
+        },
+        {
+          "query": "graph:hook_bindings[].handler_ref",
+          "equals": [
+            "RecordModelStart"
+          ]
+        },
+        {
+          "query": "graph:hook_bindings[].scope",
+          "equals": [
+            "model"
+          ]
+        },
+        {
+          "query": "graph:hook_bindings[].phase",
+          "equals": [
+            "before"
+          ]
+        },
+        {
+          "query": "graph:hook_bindings[].output_type_ref",
+          "equals": [
+            "Unit"
+          ]
+        },
+        {
+          "query": "graph:hook_bindings[].handler_digest",
+          "every_matches": "^sha256:"
+        },
+        {
+          "query": "graph:hook_bindings[0].target_selector",
+          "same_as": "graph:call_intents[intent_kind=model_invocation][0].node_id"
+        },
+        {
+          "query": "diagnostics",
+          "equals": null
+        },
+        {
+          "query": "air:semantic_operations[].op",
+          "includes": [
+            "program.new",
+            "program.invoke",
+            "await.event",
+            "model.call"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "resumable_loop_block_arguments",
+      "covers": "Every region carries exactly one lexical block, and a resumable loop body takes its resume value as a typed block argument the AIR redefines.",
+      "declarations": [
+        {
+          "name": "ResumeModel",
+          "marker": "Model",
+          "target_ref": "resume.model"
+        }
+      ],
+      "programs": [
+        {
+          "program_id": "Resumable",
+          "input": "Input",
+          "output": "Output",
+          "body": [
+            {
+              "stmt": "loop_forever",
+              "body": [
+                {
+                  "stmt": "bind",
+                  "name": "reply",
+                  "value": {
+                    "expr": "effect",
+                    "binding": "ResumeModel",
+                    "arguments": [
+                      {
+                        "expr": "name",
+                        "name": "input"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "stmt": "yield",
+                  "name": "input",
+                  "value": {
+                    "expr": "name",
+                    "name": "reply"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expect": [
+        {
+          "query": "graph:blocks[].region_id",
+          "set_same_as": "graph:regions[].region_id"
+        },
+        {
+          "query": "graph:blocks[].block_id",
+          "every_matches": "\\.block\\.0$"
+        },
+        {
+          "query": "graph:blocks[].execution_order",
+          "every_equals": 0
+        },
+        {
+          "query": "graph:values[origin=resume_input].type_ref",
+          "equals": [
+            "Input"
+          ]
+        },
+        {
+          "query": "graph:blocks[].block_arguments[]",
+          "same_as": "graph:values[origin=resume_input].value_id"
+        },
+        {
+          "query": "diagnostics",
+          "equals": null
+        },
+        {
+          "query": "air:structural_ir[].block_arguments[].value_id",
+          "includes_query": "graph:values[origin=resume_input].value_id"
+        }
+      ]
+    },
+    {
+      "id": "nested_loop_hook_targets_inner_loop",
+      "covers": "A loop-scope Hook resolves through the call its author named, so it reaches the inner loop rather than the first one, and its body runs as ordinary AIR inside that loop.",
+      "declarations": [
+        {
+          "name": "NestedOuterModel",
+          "marker": "Model",
+          "target_ref": "nested.outer.model"
+        },
+        {
+          "name": "NestedInnerTool",
+          "marker": "Tool",
+          "target_ref": "nested.inner.capability"
+        },
+        {
+          "name": "NestedAudit",
+          "marker": "Tool",
+          "target_ref": "nested.audit.capability"
+        }
+      ],
+      "programs": [
+        {
+          "program_id": "NestedLoops",
+          "input": "Input",
+          "output": "Output",
+          "context": "NestedContext",
+          "hooks": [
+            {
+              "name": "AuditInnerIteration",
+              "phase": "before",
+              "target": "NestedInnerTool",
+              "scope": "loop",
+              "body": [
+                {
+                  "stmt": "expr",
+                  "value": {
+                    "expr": "effect",
+                    "binding": "NestedAudit",
+                    "arguments": [
+                      {
+                        "expr": "context"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "body": [
+            {
+              "stmt": "loop_forever",
+              "body": [
+                {
+                  "stmt": "bind",
+                  "name": "reply",
+                  "value": {
+                    "expr": "effect",
+                    "binding": "NestedOuterModel",
+                    "arguments": [
+                      {
+                        "expr": "name",
+                        "name": "input"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "stmt": "loop_forever",
+                  "body": [
+                    {
+                      "stmt": "bind",
+                      "name": "found",
+                      "value": {
+                        "expr": "effect",
+                        "binding": "NestedInnerTool",
+                        "arguments": [
+                          {
+                            "expr": "name",
+                            "name": "reply"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "stmt": "yield",
+                      "name": "input",
+                      "value": {
+                        "expr": "name",
+                        "name": "found"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expect": [
+        {
+          "query": "graph:control_intents[control_kind=loop].node_id",
+          "length": 2
+        },
+        {
+          "query": "graph:hook_bindings[].return_mode",
+          "equals": [
+            "observe"
+          ]
+        },
+        {
+          "query": "graph:hook_bindings[].scope",
+          "equals": [
+            "loop"
+          ]
+        },
+        {
+          "query": "graph:hook_bindings[0].target_selector",
+          "same_as": "graph:call_intents[binding_ref=decl.tool.NestedInnerTool][0].parent_region_id"
+        },
+        {
+          "query": "graph:hook_bindings[0].target_selector",
+          "differs_from": "graph:control_intents[control_kind=loop][0].body_region_ids[0]"
+        },
+        {
+          "query": "diagnostics",
+          "equals": null
+        },
+        {
+          "query": "air:structural_ir[hook.hook_id=hook.AuditInnerIteration].parent_region_id",
+          "includes_query": "graph:hook_bindings[0].target_selector",
+          "length": 1
+        },
+        {
+          "query": "air:semantic_operations[op=capability.invoke].parent_region_id",
+          "includes_query": "graph:hook_bindings[0].body_region_id"
+        }
+      ]
+    },
+    {
+      "id": "negative_integer_at_safe_boundary",
+      "covers": "A negative authored integer at the shared safe-integer boundary survives capture exactly.",
+      "declarations": [
+        {
+          "name": "NegativeValueModel",
+          "marker": "Model",
+          "target_ref": "negative.value.model"
+        }
+      ],
+      "programs": [
+        {
+          "program_id": "NegativeValue",
+          "input": "Input",
+          "output": "Output",
+          "body": [
+            {
+              "stmt": "return",
+              "value": {
+                "expr": "effect",
+                "binding": "NegativeValueModel",
+                "arguments": [
+                  {
+                    "expr": "integer",
+                    "value": -9007199254740991
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expect": [
+        {
+          "query": "graph:values[origin=literal].expression",
+          "equals": [
+            {
+              "kind": "integer",
+              "value": -9007199254740991
+            }
+          ]
+        },
+        {
+          "query": "diagnostics",
+          "equals": null
+        }
+      ]
+    },
+    {
+      "id": "rejects_unresolved_returned_call",
+      "covers": "A returned call the frontend cannot resolve is rejected rather than dropped, which would silently lose the author's whole result expression.",
+      "declarations": [
+        {
+          "name": "UnresolvedReturnModel",
+          "marker": "Model",
+          "target_ref": "unresolved.return.model"
+        }
+      ],
+      "programs": [
+        {
+          "program_id": "ReturnsUnresolved",
+          "input": "Input",
+          "output": "Output",
+          "body": [
+            {
+              "stmt": "return",
+              "value": {
+                "expr": "plain_call",
+                "callee": "Unresolved",
+                "arguments": [
+                  {
+                    "expr": "name",
+                    "name": "input"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "rejects": {
+        "message_contains": "call target 'Unresolved' is not a bound Context schema"
+      }
+    },
+    {
+      "id": "rejects_unresolved_operand_call",
+      "covers": "An unresolved call nested in an operand is rejected rather than folded into an untyped literal, which would hide it from lowering and from admission.",
+      "declarations": [
+        {
+          "name": "UnresolvedOperandModel",
+          "marker": "Model",
+          "target_ref": "unresolved.operand.model"
+        }
+      ],
+      "programs": [
+        {
+          "program_id": "OperandUnresolved",
+          "input": "Input",
+          "output": "Output",
+          "body": [
+            {
+              "stmt": "return",
+              "value": {
+                "expr": "effect",
+                "binding": "UnresolvedOperandModel",
+                "arguments": [
+                  {
+                    "expr": "plain_call",
+                    "callee": "Unresolved",
+                    "arguments": [
+                      {
+                        "expr": "name",
+                        "name": "input"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "rejects": {
+        "message_contains": "call target 'Unresolved' is not a bound Context schema"
+      }
+    },
+    {
+      "id": "rejects_effect_read_as_data",
+      "covers": "A typed effect is an effect wherever it is written: reaching it without await must not degrade it to data.",
+      "declarations": [
+        {
+          "name": "ValuePositionModel",
+          "marker": "Model",
+          "target_ref": "value.position.model"
+        }
+      ],
+      "programs": [
+        {
+          "program_id": "EffectAsValue",
+          "input": "Input",
+          "output": "Output",
+          "body": [
+            {
+              "stmt": "return",
+              "value": {
+                "expr": "unawaited_effect",
+                "binding": "ValuePositionModel",
+                "arguments": [
+                  {
+                    "expr": "name",
+                    "name": "input"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "rejects": {
+        "message_contains": "is a typed effect and is called with await"
+      }
+    },
+    {
+      "id": "rejects_extra_authored_operands",
+      "covers": "An effect call with more than one authored operand fails closed rather than silently discarding the rest.",
+      "declarations": [
+        {
+          "name": "ExtraOperandModel",
+          "marker": "Model",
+          "target_ref": "extra.operand.model"
+        }
+      ],
+      "programs": [
+        {
+          "program_id": "ExtraOperands",
+          "input": "Input",
+          "output": "Output",
+          "body": [
+            {
+              "stmt": "return",
+              "value": {
+                "expr": "effect",
+                "binding": "ExtraOperandModel",
+                "arguments": [
+                  {
+                    "expr": "name",
+                    "name": "input"
+                  },
+                  {
+                    "expr": "name",
+                    "name": "input"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "rejects": {
+        "message_contains": "exactly one authored operand"
+      }
+    },
+    {
+      "id": "rejects_predicate_integer_outside_safe_domain",
+      "covers": "A predicate integer one language can represent exactly and the other cannot is rejected by both.",
+      "declarations": [],
+      "programs": [
+        {
+          "program_id": "UnsafeIntegerPredicate",
+          "input": "Input",
+          "output": "Output",
+          "body": [
+            {
+              "stmt": "if_equals",
+              "left": {
+                "expr": "field",
+                "name": "input",
+                "field": "count"
+              },
+              "right": {
+                "expr": "integer",
+                "value": 9007199254740992
+              },
+              "body": [
+                {
+                  "stmt": "return",
+                  "value": {
+                    "expr": "name",
+                    "name": "input"
+                  }
+                }
+              ]
+            },
+            {
+              "stmt": "return",
+              "value": {
+                "expr": "name",
+                "name": "input"
+              }
+            }
+          ]
+        }
+      ],
+      "rejects": {
+        "message_contains": "safe-integer"
+      }
+    },
+    {
+      "id": "rejects_local_binding_shadowing_a_declared_marker",
+      "covers": "A local binding that shadows a declared Model is rejected: the body's call target must be the declaration the module made.",
+      "declarations": [
+        {
+          "name": "ShadowedModel",
+          "marker": "Model",
+          "target_ref": "shadowed.model"
+        }
+      ],
+      "programs": [
+        {
+          "program_id": "Shadowed",
+          "input": "Input",
+          "output": "Output",
+          "body": [
+            {
+              "stmt": "shadow_binding",
+              "name": "ShadowedModel"
+            },
+            {
+              "stmt": "return",
+              "value": {
+                "expr": "effect",
+                "binding": "ShadowedModel",
+                "arguments": [
+                  {
+                    "expr": "name",
+                    "name": "input"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "rejects": {}
+    },
+    {
+      "id": "rejects_display_name_marker_references",
+      "covers": "Every marker takes an exact typed reference, never a display name or a package-local handler.",
+      "declaration_rejections": {
+        "markers": [
+          "Model",
+          "Tool",
+          "Capability",
+          "Event"
+        ],
+        "references": [
+          "",
+          "default",
+          "model.default",
+          "support",
+          "search-web"
+        ],
+        "message_contains": "exact typed reference"
+      }
+    },
+    {
+      "id": "rejects_handler_object_marker_references",
+      "covers": "A Tool or Capability declared with a package-local handler object is rejected the same way a display name is.",
+      "declaration_rejections": {
+        "markers": [
+          "Tool",
+          "Capability"
+        ],
+        "references": [
+          "@handler_object"
+        ],
+        "message_contains": "exact typed reference"
+      }
+    }
+  ]
+}

@@ -2,6 +2,7 @@ pub mod codegen;
 pub mod codegen_capabilities;
 pub mod codegen_diagnostics;
 pub mod codegen_event_kinds;
+pub mod codegen_frontend_conformance;
 pub mod codegen_frontend_records;
 pub mod codegen_frontend_serializers;
 pub mod codegen_frontend_vocabulary;

@@ -1,0 +1,269 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.frontend-conformance",
+  "title": "FrontendConformanceCorpus",
+  "description": "The single machine-readable corpus of authoring-frontend conformance vectors. Each vector states one authored program once — its declarations, its body in a language-neutral statement vocabulary, and what the resulting FrontendGraph, canonical AIR, or compiled artifact must say — and `apxm codegen frontend-conformance` projects it into a runnable harness for every registered authoring language. No language restates a fixture, so a vector added here is a case added to every language at once and a language that does not implement it fails with FrontendConformanceFailure{language, vector, diff}. This corpus carries fixture text and expected facts only; it carries no lowering identity of its own.",
+  "type": "object",
+  "required": ["schema_version", "surface_version", "type_refs", "contexts", "vectors"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": "apxm.frontend-conformance" },
+    "surface_version": { "const": "apxm.frontend-graph" },
+    "type_refs": {
+      "type": "array",
+      "description": "The typed interface declarations every fixture states its Agent interfaces with. Each language projects them into whatever it needs a named type to be.",
+      "minItems": 1,
+      "items": { "type": "string" }
+    },
+    "contexts": {
+      "type": "array",
+      "description": "The Context declarations the corpus shares across vectors. A Context is declared once so both languages give it the same type reference, which is what makes context_type_ref comparable across the two.",
+      "items": { "$ref": "#/$defs/ContextDeclaration" }
+    },
+    "vectors": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/Vector" }
+    }
+  },
+  "$defs": {
+    "ContextDeclaration": {
+      "type": "object",
+      "required": ["name", "fields"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["name", "scalar", "default"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string" },
+              "scalar": { "$ref": "#/$defs/ScalarKind" },
+              "default": {}
+            }
+          }
+        }
+      }
+    },
+    "ScalarKind": {
+      "description": "The closed set of Context field types each language projects into its own scalar spelling.",
+      "enum": ["list", "boolean", "integer", "string"]
+    },
+    "MarkerKind": {
+      "description": "The declaration markers a fixture may state. Every one is a name the frontend-surface manifest publishes.",
+      "enum": ["Model", "Tool", "Capability", "Event"]
+    },
+    "Vector": {
+      "type": "object",
+      "required": ["id", "covers"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The vector's stable identity. It names the generated fixture and appears in every failure this vector raises, in both languages.",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "covers": {
+          "type": "string",
+          "description": "What this vector proves, stated once for both languages."
+        },
+        "declarations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Declaration" }
+        },
+        "programs": {
+          "type": "array",
+          "description": "The programs this fixture authors, in source order. The last one is the subject every expectation is evaluated against; the others exist so the subject can compose them.",
+          "items": { "$ref": "#/$defs/Program" }
+        },
+        "expect": {
+          "type": "array",
+          "description": "What the captured subject must say. Present when the corpus states the authoring succeeds.",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/Expectation" }
+        },
+        "rejects": {
+          "type": "object",
+          "description": "Present when the corpus states the authoring fails. An empty object states only that it fails, which is what a vector says when the two languages reject it with different wording.",
+          "additionalProperties": false,
+          "properties": {
+            "message_contains": {
+              "type": "string",
+              "description": "Text every registered language's rejection must state. It is one shared substring, not one language's whole message."
+            }
+          }
+        },
+        "declaration_rejections": {
+          "type": "object",
+          "description": "A vector about declaring a marker rather than authoring a program: every listed marker must reject every listed reference.",
+          "required": ["markers", "references", "message_contains"],
+          "additionalProperties": false,
+          "properties": {
+            "markers": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/MarkerKind" }
+            },
+            "references": {
+              "type": "array",
+              "minItems": 1,
+              "description": "Each entry is a reference the marker must reject. `@handler_object` is the one reserved entry: it means a package-local handler object, which each language projects into its own spelling of one.",
+              "items": { "type": "string" }
+            },
+            "message_contains": { "type": "string" }
+          }
+        }
+      }
+    },
+    "Declaration": {
+      "type": "object",
+      "required": ["name", "marker", "target_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The binding name both languages declare this marker under. It is corpus-wide unique, because the Python projection authors every fixture in one module scope."
+        },
+        "marker": { "$ref": "#/$defs/MarkerKind" },
+        "target_ref": {
+          "type": "string",
+          "description": "The exact typed reference the declaration binds."
+        },
+        "permission": {
+          "type": "object",
+          "required": ["decision"],
+          "additionalProperties": false,
+          "properties": {
+            "decision": { "enum": ["allow", "ask", "deny"] },
+            "reason": { "type": "string" }
+          }
+        }
+      }
+    },
+    "Program": {
+      "type": "object",
+      "required": ["program_id", "input", "output", "body"],
+      "additionalProperties": false,
+      "properties": {
+        "program_id": { "type": "string" },
+        "input": { "type": "string" },
+        "output": { "type": "string" },
+        "context": { "type": "string" },
+        "hooks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Hook" }
+        },
+        "body": { "$ref": "#/$defs/Body" }
+      }
+    },
+    "Hook": {
+      "type": "object",
+      "required": ["name", "phase", "target", "scope", "body"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "phase": { "enum": ["before", "after"] },
+        "target": {
+          "type": "string",
+          "description": "The declaration the Hook names. Python states it as text and TypeScript as the declared value; both resolve to the same captured intent."
+        },
+        "scope": { "enum": ["node", "model", "loop", "agent"] },
+        "body": { "$ref": "#/$defs/Body" }
+      }
+    },
+    "Body": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Statement" }
+    },
+    "Statement": {
+      "type": "object",
+      "required": ["stmt"],
+      "properties": {
+        "stmt": { "$ref": "#/$defs/StatementKind" },
+        "name": { "type": "string" },
+        "value": { "$ref": "#/$defs/Expression" },
+        "left": { "$ref": "#/$defs/Expression" },
+        "right": { "$ref": "#/$defs/Expression" },
+        "context": { "type": "string" },
+        "program": { "type": "string" },
+        "values": { "type": "object" },
+        "body": { "$ref": "#/$defs/Body" }
+      },
+      "additionalProperties": false
+    },
+    "StatementKind": {
+      "description": "The closed statement vocabulary a fixture body is written in. Every entry has a projection in every registered language; adding one means teaching every language to project it.",
+      "enum": [
+        "let_null",
+        "bind",
+        "return",
+        "expr",
+        "loop_forever",
+        "if_not_null",
+        "if_equals",
+        "set_context",
+        "yield",
+        "new_program",
+        "task_group",
+        "shadow_binding"
+      ]
+    },
+    "Expression": {
+      "type": "object",
+      "required": ["expr"],
+      "additionalProperties": false,
+      "properties": {
+        "expr": { "$ref": "#/$defs/ExpressionKind" },
+        "name": { "type": "string" },
+        "field": { "type": "string" },
+        "value": { "type": "integer" },
+        "binding": { "type": "string" },
+        "callee": { "type": "string" },
+        "instance": { "type": "string" },
+        "event": { "type": "string" },
+        "arguments": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Expression" }
+        }
+      }
+    },
+    "ExpressionKind": {
+      "description": "The closed expression vocabulary a fixture body is written in. `unawaited_effect` and `plain_call` exist so a vector can state what must be rejected, not only what must be captured.",
+      "enum": [
+        "name",
+        "integer",
+        "field",
+        "context",
+        "effect",
+        "unawaited_effect",
+        "plain_call",
+        "invoke",
+        "await_event"
+      ]
+    },
+    "Expectation": {
+      "type": "object",
+      "description": "One query into a captured program, and the operators that must hold of what it resolves to. A query is `<source>:<path>`, where source is graph, air, artifact, or the bare `diagnostics`, and a path segment is a field name followed by any of `[]` (flatten one level), `[n]` (index), and `[key=value]` (filter).",
+      "required": ["query"],
+      "additionalProperties": false,
+      "properties": {
+        "query": { "type": "string" },
+        "equals": {},
+        "set_equals": { "type": "array" },
+        "includes": { "type": "array" },
+        "set_includes": { "type": "array" },
+        "length": { "type": "integer", "minimum": 0 },
+        "every_equals": {},
+        "every_matches": { "type": "string" },
+        "same_as": { "type": "string" },
+        "set_same_as": { "type": "string" },
+        "differs_from": { "type": "string" },
+        "includes_query": { "type": "string" }
+      }
+    }
+  }
+}

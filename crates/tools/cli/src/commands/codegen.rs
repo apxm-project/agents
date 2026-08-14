@@ -275,6 +275,48 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
                 json_output,
             )
         }
+        CodegenAction::FrontendConformance { check } => {
+            use crate::frontend::codegen_frontend_conformance as conformance;
+
+            // Four files, two pairs: the harness each authoring package carries,
+            // and the test-runner invoker that runs it. The invokers are
+            // generated too — a hand-written one could be deleted and that
+            // language would silently stop being checked.
+            let python_path =
+                default_python_generated_codegen_dir().join(conformance::PYTHON_CONFORMANCE_FILE);
+            let typescript_path = default_typescript_frontend_codegen_dir()
+                .join(conformance::TYPESCRIPT_CONFORMANCE_FILE);
+            let python_test_path = default_python_conformance_test_dir()
+                .join(conformance::PYTHON_CONFORMANCE_TEST_FILE);
+            let typescript_test_path = default_typescript_conformance_test_dir()
+                .join(conformance::TYPESCRIPT_CONFORMANCE_TEST_FILE);
+
+            let python = conformance::render_conformance_python();
+            let typescript = conformance::render_conformance_typescript();
+            let python_test = conformance::render_conformance_python_test();
+            let typescript_test = conformance::render_conformance_typescript_test();
+
+            let mut files = write_or_check_pair(
+                [(&python_path, &python), (&typescript_path, &typescript)],
+                check,
+                "frontend-conformance",
+            )?;
+            files.extend(write_or_check_pair(
+                [
+                    (&python_test_path, &python_test),
+                    (&typescript_test_path, &typescript_test),
+                ],
+                check,
+                "frontend-conformance",
+            )?);
+            report_pair(
+                "frontend-conformance",
+                "shared frontend conformance corpus harness",
+                files,
+                check,
+                json_output,
+            )
+        }
         CodegenAction::Diagnostics { check } => {
             let python_path = default_python_generated_codegen_dir()
                 .join(crate::frontend::codegen_diagnostics::PYTHON_DIAGNOSTICS_FILE);
@@ -495,6 +537,16 @@ fn check_generated_named_files(
 fn default_python_generated_codegen_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../compiler/frontend/python/apxm_program/_generated")
+}
+
+/// The Python frontend's test directory, which pytest collects.
+fn default_python_conformance_test_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../compiler/frontend/python/tests_program")
+}
+
+/// The TypeScript frontend's test directory, which vitest collects.
+fn default_typescript_conformance_test_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../compiler/frontend/typescript/test")
 }
 
 fn default_python_capabilities_codegen_path() -> PathBuf {

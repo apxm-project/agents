@@ -3,6 +3,7 @@
 
 use super::codegen_capabilities::PYTHON_CAPABILITIES_FILE;
 use super::codegen_diagnostics::PYTHON_DIAGNOSTICS_FILE;
+use super::codegen_frontend_conformance::PYTHON_CONFORMANCE_FILE;
 use super::codegen_frontend_records::PYTHON_FRONTEND_RECORDS_FILE;
 use super::codegen_frontend_serializers::PYTHON_FRONTEND_SERIALIZERS_FILE;
 use super::codegen_frontend_vocabulary::PYTHON_FRONTEND_GRAPH_FILE;
@@ -18,7 +19,8 @@ pub const GENERATED_PACKAGE_PYTHON_FILE: &str = "__init__.py";
 /// capability catalogue, `permissions` owns the permission decision vocabulary,
 /// `frontend-vocabulary` owns the source-graph closed sets, `frontend-records`
 /// owns the FrontendGraph contract record types, `frontend-serializers` owns
-/// their serializers, and `diagnostics` owns the rejection-code vocabulary.
+/// their serializers, `diagnostics` owns the rejection-code vocabulary, and
+/// `frontend-conformance` owns the shared conformance corpus harness.
 ///
 /// A hand-written module here would be indistinguishable from a generated one
 /// at a glance and would survive every regeneration; the guard is what makes
@@ -27,6 +29,7 @@ pub const GENERATED_PACKAGE_PYTHON_FILE: &str = "__init__.py";
 pub const GENERATED_PYTHON_FRONTEND_FILES: &[&str] = &[
     GENERATED_PACKAGE_PYTHON_FILE,
     PYTHON_CAPABILITIES_FILE,
+    PYTHON_CONFORMANCE_FILE,
     PYTHON_DIAGNOSTICS_FILE,
     PYTHON_FRONTEND_GRAPH_FILE,
     PYTHON_FRONTEND_RECORDS_FILE,
@@ -44,7 +47,11 @@ pub fn render_generated_package_python() -> String {
          \"\"\"Generated frontend modules. Every module here is written by `apxm codegen`.\"\"\"\n\n",
     );
     for filename in GENERATED_PYTHON_FRONTEND_FILES {
-        if *filename == GENERATED_PACKAGE_PYTHON_FILE {
+        // The conformance harness authors its fixture programs at module scope,
+        // so importing it captures every one of them. That is the harness's own
+        // work, not work every `import apxm_program` should do, so the package
+        // body names it without re-exporting it.
+        if *filename == GENERATED_PACKAGE_PYTHON_FILE || *filename == PYTHON_CONFORMANCE_FILE {
             continue;
         }
         let module = filename
