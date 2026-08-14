@@ -9,6 +9,7 @@ import { Agent, Capability, Context, Event, Hook, Model, TaskGroup, Tool } from 
 import { CaptureError, captureProgram } from "../src/capture.ts";
 import { decodeFact } from "../src/generated/runtime-evidence.ts";
 import { stableDigest } from "../src/markers.ts";
+import { Allow, Ask } from "../src/permissions.ts";
 
 const sourceFile = fileURLToPath(import.meta.url);
 const source = { fileName: sourceFile, text: readFileSync(sourceFile, "utf8") };
@@ -72,9 +73,11 @@ const Support = Agent({
   },
 });
 
-const AuditCapability = Capability("cap.audit");
+const AuditCapability = Capability("cap.audit", { permission: Allow });
 const AuditModel = Model("audit.model");
-const AuditTool = Tool("cap.audit", { requestedPermission: "cap.audit.read" });
+const AuditTool = Tool("cap.audit", {
+  permission: Ask("Reads whatever the model asks for."),
+});
 
 const Auditor = Agent({
   name: "Auditor",
@@ -127,7 +130,7 @@ type Graph = {
   capability_requirements: Array<{
     capability_ref: string;
     tool_schema_present: boolean;
-    requested_permission?: string;
+    requested_permission?: string | { decision: string; reason: string };
   }>;
   source_map: { node_spans: Array<{ source_file: string }> };
 };
@@ -230,11 +233,18 @@ describe("source-first TypeScript authoring", () => {
     // Keying requirements by capability_ref would drop one of these two. The
     // order matches the Python frontend's, which the parity gate compares.
     expect(graph.capability_requirements).toEqual([
-      { capability_ref: "cap.audit", tool_schema_present: false },
+      {
+        capability_ref: "cap.audit",
+        tool_schema_present: false,
+        requested_permission: "allow",
+      },
       {
         capability_ref: "cap.audit",
         tool_schema_present: true,
-        requested_permission: "cap.audit.read",
+        requested_permission: {
+          decision: "ask",
+          reason: "Reads whatever the model asks for.",
+        },
       },
     ]);
     expect(Auditor.diagnostics()).toBeNull();

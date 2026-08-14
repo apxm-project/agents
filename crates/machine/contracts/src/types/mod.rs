@@ -44,7 +44,7 @@ pub use capability::{
     CAPABILITY_TEMPLATE_SCHEMA_V1, CapabilityBinding, CapabilityBindingHandler,
     CapabilityBindingMetadata, CapabilityDefinition, CapabilityGrant, CapabilityMetadata,
     CapabilitySchemaError, CapabilityTemplateV1, Delegability, GrantProvenance, GrantStatus,
-    Lifecycle, LifecycleBound, PermissionEffect, PermissionOperation, PermissionPolicy,
+    Lifecycle, LifecycleBound, PermissionDecision, PermissionOperation, PermissionPolicy,
     PermissionRule, PermissionScope, PlannerVisibility, Principal, PrincipalKind, PromptMode,
     PromptPolicy, ResourceHandle, ResourceSelector, RoleAssignment, RoleDefinition,
     RuntimeCapabilityGrant, RuntimeLimits, RuntimeSurfaceLimit, RuntimeSurfaceMode,

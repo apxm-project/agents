@@ -267,9 +267,42 @@
         "effect_outcome_ref": {
           "$ref": "apxm.contract-common.v1#/$defs/TypedRef"
         },
+        "capability_ref": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier",
+          "description": "The exact capability this fact is about, so a capability outcome is auditable without re-parsing the AIR it came from."
+        },
+        "permission_decision": {
+          "$ref": "#/$defs/ResolvedPermission",
+          "description": "The resolved permission decision the effect was admitted or refused under. Present only alongside capability_ref, which names what was decided."
+        },
         "typed_error": {
           "$ref": "apxm.contract-common.v1#/$defs/TypedErrorEnvelope"
         }
+      },
+      "additionalProperties": false
+    },
+    "PermissionDecision": {
+      "description": "The closed permission decision, optionally carrying why it was made. A decision with no reason is the bare vocabulary string it has always been; a decision that explains itself is the object form.",
+      "oneOf": [
+        { "type": "string", "enum": ["allow", "ask", "deny"] },
+        {
+          "type": "object",
+          "required": ["decision", "reason"],
+          "properties": {
+            "decision": { "type": "string", "enum": ["allow", "ask", "deny"] },
+            "reason": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ResolvedPermission": {
+      "type": "object",
+      "description": "One winning permission decision and the resolution layer that produced it. Layers run code (10) < package (20) < deployment (30) and may only tighten.",
+      "required": ["decision", "layer"],
+      "properties": {
+        "decision": { "$ref": "#/$defs/PermissionDecision" },
+        "layer": { "type": "string", "enum": ["code", "package", "deployment"] }
       },
       "additionalProperties": false
     },

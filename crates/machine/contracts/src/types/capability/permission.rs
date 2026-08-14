@@ -55,13 +55,10 @@ impl PermissionOperation {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PermissionEffect {
-    Allow,
-    Ask,
-    Deny,
-}
+/// The one permission decision vocabulary, owned by the AIS crate so the
+/// contracts, the Agent Program graph, the admission envelope, the runtime
+/// chokepoint, and both authoring frontends all resolve through one definition.
+pub use apxm_ais::permissions::PermissionDecision;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -121,7 +118,7 @@ impl PermissionScope {
 pub struct PermissionPolicy {
     pub operations: Vec<PermissionOperation>,
     pub resources: Vec<ResourceSelector>,
-    pub effect: PermissionEffect,
+    pub effect: PermissionDecision,
     pub prompt_policy: PromptPolicy,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lifecycle_ceiling: Option<LifecycleBound>,
@@ -150,7 +147,7 @@ pub struct PermissionRule {
     pub tool: String,
     pub operations: Vec<PermissionOperation>,
     pub resources: Vec<ResourceSelector>,
-    pub effect: PermissionEffect,
+    pub effect: PermissionDecision,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_lifecycle: Option<LifecycleBound>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

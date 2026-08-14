@@ -23,7 +23,7 @@ http.workspace = true
 blake3.workspace = true
 serde_json.workspace = true
 # Shared typed permission-decision vocabulary: metric labels must go through
-# `PermissionDecisionKind::as_str()` and similar bounded enums, never ad-hoc
+# `PermissionDecision::as_str()` and similar bounded enums, never ad-hoc
 # strings. `apxm-core` has no dependency back on this crate, so this is not a
 # cycle.
 apxm-core.workspace = true

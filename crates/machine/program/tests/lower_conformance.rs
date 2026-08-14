@@ -5,6 +5,7 @@
 //! validating digest-bound artifact whose requirements come from the declared
 //! graph requirements.
 
+use apxm_program::frontend_graph::PermissionDecision;
 use apxm_program::{ExecutableArtifact, FrontendGraph, SourceBundle, frontend_graph_to_air};
 use serde_json::{Value, json};
 
@@ -171,12 +172,12 @@ fn generic_graph_produces_validating_artifact() {
 }
 
 /// The same capability declared twice — once as a model-visible Tool carrying an
-/// authored permission, once as a plain Capability carrying none. Keying the
-/// collection by `capability_ref` would drop one of the two.
-fn duplicate_declaration_graph_value(permission: Option<&str>) -> Value {
+/// authored permission decision, once as a plain Capability carrying none.
+/// Keying the collection by `capability_ref` would drop one of the two.
+fn duplicate_declaration_graph_value(permission: Option<Value>) -> Value {
     let mut tool = json!({"capability_ref": "cap.search", "tool_schema_present": true});
     if let Some(permission) = permission {
-        tool["requested_permission"] = json!(permission);
+        tool["requested_permission"] = permission;
     }
     let mut value = generic_graph_value();
     value["capability_requirements"] =
@@ -186,32 +187,38 @@ fn duplicate_declaration_graph_value(permission: Option<&str>) -> Value {
 
 #[test]
 fn an_authored_permission_survives_graph_air_and_artifact() {
-    let authored = duplicate_declaration_graph_value(Some("search.read"));
+    let requested = json!({"decision": "ask", "reason": "Reads whatever the model asks for."});
+    let authored = duplicate_declaration_graph_value(Some(requested.clone()));
     let graph: FrontendGraph = serde_json::from_value(authored).expect("permissioned graph");
 
     // Boundary 1 — decode keeps both declarations of the shared ref and the
-    // authored permission attached to the declaration that requested it.
+    // authored decision, with its reason, attached to the one that requested it.
     assert_eq!(graph.capability_requirements.len(), 2);
     assert_eq!(
-        graph.capability_requirements[0].requested_permission.as_deref(),
-        Some("search.read")
+        graph.capability_requirements[0].requested_permission,
+        Some(PermissionDecision::ask(
+            "Reads whatever the model asks for."
+        ))
     );
     assert_eq!(graph.capability_requirements[1].requested_permission, None);
     assert!(graph.verify().is_accepted());
 
-    // Boundary 2 — re-encoding emits the authored permission and omits the
+    // Boundary 2 — re-encoding emits the authored decision and omits the
     // absent one, so a graph that round-trips through JSON is unchanged.
     let encoded = serde_json::to_value(&graph).expect("re-encode graph");
     assert_eq!(
         encoded["capability_requirements"][0]["requested_permission"],
-        json!("search.read")
+        requested
     );
     assert_eq!(
         encoded["capability_requirements"][1].get("requested_permission"),
         None
     );
     let decoded: FrontendGraph = serde_json::from_value(encoded).expect("decode re-encoded graph");
-    assert_eq!(decoded.capability_requirements, graph.capability_requirements);
+    assert_eq!(
+        decoded.capability_requirements,
+        graph.capability_requirements
+    );
 
     // Boundary 3 — lowering to AIR neither consumes nor drops the requirement.
     let air = frontend_graph_to_air(&graph).expect("lower permissioned graph");
@@ -221,7 +228,10 @@ fn an_authored_permission_survives_graph_air_and_artifact() {
     // and both artifact digests are bound to it, so no consumer downstream of
     // the artifact can read a permission the author did not write.
     let bundle = SourceBundle::from_graph(&graph);
-    assert_eq!(bundle.capability_requirements, graph.capability_requirements);
+    assert_eq!(
+        bundle.capability_requirements,
+        graph.capability_requirements
+    );
     let artifact = ExecutableArtifact::from_frontend_graph(&graph).expect("artifact");
     assert!(artifact.validate().is_accepted());
     assert_eq!(
@@ -233,11 +243,33 @@ fn an_authored_permission_survives_graph_air_and_artifact() {
         serde_json::from_value(duplicate_declaration_graph_value(None)).expect("control graph");
     let control = ExecutableArtifact::from_frontend_graph(&unpermissioned).expect("control");
     assert_ne!(
-        artifact.source_bundle_digest,
-        control.source_bundle_digest,
+        artifact.source_bundle_digest, control.source_bundle_digest,
         "the authored permission must change the digest that binds the source bundle"
     );
     assert_ne!(artifact.artifact_digest, control.artifact_digest);
+
+    // Boundary 5 — the reason is bound too, so an override that quietly
+    // rewrote why a program asked would change the artifact digest.
+    let reworded: FrontendGraph = serde_json::from_value(duplicate_declaration_graph_value(Some(
+        json!({"decision": "ask", "reason": "Reads anything at all."}),
+    )))
+    .expect("reworded graph");
+    let reworded = ExecutableArtifact::from_frontend_graph(&reworded).expect("reworded artifact");
+    assert_ne!(
+        artifact.source_bundle_digest, reworded.source_bundle_digest,
+        "the reason a decision gives is bound to the source bundle"
+    );
+}
+
+/// A decision that structurally carries a reason and says nothing would put an
+/// empty explanation into the digest-bound source bundle.
+#[test]
+fn an_authored_permission_reason_must_say_something() {
+    let graph: FrontendGraph = serde_json::from_value(duplicate_declaration_graph_value(Some(
+        json!({"decision": "deny", "reason": "   "}),
+    )))
+    .expect("decodable graph");
+    assert!(!graph.verify().is_accepted());
 }
 
 #[test]

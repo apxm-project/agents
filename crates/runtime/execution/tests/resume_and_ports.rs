@@ -62,6 +62,7 @@ fn request(scope: &str) -> ExecutionRequest {
                 Vec::new(),
             )
             .expect("valid test authority"),
+            permission: None,
         },
     )]);
     ExecutionRequest {
@@ -255,18 +256,9 @@ fn ports(commit: Arc<Commit>) -> ExecutionPorts {
         proof_digest: digest('c'),
     };
     let spec = PortBundleSpec::new(vec![
-        (
-            PortSlot::ExecutionCommit,
-            contract("apxm.execution-commit"),
-        ),
-        (
-            PortSlot::ModelInference,
-            contract("apxm.model-inference"),
-        ),
-        (
-            PortSlot::Capability,
-            contract("apxm.capability-invocation"),
-        ),
+        (PortSlot::ExecutionCommit, contract("apxm.execution-commit")),
+        (PortSlot::ModelInference, contract("apxm.model-inference")),
+        (PortSlot::Capability, contract("apxm.capability-invocation")),
         (
             PortSlot::ExternalAgentCapability,
             contract("apxm.external-agent"),
@@ -695,6 +687,7 @@ async fn nested_loop_park_restores_exact_stack_without_duplicate_work() {
                 Vec::new(),
             )
             .expect("valid test authority"),
+            permission: None,
         },
     )]);
 

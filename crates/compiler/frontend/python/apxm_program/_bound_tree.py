@@ -12,6 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional, Union
 
+from ._generated.permissions import Permission
+
 
 @dataclass(frozen=True, slots=True)
 class Span:
@@ -151,7 +153,7 @@ class BoundCapabilityRequirement:
 
     capability_ref: str
     tool_schema_present: bool
-    requested_permission: Optional[str] = None
+    requested_permission: Optional[Permission] = None
 
 
 @dataclass(frozen=True, slots=True)

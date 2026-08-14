@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional, TypeVar
 
+from ._generated.permissions import Permission
+
 I = TypeVar("I")
 O = TypeVar("O")
 T = TypeVar("T")
@@ -43,7 +45,7 @@ class ToolBinding:
     target_ref: str
     input_type_ref: str = "ToolInput"
     output_type_ref: str = "ToolOutput"
-    requested_permission: Optional[str] = None
+    permission: Optional[Permission] = None
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
         raise RuntimeError("a Tool is invoked inside a compiled Agent body")
@@ -56,7 +58,7 @@ class CapabilityBinding:
     target_ref: str
     input_type_ref: str = "CapabilityInput"
     output_type_ref: str = "CapabilityOutput"
-    requested_permission: Optional[str] = None
+    permission: Optional[Permission] = None
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
         raise RuntimeError("a Capability is invoked inside a compiled Agent body")
@@ -95,12 +97,10 @@ class _ToolFactory:
         return self
 
     def __call__(
-        self, target_ref: str, *, requested_permission: Optional[str] = None
+        self, target_ref: str, *, permission: Optional[Permission] = None
     ) -> ToolBinding:
         _require_exact_reference(target_ref, "Tool")
-        return ToolBinding(
-            target_ref=target_ref, requested_permission=requested_permission
-        )
+        return ToolBinding(target_ref=target_ref, permission=permission)
 
 
 class _CapabilityFactory:
@@ -108,12 +108,10 @@ class _CapabilityFactory:
         return self
 
     def __call__(
-        self, target_ref: str, *, requested_permission: Optional[str] = None
+        self, target_ref: str, *, permission: Optional[Permission] = None
     ) -> CapabilityBinding:
         _require_exact_reference(target_ref, "Capability")
-        return CapabilityBinding(
-            target_ref=target_ref, requested_permission=requested_permission
-        )
+        return CapabilityBinding(target_ref=target_ref, permission=permission)
 
 
 class _TypedEventFactory:

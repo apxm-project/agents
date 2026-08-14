@@ -303,6 +303,13 @@ pub enum CodegenAction {
         #[arg(long)]
         check: bool,
     },
+    /// Generate the permission decision vocabulary into both authoring frontends
+    Permissions {
+        /// Check that the generated decision files are up to date without
+        /// writing them
+        #[arg(long)]
+        check: bool,
+    },
     /// Generate the op-spec AIS operation catalog + vectors fixture
     OpSpec {
         /// Output directory for the generated catalog + vectors files

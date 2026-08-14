@@ -176,8 +176,15 @@ def _capability_requirement(requirement: Any) -> dict[str, Any]:
         "capability_ref": requirement.capability_ref,
         "tool_schema_present": requirement.tool_schema_present,
     }
-    if requirement.requested_permission is not None:
-        record["requested_permission"] = requirement.requested_permission
+    permission = requirement.requested_permission
+    if permission is not None:
+        # A decision that gives no reason is the bare vocabulary string; one
+        # that explains itself carries the reason alongside the decision.
+        record["requested_permission"] = (
+            permission.decision
+            if permission.reason is None
+            else {"decision": permission.decision, "reason": permission.reason}
+        )
     return record
 
 

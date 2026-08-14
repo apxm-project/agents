@@ -26,13 +26,12 @@ pub use definition::{
 };
 pub use grant::{CAPABILITY_GRANT_SCHEMA_V1, CapabilityGrant, GrantProvenance, GrantStatus};
 pub use permission::{
-    PermissionEffect, PermissionOperation, PermissionPolicy, PermissionRule, PermissionScope,
+    PermissionDecision, PermissionOperation, PermissionPolicy, PermissionRule, PermissionScope,
     ResourceHandle, ResourceSelector,
 };
 pub use permission_vocabulary::{
-    ApprovalPosture, AuditPayloadPolicy, CredentialScope, DecisionReason, GrantState,
-    OperationClass, PERMISSION_POLICY_SCHEMA_V1, PermissionDecision, PermissionDecisionKind,
-    PermissionPolicyV1, PermissionScopeKind, RiskLevel,
+    ApprovalPosture, AuditPayloadPolicy, CredentialScope, GrantState, OperationClass,
+    PERMISSION_POLICY_SCHEMA_V1, PermissionPolicyV1, PermissionScopeKind, RiskLevel,
 };
 pub use policy::{
     AuthMethod, Principal, PrincipalKind, PromptMode, PromptPolicy, RoleAssignment, RoleDefinition,

@@ -591,11 +591,26 @@
           "description": "True when this requirement is surfaced to a model as a typed Tool schema."
         },
         "requested_permission": {
-          "$ref": "apxm.contract-common.v1#/$defs/Identifier",
-          "description": "The permission this declaration requests for the capability, carried verbatim from authored source into the digest-bound source bundle. Absent when the author requested none. It records an authored request only; it grants no authority and admission does not read it."
+          "$ref": "#/$defs/PermissionDecision",
+          "description": "The permission decision this declaration requests for the capability, carried verbatim from authored source into the digest-bound source bundle. Absent when the author requested none. It records an authored request only: it grants no authority, and the resolution layer stack may narrow it but may never widen it."
         }
       },
       "additionalProperties": false
+    },
+    "PermissionDecision": {
+      "description": "The closed permission decision, optionally carrying why it was made. A decision with no reason is the bare vocabulary string it has always been; a decision that explains itself is the object form.",
+      "oneOf": [
+        { "type": "string", "enum": ["allow", "ask", "deny"] },
+        {
+          "type": "object",
+          "required": ["decision", "reason"],
+          "properties": {
+            "decision": { "type": "string", "enum": ["allow", "ask", "deny"] },
+            "reason": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        }
+      ]
     },
     "ModelRequirement": {
       "type": "object",

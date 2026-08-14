@@ -14,6 +14,7 @@ import {
   SOURCE_MAP_VERSION,
   type Json,
 } from "./contract.js";
+import type { Permission } from "./generated/permissions.js";
 import type {
   CapabilityBinding,
   ContextSchema,
@@ -88,8 +89,19 @@ type ValueExpression =
 type CapabilityRequirement = {
   capability_ref: string;
   tool_schema_present: boolean;
-  requested_permission?: string;
+  requested_permission?: string | { decision: string; reason: string };
 };
+
+/** Whether two declarations request the very same decision, reason included. */
+function sameRequestedPermission(
+  left: CapabilityRequirement["requested_permission"],
+  right: CapabilityRequirement["requested_permission"],
+): boolean {
+  if (typeof left === "object" && typeof right === "object") {
+    return left.decision === right.decision && left.reason === right.reason;
+  }
+  return left === right;
+}
 
 /** Source text registered by the host compiler bridge before Agent capture. */
 export type StaticSource = {
@@ -236,21 +248,28 @@ class Capture {
    * declarations. Only a declaration identical in every field collapses.
    */
   private requireCapability(
-    binding: { targetRef: string; requestedPermission?: string },
+    binding: { targetRef: string; permission?: Permission },
     toolSchemaPresent: boolean,
   ): void {
     const requirement: CapabilityRequirement = {
       capability_ref: binding.targetRef,
       tool_schema_present: toolSchemaPresent,
     };
-    if (binding.requestedPermission !== undefined) {
-      requirement.requested_permission = binding.requestedPermission;
+    if (binding.permission !== undefined) {
+      // A decision that gives no reason is the bare vocabulary string; one
+      // that explains itself carries the reason alongside the decision.
+      const { decision, reason } = binding.permission;
+      requirement.requested_permission =
+        reason === undefined ? decision : { decision, reason };
     }
     const present = this.capabilityRequirements.some(
       (existing) =>
         existing.capability_ref === requirement.capability_ref &&
         existing.tool_schema_present === requirement.tool_schema_present &&
-        existing.requested_permission === requirement.requested_permission,
+        sameRequestedPermission(
+          existing.requested_permission,
+          requirement.requested_permission,
+        ),
     );
     if (!present) {
       this.capabilityRequirements.push(requirement);

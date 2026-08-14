@@ -60,6 +60,11 @@
     "confinement": {
       "$ref": "#/$defs/AdmittedConfinement"
     },
+    "capability_permissions": {
+      "type": "array",
+      "description": "Resolved permission decisions for this invocation, one per capability. Each records what was decided and which resolution layer decided it. A decision is not a grant: it mints no authority and carries no grant reference.",
+      "items": { "$ref": "#/$defs/AdmittedCapabilityPermission" }
+    },
     "expires_at_ms": {
       "type": "integer",
       "minimum": 1
@@ -187,6 +192,40 @@
         "exact_port_binding_digest": {
           "$ref": "#/$defs/Digest"
         }
+      },
+      "additionalProperties": false
+    },
+    "AdmittedCapabilityPermission": {
+      "type": "object",
+      "required": ["capability_ref", "permission"],
+      "properties": {
+        "capability_ref": { "$ref": "#/$defs/Identifier" },
+        "permission": { "$ref": "#/$defs/ResolvedPermission" }
+      },
+      "additionalProperties": false
+    },
+    "PermissionDecision": {
+      "description": "The closed permission decision, optionally carrying why it was made. A decision with no reason is the bare vocabulary string it has always been; a decision that explains itself is the object form.",
+      "oneOf": [
+        { "type": "string", "enum": ["allow", "ask", "deny"] },
+        {
+          "type": "object",
+          "required": ["decision", "reason"],
+          "properties": {
+            "decision": { "type": "string", "enum": ["allow", "ask", "deny"] },
+            "reason": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ResolvedPermission": {
+      "type": "object",
+      "description": "One winning permission decision and the resolution layer that produced it. Layers run code (10) < package (20) < deployment (30) and may only tighten.",
+      "required": ["decision", "layer"],
+      "properties": {
+        "decision": { "$ref": "#/$defs/PermissionDecision" },
+        "layer": { "type": "string", "enum": ["code", "package", "deployment"] }
       },
       "additionalProperties": false
     },

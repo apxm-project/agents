@@ -129,7 +129,7 @@ class _Capture:
         requirement = BoundCapabilityRequirement(
             capability_ref=binding.target_ref,
             tool_schema_present=tool_schema_present,
-            requested_permission=binding.requested_permission,
+            requested_permission=binding.permission,
         )
         if requirement not in self.capability_requirements:
             self.capability_requirements.append(requirement)

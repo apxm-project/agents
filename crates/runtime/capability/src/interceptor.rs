@@ -1,6 +1,7 @@
 //! Capability interception hooks.
 
 use apxm_core::events::payload::{ApprovalRiskLevel, ToolCallCorrelation};
+use apxm_core::types::capability::PermissionDecision;
 use apxm_core::types::consent::{
     ConsentBroker, ConsentDecision, PermissionPrompt, PromptMode, RiskLevel,
 };
@@ -137,7 +138,7 @@ pub async fn pre_invoke_ctx(
     args: &HashMap<String, Value>,
 ) -> InterceptDecision {
     let Some(cap) = ctx.registry.get(name) else {
-        return InterceptDecision::Allow;
+        return InterceptDecision::allow();
     };
     pre_invoke_policy_ctx(ctx, name, args, cap.metadata().requires_approval).await
 }
@@ -154,17 +155,15 @@ pub(crate) async fn pre_invoke_policy_ctx(
     requires_approval: bool,
 ) -> InterceptDecision {
     if !requires_approval {
-        return InterceptDecision::Allow;
+        return InterceptDecision::allow();
     }
 
     let identity = match ctx.invocation_identity() {
         Ok(identity) => identity,
         Err(missing) => {
-            return InterceptDecision::Deny {
-                reason: format!(
-                    "capability '{name}' requires approval but the invocation context carries no {missing}"
-                ),
-            };
+            return InterceptDecision::deny(format!(
+                "capability '{name}' requires approval but the invocation context carries no {missing}"
+            ));
         }
     };
 
@@ -223,14 +222,12 @@ pub(crate) async fn pre_invoke_policy_ctx(
     }
 
     match decision {
-        ConsentDecision::Approved { .. } => InterceptDecision::Allow,
-        ConsentDecision::Denied { reason } => InterceptDecision::Deny { reason },
-        ConsentDecision::Expired => InterceptDecision::Deny {
-            reason: format!(
-                "approval for capability '{name}' timed out after {}s",
-                ctx.permission_timeout.as_secs()
-            ),
-        },
+        ConsentDecision::Approved { .. } => InterceptDecision::allow(),
+        ConsentDecision::Denied { reason } => InterceptDecision::deny(reason),
+        ConsentDecision::Expired => InterceptDecision::deny(format!(
+            "approval for capability '{name}' timed out after {}s",
+            ctx.permission_timeout.as_secs()
+        )),
     }
 }
 
@@ -253,14 +250,61 @@ pub fn requires_approval_names(metadata: &[RuntimeCapability]) -> HashSet<String
 }
 
 /// Decision returned from `pre_invoke`.
-#[derive(Debug, Clone)]
-pub enum InterceptDecision {
+///
+/// The chokepoint speaks the one permission vocabulary rather than a parallel
+/// spelling of it, and it can only allow or deny: `Ask` is a *pre*-chokepoint
+/// posture that the approval gate has already resolved into one of the two by
+/// the time an interceptor runs, so an `Ask` arriving here has no broker left
+/// to raise it and becomes a denial carrying the reason the gate gave.
+///
+/// The vocabulary is deliberately this narrow. This is the only decision that
+/// gates capability execution, so any third outcome — notably one that
+/// rewrote the arguments after admission — would be a power to change what
+/// runs, held by whatever registered an interceptor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InterceptDecision(PermissionDecision);
+
+impl InterceptDecision {
     /// Continue execution unchanged.
-    Allow,
-    /// Deny invocation with a reason.
-    Deny { reason: String },
-    /// Continue execution with updated arguments.
-    EditArgs { args: HashMap<String, Value> },
+    #[must_use]
+    pub const fn allow() -> Self {
+        Self(PermissionDecision::allow())
+    }
+
+    /// Refuse the invocation, naming why.
+    #[must_use]
+    pub fn deny(reason: impl Into<String>) -> Self {
+        Self(PermissionDecision::deny(reason))
+    }
+
+    /// Project a resolved permission decision onto the chokepoint, failing
+    /// closed: anything that is not an outright `Allow` denies here.
+    #[must_use]
+    pub fn from_effect(effect: PermissionDecision) -> Self {
+        if effect.is_allow() {
+            return Self::allow();
+        }
+        Self(PermissionDecision::deny(
+            effect
+                .reason()
+                .map_or_else(|| effect.as_str().to_string(), str::to_string),
+        ))
+    }
+
+    /// The decision in the shared permission vocabulary.
+    #[must_use]
+    pub const fn effect(&self) -> &PermissionDecision {
+        &self.0
+    }
+
+    /// Why the invocation was refused, or `None` when it was allowed.
+    #[must_use]
+    pub fn denial_reason(&self) -> Option<&str> {
+        if self.0.is_allow() {
+            return None;
+        }
+        Some(self.0.reason().unwrap_or_else(|| self.0.as_str()))
+    }
 }
 
 /// Optional interception hook around capability execution.
@@ -273,7 +317,7 @@ pub trait CapabilityInterceptor: Send + Sync {
 
     /// Called before capability execution.
     async fn pre_invoke(&self, _name: &str, _args: &HashMap<String, Value>) -> InterceptDecision {
-        InterceptDecision::Allow
+        InterceptDecision::allow()
     }
 
     /// Called after capability execution (success path).
@@ -332,12 +376,10 @@ impl CapabilityInterceptor for PermissionInterceptor {
     async fn pre_invoke(&self, name: &str, args: &HashMap<String, Value>) -> InterceptDecision {
         if self.requires_auth.contains(name) && !Self::args_have_credential(args) {
             if self.strict {
-                return InterceptDecision::Deny {
-                    reason: format!(
-                        "capability '{name}' requires authentication but no credential was \
-                         resolved; bind one (e.g. `--tool-auth {name}=<connection_id>`)"
-                    ),
-                };
+                return InterceptDecision::deny(format!(
+                    "capability '{name}' requires authentication but no credential was \
+                     resolved; bind one (e.g. `--tool-auth {name}=<connection_id>`)"
+                ));
             }
             tracing::warn!(
                 capability = %name,
@@ -345,7 +387,7 @@ impl CapabilityInterceptor for PermissionInterceptor {
                  (advisory; set APXM_REQUIRE_AUTH_STRICT=1 to enforce)"
             );
         }
-        InterceptDecision::Allow
+        InterceptDecision::allow()
     }
 }
 
@@ -446,6 +488,65 @@ mod tests {
         Arc::new(GatedEcho { meta })
     }
 
+    /// The chokepoint that gates every capability invocation can say exactly
+    /// two things. It carries no third outcome — in particular none that
+    /// rewrites the arguments after admission — so whatever registered an
+    /// interceptor cannot change what runs, only whether it runs.
+    #[test]
+    fn the_chokepoint_can_only_allow_or_deny() {
+        assert_eq!(InterceptDecision::allow().denial_reason(), None);
+        assert_eq!(
+            InterceptDecision::deny("not admitted").denial_reason(),
+            Some("not admitted")
+        );
+        assert_eq!(
+            InterceptDecision::from_effect(PermissionDecision::allow()),
+            InterceptDecision::allow()
+        );
+        // `Ask` has no broker left here, so it refuses and says why.
+        assert_eq!(
+            InterceptDecision::from_effect(PermissionDecision::ask("confirm each send"))
+                .denial_reason(),
+            Some("confirm each send")
+        );
+        // A refusal that gives no reason still refuses.
+        assert_eq!(
+            InterceptDecision::from_effect(PermissionDecision::Deny { reason: None })
+                .denial_reason(),
+            Some("deny")
+        );
+    }
+
+    /// An interceptor sees the arguments and decides on them; the arguments the
+    /// implementation receives are the ones admission carried, unchanged.
+    #[tokio::test]
+    async fn an_interceptor_cannot_change_the_arguments_it_inspects() {
+        struct Inspector;
+        #[async_trait]
+        impl CapabilityInterceptor for Inspector {
+            async fn pre_invoke(
+                &self,
+                _name: &str,
+                args: &HashMap<String, Value>,
+            ) -> InterceptDecision {
+                assert_eq!(args.get("message"), Some(&Value::String("hi".into())));
+                InterceptDecision::allow()
+            }
+        }
+
+        let system = crate::CapabilitySystem::new();
+        system.register(Arc::new(EchoCapability::new())).unwrap();
+        system.register_interceptor(Arc::new(Inspector));
+        let mut args = HashMap::new();
+        args.insert("message".to_string(), Value::String("hi".to_string()));
+
+        let result = system.invoke("echo", args).await.expect("echo runs");
+        assert!(
+            result.to_string().contains("hi"),
+            "the implementation received the authored argument: {result}"
+        );
+    }
+
     #[tokio::test]
     async fn pre_invoke_ctx_allows_on_approval() {
         let registry = CapabilityRegistry::new();
@@ -471,7 +572,7 @@ mod tests {
         let mut args = HashMap::new();
         args.insert("message".to_string(), Value::String("hi".to_string()));
         let decision = pre_invoke_ctx(&ctx, "gated-echo", &args).await;
-        assert!(matches!(decision, InterceptDecision::Allow));
+        assert_eq!(decision, InterceptDecision::allow());
         assert_eq!(emitter.requests.lock().len(), 1);
         assert_eq!(
             emitter.resolutions.lock()[0].1,
@@ -504,7 +605,7 @@ mod tests {
 
         let decision = pre_invoke_ctx(&ctx, "gated-echo", &HashMap::new()).await;
 
-        assert!(matches!(decision, InterceptDecision::Allow));
+        assert_eq!(decision, InterceptDecision::allow());
         let prompts = broker.prompts.lock();
         assert_eq!(prompts.len(), 1);
         assert_eq!(
@@ -544,7 +645,9 @@ mod tests {
         let decision = pre_invoke_ctx(&ctx, "gated-echo", &HashMap::new()).await;
 
         assert!(
-            matches!(decision, InterceptDecision::Deny { ref reason } if reason.contains("grant_id")),
+            decision
+                .denial_reason()
+                .is_some_and(|reason| reason.contains("grant_id")),
             "a gated call carrying no grant is denied and names the absent field"
         );
         assert!(
@@ -583,7 +686,9 @@ mod tests {
         let decision = pre_invoke_ctx(&ctx, "gated-echo", &HashMap::new()).await;
 
         assert!(
-            matches!(decision, InterceptDecision::Deny { ref reason } if reason.contains("agent_code")),
+            decision
+                .denial_reason()
+                .is_some_and(|reason| reason.contains("agent_code")),
             "a gated call carrying no acting agent is denied and names the absent field"
         );
         assert!(
@@ -610,7 +715,7 @@ mod tests {
             permission_timeout: Duration::from_secs(1),
         };
         let decision = pre_invoke_ctx(&ctx, "gated-echo", &HashMap::new()).await;
-        assert!(matches!(decision, InterceptDecision::Deny { .. }));
+        assert!(decision.denial_reason().is_some());
         assert_eq!(emitter.resolutions.lock()[0].1, ApprovalResolution::Expired);
     }
 
@@ -634,11 +739,10 @@ mod tests {
 
         let decision = pre_invoke_ctx(&ctx, "gated-echo", &HashMap::new()).await;
 
-        assert!(matches!(
-            decision,
-            InterceptDecision::Deny { ref reason }
-                if reason == apxm_core::types::consent::APPROVAL_BROKER_UNAVAILABLE_REASON
-        ));
+        assert_eq!(
+            decision.denial_reason(),
+            Some(apxm_core::types::consent::APPROVAL_BROKER_UNAVAILABLE_REASON)
+        );
         assert_eq!(emitter.resolutions.lock()[0].1, ApprovalResolution::Denied);
     }
 
@@ -664,10 +768,7 @@ mod tests {
 
         let decision = pre_invoke_ctx(&ctx, "gated-echo", &HashMap::new()).await;
 
-        assert!(matches!(
-            decision,
-            InterceptDecision::Deny { ref reason } if reason == "operator rejected"
-        ));
+        assert_eq!(decision.denial_reason(), Some("operator rejected"));
         assert_eq!(emitter.resolutions.lock()[0].1, ApprovalResolution::Denied);
     }
 
@@ -690,6 +791,6 @@ mod tests {
             permission_timeout: Duration::from_secs(1),
         };
         let decision = pre_invoke_ctx(&ctx, "echo", &HashMap::new()).await;
-        assert!(matches!(decision, InterceptDecision::Allow));
+        assert_eq!(decision, InterceptDecision::allow());
     }
 }

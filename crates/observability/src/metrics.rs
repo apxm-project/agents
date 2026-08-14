@@ -8,7 +8,7 @@
 //! - per-service RED: `apxm.requests.total`, `apxm.requests.errors`,
 //!   `apxm.request.duration`
 //! - domain counters: runs started/completed/failed, op dispatches,
-//!   capability invocations by [`apxm_core::types::capability::PermissionDecisionKind`]
+//!   capability invocations by [`apxm_core::types::capability::PermissionDecision`]
 //! - journal depth + dead-letter count (gauges)
 //! - token usage
 //!
@@ -19,7 +19,7 @@
 //!
 //! Quota consumption is out of scope here.
 
-use apxm_core::types::capability::PermissionDecisionKind;
+use apxm_core::types::capability::PermissionDecision;
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Counter, Gauge, Histogram, Meter};
 
@@ -52,7 +52,9 @@ impl AppMetrics {
         Self {
             requests_total: meter
                 .u64_counter("apxm.requests.total")
-                .with_description("Total requests handled by this service's entry points (RED: rate).")
+                .with_description(
+                    "Total requests handled by this service's entry points (RED: rate).",
+                )
                 .build(),
             request_errors_total: meter
                 .u64_counter("apxm.requests.errors")
@@ -77,11 +79,15 @@ impl AppMetrics {
                 .build(),
             op_dispatches_total: meter
                 .u64_counter("apxm.ops.dispatched")
-                .with_description("Total operation dispatches, aligned with the in-process op-usage stat.")
+                .with_description(
+                    "Total operation dispatches, aligned with the in-process op-usage stat.",
+                )
                 .build(),
             capability_invocations_total: meter
                 .u64_counter("apxm.capability.invocations")
-                .with_description("Capability invocations labeled by permission decision (PermissionDecisionKind).")
+                .with_description(
+                    "Capability invocations labeled by permission decision (PermissionDecision).",
+                )
                 .build(),
             journal_depth: meter
                 .u64_gauge("apxm.journal.depth")
@@ -147,9 +153,10 @@ impl AppMetrics {
     }
 
     /// Record a capability invocation labeled by its permission decision.
-    /// The label value is always `PermissionDecisionKind::as_str()`; typed
-    /// enums are the only source of this label.
-    pub fn record_capability_invocation(&self, decision: PermissionDecisionKind) {
+    /// The label value is always `PermissionDecision::as_str()`; typed enums are
+    /// the only source of this label. A decision's reason is deliberately not
+    /// a label — it is free text and would make the series unbounded.
+    pub fn record_capability_invocation(&self, decision: &PermissionDecision) {
         self.capability_invocations_total
             .add(1, &[KeyValue::new("decision", decision.as_str())]);
     }
@@ -159,7 +166,7 @@ impl AppMetrics {
     /// counts bounded per deployment).
     pub fn record_capability_invocation_named(
         &self,
-        decision: PermissionDecisionKind,
+        decision: &PermissionDecision,
         capability: &str,
     ) {
         self.capability_invocations_total.add(
@@ -246,9 +253,9 @@ mod tests {
     async fn capability_invocation_labels_use_cm3_enum_values() {
         let (metrics, exporter, provider) = test_metrics();
 
-        metrics.record_capability_invocation(PermissionDecisionKind::Allow);
-        metrics.record_capability_invocation(PermissionDecisionKind::RequireApproval);
-        metrics.record_capability_invocation(PermissionDecisionKind::Deny);
+        metrics.record_capability_invocation(&PermissionDecision::allow());
+        metrics.record_capability_invocation(&PermissionDecision::ask("confirm"));
+        metrics.record_capability_invocation(&PermissionDecision::deny("refused"));
 
         provider.force_flush().unwrap();
 
@@ -265,10 +272,7 @@ mod tests {
                 .any(|labels| labels.contains(&("decision".to_string(), value.to_string())))
         };
         assert!(has_label("allow"), "missing decision=allow data point");
-        assert!(
-            has_label("require_approval"),
-            "missing decision=require_approval data point"
-        );
+        assert!(has_label("ask"), "missing decision=ask data point");
         assert!(has_label("deny"), "missing decision=deny data point");
     }
 
@@ -288,17 +292,14 @@ mod tests {
         assert!(errors[0].contains(&("method".to_string(), "POST".to_string())));
     }
 
-    /// Round-trip every `PermissionDecisionKind` variant through `as_str()`
-    /// — catches a stringly-typed regression if a variant's label drifts
-    /// from its serde wire value.
+    /// Round-trip every `PermissionDecision` variant through `as_str()` —
+    /// catches a stringly-typed regression if a variant's label drifts from
+    /// its serde wire value, and pins that a reason never reaches the label.
     #[test]
-    fn permission_decision_kind_as_str_matches_wire_values() {
-        assert_eq!(PermissionDecisionKind::Allow.as_str(), "allow");
-        assert_eq!(PermissionDecisionKind::Deny.as_str(), "deny");
-        assert_eq!(
-            PermissionDecisionKind::RequireApproval.as_str(),
-            "require_approval"
-        );
+    fn permission_effect_as_str_matches_wire_values() {
+        assert_eq!(PermissionDecision::allow().as_str(), "allow");
+        assert_eq!(PermissionDecision::ask("confirm").as_str(), "ask");
+        assert_eq!(PermissionDecision::deny("refused").as_str(), "deny");
     }
 
     #[test]

@@ -601,6 +601,8 @@ fn lifecycle_fact(
             context_before_ref: None,
             context_after_ref: None,
             effect_outcome_ref: None,
+            capability_ref: None,
+            permission_decision: None,
             typed_error: None,
         },
     )
