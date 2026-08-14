@@ -94,7 +94,12 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
             files.sort();
 
             if check {
-                check_generated_named_files(&output_dir, &rendered, "typescript-frontend")?;
+                check_generated_named_files(
+                    &output_dir,
+                    &rendered,
+                    crate::frontend::codegen_ts::GENERATED_TYPESCRIPT_FRONTEND_FILES,
+                    "typescript-frontend",
+                )?;
             } else {
                 crate::frontend::codegen_ts::write_typescript_frontend_generated(&output_dir)?;
             }
@@ -145,6 +150,51 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
                 );
                 println!("  target: event-kinds");
                 println!("  output: {}", output_path.display());
+            }
+
+            Ok(())
+        }
+        CodegenAction::Capabilities { check } => {
+            let python_path = default_python_capabilities_codegen_path();
+            let typescript_path = default_typescript_capabilities_codegen_path();
+            let python = crate::frontend::codegen_capabilities::render_capabilities_python();
+            let typescript =
+                crate::frontend::codegen_capabilities::render_capabilities_typescript();
+            let outputs = [(&python_path, &python), (&typescript_path, &typescript)];
+
+            if check {
+                for (path, rendered) in outputs {
+                    check_generated_file(path, rendered, "capabilities")?;
+                }
+            } else {
+                for (path, rendered) in outputs {
+                    if let Some(parent) = path.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+                    fs::write(path, rendered)?;
+                }
+            }
+
+            let files = vec![
+                python_path.display().to_string(),
+                typescript_path.display().to_string(),
+            ];
+            if json_output {
+                let output = serde_json::json!({
+                    "target": "capabilities",
+                    "files": files,
+                    "check": check,
+                });
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else {
+                println!(
+                    "{} capability catalogue:",
+                    if check { "Checked" } else { "Generated" }
+                );
+                println!("  target: capabilities");
+                for file in files {
+                    println!("  - {file}");
+                }
             }
 
             Ok(())
@@ -223,7 +273,7 @@ fn check_generated_file(output_path: &Path, rendered: &str, target: &str) -> Res
 
 /// Check a fixed, known set of generated filenames (rather than an
 /// extension-filtered directory scan). Used by `op-spec`, whose two files
-/// (`op-spec.v1.json`, `op-spec.vectors.v1.json`) are always both present or
+/// (`op-spec.json`, `op-spec.vectors.json`) are always both present or
 /// the directory is stale/missing.
 fn check_generated_json_dir(
     output_dir: &Path,
@@ -248,15 +298,16 @@ fn check_generated_json_dir(
     Ok(())
 }
 
+/// Check `rendered` against `output_dir`, then reject any `.ts` file in that
+/// directory outside `owned` — the full set of generated filenames the
+/// directory may hold, which spans every codegen arm writing into it.
 fn check_generated_named_files(
     output_dir: &Path,
     rendered: &[(&'static str, String)],
+    owned: &[&str],
     target: &str,
 ) -> Result<()> {
-    let expected = rendered
-        .iter()
-        .map(|(filename, _)| *filename)
-        .collect::<BTreeSet<_>>();
+    let expected = owned.iter().copied().collect::<BTreeSet<_>>();
     for (filename, content) in rendered {
         let output_path = output_dir.join(filename);
         let current = fs::read_to_string(&output_path).map_err(|error| {
@@ -297,6 +348,17 @@ fn check_generated_named_files(
 fn default_python_runtime_evidence_codegen_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../compiler/frontend/python/apxm_program/_generated/runtime_evidence.py")
+}
+
+fn default_python_capabilities_codegen_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../compiler/frontend/python/apxm_program/_generated")
+        .join(crate::frontend::codegen_capabilities::PYTHON_CAPABILITIES_FILE)
+}
+
+fn default_typescript_capabilities_codegen_path() -> PathBuf {
+    default_typescript_frontend_codegen_dir()
+        .join(crate::frontend::codegen_capabilities::TYPESCRIPT_CAPABILITIES_FILE)
 }
 
 fn default_op_spec_codegen_dir() -> PathBuf {

@@ -33,14 +33,14 @@ pub enum Commands {
         name: String,
     },
     /// Compile a canonical-authored agent session package to canonical
-    /// `apxm.air.v2` (`AirModule`) JSON on stdout, through the canonical
+    /// `apxm.air` (`AirModule`) JSON on stdout, through the canonical
     /// `apxm_program` frontend. Stdout contains only canonical AIR JSON;
     /// diagnostics use stderr and failures are nonzero.
     CompileServiceCanonical {
         /// Agent directory (contains agent.toml with a canonical [compile].entry)
         agent_dir: PathBuf,
     },
-    /// Execute canonical `apxm.air.v2` JSON through the canonical runtime.
+    /// Execute canonical `apxm.air` JSON through the canonical runtime.
     ExecuteCanonical {
         /// Canonical AIR JSON file.
         input: PathBuf,
@@ -60,11 +60,6 @@ pub enum Commands {
     Backend {
         #[command(subcommand)]
         action: BackendAction,
-    },
-    /// Manage external tool/capability registrations for INV nodes
-    Tool {
-        #[command(subcommand)]
-        action: ToolAction,
     },
     /// Manage agent teams from ~/.apxm/teams.toml
     Team {
@@ -116,8 +111,8 @@ pub enum Commands {
     },
     /// Emit canonical AIR from a canonical FrontendGraph via the native bridge.
     ///
-    /// Reads an `apxm.frontend-graph.v2` document from a file or stdin and lowers
-    /// it in-process to canonical `apxm.air.v2` JSON.
+    /// Reads an `apxm.frontend-graph` document from a file or stdin and lowers
+    /// it in-process to canonical `apxm.air` JSON.
     CanonicalAir {
         /// Canonical frontend graph JSON file. Omit to read stdin.
         input: Option<PathBuf>,
@@ -274,7 +269,7 @@ pub enum CodegenAction {
         #[arg(long)]
         check: bool,
     },
-    /// Generate TypeScript types into the Studio frontend
+    /// Generate TypeScript types into the TypeScript authoring frontend
     Typescript {
         /// Output file path for generated TypeScript
         #[arg(long)]
@@ -301,7 +296,14 @@ pub enum CodegenAction {
         #[arg(long)]
         check: bool,
     },
-    /// Generate the op-spec.v1 AIS operation catalog + vectors fixture
+    /// Generate the capability id catalogue into both authoring frontends
+    Capabilities {
+        /// Check that the generated catalogue files are up to date without
+        /// writing them
+        #[arg(long)]
+        check: bool,
+    },
+    /// Generate the op-spec AIS operation catalog + vectors fixture
     OpSpec {
         /// Output directory for the generated catalog + vectors files
         #[arg(long)]
@@ -489,30 +491,8 @@ pub enum BackendAction {
 }
 
 #[derive(Subcommand)]
-pub enum ToolAction {
-    /// List registered tools
-    List,
-    /// Add a new external tool
-    Add {
-        /// Tool name (used in INV node's "capability" attribute)
-        name: String,
-        /// Tool description
-        #[arg(long)]
-        description: String,
-        /// JSON Schema for tool input parameters
-        #[arg(long)]
-        schema: Option<String>,
-    },
-    /// Remove a registered tool
-    Remove {
-        /// Tool name to remove
-        name: String,
-    },
-}
-
-#[derive(Subcommand)]
 pub enum AgentAction {
-    /// Scaffold a new agent folder tree (apxm.agent.v1).
+    /// Scaffold a new agent folder tree (apxm.agent).
     New {
         /// Agent id.
         id: String,
@@ -532,7 +512,7 @@ pub enum AgentAction {
         #[arg(default_value = ".")]
         path: PathBuf,
     },
-    /// Validate an agent folder against the apxm.agent.v1 contract and
+    /// Validate an agent folder against the apxm.agent contract and
     /// check capability-set agreement across agent.toml/capabilities.toml/skills.
     Lint {
         /// Agent directory to validate (default: current directory).
@@ -564,7 +544,7 @@ pub enum AgentAction {
 
 #[derive(Subcommand)]
 pub enum OrgAction {
-    /// Scaffold a new organization-package folder tree (apxm.org-package.v1).
+    /// Scaffold a new organization-package folder tree (apxm.org-package).
     New {
         /// Org id (also used as org.toml's org_id).
         id: String,
@@ -618,20 +598,6 @@ pub enum TeamAction {
         #[arg(long)]
         system_prompt: Option<String>,
     },
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
-pub struct ToolEntry {
-    pub name: String,
-    pub description: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub schema: Option<String>,
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Default)]
-pub struct ToolsFile {
-    #[serde(default)]
-    pub tools: Vec<ToolEntry>,
 }
 
 #[cfg(test)]

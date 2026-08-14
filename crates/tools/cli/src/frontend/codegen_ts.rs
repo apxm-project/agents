@@ -3,13 +3,28 @@ use std::path::Path;
 
 use anyhow::Result;
 
+use super::codegen_capabilities::TYPESCRIPT_CAPABILITIES_FILE;
 use super::registry::{
     FrontendOperationSpec, builtin_providers, graph_attr_constants, graph_metric_constants,
     operation_specs, provider_protocols,
 };
 
+pub const RUNTIME_EVIDENCE_TYPESCRIPT_FILE: &str = "runtime-evidence.ts";
+
+/// Every file `@apxm/frontend`'s `src/generated` directory may contain. The
+/// stray-file guard belongs to the directory rather than to one codegen arm:
+/// `typescript-frontend` owns the runtime-evidence binding and `capabilities`
+/// owns the capability catalogue, and both write here.
+pub const GENERATED_TYPESCRIPT_FRONTEND_FILES: &[&str] = &[
+    TYPESCRIPT_CAPABILITIES_FILE,
+    RUNTIME_EVIDENCE_TYPESCRIPT_FILE,
+];
+
 pub fn render_typescript_frontend_files() -> Vec<(&'static str, String)> {
-    vec![("runtime-evidence.ts", render_runtime_evidence_typescript())]
+    vec![(
+        RUNTIME_EVIDENCE_TYPESCRIPT_FILE,
+        render_runtime_evidence_typescript(),
+    )]
 }
 
 fn render_runtime_evidence_typescript() -> String {
@@ -20,11 +35,11 @@ fn render_runtime_evidence_typescript() -> String {
         .join(", ");
     let runtime_schema = ts_string(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../../contracts/schemas/apxm.runtime-evidence.v1.json"
+        "/../../../contracts/schemas/apxm.runtime-evidence.json"
     )));
     let common_schema = ts_string(include_str!(env!("APXM_CONTRACT_COMMON_SCHEMA_PATH")));
     format!(
-        r##"// AUTO-GENERATED from apxm.runtime-evidence.v1; DO NOT EDIT.
+        r##"// AUTO-GENERATED from apxm.runtime-evidence; DO NOT EDIT.
 export const RUNTIME_FACT_KINDS = [{runtime_kinds}] as const;
 export const ALL_FACT_KINDS = [...RUNTIME_FACT_KINDS, "LoopIterationCompleted"] as const;
 export type RuntimeFactKind = (typeof RUNTIME_FACT_KINDS)[number];
@@ -374,14 +389,17 @@ mod tests {
     fn generic_frontend_codegen_has_closed_contract_outputs() {
         let rendered = render_typescript_frontend_files();
 
-        // The authoring surface exposes no operation constants, so the only
-        // generated frontend metadata is the runtime-evidence fact binding.
+        // The authoring surface exposes no operation constants, so this arm's
+        // only generated frontend metadata is the runtime-evidence fact
+        // binding. The capability catalogue that shares `src/generated` is a
+        // bindable-name vocabulary, not an operation vocabulary, and is
+        // rendered — and separately pinned — by `codegen_capabilities`.
         assert_eq!(
             rendered
                 .iter()
                 .map(|(filename, _)| *filename)
                 .collect::<Vec<_>>(),
-            vec!["runtime-evidence.ts"]
+            vec![RUNTIME_EVIDENCE_TYPESCRIPT_FILE]
         );
         let evidence = &rendered[0].1;
         for required in [
