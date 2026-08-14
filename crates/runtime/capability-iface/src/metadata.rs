@@ -262,7 +262,7 @@ mod tests {
             description: "Post a Slack message".to_string(),
             tool: CapabilityBinding {
                 id: "slack.post".to_string(),
-                handler: CapabilityBindingHandler::PackHandler,
+                handler: CapabilityBindingHandler::McpBridge,
                 parameters_schema: serde_json::json!({"type": "object"}),
                 returns: "json".to_string(),
             },

@@ -1,23 +1,19 @@
 //! Mediating interface crate between `apxm-runtime`'s capability module and its
-//! scheduler/executor modules.
+//! executor module.
 //!
 //! # Why this crate exists
 //!
-//! `apxm-runtime` currently hosts three modules — `scheduler`, `executor`, and
-//! `capability` — that form a genuine three-way
-//! `use`-graph cycle: executor dispatches through the scheduler, the scheduler
-//! calls back into executor context/hooks, and capability's builtin `schedule`
-//! tool calls the scheduler's park registry directly while executor's
-//! `ExecutionContext` holds a concrete `Arc<CapabilitySystem>`. Because all
-//! three live in one crate today, the cycle isn't a *compile* problem — but it
-//! blocks ever splitting them into separate crates, since a naive split
-//! would recreate the cycle at the `Cargo.toml` dependency level.
+//! `apxm-runtime` hosts `executor` and `capability` modules that would form a
+//! `use`-graph cycle if `capability` depended on executor's context/hooks
+//! directly: executor holds a concrete `Arc<CapabilitySystem>`, while
+//! capability's interceptor pipeline needs to call back into executor's event
+//! observer. Because both live in one crate today, the cycle isn't a
+//! *compile* problem — but it blocks ever splitting them into separate
+//! crates, since a naive split would recreate the cycle at the `Cargo.toml`
+//! dependency level.
 //!
 //! This crate is the trait seam that breaks it. It defines:
 //!
-//! - [`CapabilityHost`] — the narrow wake-notification interface capability's
-//!   builtin `schedule` tool needs from the scheduler (not the whole
-//!   `park_registry` module).
 //! - [`ExecutionEventEmitter`] — the event-observer trait capability's
 //!   interceptor pipeline calls into, moved here from executor so both sides
 //!   can depend on the trait without depending on each other.
@@ -31,9 +27,13 @@
 //!
 //! This crate carries the shared traits and types; concrete runtime
 //! implementations remain in their owning modules.
+//!
+//! Per ADR-0019, this crate holds no durable timer, wake-notification host
+//! bridge, or process-global park registry seam. Making a node runnable is
+//! exclusively the readiness kernel's decision; there is no second path into
+//! `runnable` here.
 
 mod facade;
-mod host;
 mod metadata;
 mod token_usage;
 
@@ -45,7 +45,6 @@ pub use facade::{
     CapabilityFacade, CapabilityInvocation, CapabilityInvocationError, CapabilitySandboxPreflight,
     HostEffectRequestEvidence, capability_effect_idempotency_key_digest,
 };
-pub use host::{CapabilityHost, CapabilityHostError};
 pub use metadata::{
     CapabilityGrantRuntimeQuota, CapabilityGrantScopeRequirements, CapabilityGrantScopeSelector,
     RuntimeCapability,
