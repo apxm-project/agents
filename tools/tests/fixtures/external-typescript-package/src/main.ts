@@ -5,8 +5,8 @@ import { staticSource } from "./static-source.js";
 type Input = { request: string };
 type Output = { answer: string };
 
-const Lookup = Tool<Input, { facts: string }>("fixture.lookup.v1");
-const Answer = Model<{ request: string; facts: string }, Output>("fixture.answer.v1");
+const Lookup = Tool<Input, { facts: string }>("fixture.lookup");
+const Answer = Model<{ request: string }, Output>("fixture.answer");
 const source = staticSource(import.meta.url);
 type FixtureProgram = ReturnType<typeof Agent<Input, Output>>;
 
@@ -21,7 +21,10 @@ export const ExternalFixture: FixtureProgram = Agent<Input, Output>({
         const lookup = await Lookup(input);
         facts = lookup.facts;
       });
-      const response = await Answer({ request: input.request, facts });
+      // `facts` is bound inside the TaskGroup scope, so it does not dominate
+      // this call; passing it as an authored argument is rejected by the
+      // forward-SSA-dominance rule. Mirrors the parity example's shape.
+      const response = await Answer({ request: input.request });
       input = await agent.yield_(response);
     }
   },
