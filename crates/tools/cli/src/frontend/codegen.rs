@@ -8,11 +8,11 @@ pub fn render_runtime_evidence_python() -> String {
         .join(", ");
     let runtime_schema = py_string(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../../contracts/schemas/apxm.runtime-evidence.v1.json"
+        "/../../../contracts/schemas/apxm.runtime-evidence.json"
     )));
     let common_schema = py_string(include_str!(env!("APXM_CONTRACT_COMMON_SCHEMA_PATH")));
     format!(
-        r##"# AUTO-GENERATED from apxm.runtime-evidence.v1; DO NOT EDIT.
+        r##"# AUTO-GENERATED from apxm.runtime-evidence; DO NOT EDIT.
 import json
 import re
 from dataclasses import dataclass

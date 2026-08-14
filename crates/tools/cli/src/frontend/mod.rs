@@ -1,4 +1,5 @@
 pub mod codegen;
+pub mod codegen_capabilities;
 pub mod codegen_event_kinds;
 pub mod codegen_ts;
 pub mod registry;
