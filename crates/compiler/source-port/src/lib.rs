@@ -262,16 +262,15 @@ fn compile_captured_graph(
     frontend: Frontend,
     captured: serde_json::Value,
 ) -> Result<CompiledSource, Vec<SourceDiagnostic>> {
-    let frontend_graph: FrontendGraph =
-        serde_json::from_value(captured).map_err(|error| {
-            vec![SourceDiagnostic::new(
-                SourceDiagnosticCode::FrontendOutputInvalid,
-                format!(
-                    "the {} authoring frontend recorded a value outside apxm.frontend-graph: {error}",
-                    frontend.wire()
-                ),
-            )]
-        })?;
+    let frontend_graph: FrontendGraph = serde_json::from_value(captured).map_err(|error| {
+        vec![SourceDiagnostic::new(
+            SourceDiagnosticCode::FrontendOutputInvalid,
+            format!(
+                "the {} authoring frontend recorded a value outside apxm.frontend-graph: {error}",
+                frontend.wire()
+            ),
+        )]
+    })?;
 
     // A frontend records the source language it authored. A graph that claims a
     // different one is not the graph this request asked for.

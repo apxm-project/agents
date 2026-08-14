@@ -611,12 +611,9 @@ mod from_air_tests {
 
     #[test]
     fn from_air_emits_one_artifact_semantic_requirement_per_distinct_model_target() {
-        let artifact = ExecutableArtifact::from_air(&air(&[
-            "model.target",
-            "model.target",
-            "model.fast",
-        ]))
-        .expect("from_air");
+        let artifact =
+            ExecutableArtifact::from_air(&air(&["model.target", "model.target", "model.fast"]))
+                .expect("from_air");
         assert_eq!(artifact.artifact_semantic_requirements.len(), 2);
         for requirement in &artifact.artifact_semantic_requirements {
             assert_eq!(requirement.source_scope, PortSourceScope::ArtifactSemantic);

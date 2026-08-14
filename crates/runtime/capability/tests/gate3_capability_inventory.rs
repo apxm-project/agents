@@ -36,7 +36,9 @@ use apxm_capability::builtins::{
     WriteCapability, register_standard_tools,
 };
 use apxm_capability::executor::CapabilityExecutor;
-use apxm_core::constants::capabilities::{BUILTINS, MCP_CALL, PROVIDER_CALL, SCHEDULE, STANDARD_BUILTINS};
+use apxm_core::constants::capabilities::{
+    BUILTINS, MCP_CALL, PROVIDER_CALL, SCHEDULE, STANDARD_BUILTINS,
+};
 use std::collections::BTreeSet;
 
 fn set_of(items: &[&str]) -> BTreeSet<String> {

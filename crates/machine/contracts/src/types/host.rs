@@ -659,10 +659,7 @@ mod tests {
             panic!("typed Host rejection was collapsed into a commit");
         };
         assert_eq!(rejection.category, HostEffectRejectionCategory::Conflict);
-        assert_eq!(
-            rejection.failure.schema_id,
-            "apxm.example-effect-failure"
-        );
+        assert_eq!(rejection.failure.schema_id, "apxm.example-effect-failure");
     }
 
     #[test]
