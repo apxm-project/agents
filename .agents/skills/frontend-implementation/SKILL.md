@@ -14,7 +14,7 @@ load `_shared/apxm-comment-rules.md`; when writing tests load
 ## Ownership
 
 - The AIS op catalog is the single source of operations:
-  `crates/machine/ais/generated/op-spec.v1.json`, generated from Rust-owned
+  `crates/machine/ais/generated/op-spec.json`, generated from Rust-owned
   AIS definitions.
 - The Rust compiler owns canonical FrontendGraph validation and AIR lowering in
   `crates/machine/program/src/lower.rs`.

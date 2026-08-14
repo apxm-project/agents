@@ -10,7 +10,7 @@ amends: ADR-0006, ADR-0010, ADR-0014
 
 ## Context
 
-ADR-0006 fixed `apxm.frontend-graph.v2` as the versioned interchange contract
+ADR-0006 fixed `apxm.frontend-graph` as the versioned interchange contract
 and made Python/TypeScript pure authoring libraries over explicit compiler
 bridges. ADR-0010 and ADR-0014 assigned loop, Hook, Context, and composition
 behavior to source, made `ConversationalAgent`/Gao examples, and split AIS into
@@ -20,7 +20,7 @@ Those decisions still leave the public authoring surface as an imperative
 recorder. At the baseline, authors construct `AgentProgram`, hand-record
 node/region identities, import raw operation constants (`OP_MODEL_CALL`,
 `SEMANTIC_*`, `STRUCTURAL_*`, literal `"ais.loop"`), and the frontend copies
-those records field-for-field into `apxm.frontend-graph.v2`, whose `operands`
+those records field-for-field into `apxm.frontend-graph`, whose `operands`
 are an untyped object bag and whose structural `kind` enum admits the raw AIR
 spelling `ais.loop`. Rust then copies FrontendGraph to AIR field-for-field, and
 the MLIR emitter writes unregistered `apxm.*` operations as `() -> ()` under an
@@ -129,7 +129,7 @@ native Python/TypeScript AST + symbols/types   (language-owned, parser evidence)
         -> bind, type/effect check
 BoundAgentTree                                  (frontend-internal, immutable, typed, lexical, source-mapped)
         -> one deterministic traversal
-apxm.frontend-graph.v2                          (only cross-language serialized IR; typed source intents)
+apxm.frontend-graph                          (only cross-language serialized IR; typed source intents)
         -> Rust verification, CFG/SSA, AIS selection
 AIR + registered ais.* / MLIR                   (Rust-owned closed semantics)
         -> verified, digest-bound
@@ -157,7 +157,7 @@ construction and preserved through traversal.
 
 ### 6. FrontendGraph owns typed source intents; Rust alone owns AIS selection
 
-`apxm.frontend-graph.v2` is replaced (not extended with a second IR) by a typed
+`apxm.frontend-graph` is replaced (not extended with a second IR) by a typed
 shape containing: typed Agent/Context/Model/Tool/Capability/imported-Agent/Event/
 Hook declarations and bindings; typed functions, parameters, values, blocks,
 regions, results, data edges, and explicit context/state edges; discriminated
@@ -184,7 +184,7 @@ canonical verification succeeds with unregistered dialects disabled.
 ### 7. One machine-readable surface manifest
 
 D0 freezes one machine-readable frontend-surface manifest
-(`contracts/schemas/apxm.frontend-surface.v1.json`) enumerating every public
+(`contracts/schemas/apxm.frontend-surface.json`) enumerating every public
 declaration/marker, its accepted arguments, inferred types, bound semantic node,
 and the diagnostics it can raise. Public-export scans, documentation-alignment
 checks, and generated reference docs derive from this one manifest. A guide,
@@ -216,7 +216,7 @@ Agent runtimes or frontend concepts.
   ADR-0006's canonical-interchange and explicit-bridge decision is retained; the
   interchange shape is replaced under §6, not the bridge boundary.
 - The parent Agent Program composition and AIR contract is amended so §3 Source
-  API shows the source-first surface, §7 FrontendGraph v2 lists typed intents
+  API shows the source-first surface, §7 FrontendGraph lists typed intents
   rather than raw operation records, and §8/§11 fix the AIR-to-registered-AIS
   signatures with complete typed operands/results.
 - `CONTEXT.md` is amended to distinguish friendly frontend names (`Agent`,

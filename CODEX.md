@@ -42,12 +42,14 @@ Command groups (see `dekk agents --help` for the live list):
 
 - **Build & Test**: `build`, `build-dialect`, `test`, `test-cli`,
   `test-python-frontend`, `codegen`, `clean`, `scrub-rustc-cache`
-- **Compilation**: `compile`, `execute`, `run`, `decompile`
-- **Authoring**: `validate`, `analyze`, `explain`, `tokenize`
+- **Compilation**: `canonical-air`, `compile-service-canonical`,
+  `execute-canonical`
+- **Authoring**: `validate`, `analyze`, `explain`, `agent`
 - **Goals & Workflows**: `goal`
-- **Configuration**: `doctor`, `backend`, `agent`, `tool`, `cache`, `process`,
-  `mcp`, `commit-lint`
-- **Discovery**: `ops`, `template`
+- **Configuration**: `doctor`, `backend`, `cache`, `process`, `mcp`,
+  `commit-lint`
+- **Discovery**: `ops`, `template`, `tokenize`
+- **Observability**: `session`
 
 If a needed action isn't yet wrapped, **add a Dekk command** in `.dekk.toml`
 rather than shelling out — that is the project-wide pattern.

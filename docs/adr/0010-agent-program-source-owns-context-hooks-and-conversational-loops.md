@@ -162,7 +162,7 @@ and client delivery are outside the Turn. Compiler source maps preserve the
 static region and semantic annotation; runtime records only generic region and
 NodeExecution occurrences.
 
-There is no `TurnOutcome`, `TurnResult`, `apxm.conversational-loop.v1`, or
+There is no `TurnOutcome`, `TurnResult`, `apxm.conversational-loop`, or
 runtime Turn entity in the target contract. Success/failure/cancellation are
 generic Program Invocation states. Business outcomes such as denied or
 deferred exist only when the program's declared result type defines them.
@@ -182,20 +182,26 @@ reasoning summary, usage, latency, attempts, Hooks, context before/after, and
 output files according to permissions and data policy. Hidden chain of thought
 is never claimed or reconstructed.
 
-## Gao
+## Gao (historical; retired)
 
-Gao remains an ordinary TypeScript specialization of the standard
-Conversational Agent. Gao may add workflow-authoring prompts, discovery
-Capabilities, Skills associations, Hooks, and program logic. It adds no direct
-loop builder, custom context engine, privileged Studio callback, compiler
-branch, or runtime path.
+This decision originally described Gao as an ordinary TypeScript
+specialization of the standard Conversational Agent, adding workflow-authoring
+prompts, discovery Capabilities, Skills associations, Hooks, and program logic
+but no direct loop builder, custom context engine, privileged Studio callback,
+compiler branch, or runtime path. Consistent with this ADR's supersession
+note above, that provision is retired, not current: `examples/agents/gao/`,
+`crates/compiler/frontend/python/apxm_program/gao.py`, and
+`crates/compiler/frontend/native/typescript/js/gao.ts` are deleted, and
+`Gao` is a forbidden named semantic enforced by
+`tools/tests/test_canonical_only_reachability.py`. This section is retained
+for historical record only.
 
 ## Replacement
 
 The target Compatibility Set replaces and rejects:
 
-- `apxm.program-context.v1`, `apxm.agent-hook.v1`, and
-  `apxm.conversational-loop.v1` as executable target semantics;
+- `apxm.program-context`, `apxm.agent-hook`, and
+  `apxm.conversational-loop` as executable target semantics;
 - public `HookContext`, `HookResult`, Context Delta/Merge, and automatic Skill
   injection APIs;
 - runtime-controlled conversation/rearm loops, graph splicing, string modes,
