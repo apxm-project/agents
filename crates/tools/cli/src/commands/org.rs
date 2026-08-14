@@ -646,8 +646,8 @@ fn check_hierarchy_consistency(members: &MembersToml, tree: &TreeToml) -> Vec<St
                     errors.push(format!(
                         "members['{}'].hierarchy.parent ('{}') is inconsistent with \
                          topology.tree (edge declares parent '{}') — organization-packages.md \
-                         'The package': a member's own hierarchy.toml must be consistent with \
-                         topology.toml, lint error otherwise.",
+                         'The package': a member's own agent.toml [hierarchy] must be consistent \
+                         with topology.toml, lint error otherwise.",
                         member.id, declared_parent, actual_parent
                     ));
                 }

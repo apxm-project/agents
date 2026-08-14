@@ -70,7 +70,6 @@ Thumbs.db
 *.key
 *.pem
 *.p12
-apxm.toml.local
 .cursor*/
 .tmp/
 *.tmp

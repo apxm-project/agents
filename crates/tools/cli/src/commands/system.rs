@@ -1,4 +1,4 @@
-//! System commands for project initialization and environment diagnostics.
+//! System commands for environment diagnostics.
 
 use std::env;
 use std::path::PathBuf;
@@ -60,41 +60,6 @@ const DOCTOR_FRONTEND_GRAPH_PROBE: &str = r#"{
     "region_annotations": []
   }
 }"#;
-
-pub fn init_command(name: &str) -> Result<()> {
-    let base = PathBuf::from(name);
-    if base.exists() {
-        return Err(anyhow::anyhow!("Directory '{}' already exists", name));
-    }
-
-    let dirs = ["agents", "flows", "nodes", "prompts", "tools"];
-    for d in &dirs {
-        std::fs::create_dir_all(base.join(d))
-            .map_err(|e| anyhow::anyhow!("Failed to create {}/{}: {}", name, d, e))?;
-    }
-
-    let toml_content = format!(
-        r#"[project]
-name = "{name}"
-version = "0.1.0"
-
-[build]
-opt_level = "O1"
-
-[runtime]
-max_parallel = 4
-"#
-    );
-    std::fs::write(base.join("apxm.toml"), toml_content)
-        .map_err(|e| anyhow::anyhow!("Failed to write {}/apxm.toml: {}", name, e))?;
-
-    println!("Initialized APXM project '{}'", name);
-    for d in &dirs {
-        println!("  {}/{}/", name, d);
-    }
-    println!("  {}/apxm.toml", name);
-    Ok(())
-}
 
 pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> {
     let report = MlirEnvReport::detect();

@@ -27,11 +27,6 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Initialize a new APXM project directory
-    Init {
-        /// Project name (creates a directory with this name)
-        name: String,
-    },
     /// Compile a canonical-authored agent session package to canonical
     /// `apxm.air` (`AirModule`) JSON on stdout, through the canonical
     /// `apxm_program` frontend. Stdout contains only canonical AIR JSON;

@@ -102,7 +102,6 @@ async fn run_cli(cli: Cli) -> Result<()> {
     initialize_tracing(&cli.trace, cli.json);
 
     match cli.command {
-        Commands::Init { name } => init_command(&name),
         Commands::CompileServiceCanonical { agent_dir } => {
             commands::compile_service_canonical::compile_service_canonical_command(
                 agent_dir, cli.config,
@@ -158,7 +157,6 @@ async fn run_cli(cli: Cli) -> Result<()> {
 #[cfg(not(feature = "driver"))]
 async fn run_cli_no_driver(cli: Cli) -> Result<()> {
     match cli.command {
-        Commands::Init { name } => init_command(&name),
         Commands::ExecuteCanonical {
             input,
             invocation_admission,

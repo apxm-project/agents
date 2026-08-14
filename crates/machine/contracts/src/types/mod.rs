@@ -5,7 +5,6 @@
 //! - **Domain**: Compiler, LLM models, backends, providers, and sessions.
 
 // ── Foundation ──────────────────────────────────────────────
-pub mod agent_definition;
 pub mod capability;
 pub mod conformance;
 pub mod consent;
@@ -35,10 +34,6 @@ pub mod models;
 pub mod session;
 pub mod source_format;
 
-pub use agent_definition::{
-    AGENT_DEFINITION_SCHEMA_V1, AgentDefinition, AgentDefinitionError, AgentEntry, AgentHierarchy,
-    AgentHook, AgentTrigger,
-};
 pub use capability::{
     AuthMethod, CAPABILITY_DEFINITION_SCHEMA_V1, CAPABILITY_GRANT_SCHEMA_V1,
     CAPABILITY_TEMPLATE_SCHEMA_V1, CapabilityBinding, CapabilityBindingHandler,
