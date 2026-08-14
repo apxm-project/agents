@@ -13,14 +13,15 @@ ports, and the runtime that executes admitted artifacts.
 5. [Execution Admission](agents/execution-admission-contract.md).
 6. [Authoring guides](guides/README.md).
 7. [Architecture decisions](adr/README.md).
+8. [Design ideas](ideas/README.md) — non-canonical proposals under review.
 
 ## Canonical pipeline
 
 ```text
 Python or TypeScript source
-  -> FrontendGraph v2
+  -> FrontendGraph
   -> Rust verification and lowering
-  -> AIR v2
+  -> AIR
   -> registered AIS MLIR
   -> immutable executable artifact
   -> exact Invocation Admission and Port bindings

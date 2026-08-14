@@ -29,23 +29,24 @@ APXM v1 has one execution spine:
 ```text
 Python or TypeScript Agent Program source
   -> APXM Authoring Frontend
-  -> apxm.frontend-graph.v2
+  -> apxm.frontend-graph
   -> Rust compiler and verifier
-  -> apxm.air.v2 and MLIR lowering
-  -> apxm.executable-artifact.v1
+  -> apxm.air and MLIR lowering
+  -> apxm.executable-artifact
   -> Server root admission and managed occurrence/delivery/application/activation durability
   -> Agents ActivationRunner, dependency readiness, and local execution
   -> exact admitted model or Capability adapter
   -> inference backend or external resource
-  -> Agents fenced Execution Commit, apxm.runtime-evidence.v1, and Session Output
+  -> Agents fenced Execution Commit, apxm.runtime-evidence, and Session Output
 ```
 
 Every arrow is a typed, versioned boundary. No layer may reinterpret a
 previous layer's semantics. Under the
 [current event/runtime ownership](0018-event-readiness-and-local-scheduling-are-agents-semantics.md),
-Server owns managed effect-work, schedule, Host-gateway, retry/DLQ, recovery,
-and operational APIs, while product consumers use current-owner generated
-bindings.
+managed effect-work, schedule, Host-gateway, retry/DLQ, recovery, and
+operational APIs are owned by whatever implementation the Composition Root
+binds behind the durable-event Port Contract under an exact Runtime Profile,
+while downstream consumers use that owner's generated bindings.
 
 ### Authoring and compiler boundary
 

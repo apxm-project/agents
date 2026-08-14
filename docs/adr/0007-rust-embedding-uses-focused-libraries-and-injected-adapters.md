@@ -103,9 +103,10 @@ it must not depend on:
 - concrete model/provider backends or provider SDKs;
 - HTTP, service discovery, network clients, TLS/proxy policy, or credentials;
 - database, object-store, checkpoint, or state implementations;
-- Server operational APIs or current-owner generated clients;
-- Server-owned managed occurrence, delivery, target-application, activation,
-  effect-work, schedule, Host-gateway, retry/DLQ, or recovery implementations;
+- downstream consumer operational APIs or current-owner generated clients;
+- managed occurrence, delivery, target-application, activation, effect-work,
+  schedule, Host-gateway, retry/DLQ, or recovery implementations owned behind
+  a Port Contract;
 - CLI, product UI, or application configuration; or
 - a runtime adapter selected through a Cargo feature.
 

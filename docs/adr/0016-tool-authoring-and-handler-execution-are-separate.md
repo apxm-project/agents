@@ -17,7 +17,7 @@ treating Node as an APXM runtime, and adding a second Python packaging surface
 before Python package-local handlers existed.
 
 The canonical runtime is Rust. TypeScript and Python are equivalent authoring
-frontends, never runtimes. The Rust-owned `apxm.handler-manifest.v1` contract
+frontends, never runtimes. The Rust-owned `apxm.handler-manifest` contract
 already carries artifact-local handler source. The runtime receives an exact
 admitted Capability implementation through its `CapabilityPort`; it does not
 discover a language worker, load a manifest from disk, or execute a source
@@ -31,7 +31,7 @@ bundle directly.
 | --- | --- | --- | --- |
 | Agent Program Tool reference | `Tool[I, O](capability_ref)` / `Tool<I, O>(capabilityRef)` | Python and TypeScript frontends | No; static capture only |
 | Package-local Tool implementation | `Tool.define({ ... })` in a handler module | language-specific build tool | No; build and packaging only |
-| Handler manifest | `apxm.handler-manifest.v1` | Rust contracts/artifact owner | No; immutable artifact metadata |
+| Handler manifest | `apxm.handler-manifest` | Rust contracts/artifact owner | No; immutable artifact metadata |
 | Capability execution | exact admitted `CapabilityPort` implementation | Rust runtime plus injected adapter | Yes |
 
 An Agent Program source file never imports a handler worker, manifest format,
@@ -86,7 +86,7 @@ a handler cannot self-authorize.
 ### 4. Language support is explicit
 
 TypeScript package-local handlers may use the definition object above because
-the TypeScript bundler already produces `apxm.handler-manifest.v1`. Python
+the TypeScript bundler already produces `apxm.handler-manifest`. Python
 Agent Programs continue to declare the same typed `Tool` references and lower
 through the same FrontendGraph.
 
@@ -100,11 +100,12 @@ than receiving a partial second packaging API.
 ### 5. The examples demonstrate the boundary
 
 Conversational remains the primary frontend reference. Coder demonstrates
-read-only coding Capability references and typed proposal results. Gao
-demonstrates APXM Capability references and typed planning/validation results.
-Their TypeScript package handlers are packaging fixtures only; they do not
-create a Coder or Gao runtime and cannot execute outside an admitted Capability
-implementation.
+read-only coding Capability references and typed proposal results. (Gao,
+which formerly demonstrated APXM Capability references and typed
+planning/validation results, is retired — see ADR-0010's historical Gao
+note.) Coder's TypeScript package handlers are packaging fixtures only; they
+do not create a Coder runtime and cannot execute outside an admitted
+Capability implementation.
 
 ## Consequences
 

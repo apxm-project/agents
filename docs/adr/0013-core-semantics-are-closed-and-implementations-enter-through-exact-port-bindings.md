@@ -104,7 +104,7 @@ Descriptor digest and one generated binding-payload contract for every
 deployment slot; it contains no deployment resource references or invocation
 authority. The Composition Root supplies exact configuration and stable opaque
 resource references in a Deployment Composition Manifest and invokes the one
-library-owned `verify_deployment_composition` path. The managed Server
+library-owned `verify_deployment_composition` path. A managed-service
 Composition Root and a standalone embedding Composition Root use this same
 verifier. Neither path resolves, searches, ranks, or tries candidates.
 

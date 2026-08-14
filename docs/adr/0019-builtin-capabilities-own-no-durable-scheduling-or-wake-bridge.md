@@ -30,38 +30,66 @@ on what a builtin Capability may hold.
 Acceptance is an ownership decision. It does not claim the removal has
 happened, that Server's replacement schedule surface is implemented, or that
 any module named below is complete. Measured against Agents revision
-`1af8d4f68c2aef2ba6b653837f5546dd80f00265`, the surfaces this ADR retires are
+`1af8d4f68c2aef2ba6b653837f5546dd80f00265`, the surfaces this ADR retires were
 still present.
+
+## Landed
+
+The removal this ADR decided has since been carried out. The `Context` section
+below is retained as a description of the pinned revision, not of the current
+tree, and is written in the past tense for that reason.
+
+On the current branch `crates/runtime/capability/src/builtins/schedule.rs`,
+`crates/runtime/capability/src/builtins/store.rs`, and
+`crates/runtime/capability-iface/src/host.rs` are deleted; the `sqlite` gate is
+gone from `crates/runtime/capability/src/builtins/mod.rs` and the `sqlite` and
+`rusqlite` entries are gone from `crates/runtime/capability/Cargo.toml`. All
+three deleted paths are enforced by the retired-file list in
+`tools/tests/test_canonical_only_reachability.py`. The stale scheduler
+rationale is gone from `crates/runtime/capability-iface/src/lib.rs`, which now
+records this ADR's ceiling directly. Nothing inside Agents replaced the deleted
+durable timer; a Program that must resume at a wall-clock time awaits a typed
+Program Event as decided below.
+
+One item of this ADR's decision has not landed: the `emit_scheduler_decision`
+observer still exists in `crates/runtime/capability-iface/src/events.rs`, still
+keyed on a `u64` node identifier, while `crates/machine/program/src/air.rs`
+identifies a semantic operation node by `String`.
+
+The removal gate named below has been restated in product-neutral terms by
+[ADR-0020](0020-durable-coordination-enters-through-port-contracts-and-composition-root.md);
+read every "Server" in this ADR through that amendment.
 
 ## Context
 
-At the pinned revision the following exist in the Agents checkout.
+At the pinned revision the following existed in the Agents checkout.
 
-`crates/runtime/capability/src/builtins/schedule.rs` implements a builtin
-Capability whose actions create, list, get, and cancel timers expressed as
-`after_secs`, `at_ms`, or `every_secs`. It spawns a background firer task, and
-on fire it invokes an `OnFire` hook and wakes a parked invocation through the
-`CapabilityHost` bridge. A host may use the bridge to
-that hook to enqueue prompt wakeups into an existing task queue, which places
-one half of a durable coordination protocol inside an Agents builtin.
+`crates/runtime/capability/src/builtins/schedule.rs` implemented a builtin
+Capability whose actions created, listed, got, and cancelled timers expressed as
+`after_secs`, `at_ms`, or `every_secs`. It spawned a background firer task, and
+on fire it invoked an `OnFire` hook and woke a parked invocation through the
+`CapabilityHost` bridge. A host could use that hook to enqueue prompt wakeups
+into an existing task queue, which placed one half of a durable coordination
+protocol inside an Agents builtin.
 
-`crates/runtime/capability/src/builtins/store.rs` backs it with a rusqlite
+`crates/runtime/capability/src/builtins/store.rs` backed it with a rusqlite
 database in WAL mode holding a `ScheduleRow` with a `kind` of `once`,
 `recurring`, or `cron`, a `next_fire_ms` column, and a `status` of `armed`,
-`fired`, or `cancelled`. That is a durable timer store with its own lifecycle
-state machine. Both modules are gated by the `sqlite` feature in
-`crates/runtime/capability/src/builtins/mod.rs`, and that feature is default-on
-in `crates/runtime/capability/Cargo.toml`, so the ordinary build carries them.
+`fired`, or `cancelled`. That was a durable timer store with its own lifecycle
+state machine. Both modules were gated by the `sqlite` feature in
+`crates/runtime/capability/src/builtins/mod.rs`, and that feature was
+default-on in `crates/runtime/capability/Cargo.toml`, so the ordinary build
+carried them.
 
-`crates/runtime/capability-iface/src/host.rs` defines `CapabilityHost` as the
+`crates/runtime/capability-iface/src/host.rs` defined `CapabilityHost` as the
 wake interface, documented as the seam a scheduler implements over a
 process-global park and wake registry. `crates/runtime/capability-iface/src/lib.rs`
-describes a three-module `apxm-runtime` crate providing `scheduler`,
-`executor`, and `capability`. Neither the crate nor the registry is a workspace
-member. `crates/runtime/capability-iface/src/events.rs` carries the residue as
-an `emit_scheduler_decision` observer keyed on a `u64` node identifier, while
-`crates/machine/program/src/air.rs` identifies a semantic operation node by
-`String`.
+described a three-module `apxm-runtime` crate providing `scheduler`,
+`executor`, and `capability`. Neither the crate nor the registry was a
+workspace member. `crates/runtime/capability-iface/src/events.rs` carried the
+residue as an `emit_scheduler_decision` observer keyed on a `u64` node
+identifier, while `crates/machine/program/src/air.rs` identified a semantic
+operation node by `String`.
 
 Three consequences follow from that state. A timer is durable coordination, and
 ADR-0018 gives durable coordination to Server. A process-global wake registry

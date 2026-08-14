@@ -23,7 +23,7 @@ reach private APXM services directly.
 
 ## Decision
 
-APXM adopts `apxm.frontend-graph.v2` as the canonical, versioned interchange
+APXM adopts `apxm.frontend-graph` as the canonical, versioned interchange
 contract between authoring frontends and the compiler.
 
 - Python and TypeScript frontend packages are pure authoring libraries. They
@@ -35,9 +35,9 @@ contract between authoring frontends and the compiler.
   Rust compiler library in-process. It is not part of the browser bundle.
 - Browser TypeScript emits the same `FrontendGraph` contract and uses a
   generated, explicitly configured remote compile client.
-- Browser compile traffic is authorized by the APXM Studio BFF or another
-  admitted product gateway, which calls the private APXM compile API through a
-  generated client. Browsers never call private APXM Server endpoints directly.
+- Browser compile traffic is authorized by an admitted downstream product
+  gateway, which calls the private APXM compile API through a generated
+  client. Browsers never call private APXM service endpoints directly.
 - Handler bundlers and source-language build tools are separate installable
   surfaces from the pure authoring frontends. Runtime handler bridges remain
   runtime internals rather than frontend execution features.
