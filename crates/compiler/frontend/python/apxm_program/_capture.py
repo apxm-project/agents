@@ -33,6 +33,7 @@ from ._bound_tree import (
 )
 from ._advanced import HookDecl, TaskGroup
 from ._generated.frontend_graph import HOOK_SCOPE_AGENT, HOOK_SCOPE_LOOP
+from ._generated.frontend_records import CallIntent, ControlIntent
 from ._markers import (
     CapabilityBinding,
     ContextSchema,
@@ -410,15 +411,17 @@ class _Capture:
         operands = self._call_operands(call, node_id, slot, receiver_kind)
         self.calls.append(
             BoundCall(
-                node_id=node_id,
-                intent_kind=intent,
-                parent_region_id=region_id,
-                execution_order=self._order_in(region_id),
-                binding_ref=binding_ref,
-                operands=tuple(operands),
-                result_value=result_value,
+                contract=CallIntent(
+                    node_id=node_id,
+                    intent_kind=intent,
+                    parent_region_id=region_id,
+                    execution_order=self._order_in(region_id),
+                    binding_ref=binding_ref,
+                    receiver_kind=receiver_kind,
+                    result_value=result_value,
+                ),
                 span=self._span(call),
-                receiver_kind=receiver_kind,
+                operands=tuple(operands),
             )
         )
         self._record_node(region_id, node_id)
@@ -687,15 +690,16 @@ class _Capture:
         )
         self.controls.append(
             BoundControl(
-                node_id=node_id,
-                control_kind="yield",
-                parent_region_id=region_id,
-                execution_order=self._order_in(region_id),
-                body_region_ids=(),
-                predicate=None,
-                operands=tuple(self._call_operands(call, node_id, "output", None)),
-                result_value=resume_value,
+                contract=ControlIntent(
+                    node_id=node_id,
+                    control_kind="yield",
+                    parent_region_id=region_id,
+                    execution_order=self._order_in(region_id),
+                    result_value=resume_value,
+                ),
                 span=self._span(call),
+                operands=tuple(self._call_operands(call, node_id, "output", None)),
+                predicate=None,
             )
         )
         self._values_by_name[assign_to] = resume_value
@@ -725,14 +729,16 @@ class _Capture:
         )
         self.calls.append(
             BoundCall(
-                node_id=node_id,
-                intent_kind=intent,
-                parent_region_id=region_id,
-                execution_order=self._order_in(region_id),
-                binding_ref=binding_ref,
-                operands=tuple(self._call_operands(call, node_id, slot, receiver_kind)),
-                result_value=result_value,
+                contract=CallIntent(
+                    node_id=node_id,
+                    intent_kind=intent,
+                    parent_region_id=region_id,
+                    execution_order=self._order_in(region_id),
+                    binding_ref=binding_ref,
+                    result_value=result_value,
+                ),
                 span=self._span(call),
+                operands=tuple(self._call_operands(call, node_id, slot, receiver_kind)),
             )
         )
         self._values_by_name[assign_to] = result_value
@@ -765,15 +771,16 @@ class _Capture:
         control_index = len(self.controls)
         self.controls.append(
             BoundControl(
-                node_id=node_id,
-                control_kind="loop",
-                parent_region_id=region_id,
-                execution_order=self._order_in(region_id),
-                body_region_ids=(body_region,),
-                predicate=predicate,
-                operands=(),
-                result_value=None,
+                contract=ControlIntent(
+                    node_id=node_id,
+                    control_kind="loop",
+                    parent_region_id=region_id,
+                    execution_order=self._order_in(region_id),
+                    body_region_ids=(body_region,),
+                ),
                 span=self._span(stmt),
+                operands=(),
+                predicate=predicate,
             )
         )
         self._record_node(region_id, node_id)
@@ -818,15 +825,17 @@ class _Capture:
                 )
             self._values_by_name[source_name] = result_value
         self.controls[control_index] = BoundControl(
-            node_id=node_id,
-            control_kind="loop",
-            parent_region_id=region_id,
-            execution_order=self._order_in(region_id),
-            body_region_ids=(body_region,),
-            predicate=predicate,
-            operands=operands,
-            result_value=result_value,
+            contract=ControlIntent(
+                node_id=node_id,
+                control_kind="loop",
+                parent_region_id=region_id,
+                execution_order=self._order_in(region_id),
+                body_region_ids=(body_region,),
+                result_value=result_value,
+            ),
             span=self._span(stmt),
+            operands=operands,
+            predicate=predicate,
         )
 
     def _predicate_projection(self, expression: ast.AST) -> tuple[str, tuple[str, ...]]:
@@ -912,15 +921,16 @@ class _Capture:
         scope_region = f"{node_id}.scope"
         self.controls.append(
             BoundControl(
-                node_id=node_id,
-                control_kind="task_group",
-                parent_region_id=region_id,
-                execution_order=self._order_in(region_id),
-                body_region_ids=(scope_region,),
-                predicate=None,
-                operands=(),
-                result_value=None,
+                contract=ControlIntent(
+                    node_id=node_id,
+                    control_kind="task_group",
+                    parent_region_id=region_id,
+                    execution_order=self._order_in(region_id),
+                    body_region_ids=(scope_region,),
+                ),
                 span=self._span(stmt),
+                operands=(),
+                predicate=None,
             )
         )
         self._record_node(region_id, node_id)
@@ -938,17 +948,18 @@ class _Capture:
         node_id = self._next("cond")
         self.controls.append(
             BoundControl(
-                node_id=node_id,
-                control_kind="conditional",
-                parent_region_id=region_id,
-                execution_order=self._order_in(region_id),
-                body_region_ids=(f"{node_id}.then", f"{node_id}.else")
-                if stmt.orelse
-                else (f"{node_id}.then",),
-                predicate=self._predicate_for_expression(stmt.test, node_id),
-                operands=(),
-                result_value=None,
+                contract=ControlIntent(
+                    node_id=node_id,
+                    control_kind="conditional",
+                    parent_region_id=region_id,
+                    execution_order=self._order_in(region_id),
+                    body_region_ids=(f"{node_id}.then", f"{node_id}.else")
+                    if stmt.orelse
+                    else (f"{node_id}.then",),
+                ),
                 span=self._span(stmt),
+                operands=(),
+                predicate=self._predicate_for_expression(stmt.test, node_id),
             )
         )
         self._record_node(region_id, node_id)
@@ -982,15 +993,16 @@ class _Capture:
         ]
         self.controls.append(
             BoundControl(
-                node_id=node_id,
-                control_kind="try_catch",
-                parent_region_id=region_id,
-                execution_order=self._order_in(region_id),
-                body_region_ids=tuple(body_regions),
-                predicate=None,
-                operands=(),
-                result_value=None,
+                contract=ControlIntent(
+                    node_id=node_id,
+                    control_kind="try_catch",
+                    parent_region_id=region_id,
+                    execution_order=self._order_in(region_id),
+                    body_region_ids=tuple(body_regions),
+                ),
                 span=self._span(stmt),
+                operands=(),
+                predicate=None,
             )
         )
         self._record_node(region_id, node_id)
@@ -1030,15 +1042,15 @@ class _Capture:
             )
         self.controls.append(
             BoundControl(
-                node_id=node_id,
-                control_kind="return",
-                parent_region_id=region_id,
-                execution_order=self._order_in(region_id),
-                body_region_ids=(),
-                predicate=None,
-                operands=tuple(operands),
-                result_value=None,
+                contract=ControlIntent(
+                    node_id=node_id,
+                    control_kind="return",
+                    parent_region_id=region_id,
+                    execution_order=self._order_in(region_id),
+                ),
                 span=self._span(stmt),
+                operands=tuple(operands),
+                predicate=None,
             )
         )
         self._record_node(region_id, node_id)
@@ -1047,15 +1059,15 @@ class _Capture:
         node_id = self._next("throw")
         self.controls.append(
             BoundControl(
-                node_id=node_id,
-                control_kind="throw",
-                parent_region_id=region_id,
-                execution_order=self._order_in(region_id),
-                body_region_ids=(),
-                predicate=None,
-                operands=(),
-                result_value=None,
+                contract=ControlIntent(
+                    node_id=node_id,
+                    control_kind="throw",
+                    parent_region_id=region_id,
+                    execution_order=self._order_in(region_id),
+                ),
                 span=self._span(stmt),
+                operands=(),
+                predicate=None,
             )
         )
         self._record_node(region_id, node_id)

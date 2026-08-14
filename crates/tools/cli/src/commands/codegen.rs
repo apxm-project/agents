@@ -228,6 +228,29 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
                 json_output,
             )
         }
+        CodegenAction::FrontendRecords { check } => {
+            let python_path = default_python_generated_codegen_dir()
+                .join(crate::frontend::codegen_frontend_records::PYTHON_FRONTEND_RECORDS_FILE);
+            let typescript_path = default_typescript_frontend_codegen_dir()
+                .join(crate::frontend::codegen_frontend_records::TYPESCRIPT_FRONTEND_RECORDS_FILE);
+            let python =
+                crate::frontend::codegen_frontend_records::render_frontend_records_python();
+            let typescript =
+                crate::frontend::codegen_frontend_records::render_frontend_records_typescript();
+
+            let files = write_or_check_pair(
+                [(&python_path, &python), (&typescript_path, &typescript)],
+                check,
+                "frontend-records",
+            )?;
+            report_pair(
+                "frontend-records",
+                "FrontendGraph contract record types",
+                files,
+                check,
+                json_output,
+            )
+        }
         CodegenAction::Diagnostics { check } => {
             let python_path = default_python_generated_codegen_dir()
                 .join(crate::frontend::codegen_diagnostics::PYTHON_DIAGNOSTICS_FILE);

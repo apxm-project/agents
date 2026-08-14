@@ -31,7 +31,7 @@ const FRONTEND_GRAPH_SCHEMA: &str = include_str!(concat!(
 ));
 
 /// Where one closed set is stated in `apxm.frontend-graph`.
-enum Source {
+pub(crate) enum Source {
     /// A top-level `properties.<property>.enum`.
     RootEnum { property: &'static str },
     /// A `$defs.<def>.properties.<property>.enum`.
@@ -50,11 +50,11 @@ enum Source {
 /// One emitted vocabulary: its type name, the prefix each member constant
 /// carries, the name of the tuple/array naming every member, and where the
 /// contract states the set.
-struct Family {
-    type_name: &'static str,
+pub(crate) struct Family {
+    pub(crate) type_name: &'static str,
     prefix: &'static str,
     set_name: &'static str,
-    source: Source,
+    pub(crate) source: Source,
 }
 
 /// Every closed string set `apxm.frontend-graph` states, in schema order.
@@ -64,7 +64,7 @@ struct Family {
 /// `ControlIntent.control_kind` while `loop_body` is a `Region.region_role`. An
 /// unprefixed constant would collide or, worse, silently resolve to the wrong
 /// vocabulary's member.
-const FAMILIES: &[Family] = &[
+pub(crate) const FAMILIES: &[Family] = &[
     Family {
         type_name: "SourceLanguage",
         prefix: "SOURCE_LANGUAGE_",
@@ -199,8 +199,37 @@ struct Member {
     value: String,
 }
 
-fn schema() -> Value {
+pub(crate) fn schema() -> Value {
     serde_json::from_str(FRONTEND_GRAPH_SCHEMA).expect("apxm.frontend-graph is valid JSON")
+}
+
+/// The vocabulary family projecting `$defs.<def>.properties.<property>.enum`,
+/// if any. `codegen_frontend_records` resolves every enum-typed record field
+/// through this lookup rather than re-deriving the FrontendGraph vocabulary.
+pub(crate) fn family_for_def_enum(def: &str, property: &str) -> Option<&'static Family> {
+    FAMILIES.iter().find(|family| {
+        matches!(
+            &family.source,
+            Source::DefEnum { def: family_def, property: family_property }
+                if *family_def == def && *family_property == property
+        )
+    })
+}
+
+/// The vocabulary family projecting `$defs.<def>.oneOf[*].properties.<discriminant>.const`,
+/// if any. `def` here is the *union's* `$defs` key (e.g. `ValueExpression`),
+/// not a branch's, since the discriminant is stated once for the whole union.
+pub(crate) fn family_for_discriminated_const(
+    def: &str,
+    discriminant: &str,
+) -> Option<&'static Family> {
+    FAMILIES.iter().find(|family| {
+        matches!(
+            &family.source,
+            Source::DiscriminatedConst { def: family_def, discriminant: family_discriminant }
+                if *family_def == def && *family_discriminant == discriminant
+        )
+    })
 }
 
 /// Resolve one local `#/$defs/...` reference, or return the branch unchanged.
