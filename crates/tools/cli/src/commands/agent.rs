@@ -354,8 +354,6 @@ fn agent_new_looped_agent(
              entry = \"src/main.ts\"\n\n\
              [prompts]\n\
              persona = \"prompts/persona.md\"\n\n\
-             [chat]\n\
-             capability_discovery = true\n\n\
              [source]\n\
              type = \"local\"\n"
         ),

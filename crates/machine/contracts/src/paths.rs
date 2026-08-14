@@ -22,7 +22,6 @@ const CACHE_DIR: &str = "cache";
 const COMPILER_DIR: &str = "compiler";
 const LOGS_DIR: &str = "logs";
 const SESSIONS_DIR: &str = "sessions";
-const MEMORY_DIR: &str = "memory";
 const INTEGRATIONS_DIR: &str = "integrations";
 
 /// Resolved APXM directories for the current process.
@@ -40,12 +39,11 @@ pub struct ApxmPaths {
 impl ApxmPaths {
     /// Discover paths based on current working directory and environment.
     ///
-    /// Validates the read-write state root against the `apxm.state-layout`
-    /// contract (see `contracts/schemas/state-layout.v1.json`) before
-    /// returning: a state root that already exists but has the wrong entry
-    /// kind (e.g. a plain file sitting where `sessions/` should be a
+    /// Validates the read-write state root against [`AGENTS_STATE_LAYOUT`]
+    /// before returning: a state root that already exists but has the wrong
+    /// entry kind (e.g. a plain file sitting where `sessions/` should be a
     /// directory) fails fast here instead of surfacing as a confusing I/O
-    /// error deep in the rollout or memory writers.
+    /// error deep in the rollout writer.
     pub fn discover() -> io::Result<Self> {
         let cwd = env::current_dir()?;
 
@@ -128,12 +126,6 @@ impl ApxmPaths {
     /// Read-write state root (`$APXM_STATE_HOME`, else `apxm_home()`).
     pub fn state_dir(&self) -> &Path {
         &self.state_dir
-    }
-
-    /// Directory for persisted memory databases (`<state_dir>/memory`),
-    /// created on demand.
-    pub fn memory_dir(&self) -> io::Result<PathBuf> {
-        Self::ensure_subdir_at(&self.state_dir, MEMORY_DIR)
     }
 
     /// Integration catalog roots ordered by precedence.
@@ -269,8 +261,7 @@ pub fn session_node_dir_name(node_id: u64, node_name: &str) -> String {
     format!("{node_id:02}_{suffix}")
 }
 
-/// A layout entry this service owns under the state root, per
-/// `apxm.state-layout`.
+/// A layout entry this service owns under the state root.
 struct LayoutEntry {
     /// Path relative to the state root.
     relative_path: &'static str,
@@ -279,12 +270,14 @@ struct LayoutEntry {
     is_dir: bool,
 }
 
-/// The `agents`-owned entries of the contracted state layout
-/// (`contracts/schemas/state-layout.v1.json`). Entries that do not exist yet
-/// are fine — they are created on demand by [`ApxmPaths::sessions_dir`],
-/// [`ApxmPaths::memory_dir`], and the rollout writer. Only an existing path
-/// of the *wrong kind* (e.g. a plain file where a directory belongs) is a
-/// layout error.
+/// The `agents`-owned entries of the state layout. This table is the source of
+/// truth for them: no contract under `contracts/` describes the state root, so
+/// a change here is the only place the layout is stated.
+///
+/// Entries that do not exist yet are fine — they are created on demand by
+/// [`ApxmPaths::sessions_dir`] and the rollout writer. Only an existing path of
+/// the *wrong kind* (e.g. a plain file where a directory belongs) is a layout
+/// error.
 const AGENTS_STATE_LAYOUT: &[LayoutEntry] = &[
     LayoutEntry {
         relative_path: SESSIONS_DIR,
@@ -298,20 +291,14 @@ const AGENTS_STATE_LAYOUT: &[LayoutEntry] = &[
         relative_path: "sessions/index.sqlite",
         is_dir: false,
     },
-    LayoutEntry {
-        relative_path: MEMORY_DIR,
-        is_dir: true,
-    },
 ];
 
-/// Validate the on-disk state root against the `agents`-owned entries of
-/// `apxm.state-layout`.
+/// Validate the on-disk state root against [`AGENTS_STATE_LAYOUT`].
 ///
 /// This is a boot-time check, not a migration: it never creates or moves
 /// anything. It only rejects a state root where an existing path has the
-/// wrong kind (file vs. directory) for its contracted role, which would
-/// otherwise surface later as an opaque I/O error from the rollout writer or
-/// the memory store.
+/// wrong kind (file vs. directory) for its declared role, which would
+/// otherwise surface later as an opaque I/O error from the rollout writer.
 pub fn validate_state_layout(state_root: &Path) -> io::Result<()> {
     for entry in AGENTS_STATE_LAYOUT {
         let path = state_root.join(entry.relative_path);
@@ -329,7 +316,7 @@ pub fn validate_state_layout(state_root: &Path) -> io::Result<()> {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
-                    "state-layout.v1 violation: {} must be {expected}, found {found}",
+                    "state layout violation: {} must be {expected}, found {found}",
                     path.display()
                 ),
             ));
@@ -368,7 +355,6 @@ mod state_layout_tests {
     fn correct_layout_is_valid() {
         let dir = scratch_dir("correct");
         fs::create_dir_all(dir.join("sessions/rollouts")).unwrap();
-        fs::create_dir_all(dir.join("memory")).unwrap();
         fs::write(dir.join("sessions/index.sqlite"), b"").unwrap();
         assert!(validate_state_layout(&dir).is_ok());
         fs::remove_dir_all(&dir).ok();
