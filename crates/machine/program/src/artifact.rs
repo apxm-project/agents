@@ -19,10 +19,15 @@ use crate::lower::frontend_graph_to_air;
 use crate::source_map::SourceMap;
 
 /// The canonical model-target Port contract an artifact's `model.call` binds to.
-const MODEL_TARGET_PORT_CONTRACT: &str = "apxm.model-target";
+///
+/// Public because the runtime admission boundary maps an artifact requirement
+/// back onto the Port slot that must be admitted for it, and that mapping must
+/// read the same string this module writes.
+pub const MODEL_TARGET_PORT_CONTRACT: &str = "apxm.model-target";
 
-/// The canonical Capability Port contract an artifact's `capability.invoke` binds to.
-const CAPABILITY_PORT_CONTRACT: &str = "apxm.capability-invocation";
+/// The canonical Capability Port contract an artifact's `capability.invoke`
+/// binds to. Same ownership rule as [`MODEL_TARGET_PORT_CONTRACT`].
+pub const CAPABILITY_PORT_CONTRACT: &str = "apxm.capability-invocation";
 const CAPABILITY_PORT_CONTRACT_DESCRIPTOR: &[u8] = include_bytes!(
     "../../../../contracts/port-contracts/apxm.capability-invocation.port-contract.json"
 );
@@ -233,6 +238,8 @@ impl ExecutableArtifact {
             .map(entrypoint_from_definition)
             .collect();
 
+        reconcile_requirements_with_air(graph, air)?;
+
         let mut artifact_semantic_requirements = Vec::new();
         let mut seen = std::collections::BTreeSet::new();
         for requirement in &graph.model_requirements {
@@ -263,6 +270,13 @@ impl ExecutableArtifact {
         let content = serde_json::to_vec(&artifact)
             .map_err(|error| ArtifactBuildError::Codec(CodecError(error)))?;
         artifact.artifact_digest = sha256_digest(&content);
+        // The producer runs the same validation the consumer runs. Without this
+        // the `typed_port_slot` grammar and requirement-scope rules only ever
+        // executed against an artifact someone had already written to disk.
+        let verdict = artifact.validate();
+        if !verdict.is_accepted() {
+            return Err(ArtifactBuildError::Validation(verdict));
+        }
         Ok(artifact)
     }
 
@@ -291,26 +305,7 @@ impl ExecutableArtifact {
             context_type_ref: None,
         }];
 
-        let mut seen = std::collections::BTreeSet::new();
-        let mut artifact_semantic_requirements = Vec::new();
-        for op in &air.semantic_operations {
-            if op.op != SemanticOpKind::ModelCall {
-                continue;
-            }
-            // The model target is carried by the typed `model_ref` operand slot
-            // (AIS operand catalogue); the untyped operand bag is retired.
-            let Some(target) = op
-                .operands
-                .iter()
-                .find(|operand| operand.slot == "model_ref")
-                .map(|operand| operand.value_id.as_str())
-            else {
-                continue;
-            };
-            if seen.insert(target.to_string()) {
-                artifact_semantic_requirements.push(model_target_requirement(target));
-            }
-        }
+        let artifact_semantic_requirements = air_semantic_requirements(air);
 
         let mut artifact = Self {
             schema_version: ArtifactVersion::V1,
@@ -438,6 +433,11 @@ pub fn compile_frontend_graph_artifact_json(graph_json: &str) -> Result<String, 
 #[derive(Debug)]
 pub enum ArtifactBuildError {
     Lowering(Verdict),
+    /// The graph's declared requirements and the lowered AIR's operands do not
+    /// name the same set of models and Capabilities.
+    Requirements(Verdict),
+    /// The derived artifact does not satisfy the artifact validation contract.
+    Validation(Verdict),
     Codec(CodecError),
 }
 
@@ -445,8 +445,149 @@ impl std::fmt::Display for ArtifactBuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Lowering(verdict) => write!(f, "artifact lowering failed: {verdict:?}"),
+            Self::Requirements(verdict) => write!(
+                f,
+                "artifact requirements do not reconcile with lowered AIR: {verdict:?}"
+            ),
+            Self::Validation(verdict) => {
+                write!(f, "derived artifact failed validation: {verdict:?}")
+            }
             Self::Codec(error) => write!(f, "{error}"),
         }
+    }
+}
+
+/// The `artifact_semantic` Port Requirements a compiled AIR module states.
+///
+/// One requirement per distinct model target and per distinct Capability the
+/// module's typed operand slots name. Exposed so an admission boundary can hold
+/// a module's requirements against the Port bindings a Runtime Profile admits
+/// without first materializing an artifact, and so that derivation exists
+/// exactly once.
+#[must_use]
+pub fn air_semantic_requirements(air: &AirModule) -> Vec<PortRequirement> {
+    // The target is carried by the typed operand slot (AIS operand catalogue);
+    // the untyped operand bag is retired. Requirements keep first-appearance
+    // order so an artifact digest is a function of the module, not of a
+    // container's iteration order.
+    let mut seen = std::collections::BTreeSet::new();
+    let mut requirements = Vec::new();
+    for target in ordered_operand_refs(air, SemanticOpKind::ModelCall, apxm_ais::SLOT_MODEL_REF) {
+        if seen.insert(target.clone()) {
+            requirements.push(model_target_requirement(&target));
+        }
+    }
+    for capability_ref in ordered_operand_refs(
+        air,
+        SemanticOpKind::CapabilityInvoke,
+        apxm_ais::SLOT_CAPABILITY_REF,
+    ) {
+        if seen.insert(capability_ref.clone()) {
+            requirements.push(capability_requirement(&capability_ref));
+        }
+    }
+    requirements
+}
+
+/// Every reference one semantic operand slot names, in module order.
+fn ordered_operand_refs(air: &AirModule, op: SemanticOpKind, slot: &str) -> Vec<String> {
+    air.semantic_operations
+        .iter()
+        .filter(|operation| operation.op == op)
+        .filter_map(|operation| {
+            operation
+                .operands
+                .iter()
+                .find(|operand| operand.slot == slot)
+                .map(|operand| operand.value_id.clone())
+        })
+        .collect()
+}
+
+/// The exact set of references one semantic operand slot names across a module.
+fn air_operand_refs(
+    air: &AirModule,
+    op: SemanticOpKind,
+    slot: &str,
+) -> std::collections::BTreeSet<String> {
+    ordered_operand_refs(air, op, slot).into_iter().collect()
+}
+
+/// Hold the graph's declared requirements against the operands the lowered AIR
+/// actually names, in both directions.
+///
+/// A requirement no operand names is an authority the program never exercises;
+/// an operand no requirement covers is an effect with no declared requirement
+/// behind it, which is exactly how an unresolvable Capability reference used to
+/// reach a running artifact. Neither is a warning: an artifact whose
+/// requirement set and effect set disagree has no single answer to "what does
+/// this program need", so it is not built at all.
+fn reconcile_requirements_with_air(
+    graph: &FrontendGraph,
+    air: &AirModule,
+) -> Result<(), ArtifactBuildError> {
+    let mut verdict = Verdict::accepted();
+
+    let declared_capabilities: std::collections::BTreeSet<&str> = graph
+        .capability_requirements
+        .iter()
+        .map(|requirement| requirement.capability_ref.as_str())
+        .collect();
+    let declared_models: std::collections::BTreeSet<&str> = graph
+        .model_requirements
+        .iter()
+        .map(|requirement| requirement.model_target_ref.as_str())
+        .collect();
+
+    let invoked = air_operand_refs(
+        air,
+        SemanticOpKind::CapabilityInvoke,
+        apxm_ais::SLOT_CAPABILITY_REF,
+    );
+    let called = air_operand_refs(air, SemanticOpKind::ModelCall, apxm_ais::SLOT_MODEL_REF);
+
+    for capability_ref in &invoked {
+        if !declared_capabilities.contains(capability_ref.as_str()) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                capability_ref.clone(),
+                "a lowered capability.invoke names a Capability the graph declares no \
+                 capability_requirement for",
+            ));
+        }
+    }
+    for capability_ref in &declared_capabilities {
+        if !invoked.contains(*capability_ref) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                (*capability_ref).to_string(),
+                "a declared capability_requirement is named by no lowered capability.invoke",
+            ));
+        }
+    }
+    for model_ref in &called {
+        if !declared_models.contains(model_ref.as_str()) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                model_ref.clone(),
+                "a lowered model.call names a target the graph declares no model_requirement for",
+            ));
+        }
+    }
+    for model_ref in &declared_models {
+        if !called.contains(*model_ref) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                (*model_ref).to_string(),
+                "a declared model_requirement is named by no lowered model.call",
+            ));
+        }
+    }
+
+    if verdict.is_accepted() {
+        Ok(())
+    } else {
+        Err(ArtifactBuildError::Requirements(verdict))
     }
 }
 
@@ -773,6 +914,36 @@ mod from_graph_tests {
         assert_eq!(
             artifact.source_bundle_digest,
             bundle.digest().expect("bundle digest")
+        );
+    }
+
+    #[test]
+    fn a_requirement_no_lowered_operand_names_is_refused() {
+        let mut graph = specialist_graph();
+        graph
+            .capability_requirements
+            .push(crate::frontend_graph::CapabilityRequirement {
+                capability_ref: "cap.unexercised".to_string(),
+                tool_schema_present: None,
+                requested_permission: None,
+            });
+        let error = ExecutableArtifact::from_frontend_graph(&graph)
+            .expect_err("a requirement the program never exercises is not an artifact");
+        assert!(
+            matches!(error, ArtifactBuildError::Requirements(_)),
+            "expected a requirement reconciliation failure, got {error}"
+        );
+    }
+
+    #[test]
+    fn an_operand_no_requirement_covers_is_refused() {
+        let mut graph = specialist_graph();
+        graph.capability_requirements.clear();
+        // The graph verifier refuses this too, so lowering is the failure that
+        // surfaces first; either way the artifact is not built.
+        assert!(
+            ExecutableArtifact::from_frontend_graph(&graph).is_err(),
+            "a capability.invoke with no declared requirement is not an artifact"
         );
     }
 

@@ -1,6 +1,7 @@
 // The TypeScript conversational reference over generic Agent Program APIs.
 
 import { Agent, Context, Hook, Model, Tool } from "@apxm/frontend";
+import { SEARCH_WEB } from "@apxm/frontend/capabilities";
 import "@apxm/frontend/node";
 import { staticSource } from "./static-source.js";
 
@@ -36,7 +37,7 @@ type ConversationalProgram = ReturnType<
   typeof Agent<ConversationInput, ConversationOutput, ConversationState>
 >;
 
-const SearchWeb = Tool<SearchWebRequest, SearchWebResult>("cap.search");
+const SearchWeb = Tool<SearchWebRequest, SearchWebResult>(SEARCH_WEB);
 const SupportModel = Model<ModelRequest, ModelResponse>("model.target");
 const ConversationContext = Context<ConversationState>(
   { messages: [], tool_calls: 0, last_reply: "" },

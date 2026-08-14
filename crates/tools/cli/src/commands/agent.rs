@@ -1432,6 +1432,24 @@ fn check_capability_bindings(pkg: &LoadedAgent) -> Vec<String> {
     errors
 }
 
+/// Every Capability id an Agent Program compiled from this package may name.
+///
+/// The union of the runtime's built-in allowlist and the ids the package's own
+/// `capabilities/capabilities.toml` declares — the two namespaces a Capability
+/// reference can be satisfied from. `agent lint` already holds the package's
+/// declarations against the builtin allowlist; this is the same set projected
+/// for the other direction, so a compiled program's references can be held
+/// against what the package actually ships.
+#[cfg(feature = "driver")]
+pub(crate) fn granted_capability_ids(root: &Path) -> Result<BTreeSet<String>> {
+    let pkg = load_agent(root)?;
+    Ok(apxm_ais::capabilities::BUILTINS
+        .iter()
+        .map(|id| (*id).to_string())
+        .chain(pkg.capabilities.capability.iter().map(|cap| cap.id.clone()))
+        .collect())
+}
+
 pub(crate) fn agent_lint(path: &Path, org: Option<PathBuf>, json_output: bool) -> Result<()> {
     let pkg = load_agent(path)?;
     let org_globals = match &org {

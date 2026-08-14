@@ -26,8 +26,16 @@ specialist Agent only when the program needs those semantics. The frontend
 captures declarations and control flow; it never executes the body while
 compiling.
 
+A Capability reference has to name something an implementation exists for — a
+built-in id, or an id the package's `capabilities/capabilities.toml` declares.
+Import the catalogue symbol rather than retyping the string: a misspelled symbol
+is an `ImportError` at author time, while a misspelled string is a reference the
+compile service refuses later.
+
 ```python
-SearchWeb = Tool[SearchWebRequest, SearchWebResult]("cap.search")
+from apxm_program.capabilities import SEARCH_WEB
+
+SearchWeb = Tool[SearchWebRequest, SearchWebResult](SEARCH_WEB)
 SupportModel = Model[ModelRequest, ModelResponse]("model.target")
 
 

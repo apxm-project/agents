@@ -47,7 +47,10 @@ pub const INVOCATION_ADMISSION_SCHEMA: &str = "apxm.invocation-admission";
 pub const EXECUTION_COMMIT_PORT_SCHEMA: &str = "apxm.execution-commit";
 pub const CONFINEMENT_PORT_SCHEMA: &str = "apxm.confinement";
 pub const MODEL_INFERENCE_PORT_SCHEMA: &str = "apxm.model-inference";
-pub const CAPABILITY_PORT_SCHEMA: &str = "apxm.capability-invocation";
+/// Aliased to the artifact-side constant rather than restated: an artifact
+/// emits this exact schema id on every Capability Port Requirement, and the two
+/// layers agreeing by coincidence is the drift this boundary exists to catch.
+pub const CAPABILITY_PORT_SCHEMA: &str = apxm_program::CAPABILITY_PORT_CONTRACT;
 pub const EXTERNAL_AGENT_PORT_SCHEMA: &str = "apxm.external-agent";
 pub const DURABLE_EVENT_PORT_SCHEMA: &str = "apxm.durable-event";
 pub const PROGRAM_COMPOSITION_PORT_SCHEMA: &str = "apxm.program-composition";
@@ -82,6 +85,9 @@ pub enum InvocationAdmissionError {
     ConfinementUnavailable,
     UnconfinedForbidden,
     InvalidRuntimeDescriptor(&'static str),
+    /// An `artifact_semantic` Port Requirement of the admitted program has no
+    /// admitted Port binding behind it.
+    ArtifactRequirementUnbound(RequirementReconciliationError),
 }
 
 impl std::fmt::Display for InvocationAdmissionError {
@@ -126,11 +132,102 @@ impl std::fmt::Display for InvocationAdmissionError {
             Self::InvalidRuntimeDescriptor(field) => {
                 write!(f, "invalid runtime descriptor: {field}")
             }
+            Self::ArtifactRequirementUnbound(error) => write!(f, "{error}"),
         }
     }
 }
 
 impl std::error::Error for InvocationAdmissionError {}
+
+/// Why an artifact-semantic Port Requirement could not be matched to an
+/// admitted Port binding.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RequirementReconciliationError {
+    /// The requirement names a Port Contract this boundary does not map onto a
+    /// Port slot, so nothing here can state whether it is admitted.
+    UnknownRequirementContract {
+        typed_port_slot: String,
+        schema_id: String,
+    },
+    /// The requirement maps onto a Port slot the admission does not bind.
+    UnadmittedSlot {
+        typed_port_slot: String,
+        slot: PortSlot,
+    },
+}
+
+impl std::fmt::Display for RequirementReconciliationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnknownRequirementContract {
+                typed_port_slot,
+                schema_id,
+            } => write!(
+                f,
+                "artifact requirement '{typed_port_slot}' names Port Contract '{schema_id}', \
+                 which this admission boundary maps onto no Port slot"
+            ),
+            Self::UnadmittedSlot {
+                typed_port_slot,
+                slot,
+            } => write!(
+                f,
+                "artifact requirement '{typed_port_slot}' needs the '{}' Port slot, which this \
+                 admission does not bind",
+                slot.as_str()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RequirementReconciliationError {}
+
+/// The Port slot an `artifact_semantic` Port Requirement must be admitted
+/// through, keyed by the Port Contract the artifact bound it to.
+fn port_slot_for_requirement(schema_id: &str) -> Option<PortSlot> {
+    match schema_id {
+        apxm_program::MODEL_TARGET_PORT_CONTRACT => Some(PortSlot::ModelInference),
+        CAPABILITY_PORT_SCHEMA => Some(PortSlot::Capability),
+        _ => None,
+    }
+}
+
+/// Hold an artifact's `artifact_semantic` Port Requirements against the Port
+/// bindings an admission actually binds.
+///
+/// This is the Capability mirror of the model-target check below: an admitted
+/// `model_target` must name an admitted `model_inference` binding, and by the
+/// same rule a program that states a Capability requirement must be admitted
+/// through a bound `capability` Port. A requirement whose Port Contract this
+/// boundary does not recognise fails closed rather than passing unexamined.
+///
+/// # Errors
+///
+/// Returns [`RequirementReconciliationError`] for the first requirement that
+/// names an unknown Port Contract or an unbound Port slot.
+pub fn reconcile_artifact_requirements(
+    requirements: &[apxm_program::PortRequirement],
+    bindings: &[ExactPortBinding],
+) -> Result<(), RequirementReconciliationError> {
+    for requirement in requirements {
+        let schema_id = requirement.required_port_contract.schema_id.as_str();
+        let Some(slot) = port_slot_for_requirement(schema_id) else {
+            return Err(
+                RequirementReconciliationError::UnknownRequirementContract {
+                    typed_port_slot: requirement.typed_port_slot.clone(),
+                    schema_id: schema_id.to_string(),
+                },
+            );
+        };
+        if !bindings.iter().any(|binding| binding.slot == slot) {
+            return Err(RequirementReconciliationError::UnadmittedSlot {
+                typed_port_slot: requirement.typed_port_slot.clone(),
+                slot,
+            });
+        }
+    }
+    Ok(())
+}
 
 impl InvocationAdmission {
     /// Validate the published wire contract independently of any host state.
@@ -657,6 +754,7 @@ pub fn verify_invocation_admission(
     artifact_bytes: &[u8],
     release_bytes: &[u8],
     provenance_bytes: &[u8],
+    artifact_semantic_requirements: &[apxm_program::PortRequirement],
     admitted_port_bindings: &[AdmittedPortBinding],
     resource_ceilings: ResourceCeilings,
     confinement: &AdmittedConfinement,
@@ -719,6 +817,8 @@ pub fn verify_invocation_admission(
     {
         return Err(InvocationAdmissionError::ConfinementUnavailable);
     }
+    reconcile_artifact_requirements(artifact_semantic_requirements, &port_bindings)
+        .map_err(InvocationAdmissionError::ArtifactRequirementUnbound)?;
     Ok(VerifiedInvocationAdmission {
         admission: admission.clone(),
         port_bindings,

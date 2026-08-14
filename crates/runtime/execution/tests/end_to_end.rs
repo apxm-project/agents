@@ -32,7 +32,7 @@ use apxm_program::runtime_evidence::{
 };
 
 use apxm_execution::{
-    CapabilityInvocationAdmission, CapabilityOutcome, CapabilityPort, CapabilityRequest,
+    CapabilityGrantSet, CapabilityOutcome, CapabilityPort, CapabilityRequest,
     CommittedNativeModelUsage, CommittedNativeModelUsageError, CommittedNativeModelUsageGateError,
     CommittedNativeModelUsageOutcome, CommittedNativeModelUsagePort, CompositionOutcome,
     CompositionPort, CompositionReceiver, CompositionRequest, EventAwait, EventOutcome, EventPort,
@@ -43,6 +43,25 @@ use apxm_execution::{
 
 fn digest(c: char) -> String {
     format!("sha256:{}", c.to_string().repeat(64))
+}
+
+/// The Capability grants this file's AIR corpora run under.
+///
+/// These programs exist to pin *lowering and dispatch shape*, not effect
+/// behaviour: their Capability references are opaque on purpose, name no
+/// catalogue id, and are answered by in-crate fakes that never look anything
+/// up. `for_conformance_corpus` is how that is stated. A composition root that
+/// dispatches for real builds its grant set with
+/// `CapabilityGrantSet::from_registered_implementations` instead, and an
+/// authored reference outside it fails at admission. The two are told apart by
+/// which constructor was called — by name, here — never by inspecting the
+/// reference and guessing.
+fn corpus_grants() -> CapabilityGrantSet {
+    CapabilityGrantSet::for_conformance_corpus([
+        "cap.search",
+        "cap.other",
+        "external-agent:acp:claude-code",
+    ])
 }
 
 fn write_set() -> AtomicWriteSet {
@@ -761,17 +780,19 @@ fn typed_tool_request(air: AirModule, hook_bindings: Vec<HookBinding>) -> Execut
         model_admission: admission(),
         capability_invocations: BTreeMap::from([(
             "n.search".to_string(),
-            CapabilityInvocationAdmission {
-                capability_ref: "cap.search".into(),
-                authority: CapabilityInvocationAuthority::new(
-                    "principal.user.1",
-                    "agent.gao.1",
-                    "grant.search.1",
-                    Vec::new(),
+            corpus_grants()
+                .admit(
+                    "cap.search",
+                    CapabilityInvocationAuthority::new(
+                        "principal.user.1",
+                        "agent.gao.1",
+                        "grant.search.1",
+                        Vec::new(),
+                    )
+                    .expect("valid test authority"),
+                    None,
                 )
-                .expect("valid test authority"),
-                permission: None,
-            },
+                .expect("corpus grant"),
         )]),
         program_instance_ref: ProgramInstanceRef::new("instance.typed-loop"),
         program_invocation_ref: ProgramInvocationRef::new("invocation.typed-loop"),
@@ -988,31 +1009,35 @@ fn request() -> ExecutionRequest {
         capability_invocations: BTreeMap::from([
             (
                 "n.cap".to_string(),
-                CapabilityInvocationAdmission {
-                    capability_ref: "cap.search".into(),
-                    authority: CapabilityInvocationAuthority::new(
-                        "principal.user.1",
-                        "agent.gao.1",
-                        "grant.search.1",
-                        ["approval.search.1".to_string()],
+                corpus_grants()
+                    .admit(
+                        "cap.search",
+                        CapabilityInvocationAuthority::new(
+                            "principal.user.1",
+                            "agent.gao.1",
+                            "grant.search.1",
+                            ["approval.search.1".to_string()],
+                        )
+                        .expect("valid test authority"),
+                        None,
                     )
-                    .expect("valid test authority"),
-                    permission: None,
-                },
+                    .expect("corpus grant"),
             ),
             (
                 "n.acp".to_string(),
-                CapabilityInvocationAdmission {
-                    capability_ref: "external-agent:acp:claude-code".into(),
-                    authority: CapabilityInvocationAuthority::new(
-                        "principal.user.1",
-                        "agent.gao.1",
-                        "grant.acp.1",
-                        ["approval.acp.1".to_string()],
+                corpus_grants()
+                    .admit(
+                        "external-agent:acp:claude-code",
+                        CapabilityInvocationAuthority::new(
+                            "principal.user.1",
+                            "agent.gao.1",
+                            "grant.acp.1",
+                            ["approval.acp.1".to_string()],
+                        )
+                        .expect("valid external-agent authority"),
+                        None,
                     )
-                    .expect("valid external-agent authority"),
-                    permission: None,
-                },
+                    .expect("corpus grant"),
             ),
         ]),
         program_instance_ref: ProgramInstanceRef::new("instance.1"),

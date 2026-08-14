@@ -146,8 +146,14 @@ mod capability_port {
         }
 
         /// Every capability registered on the local surface, admitted or not.
-        #[cfg(test)]
-        fn registered_names(&self) -> BTreeSet<String> {
+        ///
+        /// This is the resolvable set, not the permitted one: a name in here
+        /// has an implementation behind it, whether or not policy lets this
+        /// root call it. The composition root grants against this so a
+        /// reference nothing can dispatch fails at admission, while a
+        /// registered-but-refused reference stays a permission decision.
+        #[must_use]
+        pub fn registered_names(&self) -> BTreeSet<String> {
             self.system.list_capability_names().into_iter().collect()
         }
     }
@@ -1130,9 +1136,9 @@ use sha2::{Digest, Sha256};
 
 use apxm_ais::permissions::{LayerDecisions, PermissionDecision, PermissionResolution};
 use apxm_execution::{
-    CapabilityInvocationAdmission, CapabilityOutcome, CompositionOutcome, CompositionPort,
-    CompositionReceiver, CompositionRequest, EventAwait, EventOutcome, EventPort, ExecutionRequest,
-    NodeOutcome, NoopStaticHookHandler, RuntimeProfile,
+    CapabilityGrantSet, CapabilityInvocationAdmission, CapabilityOutcome, CompositionOutcome,
+    CompositionPort, CompositionReceiver, CompositionRequest, EventAwait, EventOutcome, EventPort,
+    ExecutionRequest, NodeOutcome, NoopStaticHookHandler, RuntimeProfile,
 };
 #[cfg(test)]
 use apxm_execution::{ExecutionPortBundle, ExecutionPorts, RuntimeProfileError, execute};
@@ -1269,6 +1275,7 @@ impl CanonicalRuntime {
             artifact_bytes,
             release_bytes,
             provenance_bytes,
+            &apxm_program::air_semantic_requirements(&air),
             &descriptor.port_bindings,
             descriptor.resource_ceilings.clone(),
             &descriptor.confinement,
@@ -1278,8 +1285,11 @@ impl CanonicalRuntime {
         // no decision is ever computed for an AIR the authority does not name.
         let capability_permissions =
             local_capability_permissions(&air, &capability.admitted_names())?;
-        let capability_invocations =
-            local_capability_invocation_admissions(&air, &capability_permissions)?;
+        let capability_invocations = local_capability_invocation_admissions(
+            &air,
+            &CapabilityGrantSet::from_registered_implementations(capability.registered_names()),
+            &capability_permissions,
+        )?;
         let model_binding_digest = descriptor
             .port_bindings
             .iter()
@@ -1436,10 +1446,20 @@ const LOCAL_CAPABILITY_GRANT_PREFIX: &str = "apxm.canonical.local.grant.";
 /// `apxm execute-canonical` runs with no Auth or Server issuing Capability
 /// grants, so the canonical composition root *is* the authority — and says so.
 /// Every reference names the local root explicitly, so the evidence a run emits
-/// can never be mistaken for a server-issued grant. Each admission is keyed by
-/// AIR node id and carries the capability reference the node authored, which is
-/// exactly what the driver re-checks before preparing the request; a mismatch
-/// there is still a hard `CapabilityInvocationAdmissionMismatch`.
+/// can never be mistaken for a server-issued grant.
+///
+/// The reference each admission carries is resolved out of `grants` — the names
+/// the Capability port has implementations registered for — and never copied
+/// from the AIR operand it will later be compared against. That is what the
+/// driver's authored-versus-admitted check is for: with the reference minted
+/// from the operand, the comparison was `x == x` by construction and could not
+/// fail. An authored reference nothing can dispatch now fails here, at
+/// admission, before an authority or an argument is built for it.
+///
+/// A reference that *is* registered but that policy refuses is not this
+/// function's business: it is admitted here and carries a refusing
+/// `ResolvedPermission`, so a refusal stays a decision in the evidence rather
+/// than becoming a registry miss.
 ///
 /// A node with no `capability_ref` operand is left unadmitted on purpose: the
 /// driver raises the precise `MissingOperand` diagnostic for it, which is a
@@ -1451,6 +1471,7 @@ const LOCAL_CAPABILITY_GRANT_PREFIX: &str = "apxm.canonical.local.grant.";
 /// allow.
 fn local_capability_invocation_admissions(
     air: &AirModule,
+    grants: &CapabilityGrantSet,
     permissions: &[AdmittedCapabilityPermission],
 ) -> Result<BTreeMap<String, CapabilityInvocationAdmission>> {
     let mut admissions = BTreeMap::new();
@@ -1461,7 +1482,7 @@ fn local_capability_invocation_admissions(
         let Some(capability_ref) = operation
             .operands
             .iter()
-            .find(|operand| operand.slot == "capability_ref")
+            .find(|operand| operand.slot == apxm_ais::SLOT_CAPABILITY_REF)
             .map(|operand| operand.value_id.clone())
         else {
             continue;
@@ -1489,14 +1510,15 @@ fn local_capability_invocation_admissions(
                     operation.node_id
                 )
             })?;
-        admissions.insert(
-            operation.node_id.clone(),
-            CapabilityInvocationAdmission {
-                capability_ref,
-                authority,
-                permission: Some(permission),
-            },
-        );
+        let admission = grants
+            .admit(&capability_ref, authority, Some(permission))
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "canonical local execution cannot admit node {}: {error}",
+                    operation.node_id
+                )
+            })?;
+        admissions.insert(operation.node_id.clone(), admission);
     }
     Ok(admissions)
 }
@@ -2138,8 +2160,12 @@ mod tests {
         let port = LocalCapabilityPort::new().expect("local capability port");
         let permissions = local_capability_permissions(air, &port.admitted_names())
             .expect("local permission resolution");
-        local_capability_invocation_admissions(air, &permissions)
-            .expect("local capability admissions")
+        local_capability_invocation_admissions(
+            air,
+            &CapabilityGrantSet::from_registered_implementations(port.registered_names()),
+            &permissions,
+        )
+        .expect("local capability admissions")
     }
 
     fn invocation_admission(air: &AirModule, invocation_id: &str) -> InvocationAdmission {
@@ -2168,6 +2194,7 @@ mod tests {
             &artifact_bytes,
             TEST_RELEASE_BYTES,
             TEST_PROVENANCE_BYTES,
+            &apxm_program::air_semantic_requirements(air),
             &descriptor.port_bindings,
             descriptor.resource_ceilings,
             &descriptor.confinement,
@@ -2352,6 +2379,7 @@ mod tests {
             &artifact_bytes,
             TEST_RELEASE_BYTES,
             TEST_PROVENANCE_BYTES,
+            &apxm_program::air_semantic_requirements(&air),
             &bindings,
             canonical_runtime_descriptor().resource_ceilings,
             &canonical_runtime_descriptor().confinement,

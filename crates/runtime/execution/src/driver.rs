@@ -226,6 +226,130 @@ pub struct CapabilityInvocationAdmission {
     pub permission: Option<ResolvedPermission>,
 }
 
+/// Where a [`CapabilityGrantSet`]'s names came from.
+///
+/// The two origins exist because two kinds of graph reach this boundary and
+/// only one of them is authored by a person. An author's Capability reference
+/// has to name something the machine can actually dispatch; a lowering-shape
+/// conformance corpus deliberately carries opaque references it never
+/// dispatches, to pin AIR structure rather than effect behaviour. Recording
+/// which one minted a grant set is what lets the gate hold authors to the
+/// catalogue without breaking the corpora — and the corpus exemption is stated
+/// by name, at the one call site that takes it, rather than inferred.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CapabilityGrantOrigin {
+    /// Names read off a live capability registry or an authored package's
+    /// declared implementations. Every name resolves to something dispatchable.
+    RegisteredImplementations,
+    /// Opaque names stated by a lowering-shape conformance corpus. They are
+    /// never dispatched, so they are exempt from catalogue resolution.
+    ConformanceCorpus,
+}
+
+impl CapabilityGrantOrigin {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::RegisteredImplementations => "registered implementations",
+            Self::ConformanceCorpus => "conformance corpus",
+        }
+    }
+}
+
+/// An authored Capability reference that no grant in the set covers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CapabilityNotGranted {
+    pub authored: String,
+    pub granted: Vec<String>,
+    pub origin: CapabilityGrantOrigin,
+}
+
+impl std::fmt::Display for CapabilityNotGranted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "capability '{}' is granted by nothing this invocation admits: the grant set was \
+             derived from {} and covers [{}]",
+            self.authored,
+            self.origin.as_str(),
+            self.granted.join(", ")
+        )
+    }
+}
+
+impl std::error::Error for CapabilityNotGranted {}
+
+/// The finite set of Capability references one invocation may resolve.
+///
+/// This is the Capability analogue of [`ModelBindingAdmission`]: a composition
+/// root states the exact set once, from a source that is not the program, and
+/// every authored reference is resolved against it. The reference an admission
+/// carries is then owned by the grant set, not copied out of the AIR operand
+/// it will later be compared against — which is what makes the driver's
+/// authored-versus-admitted check a real comparison rather than `x == x`.
+#[derive(Clone, Debug)]
+pub struct CapabilityGrantSet {
+    granted: BTreeSet<String>,
+    origin: CapabilityGrantOrigin,
+}
+
+impl CapabilityGrantSet {
+    /// Grants derived from a live capability registry or an authored package's
+    /// declared implementations.
+    #[must_use]
+    pub fn from_registered_implementations(
+        names: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        Self {
+            granted: names.into_iter().map(Into::into).collect(),
+            origin: CapabilityGrantOrigin::RegisteredImplementations,
+        }
+    }
+
+    /// Grants stated by a lowering-shape conformance corpus, whose references
+    /// are opaque by design and never dispatched.
+    ///
+    /// Calling this is the corpus declaring itself. Nothing infers the
+    /// exemption from the shape of the reference.
+    #[must_use]
+    pub fn for_conformance_corpus(names: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self {
+            granted: names.into_iter().map(Into::into).collect(),
+            origin: CapabilityGrantOrigin::ConformanceCorpus,
+        }
+    }
+
+    /// Resolve an authored reference to the granted name that covers it.
+    fn resolve(&self, authored: &str) -> Result<&str, CapabilityNotGranted> {
+        self.granted
+            .get(authored)
+            .map(String::as_str)
+            .ok_or_else(|| CapabilityNotGranted {
+                authored: authored.to_string(),
+                granted: self.granted.iter().cloned().collect(),
+                origin: self.origin,
+            })
+    }
+
+    /// Admit one authored Capability reference under this grant set.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CapabilityNotGranted`] when no grant covers the reference.
+    pub fn admit(
+        &self,
+        authored: &str,
+        authority: CapabilityInvocationAuthority,
+        permission: Option<ResolvedPermission>,
+    ) -> Result<CapabilityInvocationAdmission, CapabilityNotGranted> {
+        Ok(CapabilityInvocationAdmission {
+            capability_ref: self.resolve(authored)?.to_string(),
+            authority,
+            permission,
+        })
+    }
+}
+
 /// The typed outcome of one executed node.
 #[derive(Debug)]
 pub enum NodeOutcome {

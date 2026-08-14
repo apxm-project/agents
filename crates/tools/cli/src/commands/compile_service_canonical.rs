@@ -46,14 +46,61 @@ pub(crate) fn emit_canonical_air_from_agent(
         ));
     }
     let air_json = run_canonical_python_entry(&entry, config_path)?;
-    let _module: apxm_program::air::AirModule =
+    let module: apxm_program::air::AirModule =
         serde_json::from_str(&air_json).with_context(|| {
             format!(
                 "canonical entry {} did not emit valid apxm.air AIR JSON on stdout",
                 entry.display()
             )
         })?;
+    check_capability_references_are_granted(agent_dir, &module)?;
     Ok(air_json)
+}
+
+/// Hold every Capability the compiled program names against what the package
+/// can actually supply.
+///
+/// This is the join the three namespaces never made: the reference an author
+/// writes in program source, the ids `capabilities/capabilities.toml`
+/// declares, and the runtime's builtin allowlist. Without it a program could
+/// name a Capability that is in none of them and still compile, produce an
+/// artifact, and run — the reference simply resolved to nothing at the
+/// registry, far past the point where the author could see the mistake.
+fn check_capability_references_are_granted(
+    agent_dir: &Path,
+    module: &apxm_program::air::AirModule,
+) -> Result<()> {
+    let granted = super::agent::granted_capability_ids(agent_dir)?;
+    let mut ungranted: Vec<&str> = module
+        .semantic_operations
+        .iter()
+        .filter(|operation| operation.op == apxm_program::SemanticOpKind::CapabilityInvoke)
+        .filter_map(|operation| {
+            operation
+                .operands
+                .iter()
+                .find(|operand| operand.slot == apxm_ais::SLOT_CAPABILITY_REF)
+                .map(|operand| operand.value_id.as_str())
+        })
+        .filter(|capability_ref| !granted.contains(*capability_ref))
+        .collect();
+    ungranted.sort_unstable();
+    ungranted.dedup();
+    if ungranted.is_empty() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "{} authors {} no implementation can satisfy: [{}]. A Capability reference must name a \
+         built-in id or an id declared in {}",
+        agent_dir.join("agent.toml").display(),
+        if ungranted.len() == 1 {
+            "a Capability"
+        } else {
+            "Capabilities"
+        },
+        ungranted.join(", "),
+        agent_dir.join("capabilities/capabilities.toml").display(),
+    )
 }
 
 fn run_canonical_python_entry(input: &Path, config_path: Option<&Path>) -> Result<String> {

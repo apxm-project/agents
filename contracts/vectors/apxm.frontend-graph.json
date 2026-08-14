@@ -31,11 +31,11 @@
           "target_ref": "model.target"
         },
         {
-          "decl_id": "decl.cap.search",
+          "decl_id": "decl.search_web",
           "decl_kind": "capability_binding",
           "input_type_ref": "SearchArguments",
           "output_type_ref": "SearchResult",
-          "target_ref": "cap.search"
+          "target_ref": "search_web"
         },
         {
           "decl_id": "decl.event.input",
@@ -181,7 +181,7 @@
           "intent_kind": "capability_invocation",
           "parent_region_id": "region.loop.1",
           "execution_order": 1,
-          "binding_ref": "decl.cap.search",
+          "binding_ref": "decl.search_web",
           "operand_values": ["value.model.out"],
           "result_value": "value.search.out"
         },
@@ -252,7 +252,7 @@
       ],
       "capability_requirements": [
         {
-          "capability_ref": "cap.search",
+          "capability_ref": "search_web",
           "tool_schema_present": true
         }
       ],
@@ -559,12 +559,12 @@
       "hook_bindings": [],
       "capability_requirements": [
         {
-          "capability_ref": "cap.search",
+          "capability_ref": "search_web",
           "tool_schema_present": true,
           "requested_permission": { "decision": "ask", "reason": "Reads whatever the model asks for." }
         },
         {
-          "capability_ref": "cap.search",
+          "capability_ref": "search_web",
           "tool_schema_present": false
         }
       ],
@@ -619,7 +619,7 @@
       "hook_bindings": [],
       "capability_requirements": [
         {
-          "capability_ref": "cap.search",
+          "capability_ref": "search_web",
           "requested_permission": "require_approval"
         }
       ],

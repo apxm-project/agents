@@ -137,7 +137,7 @@ fn repeated_capability_declarations_each_keep_their_own_permission() {
     assert!(
         requirements
             .iter()
-            .all(|requirement| requirement.capability_ref == "cap.search"),
+            .all(|requirement| requirement.capability_ref == "search_web"),
         "both declarations name the same capability and both survive"
     );
     assert_eq!(

@@ -29,9 +29,10 @@ pub mod structural;
 
 pub use bundle::ExecutionPortBundle;
 pub use driver::{
-    CapabilityInvocationAdmission, ExecutionError, ExecutionPorts, ExecutionPortsError,
-    ExecutionRequest, NodeOutcome, NoopStaticHookHandler, RunReport, StaticHookExecutionError,
-    StaticHookHandlerPort, StaticHookResult, execute, execute_resumable, resume, resume_event,
+    CapabilityGrantOrigin, CapabilityGrantSet, CapabilityInvocationAdmission, CapabilityNotGranted,
+    ExecutionError, ExecutionPorts, ExecutionPortsError, ExecutionRequest, NodeOutcome,
+    NoopStaticHookHandler, RunReport, StaticHookExecutionError, StaticHookHandlerPort,
+    StaticHookResult, execute, execute_resumable, resume, resume_event,
 };
 pub use operational_usage::{
     CommittedNativeModelUsage, CommittedNativeModelUsageError, CommittedNativeModelUsageGateError,

@@ -7,6 +7,7 @@ import sys
 from typing import Literal, TypeAlias, TypedDict
 
 from apxm_program import Agent, Context, Hook, Model, Tool
+from apxm_program.capabilities import SEARCH_WEB
 
 
 class ConversationInput(TypedDict):
@@ -57,7 +58,7 @@ class ToolResultModelRequest(InitialModelRequest):
 ModelRequest: TypeAlias = InitialModelRequest | ToolResultModelRequest
 ModelResponse: TypeAlias = FinalModelResponse | ToolModelResponse
 
-SearchWeb = Tool[SearchWebRequest, SearchWebResult]("cap.search")
+SearchWeb = Tool[SearchWebRequest, SearchWebResult](SEARCH_WEB)
 SupportModel = Model[ModelRequest, ModelResponse]("model.target")
 
 

@@ -23,7 +23,8 @@ pub mod source_map;
 
 pub use air::{AirModule, SemanticOpKind, StructuralOpKind, verify_air_json};
 pub use artifact::{
-    ArtifactBuildError, ExecutableArtifact, PortRequirement, PortSourceScope, SourceBundle,
+    ArtifactBuildError, CAPABILITY_PORT_CONTRACT, ExecutableArtifact, MODEL_TARGET_PORT_CONTRACT,
+    PortRequirement, PortSourceScope, SourceBundle, air_semantic_requirements,
     compile_frontend_graph_artifact_json, validate_artifact_json,
 };
 pub use capability::{

@@ -439,7 +439,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         ),
         fields: &[
             OperationField::required_ref(
-                "model_ref",
+                SLOT_MODEL_REF,
                 "Exact admitted model target reference",
                 ReferenceType::Model,
             ),
@@ -464,7 +464,7 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         ),
         fields: &[
             OperationField::required_ref(
-                "capability_ref",
+                SLOT_CAPABILITY_REF,
                 "Exact admitted capability reference",
                 ReferenceType::Capability,
             ),
@@ -558,6 +558,18 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
         emission: EMISSION_TOKEN_DIRECT,
     },
 ];
+
+/// The exact admitted model target a semantic `model.call` names.
+///
+/// Named here because AIS owns the operand catalogue: every consumer that
+/// reads a model target out of AIR — artifact requirement derivation, the
+/// canonical composition root, the execution driver — resolves the slot
+/// through this constant rather than retyping the string.
+pub const SLOT_MODEL_REF: &str = "model_ref";
+
+/// The exact admitted Capability a semantic `capability.invoke` names. Same
+/// ownership rule as [`SLOT_MODEL_REF`].
+pub const SLOT_CAPABILITY_REF: &str = "capability_ref";
 
 /// The loop-entry operand of a structural `ais.loop`, paired positionally with
 /// the region's block arguments.

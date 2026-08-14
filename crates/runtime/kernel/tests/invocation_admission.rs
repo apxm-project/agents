@@ -52,6 +52,7 @@ fn invocation_admission_rejects_provenance_drift_before_runtime() {
         b"artifact",
         b"release",
         b"provenance",
+        &[],
         &port_bindings,
         resource_ceilings,
         &AdmittedConfinement {
@@ -112,4 +113,50 @@ fn invocation_admission_rejects_malformed_shape_and_unknown_fields() {
     let mut value = serde_json::to_value(valid()).expect("admission json");
     value["ambient_credentials"] = serde_json::Value::Bool(true);
     assert!(serde_json::from_value::<InvocationAdmission>(value).is_err());
+}
+
+/// A program that states a Capability requirement is not admitted through a
+/// Runtime Profile that binds no Capability Port. This is the Capability mirror
+/// of the model-target check: `artifact_semantic_requirements` used to appear
+/// nowhere under the runtime at all, so a requirement crossed into execution
+/// with nothing at the boundary asking whether it could be satisfied.
+#[test]
+fn a_capability_requirement_is_refused_when_no_capability_port_is_admitted() {
+    let air: apxm_program::AirModule = serde_json::from_value(serde_json::json!({
+        "schema_version": "apxm.air",
+        "semantic_operations": [{
+            "node_id": "n.cap",
+            "op": "capability.invoke",
+            "parent_region_id": "r.fn",
+            "execution_order": 0,
+            "operands": [
+                {"slot": "capability_ref", "value_id": "read", "type_ref": "CapabilityRef"},
+                {"slot": "arguments", "value_id": "value.args", "type_ref": "Arguments"}
+            ]
+        }],
+        "structural_ir": [{"region_id": "r.fn", "kind": "function", "execution_order": 0}],
+        "context_flow": [],
+        "source_map": {
+            "schema_version": "apxm.source-map",
+            "source_language": "python",
+            "node_spans": [],
+            "region_annotations": []
+        }
+    }))
+    .expect("probe AIR");
+    let requirements = apxm_program::air_semantic_requirements(&air);
+    assert_eq!(requirements.len(), 1);
+
+    // `minimal_port_bindings` admits execution_commit and confinement only.
+    let port_bindings = minimal_port_bindings();
+    let (exact, _) = apxm_kernel::resolve_exact_bindings(&port_bindings).expect("exact bindings");
+    let error = apxm_kernel::reconcile_artifact_requirements(&requirements, &exact)
+        .expect_err("a Capability requirement needs an admitted Capability Port");
+    assert_eq!(
+        error,
+        apxm_kernel::RequirementReconciliationError::UnadmittedSlot {
+            typed_port_slot: "read".into(),
+            slot: apxm_kernel::PortSlot::Capability,
+        }
+    );
 }

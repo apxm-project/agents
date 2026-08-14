@@ -694,6 +694,21 @@ fn collect_typed_link_diagnostics(verdict: &mut Verdict, graph: &FrontendGraph) 
                 "external declaration is missing its exact target_ref",
             ));
         }
+        // A `target_ref` is the name a Capability, model, or Event resolves by
+        // downstream. Checking only its presence admits a reference no
+        // catalogue lookup can ever match, so it carries the same identifier
+        // grammar as every other reference in the graph.
+        if let Some(target_ref) = &declaration.target_ref {
+            check_identifier(verdict, target_ref, "declaration target_ref");
+        }
+    }
+
+    for requirement in &graph.capability_requirements {
+        check_identifier(
+            verdict,
+            &requirement.capability_ref,
+            "capability requirement capability_ref",
+        );
     }
 
     for value in &graph.values {

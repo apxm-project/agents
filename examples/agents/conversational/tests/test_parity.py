@@ -464,8 +464,10 @@ def test_conversational_tool_dispatch_is_model_directed_and_closed() -> None:
         assert {hook["target_selector"] for hook in hooks} == {
             tool_call["node_id"]
         }
+        # The declared requirement is a catalogue id, not an opaque name: this
+        # is the assertion that used to pin the three namespaces disagreeing.
         assert graph["capability_requirements"] == [
-            {"capability_ref": "cap.search", "tool_schema_present": True}
+            {"capability_ref": "search_web", "tool_schema_present": True}
         ]
 
 
