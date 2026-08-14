@@ -88,12 +88,18 @@ fn an_authored_capability_invoke_runs_a_real_tool() {
         denied["outcome"]["status"], "failed",
         "an unadmitted capability fails closed: {result}"
     );
+    let message = denied["outcome"]["message"]
+        .as_str()
+        .expect("failure message");
     assert!(
-        denied["outcome"]["message"]
-            .as_str()
-            .expect("failure message")
-            .contains("not admitted by canonical local execution"),
-        "the denial names the local admission policy: {result}"
+        message.contains("is deny") && message.contains("by the package layer"),
+        "the refusal is the resolved permission decision and names the layer that gave it, so \
+         the shipped path is enforcing the lattice rather than only the port interceptor: \
+         {result}"
+    );
+    assert!(
+        message.contains("read-only capability surface"),
+        "the decision still carries the reason the local root refuses: {result}"
     );
     assert!(
         !denied_write.exists(),

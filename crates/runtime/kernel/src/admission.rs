@@ -330,6 +330,15 @@ pub struct ExecutionAdmission {
     pub confinement: AdmittedConfinement,
     /// Resolved permission decisions for this invocation, one per capability.
     /// Absent when the composition root resolved none; never a grant.
+    ///
+    /// No shipped composition root mints an [`ExecutionAdmission`] yet — the
+    /// only signed-envelope callers are this crate's admission tests. The one
+    /// execution entry point in this tree, `apxm execute-canonical`, verifies
+    /// an [`InvocationAdmission`] instead, and carries its resolved decisions
+    /// on the typed per-node capability admission the driver reads. So this
+    /// field is verified (`verify_execution_admission` rejects an empty or
+    /// duplicated `capability_ref`) but unproduced. Read its emptiness as
+    /// "this envelope has no producer", not as "no capability was decided".
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capability_permissions: Vec<AdmittedCapabilityPermission>,
     pub expires_at_ms: u64,

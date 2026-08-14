@@ -404,6 +404,35 @@ impl PermissionResolution {
         Ok(Self { entries })
     }
 
+    /// Resolve the two layers that have a producer today: what the program's
+    /// own source requested, narrowed by what the package shipping it states.
+    ///
+    /// This is the whole shipped stack, and every caller that resolves a
+    /// capability's authority goes through it rather than assembling a layer
+    /// map of its own — the stacking rule has exactly one implementation,
+    /// [`Self::resolve`], and exactly one shipped arrangement, this one.
+    ///
+    /// **[`PermissionLayer::Deployment`] (precedence 30) is unwired.** Nothing
+    /// in this tree states a deployment-profile decision, so no third layer is
+    /// stacked here. The layer is not vestigial — [`Self::resolve`] applies it
+    /// the moment a caller supplies one, and the tighten-only rule already
+    /// covers it — but its absence from this constructor means *no decision was
+    /// stated*, never that the deployment allows what the layers below decided.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PermissionResolutionError`] on the first widening or
+    /// unrequested override, exactly as [`Self::resolve`] does.
+    pub fn resolve_code_over_package(
+        code: LayerDecisions,
+        package: LayerDecisions,
+    ) -> Result<Self, PermissionResolutionError> {
+        Self::resolve(&BTreeMap::from([
+            (PermissionLayer::Code, code),
+            (PermissionLayer::Package, package),
+        ]))
+    }
+
     /// The winning decision and its layer for one capability.
     #[must_use]
     pub fn get(&self, capability_ref: &str) -> Option<&ResolvedPermission> {
@@ -611,6 +640,38 @@ mod tests {
                 attempted: PermissionDecision::allow(),
                 attempted_layer: PermissionLayer::Package,
             }
+        );
+    }
+
+    /// The shipped constructor must be the two-layer stack applied through the
+    /// same rule, not a second implementation of it.
+    #[test]
+    fn the_shipped_constructor_stacks_package_over_code_through_the_one_rule() {
+        let code = decisions([
+            ("cap.read", PermissionDecision::allow()),
+            ("cap.write", PermissionDecision::allow()),
+        ]);
+        let package = decisions([("cap.write", PermissionDecision::deny("read-only surface"))]);
+
+        let resolved =
+            PermissionResolution::resolve_code_over_package(code.clone(), package.clone())
+                .expect("a tightening stack resolves");
+        assert_eq!(
+            resolved,
+            PermissionResolution::resolve(&stack([
+                (PermissionLayer::Code, code.clone()),
+                (PermissionLayer::Package, package.clone()),
+            ]))
+            .expect("the same stack through the general rule"),
+            "the constructor is the general rule with the two shipped layers, nothing else"
+        );
+        assert_eq!(resolved.origin("cap.read"), Some(PermissionLayer::Code));
+        assert_eq!(resolved.origin("cap.write"), Some(PermissionLayer::Package));
+
+        let widened = decisions([("cap.write", PermissionDecision::allow())]);
+        assert!(
+            PermissionResolution::resolve_code_over_package(package, widened).is_err(),
+            "the constructor inherits tighten-only, it does not relax it"
         );
     }
 

@@ -134,8 +134,14 @@ mod capability_port {
         }
 
         /// Capability names this port admits, in canonical order.
-        #[cfg(test)]
-        fn admitted_names(&self) -> BTreeSet<String> {
+        ///
+        /// The same set the interceptor gates on, published so the composition
+        /// root can state it as a permission decision *before* an invocation is
+        /// admitted. Two enforcement points, one set: the permission layer
+        /// refuses at admission, this port refuses at the chokepoint, and
+        /// neither restates the other's policy.
+        #[must_use]
+        pub fn admitted_names(&self) -> BTreeSet<String> {
             admitted_capability_names(&self.system)
         }
 
@@ -1113,7 +1119,7 @@ mod model_port {
     }
 }
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -1122,6 +1128,7 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+use apxm_ais::permissions::{LayerDecisions, PermissionDecision, PermissionResolution};
 use apxm_execution::{
     CapabilityInvocationAdmission, CapabilityOutcome, CompositionOutcome, CompositionPort,
     CompositionReceiver, CompositionRequest, EventAwait, EventOutcome, EventPort, ExecutionRequest,
@@ -1134,12 +1141,12 @@ use apxm_inference::{
     ResolvedModelBinding,
 };
 use apxm_kernel::{
-    AcpPromptOutcome, AcpPromptRequest, AdmittedConfinement, AdmittedPortBinding, AtomicWriteSet,
-    ExecutionCommitPort, ExecutionCommitRequest, ExecutionCommitResult,
-    ExternalAgentCapabilityPort, InvocationAdmission, PortImplementation, PortSlot,
-    ProgramInstanceRef, ProgramInvocationRef, PromptEffectState, ResourceCeilings,
-    RuntimeAdmission, VerifiedInvocationAdmission, digest_serializable,
-    verify_invocation_admission,
+    AcpPromptOutcome, AcpPromptRequest, AdmittedCapabilityPermission, AdmittedConfinement,
+    AdmittedPortBinding, AtomicWriteSet, ExecutionCommitPort, ExecutionCommitRequest,
+    ExecutionCommitResult, ExternalAgentCapabilityPort, InvocationAdmission, PortImplementation,
+    PortSlot, ProgramInstanceRef, ProgramInvocationRef, PromptEffectState, ResourceCeilings,
+    RuntimeAdmission, VerifiedInvocationAdmission, admitted_capability_permissions,
+    digest_serializable, verify_invocation_admission,
 };
 use apxm_kernel::{ConfinementAttestation, ConfinementError, ConfinementPort, ConfinementRequest};
 #[cfg(test)]
@@ -1238,7 +1245,8 @@ impl CanonicalRuntime {
         provenance_bytes: &[u8],
         model: Arc<LocalModelInferencePort>,
     ) -> Result<Value> {
-        let capability_invocations = local_capability_invocation_admissions(&air)?;
+        let capability =
+            Arc::new(LocalCapabilityPort::new().map_err(|error| anyhow::anyhow!(error))?);
         let descriptor = canonical_runtime_descriptor();
         // Report both sides: this fails closed on any reference-profile change,
         // and without the expected digests the only way to re-mint a fixture is
@@ -1266,6 +1274,12 @@ impl CanonicalRuntime {
             &descriptor.confinement,
         )
         .map_err(|error| anyhow::anyhow!(error))?;
+        // Resolved only once the admission has verified the artifact bytes, so
+        // no decision is ever computed for an AIR the authority does not name.
+        let capability_permissions =
+            local_capability_permissions(&air, &capability.admitted_names())?;
+        let capability_invocations =
+            local_capability_invocation_admissions(&air, &capability_permissions)?;
         let model_binding_digest = descriptor
             .port_bindings
             .iter()
@@ -1285,7 +1299,7 @@ impl CanonicalRuntime {
         };
         let profile = runtime_profile_from_invocation(
             self.commit.clone(),
-            Arc::new(LocalCapabilityPort::new().map_err(|error| anyhow::anyhow!(error))?),
+            capability,
             model.clone(),
             Arc::new(LocalModelRequestMetadata),
             verified,
@@ -1430,8 +1444,14 @@ const LOCAL_CAPABILITY_GRANT_PREFIX: &str = "apxm.canonical.local.grant.";
 /// A node with no `capability_ref` operand is left unadmitted on purpose: the
 /// driver raises the precise `MissingOperand` diagnostic for it, which is a
 /// better failure than a fabricated admission for an unnamed capability.
+///
+/// Each admission carries the decision `permissions` resolved for its
+/// capability. A capability the resolution never reached would be an admission
+/// with no ruling behind it, so it is a hard failure rather than an implicit
+/// allow.
 fn local_capability_invocation_admissions(
     air: &AirModule,
+    permissions: &[AdmittedCapabilityPermission],
 ) -> Result<BTreeMap<String, CapabilityInvocationAdmission>> {
     let mut admissions = BTreeMap::new();
     for operation in &air.semantic_operations {
@@ -1458,16 +1478,100 @@ fn local_capability_invocation_admissions(
                 operation.node_id
             )
         })?;
+        let permission = permissions
+            .iter()
+            .find(|entry| entry.capability_ref == capability_ref)
+            .map(|entry| entry.permission.clone())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "canonical local execution resolved no permission for Capability \
+                     {capability_ref} at node {}",
+                    operation.node_id
+                )
+            })?;
         admissions.insert(
             operation.node_id.clone(),
             CapabilityInvocationAdmission {
                 capability_ref,
                 authority,
-                permission: None,
+                permission: Some(permission),
             },
         );
     }
     Ok(admissions)
+}
+
+/// Resolve the permission layer stack for one canonical local run, projected
+/// into the admission's typed decision list.
+///
+/// **Code layer (10).** `CapabilityRequirement.requested_permission` is the
+/// authored request, but it lives on the FrontendGraph and its digest-bound
+/// SourceBundle, and `execute-canonical` is handed canonical `apxm.air` bytes
+/// alone — AIR carries no capability requirements. What the AIR *does* carry is
+/// the request itself: authoring a `capability.invoke` node is the program
+/// asking to invoke that capability, unqualified. So the code layer states one
+/// unqualified `allow` per authored capability reference. That is the widest a
+/// request can be, which is the correct starting point for a tighten-only
+/// stack: every narrowing below is then the machine's ruling, never the
+/// program's own claim of authority. When a graph-bearing path reaches here it
+/// should state the authored `requested_permission` instead — the stack is
+/// unchanged, only the code layer becomes more precise.
+///
+/// **Package layer (20).** The canonical local composition root binds no
+/// sandbox backend and holds no issued Capability grant, so it ships the
+/// program with only the read-only capability surface. Every authored
+/// capability outside `admitted` is denied here, at admission, before the
+/// driver materializes an argument.
+///
+/// **Deployment layer (30) has no producer.** Nothing in this tree states a
+/// deployment-profile decision — see
+/// [`PermissionResolution::resolve_code_over_package`]. Its absence means no
+/// decision was stated, not that the deployment allows what the layers below
+/// decided.
+///
+/// The resolution is a pure function of digest-bound inputs: the AIR whose
+/// bytes `verify_invocation_admission` checked against
+/// `InvocationAdmission::artifact_digest`, and the admitted surface the
+/// capability port publishes about itself.
+fn local_capability_permissions(
+    air: &AirModule,
+    admitted: &BTreeSet<String>,
+) -> Result<Vec<AdmittedCapabilityPermission>> {
+    let mut requested = LayerDecisions::new();
+    let mut shipped = LayerDecisions::new();
+    for operation in &air.semantic_operations {
+        if operation.op != SemanticOpKind::CapabilityInvoke {
+            continue;
+        }
+        let Some(capability_ref) = operation
+            .operands
+            .iter()
+            .find(|operand| operand.slot == "capability_ref")
+            .map(|operand| operand.value_id.clone())
+        else {
+            continue;
+        };
+        requested.insert(capability_ref.clone(), PermissionDecision::allow());
+        if !admitted.contains(&capability_ref) {
+            shipped.insert(
+                capability_ref,
+                PermissionDecision::deny(format!(
+                    "canonical local execution binds no sandbox backend and no issued Capability \
+                     grant, so it admits only the read-only capability surface [{}]",
+                    admitted
+                        .iter()
+                        .map(String::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )),
+            );
+        }
+    }
+    let resolution =
+        PermissionResolution::resolve_code_over_package(requested, shipped).map_err(|error| {
+            anyhow::anyhow!("canonical local permission resolution failed: {error}")
+        })?;
+    Ok(admitted_capability_permissions(&resolution))
 }
 
 fn model_admission(air: &AirModule, model_binding_digest: &str) -> ModelBindingAdmission {
@@ -1692,6 +1796,25 @@ impl CompositionPort for DevComposition {
 #[derive(Default)]
 struct DevCommit {
     version: Mutex<u64>,
+    /// Evidence the last winning commit carried.
+    ///
+    /// The development port writes no durable record, so under test this is the
+    /// only way to read what a live canonical run actually committed. It is
+    /// `cfg(test)` precisely because retaining it in a real run would be a
+    /// durable record this port does not claim to keep.
+    #[cfg(test)]
+    evidence: Mutex<Vec<apxm_program::runtime_evidence::Fact>>,
+}
+
+#[cfg(test)]
+impl DevCommit {
+    /// Facts published with the last winning commit.
+    fn committed_evidence(&self) -> Vec<apxm_program::runtime_evidence::Fact> {
+        self.evidence
+            .lock()
+            .expect("dev commit evidence mutex poisoned")
+            .clone()
+    }
 }
 
 #[async_trait]
@@ -1703,6 +1826,11 @@ impl ExecutionCommitPort for DevCommit {
                 current_program_state_version: *version,
             };
         }
+        #[cfg(test)]
+        self.evidence
+            .lock()
+            .expect("dev commit evidence mutex poisoned")
+            .clone_from(&request.evidence_batch);
         *version += 1;
         ExecutionCommitResult::Committed {
             new_program_state_version: *version,
@@ -1991,6 +2119,7 @@ fn commit_result_json(result: &ExecutionCommitResult) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use apxm_ais::permissions::{PermissionLayer, ResolvedPermission};
     use apxm_backends::llm::backends::mock::{MockLLMBackend, MockResponse};
     use apxm_inference::ModelTargetRef;
 
@@ -1999,6 +2128,18 @@ mod tests {
 
     fn bytes_digest(bytes: &[u8]) -> String {
         format!("sha256:{:x}", Sha256::digest(bytes))
+    }
+
+    /// The shipped minting sequence: resolve the layer stack against the real
+    /// local capability surface, then admit each node under it. Tests go
+    /// through this rather than passing a hand-written decision list, so a test
+    /// can never admit a capability the composition root would refuse.
+    fn local_admissions(air: &AirModule) -> BTreeMap<String, CapabilityInvocationAdmission> {
+        let port = LocalCapabilityPort::new().expect("local capability port");
+        let permissions = local_capability_permissions(air, &port.admitted_names())
+            .expect("local permission resolution");
+        local_capability_invocation_admissions(air, &permissions)
+            .expect("local capability admissions")
     }
 
     fn invocation_admission(air: &AirModule, invocation_id: &str) -> InvocationAdmission {
@@ -2059,8 +2200,7 @@ mod tests {
         ExecutionRequest {
             model_admission: model_admission(&air, DEV_BINDING_DIGEST),
             initial_values: initial_model_request_values(&air),
-            capability_invocations: local_capability_invocation_admissions(&air)
-                .expect("local capability admissions"),
+            capability_invocations: local_admissions(&air),
             air,
             hook_bindings: Vec::new(),
             program_instance_ref: ProgramInstanceRef::new(format!("profile.instance.{suffix}")),
@@ -2285,8 +2425,7 @@ mod tests {
         )
         .expect("development ports form an admitted bundle");
         let model_admission = model_admission(&air, DEV_BINDING_DIGEST);
-        let capability_invocations =
-            local_capability_invocation_admissions(&air).expect("local capability admissions");
+        let capability_invocations = local_admissions(&air);
         let report = execute(
             &ports,
             ExecutionRequest {
@@ -2342,8 +2481,7 @@ mod tests {
             local_model_request_metadata(),
         )
         .expect("development ports form an admitted bundle");
-        let capability_invocations =
-            local_capability_invocation_admissions(&air).expect("local capability admissions");
+        let capability_invocations = local_admissions(&air);
         let report = execute(
             &ports,
             ExecutionRequest {
@@ -2407,8 +2545,7 @@ mod tests {
     fn mints_a_local_invocation_admission_for_each_authored_capability_node() {
         let air = capability_air("read", json!({"file_path": "Cargo.toml"}));
 
-        let admissions =
-            local_capability_invocation_admissions(&air).expect("local capability admissions");
+        let admissions = local_admissions(&air);
 
         let admission = admissions
             .get("n.cap")
@@ -2429,11 +2566,7 @@ mod tests {
 
     #[test]
     fn an_air_with_no_capability_node_admits_nothing() {
-        assert!(
-            local_capability_invocation_admissions(&empty_profile_air())
-                .expect("local capability admissions")
-                .is_empty()
-        );
+        assert!(local_admissions(&empty_profile_air()).is_empty());
     }
 
     #[tokio::test]
@@ -2510,17 +2643,214 @@ mod tests {
         );
         let outcome = &output["results"]["node_outcomes"][0];
         assert_eq!(outcome["outcome"]["status"], "failed");
+        let message = outcome["outcome"]["message"]
+            .as_str()
+            .expect("failure message");
         assert!(
-            outcome["outcome"]["message"]
-                .as_str()
-                .expect("failure message")
-                .contains("not admitted by canonical local execution"),
-            "the denial names the local admission policy: {output}"
+            message.contains("is deny") && message.contains("by the package layer"),
+            "the refusal names the resolved decision and the layer that gave it: {output}"
+        );
+        assert!(
+            message.contains("read-only capability surface"),
+            "the reason still names why the local root refuses: {output}"
         );
         assert!(
             !target.exists(),
             "the denial happens before the implementation receives its arguments"
         );
+    }
+
+    /// Build a two-node `capability.invoke` AIR: one capability the local root
+    /// admits and one it does not, in one module, so a single run exercises
+    /// both sides of the lattice.
+    fn read_then_write_air(read_path: &str, write_path: &str) -> AirModule {
+        serde_json::from_value(json!({
+            "schema_version": "apxm.air",
+            "value_assemblies": [
+                {"value_id": "value.read.arguments", "expression": {"kind": "object", "fields": [
+                    {"name": "file_path", "value": {"kind": "string", "value": read_path}}
+                ]}},
+                {"value_id": "value.write.arguments", "expression": {"kind": "object", "fields": [
+                    {"name": "file_path", "value": {"kind": "string", "value": write_path}},
+                    {"name": "content", "value": {"kind": "string", "value": "never applied"}}
+                ]}}
+            ],
+            "semantic_operations": [
+                {"node_id": "n.read", "op": "capability.invoke", "parent_region_id": "r.root", "execution_order": 0, "operands": [{"slot": "capability_ref", "value_id": "read", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "value.read.arguments", "type_ref": "ArgumentValue"}], "result": {"value_id": "value.read.output", "type_ref": "ToolOutput"}},
+                {"node_id": "n.write", "op": "capability.invoke", "parent_region_id": "r.root", "execution_order": 1, "operands": [{"slot": "capability_ref", "value_id": "write", "type_ref": "CapabilityRef"}, {"slot": "arguments", "value_id": "value.write.arguments", "type_ref": "ArgumentValue"}], "result": {"value_id": "value.write.output", "type_ref": "ToolOutput"}}
+            ],
+            "structural_ir": [{"region_id": "r.root", "kind": "function", "execution_order": 0}],
+            "context_flow": [],
+            "source_map": {"schema_version": "apxm.source-map", "source_language": "python", "node_spans": [], "region_annotations": []}
+        }))
+        .expect("two-node canonical Capability AIR")
+    }
+
+    /// Every authored capability node reaches the driver carrying a resolved
+    /// decision. `permission: None` used to be minted here unconditionally, so
+    /// the driver's enforcement and its evidence write — both gated on `Some` —
+    /// were dead on the shipped path.
+    #[test]
+    fn every_admitted_capability_node_carries_the_layer_that_decided_it() {
+        let admissions = local_admissions(&read_then_write_air("Cargo.toml", "/dev/null"));
+
+        let read = admissions["n.read"]
+            .permission
+            .as_ref()
+            .expect("an admitted capability carries its resolved decision");
+        assert_eq!(
+            read,
+            &ResolvedPermission {
+                decision: PermissionDecision::allow(),
+                layer: PermissionLayer::Code,
+            },
+            "an unnarrowed request keeps the code layer as its origin"
+        );
+
+        let write = admissions["n.write"]
+            .permission
+            .as_ref()
+            .expect("a refused capability carries its resolved decision too");
+        assert_eq!(write.layer, PermissionLayer::Package);
+        assert!(
+            !write.decision.is_allow(),
+            "the package layer narrows what the local root does not ship: {write:?}"
+        );
+        assert!(
+            write
+                .decision
+                .reason()
+                .expect("a narrowing decision says why")
+                .contains("read-only capability surface")
+        );
+    }
+
+    /// The composition root may not widen what a program requested, and the
+    /// resolver — not this call site — is what refuses.
+    #[test]
+    fn a_capability_the_local_root_does_not_ship_is_never_resolved_to_allow() {
+        let air = read_then_write_air("Cargo.toml", "/dev/null");
+        let admitted = LocalCapabilityPort::new()
+            .expect("local capability port")
+            .admitted_names();
+        assert!(
+            !admitted.contains("write"),
+            "the local root ships no write surface, so this test has something to narrow"
+        );
+
+        let resolved = local_capability_permissions(&air, &admitted).expect("resolution");
+        assert!(
+            resolved
+                .iter()
+                .all(|entry| entry.capability_ref != "write"
+                    || !entry.permission.decision.is_allow()),
+            "no layer may hand back authority the local root withheld: {resolved:?}"
+        );
+    }
+
+    /// The whole point of the lattice on the live path: a decision is committed
+    /// as evidence before the effect is attempted, and a non-allow stops the
+    /// effect without the implementation ever seeing an argument.
+    #[tokio::test]
+    async fn a_canonical_run_commits_the_decision_for_every_capability_node() {
+        use apxm_program::runtime_evidence::FactKind;
+
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let readable = directory.path().join("payload.txt");
+        std::fs::write(&readable, "committed decision payload\n").expect("write payload");
+        let forbidden = directory.path().join("must-not-exist.txt");
+
+        let air = read_then_write_air(
+            readable.to_str().expect("utf-8 path"),
+            forbidden.to_str().expect("utf-8 path"),
+        );
+        assert!(air.verify().is_accepted());
+
+        let commit = Arc::new(DevCommit::default());
+        let ports = dev_ports(
+            commit.clone(),
+            Arc::new(LocalCapabilityPort::new().expect("local capability port")),
+            Arc::new(LocalModelInferencePort::from_backend_roster().expect("local inference port")),
+            local_model_request_metadata(),
+        )
+        .expect("development ports form an admitted bundle");
+        let capability_invocations = local_admissions(&air);
+        let model_admission = model_admission(&air, DEV_BINDING_DIGEST);
+        let report = execute(
+            &ports,
+            ExecutionRequest {
+                model_admission,
+                initial_values: initial_model_request_values(&air),
+                air,
+                hook_bindings: Vec::new(),
+                capability_invocations,
+                program_instance_ref: ProgramInstanceRef::new("test.instance.decided"),
+                program_invocation_ref: ProgramInvocationRef::new("test.invocation.decided"),
+                commit_id: "test.commit.decided".into(),
+                write_set: dev_write_set(),
+            },
+            Value::Null,
+        )
+        .await
+        .expect("a refused capability is a typed outcome, not a driver error");
+
+        assert!(
+            !forbidden.exists(),
+            "a non-allow decision fails closed before the write implementation runs"
+        );
+
+        let decided = commit
+            .committed_evidence()
+            .into_iter()
+            .filter_map(|fact| {
+                fact.is_kind(FactKind::CapabilityAttemptRecorded)
+                    .then(|| fact.runtime().expect("runtime fact").clone())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            decided.len(),
+            2,
+            "one decision per authored capability node"
+        );
+        let by_capability = decided
+            .iter()
+            .map(|fact| {
+                (
+                    fact.capability_ref
+                        .clone()
+                        .expect("evidence names the capability"),
+                    fact.permission_decision
+                        .clone()
+                        .expect("evidence carries the decision"),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(
+            by_capability["read"],
+            ResolvedPermission {
+                decision: PermissionDecision::allow(),
+                layer: PermissionLayer::Code,
+            }
+        );
+        assert_eq!(by_capability["write"].layer, PermissionLayer::Package);
+        assert!(!by_capability["write"].decision.is_allow());
+
+        let outcomes = report
+            .node_outcomes
+            .iter()
+            .filter_map(|outcome| match outcome {
+                NodeOutcome::Capability { node_id, outcome } => Some((node_id.as_str(), outcome)),
+                _ => None,
+            })
+            .collect::<BTreeMap<_, _>>();
+        assert!(matches!(
+            outcomes["n.read"],
+            CapabilityOutcome::Completed { .. }
+        ));
+        assert!(matches!(
+            outcomes["n.write"],
+            CapabilityOutcome::Failed { .. }
+        ));
     }
 
     /// The exact model reference the checked-in canonical fixture authors.
