@@ -2,11 +2,24 @@ name: Agents product gates
 
 on:
   pull_request:
+  # `branches: [main]` meant a push to any feature branch triggered nothing, so
+  # nineteen commits landed on `apxm/authorable-agents` unverified. The repo
+  # already carries two feature namespaces (`apxm/**`, `feat/**`), so match every
+  # branch rather than enumerating prefixes that go stale as new ones appear.
   push:
-    branches: [main]
+    branches: ['**']
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+# Matching every branch means a branch with an open PR would otherwise run the
+# whole job twice, once per event. `head_ref` (pull_request) and `ref_name`
+# (push) are both the branch name, so both events share one group and the newer
+# run supersedes the older. `main` never cancels: its runs are the merge record.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: ${{ github.ref_name != 'main' }}
 
 jobs:
   deterministic:
@@ -15,8 +28,15 @@ jobs:
     # A cold run links the MLIR/LLVM 22 dialect, builds the release CLI for
     # test-cli, and builds both frontends plus the npm example packages for
     # test-frontend-examples. The previous 20 minutes did not cover even the
-    # cold cargo build; 90 leaves headroom for a cache miss.
-    timeout-minutes: 90
+    # cold cargo build; 90 left headroom for a cache miss. Raised to 120 for the
+    # suites added below, the largest of which is `test-compiler`: it compiles
+    # and runs the whole apxm-compiler test target, which no prior step did, and
+    # cargo gives `-p apxm-compiler` its own build-script output directory, so it
+    # configures and links its own copy of the dialect rather than reusing the
+    # one `check` built. That copy is cheaper than it sounds — the ninja graph is
+    # ~40 targets, about 50 CPU-seconds — so the whole addition is nearer 15
+    # minutes than an hour. A job that times out gates nothing.
+    timeout-minutes: 120
     defaults:
       run:
         shell: bash -el {0}
@@ -34,6 +54,9 @@ jobs:
         with:
           path: workspace/agents
           persist-credentials: false
+          # `commit-lint --range` walks every commit a PR adds, which the default
+          # depth-1 checkout cannot reach. The whole history is 36 MB.
+          fetch-depth: 0
 
       # `.dekk.toml [tools]` requires cargo >= 1.70 on PATH. ubuntu-24.04 ships
       # rustup but no toolchain, so install one rather than depending on a
@@ -119,9 +142,21 @@ jobs:
         run: dekk agents doctor
 
       # Cheap deterministic gates first so they fail fast before any Rust build.
-      # Formatting is first and needs no build at all: ungated `cargo fmt` had
-      # drifted across crates no recent change touched, so every unrelated diff
-      # carried incidental reflow.
+      # The commit rules were otherwise enforced only by the developer-side
+      # `commit` skill, so a contributor who never runs it lands unlinted
+      # messages. A PR is the last point where a rewrite is still cheap, so this
+      # is PR-only: on a push the branch history is already published and a red
+      # gate could only be cleared by a force-push the repo boundaries forbid.
+      # It costs about a second and needs nothing built, so it goes first.
+      - name: Lint the commit messages this pull request adds
+        if: github.event_name == 'pull_request'
+        run: |
+          dekk agents commit-lint --range \
+            "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+
+      # Formatting needs no build either: ungated `cargo fmt` had drifted across
+      # crates no recent change touched, so every unrelated diff carried
+      # incidental reflow.
       - name: Check Rust formatting
         run: dekk agents fmt-check
 
@@ -150,8 +185,26 @@ jobs:
       - name: Run workspace and canonical authoring tests
         run: dekk agents test
 
+      # `test` passes `--exclude apxm-compiler --exclude apxm-cli`, so until this
+      # step the MLIR pass pipeline and the AIR builder in crates/compiler were
+      # gated by nothing at all — `check` type-checks them and no step ran their
+      # tests. `test-cli` below covers the other exclusion; together the three
+      # steps close the workspace.
+      - name: Run compiler AIR builder and pipeline tests
+        run: dekk agents test-compiler
+
       - name: Run CLI tests
         run: dekk agents test-cli
+
+      # `test-cli` installs crates/tools/cli/agent-packaging's locked
+      # dependencies with `npm ci` and then never runs its suite. This step is
+      # only `npm test` in that directory, so it must stay directly after the
+      # step that populates node_modules. Two of its seven tests skip by design
+      # in a standalone `agents` checkout: they assert against
+      # `apxm.contract-common`, which the coordinating workspace owns and CI
+      # does not check out.
+      - name: Run handler-packaging tests
+        run: dekk agents test-handler-packaging
 
       # `test-cli`, `check`, and `test-frontend-examples` all passed once while
       # a checked-in example's integrity.toml was stale. This is the gate that
@@ -161,8 +214,40 @@ jobs:
       - name: Verify checked-in agent packages
         run: dekk agents check-agent-packages
 
+      # The Python frontend's suite rides along inside `test`; the TypeScript
+      # one ran nowhere, so CI built that frontend and never tested it — the
+      # shared frontend-conformance corpus was gated on one of its two halves.
+      # This also does the `npm ci` and the release native build that the two
+      # steps after it reuse, so it comes first of the three.
+      - name: Run TypeScript frontend tests
+        run: dekk agents test-typescript-frontend
+
+      # The only gate on compiling a package that depends on the published
+      # frontend the way a consumer outside this repo would, rather than on the
+      # in-tree sources. Reuses the frontend the previous step built.
+      - name: Compile an external TypeScript package through the public frontend
+        run: dekk agents test-external-source-package
+
       - name: Run repository example frontend tests
         run: dekk agents test-frontend-examples
+
+      # Sibling of the gated `check-agent-packages`, and the same stale-artifact
+      # class: it recompiles the checked-in example artifacts under
+      # crates/machine/program/tests/fixtures/example-artifacts and diffs them.
+      # It builds nothing itself, so it must follow `test-frontend-examples` —
+      # that step installs the Python `_native.so` and the example's
+      # node_modules/dist this check compiles through. Run before them it fails
+      # against a stale bridge instead of reporting real drift.
+      #
+      # This step is also why `test-execution` is deliberately absent. Its
+      # frontend-build prefix looks like it makes the apxm-execution tests see
+      # installed natives, but those tests reach the frontends only through
+      # `include_str!` of the same two example-artifact fixtures, compiled in
+      # and never read at run time. Its cargo half is already covered by `test`,
+      # and its frontend half is those fixtures' freshness — which this checks
+      # directly and far more cheaply.
+      - name: Drift-check the checked-in example artifacts
+        run: dekk agents check-example-artifacts
 
       # A `Skill` declaration is only worth anything if the instructions it
       # names can be read at execution. This runs the Skilled example end to
