@@ -187,7 +187,7 @@ impl McpBridgeCapability {
             server_url: None,
             tool: None,
             metadata: RuntimeCapability::new(
-                "mcp.call",
+                apxm_core::constants::capabilities::MCP_CALL,
                 "Call a tool on an external MCP server (tools/call over Streamable HTTP)",
                 json!({
                     "type": "object",

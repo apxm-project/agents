@@ -11,14 +11,39 @@ pub const WRITE: &str = "write";
 pub const SEARCH_WEB: &str = "search_web";
 pub const HTTP_GET: &str = "http_get";
 pub const HTTP_POST: &str = "http_post";
-pub const CAPABILITY_DISCOVERY: &str = "capability_discovery";
-pub const LIST_LOCAL_SKILLS: &str = "list_local_skills";
-pub const SEARCH_SKILLS: &str = "search_skills";
-pub const READ_LOCAL_SKILL: &str = "read_local_skill";
+/// Pure/read-only token-size estimator; host-independent, registered on every
+/// runtime profile alongside the standard tools.
+pub const COUNT_TOKENS: &str = "count_tokens";
+/// MCP-client bridge: `tools/call` over Streamable HTTP against an external
+/// MCP server. Base id for the generic block; `named()` mints per-tool ids
+/// for a declared `kind = "mcp"` pack entry.
+pub const MCP_CALL: &str = "mcp.call";
+/// Generic authenticated outbound HTTP call, forwarded through apxm-auth's
+/// proxy. Base id for the generic block; `named()`/`named_rest()` mint
+/// per-action ids for a declared `kind = "provider"` pack entry.
+pub const PROVIDER_CALL: &str = "provider.call";
+
+// `capability_discovery`, `list_local_skills`, `search_skills`, and
+// `read_local_skill` used to live here. `capability_discovery` had no
+// implementation anywhere (superseded by the generic `builtin_group =
+// "discovery"` grouping — see `groups::DISCOVERY` / `BUILTIN_GROUPS` below)
+// and was deleted outright. The three skills ids were allowlisted with no
+// handler behind them — `agent lint` accepted a package declaring an
+// unexecutable capability. Track L implements skills discovery for real and
+// re-adds it here under the settled name `read_skill` (not
+// `read_local_skill`), plus its list/search siblings.
 
 /// Event-driven scheduling tool (durable one-shot / recurring wakeups).
+/// Unimplemented in this crate today; registered only by a runtime profile
+/// with a durable persistence backend, so it stays out of `STANDARD_BUILTINS`
+/// and out of `register_standard_tools`. Left in `BUILTINS` so an authored
+/// package targeting such a profile is not rejected at lint time.
 pub const SCHEDULE: &str = "schedule";
-/// Task/goal management tool (CRUD over the AAM goal tree).
+/// Task/goal management tool (CRUD over the AAM goal tree). Same
+/// durable-backend caveat as `SCHEDULE`. Unlike `SCHEDULE`, this id is a
+/// legacy artifact with no committed durable-backend plan, so it is removed
+/// from `BUILTINS`; the constant and its `AGENT_MANAGEMENT_BUILTINS` slot
+/// stay for that future backend to reintroduce it there, not here.
 pub const MANAGE_TASK: &str = "manage_task";
 
 /// Tool-group tags for capability metadata and LLM tool exposure.
@@ -37,10 +62,22 @@ pub mod groups {
     pub const AUTHORING: &str = "authoring";
     pub const TASK: &str = "task";
     pub const AGENT_MANAGEMENT: &str = "agent_management";
+    pub const TEXT: &str = "text";
 }
 
 /// Core local tools that can exist without durable agent-management storage.
-pub const STANDARD_BUILTINS: &[&str] = &[BASH, READ, WRITE, SEARCH_WEB, HTTP_GET, HTTP_POST];
+/// Exactly the ids `register_standard_tools` registers (each behind its own
+/// `enabled` config flag, except `count_tokens` which is unconditional) —
+/// this is the SSOT the gate-3 inventory test checks the registrar against.
+pub const STANDARD_BUILTINS: &[&str] = &[
+    BASH,
+    READ,
+    WRITE,
+    SEARCH_WEB,
+    HTTP_GET,
+    HTTP_POST,
+    COUNT_TOKENS,
+];
 
 /// Durable agent-management builtins. Runtime crates register these only when
 /// their persistence backend is available.
@@ -48,19 +85,26 @@ pub const AGENT_MANAGEMENT_BUILTINS: &[&str] = &[SCHEDULE, MANAGE_TASK];
 
 /// Built-in capabilities admitted without explicit registration (compiler
 /// tool-binding allowlist and runtime startup registration use this set).
+///
+/// This is `STANDARD_BUILTINS` (always registered) plus `MCP_CALL` /
+/// `PROVIDER_CALL` (implemented, but registered dynamically per pack entry
+/// rather than by `register_standard_tools` — see their `named()` /
+/// `named_rest()` constructors) plus `SCHEDULE` (durable-backend only, see
+/// its doc comment above). Every other builtin id `register_standard_tools`
+/// can register, and every id an implemented builtin capability reports as
+/// its own name, is in this list — that equivalence is gate 3, pinned by
+/// the inventory test in `crates/runtime/capability/tests/`.
 pub const BUILTINS: &[&str] = &[
     BASH,
     READ,
     WRITE,
     SEARCH_WEB,
-    CAPABILITY_DISCOVERY,
-    LIST_LOCAL_SKILLS,
-    SEARCH_SKILLS,
-    READ_LOCAL_SKILL,
     HTTP_GET,
     HTTP_POST,
+    COUNT_TOKENS,
+    MCP_CALL,
+    PROVIDER_CALL,
     SCHEDULE,
-    MANAGE_TASK,
 ];
 
 /// Valid `builtin_group` values for grouped `kind = "builtin"` entries in an

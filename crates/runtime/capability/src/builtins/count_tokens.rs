@@ -17,7 +17,7 @@ impl CountTokensCapability {
     pub fn new() -> Self {
         Self {
             metadata: RuntimeCapability::new(
-                "count_tokens",
+                apxm_core::constants::capabilities::COUNT_TOKENS,
                 "Estimate the token count of a string (chars/4). Use to decide \
                  when to compact/summarize conversation context.",
                 serde_json::json!({
@@ -27,7 +27,9 @@ impl CountTokensCapability {
                 }),
             )
             .with_returns("integer (estimated tokens)")
-            .with_groups(vec!["text".to_string()])
+            .with_groups(vec![
+                apxm_core::constants::capabilities::groups::TEXT.to_string(),
+            ])
             .with_read_only(),
         }
     }
