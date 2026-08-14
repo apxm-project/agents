@@ -1,5 +1,5 @@
 {
-  "schema_version": "apxm.air.v2",
+  "schema_version": "apxm.air",
   "semantic_operations": [
     {
       "node_id": "fixture.new",
@@ -38,7 +38,7 @@
   ],
   "context_flow": [],
   "source_map": {
-    "schema_version": "apxm.source-map.v1",
+    "schema_version": "apxm.source-map",
     "source_language": "python",
     "node_spans": [],
     "region_annotations": []

@@ -1,0 +1,2 @@
+canonical capability fixture payload
+the read capability returns these exact lines

@@ -1,7 +1,7 @@
 {
   "schema_version": "apxm.invocation-admission",
-  "invocation_id": "invocation.canonical-fixture.1",
-  "artifact_digest": "sha256:85852448aa73ffbab188b0ab3bb64b5c4c02b9e3a88f40cb1f80972ba743c03f",
+  "invocation_id": "invocation.canonical-capability-fixture.1",
+  "artifact_digest": "sha256:fd15f468c6e05e013625c0ef9712a2bcb09ad00a1f781648f6efe5d8e22af60f",
   "release_digest": "sha256:412624c52be347a3ed837e409e561ea3924733d2b4a4991904bfb2de8cc827d4",
   "port_bindings_digest": "sha256:d6078eeb2622cc75cd00d9f302d10e0606a1043ad0ac6dc900f67f75016d36bd",
   "resource_ceiling_digest": "sha256:32fe0355dd58906703ee8731a407b77831954e255a40cc9df3f6e704f8579485",
