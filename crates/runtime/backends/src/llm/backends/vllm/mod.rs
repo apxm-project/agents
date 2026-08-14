@@ -5,6 +5,6 @@ pub mod graph_meta;
 
 pub use backend::{GraphAwareVllmBackend, GraphStatusResponse};
 pub use graph_meta::{
-    ApxmGraphHints, CompilerHints, GraphMetadata, LatencyClass, NodeGraphMetrics, NodeSpec,
-    PROBE_GRAPH_ID, PinMode, PinPolicy, PriorityClass, REQUEST_XARGS,
+    ApxmGraphHints, GraphMetadata, LatencyClass, NodeGraphMetrics, NodeSpec, PROBE_GRAPH_ID,
+    REQUEST_XARGS,
 };

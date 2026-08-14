@@ -77,8 +77,12 @@ pub use execution::{
 };
 pub use goal::{Goal, GoalId, GoalStatus};
 pub use graph_hints::{
-    ApxmGraphHints, BackendGraphCapabilities, CompilerHints, GraphBackendKind, GraphMetadata,
-    GraphStatusSnapshot, NodeSpec, PinMode, PinPolicy, PriorityClass,
+    Acknowledgement, ApxmGraphHints, BackendGraphCapabilities, EvidenceKind, FieldRealization,
+    GRAPH_HINTS_SCHEMA, GraphExecutionIntents, GraphHintCapabilities, GraphHintField,
+    GraphHintFieldCapability, GraphHintPlan, GraphHintProjector, GraphHintRealization,
+    GraphHintScope, GraphLifecycleCapability, GraphLifecycleOutcome, GraphMetadata,
+    GraphStatusSnapshot, NodeGraphFacts, NodeSpec, OptimizationObjective, ProjectionOutcome,
+    ReusableContextIntent, ReusePreference, WorkClass,
 };
 pub use graph_metrics::{LatencyClass, NodeGraphMetrics};
 pub use handler_manifest::{

@@ -36,6 +36,9 @@ pub async fn validate_backend(backend: &BackendConfig) -> Result<String, Backend
         ProviderProtocol::Google => validate_google(&client, &backend.name, &backend, base).await,
         ProviderProtocol::Ollama => validate_ollama(&client, &backend.name, &backend, base).await,
         ProviderProtocol::Vllm => validate_vllm(&client, &backend.name, &backend, base).await,
+        ProviderProtocol::LlamaCpp => {
+            validate_openai(&client, &backend.name, &backend, base).await
+        }
         ProviderProtocol::Mock => {
             unreachable!("mock validation returns before endpoint resolution")
         }

@@ -70,6 +70,13 @@ pub const BUILTIN_PROVIDERS: &[BuiltinProviderSpec] = &[
         protocol: ProviderProtocol::Vllm,
     },
     BuiltinProviderSpec {
+        id: "llamacpp",
+        api_key_env_var: None,
+        default_base_url: None,
+        requires_api_key: false,
+        protocol: ProviderProtocol::LlamaCpp,
+    },
+    BuiltinProviderSpec {
         id: "openrouter",
         api_key_env_var: Some("OPENROUTER_API_KEY"),
         default_base_url: None,

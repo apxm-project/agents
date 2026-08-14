@@ -16,8 +16,10 @@ use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
 use apxm_core::constants::llm::apxm as apxm_llm;
 use apxm_core::types::{
-    BackendGraphCapabilities, GraphMetadata, GraphStatusSnapshot, ModelCapabilities, ModelInfo,
-    PriorityClass,
+    BackendGraphCapabilities, EvidenceKind, GraphHintCapabilities, GraphHintField,
+    GraphHintFieldCapability, GraphHintPlan, GraphHintProjector, GraphLifecycleCapability,
+    GraphMetadata, GraphStatusSnapshot, ModelCapabilities, ModelInfo, OptimizationObjective,
+    ProjectionOutcome,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -71,14 +73,9 @@ fn prune_isolated_hints(value: serde_json::Value, mode: &str) -> serde_json::Val
         return value;
     };
     let drop: &[&str] = match mode {
-        "priority" => &["reuse_group", "pin_policy", "graph_metrics"],
-        "prefix" => &["priority_class"],
-        "registration" => &[
-            "priority_class",
-            "reuse_group",
-            "pin_policy",
-            "graph_metrics",
-        ],
+        "priority" => &["intents"],
+        "prefix" => &["facts"],
+        "registration" => &["facts", "intents"],
         _ => &[],
     };
     for key in drop {
@@ -99,11 +96,12 @@ enum VllmRequestPriority {
     Default,
 }
 
-impl From<PriorityClass> for VllmRequestPriority {
-    fn from(value: PriorityClass) -> Self {
-        match value {
-            PriorityClass::CriticalPath => Self::CriticalPath,
-            PriorityClass::Parallel => Self::Default,
+impl From<bool> for VllmRequestPriority {
+    fn from(critical_path: bool) -> Self {
+        if critical_path {
+            Self::CriticalPath
+        } else {
+            Self::Default
         }
     }
 }
@@ -390,8 +388,8 @@ impl GraphAwareVllmBackend {
         if apxm_disable_hints() {
             return Ok(GraphRegisterResponse {
                 object: SUPPRESSED_REGISTRATION_OBJECT.to_string(),
-                graph_id: metadata.graph_id.clone(),
-                execution_id: metadata.execution_id.clone(),
+                graph_id: metadata.graph_ref.clone(),
+                execution_id: metadata.graph_execution_ref.clone(),
                 registered_nodes: 0,
                 critical_path_length: None,
                 max_parallelism: None,
@@ -522,9 +520,13 @@ impl GraphAwareVllmBackend {
 
                 if !map.contains_key(apxm_llm::REQUEST_PRIORITY)
                     && apxm_isolate().is_none_or(|m| m == "priority")
-                    && let Some(priority_class) = &hints.priority_class
+                    && hints.facts.critical_path == Some(true)
+                    && !matches!(
+                        hints.intents.objective,
+                        Some(OptimizationObjective::MaximizeThroughput)
+                    )
                 {
-                    let priority = u8::from(VllmRequestPriority::from(*priority_class));
+                    let priority = u8::from(VllmRequestPriority::from(true));
                     map.insert(
                         apxm_llm::REQUEST_PRIORITY.to_owned(),
                         serde_json::json!(priority),
@@ -810,3 +812,71 @@ impl LLMBackend for GraphAwareVllmBackend {
         }
     }
 }
+
+impl GraphHintProjector for GraphAwareVllmBackend {
+    fn graph_hint_capabilities(&self) -> GraphHintCapabilities {
+        use EvidenceKind::{AdapterProjection, BackendAcknowledgement, OutcomeMeasurement};
+        let mut fields = GraphHintCapabilities::none().fields;
+        let derived = GraphHintFieldCapability::Derived {
+            evidence: [AdapterProjection, BackendAcknowledgement, OutcomeMeasurement]
+                .into_iter()
+                .collect(),
+        };
+        for field in [
+            GraphHintField::Scope,
+            GraphHintField::CriticalPath,
+            GraphHintField::SuccessorRefs,
+            GraphHintField::RemainingPathLen,
+            GraphHintField::StageIndex,
+            GraphHintField::Objective,
+            GraphHintField::ReusePreference,
+            GraphHintField::AffinityRef,
+            GraphHintField::BenefitHorizonMs,
+        ] {
+            fields.insert(field, derived.clone());
+        }
+        GraphHintCapabilities {
+            fields,
+            lifecycle: GraphLifecycleCapability::PrepareRelease,
+        }
+    }
+
+    fn plan_graph_hints(
+        &self,
+        hints: Option<&apxm_core::types::ApxmGraphHints>,
+    ) -> Result<GraphHintPlan, String> {
+        let Some(hints) = hints else {
+            return Ok(GraphHintPlan {
+                outcomes: Default::default(),
+            });
+        };
+        hints.validate()?;
+        let mut outcomes = GraphHintPlan::omitted_unsupported().outcomes;
+        outcomes.insert(
+            GraphHintField::Scope,
+            ProjectionOutcome::Applied {
+                mechanism_ref: "vllm.apxm_xargs".into(),
+            },
+        );
+        if hints.facts.critical_path == Some(true) {
+            outcomes.insert(
+                GraphHintField::CriticalPath,
+                ProjectionOutcome::Approximated {
+                    mechanism_ref: "vllm.request_priority".into(),
+                    reason: "critical_path".into(),
+                },
+            );
+        }
+        if hints.prefers_reuse() {
+            outcomes.insert(
+                GraphHintField::ReusePreference,
+                ProjectionOutcome::Approximated {
+                    mechanism_ref: "vllm.prefix_pin".into(),
+                    reason: "prefer_when_beneficial".into(),
+                },
+            );
+        }
+        Ok(GraphHintPlan { outcomes })
+    }
+}
+

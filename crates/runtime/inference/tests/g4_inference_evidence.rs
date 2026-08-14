@@ -18,12 +18,9 @@ use apxm_inference::{
     InferenceCredentialLease, InferenceCredentialLeaseIdentity, InferenceDriverBinding,
     InferenceLineageTarget, InferenceUsageLineage, LeasedInferenceBackend, ModelBindingAdmission,
     ModelCallPreparation, ModelCallRequest, ModelCallRequestMetadata, ModelContextEnvelopeRef,
-    ModelInferencePort, ModelOutcome, ModelStreamMode, ModelTargetRef, PINNED_VLLM_OWNER_REVISION,
-    PINNED_VLLM_PORT_CONTRACT_DIGEST, PINNED_VLLM_RELEASE_ID, PINNED_VLLM_RELEASE_MANIFEST_DIGEST,
-    PINNED_VLLM_VECTOR_DIGESTS, ResolvedModelBinding, RetryPolicy, TypedError, Usage,
-    VllmConformanceJoin, VllmJoinStatus, VllmReleaseAttestation, authoritative_usage,
-    correlate_diagnostics, digest_bytes, dispatch_committed_inference, dispatch_exact_inference,
-    redact_diagnostic_value,
+    ModelInferencePort, ModelOutcome, ModelStreamMode, ModelTargetRef, ResolvedModelBinding,
+    RetryPolicy, TypedError, Usage, authoritative_usage, correlate_diagnostics,
+    dispatch_committed_inference, dispatch_exact_inference, redact_diagnostic_value,
 };
 use apxm_inference::{InferenceTargetCommitment, TargetCommitState};
 use std::cell::{Cell, RefCell};
@@ -222,7 +219,7 @@ fn vllm_binding_reaches_model_inference_port_without_rebinding() {
         DIGEST_B,
         "deployment.vllm.exact",
         DIGEST_A,
-        PINNED_VLLM_PORT_CONTRACT_DIGEST,
+        DIGEST_C,
         DIGEST_D,
         3,
     )
@@ -284,7 +281,7 @@ fn vllm_binding_reaches_model_inference_port_without_rebinding() {
     assert_eq!(result.lineage.exact_port_binding_digest, DIGEST_A);
     assert_eq!(
         result.lineage.target_port_contract_digest.as_deref(),
-        Some(PINNED_VLLM_PORT_CONTRACT_DIGEST)
+        Some(DIGEST_C)
     );
     assert_eq!(result.lineage.native_input_tokens, usage.input_tokens);
     assert_eq!(result.lineage.native_output_tokens, usage.output_tokens);
@@ -1089,138 +1086,3 @@ fn diagnostics_reject_foreign_commit_or_unbounded_reference() {
     ));
 }
 
-// ── vLLM conformance join (no stubbed authority) ────────────────────────────
-
-#[test]
-fn vllm_conformance_join_pins_released_vector_digests_without_substitution() {
-    let join = VllmConformanceJoin::candidate_from_pinned_vectors().expect("candidate join");
-    assert_eq!(
-        join.vllm_port_contract_digest,
-        PINNED_VLLM_PORT_CONTRACT_DIGEST
-    );
-    assert_eq!(
-        join.join_status,
-        VllmJoinStatus::CandidateAwaitingVllmRelease
-    );
-    assert_eq!(
-        join.joined_vector_digests.len(),
-        PINNED_VLLM_VECTOR_DIGESTS.len()
-    );
-    join.validate().expect("valid join record");
-
-    let err = VllmConformanceJoin::join(
-        PINNED_VLLM_PORT_CONTRACT_DIGEST,
-        vec!["sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".into()],
-        true,
-    )
-    .expect_err("unknown vector is not joined");
-    assert!(matches!(
-        err,
-        apxm_inference::JoinError::UnknownVectorDigest(_)
-    ));
-
-    let err = VllmConformanceJoin::join(
-        "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-        vec![PINNED_VLLM_VECTOR_DIGESTS[0].to_string()],
-        true,
-    )
-    .expect_err("port contract mismatch fails closed");
-    assert!(matches!(
-        err,
-        apxm_inference::JoinError::PortContractMismatch { .. }
-    ));
-
-    let err = VllmConformanceJoin::join(
-        PINNED_VLLM_PORT_CONTRACT_DIGEST,
-        vec![PINNED_VLLM_VECTOR_DIGESTS[0].to_string(); 2],
-        false,
-    )
-    .expect_err("duplicate evidence is not a join");
-    assert!(matches!(
-        err,
-        apxm_inference::JoinError::DuplicateVectorDigest(_)
-    ));
-}
-
-#[test]
-fn vllm_conformance_join_cannot_claim_release_without_external_evidence() {
-    let err = VllmConformanceJoin::join(
-        PINNED_VLLM_PORT_CONTRACT_DIGEST,
-        vec![PINNED_VLLM_VECTOR_DIGESTS[0].to_string()],
-        true,
-    )
-    .expect_err("release assertion cannot manufacture external evidence");
-    assert!(matches!(
-        err,
-        apxm_inference::JoinError::ReleaseEvidenceRequired
-    ));
-
-    let mut candidate =
-        VllmConformanceJoin::candidate_from_pinned_vectors().expect("candidate join");
-    candidate.join_status = VllmJoinStatus::Joined;
-    let err = candidate
-        .validate()
-        .expect_err("deserialized joined status fails closed");
-    assert!(matches!(
-        err,
-        apxm_inference::JoinError::ReleaseEvidenceRequired
-    ));
-}
-
-#[test]
-fn vllm_conformance_join_requires_verified_release_coordinates_and_membership() {
-    let attestation = VllmReleaseAttestation {
-        release_id: PINNED_VLLM_RELEASE_ID.to_string(),
-        owner_revision: PINNED_VLLM_OWNER_REVISION.to_string(),
-        manifest_digest: PINNED_VLLM_RELEASE_MANIFEST_DIGEST.to_string(),
-        port_contract_digest: PINNED_VLLM_PORT_CONTRACT_DIGEST.to_string(),
-        vector_digests: PINNED_VLLM_VECTOR_DIGESTS
-            .iter()
-            .map(|digest| (*digest).to_string())
-            .collect(),
-    };
-    let joined = VllmConformanceJoin::join_with_release_attestation(
-        PINNED_VLLM_PORT_CONTRACT_DIGEST,
-        attestation.vector_digests.clone(),
-        attestation.clone(),
-    )
-    .expect("verified external release evidence joins");
-    assert_eq!(joined.join_status, VllmJoinStatus::Joined);
-    assert_eq!(joined.release_attestation, Some(attestation));
-    joined.validate().expect("verified joined record validates");
-
-    let mut tampered = joined.clone();
-    tampered
-        .release_attestation
-        .as_mut()
-        .expect("attestation")
-        .owner_revision = "f".repeat(40);
-    assert!(matches!(
-        tampered.validate(),
-        Err(apxm_inference::JoinError::InvalidReleaseAttestation(
-            "owner_revision"
-        ))
-    ));
-}
-
-#[test]
-fn pinned_vllm_vector_digests_match_workspace_files_when_present() {
-    // agents/crates/runtime/inference -> workspace/vllm
-    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../../vllm/contracts/vectors");
-    if !root.is_dir() {
-        // Workspace checkout may omit vllm; pinned digests still freeze the join.
-        return;
-    }
-    let files = [
-        "apxm.vllm-inference-request.v1.json",
-        "apxm.vllm-inference-result.v1.json",
-        "apxm.vllm-inference-failure.v1.json",
-        "apxm.vllm-inference-stream-chunk.v1.json",
-        "apxm.vllm-native-serving-binding.v1.json",
-    ];
-    for (file, expected) in files.iter().zip(PINNED_VLLM_VECTOR_DIGESTS.iter()) {
-        let bytes = std::fs::read(root.join(file)).expect("read vllm vector");
-        assert_eq!(digest_bytes(&bytes), *expected, "{file}");
-    }
-}

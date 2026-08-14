@@ -7,6 +7,5 @@ pub const PROBE_GRAPH_ID: &str = "__apxm_probe__";
 pub const SCHEDULER_POLICY_PRIORITY: &str = "priority";
 
 pub use apxm_core::types::{
-    ApxmGraphHints, CompilerHints, GraphMetadata, LatencyClass, NodeGraphMetrics, NodeSpec,
-    PinMode, PinPolicy, PriorityClass,
+    ApxmGraphHints, GraphMetadata, LatencyClass, NodeGraphMetrics, NodeSpec,
 };

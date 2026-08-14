@@ -178,10 +178,7 @@ impl MockLLMBackend {
             return;
         };
         let (node_id, node_name) = match &request.apxm_hints {
-            Some(h) => (
-                h.node_id.map_or(0, |n| n as u64),
-                h.node_name.clone().unwrap_or_default(),
-            ),
+            Some(h) => (0, h.scope.node_ref.clone()),
             None => (0, String::new()),
         };
         let op = request.operation_type;
