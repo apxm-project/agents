@@ -10,10 +10,6 @@ license = "MIT"
 entry = "python/agent.py"
 frontend = "python"
 
-[prompts]
-context = "prompts/context.md"
-persona = "prompts/persona.md"
-
 [source]
 type = "local"
 

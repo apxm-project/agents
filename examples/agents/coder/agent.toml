@@ -11,9 +11,5 @@ license = "MIT"
 entry = "src/main.ts"
 frontend = "typescript"
 
-[prompts]
-persona = "prompts/persona.md"
-safety = "prompts/safety.md"
-
 [source]
 type = "local"

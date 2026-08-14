@@ -77,11 +77,26 @@ pub enum InvocationAdmissionError {
     SchemaMismatch(String),
     InvalidInvocationId,
     MalformedDigest(&'static str),
-    ArtifactMismatch { expected: String, actual: String },
-    ReleaseMismatch { expected: String, actual: String },
-    ProvenanceMismatch { expected: String, actual: String },
-    PortBindingsDigestMismatch { expected: String, actual: String },
-    ResourceCeilingDigestMismatch { expected: String, actual: String },
+    ArtifactMismatch {
+        expected: String,
+        actual: String,
+    },
+    ReleaseMismatch {
+        expected: String,
+        actual: String,
+    },
+    ProvenanceMismatch {
+        expected: String,
+        actual: String,
+    },
+    PortBindingsDigestMismatch {
+        expected: String,
+        actual: String,
+    },
+    ResourceCeilingDigestMismatch {
+        expected: String,
+        actual: String,
+    },
     ConfinementUnavailable,
     UnconfinedForbidden,
     InvalidRuntimeDescriptor(&'static str),
@@ -212,12 +227,10 @@ pub fn reconcile_artifact_requirements(
     for requirement in requirements {
         let schema_id = requirement.required_port_contract.schema_id.as_str();
         let Some(slot) = port_slot_for_requirement(schema_id) else {
-            return Err(
-                RequirementReconciliationError::UnknownRequirementContract {
-                    typed_port_slot: requirement.typed_port_slot.clone(),
-                    schema_id: schema_id.to_string(),
-                },
-            );
+            return Err(RequirementReconciliationError::UnknownRequirementContract {
+                typed_port_slot: requirement.typed_port_slot.clone(),
+                schema_id: schema_id.to_string(),
+            });
         };
         if !bindings.iter().any(|binding| binding.slot == slot) {
             return Err(RequirementReconciliationError::UnadmittedSlot {
@@ -746,19 +759,40 @@ pub struct VerifiedInvocationAdmission {
     pub policy_digest: String,
 }
 
+/// The bytes and exact runtime descriptors an [`InvocationAdmission`] claims,
+/// which [`verify_invocation_admission`] checks it against.
+///
+/// Three of these fields are bare byte slices verified against three different
+/// digests, so passing them positionally let a caller transpose two and still
+/// compile — verifying the wrong digest silently. Naming them at the call site
+/// is what makes that a compile error.
+#[derive(Clone, Copy, Debug)]
+pub struct InvocationAdmissionClaim<'a> {
+    pub artifact_bytes: &'a [u8],
+    pub release_bytes: &'a [u8],
+    pub provenance_bytes: &'a [u8],
+    pub artifact_semantic_requirements: &'a [apxm_program::PortRequirement],
+    pub admitted_port_bindings: &'a [AdmittedPortBinding],
+    pub resource_ceilings: &'a ResourceCeilings,
+    pub confinement: &'a AdmittedConfinement,
+}
+
 /// Verify the transport authority against the bytes and exact runtime
 /// descriptors it is claiming. No signing key, nonce ledger, or synthetic
 /// admission is introduced by this path.
 pub fn verify_invocation_admission(
     admission: &InvocationAdmission,
-    artifact_bytes: &[u8],
-    release_bytes: &[u8],
-    provenance_bytes: &[u8],
-    artifact_semantic_requirements: &[apxm_program::PortRequirement],
-    admitted_port_bindings: &[AdmittedPortBinding],
-    resource_ceilings: ResourceCeilings,
-    confinement: &AdmittedConfinement,
+    claimed: InvocationAdmissionClaim<'_>,
 ) -> Result<VerifiedInvocationAdmission, InvocationAdmissionError> {
+    let InvocationAdmissionClaim {
+        artifact_bytes,
+        release_bytes,
+        provenance_bytes,
+        artifact_semantic_requirements,
+        admitted_port_bindings,
+        resource_ceilings,
+        confinement,
+    } = claimed;
     admission.validate()?;
     let artifact_actual = content_digest(artifact_bytes);
     if admission.artifact_digest != artifact_actual {
@@ -788,7 +822,7 @@ pub fn verify_invocation_admission(
             actual: admission.port_bindings_digest.clone(),
         });
     }
-    let ceilings_actual = digest_serializable(&resource_ceilings)?;
+    let ceilings_actual = digest_serializable(resource_ceilings)?;
     if admission.resource_ceiling_digest != ceilings_actual {
         return Err(InvocationAdmissionError::ResourceCeilingDigestMismatch {
             expected: ceilings_actual,
@@ -823,7 +857,7 @@ pub fn verify_invocation_admission(
         admission: admission.clone(),
         port_bindings,
         bundle_spec,
-        resource_ceilings,
+        resource_ceilings: resource_ceilings.clone(),
         confinement_type,
         sandbox_digest: confinement.sandbox_digest.clone(),
         policy_digest: confinement.policy_digest.clone(),

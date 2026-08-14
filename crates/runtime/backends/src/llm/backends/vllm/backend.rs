@@ -17,10 +17,10 @@ use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
 use apxm_core::constants::llm::apxm as apxm_llm;
 use apxm_core::constants::llm::apxm::graph_hints as hint_keys;
 use apxm_core::types::{
-    BackendGraphCapabilities, BackendMechanismRef, EvidenceKind, GraphHintCapabilities, GraphHintField,
-    GraphHintFieldCapability, GraphHintPlan, GraphHintProjector, GraphLifecycleCapability,
-    GraphMetadata, GraphStatusSnapshot, ModelCapabilities, ModelInfo, OptimizationObjective,
-    ProjectionOutcome,
+    BackendGraphCapabilities, BackendMechanismRef, EvidenceKind, GraphHintCapabilities,
+    GraphHintField, GraphHintFieldCapability, GraphHintPlan, GraphHintProjector,
+    GraphLifecycleCapability, GraphMetadata, GraphStatusSnapshot, ModelCapabilities, ModelInfo,
+    OptimizationObjective, ProjectionOutcome,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -819,9 +819,13 @@ impl GraphHintProjector for GraphAwareVllmBackend {
         use EvidenceKind::{AdapterProjection, BackendAcknowledgement, OutcomeMeasurement};
         let mut fields = GraphHintCapabilities::none().fields;
         let derived = GraphHintFieldCapability::Derived {
-            evidence: [AdapterProjection, BackendAcknowledgement, OutcomeMeasurement]
-                .into_iter()
-                .collect(),
+            evidence: [
+                AdapterProjection,
+                BackendAcknowledgement,
+                OutcomeMeasurement,
+            ]
+            .into_iter()
+            .collect(),
         };
         for field in [
             GraphHintField::Scope,
@@ -880,4 +884,3 @@ impl GraphHintProjector for GraphAwareVllmBackend {
         Ok(GraphHintPlan { outcomes })
     }
 }
-

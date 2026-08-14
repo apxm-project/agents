@@ -205,7 +205,7 @@ fn index_one(
     // The directory name is the discovery path, so it is the id. A frontmatter
     // name that disagrees with it would make the same skill answer to two
     // names, so it is refused rather than silently preferred either way.
-    let declared = front.get("name").map(String::as_str).unwrap_or(skill_id);
+    let declared = front.get("name").map_or(skill_id, String::as_str);
     if declared != skill_id {
         return Err(capability_error(
             capability,

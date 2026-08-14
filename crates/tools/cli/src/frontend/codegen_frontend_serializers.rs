@@ -94,10 +94,9 @@ fn fields_of(schema: &Value, name: &str) -> Vec<RecordField> {
                 name: branch_name,
                 index,
             } = branch
+                && *branch_name == name
             {
-                if *branch_name == name {
-                    return fields_for(&schema["$defs"][union.name]["oneOf"][*index], union.name);
-                }
+                return fields_for(&schema["$defs"][union.name]["oneOf"][*index], union.name);
             }
         }
     }

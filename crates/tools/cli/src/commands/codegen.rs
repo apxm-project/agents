@@ -102,8 +102,10 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
         CodegenAction::TypescriptFrontend { output_dir, check } => {
             let output_dir = output_dir.unwrap_or_else(default_typescript_frontend_codegen_dir);
             let rendered = crate::frontend::codegen_ts::render_typescript_frontend_files();
-            let mut files: Vec<String> =
-                rendered.iter().map(|(name, _)| name.to_string()).collect();
+            let mut files: Vec<String> = rendered
+                .iter()
+                .map(|(name, _)| (*name).to_string())
+                .collect();
             files.sort();
 
             if check {

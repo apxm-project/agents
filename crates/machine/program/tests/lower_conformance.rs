@@ -361,8 +361,14 @@ fn a_captured_hook_body_is_air_inside_the_region_the_binding_names() {
     assert_eq!(body.parent_region_id.as_deref(), Some("loop.main"));
     assert!(body.execution_order < model.execution_order);
     assert_eq!(captured.parent_region_id, "hook.before.model.body");
-    assert_eq!(captured.op, apxm_program::air::SemanticOpKind::CapabilityInvoke);
-    assert_eq!(body.hook.as_ref().map(|hook| hook.hook_id.as_str()), Some("hook.before.model"));
+    assert_eq!(
+        captured.op,
+        apxm_program::air::SemanticOpKind::CapabilityInvoke
+    );
+    assert_eq!(
+        body.hook.as_ref().map(|hook| hook.hook_id.as_str()),
+        Some("hook.before.model")
+    );
     assert_eq!(body.hook.as_ref(), graph.hook_bindings.first());
     assert!(air.verify().is_accepted());
 

@@ -1,7 +1,7 @@
 use apxm_kernel::{
     AdmittedConfinement, INVOCATION_ADMISSION_SCHEMA, InvocationAdmission,
-    InvocationAdmissionError, ResourceCeilings, digest_serializable, minimal_port_bindings,
-    verify_invocation_admission,
+    InvocationAdmissionClaim, InvocationAdmissionError, ResourceCeilings, digest_serializable,
+    minimal_port_bindings, verify_invocation_admission,
 };
 
 fn digest(byte: char) -> String {
@@ -49,16 +49,18 @@ fn invocation_admission_rejects_provenance_drift_before_runtime() {
 
     let error = verify_invocation_admission(
         &admission,
-        b"artifact",
-        b"release",
-        b"provenance",
-        &[],
-        &port_bindings,
-        resource_ceilings,
-        &AdmittedConfinement {
-            confinement_type: "NATIVE-SANDBOX".into(),
-            sandbox_digest: digest('d'),
-            policy_digest: digest('e'),
+        InvocationAdmissionClaim {
+            artifact_bytes: b"artifact",
+            release_bytes: b"release",
+            provenance_bytes: b"provenance",
+            artifact_semantic_requirements: &[],
+            admitted_port_bindings: &port_bindings,
+            resource_ceilings: &resource_ceilings,
+            confinement: &AdmittedConfinement {
+                confinement_type: "NATIVE-SANDBOX".into(),
+                sandbox_digest: digest('d'),
+                policy_digest: digest('e'),
+            },
         },
     );
     let error = error.expect_err("provenance drift");

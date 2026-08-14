@@ -383,12 +383,14 @@ impl ApxmGraphHints {
             .get(attrs::WARMUP_CANDIDATE)
             .and_then(|value| value.as_bool());
 
-        let reusable_context = affinity_ref.as_ref().map(|affinity_ref| ReusableContextIntent {
-            preference: ReusePreference::PreferWhenBeneficial,
-            affinity_ref: Some(affinity_ref.clone()),
-            benefit_horizon_ms: None,
-            expected_uses: None,
-        });
+        let reusable_context = affinity_ref
+            .as_ref()
+            .map(|affinity_ref| ReusableContextIntent {
+                preference: ReusePreference::PreferWhenBeneficial,
+                affinity_ref: Some(affinity_ref.clone()),
+                benefit_horizon_ms: None,
+                expected_uses: None,
+            });
 
         let hints = Self {
             schema: GRAPH_HINTS_SCHEMA.to_owned(),
@@ -506,13 +508,17 @@ impl GraphHintCapabilities {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectionOutcome {
-    Applied { mechanism_ref: BackendMechanismRef },
+    Applied {
+        mechanism_ref: BackendMechanismRef,
+    },
     Approximated {
         mechanism_ref: BackendMechanismRef,
         reason: String,
     },
     OmittedUnsupported,
-    OmittedByProfile { reason: String },
+    OmittedByProfile {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -800,10 +806,11 @@ mod tests {
         let hints = ApxmGraphHints::critical_path("g", "gx", "n", "nx", vec![]);
         let plan = Zero.plan_graph_hints(Some(&hints)).expect("plan");
         assert_eq!(plan.outcomes.len(), GraphHintField::ALL.len());
-        assert!(plan
-            .outcomes
-            .values()
-            .all(|outcome| matches!(outcome, ProjectionOutcome::OmittedUnsupported)));
+        assert!(
+            plan.outcomes
+                .values()
+                .all(|outcome| matches!(outcome, ProjectionOutcome::OmittedUnsupported))
+        );
     }
 
     #[test]

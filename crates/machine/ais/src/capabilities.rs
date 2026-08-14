@@ -77,8 +77,20 @@ pub mod groups {
     /// no handler, one level up. The membership test in
     /// `crates/runtime/capability/tests/` now holds it non-empty.
     pub const SKILLS: &str = "skills";
+    /// Tag vocabulary with no member capability today, so none of the three is
+    /// in `BUILTIN_GROUPS`: an author cannot declare a `builtin_group` that
+    /// binds nothing. They keep their constants for the same reason
+    /// `MANAGE_TASK` keeps its — a durable-backend or authoring capability may
+    /// carry one later — and re-entering `BUILTIN_GROUPS` is gated on a
+    /// capability actually reporting the tag, member first, declaration
+    /// second.
     pub const AUTHORING: &str = "authoring";
+    /// See `AUTHORING`: tag only, absent from `BUILTIN_GROUPS`. `MANAGE_TASK`
+    /// is its prospective member.
     pub const TASK: &str = "task";
+    /// See `AUTHORING`: tag only, absent from `BUILTIN_GROUPS`. `SCHEDULE` and
+    /// `MANAGE_TASK` are its prospective members, once a runtime profile with a
+    /// durable persistence backend registers them.
     pub const AGENT_MANAGEMENT: &str = "agent_management";
     pub const TEXT: &str = "text";
 }
@@ -136,10 +148,12 @@ pub const BUILTINS: &[&str] = &[
 /// capability check uses so a mistyped builtin group is rejected at author time
 /// rather than deferred to load. Keep in sync with the server's builtin-group
 /// projection.
-pub const BUILTIN_GROUPS: &[&str] = &[
-    groups::SKILLS,
-    groups::AUTHORING,
-    groups::DISCOVERY,
-    groups::TASK,
-    groups::AGENT_MANAGEMENT,
-];
+///
+/// Membership is earned, not declared: a group belongs here only once some
+/// implemented capability reports the tag in its metadata, because a group an
+/// author may declare and that binds nothing is the allowlisted-id-with-no-
+/// handler failure one level up. `groups::AUTHORING`, `groups::TASK`, and
+/// `groups::AGENT_MANAGEMENT` were listed here with no member and are removed
+/// until one exists. `declared_builtin_groups_resolve_to_member_capabilities`
+/// in `crates/runtime/capability/tests/` is the invariant.
+pub const BUILTIN_GROUPS: &[&str] = &[groups::SKILLS, groups::DISCOVERY];

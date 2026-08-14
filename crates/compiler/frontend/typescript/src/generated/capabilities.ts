@@ -21,10 +21,7 @@ export type CapabilityId =
   | "schedule";
 export type BuiltinGroup =
   | "skills"
-  | "authoring"
-  | "discovery"
-  | "task"
-  | "agent_management";
+  | "discovery";
 
 export const BASH = "bash" satisfies CapabilityId;
 export const READ = "read" satisfies CapabilityId;
@@ -41,10 +38,7 @@ export const PROVIDER_CALL = "provider.call" satisfies CapabilityId;
 export const SCHEDULE = "schedule" satisfies CapabilityId;
 
 export const GROUP_SKILLS = "skills" satisfies BuiltinGroup;
-export const GROUP_AUTHORING = "authoring" satisfies BuiltinGroup;
 export const GROUP_DISCOVERY = "discovery" satisfies BuiltinGroup;
-export const GROUP_TASK = "task" satisfies BuiltinGroup;
-export const GROUP_AGENT_MANAGEMENT = "agent_management" satisfies BuiltinGroup;
 
 export const STANDARD_BUILTIN_CAPABILITIES = [
   BASH,
@@ -75,8 +69,5 @@ export const BUILTIN_CAPABILITIES = [
 ] as const satisfies readonly CapabilityId[];
 export const BUILTIN_GROUPS = [
   GROUP_SKILLS,
-  GROUP_AUTHORING,
   GROUP_DISCOVERY,
-  GROUP_TASK,
-  GROUP_AGENT_MANAGEMENT,
 ] as const satisfies readonly BuiltinGroup[];

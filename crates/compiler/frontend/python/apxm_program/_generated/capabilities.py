@@ -26,10 +26,7 @@ CapabilityId: TypeAlias = Literal[
 ]
 BuiltinGroup: TypeAlias = Literal[
     "skills",
-    "authoring",
     "discovery",
-    "task",
-    "agent_management",
 ]
 
 BASH: Final[CapabilityId] = "bash"
@@ -47,10 +44,7 @@ PROVIDER_CALL: Final[CapabilityId] = "provider.call"
 SCHEDULE: Final[CapabilityId] = "schedule"
 
 GROUP_SKILLS: Final[BuiltinGroup] = "skills"
-GROUP_AUTHORING: Final[BuiltinGroup] = "authoring"
 GROUP_DISCOVERY: Final[BuiltinGroup] = "discovery"
-GROUP_TASK: Final[BuiltinGroup] = "task"
-GROUP_AGENT_MANAGEMENT: Final[BuiltinGroup] = "agent_management"
 
 STANDARD_BUILTIN_CAPABILITIES: Final[tuple[CapabilityId, ...]] = (
     BASH,
@@ -81,10 +75,7 @@ BUILTIN_CAPABILITIES: Final[tuple[CapabilityId, ...]] = (
 )
 BUILTIN_GROUPS: Final[tuple[BuiltinGroup, ...]] = (
     GROUP_SKILLS,
-    GROUP_AUTHORING,
     GROUP_DISCOVERY,
-    GROUP_TASK,
-    GROUP_AGENT_MANAGEMENT,
 )
 
 __all__ = [
@@ -104,10 +95,7 @@ __all__ = [
     "PROVIDER_CALL",
     "SCHEDULE",
     "GROUP_SKILLS",
-    "GROUP_AUTHORING",
     "GROUP_DISCOVERY",
-    "GROUP_TASK",
-    "GROUP_AGENT_MANAGEMENT",
     "BUILTIN_CAPABILITIES",
     "BUILTIN_GROUPS",
     "STANDARD_BUILTIN_CAPABILITIES",

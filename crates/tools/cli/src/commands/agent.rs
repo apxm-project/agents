@@ -67,8 +67,16 @@ pub struct ChainLinkToml {
 /// Scalars come first and table-valued fields last so a round-trip through
 /// `toml::to_string_pretty` — which `agent new` performs when it rewrites a
 /// scaffolded identity — emits valid TOML. `deny_unknown_fields` is what makes
-/// a retired key (`capabilities`, `allowed_agent_skills`, `hooks`) a parse
-/// error rather than a silently dropped table.
+/// a retired key (`capabilities`, `allowed_agent_skills`, `hooks`, `prompts`) a
+/// parse error rather than a silently dropped table.
+///
+/// `prompts` is retired rather than absent by accident. It was parsed here,
+/// scaffolded by `agent new`, and hashed into the integrity chain, but nothing
+/// ever loaded a declared path or even checked that it existed — a manifest key
+/// promising behaviour no consumer delivered. The same handler-first rule that
+/// keeps an unimplemented capability id out of the builtin allowlist keeps it
+/// out until a loader lands. `prompts/*.md` stays a recognized package file;
+/// what is gone is the table claiming those files are loaded.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentToml {
@@ -88,8 +96,6 @@ pub struct AgentToml {
     pub license: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compile: Option<CompileToml>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub prompts: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<toml::Value>,
     /// This agent's parent and the children it may spawn or delegate to.
@@ -358,8 +364,6 @@ fn agent_new_looped_agent(
              [compile]\n\
              frontend = \"typescript\"\n\
              entry = \"src/main.ts\"\n\n\
-             [prompts]\n\
-             persona = \"prompts/persona.md\"\n\n\
              [source]\n\
              type = \"local\"\n\n\
              # Optional: this agent's parent and the children it may spawn or\n\

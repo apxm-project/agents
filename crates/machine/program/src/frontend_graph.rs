@@ -1218,144 +1218,6 @@ fn context_endpoint_location(
     })
 }
 
-fn loop_carried_value_dominates(
-    value_id: &str,
-    loop_control: &ControlIntent,
-    context: &SsaValidationContext<'_>,
-    visiting: &mut HashSet<String>,
-) -> bool {
-    if !visiting.insert(value_id.to_string()) {
-        return false;
-    }
-    let Some(value) = context.values.get(value_id) else {
-        return false;
-    };
-    let Some(body_region) = loop_control.body_region_ids.first() else {
-        visiting.remove(value_id);
-        return false;
-    };
-
-    let producer = match value.origin {
-        ValueOrigin::CallResult => value
-            .origin_id
-            .as_deref()
-            .and_then(|node_id| context.calls.get(node_id))
-            .map(|intent| {
-                (
-                    intent.parent_region_id.as_str(),
-                    SsaLocation {
-                        region_id: intent.parent_region_id.clone(),
-                        execution_order: intent.execution_order,
-                        entry: false,
-                    },
-                )
-            }),
-        ValueOrigin::BlockArgument => value
-            .origin_id
-            .as_deref()
-            .and_then(|block_id| context.blocks.get(block_id))
-            .map(|block| {
-                (
-                    block.region_id.as_str(),
-                    SsaLocation {
-                        region_id: block.region_id.clone(),
-                        execution_order: 0,
-                        entry: true,
-                    },
-                )
-            }),
-        ValueOrigin::ResumeInput => value
-            .origin_id
-            .as_deref()
-            .and_then(|node_id| context.controls.get(node_id))
-            .map(|control| {
-                (
-                    control.parent_region_id.as_str(),
-                    SsaLocation {
-                        region_id: control.parent_region_id.clone(),
-                        execution_order: control.execution_order,
-                        entry: false,
-                    },
-                )
-            }),
-        ValueOrigin::Parameter | ValueOrigin::ContextValue | ValueOrigin::Literal => None,
-    };
-
-    let Some((producer_region, producer_location)) = producer else {
-        let result = matches!(
-            value.origin,
-            ValueOrigin::Parameter | ValueOrigin::ContextValue | ValueOrigin::Literal
-        ) && value.expression.as_ref().is_none_or(|expression| {
-            expression_references(expression)
-                .into_iter()
-                .all(|dependency| {
-                    value_dominates_use(
-                        &dependency,
-                        SsaLocation {
-                            region_id: body_region.clone(),
-                            execution_order: u32::MAX,
-                            entry: false,
-                        },
-                        context,
-                        visiting,
-                    )
-                })
-        });
-        visiting.remove(value_id);
-        return result;
-    };
-
-    let in_body = producer_region == body_region
-        || is_ancestor(body_region, producer_region, context.region_parent);
-    let reachable_back_edge =
-        in_body && loop_body_path_reaches_back_edge(producer_region, body_region, context);
-    let expression_ok = value.expression.as_ref().is_none_or(|expression| {
-        expression_references(expression)
-            .into_iter()
-            .all(|dependency| {
-                value_dominates_use(&dependency, producer_location.clone(), context, visiting)
-            })
-    });
-    visiting.remove(value_id);
-    reachable_back_edge && expression_ok
-}
-
-fn loop_body_path_reaches_back_edge(
-    producer_region: &str,
-    body_region: &str,
-    context: &SsaValidationContext<'_>,
-) -> bool {
-    let mut child = producer_region;
-    while child != body_region {
-        let Some(parent) = context.region_parent.get(child).copied().flatten() else {
-            return false;
-        };
-        let Some(owner) = context.controls.values().find(|control| {
-            control.parent_region_id == parent
-                && control
-                    .body_region_ids
-                    .iter()
-                    .any(|region_id| region_id == child)
-        }) else {
-            return false;
-        };
-        if owner.control_kind == ControlKind::Loop {
-            return false;
-        }
-        if owner.body_region_ids.len() > 1
-            && owner
-                .body_region_ids
-                .iter()
-                .filter(|region_id| region_id.as_str() != child)
-                .any(|region_id| !region_is_terminal(region_id, context))
-        {
-            return false;
-        }
-        child = parent;
-    }
-    true
-}
-
 fn region_is_terminal(region_id: &str, context: &SsaValidationContext<'_>) -> bool {
     context.controls.values().any(|control| {
         control.parent_region_id == region_id
@@ -1416,7 +1278,7 @@ fn value_dominates_use(
             .is_some_and(|region_id| {
                 dominates_location(
                     SsaLocation {
-                        region_id: region_id.to_string(),
+                        region_id: (*region_id).to_string(),
                         execution_order: 0,
                         entry: true,
                     },
@@ -1530,58 +1392,6 @@ fn dominates_location(
         }
     }
     false
-}
-
-fn loop_scope_precedes(
-    definition_region: &str,
-    use_region: &str,
-    context: &SsaValidationContext<'_>,
-) -> bool {
-    let mut common = context.region_parent.get(use_region).copied().flatten();
-    while let Some(common_region) = common {
-        let Some(definition_child) =
-            first_child_under(definition_region, common_region, context.region_parent)
-        else {
-            common = context.region_parent.get(common_region).copied().flatten();
-            continue;
-        };
-        let Some(use_child) = first_child_under(use_region, common_region, context.region_parent)
-        else {
-            return false;
-        };
-        if definition_child != use_child {
-            let definition_is_loop = context.controls.values().any(|control| {
-                control.control_kind == ControlKind::Loop
-                    && control
-                        .body_region_ids
-                        .iter()
-                        .any(|region_id| region_id == definition_child)
-            });
-            return definition_is_loop
-                && context
-                    .region_order
-                    .get(definition_child)
-                    .zip(context.region_order.get(use_child))
-                    .is_some_and(|(definition_order, use_order)| definition_order < use_order);
-        }
-        common = context.region_parent.get(common_region).copied().flatten();
-    }
-    false
-}
-
-fn first_child_under<'a>(
-    descendant: &'a str,
-    ancestor: &str,
-    region_parent: &'a HashMap<&'a str, Option<&'a str>>,
-) -> Option<&'a str> {
-    let mut child = descendant;
-    loop {
-        let parent = region_parent.get(child).copied().flatten()?;
-        if parent == ancestor {
-            return Some(child);
-        }
-        child = parent;
-    }
 }
 
 fn is_ancestor(

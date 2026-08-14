@@ -48,6 +48,17 @@ fn quote(value: &str) -> String {
     serde_json::to_string(value).expect("decision string literal")
 }
 
+/// Concatenate one rendered member per line. `collect::<String>()` over a
+/// `map(format!)` is the same string but trips `clippy::format_collect`; this
+/// is the shape `codegen_capabilities` already uses.
+fn members(rendered: impl Iterator<Item = String>) -> String {
+    let mut buf = String::new();
+    for member in rendered {
+        buf.push_str(&member);
+    }
+    buf
+}
+
 pub fn render_permissions_python() -> String {
     let decisions = decisions();
     let mut buf = String::new();
@@ -67,10 +78,11 @@ pub fn render_permissions_python() -> String {
 
     buf.push_str(&format!(
         "PermissionDecision: TypeAlias = Literal[{}\n]\n\n\n",
-        decisions
-            .iter()
-            .map(|decision| format!("\n    {},", quote(decision.value)))
-            .collect::<String>()
+        members(
+            decisions
+                .iter()
+                .map(|decision| format!("\n    {},", quote(decision.value)))
+        )
     ));
 
     buf.push_str(&format!(
@@ -101,10 +113,11 @@ pub fn render_permissions_python() -> String {
 
     buf.push_str(&format!(
         "\nPERMISSION_DECISIONS: Final[tuple[PermissionDecision, ...]] = ({}\n)\n",
-        decisions
-            .iter()
-            .map(|decision| format!("\n    {},", decision.constant))
-            .collect::<String>()
+        members(
+            decisions
+                .iter()
+                .map(|decision| format!("\n    {},", decision.constant))
+        )
     ));
 
     buf.push_str("\n__all__ = [");
@@ -130,10 +143,11 @@ pub fn render_permissions_typescript() -> String {
 
     buf.push_str(&format!(
         "export type PermissionDecision ={};\n",
-        decisions
-            .iter()
-            .map(|decision| format!("\n  | {}", quote(decision.value)))
-            .collect::<String>()
+        members(
+            decisions
+                .iter()
+                .map(|decision| format!("\n  | {}", quote(decision.value)))
+        )
     ));
     buf.push_str(&format!(
         "export type Permission = {{\n  readonly {DECISION_KEY}: PermissionDecision;\n  readonly {REASON_KEY}?: string;\n}};\n\
@@ -161,10 +175,11 @@ pub fn render_permissions_typescript() -> String {
 
     buf.push_str(&format!(
         "\nexport const PERMISSION_DECISIONS = [{}\n] as const satisfies readonly PermissionDecision[];\n",
-        decisions
-            .iter()
-            .map(|decision| format!("\n  {},", decision.constant))
-            .collect::<String>()
+        members(
+            decisions
+                .iter()
+                .map(|decision| format!("\n  {},", decision.constant))
+        )
     ));
     buf
 }

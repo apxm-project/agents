@@ -1291,7 +1291,8 @@ async fn drive_from(
             }
             ScheduleStep::HookAfter { binding } => {
                 if state.last_operation_succeeded {
-                    let (before, after) = apply_static_hook(&mut state, ports, air, binding).await?;
+                    let (before, after) =
+                        apply_static_hook(&mut state, ports, air, binding).await?;
                     state.seq += 1;
                     let mut fact = fact(
                         &state.program_invocation_id,
@@ -2537,7 +2538,9 @@ async fn commit_suspension(
     ));
     let mut committed_continuation = continuation.clone();
     committed_continuation.event_sequence = state.seq;
-    committed_continuation.evidence_batch = state.batch.clone();
+    committed_continuation
+        .evidence_batch
+        .clone_from(&state.batch);
     let payload = serde_json::to_value(&committed_continuation)
         .expect("continuation contains only serializable canonical runtime values");
     let event_wait = continuation.event_ref.as_ref().map(|event_ref| {

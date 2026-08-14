@@ -313,6 +313,6 @@ mod tests {
         assert!(
             typescript.contains("export const MCP_CALL = \"mcp.call\" satisfies CapabilityId;")
         );
-        assert!(typescript.contains("export const GROUP_AGENT_MANAGEMENT"));
+        assert!(typescript.contains("export const GROUP_SKILLS = \"skills\""));
     }
 }

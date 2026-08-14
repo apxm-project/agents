@@ -1085,4 +1085,3 @@ fn diagnostics_reject_foreign_commit_or_unbounded_reference() {
         apxm_inference::DiagnosticError::InvalidReference("log_refs")
     ));
 }
-

@@ -86,8 +86,7 @@ fn array<'a>(value: &'a Value, key: &str) -> &'a [Value] {
     value
         .get(key)
         .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or(&[])
+        .map_or(&[], Vec::as_slice)
 }
 
 /// The Context declaration one name refers to, out of the corpus's shared set.
@@ -102,20 +101,19 @@ fn context_named<'a>(corpus: &'a Value, name: &str) -> &'a Value {
 fn vector_contexts(corpus: &Value, vector: &Value) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
     for program in array(vector, "programs") {
-        if let Some(name) = program.get("context").and_then(Value::as_str) {
-            if !names.iter().any(|found| found == name) {
-                names.push(name.to_string());
-            }
+        if let Some(name) = program.get("context").and_then(Value::as_str)
+            && !names.iter().any(|found| found == name)
+        {
+            names.push(name.to_string());
         }
         walk(array(program, "body"), &mut |statement| {
-            if let Some(name) = statement.get("context").and_then(Value::as_str) {
-                if array(corpus, "contexts")
+            if let Some(name) = statement.get("context").and_then(Value::as_str)
+                && array(corpus, "contexts")
                     .iter()
                     .any(|context| context["name"] == *name)
-                    && !names.iter().any(|found| found == name)
-                {
-                    names.push(name.to_string());
-                }
+                && !names.iter().any(|found| found == name)
+            {
+                names.push(name.to_string());
             }
         });
     }
@@ -223,12 +221,12 @@ fn python_expression(node: &Value) -> String {
     }
 }
 
-fn python_body(corpus: &Value, body: &[Value], indent: usize) -> Vec<String> {
+fn python_body(body: &[Value], indent: usize) -> Vec<String> {
     let pad = " ".repeat(indent);
     let mut lines = Vec::new();
     for statement in body {
         let kind = string(statement, "stmt");
-        let nested = || python_body(corpus, array(statement, "body"), indent + 4);
+        let nested = || python_body(array(statement, "body"), indent + 4);
         match kind.as_str() {
             "let_null" => lines.push(format!("{pad}{} = None", string(statement, "name"))),
             "bind" => lines.push(format!(
@@ -339,7 +337,7 @@ fn python_context(context: &Value) -> Vec<String> {
     lines
 }
 
-fn python_hook(corpus: &Value, hook: &Value) -> Vec<String> {
+fn python_hook(hook: &Value) -> Vec<String> {
     let mut lines = vec![
         format!(
             "@Hook.{}(target={}, scope={})",
@@ -349,7 +347,7 @@ fn python_hook(corpus: &Value, hook: &Value) -> Vec<String> {
         ),
         format!("async def {}(agent) -> None:", string(hook, "name")),
     ];
-    let body = python_body(corpus, array(hook, "body"), 4);
+    let body = python_body(array(hook, "body"), 4);
     if body.is_empty() {
         lines.push("    return None".to_string());
     } else {
@@ -358,7 +356,7 @@ fn python_hook(corpus: &Value, hook: &Value) -> Vec<String> {
     lines
 }
 
-fn python_program(corpus: &Value, program: &Value, indent: usize) -> Vec<String> {
+fn python_program(program: &Value, indent: usize) -> Vec<String> {
     let pad = " ".repeat(indent);
     let mut arguments = vec![
         format!("input={}", string(program, "input")),
@@ -374,32 +372,30 @@ fn python_program(corpus: &Value, program: &Value, indent: usize) -> Vec<String>
             string(program, "program_id")
         ),
     ];
-    lines.extend(python_body(corpus, array(program, "body"), indent + 4));
+    lines.extend(python_body(array(program, "body"), indent + 4));
     lines
 }
 
 pub fn render_conformance_python() -> String {
     let corpus = corpus();
-    let mut out: Vec<String> = Vec::new();
-    out.push(PYTHON_HEADER.to_string());
-    out.push(PYTHON_MODULE_DOC.to_string());
-    out.push(String::new());
-    out.push("from __future__ import annotations".to_string());
-    out.push(String::new());
-    out.push("import json".to_string());
-    out.push("import re".to_string());
-    out.push("from typing import Any, Optional".to_string());
-    out.push(String::new());
-    out.push(
+    let mut out: Vec<String> = vec![
+        PYTHON_HEADER.to_string(),
+        PYTHON_MODULE_DOC.to_string(),
+        String::new(),
+        "from __future__ import annotations".to_string(),
+        String::new(),
+        "import json".to_string(),
+        "import re".to_string(),
+        "from typing import Any, Optional".to_string(),
+        String::new(),
         "from .. import Agent, Capability, Context, Event, Hook, Model, TaskGroup, Tool"
             .to_string(),
-    );
-    out.push("from ..permissions import Allow, Ask".to_string());
-    out.push(String::new());
-    out.push(PYTHON_RUNTIME.to_string());
-    out.push(String::new());
-
-    out.push("_EXPECTATIONS: dict[str, list[dict[str, Any]]] = {".to_string());
+        "from ..permissions import Allow, Ask".to_string(),
+        String::new(),
+        PYTHON_RUNTIME.to_string(),
+        String::new(),
+        "_EXPECTATIONS: dict[str, list[dict[str, Any]]] = {".to_string(),
+    ];
     for vector in vectors(&corpus) {
         let Some(expectations) = vector.get("expect") else {
             continue;
@@ -436,9 +432,9 @@ pub fn render_conformance_python() -> String {
         if let Some(rejections) = vector.get("declaration_rejections") {
             out.extend(python_declaration_rejections(&id, rejections));
         } else if let Some(rejects) = vector.get("rejects") {
-            out.extend(python_rejection_vector(&corpus, &id, vector, rejects));
+            out.extend(python_rejection_vector(&id, vector, rejects));
         } else {
-            out.extend(python_program_vector(&corpus, &id, vector));
+            out.extend(python_program_vector(&id, vector));
         }
         ids.push(id);
     }
@@ -502,19 +498,14 @@ fn python_declaration_rejections(id: &str, rejections: &Value) -> Vec<String> {
     ]
 }
 
-fn python_rejection_vector(
-    corpus: &Value,
-    id: &str,
-    vector: &Value,
-    rejects: &Value,
-) -> Vec<String> {
+fn python_rejection_vector(id: &str, vector: &Value, rejects: &Value) -> Vec<String> {
     let mut lines = vec![format!("def _vector_{id}() -> list[str]:")];
     for declaration in array(vector, "declarations") {
         lines.push(format!("    {}", python_declaration(declaration)));
     }
     lines.push("    try:".to_string());
     for program in array(vector, "programs") {
-        lines.extend(python_program(corpus, program, 8));
+        lines.extend(python_program(program, 8));
     }
     lines.push("    except Exception as error:".to_string());
     match rejects.get("message_contains").and_then(Value::as_str) {
@@ -539,7 +530,7 @@ fn python_rejection_vector(
     lines
 }
 
-fn python_program_vector(corpus: &Value, id: &str, vector: &Value) -> Vec<String> {
+fn python_program_vector(id: &str, vector: &Value) -> Vec<String> {
     let mut lines = Vec::new();
     for declaration in array(vector, "declarations") {
         lines.push(python_declaration(declaration));
@@ -551,11 +542,11 @@ fn python_program_vector(corpus: &Value, id: &str, vector: &Value) -> Vec<String
         // left in scope would bind into every later vector's capture too.
         for hook in array(program, "hooks") {
             lines.push(String::new());
-            lines.extend(python_hook(corpus, hook));
+            lines.extend(python_hook(hook));
             hooks.push(string(hook, "name"));
         }
         lines.push(String::new());
-        lines.extend(python_program(corpus, program, 0));
+        lines.extend(python_program(program, 0));
     }
     for hook in hooks {
         lines.push(String::new());
@@ -903,17 +894,16 @@ fn typescript_agent_call(program: &Value) -> String {
 
 pub fn render_conformance_typescript() -> String {
     let corpus = corpus();
-    let mut out: Vec<String> = Vec::new();
-    out.push(TYPESCRIPT_HEADER.to_string());
-    out.push(TYPESCRIPT_MODULE_DOC.to_string());
-    out.push(String::new());
-    out.push(
+    let mut out: Vec<String> = vec![
+        TYPESCRIPT_HEADER.to_string(),
+        TYPESCRIPT_MODULE_DOC.to_string(),
+        String::new(),
         "import { Agent, Capability, Context, Event, Model, Tool } from \"../index.js\";"
             .to_string(),
-    );
-    out.push("import { submitAuthoredSource } from \"../node.js\";".to_string());
-    out.push("import { Allow, Ask } from \"../permissions.js\";".to_string());
-    out.push(String::new());
+        "import { submitAuthoredSource } from \"../node.js\";".to_string(),
+        "import { Allow, Ask } from \"../permissions.js\";".to_string(),
+        String::new(),
+    ];
     for type_ref in array(&corpus, "type_refs") {
         out.push(format!(
             "type {} = any;",
@@ -1177,7 +1167,7 @@ pub fn render_conformance_typescript_test() -> String {
 // Fixed harness bodies
 // ---------------------------------------------------------------------------
 
-const PYTHON_MODULE_DOC: &str = r##""""The shared frontend-conformance corpus, projected into Python.
+const PYTHON_MODULE_DOC: &str = r#""""The shared frontend-conformance corpus, projected into Python.
 
 Every fixture and every expectation here is generated from
 `contracts/vectors/apxm.frontend-conformance.json`. The corpus is carried as
@@ -1189,9 +1179,9 @@ Programs are authored at module scope because Python capture reads an
 `async def` back through `inspect.getsource`, which needs a real file. Vectors
 the corpus states are rejected are authored inside their own function instead,
 so importing this module does not raise.
-""""##;
+""""#;
 
-const TYPESCRIPT_MODULE_DOC: &str = r#"// The shared frontend-conformance corpus, projected into TypeScript.
+const TYPESCRIPT_MODULE_DOC: &str = r"// The shared frontend-conformance corpus, projected into TypeScript.
 //
 // Every fixture and every expectation here is generated from
 // `contracts/vectors/apxm.frontend-conformance.json`. The corpus is carried as
@@ -1204,7 +1194,7 @@ const TYPESCRIPT_MODULE_DOC: &str = r#"// The shared frontend-conformance corpus
 // TypeScript capture reads authored source rather than a live closure and `tsc`
 // has already erased the typed interface from the module that runs. That import
 // makes this module Node-only; nothing in the browser authoring entrypoint
-// imports it."#;
+// imports it.";
 
 const PYTHON_RUNTIME: &str = r#"
 LANGUAGE = "python"
@@ -1616,7 +1606,7 @@ function check(vector: string, subject: Subject, expectations: Expectation[]): s
 }
 "#;
 
-const TYPESCRIPT_TAIL: &str = r#"/** Every failure one corpus vector states against this frontend. */
+const TYPESCRIPT_TAIL: &str = r"/** Every failure one corpus vector states against this frontend. */
 export function runVector(vectorId: string): string[] {
   const vector = VECTORS[vectorId];
   if (vector === undefined) {
@@ -1629,7 +1619,7 @@ export function runVector(vectorId: string): string[] {
 export function runConformance(): string[] {
   return VECTOR_IDS.flatMap((vectorId) => runVector(vectorId));
 }
-"#;
+";
 
 #[cfg(test)]
 mod tests {

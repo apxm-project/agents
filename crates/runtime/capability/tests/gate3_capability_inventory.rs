@@ -185,36 +185,31 @@ fn allowlist_residual_beyond_registered_and_implemented_is_exactly_the_durable_s
 /// `builtin_group = "skills"` used to resolve to nothing: the group was in
 /// `BUILTIN_GROUPS`, so `agent lint` accepted a package declaring it, and no
 /// capability carried the tag, so it bound nothing at load. That is the
-/// allowlist-without-handler failure one level up, and this pins it closed.
+/// allowlist-without-handler failure one level up, and this pins it closed for
+/// *every* group rather than for the ones that happen to be bound today.
 ///
-/// The remaining empty groups are named individually rather than tolerated as a
-/// class, so the next group to gain a member shrinks this list in review
-/// instead of silently passing.
+/// This assertion used to enumerate `authoring`, `task`, and `agent_management`
+/// as a tolerated unbound residual, which tracked the debt instead of removing
+/// it. They are out of `BUILTIN_GROUPS` now, and the rule is the invariant: no
+/// declarable group may be empty. Re-adding one without a member capability
+/// fails here, which is the group-level statement of handler-first.
 #[test]
 fn declared_builtin_groups_resolve_to_member_capabilities() {
     let members = group_members();
-    for group in [groups::SKILLS, groups::DISCOVERY] {
-        let bound = members.get(group);
-        assert!(
-            bound.is_some_and(|ids| !ids.is_empty()),
-            "builtin group '{group}' is declarable but no capability carries it"
-        );
-    }
+    let unbound: BTreeSet<&str> = BUILTIN_GROUPS
+        .iter()
+        .copied()
+        .filter(|group| !members.get(*group).is_some_and(|ids| !ids.is_empty()))
+        .collect();
+    assert!(
+        unbound.is_empty(),
+        "these builtin groups are declarable but no capability carries them: \
+         {unbound:?}. A group joins BUILTIN_GROUPS only once a capability \
+         reports its tag — member first, declaration second."
+    );
     assert_eq!(
         members.get(groups::SKILLS),
         Some(&set_of(&["list_skills", "read_skill", "search_skills"])),
         "the skills group is exactly the three implemented skill capabilities"
-    );
-
-    let unbound: BTreeSet<&str> = BUILTIN_GROUPS
-        .iter()
-        .copied()
-        .filter(|group| !members.contains_key(*group))
-        .collect();
-    assert_eq!(
-        unbound,
-        BTreeSet::from([groups::AUTHORING, groups::TASK, groups::AGENT_MANAGEMENT]),
-        "an author may declare these groups today and bind nothing; that is the \
-         residual this test exists to keep visible and shrinking"
     );
 }

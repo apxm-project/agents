@@ -114,7 +114,7 @@ impl LibraryConfig {
             lib_patterns: platform
                 .mlir_library_patterns()
                 .iter()
-                .map(|s| s.to_string())
+                .map(|s| (*s).to_string())
                 .collect(),
             platform,
         }

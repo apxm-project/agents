@@ -993,7 +993,10 @@ async fn a_replacing_capability_hook_patches_the_outcome_the_run_reports() {
             _ => None,
         })
         .expect("the Tool node reports an outcome");
-    assert!(capability.1, "the Capability outcome records the replacement");
+    assert!(
+        capability.1,
+        "the Capability outcome records the replacement"
+    );
     assert_eq!(
         *capability.0,
         apxm_program::capability::CapabilityOutcome::Completed {

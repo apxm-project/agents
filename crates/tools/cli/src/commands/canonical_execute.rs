@@ -1181,10 +1181,11 @@ use apxm_inference::{
 use apxm_kernel::{
     AcpPromptOutcome, AcpPromptRequest, AdmittedCapabilityPermission, AdmittedConfinement,
     AdmittedPortBinding, AtomicWriteSet, ExecutionCommitPort, ExecutionCommitRequest,
-    ExecutionCommitResult, ExternalAgentCapabilityPort, InvocationAdmission, PortImplementation,
-    PortSlot, ProgramInstanceRef, ProgramInvocationRef, PromptEffectState, ResourceCeilings,
-    RuntimeAdmission, VerifiedInvocationAdmission, admitted_capability_permissions,
-    digest_serializable, verify_invocation_admission,
+    ExecutionCommitResult, ExternalAgentCapabilityPort, InvocationAdmission,
+    InvocationAdmissionClaim, PortImplementation, PortSlot, ProgramInstanceRef,
+    ProgramInvocationRef, PromptEffectState, ResourceCeilings, RuntimeAdmission,
+    VerifiedInvocationAdmission, admitted_capability_permissions, digest_serializable,
+    verify_invocation_admission,
 };
 use apxm_kernel::{ConfinementAttestation, ConfinementError, ConfinementPort, ConfinementRequest};
 #[cfg(test)]
@@ -1304,13 +1305,15 @@ impl CanonicalRuntime {
         }
         let verified = verify_invocation_admission(
             admission,
-            artifact_bytes,
-            release_bytes,
-            provenance_bytes,
-            &apxm_program::air_semantic_requirements(&air),
-            &descriptor.port_bindings,
-            descriptor.resource_ceilings.clone(),
-            &descriptor.confinement,
+            InvocationAdmissionClaim {
+                artifact_bytes,
+                release_bytes,
+                provenance_bytes,
+                artifact_semantic_requirements: &apxm_program::air_semantic_requirements(&air),
+                admitted_port_bindings: &descriptor.port_bindings,
+                resource_ceilings: &descriptor.resource_ceilings,
+                confinement: &descriptor.confinement,
+            },
         )
         .map_err(|error| anyhow::anyhow!(error))?;
         // Resolved only once the admission has verified the artifact bytes, so
@@ -2236,13 +2239,15 @@ mod tests {
         let artifact_bytes = serde_json::to_vec(air).expect("test AIR serialization");
         let verified = verify_invocation_admission(
             &admission,
-            &artifact_bytes,
-            TEST_RELEASE_BYTES,
-            TEST_PROVENANCE_BYTES,
-            &apxm_program::air_semantic_requirements(air),
-            &descriptor.port_bindings,
-            descriptor.resource_ceilings,
-            &descriptor.confinement,
+            InvocationAdmissionClaim {
+                artifact_bytes: &artifact_bytes,
+                release_bytes: TEST_RELEASE_BYTES,
+                provenance_bytes: TEST_PROVENANCE_BYTES,
+                artifact_semantic_requirements: &apxm_program::air_semantic_requirements(air),
+                admitted_port_bindings: &descriptor.port_bindings,
+                resource_ceilings: &descriptor.resource_ceilings,
+                confinement: &descriptor.confinement,
+            },
         )
         .expect("test invocation admission");
         runtime_profile_from_invocation(
@@ -2421,13 +2426,15 @@ mod tests {
         let artifact_bytes = serde_json::to_vec(&air).expect("test AIR serialization");
         let error = verify_invocation_admission(
             &admission,
-            &artifact_bytes,
-            TEST_RELEASE_BYTES,
-            TEST_PROVENANCE_BYTES,
-            &apxm_program::air_semantic_requirements(&air),
-            &bindings,
-            canonical_runtime_descriptor().resource_ceilings,
-            &canonical_runtime_descriptor().confinement,
+            InvocationAdmissionClaim {
+                artifact_bytes: &artifact_bytes,
+                release_bytes: TEST_RELEASE_BYTES,
+                provenance_bytes: TEST_PROVENANCE_BYTES,
+                artifact_semantic_requirements: &apxm_program::air_semantic_requirements(&air),
+                admitted_port_bindings: &bindings,
+                resource_ceilings: &canonical_runtime_descriptor().resource_ceilings,
+                confinement: &canonical_runtime_descriptor().confinement,
+            },
         )
         .expect_err("missing confinement binding must fail closed");
         assert!(error.to_string().contains("port binding digest mismatch"));

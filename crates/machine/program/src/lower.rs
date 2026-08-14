@@ -791,7 +791,9 @@ fn hook_execution_order(phase: HookPhase, anchor: HookAnchor, declaration_order:
             },
         ) => canonical_execution_order(
             target_execution_order,
-            STRUCTURAL_ORDER_OFFSET.saturating_add(1).saturating_add(unwind),
+            STRUCTURAL_ORDER_OFFSET
+                .saturating_add(1)
+                .saturating_add(unwind),
         ),
         (HookPhase::Before, HookAnchor::Enclosing) => declaration_order.min(HOOK_ORDER_SPAN),
         (HookPhase::After, HookAnchor::Enclosing) => {

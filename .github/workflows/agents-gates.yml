@@ -119,6 +119,12 @@ jobs:
         run: dekk agents doctor
 
       # Cheap deterministic gates first so they fail fast before any Rust build.
+      # Formatting is first and needs no build at all: ungated `cargo fmt` had
+      # drifted across crates no recent change touched, so every unrelated diff
+      # carried incidental reflow.
+      - name: Check Rust formatting
+        run: dekk agents fmt-check
+
       - name: Check authoring surface alignment
         run: dekk agents check-frontend-surface
 
@@ -133,6 +139,13 @@ jobs:
 
       - name: Check generated metadata, parity, and compiler types
         run: dekk agents check
+
+      # Clippy was never gated, so `-D warnings` violations accumulated
+      # unnoticed across several crates until a sweep had to clear them in
+      # bulk. It runs right after `check` to reuse that warm target dir, and
+      # before the test steps so a lint failure is cheap to see.
+      - name: Lint Rust sources
+        run: dekk agents clippy
 
       - name: Run workspace and canonical authoring tests
         run: dekk agents test

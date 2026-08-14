@@ -40,7 +40,10 @@ impl LlamaCppBackend {
                 serde_json::to_value(&hints).unwrap_or_default(),
             );
             if hints.prefers_reuse() {
-                map.insert(hint_keys::LLAMA_CACHE_PROMPT.into(), serde_json::json!(true));
+                map.insert(
+                    hint_keys::LLAMA_CACHE_PROMPT.into(),
+                    serde_json::json!(true),
+                );
             }
         }
         request.extra_body = Some(extra);
@@ -86,10 +89,7 @@ impl LLMBackend for LlamaCppBackend {
         Ok(())
     }
 
-    async fn get_graph_status(
-        &self,
-        _graph_id: &str,
-    ) -> Result<Option<GraphStatusSnapshot>> {
+    async fn get_graph_status(&self, _graph_id: &str) -> Result<Option<GraphStatusSnapshot>> {
         Ok(None)
     }
 }

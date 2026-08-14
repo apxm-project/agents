@@ -8,8 +8,8 @@ use serde_json::{Value, json};
 
 use apxm_execution::{
     CapabilityInvocationAdmission, CapabilityOutcome, CapabilityPort, CapabilityRequest,
-    CompositionOutcome, CompositionPort, CompositionRequest, EventAwait, EventOutcome, EventPort,
-    CapturedHookBodyHandler, ExecutionPortBundle, ExecutionPorts, ExecutionRequest, RunOutcome,
+    CapturedHookBodyHandler, CompositionOutcome, CompositionPort, CompositionRequest, EventAwait,
+    EventOutcome, EventPort, ExecutionPortBundle, ExecutionPorts, ExecutionRequest, RunOutcome,
     StaticHookHandlerPort, StaticHookResult, execute, execute_resumable, resume,
 };
 use apxm_inference::{

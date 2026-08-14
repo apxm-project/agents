@@ -29,16 +29,17 @@ pub async fn validate_backend(backend: &BackendConfig) -> Result<String, Backend
     let client = reqwest::Client::new();
 
     match backend.protocol {
-        ProviderProtocol::OpenAI => validate_openai(&client, &backend.name, &backend, base).await,
+        // llama.cpp's server speaks the OpenAI-compatible surface, so it
+        // validates through the same probe rather than one of its own.
+        ProviderProtocol::OpenAI | ProviderProtocol::LlamaCpp => {
+            validate_openai(&client, &backend.name, &backend, base).await
+        }
         ProviderProtocol::Anthropic => {
             validate_anthropic(&client, &backend.name, &backend, base).await
         }
         ProviderProtocol::Google => validate_google(&client, &backend.name, &backend, base).await,
         ProviderProtocol::Ollama => validate_ollama(&client, &backend.name, &backend, base).await,
         ProviderProtocol::Vllm => validate_vllm(&client, &backend.name, &backend, base).await,
-        ProviderProtocol::LlamaCpp => {
-            validate_openai(&client, &backend.name, &backend, base).await
-        }
         ProviderProtocol::Mock => {
             unreachable!("mock validation returns before endpoint resolution")
         }

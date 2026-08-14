@@ -152,10 +152,10 @@ pub(crate) const UNIONS: &[UnionDef] = &[
 fn discriminant_owner(def: &str) -> &str {
     for union in UNIONS {
         for branch in union.branches {
-            if let Branch::Named(name) = branch {
-                if *name == def {
-                    return union.name;
-                }
+            if let Branch::Named(name) = branch
+                && *name == def
+            {
+                return union.name;
             }
         }
     }
@@ -212,15 +212,16 @@ fn field_kind(
         });
         return FieldKind::Vocabulary(family.type_name);
     }
-    if let Some(constant) = prop_schema.get("const") {
-        if constant.is_string() {
-            let family = family_for_discriminated_const(discriminant_owner, prop_name).unwrap_or_else(|| {
+    if let Some(constant) = prop_schema.get("const")
+        && constant.is_string()
+    {
+        let family = family_for_discriminated_const(discriminant_owner, prop_name)
+            .unwrap_or_else(|| {
                 panic!(
                     "frontend-records: no vocabulary family for {discriminant_owner}.{prop_name} const"
                 )
             });
-            return FieldKind::Vocabulary(family.type_name);
-        }
+        return FieldKind::Vocabulary(family.type_name);
     }
     match prop_schema.get("type").and_then(Value::as_str) {
         Some("integer") => FieldKind::Int,
@@ -292,7 +293,7 @@ fn py_type(kind: &FieldKind) -> String {
         FieldKind::Int => "int".to_string(),
         FieldKind::Bool => "bool".to_string(),
         FieldKind::StrTuple => "tuple[str, ...]".to_string(),
-        FieldKind::Vocabulary(name) => name.to_string(),
+        FieldKind::Vocabulary(name) => (*name).to_string(),
         FieldKind::Permission => "Permission".to_string(),
         FieldKind::Local(name) => name.clone(),
         FieldKind::LocalTuple(name) => format!("tuple[{name}, ...]"),
@@ -305,7 +306,7 @@ fn ts_type(kind: &FieldKind) -> String {
         FieldKind::Int => "number".to_string(),
         FieldKind::Bool => "boolean".to_string(),
         FieldKind::StrTuple => "readonly string[]".to_string(),
-        FieldKind::Vocabulary(name) => name.to_string(),
+        FieldKind::Vocabulary(name) => (*name).to_string(),
         FieldKind::Permission => "Permission".to_string(),
         FieldKind::Local(name) => name.clone(),
         FieldKind::LocalTuple(name) => format!("readonly {name}[]"),
@@ -412,7 +413,7 @@ pub fn render_frontend_records_python() -> String {
     if !families.is_empty() {
         buf.push_str(&format!("\nfrom .frontend_graph import (\n{}\n)\n", {
             let mut sorted = families.clone();
-            sorted.sort();
+            sorted.sort_unstable();
             sorted
                 .iter()
                 .map(|name| format!("    {name},"))
@@ -442,8 +443,8 @@ pub fn render_frontend_records_python() -> String {
             .branches
             .iter()
             .map(|branch| match branch {
-                Branch::Named(name) => name.to_string(),
-                Branch::Inline { name, .. } => name.to_string(),
+                Branch::Named(name) => (*name).to_string(),
+                Branch::Inline { name, .. } => (*name).to_string(),
             })
             .collect();
         buf.push_str(&format!(
@@ -454,7 +455,7 @@ pub fn render_frontend_records_python() -> String {
     }
 
     buf.push_str("\n__all__ = [");
-    for record in RECORDS.iter().copied() {
+    for record in RECORDS {
         buf.push_str(&format!("\n    \"{record}\",",));
     }
     for union in UNIONS {
@@ -488,7 +489,7 @@ pub fn render_frontend_records_typescript() -> String {
 
     if !families.is_empty() {
         let mut sorted = families.clone();
-        sorted.sort();
+        sorted.sort_unstable();
         buf.push_str(&format!(
             "\nimport type {{\n{}\n}} from \"./frontend-graph.js\";\n",
             sorted
@@ -520,8 +521,8 @@ pub fn render_frontend_records_typescript() -> String {
             .branches
             .iter()
             .map(|branch| match branch {
-                Branch::Named(name) => name.to_string(),
-                Branch::Inline { name, .. } => name.to_string(),
+                Branch::Named(name) => (*name).to_string(),
+                Branch::Inline { name, .. } => (*name).to_string(),
             })
             .collect();
         buf.push_str(&format!(

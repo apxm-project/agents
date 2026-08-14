@@ -102,14 +102,6 @@
         "compile": {
           "$ref": "#/$defs/CompileDeclaration"
         },
-        "prompts": {
-          "type": "object",
-          "description": "Named instruction resources, each a package-relative path under `prompts/`.",
-          "additionalProperties": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
         "source": {
           "type": "object",
           "description": "How the package's authored source is obtained. Carried verbatim; this schema states only that it is a table."
