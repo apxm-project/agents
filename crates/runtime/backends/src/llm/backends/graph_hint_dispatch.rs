@@ -6,13 +6,17 @@
 use super::response::LLMResponse;
 use super::traits::StreamChunk;
 use apxm_core::constants::llm::apxm::graph_hints as hint_keys;
-use apxm_core::types::{GraphHintDispatchProjection, GraphHintRealization};
+use apxm_core::types::GraphHintDispatchProjection;
 use std::pin::Pin;
 use tokio_stream::{Stream, StreamExt};
 
-/// Attach the three separable evidence layers to one response: what the
-/// adapter planned, what it projected for this attempt, and what the provider
-/// has so far acknowledged (initially: nothing).
+/// Attach the adapter's own evidence to one response: what it planned field by
+/// field, and what it projected for this attempt.
+///
+/// Provider acknowledgement and outcome measurement are separate claims, and
+/// no provider response an adapter here parses states either, so neither is
+/// recorded. A response-side evidence layer arrives with the first provider
+/// contract that actually reports one.
 pub fn record_graph_hint_evidence(
     mut response: LLMResponse,
     projected: Option<&GraphHintDispatchProjection>,
@@ -31,14 +35,6 @@ pub fn record_graph_hint_evidence(
         (
             hint_keys::PROJECTION,
             serde_json::to_value(&projected.projection).unwrap_or_default(),
-        ),
-        (
-            hint_keys::REALIZATION,
-            serde_json::to_value(GraphHintRealization::unacknowledged(
-                &projected.projection,
-                &projected.plan,
-            ))
-            .unwrap_or_default(),
         ),
     ] {
         response.metadata.insert(key.to_owned(), value);
@@ -282,7 +278,6 @@ mod tests {
 
         let plan = &response.metadata[hint_keys::PLAN];
         let projection = &response.metadata[hint_keys::PROJECTION];
-        let realization = &response.metadata[hint_keys::REALIZATION];
         assert!(
             plan["graph_hints_digest"]
                 .as_str()
@@ -295,14 +290,16 @@ mod tests {
                 .expect("request digest")
                 .starts_with("sha256:")
         );
-        assert_eq!(
-            realization["fields"]["scope"]["projected"],
-            Value::Bool(true)
+        // Only the adapter's own claims are recorded: what it planned per
+        // field, and what it sent. Nothing claims the provider agreed.
+        assert!(
+            projected
+                .plan
+                .outcomes
+                .get(&GraphHintField::Scope)
+                .is_some_and(ProjectionOutcome::is_projected)
         );
-        assert_eq!(
-            realization["fields"]["critical_path"]["acknowledgement"],
-            Value::String("not_reported".into()),
-        );
+        assert_eq!(response.metadata.len(), 2);
 
         // Mechanism identifiers are evidence labels and belong here; prompt
         // content, generated content, endpoints, and the provider body do not.
@@ -314,5 +311,51 @@ mod tests {
                 "projection evidence leaked {forbidden}",
             );
         }
+    }
+
+    /// The streaming form carries the same evidence. A stream that dropped it
+    /// would leave a dispatch with no record of what it projected, and only
+    /// the terminal chunk is the response — the token chunks stay untouched.
+    #[tokio::test]
+    async fn a_streamed_dispatch_carries_the_same_evidence_on_its_terminal_chunk() {
+        let backend = LlamaCppBackend::new("", config("deployment-model"))
+            .await
+            .expect("configured llama.cpp backend");
+        let (_, projected) = backend
+            .inject_hints(request_with_hints(), 0)
+            .expect("projection");
+        let projected = projected.expect("hints were present");
+        let buffered = record_graph_hint_evidence(
+            crate::llm::backends::LLMResponse::new(
+                "answer",
+                "deployment-model",
+                Default::default(),
+                apxm_core::types::FinishReason::Stop,
+            ),
+            Some(&projected),
+        );
+
+        let inner: Vec<anyhow::Result<StreamChunk>> = vec![
+            Ok(StreamChunk::Token("an".into())),
+            Ok(StreamChunk::Done(crate::llm::backends::LLMResponse::new(
+                "answer",
+                "deployment-model",
+                Default::default(),
+                apxm_core::types::FinishReason::Stop,
+            ))),
+        ];
+        let chunks: Vec<StreamChunk> = stream_with_graph_hint_evidence(
+            Box::pin(tokio_stream::iter(inner)),
+            Some(projected.clone()),
+        )
+        .map(|chunk| chunk.expect("chunk"))
+        .collect()
+        .await;
+
+        assert!(matches!(chunks[0], StreamChunk::Token(_)));
+        let StreamChunk::Done(ref streamed) = chunks[1] else {
+            panic!("the last chunk is the response");
+        };
+        assert_eq!(streamed.metadata, buffered.metadata);
     }
 }

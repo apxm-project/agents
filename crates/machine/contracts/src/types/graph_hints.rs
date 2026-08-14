@@ -12,7 +12,7 @@ use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value as Json};
 use sha2::{Digest as _, Sha256};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::str::FromStr;
 
@@ -868,19 +868,22 @@ impl GraphHintField {
     ];
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EvidenceKind {
-    AdapterProjection,
-    BackendAcknowledgement,
-    OutcomeMeasurement,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// How a binding carries one field, when it carries it at all.
+///
+/// `Direct` means the adapter has a provider control with the same useful
+/// semantic effect; `Derived` means it uses a documented heuristic or
+/// combination of controls. Neither is a performance guarantee.
+///
+/// The only evidence any binding here produces is its own projection record —
+/// the plan and the projection. A provider-reported acknowledgement or a
+/// comparable outcome measurement would be separate evidence layers, and no
+/// provider response this repository parses carries either, so a binding
+/// cannot declare that it produces them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GraphHintFieldCapability {
-    Direct { evidence: BTreeSet<EvidenceKind> },
-    Derived { evidence: BTreeSet<EvidenceKind> },
+    Direct,
+    Derived,
     Unsupported,
 }
 
@@ -1083,73 +1086,6 @@ impl GraphHintDispatchProjection {
             hint_keys::PLAN: self.plan,
             hint_keys::PROJECTION: self.projection,
         })
-    }
-}
-
-/// The closed set of measurements comparable across providers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MeasurementName {
-    /// Input tokens the provider reports as served from reusable context.
-    ReusedInputTokens,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GraphHintMeasurement {
-    pub name: MeasurementName,
-    pub value: i64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Acknowledgement {
-    BackendAcknowledged,
-    BackendRejected,
-    NotReported,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FieldRealization {
-    pub projected: bool,
-    pub acknowledgement: Acknowledgement,
-}
-
-/// What the provider actually reported back, joined to one projection.
-///
-/// `NotReported` is not "not honored", and a measurement of zero is a measured
-/// zero rather than proof a control was ignored.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GraphHintRealization {
-    pub projection_digest: String,
-    pub fields: BTreeMap<GraphHintField, FieldRealization>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub measurements: Vec<GraphHintMeasurement>,
-}
-
-impl GraphHintRealization {
-    /// The realization every projected field starts from: projected, and not
-    /// yet acknowledged by anyone.
-    pub fn unacknowledged(projection: &GraphHintProjection, plan: &GraphHintPlan) -> Self {
-        Self {
-            projection_digest: domain_digest(
-                PROJECTED_REQUEST_DIGEST_DOMAIN,
-                &canonical_bytes(projection),
-            ),
-            fields: plan
-                .outcomes
-                .iter()
-                .map(|(field, outcome)| {
-                    (
-                        *field,
-                        FieldRealization {
-                            projected: outcome.is_projected(),
-                            acknowledgement: Acknowledgement::NotReported,
-                        },
-                    )
-                })
-                .collect(),
-            measurements: Vec::new(),
-        }
     }
 }
 
@@ -1513,9 +1449,7 @@ mod tests {
         let mut capabilities = GraphHintCapabilities::none();
         capabilities.fields.insert(
             GraphHintField::ReusePreference,
-            GraphHintFieldCapability::Direct {
-                evidence: [EvidenceKind::AdapterProjection].into_iter().collect(),
-            },
+            GraphHintFieldCapability::Direct,
         );
         let hints = scoped();
         let plan = GraphHintPlan::omitted_unsupported(&hints, &capabilities).with_outcome(

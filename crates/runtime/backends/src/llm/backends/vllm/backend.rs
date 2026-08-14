@@ -24,7 +24,7 @@ use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
 use apxm_core::constants::llm::apxm as apxm_llm;
 use apxm_core::types::{
-    BackendGraphCapabilities, BackendMechanismRef, EvidenceKind, GraphHintCapabilities,
+    BackendGraphCapabilities, BackendMechanismRef, GraphHintCapabilities,
     GraphHintDispatchProjection, GraphHintField, GraphHintFieldCapability, GraphHintPlan,
     GraphHintProjector, GraphLifecycleCapability, GraphMetadata, GraphStatusSnapshot,
     ModelCapabilities, ModelInfo, OptimizationObjective, ProjectionOutcome, ReasonCode,
@@ -754,10 +754,6 @@ impl LLMBackend for GraphAwareVllmBackend {
         crate::llm::backends::traits::ResponseMemoizationPolicy::BackendPrefix
     }
 
-    fn supports_graph_extensions(&self) -> bool {
-        true
-    }
-
     fn supports_auto_tool_choice(&self) -> bool {
         self.auto_tool_choice_supported.load(Ordering::Relaxed)
     }
@@ -827,22 +823,12 @@ impl GraphAwareVllmBackend {
 
 impl GraphHintProjector for GraphAwareVllmBackend {
     fn graph_hint_capabilities(&self) -> GraphHintCapabilities {
-        use EvidenceKind::{AdapterProjection, BackendAcknowledgement, OutcomeMeasurement};
         let mut fields = GraphHintCapabilities::none().fields;
-        let derived = GraphHintFieldCapability::Derived {
-            evidence: [
-                AdapterProjection,
-                BackendAcknowledgement,
-                OutcomeMeasurement,
-            ]
-            .into_iter()
-            .collect(),
-        };
         for field in Self::ENVELOPE_FIELDS.iter().copied().chain([
             GraphHintField::CriticalPath,
             GraphHintField::ReusePreference,
         ]) {
-            fields.insert(field, derived.clone());
+            fields.insert(field, GraphHintFieldCapability::Derived);
         }
         GraphHintCapabilities {
             fields,

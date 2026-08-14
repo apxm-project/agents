@@ -238,10 +238,6 @@ impl LLMBackend for Provider {
         self.backend_ref().release_graph(graph_id).await
     }
 
-    fn supports_graph_extensions(&self) -> bool {
-        self.backend_ref().supports_graph_extensions()
-    }
-
     fn supports_auto_tool_choice(&self) -> bool {
         self.backend_ref().supports_auto_tool_choice()
     }

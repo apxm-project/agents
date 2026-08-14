@@ -103,6 +103,43 @@ FORBIDDEN_AUTHORED_GRAPH_HINT_SEMANTICS = (
     "benefit_horizon_ms",
     "expected_shared_prefix_tokens",
 )
+# ADR-0021: an adapter records what it planned and what it projected. A
+# provider acknowledgement and an outcome measurement are separate claims, and
+# no provider response any adapter parses states either, so the machine has no
+# vocabulary for declaring or recording them. These names may return only
+# alongside the response parsing that produces one on a real dispatch path —
+# a constructor that can only ever report "nothing" is not that.
+UNPRODUCIBLE_EVIDENCE_ROOTS = (
+    Path("crates/machine/contracts/src"),
+    Path("crates/runtime/backends/src"),
+    Path("crates/runtime/inference/src"),
+    Path("crates/runtime/execution/src"),
+)
+UNPRODUCIBLE_EVIDENCE_MARKERS = (
+    "GraphHintRealization",
+    "FieldRealization",
+    "GraphHintMeasurement",
+    "MeasurementName",
+    "ReusedInputTokens",
+    "BackendAcknowledged",
+    "BackendRejected",
+    "BackendAcknowledgement",
+    "OutcomeMeasurement",
+    # The lifecycle capability a binding declares is `GraphLifecycleCapability`,
+    # which rides on the capability digest. This boolean gated nothing.
+    "supports_graph_extensions",
+)
+# ADR-0021 §3.3: projection is exact-binding local. There is no broadcast,
+# provider discovery, graph-aware backend search, ranking, or fallback. These
+# names were the broadcast chain; a graph lifecycle that returns must be bound
+# to the one admitted adapter, not fanned out across a registry.
+RETIRED_GRAPH_BROADCAST_MARKERS = (
+    "register_graph_all",
+    "release_graph_all",
+    "find_graph_aware_backends",
+    "pre_release_status_all",
+    "GraphLifecycleOutcome",
+)
 EXAMPLE_RUNTIME_PROOF_FIXTURES = (
     Path("crates/machine/program/tests/fixtures/example-artifacts/conversational-python.json"),
     Path("crates/machine/program/tests/fixtures/example-artifacts/conversational-typescript.json"),
@@ -231,6 +268,38 @@ class CanonicalOnlyReachabilityTests(unittest.TestCase):
                 markers = [
                     marker
                     for marker in FORBIDDEN_AUTHORED_GRAPH_HINT_SEMANTICS
+                    if marker in text
+                ]
+                if markers:
+                    offenders.append(
+                        f"{path.relative_to(REPOSITORY_ROOT)}: {', '.join(markers)}"
+                    )
+        self.assertEqual(offenders, [], "\n".join(offenders))
+
+    def test_no_graph_hint_evidence_layer_reports_only_nothing(self) -> None:
+        """ADR-0021: a declarable evidence layer must have a producer."""
+        offenders: list[str] = []
+        for root in UNPRODUCIBLE_EVIDENCE_ROOTS:
+            for path in (REPOSITORY_ROOT / root).rglob("*.rs"):
+                text = buildable_source(path.read_text(errors="ignore"))
+                markers = [
+                    marker for marker in UNPRODUCIBLE_EVIDENCE_MARKERS if marker in text
+                ]
+                if markers:
+                    offenders.append(
+                        f"{path.relative_to(REPOSITORY_ROOT)}: {', '.join(markers)}"
+                    )
+        self.assertEqual(offenders, [], "\n".join(offenders))
+
+    def test_no_graph_lifecycle_is_broadcast_across_the_registry(self) -> None:
+        """ADR-0021 §3.3: graph projection and lifecycle are exact-binding local."""
+        offenders: list[str] = []
+        for root in UNPRODUCIBLE_EVIDENCE_ROOTS:
+            for path in (REPOSITORY_ROOT / root).rglob("*.rs"):
+                text = buildable_source(path.read_text(errors="ignore"))
+                markers = [
+                    marker
+                    for marker in RETIRED_GRAPH_BROADCAST_MARKERS
                     if marker in text
                 ]
                 if markers:

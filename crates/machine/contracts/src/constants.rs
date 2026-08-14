@@ -480,7 +480,6 @@ pub mod llm {
             /// digests and closed vocabulary only, never a provider body.
             pub const PLAN: &str = "graph_hint_plan";
             pub const PROJECTION: &str = "graph_hint_projection";
-            pub const REALIZATION: &str = "graph_hint_realization";
 
             /// The closed reason vocabulary a projector may cite when it
             /// approximates or withholds a field it otherwise understands.

@@ -77,13 +77,12 @@ pub use execution::{
 };
 pub use goal::{Goal, GoalId, GoalStatus};
 pub use graph_hints::{
-    Acknowledgement, ApxmGraphHints, BackendGraphCapabilities, BackendMechanismRef, EvidenceKind,
-    FieldRealization, GRAPH_HINTS_SCHEMA, GraphExecutionIntents, GraphHintCapabilities,
-    GraphHintDispatchProjection, GraphHintField, GraphHintFieldCapability, GraphHintMeasurement,
-    GraphHintPlan, GraphHintProjection, GraphHintProjector, GraphHintRealization, GraphHintScope,
-    GraphLifecycleCapability, GraphMetadata, GraphStatusSnapshot, MAX_BENEFIT_HORIZON_MS,
-    MAX_ESTIMATED_TOKENS, MAX_EXPECTED_USES, MAX_OPAQUE_REF_LEN, MAX_PATH_COORDINATE,
-    MAX_SUCCESSOR_REFS, MeasurementName, NodeGraphFacts, NodeSpec, OptimizationObjective,
+    ApxmGraphHints, BackendGraphCapabilities, BackendMechanismRef, GRAPH_HINTS_SCHEMA,
+    GraphExecutionIntents, GraphHintCapabilities, GraphHintDispatchProjection, GraphHintField,
+    GraphHintFieldCapability, GraphHintPlan, GraphHintProjection, GraphHintProjector,
+    GraphHintScope, GraphLifecycleCapability, GraphMetadata, GraphStatusSnapshot,
+    MAX_BENEFIT_HORIZON_MS, MAX_ESTIMATED_TOKENS, MAX_EXPECTED_USES, MAX_OPAQUE_REF_LEN,
+    MAX_PATH_COORDINATE, MAX_SUCCESSOR_REFS, NodeGraphFacts, NodeSpec, OptimizationObjective,
     ProjectionOutcome, ReasonCode, ReusableContextIntent, ReusePreference, WorkClass,
 };
 pub use graph_metrics::{LatencyClass, NodeGraphMetrics};

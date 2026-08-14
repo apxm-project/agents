@@ -207,12 +207,6 @@ pub trait LLMBackend: Send + Sync {
         Ok(())
     }
 
-    /// Whether the backend implements graph-aware extensions
-    /// (`register_graph`, `release_graph`). Default `false`.
-    fn supports_graph_extensions(&self) -> bool {
-        false
-    }
-
     /// Whether the backend accepts `tool_choice="auto"`. Default `true`.
     fn supports_auto_tool_choice(&self) -> bool {
         true

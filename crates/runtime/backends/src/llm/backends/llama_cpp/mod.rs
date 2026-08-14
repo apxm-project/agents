@@ -8,10 +8,10 @@ use super::{LLMBackend, LLMRequest, LLMResponse};
 use anyhow::Result;
 use apxm_core::constants::llm::apxm::HINTS_FIELD;
 use apxm_core::types::{
-    ApxmGraphHints, BackendMechanismRef, EvidenceKind, GraphHintCapabilities,
-    GraphHintDispatchProjection, GraphHintField, GraphHintFieldCapability, GraphHintPlan,
-    GraphHintProjector, GraphLifecycleCapability, GraphMetadata, GraphStatusSnapshot,
-    ModelCapabilities, ModelInfo, ProjectionOutcome,
+    ApxmGraphHints, BackendMechanismRef, GraphHintCapabilities, GraphHintDispatchProjection,
+    GraphHintField, GraphHintFieldCapability, GraphHintPlan, GraphHintProjector,
+    GraphLifecycleCapability, GraphMetadata, GraphStatusSnapshot, ModelCapabilities, ModelInfo,
+    ProjectionOutcome,
 };
 use async_trait::async_trait;
 use std::pin::Pin;
@@ -126,13 +126,12 @@ impl GraphHintProjector for LlamaCppBackend {
     /// have no llama.cpp mechanism with the same useful effect, so this binding
     /// declares exactly two supported fields and nothing more.
     fn graph_hint_capabilities(&self) -> GraphHintCapabilities {
-        let direct = GraphHintFieldCapability::Direct {
-            evidence: [EvidenceKind::AdapterProjection].into_iter().collect(),
-        };
         let mut capabilities = GraphHintCapabilities::none();
         capabilities.lifecycle = GraphLifecycleCapability::NotNeeded;
         for field in [GraphHintField::Scope, GraphHintField::ReusePreference] {
-            capabilities.fields.insert(field, direct.clone());
+            capabilities
+                .fields
+                .insert(field, GraphHintFieldCapability::Direct);
         }
         capabilities
     }

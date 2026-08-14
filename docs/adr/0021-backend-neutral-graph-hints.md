@@ -19,3 +19,15 @@ and `apxm` servers may use.
 Hints never select models, change sampling, tools, schemas, or authority.
 Unsupported fields are `OmittedUnsupported`. Graph prepare/release is
 exact-binding local. llama.cpp never hashes `affinity_ref` into `id_slot`.
+
+An adapter records two claims: the field-by-field plan and the projection it
+sent (`GraphHintPlan`, `GraphHintProjection`, written to response metadata by
+`record_graph_hint_evidence` in
+`crates/runtime/backends/src/llm/backends/graph_hint_dispatch.rs`). Provider
+acknowledgement and outcome measurement are two further, different claims, and
+no provider response any adapter here parses states either — so neither is
+recorded, and a binding cannot declare per field that it produces one.
+`GraphHintFieldCapability` is `Direct`/`Derived`/`Unsupported` with no evidence
+set, and `tools/tests/test_canonical_only_reachability.py`
+(`test_no_graph_hint_evidence_layer_reports_only_nothing`) keeps the retired
+names out until a producer exists.
