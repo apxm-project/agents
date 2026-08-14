@@ -2,7 +2,6 @@
 
 use apxm_backends::llm::backends::LLMRequest;
 use apxm_backends::llm::backends::vllm::{ApxmGraphHints, GraphMetadata, NodeSpec};
-use apxm_core::types::{NodeGraphMetrics, PriorityClass};
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 fn bench_request_with_hints(c: &mut Criterion) {
@@ -11,17 +10,15 @@ fn bench_request_with_hints(c: &mut Criterion) {
             let hints = ApxmGraphHints::critical_path(
                 "benchmark-graph",
                 "exec-001",
-                5,
                 "reasoning-node",
-                vec![6, 7, 8],
-                30_000,
+                "node-execution:reasoning-node",
+                vec!["node:6".into(), "node:7".into(), "node:8".into()],
             );
 
             let request = LLMRequest::new(black_box("Benchmark prompt"))
                 .with_temperature(0.0)
                 .with_apxm_hints(hints);
 
-            // Serialize to JSON to measure full overhead
             let _json = serde_json::to_value(&request.apxm_hints).unwrap();
             black_box(request);
         });
@@ -43,10 +40,9 @@ fn bench_hints_serialization(c: &mut Criterion) {
         let hints = ApxmGraphHints::critical_path(
             "benchmark-graph",
             "exec-001",
-            5,
             "reasoning-node",
-            vec![6, 7, 8, 9, 10],
-            30_000,
+            "node-execution:reasoning-node",
+            vec!["node:6".into()],
         );
 
         b.iter(|| {
@@ -59,48 +55,19 @@ fn bench_hints_serialization(c: &mut Criterion) {
 fn bench_graph_registration_payload(c: &mut Criterion) {
     c.bench_function("graph_registration_payload", |b| {
         let metadata = GraphMetadata::new("workflow-bench", "exec-bench")
-            .with_pin_ttl(30_000)
             .with_critical_path_length(10)
             .with_nodes(vec![
                 NodeSpec {
-                    node_id: 1,
-                    node_name: Some("architect".to_string()),
-                    estimated_prompt_tokens: Some(500),
-                    downstream_nodes: vec![2, 3],
-                    priority_class: Some(PriorityClass::CriticalPath),
-                    reuse_group: Some("planning".to_string()),
-                    graph_metrics: NodeGraphMetrics::default(),
+                    node_ref: "architect".into(),
+                    successor_refs: vec!["coder-1".into(), "coder-2".into()],
+                    estimated_input_tokens: Some(500),
                     is_critical_path: true,
                 },
                 NodeSpec {
-                    node_id: 2,
-                    node_name: Some("coder-1".to_string()),
-                    estimated_prompt_tokens: Some(1500),
-                    downstream_nodes: vec![4],
-                    priority_class: Some(PriorityClass::Parallel),
-                    reuse_group: None,
-                    graph_metrics: NodeGraphMetrics::default(),
+                    node_ref: "coder-1".into(),
+                    successor_refs: vec!["reviewer".into()],
+                    estimated_input_tokens: Some(1500),
                     is_critical_path: false,
-                },
-                NodeSpec {
-                    node_id: 3,
-                    node_name: Some("coder-2".to_string()),
-                    estimated_prompt_tokens: Some(1500),
-                    downstream_nodes: vec![4],
-                    priority_class: Some(PriorityClass::Parallel),
-                    reuse_group: None,
-                    graph_metrics: NodeGraphMetrics::default(),
-                    is_critical_path: false,
-                },
-                NodeSpec {
-                    node_id: 4,
-                    node_name: Some("reviewer".to_string()),
-                    estimated_prompt_tokens: Some(800),
-                    downstream_nodes: vec![],
-                    priority_class: Some(PriorityClass::CriticalPath),
-                    reuse_group: None,
-                    graph_metrics: NodeGraphMetrics::default(),
-                    is_critical_path: true,
                 },
             ]);
 

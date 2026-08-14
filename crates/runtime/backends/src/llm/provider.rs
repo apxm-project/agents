@@ -5,7 +5,7 @@
 
 use crate::llm::backends::{
     AnthropicBackend, GoogleBackend, GraphAwareVllmBackend, LLMBackend, LLMRequest, LLMResponse,
-    MockLLMBackend, OllamaBackend, OpenAIBackend, StreamChunk,
+    LlamaCppBackend, MockLLMBackend, OllamaBackend, OpenAIBackend, StreamChunk,
 };
 use crate::llm::{ProviderProtocol, ProviderSpec};
 use apxm_core::types::{BackendGraphCapabilities, ModelCapabilities, ModelInfo};
@@ -28,6 +28,7 @@ pub enum ProviderId {
     Google,
     Ollama,
     Vllm,
+    LlamaCpp,
     Mock,
 }
 
@@ -39,6 +40,7 @@ impl ProviderId {
             ProviderId::Google => "google",
             ProviderId::Ollama => "ollama",
             ProviderId::Vllm => "vllm",
+            ProviderId::LlamaCpp => "llamacpp",
             ProviderId::Mock => "mock",
         }
     }
@@ -50,6 +52,7 @@ impl ProviderId {
             ProviderId::Google,
             ProviderId::Ollama,
             ProviderId::Vllm,
+            ProviderId::LlamaCpp,
             ProviderId::Mock,
         ]
     }
@@ -62,6 +65,7 @@ impl ProviderId {
             ProviderId::Google => ProviderProtocol::Google,
             ProviderId::Ollama => ProviderProtocol::Ollama,
             ProviderId::Vllm => ProviderProtocol::Vllm,
+            ProviderId::LlamaCpp => ProviderProtocol::LlamaCpp,
             ProviderId::Mock => ProviderProtocol::Mock,
         }
     }
@@ -83,6 +87,7 @@ impl std::str::FromStr for ProviderId {
             "google" => Ok(ProviderId::Google),
             "ollama" => Ok(ProviderId::Ollama),
             "vllm" => Ok(ProviderId::Vllm),
+            "llamacpp" | "llama.cpp" | "llama-cpp" => Ok(ProviderId::LlamaCpp),
             "mock" => Ok(ProviderId::Mock),
             _ => Err(anyhow::anyhow!("Unknown provider: {}", s)),
         }
@@ -96,6 +101,7 @@ pub enum Provider {
     Google(GoogleBackend),
     Ollama(OllamaBackend),
     Vllm(GraphAwareVllmBackend),
+    LlamaCpp(LlamaCppBackend),
     Mock(MockLLMBackend),
 }
 
@@ -134,6 +140,9 @@ impl Provider {
             ProviderProtocol::Vllm => Ok(Provider::Vllm(
                 GraphAwareVllmBackend::new(api_key, config).await?,
             )),
+            ProviderProtocol::LlamaCpp => Ok(Provider::LlamaCpp(
+                LlamaCppBackend::new(api_key, config).await?,
+            )),
             ProviderProtocol::Mock => Ok(Provider::Mock(
                 MockLLMBackend::from_config(api_key, config).await?,
             )),
@@ -148,6 +157,7 @@ impl Provider {
             Provider::Google(_) => ProviderId::Google,
             Provider::Ollama(_) => ProviderId::Ollama,
             Provider::Vllm(_) => ProviderId::Vllm,
+            Provider::LlamaCpp(_) => ProviderId::LlamaCpp,
             Provider::Mock(_) => ProviderId::Mock,
         }
     }
@@ -164,6 +174,7 @@ impl Provider {
             Provider::Google(b) => b,
             Provider::Ollama(b) => b,
             Provider::Vllm(b) => b,
+            Provider::LlamaCpp(b) => b,
             Provider::Mock(b) => b,
         }
     }
