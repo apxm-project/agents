@@ -391,8 +391,9 @@ pub mod capabilities {
     //! these here; add new capability ids in `apxm_ais::capabilities`.
     pub use apxm_ais::capabilities::groups;
     pub use apxm_ais::capabilities::{
-        AGENT_MANAGEMENT_BUILTINS, BASH, BUILTINS, COUNT_TOKENS, HTTP_GET, HTTP_POST, MANAGE_TASK,
-        MCP_CALL, PROVIDER_CALL, READ, SCHEDULE, SEARCH_WEB, STANDARD_BUILTINS, WRITE,
+        AGENT_MANAGEMENT_BUILTINS, BASH, BUILTIN_GROUPS, BUILTINS, COUNT_TOKENS, HTTP_GET,
+        HTTP_POST, LIST_SKILLS, MANAGE_TASK, MCP_CALL, PROVIDER_CALL, READ, READ_SKILL, SCHEDULE,
+        SEARCH_SKILLS, SEARCH_WEB, STANDARD_BUILTINS, WRITE,
     };
 }
 

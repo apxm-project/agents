@@ -9,6 +9,7 @@ pub mod http;
 pub mod mcp_bridge;
 pub mod provider_call;
 pub mod read;
+pub mod skills;
 pub mod web_search;
 pub mod write;
 
@@ -19,6 +20,10 @@ pub use http::{client_for, shared_client};
 pub use mcp_bridge::McpBridgeCapability;
 pub use provider_call::ProviderCallCapability;
 pub use read::{ReadCapability, ReadConfig};
+pub use skills::{
+    ListSkillsCapability, ReadSkillCapability, SearchSkillsCapability, SkillRootConfig,
+    SkillsConfig,
+};
 pub use web_search::{SearchDepth, SearchWebCapability, SearchWebConfig};
 pub use write::{WriteCapability, WriteConfig};
 
@@ -130,6 +135,8 @@ pub struct ToolsConfig {
     pub write: WriteConfig,
     #[serde(default)]
     pub search_web: SearchWebConfig,
+    #[serde(default)]
+    pub skills: SkillsConfig,
 }
 
 /// Register the standard APxM capabilities with the runtime capability system.
@@ -162,5 +169,21 @@ pub fn register_standard_tools(
     // non-server runtimes too so in-program compaction (count_tokens → guard →
     // summarize) has transport parity with the server path (constitution #1).
     capability_system.register(Arc::new(CountTokensCapability::new()))?;
+    // The three skill-discovery capabilities register together behind one flag:
+    // listing a skill you cannot then read, or reading one you could not
+    // discover, is not a coherent half of the surface. With the default (empty)
+    // root list they register and report an empty index rather than scanning
+    // whatever directory the process happens to be near.
+    if config.skills.enabled {
+        capability_system.register(Arc::new(ListSkillsCapability::with_config(
+            config.skills.clone(),
+        )))?;
+        capability_system.register(Arc::new(SearchSkillsCapability::with_config(
+            config.skills.clone(),
+        )))?;
+        capability_system.register(Arc::new(ReadSkillCapability::with_config(
+            config.skills.clone(),
+        )))?;
+    }
     Ok(())
 }

@@ -31,14 +31,18 @@ mod capability_port {
     //!    before any argument reaches an implementation.
 
     use std::collections::{BTreeSet, HashMap};
+    use std::path::PathBuf;
     use std::sync::Arc;
 
     use apxm_capability::CapabilitySystem;
-    use apxm_capability::builtins::{BashConfig, ToolsConfig, register_standard_tools};
+    use apxm_capability::builtins::{
+        BashConfig, SkillRootConfig, SkillsConfig, ToolsConfig, register_standard_tools,
+    };
     use apxm_capability::interceptor::{CapabilityInterceptor, InterceptDecision};
     use apxm_core::error::RuntimeError;
     use apxm_core::types::values::{Value as CapabilityValue, ValueError};
     use apxm_execution::{CapabilityOutcome, CapabilityPort, CapabilityRequest};
+    use apxm_program::skill::RootTier;
     use async_trait::async_trait;
 
     /// Interceptor name reported by the local admission gate.
@@ -59,7 +63,35 @@ mod capability_port {
                 enabled: false,
                 ..BashConfig::default()
             },
+            skills: local_skills_config(),
             ..ToolsConfig::default()
+        }
+    }
+
+    /// The discovery roots canonical local execution publishes.
+    ///
+    /// `SkillsConfig` defaults to no roots on purpose — a capability that went
+    /// looking for skills on its own initiative would be reading whatever
+    /// happened to be near the process. Naming them is the host's job, and this
+    /// is the host: canonical local execution runs inside a project, so it
+    /// publishes that project's conventional roots, both relative to the
+    /// working directory the CLI was invoked from. A root that does not exist
+    /// contributes nothing rather than failing.
+    fn local_skills_config() -> SkillsConfig {
+        SkillsConfig {
+            enabled: true,
+            roots: vec![
+                SkillRootConfig {
+                    root_id: "project".to_string(),
+                    tier: RootTier::Project,
+                    path: PathBuf::from(".agents/skills"),
+                },
+                SkillRootConfig {
+                    root_id: "local".to_string(),
+                    tier: RootTier::Local,
+                    path: PathBuf::from(".apxm/skills"),
+                },
+            ],
         }
     }
 
@@ -1136,9 +1168,9 @@ use sha2::{Digest, Sha256};
 
 use apxm_ais::permissions::{LayerDecisions, PermissionDecision, PermissionResolution};
 use apxm_execution::{
-    CapabilityGrantSet, CapabilityInvocationAdmission, CapabilityOutcome, CompositionOutcome,
-    CompositionPort, CompositionReceiver, CompositionRequest, EventAwait, EventOutcome, EventPort,
-    ExecutionRequest, NodeOutcome, CapturedHookBodyHandler, RuntimeProfile,
+    CapabilityGrantSet, CapabilityInvocationAdmission, CapabilityOutcome, CapturedHookBodyHandler,
+    CompositionOutcome, CompositionPort, CompositionReceiver, CompositionRequest, EventAwait,
+    EventOutcome, EventPort, ExecutionRequest, NodeOutcome, RuntimeProfile,
 };
 #[cfg(test)]
 use apxm_execution::{ExecutionPortBundle, ExecutionPorts, RuntimeProfileError, execute};

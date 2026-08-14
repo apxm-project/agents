@@ -35,6 +35,23 @@ pub enum DiagnosticCode {
     NonAtomicWriteSet,
     /// An attributed ACP event carried reverse fields inconsistent with its kind.
     AttributedEventInconsistent,
+    /// A discovery-root skill's resource inventory did not carry its own
+    /// instruction entry, or a package-local skill repeated one it states
+    /// separately.
+    SkillInstructionNotCarried,
+    /// A resource restating the instruction entry disagreed with it on digest,
+    /// size, or media type.
+    SkillInstructionEntryMismatch,
+    /// A skill resource was an executable artifact rather than ordinary
+    /// instruction-only content.
+    SkillExecutableResource,
+    /// A list the contract requires in strict ascending order — skill tags,
+    /// imports, or discovery cards — was unordered or repeated a member.
+    UnsortedIdentifierList,
+    /// Two discovery cards named one `(library_id, skill_id)` identity.
+    DuplicateSkillCard,
+    /// A global-tier discovery root published a card that is not shared.
+    SkillCardNotShareable,
 }
 
 impl DiagnosticCode {
@@ -53,6 +70,12 @@ impl DiagnosticCode {
             Self::OutcomeUnknownClaimsSuccess => "outcome_unknown_claims_success",
             Self::NonAtomicWriteSet => "non_atomic_write_set",
             Self::AttributedEventInconsistent => "attributed_event_inconsistent",
+            Self::SkillInstructionNotCarried => "skill_instruction_not_carried",
+            Self::SkillInstructionEntryMismatch => "skill_instruction_entry_mismatch",
+            Self::SkillExecutableResource => "skill_executable_resource",
+            Self::UnsortedIdentifierList => "unsorted_identifier_list",
+            Self::DuplicateSkillCard => "duplicate_skill_card",
+            Self::SkillCardNotShareable => "skill_card_not_shareable",
         }
     }
 }

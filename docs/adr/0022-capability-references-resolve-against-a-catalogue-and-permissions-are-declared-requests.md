@@ -242,14 +242,27 @@ it.
 ## Open
 
 Skills are not declarable from either frontend. There is no `Skill` marker in
-the surface manifest or in either package, the skill discovery ids that once
-sat in `crates/machine/ais/src/capabilities.rs` were removed because nothing
-implemented them, and `contracts/schemas/apxm.skill-package.json` and
-`contracts/schemas/apxm.skill-discovery-root.json` have no reader in Rust,
-Python, or TypeScript. The package folder contract refuses a `skills/` path
-outright, which `agent_package_rejects_local_skill_resources`
-(`crates/tools/cli/src/commands/agent.rs`) pins. A package cannot declare a
-skill today, and nothing in this ADR changes that.
+the surface manifest or in either package, so a program cannot author a skill,
+and nothing in this ADR changes that.
+
+Two of the three gaps this section recorded have since closed, outside this
+ADR. The skill discovery ids are back in
+`crates/machine/ais/src/capabilities.rs` as `list_skills`, `search_skills`, and
+`read_skill`, this time behind handlers in
+`crates/runtime/capability/src/builtins/skills.rs` — the ordering the earlier
+state inverted. And the skill contracts have a reader:
+`crates/machine/program/src/skill.rs` decodes and verifies
+`apxm.skill-package`, `apxm.package-local-skill`, and
+`apxm.skill-discovery-root`, held to their vectors by
+`crates/machine/program/tests/skill_conformance.rs`.
+
+The package folder contract still refuses a `skills/` path outright, which
+`agent_package_rejects_local_skill_resources`
+(`crates/tools/cli/src/commands/agent.rs`) pins. `apxm.package-local-skill`
+describes what such a directory would contain, but the allowlist stays closed
+until something authors one — recognizing the path first would repeat, at the
+folder level, the allowlist-without-implementation mistake the capability ids
+just came back from.
 
 The frontend surface is not yet a checked interface.
 `tools/scripts/check_frontend_surface.py` compares sets of exported identifiers

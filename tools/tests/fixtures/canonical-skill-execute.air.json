@@ -1,0 +1,63 @@
+{
+  "schema_version": "apxm.air",
+  "value_assemblies": [
+    {
+      "value_id": "fixture.read_skill.arguments",
+      "expression": {
+        "kind": "object",
+        "fields": [
+          {
+            "name": "skill_id",
+            "value": { "kind": "string", "value": "context" }
+          }
+        ]
+      }
+    },
+    {
+      "value_id": "fixture.list_skills.arguments",
+      "expression": {
+        "kind": "object",
+        "fields": [
+          {
+            "name": "root_id",
+            "value": { "kind": "string", "value": "project" }
+          }
+        ]
+      }
+    }
+  ],
+  "semantic_operations": [
+    {
+      "node_id": "fixture.capability.list_skills",
+      "op": "capability.invoke",
+      "parent_region_id": "fixture.root",
+      "execution_order": 0,
+      "operands": [
+        { "slot": "capability_ref", "value_id": "list_skills", "type_ref": "CapabilityRef" },
+        { "slot": "arguments", "value_id": "fixture.list_skills.arguments", "type_ref": "ArgumentValue" }
+      ],
+      "result": { "value_id": "fixture.list_skills.output", "type_ref": "ToolOutput" }
+    },
+    {
+      "node_id": "fixture.capability.read_skill",
+      "op": "capability.invoke",
+      "parent_region_id": "fixture.root",
+      "execution_order": 1,
+      "operands": [
+        { "slot": "capability_ref", "value_id": "read_skill", "type_ref": "CapabilityRef" },
+        { "slot": "arguments", "value_id": "fixture.read_skill.arguments", "type_ref": "ArgumentValue" }
+      ],
+      "result": { "value_id": "fixture.read_skill.output", "type_ref": "ToolOutput" }
+    }
+  ],
+  "structural_ir": [
+    { "region_id": "fixture.root", "kind": "function", "execution_order": 0 }
+  ],
+  "context_flow": [],
+  "source_map": {
+    "schema_version": "apxm.source-map",
+    "source_language": "python",
+    "node_spans": [],
+    "region_annotations": []
+  }
+}

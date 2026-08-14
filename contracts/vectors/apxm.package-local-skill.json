@@ -1,11 +1,10 @@
 [
   {
-    "name": "valid_instruction_only_skill_package",
+    "name": "valid_package_local_skill_with_file_carried_instructions",
     "input": {
-      "schema_version": "apxm.skill-package",
+      "schema_version": "apxm.package-local-skill",
       "skill_id": "review",
-      "library_id": "ops",
-      "package_version": "1.2.3",
+      "carrier_package_id": "coder",
       "metadata": {
         "name": "Review",
         "description": "Review a code or document change set.",
@@ -14,11 +13,8 @@
           "quality",
           "review"
         ],
-        "imports": [
-          "ops::lint",
-          "shared-core"
-        ],
-        "shared": true
+        "imports": [],
+        "shared": false
       },
       "instruction_source": {
         "kind": "entry",
@@ -27,29 +23,10 @@
         "media_type": "text/markdown",
         "bytes": 512
       },
-      "resources": [
-        {
-          "path": "SKILL.md",
-          "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-          "media_type": "text/markdown",
-          "bytes": 512
-        },
-        {
-          "path": "assets/checklist.txt",
-          "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-          "media_type": "text/plain",
-          "bytes": 96
-        },
-        {
-          "path": "references/rubric.md",
-          "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
-          "media_type": "text/markdown",
-          "bytes": 256
-        }
-      ],
+      "resources": [],
       "constraints": {
         "instruction_only": true,
-        "executable_package": false,
+        "carried_by_executable_package": true,
         "executable_artifacts": false,
         "ambient_context_mutation": false
       }
@@ -57,25 +34,51 @@
     "expected_valid": true
   },
   {
-    "name": "missing_skill_instruction_resource_rejected",
+    "name": "valid_package_local_skill_with_inline_instructions",
     "input": {
-      "schema_version": "apxm.skill-package",
+      "schema_version": "apxm.package-local-skill",
+      "skill_id": "triage",
+      "carrier_package_id": "coder",
+      "metadata": {
+        "name": "Triage",
+        "description": "Classify and route an incoming problem.",
+        "when_to_use": "Use when the user needs an issue sorted or prioritized before deeper work.",
+        "tags": [
+          "ops",
+          "triage"
+        ],
+        "imports": [],
+        "shared": false
+      },
+      "instruction_source": {
+        "kind": "inline",
+        "media_type": "text/markdown",
+        "bytes": 384,
+        "source_bundle_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "resources": [],
+      "constraints": {
+        "instruction_only": true,
+        "carried_by_executable_package": true,
+        "executable_artifacts": false,
+        "ambient_context_mutation": false
+      }
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "valid_package_local_skill_carrying_extra_resources",
+    "input": {
+      "schema_version": "apxm.package-local-skill",
       "skill_id": "review",
-      "library_id": "ops",
-      "package_version": "1.2.3",
+      "carrier_package_id": "coder",
       "metadata": {
         "name": "Review",
         "description": "Review a code or document change set.",
         "when_to_use": "Use when the user asks for a review or critique of changed content.",
-        "tags": [
-          "quality",
-          "review"
-        ],
-        "imports": [
-          "ops::lint",
-          "shared-core"
-        ],
-        "shared": true
+        "tags": [],
+        "imports": [],
+        "shared": false
       },
       "instruction_source": {
         "kind": "entry",
@@ -94,222 +97,138 @@
       ],
       "constraints": {
         "instruction_only": true,
-        "executable_package": false,
+        "carried_by_executable_package": true,
         "executable_artifacts": false,
         "ambient_context_mutation": false
       }
     },
-    "expected_valid": false
+    "expected_valid": true
   },
   {
-    "name": "instruction_resource_digest_mismatch_rejected",
+    "name": "instruction_entry_repeated_in_resources_rejected",
     "input": {
-      "schema_version": "apxm.skill-package",
+      "schema_version": "apxm.package-local-skill",
       "skill_id": "review",
-      "library_id": "ops",
-      "package_version": "1.2.3",
-      "metadata": {
-        "name": "Review",
-        "description": "Review a code or document change set.",
-        "when_to_use": "Use when the user asks for a review or critique of changed content.",
-        "tags": [
-          "quality",
-          "review"
-        ],
-        "imports": [],
-        "shared": true
-      },
-      "instruction_source": {
-        "kind": "entry",
-        "path": "SKILL.md",
-        "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-        "media_type": "text/markdown",
-        "bytes": 512
-      },
-      "resources": [
-        {
-          "path": "SKILL.md",
-          "digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
-          "media_type": "text/markdown",
-          "bytes": 512
-        }
-      ],
-      "constraints": {
-        "instruction_only": true,
-        "executable_package": false,
-        "executable_artifacts": false,
-        "ambient_context_mutation": false
-      }
-    },
-    "expected_valid": false
-  },
-  {
-    "name": "forbidden_skill_artifact_rejected",
-    "input": {
-      "schema_version": "apxm.skill-package",
-      "skill_id": "review",
-      "library_id": "ops",
-      "package_version": "1.2.3",
-      "metadata": {
-        "name": "Review",
-        "description": "Review a code or document change set.",
-        "when_to_use": "Use when the user asks for a review or critique of changed content.",
-        "tags": [
-          "quality",
-          "review"
-        ],
-        "imports": [
-          "ops::lint",
-          "shared-core"
-        ],
-        "shared": true
-      },
-      "instruction_source": {
-        "kind": "entry",
-        "path": "SKILL.md",
-        "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-        "media_type": "text/markdown",
-        "bytes": 512
-      },
-      "resources": [
-        {
-          "path": "SKILL.md",
-          "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-          "media_type": "text/markdown",
-          "bytes": 512
-        },
-        {
-          "path": "skill.apxmobj",
-          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          "media_type": "application/octet-stream",
-          "bytes": 1024
-        }
-      ],
-      "constraints": {
-        "instruction_only": true,
-        "executable_package": false,
-        "executable_artifacts": false,
-        "ambient_context_mutation": false
-      }
-    },
-    "expected_valid": false
-  },
-  {
-    "name": "unsorted_discovery_imports_rejected",
-    "input": {
-      "schema_version": "apxm.skill-package",
-      "skill_id": "review",
-      "library_id": "ops",
-      "package_version": "1.2.3",
-      "metadata": {
-        "name": "Review",
-        "description": "Review a code or document change set.",
-        "when_to_use": "Use when the user asks for a review or critique of changed content.",
-        "tags": [
-          "quality",
-          "review"
-        ],
-        "imports": [
-          "shared-core",
-          "ops::lint"
-        ],
-        "shared": true
-      },
-      "instruction_source": {
-        "kind": "entry",
-        "path": "SKILL.md",
-        "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-        "media_type": "text/markdown",
-        "bytes": 512
-      },
-      "resources": [
-        {
-          "path": "SKILL.md",
-          "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-          "media_type": "text/markdown",
-          "bytes": 512
-        }
-      ],
-      "constraints": {
-        "instruction_only": true,
-        "executable_package": false,
-        "executable_artifacts": false,
-        "ambient_context_mutation": false
-      }
-    },
-    "expected_valid": false
-  },
-  {
-    "name": "unsorted_discovery_tags_rejected",
-    "input": {
-      "schema_version": "apxm.skill-package",
-      "skill_id": "review",
-      "library_id": "ops",
-      "package_version": "1.2.3",
-      "metadata": {
-        "name": "Review",
-        "description": "Review a code or document change set.",
-        "when_to_use": "Use when the user asks for a review or critique of changed content.",
-        "tags": [
-          "review",
-          "quality"
-        ],
-        "imports": [],
-        "shared": true
-      },
-      "instruction_source": {
-        "kind": "entry",
-        "path": "SKILL.md",
-        "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-        "media_type": "text/markdown",
-        "bytes": 512
-      },
-      "resources": [
-        {
-          "path": "SKILL.md",
-          "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-          "media_type": "text/markdown",
-          "bytes": 512
-        }
-      ],
-      "constraints": {
-        "instruction_only": true,
-        "executable_package": false,
-        "executable_artifacts": false,
-        "ambient_context_mutation": false
-      }
-    },
-    "expected_valid": false
-  },
-  {
-    "name": "inline_instruction_source_rejected_in_a_discovery_root_skill",
-    "input": {
-      "schema_version": "apxm.skill-package",
-      "skill_id": "review",
-      "library_id": "ops",
-      "package_version": "1.2.3",
+      "carrier_package_id": "coder",
       "metadata": {
         "name": "Review",
         "description": "Review a code or document change set.",
         "when_to_use": "Use when the user asks for a review or critique of changed content.",
         "tags": [],
         "imports": [],
-        "shared": true
+        "shared": false
       },
       "instruction_source": {
-        "kind": "inline",
+        "kind": "entry",
+        "path": "SKILL.md",
+        "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "media_type": "text/markdown",
+        "bytes": 512
+      },
+      "resources": [
+        {
+          "path": "SKILL.md",
+          "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "media_type": "text/markdown",
+          "bytes": 512
+        }
+      ],
+      "constraints": {
+        "instruction_only": true,
+        "carried_by_executable_package": true,
+        "executable_artifacts": false,
+        "ambient_context_mutation": false
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "mixed_instruction_source_branches_rejected",
+    "input": {
+      "schema_version": "apxm.package-local-skill",
+      "skill_id": "review",
+      "carrier_package_id": "coder",
+      "metadata": {
+        "name": "Review",
+        "description": "Review a code or document change set.",
+        "when_to_use": "Use when the user asks for a review or critique of changed content.",
+        "tags": [],
+        "imports": [],
+        "shared": false
+      },
+      "instruction_source": {
+        "kind": "entry",
+        "path": "SKILL.md",
+        "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
         "media_type": "text/markdown",
         "bytes": 512,
         "source_bundle_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
       },
-      "resources": [
-        {
-          "path": "SKILL.md",
-          "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-          "media_type": "text/markdown",
-          "bytes": 512
-        }
-      ],
+      "resources": [],
+      "constraints": {
+        "instruction_only": true,
+        "carried_by_executable_package": true,
+        "executable_artifacts": false,
+        "ambient_context_mutation": false
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "independent_library_and_version_rejected",
+    "input": {
+      "schema_version": "apxm.package-local-skill",
+      "skill_id": "review",
+      "carrier_package_id": "coder",
+      "library_id": "ops",
+      "package_version": "1.2.3",
+      "metadata": {
+        "name": "Review",
+        "description": "Review a code or document change set.",
+        "when_to_use": "Use when the user asks for a review or critique of changed content.",
+        "tags": [],
+        "imports": [],
+        "shared": false
+      },
+      "instruction_source": {
+        "kind": "entry",
+        "path": "SKILL.md",
+        "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "media_type": "text/markdown",
+        "bytes": 512
+      },
+      "resources": [],
+      "constraints": {
+        "instruction_only": true,
+        "carried_by_executable_package": true,
+        "executable_artifacts": false,
+        "ambient_context_mutation": false
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "discovery_root_constraint_block_rejected_in_a_package_local_skill",
+    "input": {
+      "schema_version": "apxm.package-local-skill",
+      "skill_id": "review",
+      "carrier_package_id": "coder",
+      "metadata": {
+        "name": "Review",
+        "description": "Review a code or document change set.",
+        "when_to_use": "Use when the user asks for a review or critique of changed content.",
+        "tags": [],
+        "imports": [],
+        "shared": false
+      },
+      "instruction_source": {
+        "kind": "entry",
+        "path": "SKILL.md",
+        "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "media_type": "text/markdown",
+        "bytes": 512
+      },
+      "resources": [],
       "constraints": {
         "instruction_only": true,
         "executable_package": false,
@@ -320,19 +239,18 @@
     "expected_valid": false
   },
   {
-    "name": "package_local_constraint_block_rejected_in_a_discovery_root_skill",
+    "name": "forbidden_executable_resource_rejected",
     "input": {
-      "schema_version": "apxm.skill-package",
+      "schema_version": "apxm.package-local-skill",
       "skill_id": "review",
-      "library_id": "ops",
-      "package_version": "1.2.3",
+      "carrier_package_id": "coder",
       "metadata": {
         "name": "Review",
         "description": "Review a code or document change set.",
         "when_to_use": "Use when the user asks for a review or critique of changed content.",
         "tags": [],
         "imports": [],
-        "shared": true
+        "shared": false
       },
       "instruction_source": {
         "kind": "entry",
@@ -343,10 +261,10 @@
       },
       "resources": [
         {
-          "path": "SKILL.md",
-          "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-          "media_type": "text/markdown",
-          "bytes": 512
+          "path": "build/skill.apxmobj",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "media_type": "application/octet-stream",
+          "bytes": 1024
         }
       ],
       "constraints": {

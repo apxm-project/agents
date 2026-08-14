@@ -13,6 +13,9 @@ export type CapabilityId =
   | "http_get"
   | "http_post"
   | "count_tokens"
+  | "list_skills"
+  | "search_skills"
+  | "read_skill"
   | "mcp.call"
   | "provider.call"
   | "schedule";
@@ -30,6 +33,9 @@ export const SEARCH_WEB = "search_web" satisfies CapabilityId;
 export const HTTP_GET = "http_get" satisfies CapabilityId;
 export const HTTP_POST = "http_post" satisfies CapabilityId;
 export const COUNT_TOKENS = "count_tokens" satisfies CapabilityId;
+export const LIST_SKILLS = "list_skills" satisfies CapabilityId;
+export const SEARCH_SKILLS = "search_skills" satisfies CapabilityId;
+export const READ_SKILL = "read_skill" satisfies CapabilityId;
 export const MCP_CALL = "mcp.call" satisfies CapabilityId;
 export const PROVIDER_CALL = "provider.call" satisfies CapabilityId;
 export const SCHEDULE = "schedule" satisfies CapabilityId;
@@ -48,6 +54,9 @@ export const STANDARD_BUILTIN_CAPABILITIES = [
   HTTP_GET,
   HTTP_POST,
   COUNT_TOKENS,
+  LIST_SKILLS,
+  SEARCH_SKILLS,
+  READ_SKILL,
 ] as const satisfies readonly CapabilityId[];
 export const BUILTIN_CAPABILITIES = [
   BASH,
@@ -57,6 +66,9 @@ export const BUILTIN_CAPABILITIES = [
   HTTP_GET,
   HTTP_POST,
   COUNT_TOKENS,
+  LIST_SKILLS,
+  SEARCH_SKILLS,
+  READ_SKILL,
   MCP_CALL,
   PROVIDER_CALL,
   SCHEDULE,

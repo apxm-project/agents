@@ -15,6 +15,9 @@ workspace = true
 apxm-core.workspace = true
 apxm-backends.workspace = true
 apxm-capability-iface.workspace = true
+# The skill capabilities hold every discovery root they serve against the
+# published `apxm.skill-discovery-root` contract, whose reader lives here.
+apxm-program.workspace = true
 
 # Async
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "rt", "process", "io-util", "fs"] }
@@ -38,6 +41,7 @@ tracing.workspace = true
 reqwest.workspace = true
 base64 = "0.22"
 blake3 = { workspace = true }
+sha2.workspace = true
 
 # Utilities
 uuid.workspace = true

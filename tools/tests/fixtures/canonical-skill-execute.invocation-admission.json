@@ -1,0 +1,9 @@
+{
+  "schema_version": "apxm.invocation-admission",
+  "invocation_id": "invocation.canonical-skill-fixture.1",
+  "artifact_digest": "sha256:089748b800bf5b3c3efbd3996b80280439aba3ea36039403e0927c50d1da140a",
+  "release_digest": "sha256:412624c52be347a3ed837e409e561ea3924733d2b4a4991904bfb2de8cc827d4",
+  "port_bindings_digest": "sha256:d6078eeb2622cc75cd00d9f302d10e0606a1043ad0ac6dc900f67f75016d36bd",
+  "resource_ceiling_digest": "sha256:32fe0355dd58906703ee8731a407b77831954e255a40cc9df3f6e704f8579485",
+  "provenance_digest": "sha256:de14c590c2efba25e8cea63c2031b64720052c3ba621fec810a5ccbd9d26d70b"
+}

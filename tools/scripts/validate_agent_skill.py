@@ -16,6 +16,11 @@ from pathlib import Path
 INSTRUCTIONS = "SKILL.md"
 MAX_INSTRUCTION_BYTES = 128 * 1024
 FORBIDDEN_ENTRIES = {"skill" + suffix for suffix in (".toml", ".apxmobj", ".air")}
+# Any compiled object or serialized AIR module is a deployment unit, wherever it
+# sits and whatever it is called. `apxm_program::is_executable_skill_resource`
+# states the same rule for the contract reader; the two must agree, because a
+# directory this gate accepts is a directory the runtime index will publish.
+FORBIDDEN_SUFFIXES = (".apxmobj", ".air")
 SKILL_ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
@@ -67,7 +72,10 @@ def validate(path: Path) -> int:
         if entry.is_symlink():
             fail(entry, "symlinked Agent Skill resources are not permitted")
             failures += 1
-        elif entry.is_file() and entry.name.lower() in FORBIDDEN_ENTRIES:
+        elif entry.is_file() and (
+            entry.name.lower() in FORBIDDEN_ENTRIES
+            or entry.name.lower().endswith(FORBIDDEN_SUFFIXES)
+        ):
             fail(entry, "executable skill package files are forbidden; use a separate ProgramPackage")
             failures += 1
 
@@ -76,11 +84,41 @@ def validate(path: Path) -> int:
     return int(failures > 0)
 
 
+def discover(root: Path) -> list[Path]:
+    """Every skill directory in a discovery root.
+
+    A root holds one ``<skill_id>/SKILL.md`` per skill. Directories without one
+    are not skills and are not this gate's business — that is the same rule the
+    runtime index applies, so the gate and the index see the same set.
+    """
+
+    if not root.is_dir():
+        fail(root, "not a directory")
+        return []
+    return sorted(child for child in root.iterdir() if (child / INSTRUCTIONS).is_file())
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("paths", nargs="+", type=Path, help="Agent Skill directories to validate")
+    parser.add_argument("paths", nargs="*", type=Path, help="Agent Skill directories to validate")
+    parser.add_argument(
+        "--root",
+        action="append",
+        type=Path,
+        default=[],
+        help="Discovery root to validate every skill directory in",
+    )
     args = parser.parse_args()
-    return max((validate(path) if path.is_dir() else (fail(path, "not a directory") or 1) for path in args.paths), default=0)
+
+    targets = list(args.paths)
+    for root in args.root:
+        targets.extend(discover(root))
+    if not targets:
+        parser.error("no Agent Skill directories to validate")
+    return max(
+        (validate(path) if path.is_dir() else (fail(path, "not a directory") or 1) for path in targets),
+        default=0,
+    )
 
 
 if __name__ == "__main__":

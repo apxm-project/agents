@@ -13,6 +13,14 @@
 //! (`list_local_skills`, `search_skills`, `read_local_skill`) with no
 //! handler behind them whatsoever.
 //!
+//! That last desync was closed by deleting the ids, and is now closed the other
+//! way: `list_skills`, `search_skills`, and `read_skill` are back in the
+//! allowlist *because* `apxm_capability::builtins::skills` implements them, and
+//! they appear in `implemented_ids()` below, which is what makes the re-add
+//! legitimate rather than a repeat. Deleting the handlers without deleting the
+//! ids fails `every_implemented_id_matches_a_canonical_constant_and_is_allowlisted`
+//! and `implemented_set_equals_standard_plus_dynamic_backings`.
+//!
 //! Two gaps are real architecture, not drift, and this test pins them by
 //! name rather than papering over them:
 //! - `SCHEDULE` is durable-backend-only: no runtime profile in this crate
@@ -32,14 +40,15 @@
 use apxm_capability::CapabilitySystem;
 use apxm_capability::builtins::{
     BashCapability, CountTokensCapability, HttpGetCapability, HttpPostCapability,
-    McpBridgeCapability, ProviderCallCapability, ReadCapability, SearchWebCapability, ToolsConfig,
-    WriteCapability, register_standard_tools,
+    ListSkillsCapability, McpBridgeCapability, ProviderCallCapability, ReadCapability,
+    ReadSkillCapability, SearchSkillsCapability, SearchWebCapability, ToolsConfig, WriteCapability,
+    register_standard_tools,
 };
 use apxm_capability::executor::CapabilityExecutor;
 use apxm_core::constants::capabilities::{
-    BUILTINS, MCP_CALL, PROVIDER_CALL, SCHEDULE, STANDARD_BUILTINS,
+    BUILTIN_GROUPS, BUILTINS, MCP_CALL, PROVIDER_CALL, SCHEDULE, STANDARD_BUILTINS, groups,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 fn set_of(items: &[&str]) -> BTreeSet<String> {
     items.iter().map(|s| (*s).to_string()).collect()
@@ -68,8 +77,43 @@ fn implemented_ids() -> BTreeSet<String> {
         Box::new(CountTokensCapability::new()),
         Box::new(McpBridgeCapability::new()),
         Box::new(ProviderCallCapability::new()),
+        Box::new(ListSkillsCapability::new()),
+        Box::new(SearchSkillsCapability::new()),
+        Box::new(ReadSkillCapability::new()),
     ];
     caps.iter().map(|c| c.metadata().name.clone()).collect()
+}
+
+/// The group tags each implemented builtin reports, inverted into
+/// group -> members. `builtin_group` is a name an author may declare in a
+/// package, so a group with no member capability is the same failure as an
+/// allowlisted id with no handler: it lints clean and binds nothing.
+fn group_members() -> BTreeMap<String, BTreeSet<String>> {
+    let caps: Vec<Box<dyn CapabilityExecutor>> = vec![
+        Box::new(BashCapability::new()),
+        Box::new(ReadCapability::new()),
+        Box::new(WriteCapability::new()),
+        Box::new(SearchWebCapability::new()),
+        Box::new(HttpGetCapability::new()),
+        Box::new(HttpPostCapability::new()),
+        Box::new(CountTokensCapability::new()),
+        Box::new(McpBridgeCapability::new()),
+        Box::new(ProviderCallCapability::new()),
+        Box::new(ListSkillsCapability::new()),
+        Box::new(SearchSkillsCapability::new()),
+        Box::new(ReadSkillCapability::new()),
+    ];
+    let mut members: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for capability in &caps {
+        let metadata = capability.metadata();
+        for group in &metadata.groups {
+            members
+                .entry(group.clone())
+                .or_default()
+                .insert(metadata.name.clone());
+        }
+    }
+    members
 }
 
 #[test]
@@ -136,4 +180,41 @@ fn allowlist_residual_beyond_registered_and_implemented_is_exactly_the_durable_s
     covered.insert(PROVIDER_CALL.to_string());
     let residual: BTreeSet<String> = allowlist.difference(&covered).cloned().collect();
     assert_eq!(residual, set_of(&[SCHEDULE]));
+}
+
+/// `builtin_group = "skills"` used to resolve to nothing: the group was in
+/// `BUILTIN_GROUPS`, so `agent lint` accepted a package declaring it, and no
+/// capability carried the tag, so it bound nothing at load. That is the
+/// allowlist-without-handler failure one level up, and this pins it closed.
+///
+/// The remaining empty groups are named individually rather than tolerated as a
+/// class, so the next group to gain a member shrinks this list in review
+/// instead of silently passing.
+#[test]
+fn declared_builtin_groups_resolve_to_member_capabilities() {
+    let members = group_members();
+    for group in [groups::SKILLS, groups::DISCOVERY] {
+        let bound = members.get(group);
+        assert!(
+            bound.is_some_and(|ids| !ids.is_empty()),
+            "builtin group '{group}' is declarable but no capability carries it"
+        );
+    }
+    assert_eq!(
+        members.get(groups::SKILLS),
+        Some(&set_of(&["list_skills", "read_skill", "search_skills"])),
+        "the skills group is exactly the three implemented skill capabilities"
+    );
+
+    let unbound: BTreeSet<&str> = BUILTIN_GROUPS
+        .iter()
+        .copied()
+        .filter(|group| !members.contains_key(*group))
+        .collect();
+    assert_eq!(
+        unbound,
+        BTreeSet::from([groups::AUTHORING, groups::TASK, groups::AGENT_MANAGEMENT]),
+        "an author may declare these groups today and bind nothing; that is the \
+         residual this test exists to keep visible and shrinking"
+    );
 }

@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.package-local-skill",
+  "title": "PackageLocalSkill",
+  "description": "Canonical instruction-only Agent Skill carried inside an executable Agent Program package at `skills/<skill_id>/SKILL.md`. It is the sibling of `apxm.skill-package`, not a relaxation of it: a discovery-root skill is a standalone package that asserts `executable_package: false`, while this one is carried by an executable package and asserts `carried_by_executable_package: true`. Because it is carried, it has no independent identity or version — it names its carrier and versions with it — and its `resources` list only the extra files it carries beyond its instruction source, so that list may be empty. The shared shapes (`SkillMetadata`, `ResourceEntry`, and both `instruction_source` branches) are referenced from `apxm.skill-package` so a single definition serves both contracts.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "skill_id",
+    "carrier_package_id",
+    "metadata",
+    "instruction_source",
+    "resources",
+    "constraints"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "apxm.package-local-skill"
+    },
+    "skill_id": {
+      "description": "Unique within the carrying package. It is also the `skills/<skill_id>/` directory name when the instruction source is file-carried.",
+      "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+    },
+    "carrier_package_id": {
+      "description": "The `apxm.agent` package that carries this skill. A package-local skill states no `library_id` and no `package_version` of its own: it has no identity or lifecycle apart from its carrier.",
+      "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+    },
+    "metadata": {
+      "$ref": "apxm.skill-package#/$defs/SkillMetadata"
+    },
+    "instruction_source": {
+      "description": "Where this skill's instructions live, discriminated by `kind`. Exactly one branch may be given, and the two reach the artifact digest by different routes: `entry` is a package path hashed into the carrier's integrity chain, `inline` is program source already inside the source-bundle digest. Both branches are admissible here because a carried skill does have an Agent Program source bundle to be part of.",
+      "oneOf": [
+        {
+          "$ref": "apxm.skill-package#/$defs/InstructionEntrySource"
+        },
+        {
+          "$ref": "apxm.skill-package#/$defs/InstructionInlineSource"
+        }
+      ]
+    },
+    "resources": {
+      "description": "Only the extra files this skill carries beyond its instruction source, relative to `skills/<skill_id>/`. The instruction source is stated once, in `instruction_source`, and is never repeated here — unlike a discovery-root skill, whose `resources` are its complete package inventory. A skill that carries nothing beyond its instructions states an empty list.",
+      "type": "array",
+      "minItems": 0,
+      "items": {
+        "$ref": "apxm.skill-package#/$defs/ResourceEntry"
+      }
+    },
+    "constraints": {
+      "type": "object",
+      "required": [
+        "instruction_only",
+        "carried_by_executable_package",
+        "executable_artifacts",
+        "ambient_context_mutation"
+      ],
+      "properties": {
+        "instruction_only": {
+          "const": true
+        },
+        "carried_by_executable_package": {
+          "description": "This skill is carried inside an executable Agent Program package. Being carried by one does not make the skill executable: `executable_artifacts` stays false, so the skill contributes instructions and ordinary resources and never a handler, artifact, or runtime selector.",
+          "const": true
+        },
+        "executable_artifacts": {
+          "const": false
+        },
+        "ambient_context_mutation": {
+          "const": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

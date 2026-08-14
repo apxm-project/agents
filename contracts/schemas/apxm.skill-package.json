@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "apxm.skill-package",
-  "title": "SkillPackage",
-  "description": "Canonical instruction-only Agent Skill package metadata. It binds one SKILL.md entry plus ordinary non-executable resources, discovery metadata, and deterministic file digests without introducing executable artifacts, package-local handlers, runtime selectors, or product-specific configuration.",
+  "title": "DiscoveryRootSkillPackage",
+  "description": "Canonical instruction-only Agent Skill package published in a skill discovery root. It is a standalone package: it carries its own identity, version, and complete file inventory, and it is not an executable Agent Program package and is not carried inside one. A skill carried inside an executable package is the separate `apxm.package-local-skill` contract, which states a different constraint block rather than weakening this one. This schema also owns the shared skill definitions both contracts reference: `SkillMetadata`, `ResourceEntry`, and the two `instruction_source` branches.",
   "type": "object",
   "required": [
     "schema_version",
@@ -10,7 +10,7 @@
     "library_id",
     "package_version",
     "metadata",
-    "instruction_entry",
+    "instruction_source",
     "resources",
     "constraints"
   ],
@@ -31,10 +31,12 @@
     "metadata": {
       "$ref": "#/$defs/SkillMetadata"
     },
-    "instruction_entry": {
-      "$ref": "#/$defs/InstructionEntry"
+    "instruction_source": {
+      "description": "Where this skill's instructions live. A discovery-root skill is standalone: it has no Agent Program source bundle for instructions to be part of, so only the file-carried `entry` branch is admissible here. The `kind` discriminant is still on the wire, so a document declaring `inline` is rejected rather than silently reinterpreted.",
+      "$ref": "#/$defs/InstructionEntrySource"
     },
     "resources": {
+      "description": "The complete file inventory of the standalone package, including the instruction entry itself. A discovery-root skill's `package_digest` is taken over exactly this set.",
       "type": "array",
       "minItems": 1,
       "items": {
@@ -54,6 +56,7 @@
           "const": true
         },
         "executable_package": {
+          "description": "A discovery-root skill is not an executable Agent Program package. Its package-local sibling replaces this key with `carried_by_executable_package`, which asserts the opposite relationship rather than negating this one.",
           "const": false
         },
         "executable_artifacts": {
@@ -119,15 +122,20 @@
       },
       "additionalProperties": false
     },
-    "InstructionEntry": {
+    "InstructionEntrySource": {
+      "description": "Instructions carried as a file at `SKILL.md`. The path is hashed into the carrying package's integrity chain, so editing the file changes the artifact digest by way of that chain.",
       "type": "object",
       "required": [
+        "kind",
         "path",
         "digest",
         "media_type",
         "bytes"
       ],
       "properties": {
+        "kind": {
+          "const": "entry"
+        },
         "path": {
           "const": "SKILL.md"
         },
@@ -140,6 +148,32 @@
         "bytes": {
           "type": "integer",
           "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "InstructionInlineSource": {
+      "description": "Instructions written inline in Agent Program source rather than carried as a package file. There is no package path and no per-file digest to state: the instruction text is already inside the source bundle, so `source_bundle_digest` is the integrity anchor. Editing inline instructions changes the artifact digest through the source-bundle digest, not through a package file digest.",
+      "type": "object",
+      "required": [
+        "kind",
+        "media_type",
+        "bytes",
+        "source_bundle_digest"
+      ],
+      "properties": {
+        "kind": {
+          "const": "inline"
+        },
+        "media_type": {
+          "const": "text/markdown"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "source_bundle_digest": {
+          "$ref": "apxm.contract-common.v1#/$defs/Digest"
         }
       },
       "additionalProperties": false

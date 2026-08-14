@@ -125,6 +125,12 @@ jobs:
       - name: Check the de-versioning sweep is complete
         run: dekk agents check-deversion
 
+      # The project discovery root is what `list_skills` / `read_skill` serve at
+      # runtime, so a skill directory that fails this gate is one the runtime
+      # index would refuse. Cheap and deterministic, so it runs before any build.
+      - name: Validate the checked-in Agent Skills
+        run: dekk agents check-agent-skills
+
       - name: Check generated metadata, parity, and compiler types
         run: dekk agents check
 

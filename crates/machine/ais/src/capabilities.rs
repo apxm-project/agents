@@ -23,15 +23,28 @@ pub const MCP_CALL: &str = "mcp.call";
 /// per-action ids for a declared `kind = "provider"` pack entry.
 pub const PROVIDER_CALL: &str = "provider.call";
 
-// `capability_discovery`, `list_local_skills`, `search_skills`, and
-// `read_local_skill` used to live here. `capability_discovery` had no
-// implementation anywhere (superseded by the generic `builtin_group =
-// "discovery"` grouping — see `groups::DISCOVERY` / `BUILTIN_GROUPS` below)
-// and was deleted outright. The three skills ids were allowlisted with no
-// handler behind them — `agent lint` accepted a package declaring an
-// unexecutable capability. Track L implements skills discovery for real and
-// re-adds it here under the settled name `read_skill` (not
-// `read_local_skill`), plus its list/search siblings.
+// `capability_discovery` used to live here too. It had no implementation
+// anywhere — superseded by the generic `builtin_group = "discovery"` grouping,
+// see `groups::DISCOVERY` / `BUILTIN_GROUPS` below — and was deleted outright.
+//
+// The three skill-discovery ids below were also removed once, for a different
+// reason: they were allowlisted with no handler behind them, so `agent lint`
+// accepted a package declaring a capability that could never execute. They are
+// back because `apxm_capability::builtins::skills` implements them, under the
+// settled name `read_skill` (not `read_local_skill`) and its list/search
+// siblings. That ordering — handler first, id second — is the rule the earlier
+// state broke, and the gate-3 inventory test in
+// `crates/runtime/capability/tests/` is what holds it: an id here with no
+// implementation reporting it fails that test.
+
+/// Metadata-only listing of the skills a configured discovery root publishes.
+/// Listing never loads an instruction body.
+pub const LIST_SKILLS: &str = "list_skills";
+/// Metadata-only search over the same discovery cards `LIST_SKILLS` returns.
+pub const SEARCH_SKILLS: &str = "search_skills";
+/// Load exactly one skill's instruction body by id. The only one of the three
+/// that activates a skill rather than advertising it.
+pub const READ_SKILL: &str = "read_skill";
 
 /// Event-driven scheduling tool (durable one-shot / recurring wakeups).
 /// Unimplemented in this crate today; registered only by a runtime profile
@@ -58,6 +71,11 @@ pub mod groups {
     pub const SEARCH: &str = "search";
     pub const WEB_SEARCH: &str = "web:search";
     pub const DISCOVERY: &str = "discovery";
+    /// Members: `list_skills`, `search_skills`, `read_skill`. Declaring this
+    /// group used to resolve to no capability at all — it lint-checked clean
+    /// and bound nothing — which is the same fraud as an allowlisted id with
+    /// no handler, one level up. The membership test in
+    /// `crates/runtime/capability/tests/` now holds it non-empty.
     pub const SKILLS: &str = "skills";
     pub const AUTHORING: &str = "authoring";
     pub const TASK: &str = "task";
@@ -77,6 +95,9 @@ pub const STANDARD_BUILTINS: &[&str] = &[
     HTTP_GET,
     HTTP_POST,
     COUNT_TOKENS,
+    LIST_SKILLS,
+    SEARCH_SKILLS,
+    READ_SKILL,
 ];
 
 /// Durable agent-management builtins. Runtime crates register these only when
@@ -102,6 +123,9 @@ pub const BUILTINS: &[&str] = &[
     HTTP_GET,
     HTTP_POST,
     COUNT_TOKENS,
+    LIST_SKILLS,
+    SEARCH_SKILLS,
+    READ_SKILL,
     MCP_CALL,
     PROVIDER_CALL,
     SCHEDULE,

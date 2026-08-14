@@ -1428,6 +1428,68 @@ mod tests {
         );
     }
 
+    /// The skill-discovery ids are grantable *because* something implements
+    /// them, and the ids that were removed for having no handler are still
+    /// refused.
+    ///
+    /// This is the asymmetry the whole re-add rests on. `list_skills`,
+    /// `search_skills`, and `read_skill` are back in the built-in allowlist
+    /// only because `apxm_capability::builtins::skills` supplies handlers for
+    /// them, so a package may decide about them. `read_local_skill` and
+    /// `list_local_skills` are the exact ids that were once allowlisted with
+    /// nothing behind them — the state where `agent lint` accepted a package
+    /// declaring a capability that could never execute. A package naming one
+    /// today fails, and it fails for the right reason: nothing grants it.
+    #[test]
+    fn lint_grants_the_implemented_skill_capabilities_and_still_refuses_the_unimplemented_ones() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("skills");
+        scaffold(&root, "skills");
+        let agent_path = root.join("agent.toml");
+        let scaffolded = fs::read_to_string(&agent_path).unwrap();
+        let without_permissions = scaffolded
+            .split("[permissions]")
+            .next()
+            .expect("the scaffolded manifest states [permissions] last")
+            .to_string();
+
+        let grantable = granted_capability_ids(&root).unwrap();
+        for implemented in ["list_skills", "search_skills", "read_skill"] {
+            assert!(
+                grantable.contains(implemented),
+                "'{implemented}' has a handler, so a package may decide about it"
+            );
+            fs::write(
+                &agent_path,
+                format!("{without_permissions}[permissions]\n{implemented} = \"ask\"\n"),
+            )
+            .unwrap();
+            agent_lint(&root, None, true)
+                .unwrap_or_else(|e| panic!("deciding about {implemented} must resolve: {e}"));
+        }
+
+        for unimplemented in ["read_local_skill", "list_local_skills"] {
+            assert!(
+                !grantable.contains(unimplemented),
+                "'{unimplemented}' has no handler and must not be grantable"
+            );
+            fs::write(
+                &agent_path,
+                format!("{without_permissions}[permissions]\n{unimplemented} = \"allow\"\n"),
+            )
+            .unwrap();
+            agent_lint(&root, None, true).unwrap_err();
+            let refusals =
+                check_permission_resolution(&load_agent(&root).unwrap(), &BTreeSet::new());
+            assert!(
+                refusals
+                    .iter()
+                    .any(|refusal| refusal.contains("never requested")),
+                "a skill capability with no handler must fail lint, got: {refusals:?}"
+            );
+        }
+    }
+
     /// A capability's decision and the reason declared beside it survive into
     /// the one place a decision is now stated.
     #[test]
@@ -1622,6 +1684,22 @@ mod tests {
             .expect("local build sidecars do not violate the folder contract");
     }
 
+    /// The folder contract still refuses `skills/`, deliberately.
+    ///
+    /// `apxm.package-local-skill` describes a skill carried inside an
+    /// executable package at `skills/<skill_id>/SKILL.md`, and it has a reader
+    /// and vectors — the shape is settled. The folder allowlist is a separate
+    /// question, and it stays closed because nothing authors such a skill yet:
+    /// no frontend emits one and no loader reads one off disk. Opening the
+    /// allowlist first would make `agent lint` accept a directory the machine
+    /// cannot do anything with, which is precisely the failure that put
+    /// `read_local_skill` on the built-in allowlist with no handler behind it.
+    /// The ordering is the same either way — the thing that consumes the path
+    /// lands first, then the path is recognized.
+    ///
+    /// Concretely: recognizing `skills/` would put those files into
+    /// `walk_recognized_files`, and therefore into every package's generated
+    /// integrity chain, on behalf of a producer that does not exist.
     #[test]
     fn agent_package_rejects_local_skill_resources() {
         assert!(!recognized_relpath("skills/review/SKILL.md"));

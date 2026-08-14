@@ -17,6 +17,9 @@ CapabilityId: TypeAlias = Literal[
     "http_get",
     "http_post",
     "count_tokens",
+    "list_skills",
+    "search_skills",
+    "read_skill",
     "mcp.call",
     "provider.call",
     "schedule",
@@ -36,6 +39,9 @@ SEARCH_WEB: Final[CapabilityId] = "search_web"
 HTTP_GET: Final[CapabilityId] = "http_get"
 HTTP_POST: Final[CapabilityId] = "http_post"
 COUNT_TOKENS: Final[CapabilityId] = "count_tokens"
+LIST_SKILLS: Final[CapabilityId] = "list_skills"
+SEARCH_SKILLS: Final[CapabilityId] = "search_skills"
+READ_SKILL: Final[CapabilityId] = "read_skill"
 MCP_CALL: Final[CapabilityId] = "mcp.call"
 PROVIDER_CALL: Final[CapabilityId] = "provider.call"
 SCHEDULE: Final[CapabilityId] = "schedule"
@@ -54,6 +60,9 @@ STANDARD_BUILTIN_CAPABILITIES: Final[tuple[CapabilityId, ...]] = (
     HTTP_GET,
     HTTP_POST,
     COUNT_TOKENS,
+    LIST_SKILLS,
+    SEARCH_SKILLS,
+    READ_SKILL,
 )
 BUILTIN_CAPABILITIES: Final[tuple[CapabilityId, ...]] = (
     BASH,
@@ -63,6 +72,9 @@ BUILTIN_CAPABILITIES: Final[tuple[CapabilityId, ...]] = (
     HTTP_GET,
     HTTP_POST,
     COUNT_TOKENS,
+    LIST_SKILLS,
+    SEARCH_SKILLS,
+    READ_SKILL,
     MCP_CALL,
     PROVIDER_CALL,
     SCHEDULE,
@@ -85,6 +97,9 @@ __all__ = [
     "HTTP_GET",
     "HTTP_POST",
     "COUNT_TOKENS",
+    "LIST_SKILLS",
+    "SEARCH_SKILLS",
+    "READ_SKILL",
     "MCP_CALL",
     "PROVIDER_CALL",
     "SCHEDULE",

@@ -164,5 +164,80 @@
       }
     },
     "expected_valid": false
+  },
+  {
+    "name": "unsorted_skill_cards_rejected",
+    "input": {
+      "schema_version": "apxm.skill-discovery-root",
+      "root_id": "project-root",
+      "root_tier": "project",
+      "root_ref": "skills://project/root",
+      "discovery_mode": "metadata_only",
+      "skill_cards": [
+        {
+          "skill_id": "triage",
+          "library_id": "ops",
+          "package_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+          "instruction_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+          "name": "Triage",
+          "description": "Classify and route an incoming problem.",
+          "when_to_use": "Use when the user needs an issue sorted or prioritized before deeper work.",
+          "tags": [],
+          "imports": [],
+          "shared": false
+        },
+        {
+          "skill_id": "review",
+          "library_id": "ops",
+          "package_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "instruction_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "name": "Review",
+          "description": "Review a code or document change set.",
+          "when_to_use": "Use when the user asks for a review or critique of changed content.",
+          "tags": [],
+          "imports": [],
+          "shared": false
+        }
+      ],
+      "constraints": {
+        "body_loaded_on_call": true,
+        "activates_on_listing": false,
+        "mutates_authority": false
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "unsorted_card_imports_rejected",
+    "input": {
+      "schema_version": "apxm.skill-discovery-root",
+      "root_id": "project-root",
+      "root_tier": "project",
+      "root_ref": "skills://project/root",
+      "discovery_mode": "metadata_only",
+      "skill_cards": [
+        {
+          "skill_id": "review",
+          "library_id": "ops",
+          "package_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "instruction_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "name": "Review",
+          "description": "Review a code or document change set.",
+          "when_to_use": "Use when the user asks for a review or critique of changed content.",
+          "tags": [],
+          "imports": [
+            "shared-core",
+            "ops::lint"
+          ],
+          "shared": false
+        }
+      ],
+      "constraints": {
+        "body_loaded_on_call": true,
+        "activates_on_listing": false,
+        "mutates_authority": false
+      }
+    },
+    "expected_valid": false
   }
 ]

@@ -19,6 +19,7 @@ pub mod frontend_graph;
 pub mod grammar;
 pub mod lower;
 pub mod runtime_evidence;
+pub mod skill;
 pub mod source_map;
 
 pub use air::{AirModule, SemanticOpKind, StructuralOpKind, verify_air_json};
@@ -51,5 +52,11 @@ pub use runtime_evidence::{
     InvocationState, LoopIterationCompletedFact, LoopMembership, ModelAttemptRecordedFact,
     ModelOutcome, NodeExecutionRecordedFact, NodeExecutionScope, ProgramIdentity, RuntimeEvidence,
     RuntimeFact, verify_runtime_evidence_json,
+};
+pub use skill::{
+    DiscoveryRootSkill, InstructionEntrySource, InstructionInlineSource, InstructionSource,
+    PackageLocalSkill, ResourceEntry, RootTier, SkillCard, SkillDiscoveryRoot, SkillMetadata,
+    is_executable_skill_resource, verify_package_local_skill_json,
+    verify_skill_discovery_root_json, verify_skill_package_json,
 };
 pub use source_map::{SourceLanguage, SourceMap, verify_source_map_json};
