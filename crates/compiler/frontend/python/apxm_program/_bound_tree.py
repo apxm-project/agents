@@ -141,6 +141,20 @@ class BoundContextEdge:
 
 
 @dataclass(frozen=True, slots=True)
+class BoundCapabilityRequirement:
+    """One authored Capability declaration.
+
+    Declarations are held one per authored binding, never one per
+    ``capability_ref``: the same capability declared as both a Tool and a plain
+    Capability is two distinct requirements and both reach the FrontendGraph.
+    """
+
+    capability_ref: str
+    tool_schema_present: bool
+    requested_permission: Optional[str] = None
+
+
+@dataclass(frozen=True, slots=True)
 class BoundProgram:
     """The immutable bound tree for one authored Agent program."""
 
@@ -160,7 +174,7 @@ class BoundProgram:
     context_edges: tuple[BoundContextEdge, ...] = ()
     hooks: tuple[BoundHook, ...] = ()
     imported_programs: tuple[tuple[str, str, str, str], ...] = ()
-    capability_requirements: tuple[tuple[str, bool], ...] = ()
+    capability_requirements: tuple[BoundCapabilityRequirement, ...] = ()
     model_requirements: tuple[str, ...] = ()
     spans: tuple[tuple[str, Span, str], ...] = field(default=())
 

@@ -72,6 +72,21 @@ const Support = Agent({
   },
 });
 
+const AuditCapability = Capability("cap.audit");
+const AuditModel = Model("audit.model");
+const AuditTool = Tool("cap.audit", { requestedPermission: "cap.audit.read" });
+
+const Auditor = Agent({
+  name: "Auditor",
+  source,
+  use: { AuditCapability, AuditModel, AuditTool },
+  async run(_agent, request) {
+    const findings = await AuditTool(request);
+    const archived = await AuditCapability(findings);
+    return await AuditModel(archived);
+  },
+});
+
 const SupportPolicy = Hook.before({
   agent: Support,
   target: SupportModel,
@@ -109,7 +124,11 @@ type Graph = {
   context_flow: Array<{ from_node: string; to_node: string }>;
   hook_bindings: Array<{ scope: string; phase: string }>;
   imported_program_refs: Array<{ program_ref: string }>;
-  capability_requirements: Array<{ capability_ref: string; tool_schema_present: boolean }>;
+  capability_requirements: Array<{
+    capability_ref: string;
+    tool_schema_present: boolean;
+    requested_permission?: string;
+  }>;
   source_map: { node_spans: Array<{ source_file: string }> };
 };
 
@@ -203,6 +222,22 @@ describe("source-first TypeScript authoring", () => {
       expect.objectContaining({ program_ref: "Specialist" }),
     ]);
     expect(Support.diagnostics()).toBeNull();
+  });
+
+  it("keeps both declarations of one capability and the permission each requested", () => {
+    const graph = Auditor.frontendGraph() as unknown as Graph;
+
+    // Keying requirements by capability_ref would drop one of these two. The
+    // order matches the Python frontend's, which the parity gate compares.
+    expect(graph.capability_requirements).toEqual([
+      { capability_ref: "cap.audit", tool_schema_present: false },
+      {
+        capability_ref: "cap.audit",
+        tool_schema_present: true,
+        requested_permission: "cap.audit.read",
+      },
+    ]);
+    expect(Auditor.diagnostics()).toBeNull();
   });
 
   it("reuses named values and allocates instance identities like the Python frontend", () => {

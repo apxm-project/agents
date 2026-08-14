@@ -19,12 +19,12 @@ pub use operations::{
     ARTIFACT_OPERATION_KIND_ENTRIES_FILE, ContextStyle, MlirEmissionSpec, MlirResultType,
     OP_SPEC_CATALOG_FILE, OP_SPEC_SCHEMA_VERSION, OP_SPEC_VECTORS_FILE,
     OP_SPEC_VECTORS_SCHEMA_VERSION, OperationCategory, OperationField, OperationLatency,
-    OperationSpec, SEMANTIC_TABLEGEN_DECLARATIONS_FILE, STRUCTURAL_TABLEGEN_DECLARATIONS_FILE,
-    SemanticOpKind, StructuralOpKind, WIRE_INDEXED_OPERATIONS,
-    generate_artifact_operation_kind_cases, generate_artifact_operation_kind_entries,
-    generate_op_spec_catalog, generate_op_spec_vectors, generate_semantic_tablegen_declarations,
-    generate_structural_tablegen_declarations, get_all_operations, get_operation_spec,
-    render_op_spec_files,
+    OperationSpec, SEMANTIC_TABLEGEN_DECLARATIONS_FILE, SLOT_CARRIED, SLOT_INITIAL, SLOT_OUTPUT,
+    STRUCTURAL_OPERAND_SLOTS, STRUCTURAL_TABLEGEN_DECLARATIONS_FILE, SemanticOpKind,
+    StructuralOpKind, WIRE_INDEXED_OPERATIONS, generate_artifact_operation_kind_cases,
+    generate_artifact_operation_kind_entries, generate_op_spec_catalog, generate_op_spec_vectors,
+    generate_semantic_tablegen_declarations, generate_structural_tablegen_declarations,
+    get_all_operations, get_operation_spec, operand_slots, render_op_spec_files,
 };
 pub use types::Value;
 pub use validation::{

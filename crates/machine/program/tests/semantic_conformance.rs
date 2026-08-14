@@ -4,9 +4,14 @@
 
 mod common;
 
+use std::collections::HashSet;
+
 use apxm_program::air::{SemanticOpKind, StructuralOpKind};
+use apxm_program::frontend_graph::CapabilityRequirement;
 use apxm_program::source_map::{RegionAnnotationKind, SourceLanguage};
-use apxm_program::{verify_air_json, verify_frontend_graph_json, verify_source_map_json};
+use apxm_program::{
+    FrontendGraph, verify_air_json, verify_frontend_graph_json, verify_source_map_json,
+};
 use common::{Vector, load_contract, load_vectors, schema_enum};
 use serde_json::Value;
 use serde_json::json;
@@ -36,6 +41,86 @@ fn frontend_graph_vectors_match_verifier() {
     check("apxm.frontend-graph.json", |v| {
         verify_frontend_graph_json(v).is_accepted()
     });
+}
+
+/// `CapabilityRequirement` is closed on both sides — `additionalProperties:
+/// false` in the published schema, `deny_unknown_fields` in Rust — so a field
+/// added to one side only either fails decode or is silently dropped. The two
+/// field sets are held equal here, in both directions.
+#[test]
+fn capability_requirement_field_set_is_closed_identically_in_schema_and_rust() {
+    let schema = load_contract("schemas/apxm.frontend-graph.json");
+    let requirement = &schema["$defs"]["CapabilityRequirement"];
+    assert_eq!(
+        requirement["additionalProperties"],
+        json!(false),
+        "the published CapabilityRequirement must stay closed"
+    );
+    let published: Vec<&str> = requirement["properties"]
+        .as_object()
+        .expect("CapabilityRequirement properties")
+        .keys()
+        .map(String::as_str)
+        .collect();
+
+    // Serializing a requirement with every optional field present names exactly
+    // the fields Rust can emit.
+    let populated = CapabilityRequirement {
+        capability_ref: "cap.search".to_string(),
+        tool_schema_present: Some(true),
+        requested_permission: Some("cap.search.read".to_string()),
+    };
+    let encoded = serde_json::to_value(&populated).expect("encode requirement");
+    let mut emitted: Vec<String> = encoded
+        .as_object()
+        .expect("requirement object")
+        .keys()
+        .cloned()
+        .collect();
+    emitted.sort();
+    let mut declared: Vec<String> = published.iter().map(|key| (*key).to_string()).collect();
+    declared.sort();
+    assert_eq!(
+        emitted, declared,
+        "the Rust CapabilityRequirement fields drifted from the published schema"
+    );
+
+    // Every schema-declared field decodes, and nothing else does.
+    let decoded: CapabilityRequirement =
+        serde_json::from_value(encoded).expect("every published field decodes");
+    assert_eq!(decoded, populated);
+    let unknown = json!({"capability_ref": "cap.search", "granted_permission": "cap.search.write"});
+    serde_json::from_value::<CapabilityRequirement>(unknown)
+        .expect_err("an unknown CapabilityRequirement field must fail decode");
+}
+
+/// A permission the author never wrote must never appear, and one the author did
+/// write must never be dropped by a repeated declaration of the same capability.
+#[test]
+fn repeated_capability_declarations_each_keep_their_own_permission() {
+    let graph = load_vectors("apxm.frontend-graph.json")
+        .into_iter()
+        .find(|vector| {
+            vector.name == "capability-requirement-permission-and-repeated-declaration-accepted"
+        })
+        .expect("permissioned capability requirement vector")
+        .input;
+    assert!(verify_frontend_graph_json(&graph).is_accepted());
+
+    let decoded: FrontendGraph = serde_json::from_value(graph).expect("decode graph");
+    let requirements = &decoded.capability_requirements;
+    assert_eq!(requirements.len(), 2);
+    assert!(
+        requirements
+            .iter()
+            .all(|requirement| requirement.capability_ref == "cap.search"),
+        "both declarations name the same capability and both survive"
+    );
+    assert_eq!(
+        requirements[0].requested_permission.as_deref(),
+        Some("cap.search.read")
+    );
+    assert_eq!(requirements[1].requested_permission, None);
 }
 
 #[test]
@@ -229,6 +314,67 @@ fn air_semantic_op_enum_does_not_drift() {
         5,
         "AIR exposes exactly five semantic operations"
     );
+}
+
+/// The `Operand.slot` closure is derived from the AIS catalogue's field
+/// signatures plus the compiler-emitted structural slots, never from the
+/// schema's prose. Prose drifted from lowering before this closed the set.
+#[test]
+fn air_operand_slot_enum_does_not_drift() {
+    let schema = load_contract("schemas/apxm.air.json");
+    let published = schema_enum(&schema, "Operand", "slot");
+    let mut owned: Vec<String> = apxm_ais::operand_slots()
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    owned.sort();
+    assert_eq!(
+        published, owned,
+        "the AIR operand slot closure drifted from the AIS operand catalogue"
+    );
+
+    // Closing an enum can only narrow, so every slot in every AIR document the
+    // repository checks in or generates has to be a member.
+    let published: HashSet<&str> = published.iter().map(String::as_str).collect();
+    let mut documents: Vec<(String, Value)> = load_vectors("apxm.air.json")
+        .into_iter()
+        .filter(|vector| vector.expected_valid)
+        .map(|vector| (vector.name, vector.input))
+        .collect();
+    for artifact in ["conversational-python", "conversational-typescript"] {
+        documents.push((artifact.to_string(), load_example_artifact(artifact)["air"].clone()));
+    }
+    for (name, document) in documents {
+        for slot in operand_slots_in(&document) {
+            assert!(
+                published.contains(slot.as_str()),
+                "AIR document '{name}' names operand slot '{slot}', which the published enum omits"
+            );
+        }
+    }
+}
+
+/// Every `slot` value anywhere in one AIR document.
+fn operand_slots_in(document: &Value) -> Vec<String> {
+    match document {
+        Value::Object(fields) => fields
+            .iter()
+            .flat_map(|(key, value)| match (key.as_str(), value.as_str()) {
+                ("slot", Some(slot)) => vec![slot.to_string()],
+                _ => operand_slots_in(value),
+            })
+            .collect(),
+        Value::Array(items) => items.iter().flat_map(operand_slots_in).collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn load_example_artifact(name: &str) -> Value {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/example-artifacts")
+        .join(format!("{name}.json"));
+    let text = std::fs::read_to_string(&path).expect("read generated example artifact");
+    serde_json::from_str(&text).expect("parse generated example artifact")
 }
 
 #[test]

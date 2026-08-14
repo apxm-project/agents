@@ -5,7 +5,7 @@
 //! validating digest-bound artifact whose requirements come from the declared
 //! graph requirements.
 
-use apxm_program::{ExecutableArtifact, FrontendGraph, frontend_graph_to_air};
+use apxm_program::{ExecutableArtifact, FrontendGraph, SourceBundle, frontend_graph_to_air};
 use serde_json::{Value, json};
 
 fn generic_graph_value() -> Value {
@@ -168,6 +168,76 @@ fn generic_graph_produces_validating_artifact() {
     assert!(artifact.validate().is_accepted());
     assert_eq!(artifact.entrypoints[0].program_id, "Worker");
     assert_eq!(artifact.artifact_semantic_requirements.len(), 2);
+}
+
+/// The same capability declared twice — once as a model-visible Tool carrying an
+/// authored permission, once as a plain Capability carrying none. Keying the
+/// collection by `capability_ref` would drop one of the two.
+fn duplicate_declaration_graph_value(permission: Option<&str>) -> Value {
+    let mut tool = json!({"capability_ref": "cap.search", "tool_schema_present": true});
+    if let Some(permission) = permission {
+        tool["requested_permission"] = json!(permission);
+    }
+    let mut value = generic_graph_value();
+    value["capability_requirements"] =
+        json!([tool, {"capability_ref": "cap.search", "tool_schema_present": false}]);
+    value
+}
+
+#[test]
+fn an_authored_permission_survives_graph_air_and_artifact() {
+    let authored = duplicate_declaration_graph_value(Some("search.read"));
+    let graph: FrontendGraph = serde_json::from_value(authored).expect("permissioned graph");
+
+    // Boundary 1 — decode keeps both declarations of the shared ref and the
+    // authored permission attached to the declaration that requested it.
+    assert_eq!(graph.capability_requirements.len(), 2);
+    assert_eq!(
+        graph.capability_requirements[0].requested_permission.as_deref(),
+        Some("search.read")
+    );
+    assert_eq!(graph.capability_requirements[1].requested_permission, None);
+    assert!(graph.verify().is_accepted());
+
+    // Boundary 2 — re-encoding emits the authored permission and omits the
+    // absent one, so a graph that round-trips through JSON is unchanged.
+    let encoded = serde_json::to_value(&graph).expect("re-encode graph");
+    assert_eq!(
+        encoded["capability_requirements"][0]["requested_permission"],
+        json!("search.read")
+    );
+    assert_eq!(
+        encoded["capability_requirements"][1].get("requested_permission"),
+        None
+    );
+    let decoded: FrontendGraph = serde_json::from_value(encoded).expect("decode re-encoded graph");
+    assert_eq!(decoded.capability_requirements, graph.capability_requirements);
+
+    // Boundary 3 — lowering to AIR neither consumes nor drops the requirement.
+    let air = frontend_graph_to_air(&graph).expect("lower permissioned graph");
+    assert!(air.verify().is_accepted());
+
+    // Boundary 4 — the artifact's source bundle carries the permission verbatim
+    // and both artifact digests are bound to it, so no consumer downstream of
+    // the artifact can read a permission the author did not write.
+    let bundle = SourceBundle::from_graph(&graph);
+    assert_eq!(bundle.capability_requirements, graph.capability_requirements);
+    let artifact = ExecutableArtifact::from_frontend_graph(&graph).expect("artifact");
+    assert!(artifact.validate().is_accepted());
+    assert_eq!(
+        artifact.source_bundle_digest,
+        bundle.digest().expect("bundle digest")
+    );
+
+    let unpermissioned: FrontendGraph =
+        serde_json::from_value(duplicate_declaration_graph_value(None)).expect("control graph");
+    let control = ExecutableArtifact::from_frontend_graph(&unpermissioned).expect("control");
+    assert_ne!(
+        artifact.source_bundle_digest,
+        control.source_bundle_digest,
+        "the authored permission must change the digest that binds the source bundle"
+    );
+    assert_ne!(artifact.artifact_digest, control.artifact_digest);
 }
 
 #[test]

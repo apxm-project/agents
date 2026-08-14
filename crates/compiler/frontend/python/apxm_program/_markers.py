@@ -9,7 +9,7 @@ endpoint, or runtime object.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any, Optional, TypeVar
 
 I = TypeVar("I")
 O = TypeVar("O")
@@ -43,6 +43,7 @@ class ToolBinding:
     target_ref: str
     input_type_ref: str = "ToolInput"
     output_type_ref: str = "ToolOutput"
+    requested_permission: Optional[str] = None
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
         raise RuntimeError("a Tool is invoked inside a compiled Agent body")
@@ -55,6 +56,7 @@ class CapabilityBinding:
     target_ref: str
     input_type_ref: str = "CapabilityInput"
     output_type_ref: str = "CapabilityOutput"
+    requested_permission: Optional[str] = None
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
         raise RuntimeError("a Capability is invoked inside a compiled Agent body")
@@ -92,18 +94,26 @@ class _ToolFactory:
     def __getitem__(self, _types: Any) -> "_ToolFactory":
         return self
 
-    def __call__(self, target_ref: str) -> ToolBinding:
+    def __call__(
+        self, target_ref: str, *, requested_permission: Optional[str] = None
+    ) -> ToolBinding:
         _require_exact_reference(target_ref, "Tool")
-        return ToolBinding(target_ref=target_ref)
+        return ToolBinding(
+            target_ref=target_ref, requested_permission=requested_permission
+        )
 
 
 class _CapabilityFactory:
     def __getitem__(self, _types: Any) -> "_CapabilityFactory":
         return self
 
-    def __call__(self, target_ref: str) -> CapabilityBinding:
+    def __call__(
+        self, target_ref: str, *, requested_permission: Optional[str] = None
+    ) -> CapabilityBinding:
         _require_exact_reference(target_ref, "Capability")
-        return CapabilityBinding(target_ref=target_ref)
+        return CapabilityBinding(
+            target_ref=target_ref, requested_permission=requested_permission
+        )
 
 
 class _TypedEventFactory:
