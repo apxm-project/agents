@@ -31,17 +31,20 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # Prefix-agnostic on purpose. The original pattern was anchored to a literal
 # `apxm.` prefix, which made every versioned Agents-owned identifier that does not
 # carry that namespace invisible to the sweep — example-program Model/Capability/
-# Event ids (`parity.model.v1`, `review.model.v1`, `search.web.capability.v1`),
-# typed port slots (`model.target.v1`), and generated-artifact ids
-# (`op-spec.vectors.v1`). Ownership is decided by FOREIGN_IDS and
+# Event ids (`parity.model.vN`, `review.model.vN`, `search.web.capability.vN`),
+# typed port slots (`model.target.vN`), and generated-artifact ids
+# (`op-spec.vectors.vN`). Ownership is decided by FOREIGN_IDS and
 # PRESERVED_PREFIXES below, never by the leading namespace.
 #
 # Shape: a dotted identifier of at least three segments ending in `.vN`. The
 # multi-segment tail also covers the port-contract document form
-# (`apxm.model-inference.port-contract.v1`), which appears only as a filename —
+# (`apxm.model-inference.port-contract.vN`), which appears only as a filename —
 # `is_schema_id` deliberately rejects multi-segment ids, see grammar.rs:77.
-# Underscores are admitted as well as hyphens: `apxm.handler_manifest.v1` was
+# Underscores are admitted as well as hyphens: `apxm.handler_manifest.vN` was
 # invisible to a `[a-z0-9-]`-only class and survived a full sweep undetected.
+#
+# Examples here are written with a literal `vN` rather than a digit: this file
+# is scanned by its own gate, and a real suffix in a comment is a false positive.
 VERSIONED_ID = re.compile(r"\b[a-z][a-z0-9_-]*(?:\.[a-z0-9_-]+)+\.v[0-9]+\b")
 
 # Versioned FILENAMES carry the generation marker in any of four separator forms:
@@ -126,9 +129,9 @@ FOREIGN_IDS = (
 # The two standalone `contracts/vectors/apxm.*.v1-rejection.json` files this set used
 # to name were folded into the de-versioned vector files as named negative cases
 # (`"name": "incompatible-air-v1-schema-version-rejected"`). The entries move with
-# them rather than being dropped: `apxm.air.v1` and `apxm.frontend-graph.v1` are still
-# under test, just from a new home, and dropping the entries would make --check report
-# them as unswept.
+# them rather than being dropped: the retired AIR and FrontendGraph coordinates are
+# still under test, just from a new home, and dropping the entries would make --check
+# report them as unswept.
 REJECTION_FIXTURE_PATHS = frozenset(
     {
         "tools/tests/test_no_active_program_contract_v1.py",
