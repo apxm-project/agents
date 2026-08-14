@@ -310,6 +310,20 @@ pub enum CodegenAction {
         #[arg(long)]
         check: bool,
     },
+    /// Generate the source graph vocabulary into both authoring frontends
+    FrontendVocabulary {
+        /// Check that the generated vocabulary files are up to date without
+        /// writing them
+        #[arg(long)]
+        check: bool,
+    },
+    /// Generate the authoring diagnostic codes into both authoring frontends
+    Diagnostics {
+        /// Check that the generated diagnostic files are up to date without
+        /// writing them
+        #[arg(long)]
+        check: bool,
+    },
     /// Generate the op-spec AIS operation catalog + vectors fixture
     OpSpec {
         /// Output directory for the generated catalog + vectors files

@@ -1,5 +1,14 @@
 // Advanced authoring markers: static Hooks and structured task scopes.
 
+import {
+  HOOK_PHASE_AFTER,
+  HOOK_PHASE_BEFORE,
+  HOOK_RETURN_MODE_OBSERVE,
+  HOOK_RETURN_MODE_REPLACE_RESULT,
+  HOOK_SCOPE_NODE,
+  type HookPhase,
+  type HookReturnMode,
+} from "./generated/frontend-graph.js";
 import { stableDigest } from "./markers.js";
 
 type HookAgent<C = unknown> = {
@@ -7,10 +16,10 @@ type HookAgent<C = unknown> = {
 };
 
 export type HookDecl = {
-  readonly phase: "before" | "after";
+  readonly phase: HookPhase;
   readonly targetSelector: string;
   readonly scope: string;
-  readonly returnMode: "observe" | "replace_result";
+  readonly returnMode: HookReturnMode;
   readonly handlerDigest: string;
 };
 
@@ -25,19 +34,23 @@ export type HookOptions<C = unknown> = {
 export const Hook = {
   before(options: HookOptions): HookDecl {
     return {
-      phase: "before",
+      phase: HOOK_PHASE_BEFORE,
       targetSelector: "static_target",
-      scope: options.scope ?? "node",
-      returnMode: options.replace ? "replace_result" : "observe",
+      scope: options.scope ?? HOOK_SCOPE_NODE,
+      returnMode: options.replace
+        ? HOOK_RETURN_MODE_REPLACE_RESULT
+        : HOOK_RETURN_MODE_OBSERVE,
       handlerDigest: stableDigest("hook:before"),
     };
   },
   after(options: HookOptions): HookDecl {
     return {
-      phase: "after",
+      phase: HOOK_PHASE_AFTER,
       targetSelector: "static_target",
-      scope: options.scope ?? "node",
-      returnMode: options.replace ? "replace_result" : "observe",
+      scope: options.scope ?? HOOK_SCOPE_NODE,
+      returnMode: options.replace
+        ? HOOK_RETURN_MODE_REPLACE_RESULT
+        : HOOK_RETURN_MODE_OBSERVE,
       handlerDigest: stableDigest("hook:after"),
     };
   },

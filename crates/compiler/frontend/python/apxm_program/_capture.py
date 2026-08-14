@@ -32,6 +32,7 @@ from ._bound_tree import (
     Span,
 )
 from ._advanced import HookDecl, TaskGroup
+from ._generated.frontend_graph import HOOK_SCOPE_AGENT, HOOK_SCOPE_LOOP
 from ._markers import (
     CapabilityBinding,
     ContextSchema,
@@ -1097,9 +1098,9 @@ class _Capture:
             return target
         if target in {control.node_id for control in self.controls}:
             return target
-        if declaration.scope == "agent" and target in {self.program_id, self.entrypoint}:
+        if declaration.scope == HOOK_SCOPE_AGENT and target in {self.program_id, self.entrypoint}:
             return self.body_region_id
-        if declaration.scope == "loop" and target in {"loop", self.entrypoint}:
+        if declaration.scope == HOOK_SCOPE_LOOP and target in {"loop", self.entrypoint}:
             for control in self.controls:
                 if control.control_kind == "loop":
                     if control.body_region_ids:
