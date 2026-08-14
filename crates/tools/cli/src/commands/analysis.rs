@@ -91,12 +91,8 @@ pub fn validate_command(
 fn load_air_module_for_analysis(input: &PathBuf) -> Result<AirModule> {
     let text = std::fs::read_to_string(input)
         .with_context(|| format!("failed to read canonical AIR from {}", input.display()))?;
-    serde_json::from_str(&text).with_context(|| {
-        format!(
-            "{} must contain canonical apxm.air JSON",
-            input.display()
-        )
-    })
+    serde_json::from_str(&text)
+        .with_context(|| format!("{} must contain canonical apxm.air JSON", input.display()))
 }
 
 /// Parsed canonical AIR sequence for analyze and explain commands.
