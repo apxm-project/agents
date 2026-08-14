@@ -14,6 +14,15 @@ import {
   SOURCE_MAP_VERSION,
   type Json,
 } from "./contract.js";
+import {
+  HOOK_SCOPE_AGENT,
+  HOOK_SCOPE_LOOP,
+  HOOK_SCOPE_NODE,
+  HOOK_SCOPES,
+  HOOK_RETURN_MODE_OBSERVE,
+  HOOK_RETURN_MODE_REPLACE_RESULT,
+  type HookScope,
+} from "./generated/frontend-graph.js";
 import type { Permission } from "./generated/permissions.js";
 import type {
   CapabilityBinding,
@@ -1443,8 +1452,8 @@ class Capture {
       const hookName = ts.isIdentifier(hook.declaration.name)
         ? hook.declaration.name.text
         : `hook_${order + 1}`;
-      const scope = stringProperty(hook.options, "scope") ?? "node";
-      if (!["agent", "loop", "node", "model", "capability"].includes(scope)) {
+      const scope = stringProperty(hook.options, "scope") ?? HOOK_SCOPE_NODE;
+      if (!(HOOK_SCOPES as readonly string[]).includes(scope)) {
         throw new CaptureError(`Hook scope '${scope}' is not supported`);
       }
       const replace = booleanProperty(hook.options, "replace") ?? false;
@@ -1452,7 +1461,7 @@ class Capture {
       if (run === undefined) {
         throw new CaptureError("Hook requires a static run callback");
       }
-      const targetSelector = this.resolveHookTarget(target, scope);
+      const targetSelector = this.resolveHookTarget(target, scope as HookScope);
       this.hooks.push({
         hook_id: `hook.${hookName}`,
         scope,
@@ -1463,16 +1472,18 @@ class Capture {
         handler_digest: stableDigest(run.getText(source)),
         input_type_ref: "AgentFacade",
         output_type_ref: replace ? this.input.outputTypeRef : "Unit",
-        return_mode: replace ? "replace_result" : "observe",
+        return_mode: replace
+          ? HOOK_RETURN_MODE_REPLACE_RESULT
+          : HOOK_RETURN_MODE_OBSERVE,
       });
     }
   }
 
-  private resolveHookTarget(target: ts.Identifier, scope: string): string {
-    if (scope === "agent") {
+  private resolveHookTarget(target: ts.Identifier, scope: HookScope): string {
+    if (scope === HOOK_SCOPE_AGENT) {
       return this.bodyRegionId;
     }
-    if (scope === "loop") {
+    if (scope === HOOK_SCOPE_LOOP) {
       const loop = this.controls.find((control) => control.control_kind === "loop");
       const region = loop?.body_region_ids?.[0];
       if (region === undefined) {

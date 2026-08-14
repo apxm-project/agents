@@ -4,6 +4,8 @@ use std::path::Path;
 use anyhow::Result;
 
 use super::codegen_capabilities::TYPESCRIPT_CAPABILITIES_FILE;
+use super::codegen_diagnostics::TYPESCRIPT_DIAGNOSTICS_FILE;
+use super::codegen_frontend_vocabulary::TYPESCRIPT_FRONTEND_GRAPH_FILE;
 use super::codegen_permissions::TYPESCRIPT_PERMISSIONS_FILE;
 use super::registry::{
     FrontendOperationSpec, builtin_providers, graph_attr_constants, graph_metric_constants,
@@ -15,10 +17,13 @@ pub const RUNTIME_EVIDENCE_TYPESCRIPT_FILE: &str = "runtime-evidence.ts";
 /// Every file `@apxm/frontend`'s `src/generated` directory may contain. The
 /// stray-file guard belongs to the directory rather than to one codegen arm:
 /// `typescript-frontend` owns the runtime-evidence binding, `capabilities`
-/// owns the capability catalogue, and `permissions` owns the permission
-/// decision vocabulary — all three write here.
+/// owns the capability catalogue, `permissions` owns the permission decision
+/// vocabulary, `frontend-vocabulary` owns the source-graph closed sets, and
+/// `diagnostics` owns the rejection-code vocabulary — all five write here.
 pub const GENERATED_TYPESCRIPT_FRONTEND_FILES: &[&str] = &[
     TYPESCRIPT_CAPABILITIES_FILE,
+    TYPESCRIPT_DIAGNOSTICS_FILE,
+    TYPESCRIPT_FRONTEND_GRAPH_FILE,
     TYPESCRIPT_PERMISSIONS_FILE,
     RUNTIME_EVIDENCE_TYPESCRIPT_FILE,
 ];

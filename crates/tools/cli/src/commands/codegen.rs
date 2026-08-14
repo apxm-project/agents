@@ -11,30 +11,43 @@ use super::cli::*;
 pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
     match action {
         CodegenAction::Frontend { check } => {
-            let evidence_path = default_python_runtime_evidence_codegen_path();
-            let output_dir = evidence_path
-                .parent()
-                .expect("runtime evidence output has a parent")
-                .to_path_buf();
-            let evidence_init_path = evidence_path.with_file_name("__init__.py");
-            let evidence = crate::frontend::codegen::render_runtime_evidence_python();
-            let evidence_init = "from .runtime_evidence import *\n";
-            let files = vec![
-                "apxm_program/_generated/__init__.py".to_string(),
-                "apxm_program/_generated/runtime_evidence.py".to_string(),
+            use crate::frontend::codegen::{
+                GENERATED_PACKAGE_PYTHON_FILE, GENERATED_PYTHON_FRONTEND_FILES,
+                RUNTIME_EVIDENCE_PYTHON_FILE,
+            };
+
+            let output_dir = default_python_generated_codegen_dir();
+            let rendered = vec![
+                (
+                    GENERATED_PACKAGE_PYTHON_FILE,
+                    crate::frontend::codegen::render_generated_package_python(),
+                ),
+                (
+                    RUNTIME_EVIDENCE_PYTHON_FILE,
+                    crate::frontend::codegen::render_runtime_evidence_python(),
+                ),
             ];
+            let files: Vec<String> = GENERATED_PYTHON_FRONTEND_FILES
+                .iter()
+                .map(|file| format!("apxm_program/_generated/{file}"))
+                .collect();
 
             if check {
-                check_generated_file(&evidence_path, &evidence, "python runtime evidence")?;
-                check_generated_file(
-                    &evidence_init_path,
-                    evidence_init,
-                    "python runtime evidence init",
+                // The whole directory is checked, not only this arm's two files:
+                // every generated Python module lands here and a stray one must
+                // not survive a regeneration unnoticed.
+                check_generated_named_files(
+                    &output_dir,
+                    &rendered,
+                    GENERATED_PYTHON_FRONTEND_FILES,
+                    "py",
+                    "frontend",
                 )?;
             } else {
                 fs::create_dir_all(&output_dir)?;
-                fs::write(&evidence_path, evidence)?;
-                fs::write(&evidence_init_path, evidence_init)?;
+                for (filename, content) in &rendered {
+                    fs::write(output_dir.join(filename), content)?;
+                }
             }
 
             if json_output {
@@ -98,6 +111,7 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
                     &output_dir,
                     &rendered,
                     crate::frontend::codegen_ts::GENERATED_TYPESCRIPT_FRONTEND_FILES,
+                    "ts",
                     "typescript-frontend",
                 )?;
             } else {
@@ -160,88 +174,80 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
             let python = crate::frontend::codegen_capabilities::render_capabilities_python();
             let typescript =
                 crate::frontend::codegen_capabilities::render_capabilities_typescript();
-            let outputs = [(&python_path, &python), (&typescript_path, &typescript)];
-
-            if check {
-                for (path, rendered) in outputs {
-                    check_generated_file(path, rendered, "capabilities")?;
-                }
-            } else {
-                for (path, rendered) in outputs {
-                    if let Some(parent) = path.parent() {
-                        fs::create_dir_all(parent)?;
-                    }
-                    fs::write(path, rendered)?;
-                }
-            }
-
-            let files = vec![
-                python_path.display().to_string(),
-                typescript_path.display().to_string(),
-            ];
-            if json_output {
-                let output = serde_json::json!({
-                    "target": "capabilities",
-                    "files": files,
-                    "check": check,
-                });
-                println!("{}", serde_json::to_string_pretty(&output)?);
-            } else {
-                println!(
-                    "{} capability catalogue:",
-                    if check { "Checked" } else { "Generated" }
-                );
-                println!("  target: capabilities");
-                for file in files {
-                    println!("  - {file}");
-                }
-            }
-
-            Ok(())
+            let files = write_or_check_pair(
+                [(&python_path, &python), (&typescript_path, &typescript)],
+                check,
+                "capabilities",
+            )?;
+            report_pair(
+                "capabilities",
+                "capability catalogue",
+                files,
+                check,
+                json_output,
+            )
         }
         CodegenAction::Permissions { check } => {
             let python_path = default_python_permissions_codegen_path();
             let typescript_path = default_typescript_permissions_codegen_path();
             let python = crate::frontend::codegen_permissions::render_permissions_python();
             let typescript = crate::frontend::codegen_permissions::render_permissions_typescript();
-            let outputs = [(&python_path, &python), (&typescript_path, &typescript)];
+            let files = write_or_check_pair(
+                [(&python_path, &python), (&typescript_path, &typescript)],
+                check,
+                "permissions",
+            )?;
+            report_pair(
+                "permissions",
+                "permission decisions",
+                files,
+                check,
+                json_output,
+            )
+        }
+        CodegenAction::FrontendVocabulary { check } => {
+            let python_path = default_python_generated_codegen_dir()
+                .join(crate::frontend::codegen_frontend_vocabulary::PYTHON_FRONTEND_GRAPH_FILE);
+            let typescript_path = default_typescript_frontend_codegen_dir()
+                .join(crate::frontend::codegen_frontend_vocabulary::TYPESCRIPT_FRONTEND_GRAPH_FILE);
+            let python =
+                crate::frontend::codegen_frontend_vocabulary::render_frontend_graph_python();
+            let typescript =
+                crate::frontend::codegen_frontend_vocabulary::render_frontend_graph_typescript();
 
-            if check {
-                for (path, rendered) in outputs {
-                    check_generated_file(path, rendered, "permissions")?;
-                }
-            } else {
-                for (path, rendered) in outputs {
-                    if let Some(parent) = path.parent() {
-                        fs::create_dir_all(parent)?;
-                    }
-                    fs::write(path, rendered)?;
-                }
-            }
+            let files = write_or_check_pair(
+                [(&python_path, &python), (&typescript_path, &typescript)],
+                check,
+                "frontend-vocabulary",
+            )?;
+            report_pair(
+                "frontend-vocabulary",
+                "source graph vocabulary",
+                files,
+                check,
+                json_output,
+            )
+        }
+        CodegenAction::Diagnostics { check } => {
+            let python_path = default_python_generated_codegen_dir()
+                .join(crate::frontend::codegen_diagnostics::PYTHON_DIAGNOSTICS_FILE);
+            let typescript_path = default_typescript_frontend_codegen_dir()
+                .join(crate::frontend::codegen_diagnostics::TYPESCRIPT_DIAGNOSTICS_FILE);
+            let python = crate::frontend::codegen_diagnostics::render_diagnostics_python();
+            let typescript = crate::frontend::codegen_diagnostics::render_diagnostics_typescript();
 
-            let files = vec![
-                python_path.display().to_string(),
-                typescript_path.display().to_string(),
-            ];
-            if json_output {
-                let output = serde_json::json!({
-                    "target": "permissions",
-                    "files": files,
-                    "check": check,
-                });
-                println!("{}", serde_json::to_string_pretty(&output)?);
-            } else {
-                println!(
-                    "{} permission decisions:",
-                    if check { "Checked" } else { "Generated" }
-                );
-                println!("  target: permissions");
-                for file in files {
-                    println!("  - {file}");
-                }
-            }
-
-            Ok(())
+            let files = write_or_check_pair(
+                [(&python_path, &python), (&typescript_path, &typescript)],
+                check,
+                "diagnostics",
+            )?;
+            report_pair(
+                "diagnostics",
+                "authoring diagnostic codes",
+                files,
+                check,
+                json_output,
+            )
         }
         CodegenAction::OpSpec { output_dir, check } => {
             let output_dir = output_dir.unwrap_or_else(default_op_spec_codegen_dir);
@@ -304,6 +310,58 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
     }
 }
 
+/// Write — or drift-check — one vocabulary's Python and TypeScript halves, and
+/// name the files either way. Both halves are one vocabulary, so they are
+/// always written together and always checked together.
+fn write_or_check_pair(
+    outputs: [(&PathBuf, &String); 2],
+    check: bool,
+    target: &str,
+) -> Result<Vec<String>> {
+    for (path, rendered) in outputs {
+        if check {
+            check_generated_file(path, rendered, target)?;
+        } else {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(path, rendered)?;
+        }
+    }
+    Ok(outputs
+        .iter()
+        .map(|(path, _)| path.display().to_string())
+        .collect())
+}
+
+/// Report one paired-vocabulary codegen arm in whichever form was asked for.
+fn report_pair(
+    target: &str,
+    description: &str,
+    files: Vec<String>,
+    check: bool,
+    json_output: bool,
+) -> Result<()> {
+    if json_output {
+        let output = serde_json::json!({
+            "target": target,
+            "files": files,
+            "check": check,
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        println!(
+            "{} {description}:",
+            if check { "Checked" } else { "Generated" }
+        );
+        println!("  target: {target}");
+        for file in files {
+            println!("  - {file}");
+        }
+    }
+    Ok(())
+}
+
 fn check_generated_file(output_path: &Path, rendered: &str, target: &str) -> Result<()> {
     let current = fs::read_to_string(output_path)?;
     if current != rendered {
@@ -342,13 +400,14 @@ fn check_generated_json_dir(
     Ok(())
 }
 
-/// Check `rendered` against `output_dir`, then reject any `.ts` file in that
-/// directory outside `owned` — the full set of generated filenames the
+/// Check `rendered` against `output_dir`, then reject any `extension` file in
+/// that directory outside `owned` — the full set of generated filenames the
 /// directory may hold, which spans every codegen arm writing into it.
 fn check_generated_named_files(
     output_dir: &Path,
     rendered: &[(&'static str, String)],
     owned: &[&str],
+    extension: &str,
     target: &str,
 ) -> Result<()> {
     let expected = owned.iter().copied().collect::<BTreeSet<_>>();
@@ -370,11 +429,7 @@ fn check_generated_named_files(
     for entry in fs::read_dir(output_dir)? {
         let entry = entry?;
         if entry.file_type()?.is_file()
-            && entry
-                .path()
-                .extension()
-                .and_then(|extension| extension.to_str())
-                == Some("ts")
+            && entry.path().extension().and_then(|found| found.to_str()) == Some(extension)
             && entry
                 .file_name()
                 .to_str()
@@ -389,14 +444,14 @@ fn check_generated_named_files(
     Ok(())
 }
 
-fn default_python_runtime_evidence_codegen_path() -> PathBuf {
+/// The one directory every generated Python frontend module lands in.
+fn default_python_generated_codegen_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../compiler/frontend/python/apxm_program/_generated/runtime_evidence.py")
+        .join("../../compiler/frontend/python/apxm_program/_generated")
 }
 
 fn default_python_capabilities_codegen_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../compiler/frontend/python/apxm_program/_generated")
+    default_python_generated_codegen_dir()
         .join(crate::frontend::codegen_capabilities::PYTHON_CAPABILITIES_FILE)
 }
 
@@ -406,8 +461,7 @@ fn default_typescript_capabilities_codegen_path() -> PathBuf {
 }
 
 fn default_python_permissions_codegen_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../compiler/frontend/python/apxm_program/_generated")
+    default_python_generated_codegen_dir()
         .join(crate::frontend::codegen_permissions::PYTHON_PERMISSIONS_FILE)
 }
 

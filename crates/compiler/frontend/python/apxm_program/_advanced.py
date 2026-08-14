@@ -7,15 +7,27 @@ import inspect
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Optional
 
+from ._generated.frontend_graph import (
+    HOOK_PHASE_AFTER,
+    HOOK_PHASE_BEFORE,
+    HOOK_RETURN_MODE_OBSERVE,
+    HOOK_RETURN_MODE_REPLACE_RESULT,
+    HOOK_SCOPE_NODE,
+    HOOK_SCOPES,
+    HookPhase,
+    HookReturnMode,
+    HookScope,
+)
+
 
 @dataclass(frozen=True, slots=True)
 class HookDecl:
     """A static before/after Hook binding over a declared scope."""
 
-    phase: str
+    phase: HookPhase
     target_selector: str
-    scope: str = "node"
-    return_mode: str = "observe"
+    scope: HookScope = HOOK_SCOPE_NODE
+    return_mode: HookReturnMode = HOOK_RETURN_MODE_OBSERVE
     handler_ref: Optional[str] = None
     handler_digest: Optional[str] = None
     input_type_ref: str = "AgentFacade"
@@ -31,7 +43,9 @@ class HookDecl:
             handler_digest=_digest(handler),
             input_type_ref=_first_parameter_type(handler),
             output_type_ref=(
-                "Unit" if self.return_mode == "observe" else _return_type(handler)
+                "Unit"
+                if self.return_mode == HOOK_RETURN_MODE_OBSERVE
+                else _return_type(handler)
             ),
         )
 
@@ -69,31 +83,31 @@ def _return_type(handler: Callable[..., Any]) -> str:
 class _Hook:
     """The Hook declaration surface exposing before/after bindings."""
 
-    def before(self, *, target: str, scope: str = "node", replace: bool = False) -> HookDecl:
-        _validate_options(target, scope)
-        return HookDecl(
-            phase="before",
-            target_selector=target,
-            scope=scope,
-            return_mode="replace_result" if replace else "observe",
-        )
+    def before(
+        self, *, target: str, scope: str = HOOK_SCOPE_NODE, replace: bool = False
+    ) -> HookDecl:
+        return _declare(HOOK_PHASE_BEFORE, target, scope, replace)
 
-    def after(self, *, target: str, scope: str = "node", replace: bool = False) -> HookDecl:
-        _validate_options(target, scope)
-        return HookDecl(
-            phase="after",
-            target_selector=target,
-            scope=scope,
-            return_mode="replace_result" if replace else "observe",
-        )
+    def after(
+        self, *, target: str, scope: str = HOOK_SCOPE_NODE, replace: bool = False
+    ) -> HookDecl:
+        return _declare(HOOK_PHASE_AFTER, target, scope, replace)
 
 
-def _validate_options(target: str, scope: str) -> None:
+def _declare(phase: HookPhase, target: str, scope: str, replace: bool) -> HookDecl:
     """Fail closed unless a Hook uses one closed static binding shape."""
     if not isinstance(target, str) or not target:
         raise TypeError("a Hook target is one non-empty static source selector")
-    if scope not in {"agent", "loop", "node", "model", "capability"}:
-        raise ValueError("a Hook scope is agent, loop, node, model, or capability")
+    if scope not in HOOK_SCOPES:
+        raise ValueError(f"a Hook scope is one of {', '.join(HOOK_SCOPES)}")
+    return HookDecl(
+        phase=phase,
+        target_selector=target,
+        scope=scope,
+        return_mode=(
+            HOOK_RETURN_MODE_REPLACE_RESULT if replace else HOOK_RETURN_MODE_OBSERVE
+        ),
+    )
 
 
 class TaskGroup:
