@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.port-contract",
+  "title": "PortContract",
+  "description": "The published descriptor of one Port Contract: which document schemas cross the port, who owns its semantics, and the content addresses that pin its lifecycle, authority, vocabulary, configuration, and conformance material. Every file under contracts/port-contracts/ is an instance of this schema. A Port Contract names schemas and digests only; it carries no implementation, endpoint, credential, or provider selection.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "port_contract_id",
+    "port_contract_digest",
+    "semantic_owner",
+    "primary_responsibility",
+    "request_schema",
+    "result_schema",
+    "failure_schema",
+    "lifecycle_digest",
+    "authority_data_classification_digest",
+    "feature_vocabulary_digest",
+    "configuration_contract_digest",
+    "conformance_vector_digest"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "apxm.port-contract"
+    },
+    "port_contract_id": {
+      "$ref": "#/$defs/SchemaId"
+    },
+    "port_contract_digest": {
+      "$ref": "#/$defs/Digest"
+    },
+    "semantic_owner": {
+      "description": "The owner of this port's semantics. Closed at the one owner every published Port Contract names. A Port Contract owned by anything else is not an Agents-owned port and does not belong in this directory; widening this enum is a deliberate act, not an accident of authoring.",
+      "enum": [
+        "agents"
+      ]
+    },
+    "primary_responsibility": {
+      "type": "string",
+      "minLength": 1
+    },
+    "request_schema": {
+      "$ref": "#/$defs/SchemaReference"
+    },
+    "result_schema": {
+      "$ref": "#/$defs/SchemaReference"
+    },
+    "failure_schema": {
+      "$ref": "#/$defs/SchemaReference"
+    },
+    "lifecycle_digest": {
+      "$ref": "#/$defs/Digest"
+    },
+    "authority_data_classification_digest": {
+      "$ref": "#/$defs/Digest"
+    },
+    "feature_vocabulary_digest": {
+      "$ref": "#/$defs/Digest"
+    },
+    "configuration_contract_digest": {
+      "$ref": "#/$defs/Digest"
+    },
+    "conformance_vector_digest": {
+      "$ref": "#/$defs/Digest"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "Digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "SchemaId": {
+      "type": "string",
+      "pattern": "^apxm\\.[a-z0-9]+(?:-[a-z0-9]+)*(?:\\.v[0-9]+)?$"
+    },
+    "SchemaReference": {
+      "description": "One document schema crossing this port, pinned by content address. The digest is the SHA-256 of the published schema file's exact bytes, so editing a schema without republishing the Port Contract is a detectable break rather than a silent one.",
+      "type": "object",
+      "required": [
+        "schema_id",
+        "digest"
+      ],
+      "properties": {
+        "schema_id": {
+          "$ref": "#/$defs/SchemaId"
+        },
+        "digest": {
+          "$ref": "#/$defs/Digest"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

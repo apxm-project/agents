@@ -77,6 +77,17 @@ pub fn load_vectors(file: &str) -> Vec<Vector> {
 /// states is compiled exactly as published.
 #[must_use]
 pub fn compile_schema(relative: &str, referenced_snapshots: &[&str]) -> jsonschema::JSONSchema {
+    compile_schema_with(relative, referenced_snapshots, &[])
+}
+
+/// Compile a published owner schema that also references sibling schemas this
+/// repository publishes itself, given by their `contracts/`-relative paths.
+#[must_use]
+pub fn compile_schema_with(
+    relative: &str,
+    referenced_snapshots: &[&str],
+    referenced_contracts: &[&str],
+) -> jsonschema::JSONSchema {
     fn rebase(mut schema: Value) -> (String, Value) {
         let id = schema["$id"]
             .as_str()
@@ -87,15 +98,86 @@ pub fn compile_schema(relative: &str, referenced_snapshots: &[&str]) -> jsonsche
         (scoped, schema)
     }
 
+    /// A supplied document's own `#/$defs/…` references are relative to that
+    /// document, not to the validator's root scope, so they are anchored to the
+    /// document's rebased `$id`. Without this, a supplied schema whose `$defs`
+    /// reference each other resolves them against the schema under test and
+    /// fails on a reference the published bytes state correctly.
+    fn anchor_self_references(node: &mut Value, scope: &str) {
+        match node {
+            Value::Object(map) => {
+                if let Some(Value::String(reference)) = map.get_mut("$ref") {
+                    if let Some(fragment) = reference.strip_prefix('#') {
+                        *reference = format!("{scope}#{fragment}");
+                    }
+                }
+                for value in map.values_mut() {
+                    anchor_self_references(value, scope);
+                }
+            }
+            Value::Array(items) => {
+                for item in items {
+                    anchor_self_references(item, scope);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn supply(options: &mut jsonschema::CompilationOptions, document: Value) {
+        let (scoped, mut document) = rebase(document);
+        anchor_self_references(&mut document, &scoped);
+        options.with_document(scoped, document);
+    }
+
     let (_, schema) = rebase(load_contract(relative));
     let mut options = jsonschema::JSONSchema::options();
     for reference in referenced_snapshots {
-        let (scoped, document) = rebase(load_contract_snapshot(reference));
-        options.with_document(scoped, document);
+        supply(&mut options, load_contract_snapshot(reference));
+    }
+    for reference in referenced_contracts {
+        supply(&mut options, load_contract(reference));
     }
     options
         .compile(&schema)
         .unwrap_or_else(|e| panic!("compile {relative}: {e}"))
+}
+
+/// Every conformance vector file published under `contracts/vectors/`.
+#[must_use]
+pub fn published_vector_files() -> Vec<String> {
+    published_contract_files("vectors")
+}
+
+/// Every JSON document published under `contracts/<directory>/`, sorted.
+#[must_use]
+pub fn published_contract_files(directory: &str) -> Vec<String> {
+    let root = agents_root().join("contracts").join(directory);
+    let mut files: Vec<String> = std::fs::read_dir(&root)
+        .unwrap_or_else(|e| panic!("read {}: {e}", root.display()))
+        .map(|entry| entry.expect("directory entry").file_name())
+        .filter_map(|name| name.to_str().map(str::to_owned))
+        .filter(|name| name.ends_with(".json"))
+        .collect();
+    files.sort();
+    files
+}
+
+/// The SHA-256 content address of a published contract document's exact bytes,
+/// in the `sha256:<hex>` form the Port Contracts use.
+#[must_use]
+pub fn contract_file_digest(relative: &str) -> String {
+    use sha2::{Digest, Sha256};
+
+    let path = agents_root().join("contracts").join(relative);
+    let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    format!("sha256:{:x}", Sha256::digest(bytes))
+}
+
+/// Whether a schema is published at `contracts/schemas/<schema_id>.json`.
+#[must_use]
+pub fn contract_file_exists(relative: &str) -> bool {
+    agents_root().join("contracts").join(relative).is_file()
 }
 
 /// The closed string members of a schema `enum` at a `$defs` path.
