@@ -12,8 +12,9 @@ Agents adapters project; they do not inline either server and they do not keep
 a SHA/release/digest join catalog.
 
 The vLLM conformance join (`apxm.vllm-conformance-join`, `backend_join.rs`,
-`PINNED_VLLM_*`) is retired. Integration proof is the same projector interface
-on both adapters and honest field-level outcomes.
+`PINNED_VLLM_*`) is retired. Envelope keys live in
+`apxm_core::constants::llm::apxm::graph_hints` and are the only names adapters
+and `apxm` servers may use.
 
 Hints never select models, change sampling, tools, schemas, or authority.
 Unsupported fields are `OmittedUnsupported`. Graph prepare/release is
