@@ -21,6 +21,9 @@ Each argument states on itself whether it is required, each schema states
 whether it accepts undeclared arguments, and each handler states whether it is
 read-only — the manifest carries all three from the handler rather than
 deciding any of them.
+`Tool.define` returns the capability the handler implements, and `src/main.ts`
+binds that returned object rather than a name repeating it — so referencing one
+capability while shipping another is unrepresentable, not merely checked.
 The TypeScript helper only builds the Rust-owned handler manifest; it never
 becomes Coder's runtime.
 

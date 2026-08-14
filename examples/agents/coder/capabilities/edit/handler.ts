@@ -1,7 +1,7 @@
 // Defines Coder's read-only structured edit proposal Tool.
 import { Tool } from "@apxm/agent-packaging";
 
-/** Prepare a before/after proposal without mutating a file. */
+/** Return a structured before/after proposal without changing a file. */
 export const proposeEdit = Tool.define({
   name: "edit",
   description: "Return a structured before/after proposal without changing a file.",

@@ -1,6 +1,9 @@
 import { Agent, Model, Tool } from "@apxm/frontend";
 import { source } from "@apxm/frontend/node";
 
+import { proposeEdit } from "../capabilities/edit/handler.js";
+import { prepareTest } from "../capabilities/test/handler.js";
+
 source(import.meta.url);
 
 type CoderInput = { file_path: string; task: string };
@@ -10,8 +13,11 @@ type EditDraft = { after: string; test_command: string };
 type CoderOutput = { summary: string };
 
 const ReadSource = Tool<{ file_path: string }, string>("read");
-const ProposeEdit = Tool<EditProposal, PreparedEdit>("edit");
-const PrepareTest = Tool<{ command: string }, { command: string; executes: false; mutates: false }>("test");
+// The package-local capabilities are bound to the handlers that implement them,
+// so the reference and the implementation are one object rather than two
+// spellings of a name that have to agree.
+const ProposeEdit = Tool<EditProposal, PreparedEdit>(proposeEdit);
+const PrepareTest = Tool<{ command: string }, { command: string; executes: false; mutates: false }>(prepareTest);
 const DraftEdit = Model<{ request: CoderInput; source: string }, EditDraft>("model.target");
 const ReviewModel = Model<
   { request: CoderInput; source: string; proposal: PreparedEdit; test: { command: string } },
