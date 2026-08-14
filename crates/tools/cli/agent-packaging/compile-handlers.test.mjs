@@ -1,5 +1,5 @@
 // Holds the handler manifest this package produces against the published
-// `apxm.handler-manifest.v1` schema it names. A producer emitting a manifest
+// `apxm.handler-manifest` schema it names. A producer emitting a manifest
 // the contract rejects fails here, at production, not at a downstream consumer.
 
 import assert from "node:assert/strict";
@@ -19,13 +19,23 @@ const workspaceRoot = path.resolve(agentsRoot, "..");
 
 const schema = JSON.parse(
   readFileSync(
-    path.join(agentsRoot, "contracts/schemas/apxm.handler-manifest.v1.json"),
+    path.join(agentsRoot, "contracts/schemas/apxm.handler-manifest.json"),
     "utf8",
   ),
 );
-const common = JSON.parse(
-  readFileSync(path.join(workspaceRoot, "contracts/schemas/contract-common.v1.json"), "utf8"),
-);
+// `apxm.contract-common.v1` is owned by the coordinating APXM workspace, not by
+// this repository, so it is only present in a full-workspace checkout. A
+// standalone `agents` clone (and CI, which checks out `workspace/agents` alone)
+// cannot resolve it. Skip rather than fail: an unreadable foreign contract is a
+// missing input, not a manifest violation.
+const commonPath = path.join(workspaceRoot, "contracts/schemas/contract-common.v1.json");
+let common = null;
+let skip = false;
+try {
+  common = JSON.parse(readFileSync(commonPath, "utf8"));
+} catch {
+  skip = `shared workspace contract not present at ${commonPath}`;
+}
 
 // The subset of JSON Schema the published handler-manifest contract uses. Each
 // keyword below appears in that schema; an unrecognized keyword is a hard error
@@ -123,7 +133,7 @@ async function compileFixture(source) {
   }
 }
 
-test("a compiled handler manifest satisfies the published schema", async () => {
+test("a compiled handler manifest satisfies the published schema", { skip }, async () => {
   const manifest = await compileFixture(
     [
       'import { Tool } from "@apxm/agent-packaging";',
@@ -151,7 +161,7 @@ test("a compiled handler manifest satisfies the published schema", async () => {
   assertValid(manifest);
 });
 
-test("the gate rejects a manifest the published schema rejects", () => {
+test("the gate rejects a manifest the published schema rejects", { skip }, () => {
   // A build-host absolute path is exactly what `HandlerSource.artifact_path`
   // forbids; if this passed, the gate above would prove nothing.
   const handlerId = makeHandlerId("capabilities/echo/handler", "echo");
@@ -159,7 +169,7 @@ test("the gate rejects a manifest the published schema rejects", () => {
     violations(
       schema,
       {
-        version: "apxm.handler-manifest.v1",
+        version: "apxm.handler-manifest",
         handlers: [{
           kind: "tool",
           language: "typescript",
