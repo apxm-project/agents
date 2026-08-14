@@ -129,7 +129,8 @@ impl BackendRegistration {
             Some(key) => resolve_secret_reference(key, "api_key", &backend.name)?,
             None if backend.backend_type == BackendType::Local
                 || backend.protocol == ProviderProtocol::Ollama
-                || backend.protocol == ProviderProtocol::Vllm =>
+                || backend.protocol == ProviderProtocol::Vllm
+                || backend.protocol == ProviderProtocol::LlamaCpp =>
             {
                 String::new()
             }

@@ -17,7 +17,7 @@ from the active index; Git history retains their rationale.
 | [0016](0016-tool-authoring-and-handler-execution-are-separate.md) | Tool declaration and admitted execution are separate boundaries. |
 | [0018](0018-event-readiness-and-local-scheduling-are-agents-semantics.md) | Event readiness and local scheduling are portable runtime semantics. |
 | [0019](0019-builtin-capabilities-own-no-durable-scheduling-or-wake-bridge.md) | Builtins do not own durable scheduling or wake bridges. |
-| [0020](0020-durable-coordination-enters-through-port-contracts-and-composition-root.md) | Durable coordination enters through Port Contracts and the Composition Root, not a named product. |
+| [0021](0021-backend-neutral-graph-hints.md) | Graph hints are one Agents contract projected onto vLLM and llama.cpp `apxm` branches; the vLLM pin/join catalog is retired. |
 
 The PXM pages under `docs/pxm/` are historical theory, not ADRs or executable
 compatibility promises.

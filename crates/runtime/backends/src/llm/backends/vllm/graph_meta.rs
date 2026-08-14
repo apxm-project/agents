@@ -1,5 +1,6 @@
 pub const BACKEND_NAME: &str = "vllm-graph-aware";
-pub const REQUEST_XARGS: &str = "vllm_xargs";
+pub const REQUEST_XARGS: &str =
+    apxm_core::constants::llm::apxm::graph_hints::VLLM_REQUEST_XARGS;
 pub const PROBE_GRAPH_ID: &str = "__apxm_probe__";
 
 /// Scheduler policy value the APXM critical-path boost relies on; the
@@ -7,6 +8,5 @@ pub const PROBE_GRAPH_ID: &str = "__apxm_probe__";
 pub const SCHEDULER_POLICY_PRIORITY: &str = "priority";
 
 pub use apxm_core::types::{
-    ApxmGraphHints, CompilerHints, GraphMetadata, LatencyClass, NodeGraphMetrics, NodeSpec,
-    PinMode, PinPolicy, PriorityClass,
+    ApxmGraphHints, GraphMetadata, LatencyClass, NodeGraphMetrics, NodeSpec,
 };

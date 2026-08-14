@@ -20,6 +20,8 @@ pub enum ProviderProtocol {
     Ollama,
     /// vLLM-compatible API with APXM graph-awareness extensions.
     Vllm,
+    /// llama.cpp llama-server (APXM `apxm` branch) with Chat Completions.
+    LlamaCpp,
     /// Mock backend for tests and benchmarks.
     Mock,
 }
@@ -32,6 +34,7 @@ impl ProviderProtocol {
             Self::Google => "google",
             Self::Ollama => "ollama",
             Self::Vllm => "vllm",
+            Self::LlamaCpp => "llamacpp",
             Self::Mock => "mock",
         }
     }
@@ -43,6 +46,7 @@ impl ProviderProtocol {
             Self::Google,
             Self::Ollama,
             Self::Vllm,
+            Self::LlamaCpp,
             Self::Mock,
         ]
     }
@@ -64,6 +68,7 @@ impl std::str::FromStr for ProviderProtocol {
             "google" => Ok(Self::Google),
             "ollama" => Ok(Self::Ollama),
             "vllm" => Ok(Self::Vllm),
+            "llamacpp" | "llama.cpp" | "llama-cpp" => Ok(Self::LlamaCpp),
             "mock" => Ok(Self::Mock),
             _ => Err(format!("Unknown provider protocol: '{value}'")),
         }
@@ -99,7 +104,10 @@ pub fn normalize_endpoint_for_protocol(protocol: ProviderProtocol, endpoint: &st
     let trimmed = endpoint.trim_end_matches('/');
     let needs_v1 = matches!(
         protocol,
-        ProviderProtocol::OpenAI | ProviderProtocol::Anthropic | ProviderProtocol::Vllm
+        ProviderProtocol::OpenAI
+            | ProviderProtocol::Anthropic
+            | ProviderProtocol::Vllm
+            | ProviderProtocol::LlamaCpp
     );
     if !needs_v1 || trimmed.ends_with("/v1") {
         return trimmed.to_string();

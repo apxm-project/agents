@@ -12,10 +12,8 @@
 //! - short-lived target- and purpose-bound credential leases in adapter memory;
 //! - immutable usage lineage with timing and typed errors;
 //! - correlated diagnostic signals that never replace owner evidence; and
-//! - digest join of released vLLM conformance vectors without stubbing backend
-//!   authority.
+//! - exact adapters that project graph hints onto provider `apxm` branches.
 
-pub mod backend_join;
 pub mod diagnostics;
 pub mod dispatch;
 pub mod driver;
@@ -26,12 +24,6 @@ pub mod lineage;
 pub mod stream;
 pub mod target;
 
-pub use backend_join::{
-    JoinError, PINNED_VLLM_OWNER_REVISION, PINNED_VLLM_PORT_CONTRACT_DIGEST,
-    PINNED_VLLM_RELEASE_ID, PINNED_VLLM_RELEASE_MANIFEST_DIGEST, PINNED_VLLM_VECTOR_DIGESTS,
-    VLLM_CONFORMANCE_JOIN_SCHEMA, VllmConformanceJoin, VllmJoinStatus, VllmReleaseAttestation,
-    digest_bytes,
-};
 pub use diagnostics::{
     BoundedMetricLabels, CorrelateDiagnosticsRequest, DIAGNOSTIC_CORRELATION_SCHEMA,
     DiagnosticAgreement, DiagnosticCorrelation, DiagnosticError, authoritative_usage,

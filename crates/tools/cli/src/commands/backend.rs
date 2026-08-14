@@ -159,7 +159,10 @@ pub async fn backend_command(action: BackendAction, json_output: bool) -> Result
             let is_ollama = protocol == ProviderProtocol::Ollama;
             let api_key_not_required = matches!(
                 protocol,
-                ProviderProtocol::Ollama | ProviderProtocol::Vllm | ProviderProtocol::Mock
+                ProviderProtocol::Ollama
+                    | ProviderProtocol::Vllm
+                    | ProviderProtocol::LlamaCpp
+                    | ProviderProtocol::Mock
             );
             let provider_spec = resolve_builtin_provider(&protocol.to_string());
 

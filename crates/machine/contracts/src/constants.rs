@@ -431,21 +431,74 @@ pub mod llm {
         pub const OBJECT_GRAPH_RELEASE: &str = "apxm.graph.release";
         pub const OBJECT: &str = "object";
         pub const REQUEST_PRIORITY: &str = "priority";
-        pub const HINTS_FIELD: &str = "apxm";
+        /// Common envelope object on every `apxm` server request.
+        pub const HINTS_FIELD: &str = graph_hints::ENVELOPE;
         pub const SCHEMA_VERSION: &str = "schema_version";
-        pub const GRAPH_ID: &str = "graph_id";
-        pub const EXECUTION_ID: &str = "execution_id";
-        pub const NODE_ID: &str = "node_id";
-        pub const NODE_NAME: &str = "node_name";
-        pub const PRIORITY_CLASS: &str = "priority_class";
-        pub const DOWNSTREAM_NODES: &str = "downstream_nodes";
-        pub const REUSE_GROUP: &str = "reuse_group";
+        pub const GRAPH_ID: &str = graph_hints::GRAPH_REF;
+        pub const EXECUTION_ID: &str = graph_hints::GRAPH_EXECUTION_REF;
+        pub const NODE_ID: &str = graph_hints::NODE_REF;
+        pub const NODE_NAME: &str = graph_hints::NODE_REF;
+        pub const PRIORITY_CLASS: &str = graph_hints::CRITICAL_PATH;
+        pub const DOWNSTREAM_NODES: &str = graph_hints::SUCCESSOR_REFS;
+        pub const REUSE_GROUP: &str = graph_hints::AFFINITY_REF;
         pub const PIN_POLICY: &str = "pin_policy";
         pub const PIN_POLICY_MODE: &str = "mode";
         pub const PIN_POLICY_TTL_MS: &str = "ttl_ms";
         pub const COMPILER_HINTS: &str = "compiler_hints";
-        pub const SHARED_PREFIX_EST_TOKENS: &str = "shared_prefix_est_tokens";
-        pub const WARMUP_CANDIDATE: &str = "warmup_candidate";
+        pub const SHARED_PREFIX_EST_TOKENS: &str = graph_hints::EXPECTED_SHARED_PREFIX_TOKENS;
+        pub const WARMUP_CANDIDATE: &str = graph_hints::PREFIX_WARMUP_ELIGIBLE;
+
+        /// Closed APXM graph-hint envelope. Adapters and `apxm` servers
+        /// must use these names; they must not invent parallel keys.
+        pub mod graph_hints {
+            pub const SCHEMA: &str = "apxm.inference-graph-hints";
+            pub const ENVELOPE: &str = "apxm";
+            pub const SCHEMA_FIELD: &str = "schema";
+            pub const SCOPE: &str = "scope";
+            pub const FACTS: &str = "facts";
+            pub const INTENTS: &str = "intents";
+
+            pub const GRAPH_REF: &str = "graph_ref";
+            pub const GRAPH_EXECUTION_REF: &str = "graph_execution_ref";
+            pub const NODE_REF: &str = "node_ref";
+            pub const NODE_EXECUTION_REF: &str = "node_execution_ref";
+
+            pub const CRITICAL_PATH: &str = "critical_path";
+            pub const SUCCESSOR_REFS: &str = "successor_refs";
+            pub const REMAINING_PATH_LEN: &str = "remaining_path_len";
+            pub const STAGE_INDEX: &str = "stage_index";
+            pub const WORK_CLASS: &str = "work_class";
+            pub const ESTIMATED_INPUT_TOKENS: &str = "estimated_input_tokens";
+            pub const ESTIMATED_OUTPUT_TOKENS: &str = "estimated_output_tokens";
+            pub const EXPECTED_SHARED_PREFIX_TOKENS: &str = "expected_shared_prefix_tokens";
+            pub const PREFIX_WARMUP_ELIGIBLE: &str = "prefix_warmup_eligible";
+            pub const PIPELINE_ELIGIBLE: &str = "pipeline_eligible";
+            pub const COEXECUTION_GROUP_REF: &str = "coexecution_group_ref";
+
+            pub const OBJECTIVE: &str = "objective";
+            pub const REUSABLE_CONTEXT: &str = "reusable_context";
+            pub const PREFERENCE: &str = "preference";
+            pub const AFFINITY_REF: &str = "affinity_ref";
+            pub const BENEFIT_HORIZON_MS: &str = "benefit_horizon_ms";
+            pub const EXPECTED_USES: &str = "expected_uses";
+
+            pub const PREFER_WHEN_BENEFICIAL: &str = "prefer_when_beneficial";
+            pub const MINIMIZE_GRAPH_COMPLETION_TIME: &str = "minimize_graph_completion_time";
+            pub const BALANCED: &str = "balanced";
+            pub const MAXIMIZE_THROUGHPUT: &str = "maximize_throughput";
+            pub const WORK_SHORT: &str = "short";
+            pub const WORK_MEDIUM: &str = "medium";
+            pub const WORK_LONG: &str = "long";
+
+            pub const VLLM_REQUEST_XARGS: &str = "vllm_xargs";
+            pub const LLAMA_CACHE_PROMPT: &str = "cache_prompt";
+
+            pub const MECHANISM_VLLM_APXM_XARGS: &str = "vllm.apxm_xargs";
+            pub const MECHANISM_VLLM_REQUEST_PRIORITY: &str = "vllm.request_priority";
+            pub const MECHANISM_VLLM_PREFIX_PIN: &str = "vllm.prefix_pin";
+            pub const MECHANISM_LLAMA_APXM_ENVELOPE: &str = "llama.apxm_envelope";
+            pub const MECHANISM_LLAMA_CACHE_PROMPT: &str = "llama.cache_prompt";
+        }
         pub const REGISTERED_NODES: &str = "registered_nodes";
         pub const CRITICAL_PATH_LENGTH: &str = "critical_path_length";
         pub const MAX_PARALLELISM: &str = "max_parallelism";
@@ -455,7 +508,7 @@ pub mod llm {
         pub const REMAINING_HANDLES: &str = "remaining_handles";
         pub const REMAINING_BLOCKS: &str = "remaining_blocks";
 
-        pub const PRIORITY_CRITICAL_PATH: &str = "critical_path";
+        pub const PRIORITY_CRITICAL_PATH: &str = graph_hints::CRITICAL_PATH;
         pub const PRIORITY_PARALLEL: &str = "parallel";
 
         pub const PIN_MODE_PREFIX: &str = "prefix";

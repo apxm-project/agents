@@ -16,6 +16,7 @@ pub mod anthropic;
 pub mod configuration;
 pub mod google;
 pub(crate) mod http;
+pub mod llama_cpp;
 pub mod mock;
 pub mod ollama;
 pub mod openai;
@@ -23,6 +24,7 @@ pub mod vllm;
 
 pub use anthropic::AnthropicBackend;
 pub use google::GoogleBackend;
+pub use llama_cpp::LlamaCppBackend;
 pub use mock::{MockLLMBackend, MockResponse, RecordedCall};
 pub use ollama::OllamaBackend;
 pub use openai::OpenAIBackend;
@@ -35,10 +37,7 @@ pub use traits::{
     CorrelatedBatchingCapability, CorrelatedLLMOutcome, CorrelatedLLMRequest, LLMBackend,
     StreamChunk,
 };
-pub use vllm::{
-    ApxmGraphHints, CompilerHints, GraphAwareVllmBackend, GraphMetadata, NodeSpec, PinMode,
-    PinPolicy, PriorityClass,
-};
+pub use vllm::{ApxmGraphHints, GraphAwareVllmBackend, GraphMetadata, NodeSpec};
 
 use crate::llm::ProviderProtocol;
 pub use configuration::BackendConfigurationError;
@@ -94,6 +93,9 @@ impl BackendFactory {
             }
             ProviderProtocol::Vllm => {
                 Arc::new(vllm::GraphAwareVllmBackend::new(api_key, config).await?)
+            }
+            ProviderProtocol::LlamaCpp => {
+                Arc::new(llama_cpp::LlamaCppBackend::new(api_key, config).await?)
             }
             ProviderProtocol::Mock => {
                 Arc::new(mock::MockLLMBackend::from_config(api_key, config).await?)

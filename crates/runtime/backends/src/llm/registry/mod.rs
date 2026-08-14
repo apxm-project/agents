@@ -886,32 +886,30 @@ impl LLMRegistry {
             .collect()
     }
 
-    /// Register graph metadata with all backends (best-effort).
-    ///
-    /// Backends that don't support graph registration (default impl) silently succeed.
-    pub async fn register_graph_all(&self, metadata: apxm_core::types::GraphMetadata) {
-        for (name, backend) in self.backend_snapshot() {
-            if let Err(e) = backend.register_graph(metadata.clone()).await {
-                tracing::warn!(
-                    backend = %name,
-                    error = %e,
-                    "Failed to register graph with backend (non-fatal)"
-                );
-            }
-        }
+    /// Register graph metadata with the exact bound backend only.
+    pub async fn register_graph(
+        &self,
+        backend_name: &str,
+        metadata: apxm_core::types::GraphMetadata,
+    ) -> anyhow::Result<()> {
+        let backend = self
+            .backend_snapshot()
+            .into_iter()
+            .find(|(name, _)| name == backend_name)
+            .ok_or_else(|| anyhow::anyhow!("unknown backend {backend_name}"))?
+            .1;
+        backend.register_graph(metadata).await
     }
 
-    /// Release graph from all backends (best-effort).
-    pub async fn release_graph_all(&self, graph_id: &str) {
-        for (name, backend) in self.backend_snapshot() {
-            if let Err(e) = backend.release_graph(graph_id).await {
-                tracing::warn!(
-                    backend = %name,
-                    error = %e,
-                    "Failed to release graph from backend (non-fatal)"
-                );
-            }
-        }
+    /// Release graph from the exact bound backend only.
+    pub async fn release_graph(&self, backend_name: &str, graph_id: &str) -> anyhow::Result<()> {
+        let backend = self
+            .backend_snapshot()
+            .into_iter()
+            .find(|(name, _)| name == backend_name)
+            .ok_or_else(|| anyhow::anyhow!("unknown backend {backend_name}"))?
+            .1;
+        backend.release_graph(graph_id).await
     }
 
     /// Snapshot only the backends that opt into graph-aware extensions
@@ -998,8 +996,8 @@ impl LLMRegistry {
                 ticker.tick().await;
                 for (_name, backend) in registry.find_graph_aware_backends() {
                     if let Ok(Some(snap)) = backend.get_graph_status(&graph_id).await {
-                        bump_max(&handles_peak, snap.pinned_handles);
-                        bump_max(&blocks_peak, snap.pinned_blocks);
+                        bump_max(&handles_peak, snap.pinned_handles());
+                        bump_max(&blocks_peak, snap.pinned_blocks());
                     }
                 }
             }

@@ -1,6 +1,12 @@
 # Backend-neutral APXM graph hints
 
-- Status: design
+Superseded by
+[`docs/adr/0021-backend-neutral-graph-hints.md`](../adr/0021-backend-neutral-graph-hints.md).
+Keep this file as the long-form design notes. Ownership: Agents owns facts and
+intents; `apxm-project/vllm` and `apxm-project/llama.cpp` `apxm` branches
+receive the envelope. The vLLM pin/join catalog is retired.
+
+
 - Scope: APXM inference adapters and runtime evidence
 - Decision sought: replace backend-shaped graph metadata with one APXM-owned
   semantic contract and adapter-owned lowerings

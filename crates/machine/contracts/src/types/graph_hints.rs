@@ -1,179 +1,586 @@
-use crate::constants::{
-    graph::backend_kind,
-    graph::{attrs, metadata as graph_meta},
-    llm::apxm as apxm_llm,
-};
-use crate::types::graph_metrics::NodeGraphMetrics;
+//! APXM-owned graph facts and advisory intents.
+//!
+//! Provider mechanisms (pins, slots, queue priority, `vllm_xargs`) do not
+//! belong here. Adapters project this contract onto an `apxm` server branch.
+
+use crate::constants::llm::apxm::graph_hints as hint_keys;
 use crate::types::values::Value;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::str::FromStr;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum PinMode {
-    Prefix,
-    #[default]
-    None,
+pub const GRAPH_HINTS_SCHEMA: &str = hint_keys::SCHEMA;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphHintScope {
+    pub graph_ref: String,
+    pub graph_execution_ref: String,
+    pub node_ref: String,
+    pub node_execution_ref: String,
 }
 
-impl PinMode {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Prefix => apxm_llm::PIN_MODE_PREFIX,
-            Self::None => apxm_llm::PIN_MODE_NONE,
+impl GraphHintScope {
+    pub fn validate(&self) -> Result<(), String> {
+        for (name, value) in [
+            (hint_keys::GRAPH_REF, &self.graph_ref),
+            (hint_keys::GRAPH_EXECUTION_REF, &self.graph_execution_ref),
+            (hint_keys::NODE_REF, &self.node_ref),
+            (hint_keys::NODE_EXECUTION_REF, &self.node_execution_ref),
+        ] {
+            if value.trim().is_empty() {
+                return Err(format!("{name} must be a non-empty opaque reference"));
+            }
         }
-    }
-}
-
-impl fmt::Display for PinMode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl FromStr for PinMode {
-    type Err = String;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            apxm_llm::PIN_MODE_PREFIX => Ok(Self::Prefix),
-            apxm_llm::PIN_MODE_NONE => Ok(Self::None),
-            _ => Err(format!("unknown pin mode: {value}")),
-        }
-    }
-}
-
-impl Serialize for PinMode {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for PinMode {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        Self::from_str(&value).map_err(D::Error::custom)
+        Ok(())
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PriorityClass {
-    CriticalPath,
-    Parallel,
+pub enum WorkClass {
+    Short,
+    Medium,
+    Long,
 }
 
-impl PriorityClass {
+impl WorkClass {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::CriticalPath => apxm_llm::PRIORITY_CRITICAL_PATH,
-            Self::Parallel => apxm_llm::PRIORITY_PARALLEL,
+            Self::Short => hint_keys::WORK_SHORT,
+            Self::Medium => hint_keys::WORK_MEDIUM,
+            Self::Long => hint_keys::WORK_LONG,
         }
     }
 }
 
-impl fmt::Display for PriorityClass {
+impl fmt::Display for WorkClass {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
 }
 
-impl FromStr for PriorityClass {
+impl FromStr for WorkClass {
     type Err = String;
-
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
-            apxm_llm::PRIORITY_CRITICAL_PATH => Ok(Self::CriticalPath),
-            apxm_llm::PRIORITY_PARALLEL => Ok(Self::Parallel),
-            _ => Err(format!("unknown priority class: {value}")),
+            hint_keys::WORK_SHORT => Ok(Self::Short),
+            hint_keys::WORK_MEDIUM => Ok(Self::Medium),
+            hint_keys::WORK_LONG => Ok(Self::Long),
+            _ => Err(format!("unknown work class: {value}")),
         }
     }
 }
 
-impl Serialize for PriorityClass {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
+impl Serialize for WorkClass {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(self.as_str())
     }
 }
 
-impl<'de> Deserialize<'de> for PriorityClass {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        Self::from_str(&value).map_err(D::Error::custom)
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct PinPolicy {
-    pub mode: PinMode,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ttl_ms: Option<u32>,
-}
-
-impl PinPolicy {
-    pub fn none() -> Self {
-        Self {
-            mode: PinMode::None,
-            ttl_ms: None,
-        }
-    }
-
-    pub fn prefix(ttl_ms: u32) -> Self {
-        Self {
-            mode: PinMode::Prefix,
-            ttl_ms: Some(ttl_ms),
-        }
-    }
-
-    pub fn prefix_default() -> Self {
-        Self {
-            mode: PinMode::Prefix,
-            ttl_ms: None,
-        }
+impl<'de> Deserialize<'de> for WorkClass {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::from_str(&String::deserialize(deserializer)?).map_err(D::Error::custom)
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct CompilerHints {
-    /// Estimated static shared-prefix tokens, produced by compiler analysis.
+pub struct NodeGraphFacts {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub shared_prefix_est_tokens: Option<u32>,
-    /// Declarative compiler hint: this node is eligible for runtime prefix prefill.
-    /// The runtime still decides whether to dispatch a warmup request based on
-    /// backend capabilities and runtime policy.
+    pub critical_path: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub successor_refs: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub warmup_candidate: Option<bool>,
-    /// Declarative compiler hint for backend request pipelining.
+    pub remaining_path_len: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub pipeline_candidate: Option<bool>,
+    pub stage_index: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub work_class: Option<WorkClass>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub estimated_input_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub estimated_output_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_shared_prefix_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prefix_warmup_eligible: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pipeline_eligible: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coexecution_group_ref: Option<String>,
 }
 
-impl CompilerHints {
-    pub fn is_empty(&self) -> bool {
-        self.shared_prefix_est_tokens.is_none()
-            && self.warmup_candidate.is_none()
-            && self.pipeline_candidate.is_none()
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OptimizationObjective {
+    MinimizeGraphCompletionTime,
+    Balanced,
+    MaximizeThroughput,
+}
+
+impl OptimizationObjective {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::MinimizeGraphCompletionTime => hint_keys::MINIMIZE_GRAPH_COMPLETION_TIME,
+            Self::Balanced => hint_keys::BALANCED,
+            Self::MaximizeThroughput => hint_keys::MAXIMIZE_THROUGHPUT,
+        }
     }
 }
 
-/// Backend support surface for graph-aware APXM execution.
-///
-/// These booleans describe what APXM can rely on for one configured backend.
-/// Unsupported capability bits are reported explicitly in metrics and claim
-/// evidence.
+impl fmt::Display for OptimizationObjective {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for OptimizationObjective {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            hint_keys::MINIMIZE_GRAPH_COMPLETION_TIME => Ok(Self::MinimizeGraphCompletionTime),
+            hint_keys::BALANCED => Ok(Self::Balanced),
+            hint_keys::MAXIMIZE_THROUGHPUT => Ok(Self::MaximizeThroughput),
+            _ => Err(format!("unknown optimization objective: {value}")),
+        }
+    }
+}
+
+impl Serialize for OptimizationObjective {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for OptimizationObjective {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::from_str(&String::deserialize(deserializer)?).map_err(D::Error::custom)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ReusePreference {
+    PreferWhenBeneficial,
+}
+
+impl ReusePreference {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PreferWhenBeneficial => hint_keys::PREFER_WHEN_BENEFICIAL,
+        }
+    }
+}
+
+impl fmt::Display for ReusePreference {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ReusePreference {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            hint_keys::PREFER_WHEN_BENEFICIAL => Ok(Self::PreferWhenBeneficial),
+            _ => Err(format!("unknown reuse preference: {value}")),
+        }
+    }
+}
+
+impl Serialize for ReusePreference {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ReusePreference {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::from_str(&String::deserialize(deserializer)?).map_err(D::Error::custom)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BackendMechanismRef {
+    VllmApxmXargs,
+    VllmRequestPriority,
+    VllmPrefixPin,
+    LlamaApxmEnvelope,
+    LlamaCachePrompt,
+}
+
+impl BackendMechanismRef {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::VllmApxmXargs => hint_keys::MECHANISM_VLLM_APXM_XARGS,
+            Self::VllmRequestPriority => hint_keys::MECHANISM_VLLM_REQUEST_PRIORITY,
+            Self::VllmPrefixPin => hint_keys::MECHANISM_VLLM_PREFIX_PIN,
+            Self::LlamaApxmEnvelope => hint_keys::MECHANISM_LLAMA_APXM_ENVELOPE,
+            Self::LlamaCachePrompt => hint_keys::MECHANISM_LLAMA_CACHE_PROMPT,
+        }
+    }
+}
+
+impl fmt::Display for BackendMechanismRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for BackendMechanismRef {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            hint_keys::MECHANISM_VLLM_APXM_XARGS => Ok(Self::VllmApxmXargs),
+            hint_keys::MECHANISM_VLLM_REQUEST_PRIORITY => Ok(Self::VllmRequestPriority),
+            hint_keys::MECHANISM_VLLM_PREFIX_PIN => Ok(Self::VllmPrefixPin),
+            hint_keys::MECHANISM_LLAMA_APXM_ENVELOPE => Ok(Self::LlamaApxmEnvelope),
+            hint_keys::MECHANISM_LLAMA_CACHE_PROMPT => Ok(Self::LlamaCachePrompt),
+            _ => Err(format!("unknown backend mechanism: {value}")),
+        }
+    }
+}
+
+impl Serialize for BackendMechanismRef {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for BackendMechanismRef {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::from_str(&String::deserialize(deserializer)?).map_err(D::Error::custom)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReusableContextIntent {
+    pub preference: ReusePreference,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub affinity_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub benefit_horizon_ms: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_uses: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct GraphExecutionIntents {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub objective: Option<OptimizationObjective>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reusable_context: Option<ReusableContextIntent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApxmGraphHints {
+    pub schema: String,
+    pub scope: GraphHintScope,
+    #[serde(default)]
+    pub facts: NodeGraphFacts,
+    #[serde(default)]
+    pub intents: GraphExecutionIntents,
+}
+
+impl ApxmGraphHints {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.schema != GRAPH_HINTS_SCHEMA {
+            return Err(format!("unknown graph-hints schema: {}", self.schema));
+        }
+        self.scope.validate()
+    }
+
+    pub fn has_graph_context(&self) -> bool {
+        self.scope.validate().is_ok()
+    }
+
+    pub fn critical_path(
+        graph_ref: impl Into<String>,
+        graph_execution_ref: impl Into<String>,
+        node_ref: impl Into<String>,
+        node_execution_ref: impl Into<String>,
+        successor_refs: Vec<String>,
+    ) -> Self {
+        Self {
+            schema: GRAPH_HINTS_SCHEMA.to_owned(),
+            scope: GraphHintScope {
+                graph_ref: graph_ref.into(),
+                graph_execution_ref: graph_execution_ref.into(),
+                node_ref: node_ref.into(),
+                node_execution_ref: node_execution_ref.into(),
+            },
+            facts: NodeGraphFacts {
+                critical_path: Some(true),
+                successor_refs,
+                ..NodeGraphFacts::default()
+            },
+            intents: GraphExecutionIntents {
+                objective: Some(OptimizationObjective::MinimizeGraphCompletionTime),
+                reusable_context: Some(ReusableContextIntent {
+                    preference: ReusePreference::PreferWhenBeneficial,
+                    affinity_ref: None,
+                    benefit_horizon_ms: None,
+                    expected_uses: None,
+                }),
+            },
+        }
+    }
+
+    pub fn prefers_reuse(&self) -> bool {
+        matches!(
+            self.intents.reusable_context.as_ref().map(|c| c.preference),
+            Some(ReusePreference::PreferWhenBeneficial)
+        )
+    }
+
+    pub fn from_node_attrs(
+        graph_id: String,
+        node_label: String,
+        attrs_map: &HashMap<String, Value>,
+    ) -> Self {
+        Self::try_from_node_attrs(graph_id, node_label, attrs_map)
+            .expect("invalid compiler-derived graph hint attributes")
+    }
+
+    pub fn try_from_node_attrs(
+        graph_id: String,
+        node_label: String,
+        attrs_map: &HashMap<String, Value>,
+    ) -> Result<Self, String> {
+        use crate::constants::graph::attrs;
+        use crate::constants::graph::metadata as graph_meta;
+
+        let critical_path = attrs_map.get(attrs::PRIORITY).and_then(|value| {
+            let priority = value.as_i64()?;
+            Some(priority >= graph_meta::CRITICAL_PATH_PRIORITY_THRESHOLD)
+        });
+
+        let successor_refs = attrs_map
+            .get(attrs::DOWNSTREAM_NODES)
+            .and_then(|value| value.as_array())
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(|value| {
+                        value
+                            .as_u64()
+                            .map(|raw| raw.to_string())
+                            .or_else(|| value.as_string().map(ToOwned::to_owned))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let affinity_ref = attrs_map
+            .get(attrs::REUSE_GROUP)
+            .and_then(|value| value.as_string())
+            .map(ToOwned::to_owned);
+
+        let expected_shared_prefix_tokens = attrs_map
+            .get(attrs::SHARED_PREFIX_EST_TOKENS)
+            .and_then(|value| value.as_u64())
+            .map(|value| value as u32);
+
+        let prefix_warmup_eligible = attrs_map
+            .get(attrs::WARMUP_CANDIDATE)
+            .and_then(|value| value.as_bool());
+
+        let reusable_context = affinity_ref.as_ref().map(|affinity_ref| ReusableContextIntent {
+            preference: ReusePreference::PreferWhenBeneficial,
+            affinity_ref: Some(affinity_ref.clone()),
+            benefit_horizon_ms: None,
+            expected_uses: None,
+        });
+
+        let hints = Self {
+            schema: GRAPH_HINTS_SCHEMA.to_owned(),
+            scope: GraphHintScope {
+                graph_ref: graph_id.clone(),
+                graph_execution_ref: graph_id,
+                node_ref: node_label.clone(),
+                node_execution_ref: node_label,
+            },
+            facts: NodeGraphFacts {
+                critical_path,
+                successor_refs,
+                expected_shared_prefix_tokens,
+                prefix_warmup_eligible,
+                ..NodeGraphFacts::default()
+            },
+            intents: GraphExecutionIntents {
+                objective: critical_path.and_then(|critical| {
+                    critical.then_some(OptimizationObjective::MinimizeGraphCompletionTime)
+                }),
+                reusable_context,
+            },
+        };
+        hints.validate()?;
+        Ok(hints)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GraphHintField {
+    Scope,
+    CriticalPath,
+    SuccessorRefs,
+    RemainingPathLen,
+    StageIndex,
+    WorkClass,
+    EstimatedInputTokens,
+    EstimatedOutputTokens,
+    ExpectedSharedPrefixTokens,
+    PrefixWarmupEligible,
+    PipelineEligible,
+    CoexecutionGroupRef,
+    Objective,
+    ReusePreference,
+    AffinityRef,
+    BenefitHorizonMs,
+    ExpectedUses,
+}
+
+impl GraphHintField {
+    pub const ALL: &'static [Self] = &[
+        Self::Scope,
+        Self::CriticalPath,
+        Self::SuccessorRefs,
+        Self::RemainingPathLen,
+        Self::StageIndex,
+        Self::WorkClass,
+        Self::EstimatedInputTokens,
+        Self::EstimatedOutputTokens,
+        Self::ExpectedSharedPrefixTokens,
+        Self::PrefixWarmupEligible,
+        Self::PipelineEligible,
+        Self::CoexecutionGroupRef,
+        Self::Objective,
+        Self::ReusePreference,
+        Self::AffinityRef,
+        Self::BenefitHorizonMs,
+        Self::ExpectedUses,
+    ];
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceKind {
+    AdapterProjection,
+    BackendAcknowledgement,
+    OutcomeMeasurement,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GraphHintFieldCapability {
+    Direct { evidence: BTreeSet<EvidenceKind> },
+    Derived { evidence: BTreeSet<EvidenceKind> },
+    Unsupported,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GraphLifecycleCapability {
+    PrepareRelease,
+    NotNeeded,
+    Unsupported,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphHintCapabilities {
+    pub fields: BTreeMap<GraphHintField, GraphHintFieldCapability>,
+    pub lifecycle: GraphLifecycleCapability,
+}
+
+impl GraphHintCapabilities {
+    pub fn none() -> Self {
+        Self {
+            fields: GraphHintField::ALL
+                .iter()
+                .map(|field| (*field, GraphHintFieldCapability::Unsupported))
+                .collect(),
+            lifecycle: GraphLifecycleCapability::NotNeeded,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectionOutcome {
+    Applied { mechanism_ref: BackendMechanismRef },
+    Approximated {
+        mechanism_ref: BackendMechanismRef,
+        reason: String,
+    },
+    OmittedUnsupported,
+    OmittedByProfile { reason: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphHintPlan {
+    pub outcomes: BTreeMap<GraphHintField, ProjectionOutcome>,
+}
+
+impl GraphHintPlan {
+    pub fn omitted_unsupported() -> Self {
+        Self {
+            outcomes: GraphHintField::ALL
+                .iter()
+                .map(|field| (*field, ProjectionOutcome::OmittedUnsupported))
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Acknowledgement {
+    BackendAcknowledged,
+    BackendRejected,
+    NotReported,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FieldRealization {
+    pub projected: bool,
+    pub acknowledgement: Acknowledgement,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphHintRealization {
+    pub fields: BTreeMap<GraphHintField, FieldRealization>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub measurements: Vec<(String, i64)>,
+}
+
+pub trait GraphHintProjector {
+    fn graph_hint_capabilities(&self) -> GraphHintCapabilities {
+        GraphHintCapabilities::none()
+    }
+
+    fn plan_graph_hints(&self, hints: Option<&ApxmGraphHints>) -> Result<GraphHintPlan, String> {
+        match hints {
+            None => Ok(GraphHintPlan {
+                outcomes: BTreeMap::new(),
+            }),
+            Some(hints) => {
+                hints.validate()?;
+                Ok(GraphHintPlan::omitted_unsupported())
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GraphLifecycleOutcome {
+    Prepared,
+    Released,
+    NotNeeded,
+    Unsupported,
+    FailedBeforeSend,
+    OutcomeUnknown,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct BackendGraphCapabilities {
     pub supports_graph_registration: bool,
@@ -186,16 +593,10 @@ pub struct BackendGraphCapabilities {
     pub supports_backend_cache_state: bool,
     pub supports_cancel_groups: bool,
     pub supports_dispatch_ir_v1_internal: bool,
-    /// Whether the backend exposes `POST /v1/apxm/admin/reset_prefix_cache`,
-    /// the operator endpoint benchmark harnesses use for cell isolation.
     pub supports_admin_reset_prefix_cache: bool,
 }
 
 impl BackendGraphCapabilities {
-    /// Returns the subset of `fields_sent` the backend reports it does
-    /// NOT support. The runtime emits this in `runtime.dispatch_ir_v1`
-    /// telemetry so claim evidence shows which APXM hints were silently
-    /// dropped because the backend cannot honor them.
     pub fn unsupported_dispatch_fields<'a>(
         &self,
         fields_sent: impl IntoIterator<Item = &'a str>,
@@ -207,19 +608,6 @@ impl BackendGraphCapabilities {
             .collect()
     }
 
-    /// Returns the subset of `fields_sent` the backend's *static
-    /// capability table* reports as supported — the complement of
-    /// `unsupported_dispatch_fields` over the same input. Together the
-    /// two lists partition the request's hint surface.
-    ///
-    /// Distinct from `fields_honored`, which is per-request runtime
-    /// evidence from the backend (the `x-apxm-fields-honored` response
-    /// header — see `crate::constants::llm::apxm::APXM_FIELDS_HONORED_HEADER`).
-    /// Capability-supported says "the backend declares it CAN honor this
-    /// field"; honored says "the backend reported it DID honor this
-    /// field on this specific request." The runtime-evidence contract reserves the
-    /// `fields_honored` name for the runtime-evidence signal; do not
-    /// conflate the two.
     pub fn dispatch_fields_capability_supported<'a>(
         &self,
         fields_sent: impl IntoIterator<Item = &'a str>,
@@ -245,203 +633,28 @@ impl BackendGraphCapabilities {
             df::CANCEL_GROUPS => self.supports_cancel_groups,
             df::DISPATCH_IR_V1_INTERNAL => self.supports_dispatch_ir_v1_internal,
             df::ADMIN_RESET_PREFIX_CACHE => self.supports_admin_reset_prefix_cache,
-            // Unknown field name is reported as unsupported so a caller
-            // shipping an unrecognized hint cannot infer the backend
-            // applied it. The runtime's fields-sent collector should
-            // only emit names declared above; this branch is the
-            // defensive seam.
             _ => false,
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApxmGraphHints {
-    pub schema_version: u8,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub graph_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub execution_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub node_id: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub node_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub priority_class: Option<PriorityClass>,
-    pub downstream_nodes: Vec<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reuse_group: Option<String>,
-    #[serde(default, skip_serializing_if = "NodeGraphMetrics::is_empty")]
-    pub graph_metrics: NodeGraphMetrics,
-    pub pin_policy: PinPolicy,
-    pub compiler_hints: CompilerHints,
-}
-
-impl Default for ApxmGraphHints {
-    fn default() -> Self {
-        Self {
-            schema_version: 1,
-            graph_id: None,
-            execution_id: None,
-            node_id: None,
-            node_name: None,
-            priority_class: None,
-            downstream_nodes: Vec::new(),
-            reuse_group: None,
-            graph_metrics: NodeGraphMetrics::default(),
-            pin_policy: PinPolicy::none(),
-            compiler_hints: CompilerHints::default(),
-        }
-    }
-}
-
-impl ApxmGraphHints {
-    pub fn critical_path(
-        graph_id: impl Into<String>,
-        execution_id: impl Into<String>,
-        node_id: u32,
-        node_name: impl Into<String>,
-        downstream_nodes: Vec<u32>,
-        pin_ttl_ms: u32,
-    ) -> Self {
-        Self {
-            schema_version: 1,
-            graph_id: Some(graph_id.into()),
-            execution_id: Some(execution_id.into()),
-            node_id: Some(node_id),
-            node_name: Some(node_name.into()),
-            priority_class: Some(PriorityClass::CriticalPath),
-            downstream_nodes,
-            reuse_group: None,
-            graph_metrics: NodeGraphMetrics::default(),
-            pin_policy: PinPolicy::prefix(pin_ttl_ms),
-            compiler_hints: CompilerHints::default(),
-        }
-    }
-
-    pub fn parallel(
-        graph_id: impl Into<String>,
-        execution_id: impl Into<String>,
-        node_id: u32,
-        node_name: impl Into<String>,
-    ) -> Self {
-        Self {
-            schema_version: 1,
-            graph_id: Some(graph_id.into()),
-            execution_id: Some(execution_id.into()),
-            node_id: Some(node_id),
-            node_name: Some(node_name.into()),
-            priority_class: Some(PriorityClass::Parallel),
-            downstream_nodes: Vec::new(),
-            reuse_group: None,
-            graph_metrics: NodeGraphMetrics::default(),
-            pin_policy: PinPolicy::none(),
-            compiler_hints: CompilerHints::default(),
-        }
-    }
-
-    pub fn from_node_attrs(
-        graph_id: String,
-        node_label: String,
-        attrs_map: &HashMap<String, Value>,
-    ) -> Self {
-        Self::try_from_node_attrs(graph_id, node_label, attrs_map)
-            .expect("invalid compiler-derived graph hint attributes")
-    }
-
-    pub fn try_from_node_attrs(
-        graph_id: String,
-        node_label: String,
-        attrs_map: &HashMap<String, Value>,
-    ) -> Result<Self, String> {
-        let numeric_node_id = node_label.parse::<u32>().ok();
-
-        let priority_class = attrs_map.get(attrs::PRIORITY).and_then(|value| {
-            let priority = value.as_i64()?;
-            if priority >= graph_meta::CRITICAL_PATH_PRIORITY_THRESHOLD {
-                Some(PriorityClass::CriticalPath)
-            } else {
-                Some(PriorityClass::Parallel)
-            }
-        });
-
-        let downstream_nodes = attrs_map
-            .get(attrs::DOWNSTREAM_NODES)
-            .and_then(|value| value.as_array())
-            .map(|values| {
-                values
-                    .iter()
-                    .filter_map(|value| value.as_u64().map(|raw| raw as u32))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let reuse_group = attrs_map
-            .get(attrs::REUSE_GROUP)
-            .and_then(|value| value.as_string())
-            .map(ToOwned::to_owned);
-
-        let pin_policy = if reuse_group.is_some() {
-            PinPolicy::prefix_default()
-        } else {
-            PinPolicy::none()
-        };
-
-        let shared_prefix_est_tokens = attrs_map
-            .get(attrs::SHARED_PREFIX_EST_TOKENS)
-            .and_then(|value| value.as_u64())
-            .map(|value| value as u32);
-
-        let warmup_candidate = attrs_map
-            .get(attrs::WARMUP_CANDIDATE)
-            .and_then(|value| value.as_bool());
-
-        Ok(Self {
-            schema_version: 1,
-            graph_id: Some(graph_id),
-            execution_id: None,
-            node_id: numeric_node_id,
-            node_name: Some(node_label),
-            priority_class,
-            downstream_nodes,
-            reuse_group,
-            graph_metrics: NodeGraphMetrics::try_from_attrs(attrs_map)?,
-            pin_policy,
-            compiler_hints: CompilerHints {
-                shared_prefix_est_tokens,
-                warmup_candidate,
-                pipeline_candidate: None,
-            },
-        })
-    }
-
-    pub fn has_graph_context(&self) -> bool {
-        self.graph_id.is_some() || self.node_id.is_some()
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeSpec {
-    pub node_id: u32,
+    #[serde(alias = "node_id", alias = "node_name")]
+    pub node_ref: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub successor_refs: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub node_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub estimated_prompt_tokens: Option<u32>,
-    pub downstream_nodes: Vec<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub priority_class: Option<PriorityClass>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reuse_group: Option<String>,
-    #[serde(default, skip_serializing_if = "NodeGraphMetrics::is_empty")]
-    pub graph_metrics: NodeGraphMetrics,
+    pub estimated_input_tokens: Option<u32>,
     pub is_critical_path: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphMetadata {
-    pub graph_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub execution_id: Option<String>,
+    #[serde(rename = "graph_id", alias = "graph_ref")]
+    pub graph_ref: String,
+    #[serde(rename = "execution_id", alias = "graph_execution_ref")]
+    pub graph_execution_ref: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub critical_path_length: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -449,41 +662,40 @@ pub struct GraphMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_parallelism: Option<u32>,
     pub nodes: Vec<NodeSpec>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub default_pin_ttl_ms: Option<u32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum GraphBackendKind {
-    GraphAware,
-    Generic,
-}
-
-impl GraphBackendKind {
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::GraphAware => backend_kind::GRAPH_AWARE,
-            Self::Generic => backend_kind::GENERIC,
+impl GraphMetadata {
+    pub fn new(graph_ref: impl Into<String>, graph_execution_ref: impl Into<String>) -> Self {
+        Self {
+            graph_ref: graph_ref.into(),
+            graph_execution_ref: Some(graph_execution_ref.into()),
+            critical_path_length: None,
+            node_count: None,
+            max_parallelism: None,
+            nodes: Vec::new(),
         }
+    }
+
+    pub fn with_critical_path_length(mut self, len: u32) -> Self {
+        self.critical_path_length = Some(len);
+        self
+    }
+
+    pub fn with_nodes(mut self, nodes: Vec<NodeSpec>) -> Self {
+        self.node_count = Some(nodes.len() as u32);
+        self.nodes = nodes;
+        self
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphStatusSnapshot {
-    pub backend_kind: GraphBackendKind,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backend_name: Option<String>,
-    pub graph_id: String,
+    pub graph_ref: String,
     pub registered: bool,
-    pub pinned_handles: u64,
-    pub pinned_blocks: u64,
-    /// Peak `pinned_handles` recorded by `LLMRegistry::start_pin_polling`.
-    #[serde(default)]
-    pub pinned_handles_peak: u64,
-    /// Peak `pinned_blocks` recorded by `LLMRegistry::start_pin_polling`.
-    #[serde(default)]
-    pub pinned_blocks_peak: u64,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub adapter_observations: BTreeMap<String, u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub node_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -491,23 +703,33 @@ pub struct GraphStatusSnapshot {
 }
 
 impl GraphStatusSnapshot {
-    pub fn new(backend_kind: GraphBackendKind, graph_id: impl Into<String>) -> Self {
+    pub fn new(graph_ref: impl Into<String>) -> Self {
         Self {
-            backend_kind,
             backend_name: None,
-            graph_id: graph_id.into(),
+            graph_ref: graph_ref.into(),
             registered: false,
-            pinned_handles: 0,
-            pinned_blocks: 0,
-            pinned_handles_peak: 0,
-            pinned_blocks_peak: 0,
+            adapter_observations: BTreeMap::new(),
             node_count: None,
             critical_path_length: None,
         }
     }
 
     pub fn graph_aware(graph_id: impl Into<String>) -> Self {
-        Self::new(GraphBackendKind::GraphAware, graph_id)
+        Self::new(graph_id).with_registered(true)
+    }
+
+    pub fn pinned_handles(&self) -> u64 {
+        self.adapter_observations
+            .get("vllm.pinned_handles")
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub fn pinned_blocks(&self) -> u64 {
+        self.adapter_observations
+            .get("vllm.pinned_blocks")
+            .copied()
+            .unwrap_or(0)
     }
 
     pub fn with_registered(mut self, registered: bool) -> Self {
@@ -521,16 +743,18 @@ impl GraphStatusSnapshot {
     }
 
     pub fn with_pin_counts(mut self, handles: u64, blocks: u64) -> Self {
-        self.pinned_handles = handles;
-        self.pinned_blocks = blocks;
+        self.adapter_observations
+            .insert("vllm.pinned_handles".into(), handles);
+        self.adapter_observations
+            .insert("vllm.pinned_blocks".into(), blocks);
         self
     }
 
-    /// Fold pin-peak counters into the snapshot, clamping each peak to be
-    /// at least the corresponding live count.
     pub fn with_pin_peaks(mut self, handles_peak: u64, blocks_peak: u64) -> Self {
-        self.pinned_handles_peak = handles_peak.max(self.pinned_handles);
-        self.pinned_blocks_peak = blocks_peak.max(self.pinned_blocks);
+        self.adapter_observations
+            .insert("vllm.pinned_handles_peak".into(), handles_peak);
+        self.adapter_observations
+            .insert("vllm.pinned_blocks_peak".into(), blocks_peak);
         self
     }
 
@@ -545,75 +769,58 @@ impl GraphStatusSnapshot {
     }
 
     pub fn to_metrics_json(&self) -> serde_json::Value {
-        use crate::types::metrics::GraphStatusKey as K;
-
-        let mut map = serde_json::Map::new();
-        map.insert(
-            K::Object.as_str().into(),
-            apxm_llm::OBJECT_GRAPH_STATUS.into(),
-        );
-        map.insert(
-            K::BackendKind.as_str().into(),
-            self.backend_kind.as_str().into(),
-        );
-        if let Some(backend_name) = &self.backend_name {
-            map.insert(K::BackendName.as_str().into(), backend_name.clone().into());
-        }
-        map.insert(K::GraphId.as_str().into(), self.graph_id.clone().into());
-        map.insert(K::Registered.as_str().into(), self.registered.into());
-        map.insert(K::PinnedHandles.as_str().into(), self.pinned_handles.into());
-        map.insert(K::PinnedBlocks.as_str().into(), self.pinned_blocks.into());
-        if self.pinned_handles_peak > 0 {
-            map.insert(
-                K::PinnedHandlesPeak.as_str().into(),
-                self.pinned_handles_peak.into(),
-            );
-        }
-        if self.pinned_blocks_peak > 0 {
-            map.insert(
-                K::PinnedBlocksPeak.as_str().into(),
-                self.pinned_blocks_peak.into(),
-            );
-        }
-        if let Some(node_count) = self.node_count {
-            map.insert(K::NodeCount.as_str().into(), node_count.into());
-        }
-        if let Some(critical_path_length) = self.critical_path_length {
-            map.insert(
-                K::CriticalPathLength.as_str().into(),
-                critical_path_length.into(),
-            );
-        }
-        serde_json::Value::Object(map)
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
     }
 }
 
-impl GraphMetadata {
-    pub fn new(graph_id: impl Into<String>, execution_id: impl Into<String>) -> Self {
-        Self {
-            graph_id: graph_id.into(),
-            execution_id: Some(execution_id.into()),
-            critical_path_length: None,
-            node_count: None,
-            max_parallelism: None,
-            nodes: Vec::new(),
-            default_pin_ttl_ms: None,
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_scope_refs_fail_closed() {
+        let hints = ApxmGraphHints {
+            schema: GRAPH_HINTS_SCHEMA.into(),
+            scope: GraphHintScope {
+                graph_ref: " ".into(),
+                graph_execution_ref: "gex".into(),
+                node_ref: "n".into(),
+                node_execution_ref: "nex".into(),
+            },
+            facts: NodeGraphFacts::default(),
+            intents: GraphExecutionIntents::default(),
+        };
+        assert!(hints.validate().is_err());
     }
 
-    pub fn with_pin_ttl(mut self, ttl_ms: u32) -> Self {
-        self.default_pin_ttl_ms = Some(ttl_ms);
-        self
+    #[test]
+    fn zero_capability_plan_omits_every_field() {
+        struct Zero;
+        impl GraphHintProjector for Zero {}
+        let hints = ApxmGraphHints::critical_path("g", "gx", "n", "nx", vec![]);
+        let plan = Zero.plan_graph_hints(Some(&hints)).expect("plan");
+        assert_eq!(plan.outcomes.len(), GraphHintField::ALL.len());
+        assert!(plan
+            .outcomes
+            .values()
+            .all(|outcome| matches!(outcome, ProjectionOutcome::OmittedUnsupported)));
     }
 
-    pub fn with_critical_path_length(mut self, len: u32) -> Self {
-        self.critical_path_length = Some(len);
-        self
-    }
-
-    pub fn with_nodes(mut self, nodes: Vec<NodeSpec>) -> Self {
-        self.node_count = Some(nodes.len() as u32);
-        self.nodes = nodes;
-        self
+    #[test]
+    fn envelope_uses_owned_hint_keys() {
+        let hints = ApxmGraphHints::critical_path("g", "gx", "n", "nx", vec!["s".into()]);
+        let value = serde_json::to_value(&hints).expect("serialize");
+        assert_eq!(value[hint_keys::SCHEMA_FIELD], hint_keys::SCHEMA);
+        assert!(value.get(hint_keys::SCOPE).is_some());
+        assert!(value.get(hint_keys::FACTS).is_some());
+        assert!(value.get(hint_keys::INTENTS).is_some());
+        assert_eq!(
+            value[hint_keys::INTENTS][hint_keys::REUSABLE_CONTEXT][hint_keys::PREFERENCE],
+            hint_keys::PREFER_WHEN_BENEFICIAL
+        );
+        assert_eq!(
+            BackendMechanismRef::LlamaCachePrompt.as_str(),
+            hint_keys::MECHANISM_LLAMA_CACHE_PROMPT
+        );
     }
 }

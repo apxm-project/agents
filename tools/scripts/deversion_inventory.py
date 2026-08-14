@@ -63,9 +63,8 @@ CONTRACTS_OWNER_IDS = frozenset(
     }
 )
 
-# Ids owned by the vLLM project. The vLLM branch is live in the organization, so
-# these remain a real external counterparty (plan §11). `apxm.vllm-conformance-join`
-# is deliberately NOT here: the join record is Agents-owned and is de-versioned.
+# Ids owned by the vLLM project. The vLLM `apxm` branch is the live receiver.
+# Agents does not keep a conformance-join catalog.
 VLLM_OWNER_IDS = frozenset(
     {
         "apxm.vllm-inference.v1",
