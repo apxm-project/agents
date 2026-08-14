@@ -320,6 +320,7 @@ export type ProviderProtocol =
   | "google"
   | "ollama"
   | "vllm"
+  | "llamacpp"
   | "mock";
 
 export type ProviderSpec = {
@@ -362,6 +363,13 @@ export const BUILTIN_PROVIDERS: readonly ProviderSpec[] = [
   {
     id: "vllm",
     protocol: "vllm" as ProviderProtocol,
+    defaultBaseUrl: null,
+    requiresApiKey: false,
+    apiKeyEnvVar: null,
+  },
+  {
+    id: "llamacpp",
+    protocol: "llamacpp" as ProviderProtocol,
     defaultBaseUrl: null,
     requiresApiKey: false,
     apiKeyEnvVar: null,
