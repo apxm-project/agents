@@ -10,6 +10,7 @@ Reading order:
 2. [Create an Agent Program](creating-an-agent-program.md)
 3. [Compose Agent Programs](composing-agent-programs.md)
 4. [Create a conversational example](creating-a-conversational-agent.md)
+5. [The agent package format](agent-package-format.md)
 
 Conversational behavior is an ordinary authored loop. It is not a runtime
 special case, a product lifecycle, or a named frontend export. External
