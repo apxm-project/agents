@@ -3002,6 +3002,7 @@ mod loop_evidence_tests {
             semantic_operations: Vec::new(),
             structural_ir: Vec::new(),
             context_flow: Vec::new(),
+            capability_permission_requests: Default::default(),
             source_map: apxm_program::source_map::SourceMap {
                 schema_version: apxm_program::source_map::SourceMapVersion::V1,
                 source_language: apxm_program::source_map::SourceLanguage::Python,

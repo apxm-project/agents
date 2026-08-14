@@ -555,49 +555,86 @@ fn shipped_capability_handler_ids(root: &Path) -> Result<BTreeSet<String>> {
 /// Resolve the package's permission layer stack into one decision per capability
 /// the package can supply.
 ///
-/// **Code layer.** Authoring a Capability reference is the program asking to
-/// invoke it, unqualified, so the code layer states one bare `allow` per
-/// grantable capability id. That is the widest a request can be, which is the
-/// correct floor for a tighten-only stack: every narrowing below is the
-/// machine's ruling rather than the program's own claim of authority. It is the
-/// same code layer `local_capability_permissions` states for canonical local
-/// execution, read here from the package's grantable surface rather than from a
-/// compiled module's capability references.
+/// **Code layer.** `authored` is what the compiled program's own source
+/// requested, keyed by `capability_ref` — the
+/// `CapabilityRequirement.requested_permission` an author wrote, carried this
+/// far by `AirModule::capability_permission_requests`. A grantable id the
+/// program stated no permission for gets a bare `allow`: authoring a Capability
+/// reference is the program asking to invoke it, unqualified, and that is the
+/// widest a request can be, which is the correct floor for a tighten-only stack.
+///
+/// The keyspace is the package's whole grantable surface rather than only what
+/// the program invokes, because `agent.toml` is package policy: it may state a
+/// decision for a capability this package can supply before any program invokes
+/// it. What it may not do is decide for a capability *nothing* grants — there is
+/// no request there for it to narrow.
+///
+/// **Callers supply what they know.** `agent lint` and `agent sync` read a
+/// package as authored and compile no program, so they pass no authored
+/// requests and every grantable id sits at the `allow` floor; `agent.toml` can
+/// only narrow, never widen, and the widening arm is unreachable from there by
+/// construction. `compile-service-canonical`, which has just lowered the
+/// program, passes the AIR's authored requests, and that is where a package
+/// trying to hand back authority the program itself declined is refused.
 ///
 /// **Package layer.** `agent.toml [permissions]` is what this package decides on
-/// top of that. It may narrow `allow` to `ask` or `deny`, and it may not decide
-/// for a capability nothing grants — there is no request there for it to narrow.
+/// top of that. It may narrow `allow` to `ask` or `deny`, and it may not widen
+/// an authored request.
 fn resolve_permission_layers(
     agent: &AgentToml,
     grantable: &BTreeSet<String>,
+    authored: &LayerDecisions,
 ) -> Result<BTreeMap<String, PermissionDecision>, String> {
     let requested: LayerDecisions = grantable
         .iter()
-        .map(|id| (id.clone(), PermissionDecision::allow()))
+        .map(|id| {
+            (
+                id.clone(),
+                authored
+                    .get(id)
+                    .cloned()
+                    .unwrap_or_else(PermissionDecision::allow),
+            )
+        })
         .collect();
     let resolution = PermissionResolution::resolve_code_over_package(
         requested,
         agent.permissions.clone().into_iter().collect(),
     )
-    .map_err(|error| format!("agent.toml [permissions]: {error}"))?;
+    .map_err(|error| format!("[permissions]: {error}"))?;
     Ok(resolution
         .iter()
         .map(|(capability_ref, resolved)| (capability_ref.to_string(), resolved.decision.clone()))
         .collect())
 }
 
-pub(crate) fn agent_sync(root: &Path, json_output: bool) -> Result<()> {
-    if !root.is_dir() {
-        bail!("'{}' is not a directory", root.display());
-    }
-    let agent_path = root.join("agent.toml");
-    if !agent_path.is_file() {
-        bail!("missing required file: {}", agent_path.display());
-    }
-    let agent: AgentToml = read_toml(&agent_path)?;
-
+/// Resolve one on-disk package's permission layer stack against what its
+/// compiled program requested.
+///
+/// The seam `compile-service-canonical` reaches through: it holds the lowered
+/// AIR's authored requests and the package root, and this joins them to the
+/// package's grantable surface and its `agent.toml [permissions]` without
+/// making the compile service a second owner of the stacking rule.
+///
+/// # Errors
+///
+/// Returns an error when the package cannot be read, or when `agent.toml`
+/// widens an authored request or decides for a capability nothing grants.
+pub(crate) fn resolve_package_permission_layers(
+    root: &Path,
+    authored: &LayerDecisions,
+) -> Result<BTreeMap<String, PermissionDecision>> {
+    let pkg = load_agent(root)?;
     let grantable = granted_capability_ids(root)?;
-    let resolved = resolve_permission_layers(&agent, &grantable).map_err(|error| anyhow!(error))?;
+    resolve_permission_layers(&pkg.agent, &grantable, authored)
+        .map_err(|error| anyhow!("{} {error}", root.join("agent.toml").display()))
+}
+
+pub(crate) fn agent_sync(root: &Path, json_output: bool) -> Result<()> {
+    let pkg = load_agent(root)?;
+    // Sync compiles no program, so it states no authored request and every
+    // grantable id sits at the code layer's `allow` floor.
+    let resolved = resolve_package_permission_layers(root, &LayerDecisions::new())?;
 
     compile_agent_handlers(root)?;
     let mut tools_manifest = load_typescript_tools_manifest(root)?;
@@ -617,7 +654,7 @@ pub(crate) fn agent_sync(root: &Path, json_output: bool) -> Result<()> {
     } else {
         print_section_header("Agent Sync");
         print_status_line(
-            &agent.id,
+            &pkg.agent.id,
             Status::Ok,
             &format!("{handler_count} handlers regenerated"),
         );
@@ -754,9 +791,9 @@ fn check_permission_resolution(pkg: &LoadedAgent, org_globals: &BTreeSet<String>
         Err(error) => return vec![error.to_string()],
     };
     grantable.extend(org_globals.iter().cloned());
-    match resolve_permission_layers(&pkg.agent, &grantable) {
+    match resolve_permission_layers(&pkg.agent, &grantable, &LayerDecisions::new()) {
         Ok(_) => Vec::new(),
-        Err(error) => vec![error],
+        Err(error) => vec![format!("agent.toml {error}")],
     }
 }
 
@@ -1383,9 +1420,10 @@ mod tests {
     }
 
     /// `agent.toml [permissions]` is the package layer of the resolution stack.
-    /// The code layer states one bare `allow` per grantable capability, so the
-    /// package may narrow one and may not decide for a capability nothing
-    /// grants — there is no request there for it to narrow.
+    /// `agent lint` compiles no program, so it states no authored request and
+    /// the code layer sits at the `allow` floor: the package may narrow one and
+    /// may not decide for a capability nothing grants — there is no request
+    /// there for it to narrow.
     #[test]
     fn lint_refuses_a_package_permission_for_a_capability_nothing_grants() {
         let tmp = tempdir().unwrap();
@@ -1429,6 +1467,65 @@ mod tests {
         assert!(
             check_permission_resolution(&load_agent(&root).unwrap(), &org_globals).is_empty(),
             "an org-global capability must accept a package decision"
+        );
+    }
+
+    /// The other arm of the lattice, reachable only once a caller knows what
+    /// the program itself requested.
+    ///
+    /// With no authored request the code layer is a maximally wide floor, and
+    /// nothing can widen what is already widest — `write = "allow"` resolves
+    /// clean. The same package against a program whose source asked for a gate
+    /// on `write` is a package handing back authority the program declined, and
+    /// it fails closed. `compile-service-canonical` is the caller that knows the
+    /// difference, because it has just lowered the program.
+    #[test]
+    fn a_package_may_not_widen_what_the_program_requested() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("widening");
+        scaffold(&root, "widening");
+        let agent_path = root.join("agent.toml");
+        let scaffolded = fs::read_to_string(&agent_path).unwrap();
+        let without_permissions = scaffolded
+            .split("[permissions]")
+            .next()
+            .expect("the scaffolded manifest states [permissions] last")
+            .to_string();
+        fs::write(
+            &agent_path,
+            format!("{without_permissions}[permissions]\nwrite = \"allow\"\n"),
+        )
+        .unwrap();
+
+        resolve_package_permission_layers(&root, &LayerDecisions::new())
+            .expect("nothing can widen an unstated request");
+
+        let authored = LayerDecisions::from([(
+            "write".to_string(),
+            PermissionDecision::ask("Writes files on the host."),
+        )]);
+        let error = resolve_package_permission_layers(&root, &authored)
+            .expect_err("a package may not widen an authored request")
+            .to_string();
+        assert!(
+            error.contains("may only tighten"),
+            "expected a widening refusal, got: {error}"
+        );
+
+        let resolved = resolve_package_permission_layers(
+            &root,
+            &LayerDecisions::from([(
+                "read".to_string(),
+                PermissionDecision::ask("Reads whatever the model asks for."),
+            )]),
+        )
+        .expect("an authored request no package layer touches resolves");
+        assert_eq!(
+            resolved.get("read"),
+            Some(&PermissionDecision::ask(
+                "Reads whatever the model asks for."
+            )),
+            "an unnarrowed authored request is the resolved decision, not a blanket allow"
         );
     }
 
@@ -1517,8 +1614,12 @@ mod tests {
         .unwrap();
 
         let pkg = load_agent(&root).unwrap();
-        let resolved =
-            resolve_permission_layers(&pkg.agent, &granted_capability_ids(&root).unwrap()).unwrap();
+        let resolved = resolve_permission_layers(
+            &pkg.agent,
+            &granted_capability_ids(&root).unwrap(),
+            &LayerDecisions::new(),
+        )
+        .unwrap();
         assert_eq!(
             resolved.get("write"),
             Some(&PermissionDecision::ask("Writes files on the host."))

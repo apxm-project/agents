@@ -30,6 +30,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use apxm_ais::permissions::LayerDecisions;
 use apxm_ais::{SemanticOpKind, StructuralOpKind};
 
 use crate::air::{
@@ -161,6 +162,7 @@ pub fn frontend_graph_to_air(graph: &FrontendGraph) -> Result<AirModule, Verdict
                 value_id: edge.value_id.clone(),
             })
             .collect(),
+        capability_permission_requests: lower_capability_permission_requests(graph),
         source_map: graph.source_map.clone(),
     };
     let air_verdict = air.verify();
@@ -168,6 +170,34 @@ pub fn frontend_graph_to_air(graph: &FrontendGraph) -> Result<AirModule, Verdict
         return Err(air_verdict);
     }
     Ok(air)
+}
+
+/// Reduce the graph's authored Capability declarations to one permission
+/// request per `capability_ref`.
+///
+/// A graph carries one requirement record per *declaration*, so the same
+/// reference can arrive twice — declared once as a Tool and once as a plain
+/// Capability — with two different authored permissions, or with one stated and
+/// one absent. Collapsing them by taking the tightest stated request is the
+/// only reduction that cannot manufacture authority: an author who wrote
+/// `Ask` anywhere for a capability did not also authorize it unqualified
+/// elsewhere. A reference no declaration states a permission for contributes no
+/// entry at all, which the code layer reads as an unqualified request rather
+/// than as a request for nothing.
+pub(crate) fn lower_capability_permission_requests(graph: &FrontendGraph) -> LayerDecisions {
+    let mut requests = LayerDecisions::new();
+    for requirement in &graph.capability_requirements {
+        let Some(requested) = &requirement.requested_permission else {
+            continue;
+        };
+        match requests.get(&requirement.capability_ref) {
+            Some(held) if held.restriction() >= requested.restriction() => {}
+            _ => {
+                requests.insert(requirement.capability_ref.clone(), requested.clone());
+            }
+        }
+    }
+    requests
 }
 
 /// Select the AIS semantic operation for a typed call intent. Tool and advanced

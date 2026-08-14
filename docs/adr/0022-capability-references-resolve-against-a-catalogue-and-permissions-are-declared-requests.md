@@ -357,15 +357,24 @@ until something authors one — recognizing the path first would repeat, at the
 folder level, the allowlist-without-implementation mistake the capability ids
 just came back from.
 
-No shipped code-layer producer reads `requested_permission`.
-`resolve_permission_layers` states one bare `allow` per grantable id
-(`crates/tools/cli/src/commands/agent.rs`) and `local_capability_permissions`
-one per authored `capability.invoke`, because AIR carries no requirements
-(`crates/tools/cli/src/commands/canonical_execute.rs`, whose own doc comment
-records that a graph-bearing path should state the authored request instead).
-The stack, the tighten-only rule, and the digest-bound record are all in place;
-what is missing is the producer that starts the code layer from what the program
-actually asked for rather than from the widest thing it could have asked for.
+`agent lint` still starts its code layer from the widest thing a program could
+have asked for. It reads a package as authored and compiles nothing, so it has
+no authored request to state and `resolve_permission_layers`
+(`crates/tools/cli/src/commands/agent.rs`) leaves every grantable id at the
+`allow` floor. Nothing can widen what is already widest, so the tighten-only
+arm of the stack is unreachable from lint by construction; only the
+unrequested-override arm fires there.
+
+The two callers that do hold the compiled program read the authored request.
+AIR carries it as `AirModule::capability_permission_requests`, lowered from
+`CapabilityRequirement.requested_permission` (`crates/machine/program/src/air.rs`,
+`crates/machine/program/src/lower.rs`) and reconciled against the source bundle
+the artifact digest binds (`crates/machine/program/src/artifact.rs`).
+`local_capability_permissions` states it as the code layer for canonical local
+execution (`crates/tools/cli/src/commands/canonical_execute.rs`), and
+`compile-service-canonical` — the one caller holding both the lowered program
+and the package that ships it — refuses to emit AIR when `agent.toml` widens it
+(`crates/tools/cli/src/commands/compile_service_canonical.rs`).
 
 A Python-declared shipped Capability is not executable. No Python bundler or
 admitted worker adapter exists, and `HandlerLanguage` admits only `typescript`

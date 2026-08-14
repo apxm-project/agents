@@ -38,6 +38,16 @@
         "$ref": "#/$defs/ContextEdge"
       }
     },
+    "capability_permission_requests": {
+      "type": "object",
+      "description": "The permission the program's own source requested for a Capability it invokes, keyed by capability_ref. Present only for a reference whose authored declaration stated one; an absent reference is an unqualified request, not a narrowed one. It is a request, never a grant: it is the code layer of the permission resolution stack, and every layer above may only narrow it.",
+      "propertyNames": {
+        "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+      },
+      "additionalProperties": {
+        "$ref": "apxm.frontend-graph#/$defs/PermissionDecision"
+      }
+    },
     "source_map": {
       "$ref": "apxm.source-map#/$defs/SourceMapBody"
     }

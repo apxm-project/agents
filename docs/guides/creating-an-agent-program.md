@@ -229,15 +229,23 @@ is still only a request, and every narrowing below it belongs to the machine.
 The one authored layer above code is `agent.toml [permissions]` — see
 [the package format](agent-package-format.md#5-permissions-the-tighten-only-layer).
 
-One caveat, so you don't expect more than the tree does: neither shipped
-code-layer producer reads `requested_permission` yet. `resolve_permission_layers`
-states one bare `allow` per grantable id from the package's surface
-(`crates/tools/cli/src/commands/agent.rs`), and `local_capability_permissions`
-states one per `capability.invoke` the AIR names, because AIR carries no
-requirements (`crates/tools/cli/src/commands/canonical_execute.rs`). So a
-declared permission is recorded, digest-bound, and carried, but a stricter
-request does not yet tighten either shipped stack on its own. Narrowing you
-actually depend on belongs in `agent.toml [permissions]` today.
+What you write reaches the running machine. Lowering carries the authored
+request into AIR as `capability_permission_requests`
+(`crates/machine/program/src/lower.rs`), and a composition root handed nothing
+but AIR bytes reads it as the code layer: `local_capability_permissions` states
+your decision for a reference you wrote one for and a bare `allow` for one you
+did not (`crates/tools/cli/src/commands/canonical_execute.rs`). The canonical
+local driver brokers no approvals, so an `Ask` that reaches it refuses the
+effect and commits the refusal as evidence naming the code layer
+(`crates/runtime/execution/src/driver.rs`).
+
+One caveat, so you don't expect more than the tree does: `agent lint` compiles
+no program, so it cannot see your request — it resolves `agent.toml` against a
+blanket `allow` floor (`crates/tools/cli/src/commands/agent.rs`). The caller
+that holds both your request and the package policy is
+`compile-service-canonical`, which refuses to emit AIR when `agent.toml` tries
+to widen what your source asked for
+(`crates/tools/cli/src/commands/compile_service_canonical.rs`).
 
 A Python package declares the handlers it ships with `capability(...)` from
 `apxm_program.handlers`, in the same shape `Tool.define` uses in TypeScript, and

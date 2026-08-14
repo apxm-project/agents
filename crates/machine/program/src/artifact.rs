@@ -650,6 +650,21 @@ fn reconcile_requirements_with_air(
         }
     }
 
+    // The authored permission request now exists twice inside one artifact:
+    // on the digest-bound source bundle as declared, and on the AIR the runtime
+    // resolves from. Holding them equal is what keeps the artifact's two
+    // answers to "what did this program ask for" from becoming two facts, the
+    // same reason `hook_bindings` is reconciled rather than trusted.
+    let declared_requests = crate::lower::lower_capability_permission_requests(graph);
+    if declared_requests != air.capability_permission_requests {
+        verdict.push(Diagnostic::new(
+            DiagnosticCode::SchemaViolation,
+            "capability_permission_requests".to_string(),
+            "the AIR's capability permission requests disagree with the authored capability \
+             requirements the source bundle binds",
+        ));
+    }
+
     if verdict.is_accepted() {
         Ok(())
     } else {

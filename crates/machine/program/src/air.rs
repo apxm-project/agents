@@ -10,7 +10,8 @@ use std::collections::HashSet;
 
 const MAX_SAFE_PREDICATE_INTEGER: i64 = 9_007_199_254_740_991;
 
-use apxm_ais::{SLOT_CARRIED, SLOT_INITIAL, get_operation_spec};
+use apxm_ais::permissions::LayerDecisions;
+use apxm_ais::{SLOT_CAPABILITY_REF, SLOT_CARRIED, SLOT_INITIAL, get_operation_spec};
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Verdict, schema_violation};
@@ -142,10 +143,48 @@ pub struct AirModule {
     pub semantic_operations: Vec<SemanticOp>,
     pub structural_ir: Vec<StructuralNode>,
     pub context_flow: Vec<ContextEdge>,
+    /// The permission the program's own source requested for a Capability it
+    /// invokes, keyed by `capability_ref`.
+    ///
+    /// AIR already says *which* Capabilities a program invokes — that is what a
+    /// `capability.invoke` node is. What it could not say is what the author
+    /// asked for when invoking one, so every composition root handed bare AIR
+    /// had to assume the widest possible request. This carries the authored
+    /// request across that boundary, and only the authored request: a
+    /// `capability_ref` absent here is one whose declaration stated no
+    /// permission, which is an unqualified ask for the capability, not a
+    /// silently narrowed one.
+    ///
+    /// It is a *request*, never a grant. The resolution stack in
+    /// [`apxm_ais::permissions`] takes it as the code layer, and every layer
+    /// above may only narrow it.
+    #[serde(default, skip_serializing_if = "LayerDecisions::is_empty")]
+    pub capability_permission_requests: LayerDecisions,
     pub source_map: SourceMap,
 }
 
 impl AirModule {
+    /// Every `capability_ref` this module's `capability.invoke` operations
+    /// name, deduplicated and in reference order.
+    ///
+    /// This is the set of Capabilities the program asks to invoke, which is the
+    /// keyspace of [`Self::capability_permission_requests`] and of the code
+    /// layer any composition root resolves from bare AIR.
+    #[must_use]
+    pub fn invoked_capability_refs(&self) -> std::collections::BTreeSet<&str> {
+        self.semantic_operations
+            .iter()
+            .filter(|operation| operation.op == SemanticOpKind::CapabilityInvoke)
+            .filter_map(|operation| {
+                operation
+                    .operands
+                    .iter()
+                    .find(|operand| operand.slot == SLOT_CAPABILITY_REF)
+                    .map(|operand| operand.value_id.as_str())
+            })
+            .collect()
+    }
+
     /// Verify a decoded AIR module. The op and kind closures are already
     /// guaranteed by decode; this adds identifier grammar, unique-id, and
     /// source-map checks, producing deterministic closed diagnostics.
@@ -209,6 +248,8 @@ impl AirModule {
                 }
             }
         }
+
+        validate_capability_permission_requests(&mut verdict, self);
 
         let mut seen_regions: HashSet<&str> = HashSet::new();
         for region in &self.structural_ir {
@@ -701,6 +742,42 @@ fn collect_expression_references(expression: &ValueExpression, out: &mut Vec<Str
         | ValueExpression::Integer { .. }
         | ValueExpression::Boolean { .. }
         | ValueExpression::Null => {}
+    }
+}
+
+/// A permission request may only be stated for a Capability this module
+/// actually invokes, and it must say something when it says why.
+///
+/// Both halves close the same hole from opposite sides. A request naming a
+/// `capability_ref` no `capability.invoke` names would sit in the code layer of
+/// every resolution forever, narrowing an effect that does not exist and
+/// looking, to a reader, like authority the program holds. An empty reason
+/// would put a blank explanation into the digest — the same check the
+/// FrontendGraph already runs on the authored requirement it lowers from, held
+/// again here because AIR is decoded from bytes nothing upstream saw.
+fn validate_capability_permission_requests(verdict: &mut Verdict, air: &AirModule) {
+    if air.capability_permission_requests.is_empty() {
+        return;
+    }
+    let invoked = air.invoked_capability_refs();
+    for (capability_ref, decision) in &air.capability_permission_requests {
+        if !invoked.contains(capability_ref.as_str()) {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                capability_ref.clone(),
+                "a capability permission request names a Capability no capability.invoke names",
+            ));
+        }
+        if decision
+            .reason()
+            .is_some_and(|reason| reason.trim().is_empty())
+        {
+            verdict.push(Diagnostic::new(
+                DiagnosticCode::SchemaViolation,
+                capability_ref.clone(),
+                "a capability permission request carries an empty reason",
+            ));
+        }
     }
 }
 

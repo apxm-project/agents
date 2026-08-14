@@ -31,8 +31,6 @@ pub mod env {
     /// Root of the installed TypeScript frontend package used for source
     /// execution and handler workers.
     pub const APXM_TYPESCRIPT_FRONTEND_PACKAGE: &str = "APXM_TYPESCRIPT_FRONTEND_PACKAGE";
-    /// Output path supplied to Python frontend processes for their handler manifest.
-    pub const APXM_PYTHON_TOOLS_OUT: &str = "APXM_PYTHON_TOOLS_OUT";
     /// Enables the in-process mock backend for tests and offline benchmarks.
     pub const APXM_MOCK_BACKEND: &str = "APXM_MOCK_BACKEND";
     /// Configures mock backend latency in milliseconds.

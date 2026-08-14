@@ -168,12 +168,17 @@ The decision vocabulary is closed to three values — `allow`, `ask`, `deny`
 carrying a `reason`. Both forms round-trip identically when there is no
 reason to state.
 
-Two ways this fails closed, both enforced at `agent lint`:
+Two ways this fails closed:
 
-- **Widening.** A `[permissions]` entry may only move a decision toward
-  `deny` (`allow → ask → deny`, checked by `PermissionDecision::tightens_to`).
-  Moving it back toward `allow` is refused.
-- **An unrequested override.** `write = "allow"` for a capability the
+- **Widening**, enforced at `compile-service-canonical`. A `[permissions]`
+  entry may only move a decision toward `deny` (`allow → ask → deny`, checked
+  by `PermissionDecision::tightens_to`). Moving it back toward `allow` is
+  refused. This is checked where the compiled program is in hand, because that
+  is the only place the decision being widened is known: the code layer it
+  narrows is the program's own `permission=` request, carried into AIR as
+  `capability_permission_requests`. `agent lint` compiles nothing, so its code
+  layer is a blanket `allow` floor and there is nothing there to widen.
+- **An unrequested override**, enforced at `agent lint`. `write = "allow"` for a capability the
   package cannot supply — not a builtin and not a shipped handler — fails
   with "the package layer decides ... for capability ..., which the program
   never requested." `agent lint --org <org-root>` extends the grantable set

@@ -54,7 +54,33 @@ pub(crate) fn emit_canonical_air_from_agent(
             )
         })?;
     check_capability_references_are_granted(agent_dir, &module)?;
+    check_package_permissions_only_tighten(agent_dir, &module)?;
     Ok(air_json)
+}
+
+/// Resolve the compiled program's authored permission requests against the
+/// package's own `agent.toml [permissions]`, and refuse to emit AIR the stack
+/// rejects.
+///
+/// This is the one place in the tree where both halves of the shipped
+/// resolution stack are simultaneously known: the program has just been lowered,
+/// so `AirModule::capability_permission_requests` carries what its source
+/// requested, and the package that ships it is right here on disk. Every other
+/// producer knows only one of the two — `agent lint` reads a package without
+/// compiling it, and `execute-canonical` is handed AIR without a package — so
+/// until a caller held both, `agent.toml` could hand back authority the program
+/// had itself declined and nothing would notice. A widening is not a warning
+/// and not something the artifact records: the compile does not produce AIR at
+/// all.
+fn check_package_permissions_only_tighten(
+    agent_dir: &Path,
+    module: &apxm_program::air::AirModule,
+) -> Result<()> {
+    super::agent::resolve_package_permission_layers(
+        agent_dir,
+        &module.capability_permission_requests,
+    )
+    .map(|_| ())
 }
 
 /// Hold every Capability the compiled program names against what the package

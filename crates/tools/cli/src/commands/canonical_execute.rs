@@ -1569,18 +1569,16 @@ fn local_capability_invocation_admissions(
 /// Resolve the permission layer stack for one canonical local run, projected
 /// into the admission's typed decision list.
 ///
-/// **Code layer (10).** `CapabilityRequirement.requested_permission` is the
-/// authored request, but it lives on the FrontendGraph and its digest-bound
-/// SourceBundle, and `execute-canonical` is handed canonical `apxm.air` bytes
-/// alone — AIR carries no capability requirements. What the AIR *does* carry is
-/// the request itself: authoring a `capability.invoke` node is the program
-/// asking to invoke that capability, unqualified. So the code layer states one
-/// unqualified `allow` per authored capability reference. That is the widest a
-/// request can be, which is the correct starting point for a tighten-only
-/// stack: every narrowing below is then the machine's ruling, never the
-/// program's own claim of authority. When a graph-bearing path reaches here it
-/// should state the authored `requested_permission` instead — the stack is
-/// unchanged, only the code layer becomes more precise.
+/// **Code layer (10).** One decision per capability the AIR invokes, read off
+/// the AIR itself. Authoring a `capability.invoke` node is the program asking
+/// to invoke that capability; `AirModule::capability_permission_requests` says
+/// what the author asked *for* when the declaration stated a permission, and
+/// lowering carries that request from the same
+/// `CapabilityRequirement.requested_permission` the digest-bound SourceBundle
+/// binds. A reference the program stated no permission for gets an unqualified
+/// `allow` — the widest a request can be, and the correct reading of silence in
+/// a tighten-only stack, where every narrowing below is the machine's ruling
+/// rather than the program's own claim of authority.
 ///
 /// **Package layer (20).** The canonical local composition root binds no
 /// sandbox backend and holds no issued Capability grant, so it ships the
@@ -1604,22 +1602,16 @@ fn local_capability_permissions(
 ) -> Result<Vec<AdmittedCapabilityPermission>> {
     let mut requested = LayerDecisions::new();
     let mut shipped = LayerDecisions::new();
-    for operation in &air.semantic_operations {
-        if operation.op != SemanticOpKind::CapabilityInvoke {
-            continue;
-        }
-        let Some(capability_ref) = operation
-            .operands
-            .iter()
-            .find(|operand| operand.slot == "capability_ref")
-            .map(|operand| operand.value_id.clone())
-        else {
-            continue;
-        };
-        requested.insert(capability_ref.clone(), PermissionDecision::allow());
-        if !admitted.contains(&capability_ref) {
+    for capability_ref in air.invoked_capability_refs() {
+        let authored = air
+            .capability_permission_requests
+            .get(capability_ref)
+            .cloned()
+            .unwrap_or_else(PermissionDecision::allow);
+        requested.insert(capability_ref.to_string(), authored);
+        if !admitted.contains(capability_ref) {
             shipped.insert(
-                capability_ref,
+                capability_ref.to_string(),
                 PermissionDecision::deny(format!(
                     "canonical local execution binds no sandbox backend and no issued Capability \
                      grant, so it admits only the read-only capability surface [{}]",
@@ -2933,6 +2925,102 @@ mod tests {
             outcomes["n.write"],
             CapabilityOutcome::Failed { .. }
         ));
+    }
+
+    /// What an author writes as `permission=Ask(...)` reaches the running
+    /// machine and changes what it does.
+    ///
+    /// `read` is a capability the local root ships and no layer above the code
+    /// layer narrows, so a blanket-`allow` code layer completes it — that is
+    /// exactly what the sibling test above asserts. Here the program's own
+    /// source asked for a gate instead, and the local driver brokers no
+    /// approval, so the effect is refused and the refusal names the *code*
+    /// layer: the program's request, not the machine's ruling.
+    #[tokio::test]
+    async fn an_authored_ask_refuses_a_capability_the_local_root_would_otherwise_allow() {
+        use apxm_program::runtime_evidence::FactKind;
+
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let readable = directory.path().join("payload.txt");
+        std::fs::write(&readable, "authored-ask payload\n").expect("write payload");
+
+        let mut air = read_then_write_air(
+            readable.to_str().expect("utf-8 path"),
+            directory
+                .path()
+                .join("unused.txt")
+                .to_str()
+                .expect("utf-8 path"),
+        );
+        air.capability_permission_requests.insert(
+            "read".to_string(),
+            PermissionDecision::ask("Reads whatever the model asks for."),
+        );
+        assert!(air.verify().is_accepted());
+
+        let commit = Arc::new(DevCommit::default());
+        let ports = dev_ports(
+            commit.clone(),
+            Arc::new(LocalCapabilityPort::new().expect("local capability port")),
+            Arc::new(LocalModelInferencePort::from_backend_roster().expect("local inference port")),
+            local_model_request_metadata(),
+        )
+        .expect("development ports form an admitted bundle");
+        let capability_invocations = local_admissions(&air);
+        let model_admission = model_admission(&air, DEV_BINDING_DIGEST);
+        let report = execute(
+            &ports,
+            ExecutionRequest {
+                model_admission,
+                initial_values: initial_model_request_values(&air),
+                air,
+                hook_bindings: Vec::new(),
+                capability_invocations,
+                program_instance_ref: ProgramInstanceRef::new("test.instance.authored-ask"),
+                program_invocation_ref: ProgramInvocationRef::new("test.invocation.authored-ask"),
+                commit_id: "test.commit.authored-ask".into(),
+                write_set: dev_write_set(),
+            },
+            Value::Null,
+        )
+        .await
+        .expect("a refused capability is a typed outcome, not a driver error");
+
+        let recorded = commit
+            .committed_evidence()
+            .into_iter()
+            .filter_map(|fact| {
+                fact.is_kind(FactKind::CapabilityAttemptRecorded)
+                    .then(|| fact.runtime().expect("runtime fact").clone())
+            })
+            .find(|fact| fact.capability_ref.as_deref() == Some("read"))
+            .expect("evidence records the decision for the authored capability");
+        assert_eq!(
+            recorded.permission_decision,
+            Some(ResolvedPermission {
+                decision: PermissionDecision::ask("Reads whatever the model asks for."),
+                layer: PermissionLayer::Code,
+            }),
+            "the committed decision is the one the program's source requested"
+        );
+
+        let outcome = report
+            .node_outcomes
+            .iter()
+            .find_map(|outcome| match outcome {
+                NodeOutcome::Capability {
+                    node_id, outcome, ..
+                } if node_id == "n.read" => Some(outcome),
+                _ => None,
+            })
+            .expect("the authored capability node produced an outcome");
+        match outcome {
+            CapabilityOutcome::Failed { message } => assert!(
+                message.contains("is ask") && message.contains("code layer"),
+                "the refusal names the authored request and the layer that made it: {message}"
+            ),
+            other => panic!("an authored ask must not complete unguarded: {other:?}"),
+        }
     }
 
     /// The exact model reference the checked-in canonical fixture authors.

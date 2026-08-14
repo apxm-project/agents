@@ -220,9 +220,23 @@ fn an_authored_permission_survives_graph_air_and_artifact() {
         graph.capability_requirements
     );
 
-    // Boundary 3 — lowering to AIR neither consumes nor drops the requirement.
+    // Boundary 3 — lowering to AIR neither consumes nor drops the requirement,
+    // and AIR states it in the form a composition root handed bare AIR resolves
+    // from. Two declarations of one reference collapse to the tightest request:
+    // an author who wrote `ask` anywhere did not also authorize the reference
+    // unqualified elsewhere.
     let air = frontend_graph_to_air(&graph).expect("lower permissioned graph");
     assert!(air.verify().is_accepted());
+    assert_eq!(
+        air.capability_permission_requests.get("cap.search"),
+        Some(&PermissionDecision::ask(
+            "Reads whatever the model asks for."
+        ))
+    );
+    assert_eq!(
+        serde_json::to_value(&air).expect("encode AIR")["capability_permission_requests"],
+        json!({"cap.search": requested})
+    );
 
     // Boundary 4 — the artifact's source bundle carries the permission verbatim
     // and both artifact digests are bound to it, so no consumer downstream of
@@ -259,6 +273,41 @@ fn an_authored_permission_survives_graph_air_and_artifact() {
         artifact.source_bundle_digest, reworded.source_bundle_digest,
         "the reason a decision gives is bound to the source bundle"
     );
+}
+
+/// A program that authors no permission states no request, rather than a
+/// request for nothing. AIR omits the field entirely, which is what keeps every
+/// artifact and pinned AIR fixture compiled before requests were carried
+/// byte-identical — and what lets a composition root read the absence as an
+/// unqualified request instead of a narrowed one.
+#[test]
+fn an_unauthored_permission_leaves_no_request_in_air() {
+    let graph: FrontendGraph =
+        serde_json::from_value(duplicate_declaration_graph_value(None)).expect("control graph");
+    let air = frontend_graph_to_air(&graph).expect("lower control graph");
+    assert!(air.capability_permission_requests.is_empty());
+    assert_eq!(
+        serde_json::to_value(&air)
+            .expect("encode AIR")
+            .get("capability_permission_requests"),
+        None
+    );
+}
+
+/// A request may only narrow an effect the module actually performs. One naming
+/// a Capability no `capability.invoke` names would sit in the code layer of
+/// every resolution forever, narrowing nothing and reading like authority.
+#[test]
+fn an_air_permission_request_must_name_an_invoked_capability() {
+    let graph: FrontendGraph =
+        serde_json::from_value(duplicate_declaration_graph_value(None)).expect("control graph");
+    let mut air = frontend_graph_to_air(&graph).expect("lower control graph");
+    assert!(air.verify().is_accepted());
+    air.capability_permission_requests.insert(
+        "cap.never.invoked".to_string(),
+        PermissionDecision::deny("narrows an effect that does not exist"),
+    );
+    assert!(!air.verify().is_accepted());
 }
 
 /// A decision that structurally carries a reason and says nothing would put an
