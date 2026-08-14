@@ -8,6 +8,15 @@ amends: ADR-0006, ADR-0010, ADR-0014
 
 # Source-first Agent frontend vocabulary and representation stack
 
+The Capability-reference position and the frozen declaration matrix below have
+been restated by
+[ADR-0022](0022-capability-references-resolve-against-a-catalogue-and-permissions-are-declared-requests.md):
+a Capability reference resolves against a generated catalogue rather than being
+an opaque exact string, `contracts/vectors/apxm.frontend-surface.json` rather
+than §4's table is where the cross-language surface is now decided, and §4's
+two bundled-handler rows are one row. Read §4 and §7 of this ADR through that
+amendment.
+
 ## Context
 
 ADR-0006 fixed `apxm.frontend-graph` as the versioned interchange contract

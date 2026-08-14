@@ -81,7 +81,9 @@ pub mod env {
     /// Server rollout payload spill threshold, in bytes.
     pub const APXM_ROLLOUT_SPILL_THRESHOLD_BYTES: &str = "APXM_ROLLOUT_SPILL_THRESHOLD_BYTES";
     /// Retention: rollout max age (days) before compaction archives its content.
-    /// See state-layout.v1 `sessions/rollouts` (class=durable). .
+    /// See the `sessions/rollouts` entry of `AGENTS_STATE_LAYOUT` in
+    /// `crates/machine/contracts/src/paths.rs`, which is the source of truth
+    /// for the state layout; no contract under `contracts/` describes it.
     pub const APXM_RETENTION_ROLLOUT_MAX_AGE_DAYS: &str = "APXM_RETENTION_ROLLOUT_MAX_AGE_DAYS";
     /// Retention: grace period (hours) an unreferenced blob must sit idle
     /// before GC deletes it, to avoid racing an in-flight spill write.

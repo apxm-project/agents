@@ -26,6 +26,21 @@ lifecycle, authority, or canonical evidence. A real model or external system
 may return a different valid domain value. Exact output equality is required
 only for a scripted deterministic fixture with the same injected inputs.
 
+This contract is intentionally target-only. The key words **MUST**,
+**MUST NOT**, **SHOULD**, and **MAY** describe the accepted target, not the
+current implementation. §14's checklist is the ledger of the difference, and
+no item on it is checked yet.
+
+Shipped today are the Port Contract, Runtime Profile, Exact Port Binding, and
+Execution/Invocation Admission layers — `apxm.port-contract`,
+`apxm.execution-admission`, and `apxm.invocation-admission` under
+`contracts/schemas/`, with their types under `crates/machine/contracts/`. The
+deployment-composition layer that §7, §9, §10, and §12 describe between them is
+design only: Compatibility Set, Implementation Descriptor, Deployment Port
+Slot, Deployment Composition Manifest, `verify_deployment_composition`, and the
+shared fake/real conformance suite with its negative-ceiling and bypass scans
+name nothing that resolves to code in `crates/` on this branch.
+
 ## 2. Normative vocabulary
 
 The canonical terms are in [`CONTEXT.md`](../../CONTEXT.md).
@@ -219,6 +234,13 @@ choice.
 No speculative target port is introduced before this condition exists.
 
 ## 7. Binding and construction contract
+
+Status: design. Port Contracts, Runtime Profiles, and Exact Port Bindings are
+shipped, but the release and deployment scopes below — Compatibility Set,
+Implementation Descriptor, Deployment Port Slot, Deployment Composition
+Manifest, and the `verify_deployment_composition` verifier every clause here
+routes through — have no implementation in `crates/`. Read this section as the
+accepted target for that layer, not as a description of what runs.
 
 ### 7.1 Release, deployment, and invocation scopes
 
@@ -591,6 +613,11 @@ Contract-generated identifiers and explicit mathematical/format constants are
 not accidental hardcoding; their owner and invariant must be evident.
 
 ## 12. Conformance
+
+Status: design. The shared fake/real conformance suite this section specifies
+does not exist: no negative-ceiling test, first-party bypass scan, or
+direct-core-call scan is present in `crates/`. Per-crate tests cover parts of
+the ground below, but the suite as an owner obligation is the target.
 
 Each owner suite includes:
 

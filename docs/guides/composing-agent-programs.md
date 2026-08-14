@@ -76,14 +76,36 @@ calls in §1 are the only things that invoke. It is a different thing from the
 (`crates/tools/cli/src/commands/org.rs`). No membership, edge, or declared
 parent causes an invocation.
 
-Skills are not something an Agent Program declares, associates, or inherits.
-There is no `Skill` marker in either frontend — the surface manifest carries no
-skill declaration, so a program cannot author one. What a program can do is
-*read* one through an admitted Capability: `list_skills`, `search_skills`, and
-`read_skill` are builtin ids (`crates/machine/ais/src/capabilities.rs`)
-implemented in `crates/runtime/capability/src/builtins/skills.rs`, resolving
-against discovery roots the composition root configures. That root list is empty
-by default, so nothing scans whatever happens to sit near the process.
+A Program declares its own skills, but it does not associate or inherit them.
+The `Skill` marker is `advanced`-tier surface in both frontends
+(`crates/compiler/frontend/python/apxm_program/_markers.py`,
+`crates/compiler/frontend/typescript/src/markers.ts`), and it carries the
+instructions one of exactly two ways:
+
+```python
+Skill("code_review", entry="skills/code_review/SKILL.md")  # package file
+Skill("code_review", text="Review the diff for ...")       # inline in source
+```
+
+Stating both is `SkillSourceAmbiguous` and stating neither is
+`SkillSourceMissing`. The `entry=` path is derived from the id, never spelled
+independently — anything but `skills/<skill_id>/SKILL.md` is
+`SkillEntryPathNotCanonical` (`SkillRequirement::entry_path_for`,
+`crates/machine/program/src/frontend_graph.rs`). The two forms are two routes
+to the same digest: an `entry=` file is hashed by the carrying package's
+integrity chain, and `text=` sits inside the source bundle the artifact digest
+already covers. A declaration lowers to `SkillRequirement` and reaches the
+artifact as `skill_requirements` (`crates/machine/program/src/artifact.rs`).
+
+Declaring a skill is not authority to read it. `await skill.load()` is an
+ordinary `capability.invoke` on the skill-reading capability, so the permission
+is declared in the artifact like any other; loading outside a compiled Agent
+body is `SkillLoadOutsideBody`. The discovery ids `list_skills`,
+`search_skills`, and `read_skill` are builtin
+(`crates/machine/ais/src/capabilities.rs`) and implemented in
+`crates/runtime/capability/src/builtins/skills.rs`, resolving against discovery
+roots the composition root configures. That root list is empty by default, so
+nothing scans whatever happens to sit near the process.
 
 Skill access is therefore an admitted grant to one invocation, not an attribute
 travelling down a parent/child edge. A child that can read skills can do so

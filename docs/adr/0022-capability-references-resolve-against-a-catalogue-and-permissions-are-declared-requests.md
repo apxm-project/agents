@@ -128,9 +128,15 @@ today; `Deployment` has no producer in this tree, and its absence is documented
 there as *no decision stated*, never as a deployment allowing what the layers
 below decided.
 
-The resolution reaches execution as admission data, not as program data:
-`AdmittedCapabilityPermission` on `ExecutionAdmission.capability_permissions`
-(`crates/runtime/kernel/src/admission.rs`). The driver records the decision as
+The resolution reaches execution as admission data, not as program data. On the
+shipping path it rides the per-node `CapabilityInvocationAdmission.permission`
+minted through `InvocationAdmission`
+(`crates/runtime/execution/src/driver.rs`). `ExecutionAdmission` carries
+`AdmittedCapabilityPermission` on `capability_permissions`
+(`crates/runtime/kernel/src/admission.rs`) as the signed, nonce-bound envelope's
+own carrier; nothing in this tree mints an `ExecutionAdmission`, so that field
+is verified but unproduced, exactly as the rest of that envelope is. The driver
+records the decision as
 a `CapabilityAttemptRecorded` fact before attempting the effect, then refuses
 anything short of an outright allow before materializing an argument
 (`crates/runtime/execution/src/driver.rs`). A package build refuses in the same
@@ -334,12 +340,27 @@ it.
 
 ## Open
 
-Skills are not declarable from either frontend. There is no `Skill` marker in
-the surface manifest or in either package, so a program cannot author a skill,
-and nothing in this ADR changes that.
+Skills are declarable from both frontends, and the three gaps this section
+recorded have since closed, outside this ADR.
 
-Two of the three gaps this section recorded have since closed, outside this
-ADR. The skill discovery ids are back in
+The `Skill` marker exists in the surface manifest and in both packages.
+`Skill(skill_id, entry=...)` and `Skill(skill_id, text=...)` are Python
+(`crates/compiler/frontend/python/apxm_program/_markers.py`, exported from that
+package's `__init__.py`); `Skill(skillId, { entry })` and
+`Skill(skillId, { text })` are TypeScript
+(`crates/compiler/frontend/typescript/src/markers.ts`).
+`contracts/vectors/apxm.frontend-surface.json` carries `Skill` in its
+`advanced` tier and binds both projections to the `SkillDecl` node that
+`contracts/schemas/apxm.frontend-surface.json` admits, so a change to either
+marker's arguments is a change to that manifest or a gate failure. A
+declaration lowers to `SkillRequirement` on the FrontendGraph and travels into
+the artifact as `skill_requirements`
+(`crates/machine/program/src/frontend_graph.rs`,
+`crates/machine/program/src/artifact.rs`). Loading is not a construct of its
+own: `await skill.load()` records a `capability.invoke` on `read_skill`, which
+`crates/tools/cli/tests/canonical_skill_execute.rs` drives end to end.
+
+The skill discovery ids are back in
 `crates/machine/ais/src/capabilities.rs` as `list_skills`, `search_skills`, and
 `read_skill`, this time behind handlers in
 `crates/runtime/capability/src/builtins/skills.rs` — the ordering the earlier
@@ -349,13 +370,13 @@ state inverted. And the skill contracts have a reader:
 `apxm.skill-discovery-root`, held to their vectors by
 `crates/machine/program/tests/skill_conformance.rs`.
 
-The package folder contract still refuses a `skills/` path outright, which
-`agent_package_rejects_local_skill_resources`
-(`crates/tools/cli/src/commands/agent.rs`) pins. `apxm.package-local-skill`
-describes what such a directory would contain, but the allowlist stays closed
-until something authors one — recognizing the path first would repeat, at the
-folder level, the allowlist-without-implementation mistake the capability ids
-just came back from.
+The package folder contract recognizes a `skills/` path now that a producer
+exists, which `agent_package_recognizes_local_skill_resources`
+(`crates/tools/cli/src/commands/agent.rs`) pins: a skill's instruction document
+and its resources are recognized, while arbitrary package content parked under
+`skills/` is not. The allowlist stayed closed until something could author one,
+so the thing that consumes the path landed before the path was recognized —
+the same ordering the capability ids came back from.
 
 `agent lint` still starts its code layer from the widest thing a program could
 have asked for. It reads a package as authored and compiles nothing, so it has

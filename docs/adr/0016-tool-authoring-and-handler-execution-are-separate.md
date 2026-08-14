@@ -7,6 +7,14 @@ amends: ADR-0006, ADR-0007, ADR-0015
 
 # Tool authoring and handler execution are separate
 
+The imported-Tool signature and the Python deferral below have been restated by
+[ADR-0022](0022-capability-references-resolve-against-a-catalogue-and-permissions-are-declared-requests.md):
+a Tool binding carries a declared permission request beside its catalogue-resolved
+reference, and only half of §4's Python deferral survives — declaring a shipped
+Capability from Python is supported, while executing one remains the separate
+owner change §4 describes. Read §1, §3, and §4 of this ADR through that
+amendment.
+
 ## Context
 
 APXM source uses `Tool` to declare a typed, model-callable Capability. A

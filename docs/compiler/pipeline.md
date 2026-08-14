@@ -24,7 +24,7 @@ effect operation.
 Use the Dekk authority surface for checks:
 
 ```sh
-dekk agents test-frontend-parity
+dekk agents check-frontend-parity
 dekk agents test-compiler
 dekk agents test-program-source
 ```
