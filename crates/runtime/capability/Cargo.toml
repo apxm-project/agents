@@ -42,11 +42,6 @@ blake3 = { workspace = true }
 # Utilities
 uuid.workspace = true
 chrono.workspace = true
-rusqlite = { workspace = true, optional = true }
-
-[features]
-default = ["sqlite"]
-sqlite = ["dep:rusqlite"]
 
 [dev-dependencies]
 wiremock = "0.6"

@@ -245,7 +245,7 @@ impl ProviderCallCapability {
             base: None,
             rest: None,
             metadata: RuntimeCapability::new(
-                "provider.call",
+                apxm_core::constants::capabilities::PROVIDER_CALL,
                 "Authenticated HTTP call to a connected provider (via apxm-auth proxy; secret stays in apxm-auth)",
                 json!({
                     "type": "object",
