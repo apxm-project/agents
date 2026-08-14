@@ -29,13 +29,12 @@ jobs:
     # test-cli, and builds both frontends plus the npm example packages for
     # test-frontend-examples. The previous 20 minutes did not cover even the
     # cold cargo build; 90 left headroom for a cache miss. Raised to 120 for the
-    # suites added below, the largest of which is `test-compiler`: it compiles
-    # and runs the whole apxm-compiler test target, which no prior step did, and
-    # cargo gives `-p apxm-compiler` its own build-script output directory, so it
-    # configures and links its own copy of the dialect rather than reusing the
-    # one `check` built. That copy is cheaper than it sounds — the ninja graph is
-    # ~40 targets, about 50 CPU-seconds — so the whole addition is nearer 15
-    # minutes than an hour. A job that times out gates nothing.
+    # suites added below. The largest is `test-compiler`: cargo gives
+    # `-p apxm-compiler` its own build-script output directory, so it configures
+    # and links its own copy of the dialect rather than reusing the one `check`
+    # built. That copy is cheaper than it sounds — the ninja graph is ~40
+    # targets, about 50 CPU-seconds — so the whole addition is nearer 15 minutes
+    # than an hour. A job that times out gates nothing.
     timeout-minutes: 120
     defaults:
       run:
@@ -186,10 +185,12 @@ jobs:
         run: dekk agents test
 
       # `test` passes `--exclude apxm-compiler --exclude apxm-cli`, so until this
-      # step the MLIR pass pipeline and the AIR builder in crates/compiler were
-      # gated by nothing at all — `check` type-checks them and no step ran their
+      # step the canonical AIR -> AIS lowering in crates/compiler/pipeline was
+      # gated by nothing at all — `check` type-checks it and no step ran its
       # tests. `test-cli` below covers the other exclusion; together the three
-      # steps close the workspace.
+      # steps close the workspace. The crate carries 5 unit tests and no
+      # integration target today, so this wires up a gate that is currently thin;
+      # it is the hook new pipeline tests land on rather than a broad net.
       - name: Run compiler AIR builder and pipeline tests
         run: dekk agents test-compiler
 

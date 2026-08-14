@@ -69,7 +69,19 @@ lib = ["{project}/target/release/lib", "{environment}/lib"]
 build = { run = "python tools/scripts/cargo.py build -p apxm-cli --features driver,metrics --release", description = "Build the APXM CLI", skill = true, group = "Build & Test" }
 build-dialect = { run = "python tools/scripts/cargo.py build-dialect", description = "Rebuild MLIR dialect (TableGen + C++ + Rust) after editing .td or .cpp files", skill = true, group = "Build & Test" }
 test = { run = "python tools/scripts/check_frontend_parity.py && python tools/scripts/cargo.py test --workspace --exclude apxm-compiler --exclude apxm-cli && python -m pytest crates/compiler/frontend/python/tests_program -q", description = "Run frontend parity, workspace, and canonical authoring tests", skill = true, group = "Build & Test" }
-test-compiler = { run = "env -u CC -u CXX python tools/scripts/cargo.py test -p apxm-compiler", description = "Run compiler AIR builder and pipeline tests", group = "Build & Test" }
+# This deliberately does NOT carry the `env -u CC -u CXX` of the frontend
+# commands below. Those unset the pair so a PyO3/napi module is not linked by the
+# conda cross-compiler wrapper; this command instead builds the MLIR dialect,
+# where the pair is what CMake needs. Unsetting it cannot fall back to the Dekk
+# toolchain, because [environment.packages] installs no unsuffixed `cc`, `c++`,
+# `gcc`, `g++`, or `clang++` — only `clang`, `clang++-22`, and the
+# `x86_64-conda-linux-gnu-*` pair. So the unset always dropped CMake onto the
+# host compiler, which on an RHEL7 development host is GCC 4.8.5 and fails
+# LLVM's `CheckCompilerVersion` (>= 7.4). Keeping the pair set also keeps macOS
+# working: cargo.py's Darwin fixup rewrites a linux-gnu CC/CXX to native clang
+# only when they ARE set, so the unset defeated the very fixup it looked like it
+# was there for.
+test-compiler = { run = "python tools/scripts/cargo.py test -p apxm-compiler", description = "Run compiler AIR builder and pipeline tests", group = "Build & Test" }
 test-source-port = { run = "env -u CC -u CXX python tools/scripts/cargo.py test -p apxm-source-port", description = "Run source-bundle compiler port conformance", group = "Build & Test" }
 test-program = { run = "env -u CC -u CXX python tools/scripts/cargo.py test -p apxm-program", description = "Run Agent Program artifact and lowering conformance", group = "Build & Test" }
 test-program-source = { run = "env -u CC -u CXX python tools/scripts/cargo.py test -p apxm-program --lib --test artifact_conformance --test lower_conformance --test semantic_conformance --test structural_containment", description = "Run source/compiler Agent Program graph, AIR, artifact, and source-map conformance", group = "Build & Test" }
