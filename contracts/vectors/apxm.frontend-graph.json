@@ -517,5 +517,120 @@
       }
     },
     "expected_valid": false
+  },
+  {
+    "name": "capability-requirement-permission-and-repeated-declaration-accepted",
+    "input": {
+      "schema_version": "apxm.frontend-graph",
+      "source_language": "python",
+      "program_definitions": [
+        {
+          "program_id": "Specialist",
+          "entrypoint": "run",
+          "input_type_ref": "SpecialistInput",
+          "output_type_ref": "SpecialistOutput",
+          "has_default_context": true
+        }
+      ],
+      "imported_program_refs": [],
+      "declarations": [],
+      "functions": [
+        {
+          "function_id": "run",
+          "parameters": [],
+          "result_type_ref": "SpecialistOutput",
+          "body_region_id": "region.root",
+          "is_entrypoint": true
+        }
+      ],
+      "values": [],
+      "blocks": [],
+      "regions": [
+        {
+          "region_id": "region.root",
+          "region_role": "function_body",
+          "execution_order": 0
+        }
+      ],
+      "data_edges": [],
+      "call_intents": [],
+      "control_intents": [],
+      "context_flow": [],
+      "hook_bindings": [],
+      "capability_requirements": [
+        {
+          "capability_ref": "cap.search",
+          "tool_schema_present": true,
+          "requested_permission": "cap.search.read"
+        },
+        {
+          "capability_ref": "cap.search",
+          "tool_schema_present": false
+        }
+      ],
+      "model_requirements": [],
+      "source_map": {
+        "schema_version": "apxm.source-map",
+        "source_language": "python",
+        "node_spans": [],
+        "region_annotations": []
+      }
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "capability-requirement-permission-grammar-rejected",
+    "input": {
+      "schema_version": "apxm.frontend-graph",
+      "source_language": "python",
+      "program_definitions": [
+        {
+          "program_id": "Specialist",
+          "entrypoint": "run",
+          "input_type_ref": "SpecialistInput",
+          "output_type_ref": "SpecialistOutput",
+          "has_default_context": true
+        }
+      ],
+      "imported_program_refs": [],
+      "declarations": [],
+      "functions": [
+        {
+          "function_id": "run",
+          "parameters": [],
+          "result_type_ref": "SpecialistOutput",
+          "body_region_id": "region.root",
+          "is_entrypoint": true
+        }
+      ],
+      "values": [],
+      "blocks": [],
+      "regions": [
+        {
+          "region_id": "region.root",
+          "region_role": "function_body",
+          "execution_order": 0
+        }
+      ],
+      "data_edges": [],
+      "call_intents": [],
+      "control_intents": [],
+      "context_flow": [],
+      "hook_bindings": [],
+      "capability_requirements": [
+        {
+          "capability_ref": "cap.search",
+          "requested_permission": "read write"
+        }
+      ],
+      "model_requirements": [],
+      "source_map": {
+        "schema_version": "apxm.source-map",
+        "source_language": "python",
+        "node_spans": [],
+        "region_annotations": []
+      }
+    },
+    "expected_valid": false
   }
 ]

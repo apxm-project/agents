@@ -373,7 +373,7 @@
         },
         "consumer_slot": {
           "type": "string",
-          "description": "The named typed operand slot on the consumer (e.g. request, options, arguments, input, receiver, event_ref, condition, carried)."
+          "description": "The named typed operand slot on the consumer. Lowering carries it into `apxm.air#/$defs/Operand.slot`, which states the closed set."
         }
       },
       "additionalProperties": false
@@ -582,12 +582,17 @@
     },
     "CapabilityRequirement": {
       "type": "object",
+      "description": "One authored Capability declaration. A program may declare the same capability_ref more than once — once as a Tool and once as a plain Capability, for instance — so each declaration is its own record and the array is not keyed by capability_ref.",
       "required": ["capability_ref"],
       "properties": {
         "capability_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
         "tool_schema_present": {
           "type": "boolean",
           "description": "True when this requirement is surfaced to a model as a typed Tool schema."
+        },
+        "requested_permission": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier",
+          "description": "The permission this declaration requests for the capability, carried verbatim from authored source into the digest-bound source bundle. Absent when the author requested none. It records an authored request only; it grants no authority and admission does not read it."
         }
       },
       "additionalProperties": false

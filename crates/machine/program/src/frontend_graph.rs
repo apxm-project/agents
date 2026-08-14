@@ -379,13 +379,21 @@ pub struct HookBinding {
     pub return_mode: HookReturnMode,
 }
 
-/// A declared Capability requirement.
+/// One declared Capability requirement.
+///
+/// A graph carries one record per authored declaration, not one per
+/// `capability_ref`: the same capability may be declared both as a Tool and as
+/// a plain Capability, and both declarations survive.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CapabilityRequirement {
     pub capability_ref: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_schema_present: Option<bool>,
+    /// The permission the author requested for this capability. Recorded and
+    /// digest-bound as authored; it confers no authority on its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_permission: Option<String>,
 }
 
 /// A declared model requirement referencing exactly one target.
@@ -484,6 +492,19 @@ impl FrontendGraph {
                     value.value_id.clone(),
                     "value value_id is not unique",
                 ));
+            }
+        }
+
+        // An authored permission is recorded verbatim, so it is held to the
+        // published Identifier grammar here rather than at the point some later
+        // consumer reads it.
+        for requirement in &self.capability_requirements {
+            if let Some(permission) = requirement.requested_permission.as_deref() {
+                check_identifier(
+                    &mut verdict,
+                    permission,
+                    "capability requirement requested_permission",
+                );
             }
         }
 

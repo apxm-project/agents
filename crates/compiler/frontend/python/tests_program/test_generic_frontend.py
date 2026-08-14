@@ -52,6 +52,18 @@ async def Support(agent, incoming):
         return response
 
 
+AuditCapability = Capability[object, object]("cap.audit")
+AuditModel = Model[object, object]("audit.model")
+AuditTool = Tool[object, object]("cap.audit", requested_permission="cap.audit.read")
+
+
+@Agent(input="AuditRequest", output="AuditReport")
+async def Auditor(agent, request):
+    findings = await AuditTool(request)
+    archived = await AuditCapability(findings)
+    return await AuditModel(archived)
+
+
 @Context
 class ReviewContext:
     completed: bool = False
@@ -389,6 +401,37 @@ def test_effect_call_rejects_extra_authored_operands() -> None:
         assert "exactly one authored operand" in str(error)
     else:
         raise AssertionError("extra authored operands must fail closed")
+
+
+def test_one_capability_declared_twice_keeps_both_declarations_and_its_permission() -> None:
+    graph = Auditor.frontend_graph()
+
+    # Keying requirements by capability_ref would drop one of these two.
+    assert graph["capability_requirements"] == [
+        {"capability_ref": "cap.audit", "tool_schema_present": False},
+        {
+            "capability_ref": "cap.audit",
+            "tool_schema_present": True,
+            "requested_permission": "cap.audit.read",
+        },
+    ]
+    assert Auditor.diagnostics() is None
+
+    # Two declarations of one capability still bind exactly one Port
+    # Requirement in the compiled artifact.
+    artifact = Auditor.artifact()
+    slots = [
+        requirement["typed_port_slot"]
+        for requirement in artifact["artifact_semantic_requirements"]
+    ]
+    assert slots.count("cap.audit") == 1
+
+
+def test_a_capability_declared_without_a_permission_emits_no_permission_key() -> None:
+    graph = Support.frontend_graph()
+    assert graph["capability_requirements"] == [
+        {"capability_ref": "search.web.capability", "tool_schema_present": True}
+    ]
 
 
 def _value(graph: dict, value_id: str) -> dict:

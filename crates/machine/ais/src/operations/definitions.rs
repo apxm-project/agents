@@ -559,6 +559,40 @@ pub static AIS_OPERATIONS: &[OperationSpec] = &[
     },
 ];
 
+/// The loop-entry operand of a structural `ais.loop`, paired positionally with
+/// the region's block arguments.
+pub const SLOT_INITIAL: &str = "initial";
+
+/// The loop-back operand of a structural `ais.loop`, paired positionally with
+/// the region's block arguments.
+pub const SLOT_CARRIED: &str = "carried";
+
+/// The value a structural `yield` or `return` node hands back to its consumer.
+pub const SLOT_OUTPUT: &str = "output";
+
+/// The closed operand slot family the compiler emits on structural nodes.
+/// Structural nodes carry no AIS field signature, so their slots are named here
+/// rather than derived from [`AIS_OPERATIONS`].
+pub const STRUCTURAL_OPERAND_SLOTS: &[&str] = &[SLOT_INITIAL, SLOT_CARRIED, SLOT_OUTPUT];
+
+/// Every typed operand slot name AIR may name, sorted and deduplicated.
+///
+/// Semantic slots are read off the catalogue's field signatures so the set
+/// cannot drift from the operations that declare them; structural slots come
+/// from [`STRUCTURAL_OPERAND_SLOTS`]. This is the authority the published
+/// `apxm.air` `Operand.slot` closure is held against.
+#[must_use]
+pub fn operand_slots() -> Vec<&'static str> {
+    let mut slots: Vec<&'static str> = AIS_OPERATIONS
+        .iter()
+        .flat_map(|spec| spec.fields.iter().map(|field| field.name))
+        .chain(STRUCTURAL_OPERAND_SLOTS.iter().copied())
+        .collect();
+    slots.sort_unstable();
+    slots.dedup();
+    slots
+}
+
 /// Lookup one semantic operation specification.
 #[must_use]
 pub fn get_operation_spec(op: SemanticOpKind) -> Option<&'static OperationSpec> {

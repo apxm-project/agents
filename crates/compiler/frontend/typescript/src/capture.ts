@@ -78,6 +78,19 @@ type ValueExpression =
   | { kind: "boolean"; value: boolean }
   | { kind: "null" };
 
+/**
+ * One authored Capability declaration.
+ *
+ * Declarations are held one per authored binding, never one per
+ * `capability_ref`: the same capability declared as both a Tool and a plain
+ * Capability is two distinct requirements and both reach the FrontendGraph.
+ */
+type CapabilityRequirement = {
+  capability_ref: string;
+  tool_schema_present: boolean;
+  requested_permission?: string;
+};
+
 /** Source text registered by the host compiler bridge before Agent capture. */
 export type StaticSource = {
   readonly fileName: string;
@@ -122,7 +135,7 @@ class Capture {
   private readonly bindingSymbols = new Map<ts.Symbol, string>();
   private readonly lastNodeByRegion = new Map<string, string>();
   private readonly pendingContextByRegion = new Map<string, { source: string; valueId: string }>();
-  private readonly capabilityRequirements = new Map<string, boolean>();
+  private readonly capabilityRequirements: CapabilityRequirement[] = [];
   private readonly modelRequirements: string[] = [];
   private readonly nodeSpans: Json[] = [];
   private readonly bodyRegionId: string;
@@ -145,8 +158,18 @@ class Capture {
     return current;
   }
 
+  /**
+   * Declare bindings in sorted-name order, which is also the order the Python
+   * frontend declares them in. Every collection this fills — declarations,
+   * model requirements, capability requirements — is compared across the two
+   * languages, so the order is fixed here rather than left to how an author
+   * happened to write the `use` object.
+   */
   private declareBindings(): void {
-    for (const [name, binding] of this.input.bindings) {
+    const declared = [...this.input.bindings.entries()].sort(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0,
+    );
+    for (const [name, binding] of declared) {
       const declId = this.input.bindingDeclIds.get(name);
       if (declId === undefined) {
         continue;
@@ -168,7 +191,7 @@ class Capture {
           output_type_ref: binding.outputTypeRef,
           target_ref: binding.targetRef,
         });
-        this.capabilityRequirements.set(binding.targetRef, true);
+        this.requireCapability(binding, true);
       } else if (binding.kind === "capability_binding") {
         this.declarations.push({
           decl_id: declId,
@@ -177,7 +200,7 @@ class Capture {
           output_type_ref: binding.outputTypeRef,
           target_ref: binding.targetRef,
         });
-        this.capabilityRequirements.set(binding.targetRef, false);
+        this.requireCapability(binding, false);
       } else if (binding.kind === "event_type") {
         this.declarations.push({
           decl_id: declId,
@@ -202,6 +225,35 @@ class Capture {
           target_agent_identity_requirement: binding.targetAgentIdentityRequirement,
         });
       }
+    }
+  }
+
+  /**
+   * Record one authored Capability declaration in declaration order.
+   *
+   * Requirements are held as a list rather than keyed by `capability_ref` so a
+   * reference declared both as a Tool and as a plain Capability keeps both
+   * declarations. Only a declaration identical in every field collapses.
+   */
+  private requireCapability(
+    binding: { targetRef: string; requestedPermission?: string },
+    toolSchemaPresent: boolean,
+  ): void {
+    const requirement: CapabilityRequirement = {
+      capability_ref: binding.targetRef,
+      tool_schema_present: toolSchemaPresent,
+    };
+    if (binding.requestedPermission !== undefined) {
+      requirement.requested_permission = binding.requestedPermission;
+    }
+    const present = this.capabilityRequirements.some(
+      (existing) =>
+        existing.capability_ref === requirement.capability_ref &&
+        existing.tool_schema_present === requirement.tool_schema_present &&
+        existing.requested_permission === requirement.requested_permission,
+    );
+    if (!present) {
+      this.capabilityRequirements.push(requirement);
     }
   }
 
@@ -1490,13 +1542,7 @@ class Capture {
       control_intents: this.controls as unknown as Json[],
       context_flow: this.contextFlow,
       hook_bindings: this.hooks,
-      capability_requirements: Array.from(
-        this.capabilityRequirements,
-        ([ref, tool]) => ({
-          capability_ref: ref,
-          tool_schema_present: tool,
-        }),
-      ),
+      capability_requirements: this.capabilityRequirements,
       model_requirements: this.modelRequirements.map((ref) => ({
         model_target_ref: ref,
       })),

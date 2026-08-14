@@ -16,8 +16,9 @@ pub use artifact_wire::{
 pub use category::OperationCategory;
 pub use definitions::{
     AIS_OPERATIONS, AISOperationType, ContextStyle, MlirEmissionSpec, MlirResultType,
-    OperationField, OperationLatency, OperationSpec, ReferenceType, SemanticOpKind,
-    StructuralOpKind, WIRE_INDEXED_OPERATIONS, get_all_operations, get_operation_spec,
+    OperationField, OperationLatency, OperationSpec, ReferenceType, SLOT_CARRIED, SLOT_INITIAL,
+    SLOT_OUTPUT, STRUCTURAL_OPERAND_SLOTS, SemanticOpKind, StructuralOpKind,
+    WIRE_INDEXED_OPERATIONS, get_all_operations, get_operation_spec, operand_slots,
 };
 pub use op_spec::{
     OP_SPEC_CATALOG_FILE, OP_SPEC_SCHEMA_VERSION, OP_SPEC_VECTORS_FILE,

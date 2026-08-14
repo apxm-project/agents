@@ -156,8 +156,8 @@ def emit_frontend_graph(program: BoundProgram, source_language: str = "python") 
         ],
         "hook_bindings": [_hook(h) for h in program.hooks],
         "capability_requirements": [
-            {"capability_ref": ref, "tool_schema_present": tool}
-            for (ref, tool) in program.capability_requirements
+            _capability_requirement(requirement)
+            for requirement in program.capability_requirements
         ],
         "model_requirements": [
             {"model_target_ref": ref} for ref in program.model_requirements
@@ -169,6 +169,16 @@ def emit_frontend_graph(program: BoundProgram, source_language: str = "python") 
             "region_annotations": region_annotations,
         },
     }
+
+
+def _capability_requirement(requirement: Any) -> dict[str, Any]:
+    record: dict[str, Any] = {
+        "capability_ref": requirement.capability_ref,
+        "tool_schema_present": requirement.tool_schema_present,
+    }
+    if requirement.requested_permission is not None:
+        record["requested_permission"] = requirement.requested_permission
+    return record
 
 
 def _declaration(decl: Any) -> dict[str, Any]:

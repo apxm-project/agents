@@ -101,7 +101,25 @@
       "properties": {
         "slot": {
           "type": "string",
-          "description": "Named typed input slot from the AIS operand catalogue (e.g. model_ref, request, options, capability_ref, arguments, receiver, input, event_ref, timeout_ms, condition, carried)."
+          "description": "Named typed input slot. Semantic slots are the field signatures the AIS operation catalogue declares; initial, carried, and output are the compiler-emitted structural slots. Which of these an operand may name is further narrowed by its owning operation.",
+          "enum": [
+            "arguments",
+            "cancellation",
+            "capability_ref",
+            "carried",
+            "context_projection",
+            "event_ref",
+            "initial",
+            "initial_context",
+            "input",
+            "model_ref",
+            "options",
+            "output",
+            "program_ref",
+            "receiver",
+            "request",
+            "timeout_ms"
+          ]
         },
         "value_id": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" },
         "type_ref": { "$ref": "apxm.contract-common.v1#/$defs/Identifier" }

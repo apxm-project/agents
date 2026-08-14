@@ -14,10 +14,11 @@ import ast
 import inspect
 import textwrap
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from ._bound_tree import (
     BoundCall,
+    BoundCapabilityRequirement,
     BoundContextEdge,
     BoundControl,
     BoundDeclaration,
@@ -82,7 +83,7 @@ class _Capture:
         self.context_edges: list[BoundContextEdge] = []
         self.hooks: list[BoundHook] = []
         self.imported_programs: list[tuple[str, str, str, str]] = []
-        self.capability_requirements: dict[str, bool] = {}
+        self.capability_requirements: list[BoundCapabilityRequirement] = []
         self.model_requirements: list[str] = []
         self.spans: list[tuple[str, Span, str]] = []
 
@@ -112,6 +113,26 @@ class _Capture:
         end_line = getattr(node, "end_lineno", node.lineno) or node.lineno
         end_col = getattr(node, "end_col_offset", node.col_offset + 1)
         return Span(self.source_file, node.lineno, node.col_offset, end_line, end_col)
+
+    def _require_capability(
+        self,
+        binding: Union[ToolBinding, CapabilityBinding],
+        *,
+        tool_schema_present: bool,
+    ) -> None:
+        """Record one authored Capability declaration in declaration order.
+
+        Requirements are held as a list rather than keyed by ``capability_ref``
+        so a reference declared both as a Tool and as a plain Capability keeps
+        both declarations. Only a declaration identical in every field collapses.
+        """
+        requirement = BoundCapabilityRequirement(
+            capability_ref=binding.target_ref,
+            tool_schema_present=tool_schema_present,
+            requested_permission=binding.requested_permission,
+        )
+        if requirement not in self.capability_requirements:
+            self.capability_requirements.append(requirement)
 
     def _declare_bindings(self) -> None:
         for name in sorted(self.bindings):
@@ -150,7 +171,7 @@ class _Capture:
                         target_ref=binding.target_ref,
                     )
                 )
-                self.capability_requirements[binding.target_ref] = True
+                self._require_capability(binding, tool_schema_present=True)
             elif isinstance(binding, CapabilityBinding):
                 decl_id = f"decl.capability.{name}"
                 self._declared[name] = decl_id
@@ -163,7 +184,7 @@ class _Capture:
                         target_ref=binding.target_ref,
                     )
                 )
-                self.capability_requirements[binding.target_ref] = False
+                self._require_capability(binding, tool_schema_present=False)
             elif isinstance(binding, EventType):
                 decl_id = f"decl.event.{name}"
                 self._declared[name] = decl_id
@@ -275,7 +296,7 @@ class _Capture:
             context_edges=tuple(self.context_edges),
             hooks=tuple(self.hooks),
             imported_programs=tuple(self.imported_programs),
-            capability_requirements=tuple(self.capability_requirements.items()),
+            capability_requirements=tuple(self.capability_requirements),
             model_requirements=tuple(self.model_requirements),
             spans=tuple(self.spans),
         )

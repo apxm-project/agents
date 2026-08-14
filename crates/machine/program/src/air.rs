@@ -10,7 +10,7 @@ use std::collections::HashSet;
 
 const MAX_SAFE_PREDICATE_INTEGER: i64 = 9_007_199_254_740_991;
 
-use apxm_ais::get_operation_spec;
+use apxm_ais::{SLOT_CARRIED, SLOT_INITIAL, get_operation_spec};
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Verdict, schema_violation};
@@ -783,17 +783,17 @@ fn validate_loop_signature(verdict: &mut Verdict, region: &StructuralNode) {
     let initial: Vec<_> = region
         .operands
         .iter()
-        .filter(|operand| operand.slot == "initial")
+        .filter(|operand| operand.slot == SLOT_INITIAL)
         .collect();
     let carried: Vec<_> = region
         .operands
         .iter()
-        .filter(|operand| operand.slot == "carried")
+        .filter(|operand| operand.slot == SLOT_CARRIED)
         .collect();
     let only_phi_slots = region
         .operands
         .iter()
-        .all(|operand| operand.slot == "initial" || operand.slot == "carried");
+        .all(|operand| operand.slot == SLOT_INITIAL || operand.slot == SLOT_CARRIED);
     let signature_matches = only_phi_slots
         && initial.len() == region.block_arguments.len()
         && carried.len() == region.block_arguments.len()

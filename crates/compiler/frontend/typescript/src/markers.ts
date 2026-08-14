@@ -31,6 +31,7 @@ export type ToolBinding<I = unknown, O = unknown> = {
   readonly targetRef: string;
   readonly inputTypeRef: string;
   readonly outputTypeRef: string;
+  readonly requestedPermission?: string;
   (args: I): Promise<O>;
 };
 
@@ -39,6 +40,7 @@ export type CapabilityBinding<I = unknown, O = unknown> = {
   readonly targetRef: string;
   readonly inputTypeRef: string;
   readonly outputTypeRef: string;
+  readonly requestedPermission?: string;
   (args: I): Promise<O>;
 };
 
@@ -149,7 +151,10 @@ export function Model<I, O>(ref: string): ModelBinding<I, O> {
   });
 }
 
-export function Tool<I, O>(targetRef: string): ToolBinding<I, O> {
+export function Tool<I, O>(
+  targetRef: string,
+  options: { readonly requestedPermission?: string } = {},
+): ToolBinding<I, O> {
   const binding = () => uncallable("Tool");
   rejectDisplayName(targetRef, "Tool");
   return Object.assign(binding, {
@@ -157,10 +162,14 @@ export function Tool<I, O>(targetRef: string): ToolBinding<I, O> {
     targetRef,
     inputTypeRef: "ToolInput",
     outputTypeRef: "ToolOutput",
+    requestedPermission: options.requestedPermission,
   });
 }
 
-export function Capability<I, O>(targetRef: string): CapabilityBinding<I, O> {
+export function Capability<I, O>(
+  targetRef: string,
+  options: { readonly requestedPermission?: string } = {},
+): CapabilityBinding<I, O> {
   const binding = () => uncallable("Capability");
   rejectDisplayName(targetRef, "Capability");
   return Object.assign(binding, {
@@ -168,6 +177,7 @@ export function Capability<I, O>(targetRef: string): CapabilityBinding<I, O> {
     targetRef,
     inputTypeRef: "CapabilityInput",
     outputTypeRef: "CapabilityOutput",
+    requestedPermission: options.requestedPermission,
   });
 }
 
