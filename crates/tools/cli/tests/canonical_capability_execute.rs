@@ -7,6 +7,9 @@ use std::process::Command;
 
 use serde_json::Value;
 
+#[path = "apxm_dev_bin.rs"]
+mod apxm_dev_bin;
+
 fn repository_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../..")
@@ -21,7 +24,7 @@ fn fixture(name: &str) -> PathBuf {
 /// The fixture AIR authors a repository-relative path, so the CLI runs from the
 /// repository root exactly as `dekk agents execute-canonical` does.
 fn execute_capability_fixture() -> std::process::Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_apxm_dev"));
+    let mut command = apxm_dev_bin::command();
     command.current_dir(repository_root());
     command.args([
         "--json",

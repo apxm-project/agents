@@ -156,6 +156,14 @@ def _load_frontend(frontend_root: str) -> None:
     )
     try:
         import apxm_program  # noqa: F401
+        for submodule in ("capabilities", "handlers", "permissions", "scopes"):
+            try:
+                __import__(f"apxm_program.{submodule}")
+            except ImportError:
+                # A declared root may be a test stand-in that only publishes
+                # the package itself. Public frontend submodules are imported
+                # when they exist so authored source can name them.
+                continue
     except BaseException as error:  # noqa: BLE001 - any resolution failure is unavailability
         raise Rejected(
             REASON_FRONTEND,

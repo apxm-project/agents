@@ -6,6 +6,9 @@ use std::process::Command;
 
 use serde_json::Value;
 
+#[path = "apxm_dev_bin.rs"]
+mod apxm_dev_bin;
+
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../..")
@@ -14,7 +17,7 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 fn command(release: &std::path::Path) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_apxm_dev"));
+    let mut command = apxm_dev_bin::command();
     command.args([
         "--json",
         "execute-canonical",

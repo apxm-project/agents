@@ -178,7 +178,13 @@ fn compile_snapshot(
     .map_err(|diagnostics| {
         diagnostics
             .first()
-            .map(|diagnostic| diagnostic.code.slug().to_owned())
+            .map(|diagnostic| {
+                if diagnostic.message.is_empty() {
+                    diagnostic.code.slug().to_owned()
+                } else {
+                    format!("{}: {}", diagnostic.code.slug(), diagnostic.message)
+                }
+            })
             .unwrap_or_else(|| "compile_failed".to_owned())
     })?;
     check_capability_references(snapshot, &compiled.air)?;
@@ -239,11 +245,7 @@ fn authored_program_name(frontend: Frontend, source: &str) -> Result<String, Str
                         .strip_prefix("async def ")
                         .or_else(|| trimmed.strip_prefix("def "));
                     let Some(rest) = rest else {
-                        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('@')
-                        {
-                            continue;
-                        }
-                        break;
+                        continue;
                     };
                     let name = rest.split('(').next().unwrap_or("").trim();
                     if name.is_empty() {
@@ -290,10 +292,11 @@ fn verify_integrity(snapshot: &PackageSnapshot) -> Result<(), String> {
         return Err("integrity_invalid".to_owned());
     }
     let mut files = BTreeMap::new();
-    for content in &snapshot.contents {
-        if content.path != "integrity.toml" {
-            files.insert(content.path.clone(), content.digest.clone());
-        }
+    for link in &recorded.chain {
+        let content = snapshot
+            .file(&link.path)
+            .ok_or_else(|| "integrity_mismatch".to_owned())?;
+        files.insert(link.path.clone(), content.digest.clone());
     }
     let expected = compute_integrity(&files);
     if recorded != expected {

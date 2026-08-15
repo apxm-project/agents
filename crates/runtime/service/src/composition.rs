@@ -3,7 +3,11 @@
 //! This is the product handler body. It does not relocate `CanonicalRuntime`.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+
+use crate::ports::capability::LocalCapabilityPort;
+use crate::ports::model::{LocalModelInferencePort, LocalModelRequestMetadata};
 
 use apxm_ais::permissions::{LayerDecisions, PermissionDecision, PermissionResolution};
 use apxm_execution::{
@@ -12,15 +16,13 @@ use apxm_execution::{
     ExecutionRequest, NodeOutcome, RuntimeProfile,
 };
 use apxm_inference::{
-    AttemptDisposition, ErrorCategory, IdempotencyKey, InferenceTargetCommitment,
-    ModelBindingAdmission, ModelCallPreparation, ModelCallRequest, ModelCallRequestMetadata,
-    ModelCallRequestMetadataPort, ModelContextEnvelopeRef, ModelInferencePort, ModelOutcome,
-    ModelStreamMode, ResolvedModelBinding, TypedError,
+    InferenceTargetCommitment, ModelBindingAdmission, ModelCallRequestMetadataPort, ModelOutcome,
+    ResolvedModelBinding,
 };
 use apxm_kernel::{
     AcpPromptOutcome, AcpPromptRequest, AdmittedCapabilityPermission, AdmittedConfinement,
-    AdmittedPortBinding, AtomicWriteSet, CapabilityOutcome, CapabilityPort, CapabilityRequest,
-    ConfinementAttestation, ConfinementError, ConfinementPort, ConfinementRequest,
+    AdmittedPortBinding, AtomicWriteSet, CapabilityOutcome, ConfinementAttestation,
+    ConfinementError, ConfinementPort, ConfinementRequest,
     ExecutionCommitPort, ExecutionCommitRequest, ExecutionCommitResult,
     ExternalAgentCapabilityPort, INVOCATION_ADMISSION_SCHEMA, InvocationAdmission,
     InvocationAdmissionClaim, PortImplementation, PortSlot, ProgramInstanceRef,
@@ -38,8 +40,6 @@ use sha2::{Digest, Sha256};
 const LOCAL_ACTING_PRINCIPAL_REF: &str = "apxm.canonical.local.acting-principal";
 const LOCAL_AGENT_IDENTITY_REF: &str = "apxm.canonical.local.agent-identity";
 const LOCAL_CAPABILITY_GRANT_PREFIX: &str = "apxm.canonical.local.grant.";
-const LOCAL_MODEL_CONTEXT_PREFIX: &str = "apxm.canonical.local.context.";
-const LOCAL_IDEMPOTENCY_SCOPE_REF: &str = "apxm.canonical.local.idempotency";
 
 /// Exact APXM-owned descriptors used by the service composition root.
 #[derive(Clone, Debug)]
@@ -287,59 +287,6 @@ impl ExecutionCommitPort for DevCommit {
     }
 }
 
-struct ServiceCapabilityPort;
-
-#[async_trait]
-impl CapabilityPort for ServiceCapabilityPort {
-    async fn invoke(&self, request: CapabilityRequest) -> CapabilityOutcome {
-        CapabilityOutcome::Failed {
-            message: format!(
-                "runtime service has no implementation for {}",
-                request.capability_ref()
-            ),
-        }
-    }
-}
-
-struct ServiceModelPort;
-
-impl ModelInferencePort for ServiceModelPort {
-    fn attempt(&self, request: &ModelCallRequest, _attempt: u32) -> AttemptDisposition {
-        AttemptDisposition::DeliveredTypedFailure(TypedError {
-            category: ErrorCategory::Unavailable,
-            code: "model_not_bound".into(),
-            message: format!(
-                "runtime service has no model implementation for {:?}",
-                request.target()
-            ),
-        })
-    }
-}
-
-struct ServiceModelRequestMetadata;
-
-impl ModelCallRequestMetadataPort for ServiceModelRequestMetadata {
-    fn materialize(
-        &self,
-        preparation: &ModelCallPreparation,
-    ) -> Result<ModelCallRequestMetadata, TypedError> {
-        Ok(ModelCallRequestMetadata {
-            model_context_envelope_ref: ModelContextEnvelopeRef {
-                context_id: format!(
-                    "{LOCAL_MODEL_CONTEXT_PREFIX}{}",
-                    preparation.node_execution_id().as_str()
-                ),
-                sealed_digest: preparation.context_digest().into(),
-            },
-            idempotency: IdempotencyKey {
-                key_id: preparation.request_digest().into(),
-                scope_ref: LOCAL_IDEMPOTENCY_SCOPE_REF.into(),
-            },
-            stream_mode: ModelStreamMode::Buffered,
-        })
-    }
-}
-
 /// Materials required to admit one invocation of a committed artifact.
 pub struct InvocationMaterials {
     pub admission: InvocationAdmission,
@@ -347,11 +294,32 @@ pub struct InvocationMaterials {
     pub provenance_bytes: Vec<u8>,
 }
 
+/// Package-handler implementations supplied to one Runtime Service instance.
+#[derive(Debug, Clone)]
+pub struct AdmittedPackageHandlers {
+    /// Private handler-worker command for each language the manifest uses.
+    pub workers:
+        std::collections::BTreeMap<apxm_core::types::HandlerLanguage, PackageHandlerWorkerCommand>,
+    /// Validated manifest those workers may evaluate.
+    pub manifest: apxm_core::types::HandlerManifest,
+}
+
+/// How one language's private worker is started.
+#[derive(Debug, Clone)]
+pub struct PackageHandlerWorkerCommand {
+    /// Interpreter that runs the worker entry.
+    pub interpreter: String,
+    /// Private worker entry path.
+    pub entry: PathBuf,
+}
+
 /// Execute one admitted AIR artifact through the shared runtime profile.
 pub async fn execute_admitted_artifact(
     air: AirModule,
     artifact_bytes: &[u8],
     materials: &InvocationMaterials,
+    handlers: Option<&AdmittedPackageHandlers>,
+    package_root: Option<&Path>,
 ) -> Result<Value, String> {
     let admission = &materials.admission;
     let descriptor = canonical_runtime_descriptor();
@@ -373,14 +341,15 @@ pub async fn execute_admitted_artifact(
         },
     )
     .map_err(|error| error.to_string())?;
-    let admitted = apxm_ais::capabilities::BUILTINS
-        .iter()
-        .map(|id| (*id).to_owned())
-        .collect::<BTreeSet<_>>();
-    let capability_permissions = local_capability_permissions(&air, &admitted)?;
+    let capability = Arc::new(
+        LocalCapabilityPort::with_package_root(handlers, package_root)
+            .map_err(|error| error.to_string())?,
+    );
+    let capability_permissions =
+        local_capability_permissions(&air, &capability.admitted_names())?;
     let capability_invocations = local_capability_invocation_admissions(
         &air,
-        &CapabilityGrantSet::from_registered_implementations(admitted),
+        &CapabilityGrantSet::from_registered_implementations(capability.registered_names()),
         &capability_permissions,
     )?;
     let model_binding_digest = descriptor
@@ -402,13 +371,14 @@ pub async fn execute_admitted_artifact(
         write_set: reference_write_set(&admission.invocation_id),
     };
     let commit = Arc::new(DevCommit::default());
-    let capability = Arc::new(ServiceCapabilityPort);
-    let model = Arc::new(ServiceModelPort);
+    let model = Arc::new(
+        LocalModelInferencePort::from_backend_roster().map_err(|error| error.to_string())?,
+    );
     let profile = runtime_profile_from_invocation(
         commit,
         capability,
-        model,
-        Arc::new(ServiceModelRequestMetadata),
+        model.clone(),
+        Arc::new(LocalModelRequestMetadata),
         verified,
         "runtime.service.execution",
     )
@@ -425,7 +395,7 @@ pub async fn execute_admitted_artifact(
         "results": {
             "node_outcomes": report.node_outcomes.iter().map(node_outcome_json).collect::<Vec<_>>(),
             "external_agent_evidence": report.external_agent_evidence,
-            "model_attempt_diagnostics": Value::Array(Vec::new()),
+            "model_attempt_diagnostics": model.attempt_diagnostics(),
         },
         "stats": {
             "executed_nodes": report.node_outcomes.len(),
@@ -470,8 +440,8 @@ pub fn materials_for_artifact(
 
 async fn runtime_profile_from_invocation(
     commit: Arc<DevCommit>,
-    capability: Arc<ServiceCapabilityPort>,
-    model: Arc<ServiceModelPort>,
+    capability: Arc<LocalCapabilityPort>,
+    model: Arc<LocalModelInferencePort>,
     model_call_request_metadata: Arc<dyn ModelCallRequestMetadataPort>,
     verified: VerifiedInvocationAdmission,
     execution_id: &str,
@@ -603,9 +573,15 @@ fn local_capability_permissions(
         if !admitted.contains(capability_ref) {
             shipped.insert(
                 capability_ref.to_string(),
-                PermissionDecision::deny(
-                    "runtime service admits only the read-only builtin capability surface",
-                ),
+                PermissionDecision::deny(format!(
+                    "canonical local execution binds no sandbox backend and no issued Capability \
+                     grant, so it admits only the read-only capability surface [{}]",
+                    admitted
+                        .iter()
+                        .map(String::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )),
             );
         }
     }

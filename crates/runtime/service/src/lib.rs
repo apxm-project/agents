@@ -4,12 +4,14 @@
 //! import source-port, frontends, or the compiler.
 
 mod composition;
+mod ports;
 mod stdio;
 
 pub use composition::{
-    ArtifactStore, CanonicalRuntimeDescriptor, InvocationMaterials, artifact_digest,
-    canonical_port_bindings_digest, canonical_resource_ceiling_digest, canonical_runtime_descriptor,
-    execute_admitted_artifact, materials_for_artifact,
+    AdmittedPackageHandlers, ArtifactStore, CanonicalRuntimeDescriptor, InvocationMaterials,
+    PackageHandlerWorkerCommand, artifact_digest, canonical_port_bindings_digest,
+    canonical_resource_ceiling_digest, canonical_runtime_descriptor, execute_admitted_artifact,
+    materials_for_artifact,
 };
 pub use stdio::{
     StdioFrame, UnixEndpoint, decode_jsonl, encode_jsonl, handshake_cross_wired, serve_stdio,
@@ -17,6 +19,7 @@ pub use stdio::{
 
 use std::collections::BTreeMap;
 use std::future::Future;
+use std::path::PathBuf;
 
 use apxm_kernel::event_api::{CanonicalEventRef, EventApplication, EventApplicationResult};
 use apxm_program::air::AirModule;
@@ -31,6 +34,8 @@ pub struct RuntimeService {
     applications: Vec<(String, Value)>,
     next_generation: u64,
     last_output: Option<Value>,
+    handlers: Option<AdmittedPackageHandlers>,
+    package_root: Option<PathBuf>,
 }
 
 struct InstanceState {
@@ -39,6 +44,16 @@ struct InstanceState {
 }
 
 impl RuntimeService {
+    /// Bind package-local Capability handlers for subsequent invocations.
+    pub fn bind_package(
+        &mut self,
+        handlers: Option<AdmittedPackageHandlers>,
+        package_root: Option<PathBuf>,
+    ) {
+        self.handlers = handlers;
+        self.package_root = package_root;
+    }
+
     /// Commit AIR/artifact bytes. The digest is the only executable identity.
     pub fn admit_artifact(&mut self, bytes: Vec<u8>) -> String {
         self.artifacts.commit(bytes)
@@ -179,7 +194,13 @@ impl RuntimeService {
                 b"{}".to_vec(),
             ),
         };
-        match block_on(execute_admitted_artifact(air, &bytes, &materials)) {
+        match block_on(execute_admitted_artifact(
+            air,
+            &bytes,
+            &materials,
+            self.handlers.as_ref(),
+            self.package_root.as_deref(),
+        )) {
             Ok(output) => {
                 self.last_output = Some(output);
                 RuntimeResult::ProgramInvocationStarted {

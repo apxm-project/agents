@@ -1796,8 +1796,27 @@ fn execute_via_runtime_service(
     admission: InvocationAdmission,
     release_bytes: Vec<u8>,
     provenance_bytes: Vec<u8>,
+    handlers: Option<AdmittedPackageHandlers>,
+    package_root: Option<PathBuf>,
 ) -> Result<Value> {
     let mut service = apxm_runtime_service::RuntimeService::default();
+    let handlers = handlers.map(|handlers| apxm_runtime_service::AdmittedPackageHandlers {
+        workers: handlers
+            .workers
+            .into_iter()
+            .map(|(language, command)| {
+                (
+                    language,
+                    apxm_runtime_service::PackageHandlerWorkerCommand {
+                        interpreter: command.interpreter,
+                        entry: command.entry,
+                    },
+                )
+            })
+            .collect(),
+        manifest: handlers.manifest,
+    });
+    service.bind_package(handlers, package_root);
     let digest = service.admit_artifact(artifact_bytes.to_vec());
     if digest != admission.artifact_digest {
         anyhow::bail!(
@@ -1879,9 +1898,14 @@ pub async fn execute_canonical_command(
         })?;
     let release_bytes = read_exact_bytes(&release, "release")?;
     let provenance_bytes = read_exact_bytes(&provenance, "provenance")?;
-    let _ = (handlers, package_root);
-    let output =
-        execute_via_runtime_service(&artifact_bytes, admission, release_bytes, provenance_bytes)?;
+    let output = execute_via_runtime_service(
+        &artifact_bytes,
+        admission,
+        release_bytes,
+        provenance_bytes,
+        handlers,
+        package_root,
+    )?;
     if json_output {
         println!("{}", serde_json::to_string(&output)?);
     } else {
