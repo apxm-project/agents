@@ -752,14 +752,17 @@ fn capability_effect_receipt_round_trips_without_content_fields() {
     );
 }
 
-/// A capability effect is dispatched only by a graph `INV_CAP` operation, and
-/// a package-local artifact handler is TypeScript-only. A receipt naming a
-/// model tool loop as its dispatch surface, or a Python package handler as its
-/// implementation family, describes execution this runtime cannot perform, so
-/// it is rejected rather than decoded. Rejection is the only behavior: there is
-/// no translation of either name onto a canonical one.
+/// A receipt carries only names this vocabulary publishes, and a name outside
+/// it is rejected rather than translated onto a canonical one.
+///
+/// The two cases differ in why they are outside it. A model tool loop is not a
+/// dispatch surface this runtime has. A Python handler, by contrast, does run —
+/// it is simply not nameable here, because `apxm.core-event` is owned by the
+/// coordinating workspace and publishes no family for it. Both fail closed, and
+/// the second is the case to read carefully before assuming Python cannot
+/// execute.
 #[test]
-fn capability_effect_receipt_rejects_undispatchable_vocabulary() {
+fn capability_effect_receipt_rejects_unpublished_vocabulary() {
     let canonical = ApxmEvent::root(
         CapabilityEffectReceiptPayload {
             receipt_id: "receipt-1".to_string(),
@@ -787,18 +790,18 @@ fn capability_effect_receipt_rejects_undispatchable_vocabulary() {
     serde_json::from_value::<ApxmEvent>(canonical.clone())
         .expect("the canonical receipt vocabulary decodes");
 
-    for (field, undispatchable) in [
+    for (field, unpublished) in [
         ("dispatch_path", "ask_tool"),
         ("implementation_kind", "python"),
     ] {
         let mut record = canonical.clone();
-        record["payload"][field] = serde_json::json!(undispatchable);
+        record["payload"][field] = serde_json::json!(unpublished);
         let error = serde_json::from_value::<ApxmEvent>(record)
-            .expect_err("an undispatchable receipt vocabulary must fail closed");
+            .expect_err("a receipt vocabulary this contract does not publish must fail closed");
         let message = error.to_string();
         assert!(
-            message.contains(undispatchable),
-            "rejection must name the undispatchable {field} value: {message}"
+            message.contains(unpublished),
+            "rejection must name the unpublished {field} value: {message}"
         );
     }
 }

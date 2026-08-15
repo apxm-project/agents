@@ -15,7 +15,7 @@ use crate::types::execution::NodeMetrics;
 use crate::types::operations::AISOperationType;
 
 /// Redaction policy used for prompt and node-output observability payloads.
-pub const REDACTION_POLICY_SUMMARY_HASH: &str = "summary_hash_v1";
+pub const REDACTION_POLICY_SUMMARY_HASH: &str = "summary_hash";
 /// Hash prefix used in redacted observability payloads.
 pub const REDACTION_HASH_PREFIX_BLAKE3: &str = "blake3:";
 /// Media type used when redacting plain prompt text.
@@ -1211,10 +1211,14 @@ pub enum CapabilityEffectDispatchPath {
 
 /// Capability implementation family that produced the effect evidence.
 ///
-/// The only package-local artifact handler that can produce effect evidence is
-/// a TypeScript handler. `CapabilityBindingHandler` is a wider vocabulary of
-/// declarable bindings; this enum names only the families a committed receipt
-/// can attest to.
+/// Narrower than what a package may ship: `HandlerLanguage` admits Python and
+/// TypeScript handlers and only TypeScript has a family here. That is not a
+/// statement about what can execute — a Python handler runs through the same
+/// chokepoint — but about who owns this vocabulary. `apxm.core-event` and the
+/// generator for the clients pinned against it live in the coordinating
+/// workspace, so adding a family is a change there, not here. Widening it in
+/// this crate alone makes the generated clients advertise less than the runtime
+/// admits, which `generated_client_parity` refuses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CapabilityEffectImplementationKind {

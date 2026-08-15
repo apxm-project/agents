@@ -48,8 +48,17 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # is scanned by its own gate, and a real suffix in a comment is a false positive.
 VERSIONED_ID = re.compile(r"\b[a-z][a-z0-9_-]*(?:\.[a-z0-9_-]+)+\.v[0-9]+\b")
 
+# Source IDENTIFIERS carrying the generation marker: `ConformanceReport::schema_vN`,
+# `REDACTION_POLICY_SUMMARY_HASH = "summary_hash_vN"`. A dotted-id pattern cannot
+# see these — no Rust, TypeScript, or Python name is dotted — so five of them were
+# swept by hand in one commit with nothing left behind to catch the sixth. Scoped
+# to source files, and to a marker at the end of the name, so `schema_vN_path`
+# (a name that merely mentions a generation) is not a rename this gate demands.
+VERSIONED_IDENTIFIER = re.compile(r"\b[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*_[vV][0-9]+\b")
+IDENTIFIER_SUFFIXES = (".rs", ".ts", ".py")
+
 # Versioned FILENAMES carry the generation marker in any of four separator forms:
-# `op-spec.v1.json`, `conversational-python.v2.json`, `event_v1.py`, `event-v1.ts`.
+# `op-spec.v1.json`, `conversational-python.v2.json`, `event_vN.py`, `event-v1.ts`.
 # Matching only the dotted-id form missed the `_vN` and `-vN` spellings entirely.
 VERSIONED_FILENAME = re.compile(r"(?:^|(?<=[._-]))v[0-9]+(?=[._-]|$)")
 
@@ -113,6 +122,23 @@ DIGEST_SEED_STRINGS = frozenset(
 # (`grammar.rs:77`). The suffix is the thing under test.
 GRAMMAR_NEGATIVE_IDS = frozenset({"apxm.a.b.v1"})
 
+# Source identifiers whose generation marker belongs to somebody else's API.
+# `new_v4`/`new_v7`/`now_v7` are the `uuid` crate's constructors and name a UUID
+# version, not a schema generation. `RUNTIME_DISPATCH_IR_V1` and its value
+# `dispatch_ir_v1` are vLLM's own name — `constants.rs:626` says renaming it
+# breaks the contract. `needs_v1` decides whether an OpenAI-style base URL still
+# needs its `/v1` path segment, which is that vendor's route, not our id.
+FOREIGN_IDENTIFIERS = frozenset(
+    {
+        "new_v4",
+        "new_v7",
+        "now_v7",
+        "RUNTIME_DISPATCH_IR_V1",
+        "dispatch_ir_v1",
+        "needs_v1",
+    }
+)
+
 FOREIGN_IDS = (
     CONTRACTS_OWNER_IDS
     | VLLM_OWNER_IDS
@@ -120,6 +146,7 @@ FOREIGN_IDS = (
     | STORAGE_FORMAT_IDS
     | DIGEST_SEED_STRINGS
     | GRAMMAR_NEGATIVE_IDS
+    | FOREIGN_IDENTIFIERS
 )
 
 # Paths whose `.vN` occurrences are *rejection* fixtures: the suffixed string is the
@@ -151,15 +178,15 @@ def is_preserved(path: str) -> bool:
 
 
 def deversion(schema_id: str) -> str:
-    """Drop the trailing `.vN` from an Agents-owned id."""
-    return re.sub(r"\.v[0-9]+$", "", schema_id)
+    """Drop the trailing generation marker from an Agents-owned id or identifier."""
+    return re.sub(r"[._][vV][0-9]+$", "", schema_id)
 
 
 def deversion_filename(name: str) -> str:
     """Drop the generation marker from a versioned filename.
 
     Handles every separator form: `op-spec.v1.json` -> `op-spec.json`,
-    `event_v1.py` -> `event.py`, `event-v1.ts` -> `event.ts`.
+    `event_vN.py` -> `event.py`, `event-v1.ts` -> `event.ts`.
     """
     return re.sub(r"[._-]v[0-9]+(?=[._-]|$)", "", name)
 
@@ -190,9 +217,20 @@ def negative_case_ids(rel: str, text: str) -> set[str]:
     return negative - positive
 
 
+def fixture_stems() -> set[str]:
+    """Identifier-shaped names that are only ever a rejection fixture's own filename.
+
+    `test_no_active_program_contract_v1.py` keeps its suffix because the suffix is
+    what it tests, so the stem naming it — here, and in this module's own listing
+    of it — is not an identifier awaiting a sweep.
+    """
+    return {Path(rel).name.split(".")[0] for rel in REJECTION_FIXTURE_PATHS}
+
+
 def scan() -> dict[str, dict[str, int]]:
     """Map each id to {path: occurrence_count}."""
     found: dict[str, dict[str, int]] = {}
+    stems = fixture_stems()
     for rel in tracked_files():
         if is_preserved(rel):
             continue
@@ -202,7 +240,14 @@ def scan() -> dict[str, dict[str, int]]:
         except (UnicodeDecodeError, FileNotFoundError, IsADirectoryError, OSError):
             continue
         under_test = negative_case_ids(rel, text)
-        for schema_id in VERSIONED_ID.findall(text):
+        names = list(VERSIONED_ID.findall(text))
+        if rel.endswith(IDENTIFIER_SUFFIXES):
+            names += [
+                name
+                for name in VERSIONED_IDENTIFIER.findall(text)
+                if name not in stems
+            ]
+        for schema_id in names:
             if schema_id in under_test:
                 continue
             found.setdefault(schema_id, {}).setdefault(rel, 0)

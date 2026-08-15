@@ -62,7 +62,7 @@ pub struct FailedVector {
 }
 
 impl ConformanceReport {
-    pub fn schema_v1() -> &'static str {
+    pub fn schema_id() -> &'static str {
         "apxm.conformance-report"
     }
 }
