@@ -4,6 +4,10 @@ Documents in this directory are proposals, not shipped or canonical APXM
 contracts. Each document states its own status and identifies the evidence
 needed before promotion into a contract or architecture decision.
 
+- [Collapsing the org package onto one authored manifest](org-package-collapse.md)
+  — the org format still authors the four files the agent collapse retired.
+  Carries a drafted `apxm.org` contract and 13 validated conformance vectors,
+  parked outside `contracts/` until a reader exists for them.
 - [Backend-neutral graph hints](backend-neutral-graph-hints.md) — a common
   APXM graph-fact and execution-intent contract with explicit backend
   projection, including llama.cpp and vLLM lowerings.

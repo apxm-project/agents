@@ -1,0 +1,333 @@
+[
+  {
+    "name": "valid-one-file-org",
+    "input": {
+      "org": {
+        "org_id": "acme",
+        "schema_version": "apxm.org",
+        "display_name": "Acme",
+        "description": "An org with no members yet.",
+        "policy": {
+          "approval_default": "manual",
+          "autonomy_ceiling": "supervised"
+        },
+        "topology": {
+          "tree": {
+            "root": "acme-root",
+            "edges": []
+          }
+        }
+      },
+      "files": {
+        "org.toml": "1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "valid-two-level-tree-with-a-masked-global-capability",
+    "input": {
+      "org": {
+        "org_id": "acme",
+        "schema_version": "apxm.org",
+        "display_name": "Acme",
+        "permissions": {
+          "read": "allow",
+          "write": {
+            "decision": "ask",
+            "reason": "This org reviews host writes."
+          }
+        },
+        "members": [
+          {
+            "id": "root-agent",
+            "package": "root-pkg",
+            "version": "0.1.0",
+            "hierarchy": {
+              "permitted_children": [
+                "child-agent"
+              ]
+            }
+          },
+          {
+            "id": "child-agent",
+            "package": "child-pkg",
+            "version": "^0.2.0",
+            "capability_mask": {
+              "deny": [
+                "write"
+              ]
+            },
+            "hierarchy": {
+              "parent": "root-agent"
+            }
+          }
+        ],
+        "topology": {
+          "tree": {
+            "root": "root-agent",
+            "edges": [
+              {
+                "parent": "root-agent",
+                "child": "child-agent"
+              }
+            ]
+          },
+          "relations": [
+            {
+              "from": "root-agent",
+              "to": "child-agent",
+              "type": "delegates_to"
+            }
+          ]
+        }
+      },
+      "files": {
+        "org.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "prompts/persona.md": "2222222222222222222222222222222222222222222222222222222222222222",
+        "tests/README.md": "3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "org-carrying-generated-capabilities-toml-rejected",
+    "input": {
+      "org": {
+        "org_id": "acme",
+        "schema_version": "apxm.org",
+        "display_name": "Acme",
+        "topology": {
+          "tree": {
+            "root": "acme-root"
+          }
+        }
+      },
+      "files": {
+        "org.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "capabilities/capabilities.toml": "2222222222222222222222222222222222222222222222222222222222222222"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "org-carrying-generated-permissions-toml-rejected",
+    "input": {
+      "org": {
+        "org_id": "acme",
+        "schema_version": "apxm.org",
+        "display_name": "Acme",
+        "topology": {
+          "tree": {
+            "root": "acme-root"
+          }
+        }
+      },
+      "files": {
+        "org.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "capabilities/permissions.toml": "2222222222222222222222222222222222222222222222222222222222222222"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "org-carrying-members-toml-rejected",
+    "input": {
+      "org": {
+        "org_id": "acme",
+        "schema_version": "apxm.org",
+        "display_name": "Acme",
+        "topology": {
+          "tree": {
+            "root": "acme-root"
+          }
+        }
+      },
+      "files": {
+        "org.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "agents/members.toml": "2222222222222222222222222222222222222222222222222222222222222222"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "org-carrying-topology-toml-rejected",
+    "input": {
+      "org": {
+        "org_id": "acme",
+        "schema_version": "apxm.org",
+        "display_name": "Acme",
+        "topology": {
+          "tree": {
+            "root": "acme-root"
+          }
+        }
+      },
+      "files": {
+        "org.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "topology.toml": "2222222222222222222222222222222222222222222222222222222222222222"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "org-declaring-a-retired-capability-array-rejected",
+    "input": {
+      "org": {
+        "org_id": "acme",
+        "schema_version": "apxm.org",
+        "display_name": "Acme",
+        "capability": [
+          {
+            "id": "read",
+            "description": "Read a file."
+          }
+        ],
+        "topology": {
+          "tree": {
+            "root": "acme-root"
+          }
+        }
+      },
+      "files": {
+        "org.toml": "1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "org-permission-decision-outside-the-closed-vocabulary-rejected",
+    "input": {
+      "org": {
+        "org_id": "acme",
+        "schema_version": "apxm.org",
+        "display_name": "Acme",
+        "permissions": {
+          "read": "prompt"
+        },
+        "topology": {
+          "tree": {
+            "root": "acme-root"
+          }
+        }
+      },
+      "files": {
+        "org.toml": "1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "org-without-an-org-id-rejected",
+    "input": {
+      "org": {
+        "schema_version": "apxm.org",
+        "display_name": "Acme",
+        "topology": {
+          "tree": {
+            "root": "acme-root"
+          }
+        }
+      },
+      "files": {
+        "org.toml": "1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "org-schema-version-outside-the-published-constant-rejected",
+    "input": {
+      "org": {
+        "org_id": "acme",
+        "schema_version": "apxm.org-package",
+        "display_name": "Acme",
+        "topology": {
+          "tree": {
+            "root": "acme-root"
+          }
+        }
+      },
+      "files": {
+        "org.toml": "1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "org-member-hierarchy-carrying-an-undeclared-key-rejected",
+    "input": {
+      "org": {
+        "org_id": "acme",
+        "schema_version": "apxm.org",
+        "display_name": "Acme",
+        "members": [
+          {
+            "id": "root-agent",
+            "package": "root-pkg",
+            "version": "0.1.0",
+            "hierarchy": {
+              "permitted_parents": [
+                "nobody"
+              ]
+            }
+          }
+        ],
+        "topology": {
+          "tree": {
+            "root": "root-agent"
+          }
+        }
+      },
+      "files": {
+        "org.toml": "1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "org-member-without-a-version-requirement-rejected",
+    "input": {
+      "org": {
+        "org_id": "acme",
+        "schema_version": "apxm.org",
+        "display_name": "Acme",
+        "members": [
+          {
+            "id": "root-agent",
+            "package": "root-pkg"
+          }
+        ],
+        "topology": {
+          "tree": {
+            "root": "root-agent"
+          }
+        }
+      },
+      "files": {
+        "org.toml": "1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    },
+    "expected_valid": false
+  },
+  {
+    "name": "org-unrecognized-top-level-file-rejected",
+    "input": {
+      "org": {
+        "org_id": "acme",
+        "schema_version": "apxm.org",
+        "display_name": "Acme",
+        "topology": {
+          "tree": {
+            "root": "acme-root"
+          }
+        }
+      },
+      "files": {
+        "org.toml": "1111111111111111111111111111111111111111111111111111111111111111",
+        "notes.txt": "2222222222222222222222222222222222222222222222222222222222222222"
+      }
+    },
+    "expected_valid": false
+  }
+]

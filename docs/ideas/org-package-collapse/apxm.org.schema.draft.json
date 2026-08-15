@@ -1,0 +1,288 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.org",
+  "title": "OrgPackage",
+  "description": "The canonical authored organization package: one authored manifest (`org.toml`) and the closed set of package-relative paths the folder contract recognizes. An org declares its global Capability set exactly once, as the keys of the manifest's `[permissions]` table: a capability id with a decision is the declaration, so there is no second inventory for it to agree with. Members and topology are tables of the same manifest rather than separate files, so an org is read from one document or not at all.",
+  "type": "object",
+  "required": [
+    "org",
+    "files"
+  ],
+  "properties": {
+    "org": {
+      "$ref": "#/$defs/OrgManifest"
+    },
+    "files": {
+      "$ref": "#/$defs/PackageFiles"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "Identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,255}$"
+    },
+    "FileDigest": {
+      "type": "string",
+      "description": "Lowercase hex SHA-256 of the file's bytes.",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "PermissionDecision": {
+      "description": "The closed three-value permission vocabulary, in the one wire form the machine publishes: a bare decision string, or an object carrying the reason declared beside it.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "allow",
+            "ask",
+            "deny"
+          ]
+        },
+        {
+          "type": "object",
+          "required": [
+            "decision"
+          ],
+          "properties": {
+            "decision": {
+              "type": "string",
+              "enum": [
+                "allow",
+                "ask",
+                "deny"
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "Hierarchy": {
+      "description": "Snapshot of a member agent's own `agent.toml [hierarchy]` table, carried here so org lint can check it against the topology tree without resolving the referenced agent.",
+      "type": "object",
+      "properties": {
+        "parent": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "permitted_children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Identifier"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "CapabilityMask": {
+      "description": "Per-member narrowing of the org's global Capability set. Every id named here must be a key of the manifest's `[permissions]` table.",
+      "type": "object",
+      "properties": {
+        "grant": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Identifier"
+          }
+        },
+        "deny": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Identifier"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "Member": {
+      "description": "One org member, by reference to an installed agent package. No agent code lives in an org package.",
+      "type": "object",
+      "required": [
+        "id",
+        "package",
+        "version"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "package": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "version": {
+          "type": "string",
+          "description": "SemVer requirement against the referenced agent's own version: an exact version, or a `^`/`~` range.",
+          "minLength": 1
+        },
+        "instances": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "capability_mask": {
+          "$ref": "#/$defs/CapabilityMask"
+        },
+        "hierarchy": {
+          "$ref": "#/$defs/Hierarchy"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Edge": {
+      "type": "object",
+      "required": [
+        "parent",
+        "child"
+      ],
+      "properties": {
+        "parent": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "child": {
+          "$ref": "#/$defs/Identifier"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Relation": {
+      "type": "object",
+      "required": [
+        "from",
+        "to",
+        "type"
+      ],
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "to": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reach": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "Tree": {
+      "description": "The org's single-rooted membership tree. Exactly one root, no cycles, every edge naming declared members.",
+      "type": "object",
+      "required": [
+        "root"
+      ],
+      "properties": {
+        "root": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Edge"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "Topology": {
+      "type": "object",
+      "required": [
+        "tree"
+      ],
+      "properties": {
+        "tree": {
+          "$ref": "#/$defs/Tree"
+        },
+        "relations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Relation"
+          }
+        },
+        "directory_policy": {
+          "type": "object"
+        },
+        "handoff_policy": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "OrgManifest": {
+      "description": "`org.toml` — the only authored manifest in the package. Every key is stated here; a key this schema does not name is a parse error, not a tolerated extra.",
+      "type": "object",
+      "required": [
+        "org_id",
+        "display_name"
+      ],
+      "properties": {
+        "org_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "schema_version": {
+          "const": "apxm.org"
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "policy": {
+          "type": "object"
+        },
+        "environment": {
+          "type": "object"
+        },
+        "models": {
+          "type": "object"
+        },
+        "permissions": {
+          "description": "The org's global Capability set. Each key is a capability id the org supplies to its members; its value is the decision the org states for it. The key set is the declaration — there is no separate inventory.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/PermissionDecision"
+          }
+        },
+        "members": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Member"
+          }
+        },
+        "topology": {
+          "$ref": "#/$defs/Topology"
+        }
+      },
+      "additionalProperties": false
+    },
+    "PackageFiles": {
+      "description": "Every package-relative path the folder contract recognizes, mapped to the digest of its bytes. `patternProperties` is the sole authority: `apxm org lint` derives its recognized-path predicate from these patterns, so a path this object does not match is not part of the package. The retired `capabilities/capabilities.toml`, `capabilities/permissions.toml`, `agents/members.toml`, and `topology.toml` are refused by absence.",
+      "type": "object",
+      "patternProperties": {
+        "^org\\.toml$": {
+          "$ref": "#/$defs/FileDigest"
+        },
+        "^README\\.md$": {
+          "$ref": "#/$defs/FileDigest"
+        },
+        "^prompts/[^/]+\\.md$": {
+          "$ref": "#/$defs/FileDigest"
+        },
+        "^tests/[^/]+$": {
+          "$ref": "#/$defs/FileDigest"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
