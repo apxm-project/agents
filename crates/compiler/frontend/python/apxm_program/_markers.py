@@ -11,13 +11,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional, TypeVar
 
+from ._generated.capabilities import BUILTIN_CAPABILITIES
 from ._generated.diagnostics import (
+    CAPABILITY_REF_NOT_EXACT,
+    DiagnosticCode,
     SKILL_ENTRY_PATH_NOT_CANONICAL,
     SKILL_ID_NOT_EXACT,
     SKILL_INSTRUCTIONS_OVERLONG,
     SKILL_LOAD_OUTSIDE_BODY,
     SKILL_SOURCE_AMBIGUOUS,
     SKILL_SOURCE_MISSING,
+    TOOL_REF_NOT_CAPABILITY,
 )
 from ._generated.frontend_graph import (
     SKILL_INSTRUCTION_KIND_ENTRY,
@@ -29,6 +33,7 @@ from ._generated.frontend_records import (
     SkillInstructionSource,
 )
 from ._generated.permissions import Permission
+from .handlers import CapabilityId
 
 #: The ceiling the skill-reading capability enforces on a body it loads. An
 #: inline skill is the same trusted context landing in the same model window,
@@ -158,6 +163,7 @@ class _ToolFactory(_TypedFactory):
         self, capability_ref: str, *, permission: Optional[Permission] = None
     ) -> ToolBinding:
         _require_exact_reference(capability_ref, "Tool")
+        _require_capability_reference(capability_ref, "Tool", TOOL_REF_NOT_CAPABILITY)
         return ToolBinding(target_ref=capability_ref, permission=permission)
 
 
@@ -168,6 +174,7 @@ class _CapabilityFactory(_TypedFactory):
         self, ref: str, *, permission: Optional[Permission] = None
     ) -> CapabilityBinding:
         _require_exact_reference(ref, "Capability")
+        _require_capability_reference(ref, "Capability", CAPABILITY_REF_NOT_EXACT)
         return CapabilityBinding(target_ref=ref, permission=permission)
 
 
@@ -264,6 +271,34 @@ def _require_exact_reference(value: Any, marker: str) -> None:
         raise ValueError(
             f"{marker} accepts an exact typed reference, not a display name '{value}'"
         )
+
+
+def _require_capability_reference(
+    value: Any, marker: str, code: DiagnosticCode
+) -> None:
+    """Refuse a Capability reference that neither catalogue nor package mints.
+
+    TypeScript narrows this to a union and the compiler settles it; Python has
+    no type-checker in the build, so the same closed set is settled here, where
+    the binding is constructed. Two arms are admitted, and they are the two
+    places a Capability can come from:
+
+    * a builtin id the generated catalogue mints, which the compiler's builtin
+      allowlist admits without any registration; and
+    * the :class:`CapabilityId` a ``capability(...)`` declaration returns, which
+      carries the implementation it names.
+
+    ``CapabilityId`` subclasses ``str`` so an author can still print it and
+    compare it to the id it spells, but ``isinstance`` — not ``==`` — is what is
+    asked here, so an equal bare string is not mistaken for the declaration that
+    would have implemented it.
+    """
+    if isinstance(value, CapabilityId) or value in BUILTIN_CAPABILITIES:
+        return
+    raise ValueError(
+        f"{code}: {marker} accepts a builtin catalogue id or the handler "
+        f"declaration that implements one, not '{value}'"
+    )
 
 
 Model = _ModelFactory()

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from apxm_program import Tool
+from apxm_program import Capability, Tool
+from apxm_program.capabilities import READ
 from apxm_program.handlers import (
     CapabilityHandlerError,
     CapabilityId,
@@ -48,6 +49,26 @@ def test_the_reference_and_the_implementation_are_one_object() -> None:
     assert EDIT.descriptor.handler_id == handler_id(
         propose_edit.__module__, "propose_edit"
     )
+
+
+def test_an_invented_bare_reference_is_refused() -> None:
+    # `edit` is the id this package's own handler declares, and a bare string
+    # spelling it is exactly the second spelling the declaration object exists
+    # to remove: it compares equal to the declaration and is still refused,
+    # because being the declaration is what admits it, not equalling one.
+    assert EDIT == "edit"
+    for marker, code in ((Tool, "ToolRefNotCapability"), (Capability, "CapabilityRefNotExact")):
+        for invented in ("edit", "cap.search"):
+            with pytest.raises(ValueError) as rejection:
+                marker[dict, dict](invented)
+            assert str(rejection.value).startswith(f"{code}: ")
+
+
+def test_a_builtin_catalogue_id_is_still_a_reference() -> None:
+    # The other admitted arm: an id the generated catalogue mints needs no
+    # package handler, because the compiler's builtin allowlist admits it.
+    assert Tool[dict, dict](READ).target_ref == "read"
+    assert Capability[dict, dict](READ).target_ref == "read"
 
 
 def test_required_is_stated_on_the_property_it_describes() -> None:

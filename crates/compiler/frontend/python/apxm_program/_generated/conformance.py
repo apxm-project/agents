@@ -217,16 +217,16 @@ _EXPECTATIONS: dict[str, list[dict[str, Any]]] = {
         {"query": "graph:declarations[].decl_kind", "set_equals": ["context", "tool_binding", "model_binding"]},
         {"equals": ["tool_invocation", "model_invocation"], "query": "graph:call_intents[].intent_kind"},
         {"query": "graph:control_intents[].control_kind", "set_equals": ["loop", "conditional", "return"]},
-        {"equals": [{"capability_ref": "search.web.capability", "tool_schema_present": True}], "query": "graph:capability_requirements"},
+        {"equals": [{"capability_ref": "search_web", "tool_schema_present": True}], "query": "graph:capability_requirements"},
         {"includes": ["decl.context.Conversation"], "query": "graph:declarations[].decl_id"},
         {"equals": None, "query": "diagnostics"},
         {"includes": ["capability.invoke", "model.call"], "query": "air:semantic_operations[].op"},
         {"includes": ["ais.loop", "branch"], "query": "air:structural_ir[].kind"},
     ],
     "capability_declared_twice": [
-        {"equals": [{"capability_ref": "cap.audit", "requested_permission": "allow", "tool_schema_present": False}, {"capability_ref": "cap.audit", "requested_permission": {"decision": "ask", "reason": "Reads whatever the model asks for."}, "tool_schema_present": True}], "query": "graph:capability_requirements"},
+        {"equals": [{"capability_ref": "read", "requested_permission": "allow", "tool_schema_present": False}, {"capability_ref": "read", "requested_permission": {"decision": "ask", "reason": "Reads whatever the model asks for."}, "tool_schema_present": True}], "query": "graph:capability_requirements"},
         {"equals": None, "query": "diagnostics"},
-        {"length": 1, "query": "artifact:artifact_semantic_requirements[typed_port_slot=cap.audit].typed_port_slot"},
+        {"length": 1, "query": "artifact:artifact_semantic_requirements[typed_port_slot=read].typed_port_slot"},
     ],
     "composed_agent_event_and_task_group": [
         {"equals": ["Specialist"], "query": "graph:imported_program_refs[].program_ref"},
@@ -341,7 +341,7 @@ def _vector_initial_context_assignment() -> list[str]:
     return _check("initial_context_assignment", InitialContextAgent, _EXPECTATIONS["initial_context_assignment"])
 
 # vector: contextual_tool_loop
-SearchWeb = Tool[object, object]("search.web.capability")
+SearchWeb = Tool[object, object]("search_web")
 SupportModel = Model[object, object]("support.model")
 
 @Agent(input=Input, output=Output, context=Conversation)
@@ -358,9 +358,9 @@ def _vector_contextual_tool_loop() -> list[str]:
     return _check("contextual_tool_loop", Support, _EXPECTATIONS["contextual_tool_loop"])
 
 # vector: capability_declared_twice
-AuditCapability = Capability[object, object]("cap.audit", permission=Allow)
+AuditCapability = Capability[object, object]("read", permission=Allow)
 AuditModel = Model[object, object]("audit.model")
-AuditTool = Tool[object, object]("cap.audit", permission=Ask("Reads whatever the model asks for."))
+AuditTool = Tool[object, object]("read", permission=Ask("Reads whatever the model asks for."))
 
 @Agent(input=Input, output=Output)
 async def Auditor(agent, input):
@@ -414,8 +414,8 @@ def _vector_resumable_loop_block_arguments() -> list[str]:
 
 # vector: nested_loop_hook_targets_inner_loop
 NestedOuterModel = Model[object, object]("nested.outer.model")
-NestedInnerTool = Tool[object, object]("nested.inner.capability")
-NestedAudit = Tool[object, object]("nested.audit.capability")
+NestedInnerTool = Tool[object, object]("search_web")
+NestedAudit = Tool[object, object]("read")
 
 @Hook.before(target="NestedInnerTool", scope="loop")
 async def AuditInnerIteration(agent) -> None:

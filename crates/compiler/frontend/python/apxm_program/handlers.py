@@ -20,8 +20,10 @@ shape is written, so the handler cannot declare one shape and validate another.
 
 ``capability(...)`` returns a :class:`CapabilityId` — the id *is* the
 implementation. A program references the handler it ships by naming the object
-that implements it, so referencing one Capability while implementing another is
-not a mistake this surface can express.
+that implements it, and ``Tool``/``Capability`` admit that object or a builtin
+id the generated catalogue mints, so referencing one Capability while
+implementing another is not a mistake this surface can express: there is no
+bare-string arm left to spell the second name in.
 
 **A Python declaration is not yet a dispatchable implementation.** Executing a
 package handler takes three things beyond the declaration: a deterministic
@@ -77,10 +79,18 @@ class CapabilityHandlerError(ValueError):
 class CapabilityId(str):
     """The exact Capability reference a shipped handler both names and implements.
 
-    It is a ``str``, so it is accepted wherever an exact Capability reference is
-    — ``Tool[I, O](my_capability)`` — and it carries the descriptor, so the
-    reference and the implementation are one object rather than two spellings
-    that have to agree.
+    It carries the descriptor, so the reference and the implementation are one
+    object rather than two spellings that have to agree, and
+    ``Tool[I, O](my_capability)`` takes it because it *is* that object: the
+    marker admits a member of the generated catalogue or an instance of this
+    class, and nothing else.
+
+    Subclassing ``str`` is a convenience, not the admission. The id still prints
+    and compares as the string it spells, so a manifest, a log line, and a
+    dictionary key all read the way an author expects — but the marker asks
+    ``isinstance``, not ``==``, so a bare string equal to a shipped id is
+    refused exactly like any other invented reference. Equalling the
+    declaration is not being it.
     """
 
     __slots__ = ("descriptor",)

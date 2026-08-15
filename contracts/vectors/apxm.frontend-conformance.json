@@ -236,7 +236,7 @@
         {
           "name": "SearchWeb",
           "marker": "Tool",
-          "target_ref": "search.web.capability"
+          "target_ref": "search_web"
         },
         {
           "name": "SupportModel",
@@ -340,7 +340,7 @@
           "query": "graph:capability_requirements",
           "equals": [
             {
-              "capability_ref": "search.web.capability",
+              "capability_ref": "search_web",
               "tool_schema_present": true
             }
           ]
@@ -378,7 +378,7 @@
         {
           "name": "AuditCapability",
           "marker": "Capability",
-          "target_ref": "cap.audit",
+          "target_ref": "read",
           "permission": {
             "decision": "allow"
           }
@@ -391,7 +391,7 @@
         {
           "name": "AuditTool",
           "marker": "Tool",
-          "target_ref": "cap.audit",
+          "target_ref": "read",
           "permission": {
             "decision": "ask",
             "reason": "Reads whatever the model asks for."
@@ -453,12 +453,12 @@
           "query": "graph:capability_requirements",
           "equals": [
             {
-              "capability_ref": "cap.audit",
+              "capability_ref": "read",
               "tool_schema_present": false,
               "requested_permission": "allow"
             },
             {
-              "capability_ref": "cap.audit",
+              "capability_ref": "read",
               "tool_schema_present": true,
               "requested_permission": {
                 "decision": "ask",
@@ -472,7 +472,7 @@
           "equals": null
         },
         {
-          "query": "artifact:artifact_semantic_requirements[typed_port_slot=cap.audit].typed_port_slot",
+          "query": "artifact:artifact_semantic_requirements[typed_port_slot=read].typed_port_slot",
           "length": 1
         }
       ]
@@ -804,12 +804,12 @@
         {
           "name": "NestedInnerTool",
           "marker": "Tool",
-          "target_ref": "nested.inner.capability"
+          "target_ref": "search_web"
         },
         {
           "name": "NestedAudit",
           "marker": "Tool",
-          "target_ref": "nested.audit.capability"
+          "target_ref": "read"
         }
       ],
       "programs": [

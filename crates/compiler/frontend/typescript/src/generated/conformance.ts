@@ -284,16 +284,16 @@ const EXPECTATIONS: Readonly<Record<string, Expectation[]>> = {
     {"query":"graph:declarations[].decl_kind","set_equals":["context","tool_binding","model_binding"]},
     {"equals":["tool_invocation","model_invocation"],"query":"graph:call_intents[].intent_kind"},
     {"query":"graph:control_intents[].control_kind","set_equals":["loop","conditional","return"]},
-    {"equals":[{"capability_ref":"search.web.capability","tool_schema_present":true}],"query":"graph:capability_requirements"},
+    {"equals":[{"capability_ref":"search_web","tool_schema_present":true}],"query":"graph:capability_requirements"},
     {"includes":["decl.context.Conversation"],"query":"graph:declarations[].decl_id"},
     {"equals":null,"query":"diagnostics"},
     {"includes":["capability.invoke","model.call"],"query":"air:semantic_operations[].op"},
     {"includes":["ais.loop","branch"],"query":"air:structural_ir[].kind"},
   ],
   "capability_declared_twice": [
-    {"equals":[{"capability_ref":"cap.audit","requested_permission":"allow","tool_schema_present":false},{"capability_ref":"cap.audit","requested_permission":{"decision":"ask","reason":"Reads whatever the model asks for."},"tool_schema_present":true}],"query":"graph:capability_requirements"},
+    {"equals":[{"capability_ref":"read","requested_permission":"allow","tool_schema_present":false},{"capability_ref":"read","requested_permission":{"decision":"ask","reason":"Reads whatever the model asks for."},"tool_schema_present":true}],"query":"graph:capability_requirements"},
     {"equals":null,"query":"diagnostics"},
-    {"length":1,"query":"artifact:artifact_semantic_requirements[typed_port_slot=cap.audit].typed_port_slot"},
+    {"length":1,"query":"artifact:artifact_semantic_requirements[typed_port_slot=read].typed_port_slot"},
   ],
   "composed_agent_event_and_task_group": [
     {"equals":["Specialist"],"query":"graph:imported_program_refs[].program_ref"},
@@ -381,12 +381,12 @@ function vector_initial_context_assignment(): string[] {
   return check("initial_context_assignment", InitialContextAgent, EXPECTATIONS["initial_context_assignment"]);
 }
 
-const source_contextual_tool_loop = "import { Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\ntype Conversation = { messages: unknown[] };\n\nconst Conversation = Context<Conversation>({ messages: [] });\nconst SearchWeb = Tool<Input, Output>(\"search.web.capability\");\nconst SupportModel = Model<Input, Output>(\"support.model\");\n\nconst Support = Agent<Input, Output, Conversation>({\n  name: \"Support\",\n  context: Conversation,\n  async run(agent, input) {\n    while (true) {\n      let research: any = null;\n      if (input !== null) {\n        research = await SearchWeb(input);\n      }\n      const response = await SupportModel(input);\n      agent.context = { messages: [] };\n      return response;\n    }\n  },\n});\n";
+const source_contextual_tool_loop = "import { Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\ntype Conversation = { messages: unknown[] };\n\nconst Conversation = Context<Conversation>({ messages: [] });\nconst SearchWeb = Tool<Input, Output>(\"search_web\");\nconst SupportModel = Model<Input, Output>(\"support.model\");\n\nconst Support = Agent<Input, Output, Conversation>({\n  name: \"Support\",\n  context: Conversation,\n  async run(agent, input) {\n    while (true) {\n      let research: any = null;\n      if (input !== null) {\n        research = await SearchWeb(input);\n      }\n      const response = await SupportModel(input);\n      agent.context = { messages: [] };\n      return response;\n    }\n  },\n});\n";
 
 function vector_contextual_tool_loop(): string[] {
   const Conversation = Context<Conversation>({ messages: [] });
   void Conversation;
-  const SearchWeb = Tool<Input, Output>("search.web.capability");
+  const SearchWeb = Tool<Input, Output>("search_web");
   void SearchWeb;
   const SupportModel = Model<Input, Output>("support.model");
   void SupportModel;
@@ -395,14 +395,14 @@ function vector_contextual_tool_loop(): string[] {
   return check("contextual_tool_loop", Support, EXPECTATIONS["contextual_tool_loop"]);
 }
 
-const source_capability_declared_twice = "import { Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\n\nconst AuditCapability = Capability<Input, Output>(\"cap.audit\", { permission: Allow });\nconst AuditModel = Model<Input, Output>(\"audit.model\");\nconst AuditTool = Tool<Input, Output>(\"cap.audit\", { permission: Ask(\"Reads whatever the model asks for.\") });\n\nconst Auditor = Agent<Input, Output>({\n  name: \"Auditor\",\n  async run(agent, input) {\n    const findings = await AuditTool(input);\n    const archived = await AuditCapability(findings);\n    return await AuditModel(archived);\n  },\n});\n";
+const source_capability_declared_twice = "import { Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\n\nconst AuditCapability = Capability<Input, Output>(\"read\", { permission: Allow });\nconst AuditModel = Model<Input, Output>(\"audit.model\");\nconst AuditTool = Tool<Input, Output>(\"read\", { permission: Ask(\"Reads whatever the model asks for.\") });\n\nconst Auditor = Agent<Input, Output>({\n  name: \"Auditor\",\n  async run(agent, input) {\n    const findings = await AuditTool(input);\n    const archived = await AuditCapability(findings);\n    return await AuditModel(archived);\n  },\n});\n";
 
 function vector_capability_declared_twice(): string[] {
-  const AuditCapability = Capability<Input, Output>("cap.audit", { permission: Allow });
+  const AuditCapability = Capability<Input, Output>("read", { permission: Allow });
   void AuditCapability;
   const AuditModel = Model<Input, Output>("audit.model");
   void AuditModel;
-  const AuditTool = Tool<Input, Output>("cap.audit", { permission: Ask("Reads whatever the model asks for.") });
+  const AuditTool = Tool<Input, Output>("read", { permission: Ask("Reads whatever the model asks for.") });
   void AuditTool;
   submitAuthoredSource({ fileName: "capability_declared_twice.ts", text: source_capability_declared_twice });
   const Auditor = Agent<Input, Output>({ name: "Auditor", async run() { return null; } });
@@ -437,16 +437,16 @@ function vector_resumable_loop_block_arguments(): string[] {
   return check("resumable_loop_block_arguments", Resumable, EXPECTATIONS["resumable_loop_block_arguments"]);
 }
 
-const source_nested_loop_hook_targets_inner_loop = "import { Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\ntype NestedContext = { depth: number };\n\nconst NestedContext = Context<NestedContext>({ depth: 0 });\nconst NestedOuterModel = Model<Input, Output>(\"nested.outer.model\");\nconst NestedInnerTool = Tool<Input, Output>(\"nested.inner.capability\");\nconst NestedAudit = Tool<Input, Output>(\"nested.audit.capability\");\n\nconst NestedLoops = Agent<Input, Output, NestedContext>({\n  name: \"NestedLoops\",\n  context: NestedContext,\n  async run(agent, input) {\n    while (true) {\n      const reply = await NestedOuterModel(input);\n      while (true) {\n        const found = await NestedInnerTool(reply);\n        input = await agent.yield_(found);\n      }\n    }\n  },\n});\n\nconst AuditInnerIteration = Hook.before<NestedContext>({\n  agent: NestedLoops,\n  target: NestedInnerTool,\n  scope: \"loop\",\n  async run(agent) {\n    await NestedAudit(agent.context);\n  },\n});\n";
+const source_nested_loop_hook_targets_inner_loop = "import { Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\ntype NestedContext = { depth: number };\n\nconst NestedContext = Context<NestedContext>({ depth: 0 });\nconst NestedOuterModel = Model<Input, Output>(\"nested.outer.model\");\nconst NestedInnerTool = Tool<Input, Output>(\"search_web\");\nconst NestedAudit = Tool<Input, Output>(\"read\");\n\nconst NestedLoops = Agent<Input, Output, NestedContext>({\n  name: \"NestedLoops\",\n  context: NestedContext,\n  async run(agent, input) {\n    while (true) {\n      const reply = await NestedOuterModel(input);\n      while (true) {\n        const found = await NestedInnerTool(reply);\n        input = await agent.yield_(found);\n      }\n    }\n  },\n});\n\nconst AuditInnerIteration = Hook.before<NestedContext>({\n  agent: NestedLoops,\n  target: NestedInnerTool,\n  scope: \"loop\",\n  async run(agent) {\n    await NestedAudit(agent.context);\n  },\n});\n";
 
 function vector_nested_loop_hook_targets_inner_loop(): string[] {
   const NestedContext = Context<NestedContext>({ depth: 0 });
   void NestedContext;
   const NestedOuterModel = Model<Input, Output>("nested.outer.model");
   void NestedOuterModel;
-  const NestedInnerTool = Tool<Input, Output>("nested.inner.capability");
+  const NestedInnerTool = Tool<Input, Output>("search_web");
   void NestedInnerTool;
-  const NestedAudit = Tool<Input, Output>("nested.audit.capability");
+  const NestedAudit = Tool<Input, Output>("read");
   void NestedAudit;
   submitAuthoredSource({ fileName: "nested_loop_hook_targets_inner_loop.ts", text: source_nested_loop_hook_targets_inner_loop });
   const NestedLoops = Agent<Input, Output>({ name: "NestedLoops", context: NestedContext, async run() { return null; } });

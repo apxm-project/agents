@@ -10,6 +10,7 @@ import {
   TaskGroup,
   Tool,
 } from "@apxm/frontend";
+import { COUNT_TOKENS, SEARCH_WEB } from "@apxm/frontend/capabilities";
 import { source } from "@apxm/frontend/node";
 
 source(import.meta.url);
@@ -20,8 +21,8 @@ type ParityContext = { iterations: number };
 type ParityProgram = ReturnType<typeof Agent<Input, Output, ParityContext>>;
 
 const ParityModel = Model<Input, Output>("parity.model");
-const ParityTool = Tool<Input, Output>("parity.tool");
-const ParityCapability = Capability<Input, Output>("parity.capability");
+const ParityTool = Tool<Input, Output>(SEARCH_WEB);
+const ParityCapability = Capability<Input, Output>(COUNT_TOKENS);
 const ParityEvent = Event<Output>("parity.event");
 const ParityContext: ReturnType<typeof Context> = Context<ParityContext>({ iterations: 0 });
 

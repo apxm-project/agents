@@ -12,10 +12,14 @@ type PreparedEdit = EditProposal & { mutates: false };
 type EditDraft = { after: string; test_command: string };
 type CoderOutput = { summary: string };
 
+// `read` is a builtin the generated catalogue mints, so no package ships a
+// handler for it and there is no declaration object to name; the literal is one
+// of the two arms `CapabilityReference` admits.
 const ReadSource = Tool<{ file_path: string }, string>("read");
-// The package-local capabilities are bound to the handlers that implement them,
-// so the reference and the implementation are one object rather than two
-// spellings of a name that have to agree.
+// The other arm: the package-local capabilities are bound to the handlers that
+// implement them, so the reference and the implementation are one object rather
+// than two spellings of a name that have to agree. An invented bare string is
+// neither arm, so it does not typecheck.
 const ProposeEdit = Tool<EditProposal, PreparedEdit>(proposeEdit);
 const PrepareTest = Tool<{ command: string }, { command: string; executes: false; mutates: false }>(prepareTest);
 const DraftEdit = Model<{ request: CoderInput; source: string }, EditDraft>("model.target");

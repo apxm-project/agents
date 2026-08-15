@@ -20,6 +20,11 @@ import {
 } from "./generated/frontend-graph.js";
 import type { SkillInstructionSource } from "./generated/frontend-records.js";
 import type { Permission } from "./generated/permissions.js";
+// The generated catalogue's `CapabilityId` is the closed set of builtin ids; the
+// packaging surface's `CapabilityId` is the object a handler declaration hands
+// back. Two different concepts wearing one name, so each is renamed to the thing
+// it actually is at the point where both meet.
+import type { CapabilityId as BuiltinCapabilityId } from "./generated/capabilities.js";
 
 /**
  * The ceiling the skill-reading capability enforces on a body it loads. An
@@ -31,12 +36,19 @@ const MAX_INSTRUCTION_BYTES = 128 * 1024;
 const FORBIDDEN_DISPLAY_NAMES = new Set(["default", "model.default", "support", "search-web", ""]);
 
 /**
- * A Capability reference is either an exact catalogue id or the handler that
- * implements one. Accepting the handler itself is what makes referencing one
- * capability while implementing another unrepresentable rather than merely
- * checked: there is no second place to spell the id.
+ * The reference a shipped handler declaration hands back. The id and the
+ * implementation arrive as one object, so there is no second place to spell the
+ * id and nothing for the two spellings to disagree about.
  */
-export type CapabilityReference = string | { readonly capabilityId: string };
+export type ShippedCapabilityReference = { readonly capabilityId: string };
+
+/**
+ * A Capability reference is a builtin id from the generated catalogue or the
+ * handler that implements one. Nothing else: an invented bare string is not a
+ * member of either arm, so referencing a Capability nobody implements is a type
+ * error rather than a check some later pass has to remember to run.
+ */
+export type CapabilityReference = BuiltinCapabilityId | ShippedCapabilityReference;
 
 function capabilityIdOf(reference: CapabilityReference): string {
   return typeof reference === "string" ? reference : reference?.capabilityId;

@@ -4,7 +4,7 @@
   "title": "FrontendSurfaceManifest",
   "description": "The single machine-readable manifest of the public source-first authoring surface. Public-export scans, documentation-alignment checks, and generated reference docs derive from this one manifest. Every declaration must carry a projection for every registered language, and the projection is checked by argument shape rather than by name: a language with no projection for a declaration is not a conforming implementation of the surface. This manifest carries no AIR/AIS operation string and no lowering identity.",
   "type": "object",
-  "required": ["schema_version", "surface_version", "everyday", "advanced", "non_public", "languages", "declarations"],
+  "required": ["schema_version", "surface_version", "everyday", "advanced", "non_public", "languages", "vocabularies", "declarations"],
   "properties": {
     "schema_version": { "const": "apxm.frontend-surface" },
     "surface_version": { "const": "apxm.frontend-graph" },
@@ -58,6 +58,11 @@
       "minItems": 1,
       "items": { "$ref": "#/$defs/SurfaceLanguage" }
     },
+    "vocabularies": {
+      "type": "array",
+      "description": "Every generated closed vocabulary the surface publishes on its own author-facing import path, and where each language publishes it. A vocabulary is not a declaration: it carries no arguments and produces no intent, it is the set of values a declaration's arguments are written with. Each is stated here so the import path an author is taught is a fact the manifest owns rather than one each document remembers, and so `exported_from_root: false` — the invariant that a vocabulary stays off the root namespace the tiers pin exactly — is declared rather than merely observed.",
+      "items": { "$ref": "#/$defs/SurfaceVocabulary" }
+    },
     "declarations": {
       "type": "array",
       "description": "Every public declaration/marker: its per-language projections, the bound semantic node, its accepted arguments and how each language projects them, its produced intent, and the diagnostics it can raise.",
@@ -82,6 +87,35 @@
         "generated_diagnostics": {
           "type": "string",
           "description": "Repository-relative generated module projecting `declarations[].diagnostics`. Drift against this manifest is FrontendSurfaceUnsynced."
+        }
+      },
+      "additionalProperties": false
+    },
+    "VocabularyProjection": {
+      "type": "object",
+      "description": "How one language publishes one vocabulary: the repository-relative module that re-exports the generated names, the import path an author writes, and whether the authoring root re-exports it — which is always false, because the root publishes exactly the tiered declaration names.",
+      "required": ["module", "import_path", "exported_from_root"],
+      "properties": {
+        "module": { "type": "string" },
+        "import_path": { "type": "string" },
+        "exported_from_root": { "const": false }
+      },
+      "additionalProperties": false
+    },
+    "SurfaceVocabulary": {
+      "type": "object",
+      "description": "One generated closed vocabulary and its per-language public import path. A registered language absent here is FrontendSurfaceIncomplete, exactly as it is for a declaration.",
+      "required": ["concept", "generated_by", "projections"],
+      "properties": {
+        "concept": { "type": "string" },
+        "generated_by": {
+          "type": "string",
+          "description": "The codegen arm that mints the names, so the vocabulary has one source and this manifest states where it surfaces rather than what it contains."
+        },
+        "projections": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/LanguageId" },
+          "additionalProperties": { "$ref": "#/$defs/VocabularyProjection" }
         }
       },
       "additionalProperties": false

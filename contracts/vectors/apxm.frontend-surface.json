@@ -42,6 +42,56 @@
       "generated_diagnostics": "crates/compiler/frontend/typescript/src/generated/diagnostics.ts"
     }
   ],
+  "vocabularies": [
+    {
+      "concept": "Capability id catalogue",
+      "generated_by": "apxm codegen capabilities",
+      "projections": {
+        "python": {
+          "module": "crates/compiler/frontend/python/apxm_program/capabilities.py",
+          "import_path": "apxm_program.capabilities",
+          "exported_from_root": false
+        },
+        "typescript": {
+          "module": "crates/compiler/frontend/typescript/src/capabilities.ts",
+          "import_path": "@apxm/frontend/capabilities",
+          "exported_from_root": false
+        }
+      }
+    },
+    {
+      "concept": "Permission decisions",
+      "generated_by": "apxm codegen permissions",
+      "projections": {
+        "python": {
+          "module": "crates/compiler/frontend/python/apxm_program/permissions.py",
+          "import_path": "apxm_program.permissions",
+          "exported_from_root": false
+        },
+        "typescript": {
+          "module": "crates/compiler/frontend/typescript/src/permissions.ts",
+          "import_path": "@apxm/frontend/permissions",
+          "exported_from_root": false
+        }
+      }
+    },
+    {
+      "concept": "Hook scopes",
+      "generated_by": "apxm codegen frontend-vocabulary",
+      "projections": {
+        "python": {
+          "module": "crates/compiler/frontend/python/apxm_program/scopes.py",
+          "import_path": "apxm_program.scopes",
+          "exported_from_root": false
+        },
+        "typescript": {
+          "module": "crates/compiler/frontend/typescript/src/scopes.ts",
+          "import_path": "@apxm/frontend/scopes",
+          "exported_from_root": false
+        }
+      }
+    }
+  ],
   "declarations": [
     {
       "concept": "Agent definition",

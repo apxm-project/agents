@@ -7,4 +7,5 @@ from .frontend_graph import *  # noqa: F401,F403
 from .frontend_records import *  # noqa: F401,F403
 from .frontend_serializers import *  # noqa: F401,F403
 from .permissions import *  # noqa: F401,F403
+from .scopes import *  # noqa: F401,F403
 from .runtime_evidence import *  # noqa: F401,F403

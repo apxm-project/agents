@@ -21,6 +21,10 @@
     "./permissions": {
       "types": "./dist/permissions.d.ts",
       "default": "./dist/permissions.js"
+    },
+    "./scopes": {
+      "types": "./dist/scopes.d.ts",
+      "default": "./dist/scopes.js"
     }
   },
   "license": "Apache-2.0",
@@ -39,6 +43,7 @@
     "build": "npm run clean && tsc -p tsconfig.json",
     "prepack": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:test": "tsc -p test/tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest"
   },

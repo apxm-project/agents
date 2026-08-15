@@ -1,4 +1,5 @@
 import { Agent, Model, TaskGroup, Tool } from "@apxm/frontend";
+import { SEARCH_WEB } from "@apxm/frontend/capabilities";
 import { source } from "@apxm/frontend/node";
 
 source(import.meta.url);
@@ -6,7 +7,7 @@ source(import.meta.url);
 type Input = { request: string };
 type Output = { answer: string };
 
-const Lookup = Tool<Input, { facts: string }>("fixture.lookup");
+const Lookup = Tool<Input, { facts: string }>(SEARCH_WEB);
 const Answer = Model<{ request: string }, Output>("fixture.answer");
 type FixtureProgram = ReturnType<typeof Agent<Input, Output>>;
 

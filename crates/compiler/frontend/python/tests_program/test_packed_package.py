@@ -60,6 +60,7 @@ def test_packed_wheel_exposes_only_generic_agent_program_surface() -> None:
         golden = temp / "clean_agent.py"
         golden.write_text(
             "from apxm_program import Agent, Context, Model, Tool\n"
+            "from apxm_program.capabilities import SEARCH_WEB\n"
             "\n"
             "\n"
             "class TripRequest:\n"
@@ -70,7 +71,7 @@ def test_packed_wheel_exposes_only_generic_agent_program_surface() -> None:
             "    pass\n"
             "\n"
             "\n"
-            "Weather = Tool[TripRequest, TripPlan]('weather.capability')\n"
+            "Weather = Tool[TripRequest, TripPlan](SEARCH_WEB)\n"
             "Planner = Model[TripRequest, TripPlan]('planner.model')\n"
             "\n"
             "\n"

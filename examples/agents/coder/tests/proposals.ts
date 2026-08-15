@@ -6,12 +6,15 @@
 // nothing about the handlers unless a model is bound and an input is supplied.
 //
 // This program isolates the half that is about the package's own
-// implementations. It names the same two Capability references `src/main.ts`
-// names, with authored literal arguments, so executing it exercises exactly one
+// implementations. It binds the same two handler declarations `src/main.ts`
+// binds, with authored literal arguments, so executing it exercises exactly one
 // thing: whether a `capability.invoke` for a Capability this package ships
 // reaches the handler this package ships.
 import { Agent, Tool } from "@apxm/frontend";
 import { source } from "@apxm/frontend/node";
+
+import { proposeEdit } from "../capabilities/edit/handler.js";
+import { prepareTest } from "../capabilities/test/handler.js";
 
 source(import.meta.url);
 
@@ -20,8 +23,8 @@ type PreparedEdit = EditProposal & { mutates: false };
 type PreparedTest = { command: string; executes: false; mutates: false };
 type NoInput = { unused?: never };
 
-const ProposeEdit = Tool<EditProposal, PreparedEdit>("edit");
-const PrepareTest = Tool<{ command: string }, PreparedTest>("test");
+const ProposeEdit = Tool<EditProposal, PreparedEdit>(proposeEdit);
+const PrepareTest = Tool<{ command: string }, PreparedTest>(prepareTest);
 
 export const Proposals = Agent<NoInput, PreparedTest>({
   name: "Proposals",

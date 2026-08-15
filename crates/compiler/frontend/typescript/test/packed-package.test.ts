@@ -77,7 +77,7 @@ describe("packed @apxm/frontend", () => {
         'const expected = ["Agent", "Capability", "Context", "Event", "Hook", "Model", "Skill", "TaskGroup", "Tool"];',
         "if (JSON.stringify(Object.keys(frontend).sort()) !== JSON.stringify(expected)) process.exit(7);",
         "const { Agent, Context, Model, Tool } = frontend;",
-        "const Weather = Tool('weather.capability');",
+        "const Weather = Tool('search_web');",
         "const Planner = Model('planner.model');",
         "const TripCtx = Context({ legs: [] });",
         "const Plan = Agent({",

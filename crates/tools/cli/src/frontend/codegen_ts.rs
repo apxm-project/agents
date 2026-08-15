@@ -8,7 +8,7 @@ use super::codegen_diagnostics::TYPESCRIPT_DIAGNOSTICS_FILE;
 use super::codegen_frontend_conformance::TYPESCRIPT_CONFORMANCE_FILE;
 use super::codegen_frontend_records::TYPESCRIPT_FRONTEND_RECORDS_FILE;
 use super::codegen_frontend_serializers::TYPESCRIPT_FRONTEND_SERIALIZERS_FILE;
-use super::codegen_frontend_vocabulary::TYPESCRIPT_FRONTEND_GRAPH_FILE;
+use super::codegen_frontend_vocabulary::{TYPESCRIPT_FRONTEND_GRAPH_FILE, TYPESCRIPT_SCOPES_FILE};
 use super::codegen_permissions::TYPESCRIPT_PERMISSIONS_FILE;
 use super::registry::{
     FrontendOperationSpec, builtin_providers, graph_attr_constants, graph_metric_constants,
@@ -21,7 +21,8 @@ pub const RUNTIME_EVIDENCE_TYPESCRIPT_FILE: &str = "runtime-evidence.ts";
 /// stray-file guard belongs to the directory rather than to one codegen arm:
 /// `typescript-frontend` owns the runtime-evidence binding, `capabilities`
 /// owns the capability catalogue, `permissions` owns the permission decision
-/// vocabulary, `frontend-vocabulary` owns the source-graph closed sets,
+/// vocabulary, `frontend-vocabulary` owns the source-graph closed sets and the
+/// author-facing Hook scopes projected from them,
 /// `frontend-records` owns the FrontendGraph contract record types,
 /// `frontend-serializers` owns their serializers, `diagnostics` owns the
 /// rejection-code vocabulary, and `frontend-conformance` owns the shared
@@ -34,6 +35,7 @@ pub const GENERATED_TYPESCRIPT_FRONTEND_FILES: &[&str] = &[
     TYPESCRIPT_FRONTEND_RECORDS_FILE,
     TYPESCRIPT_FRONTEND_SERIALIZERS_FILE,
     TYPESCRIPT_PERMISSIONS_FILE,
+    TYPESCRIPT_SCOPES_FILE,
     RUNTIME_EVIDENCE_TYPESCRIPT_FILE,
 ];
 

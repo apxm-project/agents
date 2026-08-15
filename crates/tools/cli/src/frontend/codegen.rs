@@ -6,7 +6,7 @@ use super::codegen_diagnostics::PYTHON_DIAGNOSTICS_FILE;
 use super::codegen_frontend_conformance::PYTHON_CONFORMANCE_FILE;
 use super::codegen_frontend_records::PYTHON_FRONTEND_RECORDS_FILE;
 use super::codegen_frontend_serializers::PYTHON_FRONTEND_SERIALIZERS_FILE;
-use super::codegen_frontend_vocabulary::PYTHON_FRONTEND_GRAPH_FILE;
+use super::codegen_frontend_vocabulary::{PYTHON_FRONTEND_GRAPH_FILE, PYTHON_SCOPES_FILE};
 use super::codegen_permissions::PYTHON_PERMISSIONS_FILE;
 
 pub const RUNTIME_EVIDENCE_PYTHON_FILE: &str = "runtime_evidence.py";
@@ -17,7 +17,8 @@ pub const GENERATED_PACKAGE_PYTHON_FILE: &str = "__init__.py";
 /// arm, mirroring `GENERATED_TYPESCRIPT_FRONTEND_FILES`: `frontend` owns the
 /// runtime-evidence binding and the package init, `capabilities` owns the
 /// capability catalogue, `permissions` owns the permission decision vocabulary,
-/// `frontend-vocabulary` owns the source-graph closed sets, `frontend-records`
+/// `frontend-vocabulary` owns the source-graph closed sets and the author-facing
+/// Hook scopes projected from them, `frontend-records`
 /// owns the FrontendGraph contract record types, `frontend-serializers` owns
 /// their serializers, `diagnostics` owns the rejection-code vocabulary, and
 /// `frontend-conformance` owns the shared conformance corpus harness.
@@ -35,6 +36,7 @@ pub const GENERATED_PYTHON_FRONTEND_FILES: &[&str] = &[
     PYTHON_FRONTEND_RECORDS_FILE,
     PYTHON_FRONTEND_SERIALIZERS_FILE,
     PYTHON_PERMISSIONS_FILE,
+    PYTHON_SCOPES_FILE,
     RUNTIME_EVIDENCE_PYTHON_FILE,
 ];
 

@@ -90,9 +90,12 @@ const SearchWeb = Tool<SearchWebRequest, SearchWebResult>(SEARCH_WEB);
 ```
 
 The catalogue is generated from `crates/machine/ais/src/capabilities.rs`, so a
-misspelled symbol fails at import, while a misspelled string survives until
-`dekk agents compile-service-canonical` holds every reference against the
-granted set. The marker itself refuses a mutable display name on sight:
+misspelled symbol fails at import — and so does a misspelled string, because the
+marker admits only a catalogue id or a handler declaration: TypeScript's
+`CapabilityReference` has no bare-string arm, and the Python constructor raises
+`ToolRefNotCapability`. `dekk agents compile-service-canonical` still holds
+every surviving reference against the granted set. The marker also refuses a
+mutable display name on sight:
 <!-- frontend-surface:quoted search-web the display name the marker refuses, quoted to show the refusal rather than taught as a reference to write -->
 `Tool("search-web")` raises "Tool accepts an exact typed reference, not a
 display name 'search-web'" in both languages, because the id is `search_web`.
@@ -107,8 +110,10 @@ marker lookup and local shadowing instead of guessing what an Agent means.
 does not implement or execute a runtime tool. A package-local handler, when one is
 needed, uses `Tool.define`/`Tool.answer` from `@apxm/agent-packaging` in
 TypeScript or `capability(...)` from `apxm_program.handlers` in Python, in a
-separate handler module. Either returns the Capability id it implements, so the
-reference and the implementation are one object.
+separate handler module. Either returns the Capability id it implements, and the
+marker takes that returned object, so the reference and the implementation are
+one object — referencing one Capability while implementing another is a
+sentence neither language can write.
 
 Declaring is not executing, and the split runs along the language. Only a
 TypeScript handler becomes an executable one: `HandlerLanguage` admits only

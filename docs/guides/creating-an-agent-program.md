@@ -228,8 +228,10 @@ memory update.
 ### 3.3 A Tool reference, and a shipped handler
 
 A `Tool` reference names an id that something can already satisfy: a builtin
-from the generated catalogue, or an id the package ships a handler for at
-`capabilities/<id>/handler.ts`. It is not a name an author invents.
+from the generated catalogue, or the handler declaration a package ships at
+`capabilities/<id>/handler.ts`. It is not a name an author invents, and it is
+not one an author *can* invent — those two arms are the whole accepted set, in
+the TypeScript type and in the Python constructor alike.
 
 ```python
 from apxm_program import Tool
@@ -285,7 +287,13 @@ to widen what your source asked for
 A Python package declares the handlers it ships with `capability(...)` from
 `apxm_program.handlers`, in the same shape `Tool.define` uses in TypeScript, and
 gets back the exact Capability id it implements, so the reference and the
-implementation are one object:
+implementation are one object. Python has no type-checker in the build, so the
+same closed set is settled where the binding is constructed
+(`crates/compiler/frontend/python/apxm_program/_markers.py`): `Tool[...]` and
+`Capability[...]` admit a catalogue id or a `capability(...)` declaration and
+refuse anything else with `ToolRefNotCapability` / `CapabilityRefNotExact`. The
+declaration subclasses `str`, so it still prints and compares as the id it
+spells, but being the declaration — not equalling one — is what admits it:
 
 ```python
 from apxm_program import Tool
@@ -430,20 +438,23 @@ export const normalizeAddress = Tool.define({
 This declaration lives in a package handler module at
 `capabilities/normalize_address/handler.ts`. The directory name *is* the
 capability id — the handler's existence is the whole declaration that the
-package supplies it — so the Agent Program binds that id:
+package supplies it — so the Agent Program binds the declaration itself:
 
 ```typescript
-const NormalizeAddress = Tool<AddressInput, NormalizedAddress>(
-  "normalize_address",
-);
+import { normalizeAddress } from "../capabilities/normalize_address/handler.js";
+
+const NormalizeAddress = Tool<AddressInput, NormalizedAddress>(normalizeAddress);
 ```
 
 That is what [`examples/agents/coder/src/main.ts`](../../examples/agents/coder/src/main.ts)
-does for its own `edit` and `test` handlers. `Tool.define` also returns the
-Capability id it implements, and the marker accepts that returned object in place
-of the string (`crates/compiler/frontend/typescript/src/markers.ts`), which is
-how a package makes referencing one capability while implementing another
-unrepresentable.
+does for its own `edit` and `test` handlers. Binding the declaration is not a
+style preference: `CapabilityReference` is the generated catalogue's closed
+`CapabilityId` union or the object a handler declaration returns
+(`crates/compiler/frontend/typescript/src/markers.ts`), so
+`Tool<AddressInput, NormalizedAddress>("normalize_address")` does not typecheck
+at all. Referencing one capability while implementing another is unrepresentable
+rather than merely checked, because there is no bare-string arm to spell the
+second name in.
 
 The packaging helper generates the Rust-owned handler manifest; it is not a
 frontend runtime or an authority path. Authors never write the manifest, JSON
@@ -515,11 +526,12 @@ a model is data. Source chooses a closed Tool variant, invokes it, and decides
 whether to call the Model again.
 
 `Model(...)` receives a typed digest-pinned Model Target reference. An imported
-`Tool(...)` receives an exact Capability reference: a builtin id from the
-generated catalogue, or an id the package ships a handler for. A separate
-package handler module can use `Tool.define` (TypeScript) or `capability(...)`
-(Python) to declare one, but neither can select an implementation or grant
-authority, and only the TypeScript declaration reaches an executable handler.
+`Tool(...)` receives an exact Capability reference, and the accepted set is
+closed: a builtin id from the generated catalogue, or the declaration object a
+package's own handler returns. A separate package handler module uses
+`Tool.define` (TypeScript) or `capability(...)` (Python) to declare one, but
+neither can select an implementation or grant authority, and only the TypeScript
+declaration reaches an executable handler.
 
 A mutable display name is not an executable source reference. The marker
 refuses `"default"`, `"model.default"`, `"support"`, `"search-web"`, and the

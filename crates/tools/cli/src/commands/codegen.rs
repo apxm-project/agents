@@ -176,8 +176,8 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
             let python = crate::frontend::codegen_capabilities::render_capabilities_python();
             let typescript =
                 crate::frontend::codegen_capabilities::render_capabilities_typescript();
-            let files = write_or_check_pair(
-                [(&python_path, &python), (&typescript_path, &typescript)],
+            let files = write_or_check_files(
+                &[(&python_path, &python), (&typescript_path, &typescript)],
                 check,
                 "capabilities",
             )?;
@@ -194,8 +194,8 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
             let typescript_path = default_typescript_permissions_codegen_path();
             let python = crate::frontend::codegen_permissions::render_permissions_python();
             let typescript = crate::frontend::codegen_permissions::render_permissions_typescript();
-            let files = write_or_check_pair(
-                [(&python_path, &python), (&typescript_path, &typescript)],
+            let files = write_or_check_files(
+                &[(&python_path, &python), (&typescript_path, &typescript)],
                 check,
                 "permissions",
             )?;
@@ -232,15 +232,30 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
                 crate::frontend::codegen_frontend_vocabulary::render_frontend_graph_python();
             let typescript =
                 crate::frontend::codegen_frontend_vocabulary::render_frontend_graph_typescript();
+            // The author-facing Hook scopes are a projection of one family in
+            // the same contract, so they are written by the arm that owns it
+            // rather than by an arm of their own that could fall behind it.
+            let python_scopes_path = default_python_generated_codegen_dir()
+                .join(crate::frontend::codegen_frontend_vocabulary::PYTHON_SCOPES_FILE);
+            let typescript_scopes_path = default_typescript_frontend_codegen_dir()
+                .join(crate::frontend::codegen_frontend_vocabulary::TYPESCRIPT_SCOPES_FILE);
+            let python_scopes = crate::frontend::codegen_frontend_vocabulary::render_scopes_python();
+            let typescript_scopes =
+                crate::frontend::codegen_frontend_vocabulary::render_scopes_typescript();
 
-            let files = write_or_check_pair(
-                [(&python_path, &python), (&typescript_path, &typescript)],
+            let files = write_or_check_files(
+                &[
+                    (&python_path, &python),
+                    (&typescript_path, &typescript),
+                    (&python_scopes_path, &python_scopes),
+                    (&typescript_scopes_path, &typescript_scopes),
+                ],
                 check,
                 "frontend-vocabulary",
             )?;
             report_pair(
                 "frontend-vocabulary",
-                "source graph vocabulary",
+                "source graph vocabulary and author-facing Hook scopes",
                 files,
                 check,
                 json_output,
@@ -256,8 +271,8 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
             let typescript =
                 crate::frontend::codegen_frontend_records::render_frontend_records_typescript();
 
-            let files = write_or_check_pair(
-                [(&python_path, &python), (&typescript_path, &typescript)],
+            let files = write_or_check_files(
+                &[(&python_path, &python), (&typescript_path, &typescript)],
                 check,
                 "frontend-records",
             )?;
@@ -280,8 +295,8 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
                 crate::frontend::codegen_frontend_serializers::render_frontend_serializers_python();
             let typescript = crate::frontend::codegen_frontend_serializers::render_frontend_serializers_typescript();
 
-            let files = write_or_check_pair(
-                [(&python_path, &python), (&typescript_path, &typescript)],
+            let files = write_or_check_files(
+                &[(&python_path, &python), (&typescript_path, &typescript)],
                 check,
                 "frontend-serializers",
             )?;
@@ -314,13 +329,13 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
             let python_test = conformance::render_conformance_python_test();
             let typescript_test = conformance::render_conformance_typescript_test();
 
-            let mut files = write_or_check_pair(
-                [(&python_path, &python), (&typescript_path, &typescript)],
+            let mut files = write_or_check_files(
+                &[(&python_path, &python), (&typescript_path, &typescript)],
                 check,
                 "frontend-conformance",
             )?;
-            files.extend(write_or_check_pair(
-                [
+            files.extend(write_or_check_files(
+                &[
                     (&python_test_path, &python_test),
                     (&typescript_test_path, &typescript_test),
                 ],
@@ -343,8 +358,8 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
             let python = crate::frontend::codegen_diagnostics::render_diagnostics_python();
             let typescript = crate::frontend::codegen_diagnostics::render_diagnostics_typescript();
 
-            let files = write_or_check_pair(
-                [(&python_path, &python), (&typescript_path, &typescript)],
+            let files = write_or_check_files(
+                &[(&python_path, &python), (&typescript_path, &typescript)],
                 check,
                 "diagnostics",
             )?;
@@ -453,11 +468,11 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
     }
 }
 
-/// Write — or drift-check — one vocabulary's Python and TypeScript halves, and
-/// name the files either way. Both halves are one vocabulary, so they are
-/// always written together and always checked together.
-fn write_or_check_pair(
-    outputs: [(&PathBuf, &String); 2],
+/// Write — or drift-check — every file one vocabulary projects, and name them
+/// either way. A vocabulary's per-language halves are one vocabulary, so they
+/// are always written together and always checked together.
+fn write_or_check_files(
+    outputs: &[(&PathBuf, &String)],
     check: bool,
     target: &str,
 ) -> Result<Vec<String>> {

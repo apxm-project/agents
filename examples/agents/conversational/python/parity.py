@@ -6,6 +6,7 @@ import json
 import sys
 
 from apxm_program import Agent, Capability, Context, Event, Hook, Model, TaskGroup, Tool
+from apxm_program.capabilities import COUNT_TOKENS, SEARCH_WEB
 
 
 class Input:
@@ -17,8 +18,8 @@ class Output:
 
 
 ParityModel = Model[Input, Output]("parity.model")
-ParityTool = Tool[Input, Output]("parity.tool")
-ParityCapability = Capability[Input, Output]("parity.capability")
+ParityTool = Tool[Input, Output](SEARCH_WEB)
+ParityCapability = Capability[Input, Output](COUNT_TOKENS)
 ParityEvent = Event("parity.event")
 
 
