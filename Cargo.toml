@@ -7,6 +7,7 @@ members = [
 	# ── Compiler (Compilation) ────────────────────
 	"crates/compiler/pipeline",
 	"crates/compiler/source-port",
+	"crates/compiler/service-protocol",
 	"crates/compiler/frontend/native/python",
 	"crates/compiler/frontend/native/typescript",
 	# ── Runtime (Execution + Backend) ─────────────
@@ -16,6 +17,7 @@ members = [
 	"crates/runtime/backend-registry",
 	"crates/runtime/inference",
 	"crates/runtime/kernel",
+	"crates/runtime/service-protocol",
 	"crates/runtime/commit-local",
 	"crates/runtime/execution",
 	# ── Orchestration (ACP + Artifact) ───
@@ -46,12 +48,14 @@ apxm-core = { version = "0.1.0", path = "crates/machine/contracts" }
 apxm-program = { version = "0.1.0", path = "crates/machine/program" }
 apxm-compiler = { version = "0.1.0", path = "crates/compiler/pipeline" }
 apxm-source-port = { version = "0.1.0", path = "crates/compiler/source-port" }
+apxm-compilation-protocol = { version = "0.1.0", path = "crates/compiler/service-protocol" }
 apxm-capability-iface = { version = "0.1.0", path = "crates/runtime/capability-iface" }
 apxm-capability = { version = "0.1.0", path = "crates/runtime/capability" }
 apxm-backends = { version = "0.1.0", path = "crates/runtime/backends" }
 apxm-backend-registry = { version = "0.1.0", path = "crates/runtime/backend-registry" }
 apxm-inference = { version = "0.1.0", path = "crates/runtime/inference" }
 apxm-kernel = { version = "0.1.0", path = "crates/runtime/kernel" }
+apxm-runtime-protocol = { version = "0.1.0", path = "crates/runtime/service-protocol" }
 apxm-commit-local = { version = "0.1.0", path = "crates/runtime/commit-local" }
 apxm-execution = { version = "0.1.0", path = "crates/runtime/execution" }
 apxm-artifact = { version = "0.1.0", path = "crates/orchestration/artifact" }

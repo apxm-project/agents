@@ -17,6 +17,7 @@ pub mod capability;
 pub mod commit;
 pub mod confinement;
 pub mod effect;
+pub mod event_api;
 pub mod events;
 pub mod external_agent;
 pub mod hook;
@@ -52,6 +53,11 @@ pub use confinement::{
 };
 pub use effect::{
     EffectError, EffectId, EffectRecord, EffectState, EffectTransition, PreparedEffect,
+};
+pub use event_api::{
+    CanonicalEventRef, EVENT_CONTRACT, EventApplication, EventApplicationResult,
+    EventContractError, EventHttpMethod, EventOccurrence, EventTypeRef, EventWaitBinding,
+    InvocationBoundary,
 };
 pub use events::{EventSink, NullEventSink, TelemetryNote, diagnostic_may_override_evidence};
 pub use external_agent::{

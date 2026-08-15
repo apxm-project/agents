@@ -266,6 +266,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "apxm-compilation-protocol"
+version = "0.1.0"
+dependencies = [
+ "apxm-source-port",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "apxm-compiler"
 version = "0.1.0"
 dependencies = [
@@ -401,6 +410,15 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "apxm-runtime-protocol"
+version = "0.1.0"
+dependencies = [
+ "apxm-kernel",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
