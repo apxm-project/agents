@@ -37,7 +37,7 @@ mod capability_port {
     //! that differs is which implementation the registry hands back.
 
     use std::collections::{BTreeMap, BTreeSet, HashMap};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -58,6 +58,11 @@ mod capability_port {
     /// Interceptor name reported by the local admission gate.
     const LOCAL_ADMISSION_INTERCEPTOR: &str = "canonical-local-admission";
 
+    /// Discovery-root id for the `skills/` directory of the package under
+    /// execution. Distinct from the project and local roots so an operator
+    /// reading evidence can tell which root served an instruction.
+    const PACKAGE_SKILL_ROOT_ID: &str = "package";
+
     /// Standard-tool configuration for a composition root with no admitted sandbox.
     ///
     /// `bash` declares an `ExecRequest` through
@@ -67,13 +72,13 @@ mod capability_port {
     /// publish a capability that fails 100% of the time, so the local root leaves it
     /// unregistered instead of advertising it. A sandbox-backed local profile is the
     /// thing that turns it back on, not a config toggle here.
-    fn local_tools_config() -> ToolsConfig {
+    fn local_tools_config(package_root: Option<&Path>) -> ToolsConfig {
         ToolsConfig {
             bash: BashConfig {
                 enabled: false,
                 ..BashConfig::default()
             },
-            skills: local_skills_config(),
+            skills: local_skills_config(package_root),
             ..ToolsConfig::default()
         }
     }
@@ -87,21 +92,36 @@ mod capability_port {
     /// publishes that project's conventional roots, both relative to the
     /// working directory the CLI was invoked from. A root that does not exist
     /// contributes nothing rather than failing.
-    fn local_skills_config() -> SkillsConfig {
+    ///
+    /// A package under execution publishes its own `skills/` as a third root.
+    /// Without it a program could declare a Skill, ship the `SKILL.md` the
+    /// package format recognises, pass every gate, and then fail at
+    /// `read_skill` because no root ever named the directory sitting inside the
+    /// package being run. The package path arrives already integrity-verified,
+    /// so the bytes served are the bytes the chain covers.
+    fn local_skills_config(package_root: Option<&Path>) -> SkillsConfig {
+        let mut roots = vec![
+            SkillRootConfig {
+                root_id: "project".to_string(),
+                tier: RootTier::Project,
+                path: PathBuf::from(".agents/skills"),
+            },
+            SkillRootConfig {
+                root_id: "local".to_string(),
+                tier: RootTier::Local,
+                path: PathBuf::from(".apxm/skills"),
+            },
+        ];
+        if let Some(package_root) = package_root {
+            roots.push(SkillRootConfig {
+                root_id: PACKAGE_SKILL_ROOT_ID.to_string(),
+                tier: RootTier::Local,
+                path: package_root.join("skills"),
+            });
+        }
         SkillsConfig {
             enabled: true,
-            roots: vec![
-                SkillRootConfig {
-                    root_id: "project".to_string(),
-                    tier: RootTier::Project,
-                    path: PathBuf::from(".agents/skills"),
-                },
-                SkillRootConfig {
-                    root_id: "local".to_string(),
-                    tier: RootTier::Local,
-                    path: PathBuf::from(".apxm/skills"),
-                },
-            ],
+            roots,
         }
     }
 
@@ -499,15 +519,21 @@ mod capability_port {
         /// discovery step: an AIR naming a package Capability that no supplied
         /// implementation covers is refused at admission.
         ///
+        /// `package_root` publishes that package's own `skills/` directory as a
+        /// discovery root, so a Skill the package ships is readable by the
+        /// program that declared it. `None` leaves only the project and local
+        /// roots, which is what a run with no package on disk should see.
+        ///
         /// # Errors
         ///
         /// Returns the registration error if a standard tool or a package
         /// Capability cannot be registered.
-        pub fn new(
+        pub fn with_package_root(
             handlers: Option<&super::AdmittedPackageHandlers>,
+            package_root: Option<&Path>,
         ) -> Result<Self, RuntimeError> {
             let system = CapabilitySystem::new();
-            register_standard_tools(&system, &local_tools_config())?;
+            register_standard_tools(&system, &local_tools_config(package_root))?;
             if let Some(handlers) = handlers {
                 register_package_handlers(&system, handlers)?;
             }
@@ -658,7 +684,8 @@ mod capability_port {
 
         #[test]
         fn the_local_surface_registers_no_capability_that_needs_a_sandbox() {
-            let port = LocalCapabilityPort::new(None).expect("local capability port");
+            let port =
+                LocalCapabilityPort::with_package_root(None, None).expect("local capability port");
             let registered = port.registered_names();
             assert!(
                 !registered.contains("bash"),
@@ -669,7 +696,8 @@ mod capability_port {
 
         #[test]
         fn only_the_read_only_surface_is_admitted() {
-            let port = LocalCapabilityPort::new(None).expect("local capability port");
+            let port =
+                LocalCapabilityPort::with_package_root(None, None).expect("local capability port");
             assert!(port.admitted_names().contains("read"));
             assert!(
                 port.registered_names().contains("write"),
@@ -687,7 +715,8 @@ mod capability_port {
             let file = directory.path().join("payload.txt");
             std::fs::write(&file, "canonical capability payload\n").expect("write payload");
 
-            let port = LocalCapabilityPort::new(None).expect("local capability port");
+            let port =
+                LocalCapabilityPort::with_package_root(None, None).expect("local capability port");
             let outcome = port
                 .invoke(request(
                     "read",
@@ -709,7 +738,8 @@ mod capability_port {
             let directory = tempfile::tempdir().expect("temporary directory");
             let target = directory.path().join("must-not-exist.txt");
 
-            let port = LocalCapabilityPort::new(None).expect("local capability port");
+            let port =
+                LocalCapabilityPort::with_package_root(None, None).expect("local capability port");
             let outcome = port
                 .invoke(request(
                     "write",
@@ -735,7 +765,8 @@ mod capability_port {
 
         #[tokio::test]
         async fn a_non_object_argument_root_is_a_definite_failure() {
-            let port = LocalCapabilityPort::new(None).expect("local capability port");
+            let port =
+                LocalCapabilityPort::with_package_root(None, None).expect("local capability port");
             let outcome = port
                 .invoke(request("read", serde_json::json!(["not", "a", "map"])))
                 .await;
@@ -751,7 +782,8 @@ mod capability_port {
 
         #[tokio::test]
         async fn an_unregistered_capability_fails_closed() {
-            let port = LocalCapabilityPort::new(None).expect("local capability port");
+            let port =
+                LocalCapabilityPort::with_package_root(None, None).expect("local capability port");
             let outcome = port
                 .invoke(request("cap.absent", serde_json::json!({})))
                 .await;
@@ -815,7 +847,8 @@ mod capability_port {
                 descriptor("proposal", Some(true), Some(false)),
                 descriptor("apply", Some(false), Some(false)),
             ]);
-            let port = LocalCapabilityPort::new(Some(&handlers)).expect("local capability port");
+            let port = LocalCapabilityPort::with_package_root(Some(&handlers), None)
+                .expect("local capability port");
 
             assert!(port.registered_names().contains("proposal"));
             assert!(
@@ -830,10 +863,68 @@ mod capability_port {
             );
         }
 
+        /// A Skill the package ships has to be readable by the program that
+        /// declared it. Before the package root was published, `Skill(...)`
+        /// compiled, passed the folder contract, rode the integrity chain, and
+        /// then failed at `read_skill` because no configured root ever named
+        /// the directory inside the package being executed.
+        #[tokio::test]
+        async fn a_skill_the_package_ships_resolves_through_the_package_root() {
+            let package = tempfile::tempdir().expect("temp package root");
+            let skill_dir = package.path().join("skills").join("review");
+            std::fs::create_dir_all(&skill_dir).expect("create skill dir");
+            std::fs::write(
+                skill_dir.join("SKILL.md"),
+                "---\nname: review\ndescription: How to review a change.\n---\n\n# Review\n\nRead the diff first.\n",
+            )
+            .expect("write SKILL.md");
+
+            let port = LocalCapabilityPort::with_package_root(None, Some(package.path()))
+                .expect("local capability port");
+
+            let outcome = port
+                .invoke(request(
+                    "read_skill",
+                    serde_json::json!({ "skill_id": "review" }),
+                ))
+                .await;
+            let CapabilityOutcome::Completed { result } = outcome else {
+                panic!("a package-shipped skill must be readable: {outcome:?}");
+            };
+            let rendered = serde_json::to_string(&result).expect("serialize skill body");
+            assert!(
+                rendered.contains("Read the diff first."),
+                "read_skill must serve the package's own instructions: {rendered}"
+            );
+        }
+
+        /// Without a package the root is absent, so the same id resolves to
+        /// nothing rather than to whatever happens to sit near the process.
+        #[tokio::test]
+        async fn a_package_skill_is_not_reachable_without_the_package_root() {
+            let port =
+                LocalCapabilityPort::with_package_root(None, None).expect("local capability port");
+
+            let outcome = port
+                .invoke(request(
+                    "read_skill",
+                    serde_json::json!({ "skill_id": "a-skill-no-configured-root-publishes" }),
+                ))
+                .await;
+            let CapabilityOutcome::Failed { message } = outcome else {
+                panic!("an unpublished skill must fail: {outcome:?}");
+            };
+            assert!(
+                message.contains("discovery roots"),
+                "the refusal names the root set that was searched: {message}"
+            );
+        }
+
         #[tokio::test]
         async fn a_package_capability_the_root_does_not_admit_never_reaches_its_worker() {
             let handlers = supplied(vec![descriptor("apply", Some(false), Some(false))]);
-            let port = LocalCapabilityPort::new(Some(&handlers)).expect("local capability port");
+            let port = LocalCapabilityPort::with_package_root(Some(&handlers), None)
+                .expect("local capability port");
 
             let outcome = port.invoke(request("apply", serde_json::json!({}))).await;
             let CapabilityOutcome::Failed { message } = outcome else {
@@ -852,8 +943,8 @@ mod capability_port {
             // package cannot run unapproved.
             for undecided in [None, Some(true)] {
                 let handlers = supplied(vec![descriptor("gated", Some(true), undecided)]);
-                let port =
-                    LocalCapabilityPort::new(Some(&handlers)).expect("local capability port");
+                let port = LocalCapabilityPort::with_package_root(Some(&handlers), None)
+                    .expect("local capability port");
                 assert!(
                     port.admitted_names().contains("gated"),
                     "the read-only surface still admits it; approval is the separate gate"
@@ -875,7 +966,7 @@ mod capability_port {
         #[test]
         fn a_package_handler_may_not_take_a_builtin_name() {
             let handlers = supplied(vec![descriptor("read", Some(true), Some(false))]);
-            let Err(error) = LocalCapabilityPort::new(Some(&handlers)) else {
+            let Err(error) = LocalCapabilityPort::with_package_root(Some(&handlers), None) else {
                 panic!("a package handler must not shadow a builtin");
             };
             assert!(
@@ -1706,6 +1797,7 @@ pub async fn execute_canonical_command(
     release: PathBuf,
     provenance: PathBuf,
     handlers: Option<AdmittedPackageHandlers>,
+    package_root: Option<PathBuf>,
     json_output: bool,
 ) -> Result<()> {
     let (air, artifact_bytes) = load_canonical_air(&input)?;
@@ -1720,7 +1812,7 @@ pub async fn execute_canonical_command(
         })?;
     let release_bytes = read_exact_bytes(&release, "release")?;
     let provenance_bytes = read_exact_bytes(&provenance, "provenance")?;
-    let output = CanonicalRuntime::with_package_handlers(handlers)
+    let output = CanonicalRuntime::with_package(handlers, package_root)
         .execute(
             air,
             &artifact_bytes,
@@ -1747,21 +1839,29 @@ pub struct CanonicalRuntime {
     /// instance rather than to each call: which implementations are bound is a
     /// property of the composition, not of one execution.
     handlers: Option<AdmittedPackageHandlers>,
+    /// Root of the package under execution, when one was supplied. It publishes
+    /// the package's own `skills/` as a discovery root; it is a property of the
+    /// composition for the same reason `handlers` is.
+    package_root: Option<PathBuf>,
 }
 
 impl CanonicalRuntime {
     #[must_use]
     pub fn new() -> Self {
-        Self::with_package_handlers(None)
+        Self::with_package(None, None)
     }
 
-    /// One canonical runtime bound to the Capability implementations a package
-    /// supplies, alongside the built-in surface.
+    /// One canonical runtime bound to everything a package on disk supplies:
+    /// its Capability implementations and its own skill discovery root.
     #[must_use]
-    pub fn with_package_handlers(handlers: Option<AdmittedPackageHandlers>) -> Self {
+    pub fn with_package(
+        handlers: Option<AdmittedPackageHandlers>,
+        package_root: Option<PathBuf>,
+    ) -> Self {
         Self {
             commit: Arc::new(DevCommit::default()),
             handlers,
+            package_root,
         }
     }
 
@@ -1800,8 +1900,11 @@ impl CanonicalRuntime {
         model: Arc<LocalModelInferencePort>,
     ) -> Result<Value> {
         let capability = Arc::new(
-            LocalCapabilityPort::new(self.handlers.as_ref())
-                .map_err(|error| anyhow::anyhow!(error))?,
+            LocalCapabilityPort::with_package_root(
+                self.handlers.as_ref(),
+                self.package_root.as_deref(),
+            )
+            .map_err(|error| anyhow::anyhow!(error))?,
         );
         let descriptor = canonical_runtime_descriptor();
         // Report both sides: this fails closed on any reference-profile change,
@@ -2714,7 +2817,8 @@ mod tests {
     /// through this rather than passing a hand-written decision list, so a test
     /// can never admit a capability the composition root would refuse.
     fn local_admissions(air: &AirModule) -> BTreeMap<String, CapabilityInvocationAdmission> {
-        let port = LocalCapabilityPort::new(None).expect("local capability port");
+        let port =
+            LocalCapabilityPort::with_package_root(None, None).expect("local capability port");
         let permissions = local_capability_permissions(air, &port.admitted_names())
             .expect("local permission resolution");
         local_capability_invocation_admissions(
@@ -2761,7 +2865,9 @@ mod tests {
         .expect("test invocation admission");
         runtime_profile_from_invocation(
             commit,
-            Arc::new(LocalCapabilityPort::new(None).expect("local capability port")),
+            Arc::new(
+                LocalCapabilityPort::with_package_root(None, None).expect("local capability port"),
+            ),
             Arc::new(LocalModelInferencePort::from_backend_roster().expect("local inference port")),
             Arc::new(LocalModelRequestMetadata),
             verified,
@@ -3008,7 +3114,9 @@ mod tests {
         let commit = Arc::new(DevCommit::default());
         let ports = dev_ports(
             commit,
-            Arc::new(LocalCapabilityPort::new(None).expect("local capability port")),
+            Arc::new(
+                LocalCapabilityPort::with_package_root(None, None).expect("local capability port"),
+            ),
             Arc::new(LocalModelInferencePort::from_backend_roster().expect("local inference port")),
             local_model_request_metadata(),
         )
@@ -3065,7 +3173,9 @@ mod tests {
         let commit = Arc::new(DevCommit::default());
         let ports = dev_ports(
             commit,
-            Arc::new(LocalCapabilityPort::new(None).expect("local capability port")),
+            Arc::new(
+                LocalCapabilityPort::with_package_root(None, None).expect("local capability port"),
+            ),
             Arc::new(LocalModelInferencePort::from_backend_roster().expect("local inference port")),
             local_model_request_metadata(),
         )
@@ -3313,7 +3423,7 @@ mod tests {
     #[test]
     fn a_capability_the_local_root_does_not_ship_is_never_resolved_to_allow() {
         let air = read_then_write_air("Cargo.toml", "/dev/null");
-        let admitted = LocalCapabilityPort::new(None)
+        let admitted = LocalCapabilityPort::with_package_root(None, None)
             .expect("local capability port")
             .admitted_names();
         assert!(
@@ -3352,7 +3462,9 @@ mod tests {
         let commit = Arc::new(DevCommit::default());
         let ports = dev_ports(
             commit.clone(),
-            Arc::new(LocalCapabilityPort::new(None).expect("local capability port")),
+            Arc::new(
+                LocalCapabilityPort::with_package_root(None, None).expect("local capability port"),
+            ),
             Arc::new(LocalModelInferencePort::from_backend_roster().expect("local inference port")),
             local_model_request_metadata(),
         )
@@ -3472,7 +3584,9 @@ mod tests {
         let commit = Arc::new(DevCommit::default());
         let ports = dev_ports(
             commit.clone(),
-            Arc::new(LocalCapabilityPort::new(None).expect("local capability port")),
+            Arc::new(
+                LocalCapabilityPort::with_package_root(None, None).expect("local capability port"),
+            ),
             Arc::new(LocalModelInferencePort::from_backend_roster().expect("local inference port")),
             local_model_request_metadata(),
         )

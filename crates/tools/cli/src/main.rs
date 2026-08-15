@@ -125,6 +125,7 @@ async fn run_cli(cli: Cli) -> Result<()> {
                 release,
                 provenance,
                 handlers,
+                package,
                 cli.json,
             )
             .await
@@ -175,6 +176,7 @@ async fn run_cli_no_driver(cli: Cli) -> Result<()> {
                 release,
                 provenance,
                 handlers,
+                package,
                 cli.json,
             )
             .await

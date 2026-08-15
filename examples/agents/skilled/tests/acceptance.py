@@ -88,29 +88,37 @@ def typescript_source():
 
 
 def publish_declared_skills(graph: dict) -> list[str]:
-    """Publish every skill the program declares into the local root.
+    """Publish the skills only a host can publish.
 
-    A discovery card needs a name and a description, and a file-carried skill
-    already states both in its own frontmatter. A program-written one states
-    only instructions, so the host supplies the card fields from the identity it
-    already knows — which is what a host does with any body it publishes.
+    A file-carried skill needs no publishing: it lives at
+    ``skills/<id>/SKILL.md`` inside the package, and ``--package`` makes the
+    package's own directory a discovery root, so the bytes the integrity chain
+    covers are the bytes served.
+
+    A program-written skill has no file. Its instructions exist only in the
+    compiled source bundle, which is digest-collapsed before execution, so the
+    host materialises the body and supplies the card fields from the identity it
+    already knows. That is the one case still needing a local root.
     """
     published: list[str] = []
+    # A stale body from an earlier run would resolve in two roots at once, and
+    # read_skill refuses an ambiguous id rather than guessing.
+    if LOCAL_SKILL_ROOT.is_dir():
+        shutil.rmtree(LOCAL_SKILL_ROOT)
     for requirement in graph["skill_requirements"]:
         skill_id = requirement["skill_id"]
         source = requirement["instruction_source"]
+        if source["kind"] == "entry":
+            published.append(skill_id)
+            continue
         directory = LOCAL_SKILL_ROOT / skill_id
         directory.mkdir(parents=True, exist_ok=True)
-        target = directory / "SKILL.md"
-        if source["kind"] == "entry":
-            shutil.copyfile(EXAMPLE_ROOT / source["path"], target)
-        else:
-            target.write_text(
-                f"---\nname: {skill_id}\n"
-                f"description: Instructions the Skilled example writes in its own source.\n"
-                f"---\n\n{source['text']}",
-                encoding="utf-8",
-            )
+        (directory / "SKILL.md").write_text(
+            f"---\nname: {skill_id}\n"
+            f"description: Instructions the Skilled example writes in its own source.\n"
+            f"---\n\n{source['text']}",
+            encoding="utf-8",
+        )
         published.append(skill_id)
     return published
 
@@ -168,6 +176,10 @@ def execute(air_path: Path, admission_path: Path) -> dict:
             str(FIXTURES / "canonical-execute.release.json"),
             "--provenance",
             str(FIXTURES / "canonical-execute.provenance.json"),
+            # Publishes the package's own skills/ as a discovery root, so a
+            # file-carried Skill resolves from the package that ships it.
+            "--package",
+            str(EXAMPLE_ROOT),
         ],
         cwd=REPOSITORY_ROOT,
         capture_output=True,

@@ -48,12 +48,15 @@ pub enum Commands {
         /// Exact provenance bytes named by the Invocation Admission.
         #[arg(long, value_name = "PATH")]
         provenance: PathBuf,
-        /// Agent package whose own Capability handlers this run may dispatch.
+        /// Agent package whose own Capability handlers and Skills this run may
+        /// reach.
         ///
         /// Supplying one is how a composition root binds a package's
         /// implementations: without it only the built-in surface is
         /// registered, and an AIR naming a package Capability is refused at
-        /// admission rather than at dispatch.
+        /// admission rather than at dispatch. It also publishes the package's
+        /// `skills/` directory as a discovery root, so a Skill the package
+        /// ships resolves instead of failing at `read_skill`.
         #[arg(long, value_name = "DIR")]
         package: Option<PathBuf>,
     },
