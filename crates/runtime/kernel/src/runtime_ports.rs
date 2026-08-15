@@ -78,6 +78,16 @@ pub enum EventOutcome {
 #[async_trait]
 pub trait EventPort: Send + Sync {
     async fn await_event(&self, request: EventAwait) -> EventOutcome;
+
+    /// Apply an admitted occurrence. The default rejects so a host cannot inject
+    /// a raw continuation value through this trait by accident.
+    async fn apply_occurrence(
+        &self,
+        application: crate::event_api::EventApplication<String>,
+    ) -> crate::event_api::EventApplicationResult {
+        let _ = application;
+        crate::event_api::EventApplicationResult::Rejected
+    }
 }
 
 /// The typed receiver of a Program composition operation.
