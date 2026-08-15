@@ -19,6 +19,7 @@
 
 mod bundle;
 pub mod driver;
+pub mod observe;
 pub mod operational_usage;
 pub mod ports;
 pub mod profile;
@@ -34,6 +35,9 @@ pub use driver::{
     NodeOutcome, RunReport, StaticHookExecutionError, StaticHookHandlerPort, StaticHookInvocation,
     StaticHookResult, execute, execute_resumable, resume, wake_from_event_application,
 };
+pub use observe::{
+    ApprovalBroker, ApprovalDecision, DenyBroker, ExecutionObserver, Observation, RecordingObserver,
+};
 pub use operational_usage::{
     CommittedNativeModelUsage, CommittedNativeModelUsageError, CommittedNativeModelUsageGateError,
     CommittedNativeModelUsageOutcome, CommittedNativeModelUsagePort,
@@ -42,8 +46,7 @@ pub use operational_usage::{
 pub use ports::{
     CapabilityOutcome, CapabilityPort, CapabilityRequest, CompositionOutcome, CompositionPort,
     CompositionReceiver, CompositionRequest, EventApplication, EventApplicationResult, EventAwait,
-    EventOutcome, EventPort, EventRef,
-    EventRefError, MemoryError, MemorySpace, ScopedMemoryPort,
+    EventOutcome, EventPort, EventRef, EventRefError, MemoryError, MemorySpace, ScopedMemoryPort,
 };
 pub use profile::{RuntimeProfile, RuntimeProfileError};
 pub use readiness::{

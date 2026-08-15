@@ -16,6 +16,7 @@ pub mod codegen;
 #[cfg(feature = "driver")]
 pub mod compile_service_canonical;
 pub(crate) mod dekk_hints;
+pub mod interaction;
 pub mod ops;
 pub mod org;
 pub mod process;

@@ -1791,6 +1791,23 @@ pub struct PackageHandlerWorkerCommand {
     pub entry: PathBuf,
 }
 
+fn admit_artifact_via_runtime_service(artifact_bytes: &[u8]) -> Result<()> {
+    let digest = format!("{:x}", Sha256::digest(artifact_bytes));
+    let mut service = apxm_runtime_service::RuntimeService::default();
+    service
+        .handle(
+            &apxm_runtime_protocol::RuntimeHandshake {
+                protocol_version: apxm_runtime_protocol::RUNTIME_PROTOCOL_VERSION.to_owned(),
+            },
+            apxm_runtime_protocol::RuntimeRequest::ProgramInstanceCreate {
+                request_id: "execute-canonical".to_owned(),
+                artifact_digest: digest,
+            },
+        )
+        .map_err(|error| anyhow::anyhow!("Runtime Service refused the artifact: {error:?}"))?;
+    Ok(())
+}
+
 pub async fn execute_canonical_command(
     input: PathBuf,
     invocation_admission: PathBuf,
@@ -1812,6 +1829,7 @@ pub async fn execute_canonical_command(
         })?;
     let release_bytes = read_exact_bytes(&release, "release")?;
     let provenance_bytes = read_exact_bytes(&provenance, "provenance")?;
+    admit_artifact_via_runtime_service(&artifact_bytes)?;
     let output = CanonicalRuntime::with_package(handlers, package_root)
         .execute(
             air,

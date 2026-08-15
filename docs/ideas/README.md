@@ -13,4 +13,4 @@ needed before promotion into a contract or architecture decision.
   diagnostic wiring still to be generated.
 - [CLI shell, Compilation Service, Runtime Service, OpenAI protocol API, and program-owned harness migration](cli-interaction-runtime-service-migration.md)
   — accepted as [ADR-0023](../adr/0023-compilation-and-runtime-services-and-program-owned-interaction.md);
-  the idea document remains the phase implementation plan until cutover.
+  implementation landed on `apxm/cli-compilation-runtime-service`.

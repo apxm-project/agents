@@ -38,7 +38,8 @@ use apxm_inference::{
 };
 use apxm_kernel::{
     AtomicWriteSet, EventApplicationResult, ExecutionCommitPort, ExecutionCommitRequest,
-    ExecutionCommitResult, ExecutionCommitTuple, PortSlot, ProgramInstanceRef, ProgramInvocationRef,
+    ExecutionCommitResult, ExecutionCommitTuple, PortSlot, ProgramInstanceRef,
+    ProgramInvocationRef,
 };
 use apxm_program::air::{
     AirModule, ControlPredicate, PredicateComparator, PredicateLiteral, SemanticOp, SemanticOpKind,

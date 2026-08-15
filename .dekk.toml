@@ -85,7 +85,13 @@ test = { run = "python tools/scripts/check_frontend_parity.py && python tools/sc
 test-compiler = { run = "python tools/scripts/cargo.py test -p apxm-compiler", description = "Run compiler AIR builder and pipeline tests", group = "Build & Test" }
 test-source-port = { run = "env -u CC -u CXX python tools/scripts/cargo.py test -p apxm-source-port", description = "Run source-bundle compiler port conformance", group = "Build & Test" }
 test-compilation-protocol = { run = "env -u CC -u CXX python tools/scripts/cargo.py test -p apxm-compilation-protocol", description = "Run Compilation Service protocol vectors", group = "Build & Test" }
+test-compilation-service = { run = "env -u CC -u CXX python tools/scripts/cargo.py test -p apxm-compilation-service", description = "Run Compilation Service handler conformance", group = "Build & Test" }
 test-runtime-protocol = { run = "python tools/scripts/cargo.py test -p apxm-runtime-protocol", description = "Run Runtime Service protocol vectors", group = "Build & Test" }
+test-runtime-service = { run = "python tools/scripts/cargo.py test -p apxm-runtime-service", description = "Run Runtime Service handler conformance", group = "Build & Test" }
+test-compilation-client = { run = "env -u CC -u CXX python tools/scripts/cargo.py test -p apxm-compilation-client", description = "Run Compilation Client conformance", group = "Build & Test" }
+test-interaction-client = { run = "python tools/scripts/cargo.py test -p apxm-interaction-client", description = "Run Interaction Client conformance", group = "Build & Test" }
+test-openai-compat = { run = "python tools/scripts/cargo.py test -p apxm-openai-compat", description = "Run OpenAI protocol adapter conformance", group = "Build & Test" }
+test-event-http = { run = "python tools/scripts/cargo.py test -p apxm-event-http", description = "Run Event HTTP projection conformance", group = "Build & Test" }
 test-program = { run = "env -u CC -u CXX python tools/scripts/cargo.py test -p apxm-program", description = "Run Agent Program artifact and lowering conformance", group = "Build & Test" }
 test-program-source = { run = "env -u CC -u CXX python tools/scripts/cargo.py test -p apxm-program --lib --test artifact_conformance --test lower_conformance --test semantic_conformance --test structural_containment", description = "Run source/compiler Agent Program graph, AIR, artifact, and source-map conformance", group = "Build & Test" }
 test-kernel = { run = "python tools/scripts/cargo.py test -p apxm-kernel", description = "Run atomic execution commit and lifecycle conformance", group = "Build & Test" }

@@ -1,0 +1,20 @@
+[package]
+name = "apxm-runtime-service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+publish = false
+description = "Runtime Service Composition Root over the native runtime protocol"
+
+[lints]
+workspace = true
+
+[dependencies]
+apxm-runtime-protocol.workspace = true
+apxm-kernel.workspace = true
+apxm-execution.workspace = true
+serde.workspace = true
+serde_json.workspace = true

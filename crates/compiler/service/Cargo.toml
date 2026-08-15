@@ -1,0 +1,19 @@
+[package]
+name = "apxm-compilation-service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+publish = false
+description = "Compilation Service Composition Root over the native compilation protocol"
+
+[lints]
+workspace = true
+
+[dependencies]
+apxm-compilation-protocol.workspace = true
+apxm-source-port.workspace = true
+serde.workspace = true
+serde_json.workspace = true

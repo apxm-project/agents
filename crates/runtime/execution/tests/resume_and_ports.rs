@@ -20,11 +20,10 @@ use apxm_inference::{
     Usage,
 };
 use apxm_kernel::{
-    AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, ExactPortBinding, ExecutionCommitPort,
-    ExecutionCommitRequest, ExecutionCommitResult, ExternalAgentCapabilityPort, EventApplicationResult,
-    PortBundle,
-    PortBundleSpec, PortImplementation, PortSlot, ProgramInstanceRef, ProgramInvocationRef,
-    PromptEffectState,
+    AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, EventApplicationResult, ExactPortBinding,
+    ExecutionCommitPort, ExecutionCommitRequest, ExecutionCommitResult,
+    ExternalAgentCapabilityPort, PortBundle, PortBundleSpec, PortImplementation, PortSlot,
+    ProgramInstanceRef, ProgramInvocationRef, PromptEffectState,
 };
 use apxm_program::air::AirModule;
 use apxm_program::artifact::SchemaDigestRef;

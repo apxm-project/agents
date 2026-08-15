@@ -60,6 +60,35 @@ pub enum Commands {
         #[arg(long, value_name = "DIR")]
         package: Option<PathBuf>,
     },
+    /// Compile a package snapshot to a committed executable artifact.
+    Build {
+        /// Agent package directory.
+        agent_package: PathBuf,
+    },
+    /// Headless Runtime Service client. Source packages build first.
+    Run {
+        /// Agent package directory, unless `--artifact` is set.
+        agent_package: Option<PathBuf>,
+        /// Explicit artifact digest. Does not contact Compilation Service.
+        #[arg(long)]
+        artifact: Option<String>,
+    },
+    /// Canonical Event ingress client.
+    Event {
+        #[command(subcommand)]
+        action: EventAction,
+    },
+    /// Supervise or connect to a Runtime Service.
+    Runtime {
+        #[command(subcommand)]
+        action: RuntimeAction,
+    },
+    /// Reopen a client interaction record against runtime truth.
+    Resume {
+        /// Resume the most recent client record.
+        #[arg(long)]
+        last: bool,
+    },
     /// Diagnose compiler/runtime dependencies
     Doctor,
     /// Manage registered inference backend endpoints
@@ -149,110 +178,62 @@ pub enum Commands {
         #[arg(long)]
         model: Option<String>,
     },
-    ///.F — stream a run's dispatch tree from
-    /// `/v1/runs/<thread>/events/stream` and render it as monospace.
-    #[command(hide = true)]
-    Watch {
-        /// Thread id (execution id) to attach to. Same id surfaced by
-        /// `apxm rollout list` and by the chat panel's URL.
-        thread_id: String,
-        /// One-shot node expand: pulls `/v1/runs/<thread>/nodes/<id>`
-        /// before the live stream starts and prints the detail to stderr.
+}
+
+#[derive(Subcommand)]
+pub enum EventAction {
+    /// Inspect one EventRef.
+    Inspect {
+        /// Event id.
+        event_id: String,
+        /// Ownership generation.
         #[arg(long)]
-        expand: Option<u64>,
+        generation: u64,
     },
-    ///.F — inspect, replay, and archive on-disk rollouts.
-    #[command(hide = true)]
-    Rollout {
-        #[command(subcommand)]
-        action: RolloutAction,
+    /// List authorized pending EventRefs.
+    List,
+    /// Fulfill one EventRef from JSON/file/stdin.
+    Fulfill {
+        /// Event id.
+        event_id: String,
+        /// Ownership generation.
+        #[arg(long)]
+        generation: u64,
+        /// Idempotency key.
+        #[arg(long)]
+        idempotency_key: String,
     },
-    /// Retired product chat flow retained only for explicit rejection.
-    ///
-    /// Requires `--agent <id>` for server-backed chat
-    /// (`POST /v1/agents/{{id}}/sessions`) or `--air <path>` for a
-    /// custom in-graph artifact with an in-program recv loop.
-    #[command(hide = true)]
-    Chat {
-        /// Agent id for thin server-backed chat. Starts
-        /// `POST /v1/agents/{{id}}/sessions` and pipes stdin messages to the
-        /// server session.
-        #[arg(long = "agent", value_name = "ID", conflicts_with = "air")]
-        agent: Option<String>,
-        /// AIR graph with an in-program recv loop (path to a `.air` file).
-        #[arg(long, conflicts_with = "agent")]
-        air: Option<std::path::PathBuf>,
-        /// Retired host address field.
+    /// Expire one EventRef.
+    Expire {
+        /// Event id.
+        event_id: String,
+        /// Ownership generation.
         #[arg(long)]
-        server: Option<String>,
-        /// Reuse/resume a prior conversation by session id instead of minting
-        /// a fresh one.
+        generation: u64,
+    },
+    /// Cancel one EventRef.
+    Cancel {
+        /// Event id.
+        event_id: String,
+        /// Ownership generation.
         #[arg(long)]
-        session_id: Option<String>,
-        /// Runtime-minted capability grant id for write-tool calls (repeatable).
-        #[arg(long = "capability-grant-id", value_name = "GRANT_ID")]
-        capability_grant_ids: Vec<String>,
-        /// Skill library / id to import into the agent's visible catalogue
-        /// (repeatable: `lib`, `lib::skill`, or `skill`). Empty = unrestricted.
-        #[arg(long = "import", value_name = "LIB")]
-        import: Vec<String>,
-        /// Pin agent chat to a registered backend by name (as listed by
-        /// `GET /v1/models`).
-        #[arg(long, value_name = "NAME")]
-        backend: Option<String>,
-        /// Pin agent chat to a specific model id.
-        #[arg(long, value_name = "ID")]
-        model: Option<String>,
-        /// Tenant/owner scope for credential resolution.
-        #[arg(long = "owner", value_name = "OWNER")]
-        owner: Option<String>,
+        generation: u64,
     },
 }
 
 #[derive(Subcommand)]
-pub enum RolloutAction {
-    /// List recent rollouts from the SQLite index.
-    List {
-        /// Filter by session id.
+pub enum RuntimeAction {
+    /// Supervise a local Runtime Service.
+    Serve {
+        /// Optional Unix socket path.
         #[arg(long)]
-        session: Option<String>,
-        /// Filter to rollouts that started on or after this RFC3339 ts.
+        socket: Option<PathBuf>,
+    },
+    /// Connect to an existing Runtime Service.
+    Connect {
+        /// Unix socket path.
         #[arg(long)]
-        since: Option<String>,
-        /// Filter by SessionMeta.agent_role.
-        #[arg(long = "agent-role")]
-        agent_role: Option<String>,
-        /// Maximum rows to display.
-        #[arg(long, default_value = "20")]
-        limit: usize,
-    },
-    /// Replay a rollout JSONL from disk as a monospace tree.
-    Replay {
-        /// Thread id of the rollout to replay.
-        thread_id: String,
-    },
-    /// Archive a rollout (JSONL + blobs + optional skill source) as a
-    /// `.tar.gz` — the air-gapped reproducibility envelope.
-    Archive {
-        /// Thread id to bundle.
-        thread_id: String,
-        /// Retired output path field.
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-        /// Optional directory holding source instruction files.
-        #[arg(long = "skill-dir")]
-        skill_dir: Option<PathBuf>,
-    },
-    /// Run the  retention/compaction pass: archive expired rollout
-    /// bodies (index row survives with `status=archived`) and collect
-    /// unreferenced spilled blobs. Never touches the memory tier.
-    Compact {
-        /// Override the rollout max-age policy, in days.
-        #[arg(long = "max-age-days")]
-        max_age_days: Option<u64>,
-        /// Override the blob GC grace period, in hours.
-        #[arg(long = "blob-grace-hours")]
-        blob_grace_hours: Option<u64>,
+        socket: PathBuf,
     },
 }
 

@@ -4,17 +4,13 @@
 managed toolchain and target directory remain consistent.
 
 [ADR-0023](../../../docs/adr/0023-compilation-and-runtime-services-and-program-owned-interaction.md)
-owns the target architecture: the shell sequences a Compilation Client
-(source package to a committed artifact) and an Interaction Client (admitted
-artifact through the Runtime Service). It does not own compiler lowering,
-runtime construction, or conversational policy. Interaction harnesses are
-compiled Agent Programs.
+owns the architecture: the shell sequences a Compilation Client (`apxm build`)
+and an Interaction Client (`apxm run`, TUI, `apxm event`, `apxm resume`).
+`--artifact` invokes the Runtime Service without contacting compilation.
+`apxm runtime serve` / `--connect` supervise local stdio/Unix transports.
 
-Until cutover, the tree still exposes `compile-service-canonical` and
-`execute-canonical` as current fixture commands. Those are not the accepted
-product spine.
+`compile-service-canonical` and `execute-canonical` remain Dekk fixture
+commands routed through those services. They are not a second product spine.
 
-The CLI does not own a server chat REPL, rollout archive, deployment fleet,
-model zoo, or product UI. Hidden `chat`/`watch`/`rollout` parser variants are
-retired and will be deleted rather than aliased. Runtime implementations
-enter through exact admitted capability and model ports.
+The CLI does not parse `chat`, `watch`, or `rollout`. OpenAI `/v1/chat/completions`
+is an independently owned protocol edge (ADR-0024 for non-loopback).

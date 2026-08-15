@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use apxm_core::constants::env as apxm_env;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 use super::agent::{CompileToml, FrontendLanguage};
 
@@ -54,6 +55,7 @@ pub(crate) fn emit_canonical_air_from_agent(
         })?;
     check_capability_references_are_granted(agent_dir, &module)?;
     check_package_permissions_only_tighten(agent_dir, &module)?;
+    commit_package_via_compilation_service(agent_dir, frontend)?;
     Ok(air_json)
 }
 
@@ -80,6 +82,47 @@ fn check_package_permissions_only_tighten(
         &module.capability_permission_requests,
     )
     .map(|_| ())
+}
+
+fn commit_package_via_compilation_service(
+    agent_dir: &Path,
+    frontend: FrontendLanguage,
+) -> Result<()> {
+    let protocol_frontend = match frontend {
+        FrontendLanguage::Python => apxm_source_port::Frontend::Python,
+        FrontendLanguage::TypeScript => apxm_source_port::Frontend::Typescript,
+    };
+    let digest = format!(
+        "{:x}",
+        Sha256::digest(agent_dir.display().to_string().as_bytes())
+    );
+    let snapshot = apxm_source_port::PackageSnapshot {
+        contract: apxm_source_port::PACKAGE_SNAPSHOT_CONTRACT.to_owned(),
+        frontend: protocol_frontend,
+        entrypoint: "agent".to_owned(),
+        contents: vec![apxm_source_port::SnapshotContent {
+            path: "agent.toml".to_owned(),
+            digest: digest.clone(),
+        }],
+        dependency_lock_digest: None,
+        compatibility_set: "apxm.compatibility-set/local".to_owned(),
+        snapshot_digest: digest.clone(),
+    };
+    let mut service = apxm_compilation_service::CompilationService::default();
+    service
+        .handle(
+            &apxm_compilation_protocol::CompilationHandshake {
+                protocol_version: apxm_compilation_protocol::COMPILATION_PROTOCOL_VERSION
+                    .to_owned(),
+            },
+            apxm_compilation_protocol::CompilationRequest::Compile {
+                request_id: "compile-service-canonical".to_owned(),
+                idempotency_key: digest,
+                snapshot,
+            },
+        )
+        .map_err(|error| anyhow::anyhow!("Compilation Service refused the package: {error:?}"))?;
+    Ok(())
 }
 
 /// Hold every Capability the compiled program names against what the package

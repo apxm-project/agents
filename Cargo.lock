@@ -226,11 +226,18 @@ dependencies = [
  "apxm-backend-registry",
  "apxm-backends",
  "apxm-capability",
+ "apxm-compilation-client",
+ "apxm-compilation-protocol",
+ "apxm-compilation-service",
  "apxm-core",
  "apxm-execution",
  "apxm-inference",
+ "apxm-interaction-client",
  "apxm-kernel",
  "apxm-program",
+ "apxm-runtime-protocol",
+ "apxm-runtime-service",
+ "apxm-source-port",
  "async-trait",
  "chrono",
  "clap",
@@ -266,9 +273,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "apxm-compilation-client"
+version = "0.1.0"
+dependencies = [
+ "apxm-compilation-protocol",
+ "apxm-compilation-service",
+ "apxm-source-port",
+]
+
+[[package]]
 name = "apxm-compilation-protocol"
 version = "0.1.0"
 dependencies = [
+ "apxm-source-port",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "apxm-compilation-service"
+version = "0.1.0"
+dependencies = [
+ "apxm-compilation-protocol",
  "apxm-source-port",
  "serde",
  "serde_json",
@@ -321,6 +347,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "apxm-event-http"
+version = "0.1.0"
+dependencies = [
+ "apxm-kernel",
+ "apxm-runtime-protocol",
+ "apxm-runtime-service",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "apxm-execution"
 version = "0.1.0"
 dependencies = [
@@ -365,6 +402,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "apxm-interaction-client"
+version = "0.1.0"
+dependencies = [
+ "apxm-kernel",
+ "apxm-runtime-protocol",
+ "apxm-runtime-service",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "apxm-kernel"
 version = "0.1.0"
 dependencies = [
@@ -401,6 +449,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "apxm-openai-compat"
+version = "0.1.0"
+dependencies = [
+ "apxm-runtime-protocol",
+ "apxm-runtime-service",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "apxm-program"
 version = "0.1.0"
 dependencies = [
@@ -417,6 +475,17 @@ name = "apxm-runtime-protocol"
 version = "0.1.0"
 dependencies = [
  "apxm-kernel",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "apxm-runtime-service"
+version = "0.1.0"
+dependencies = [
+ "apxm-execution",
+ "apxm-kernel",
+ "apxm-runtime-protocol",
  "serde",
  "serde_json",
 ]

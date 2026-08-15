@@ -388,6 +388,16 @@ class CanonicalOnlyReachabilityTests(unittest.TestCase):
                 for marker in forbidden_runtime_markers:
                     self.assertNotIn(marker, text, f"special Gao path in {path}")
 
+    def test_retired_chat_watch_rollout_commands_are_gone(self) -> None:
+        cli = (REPOSITORY_ROOT / "crates/tools/cli/src/commands/cli.rs").read_text()
+        for marker in ("Commands::Chat", "enum Commands {\n    Chat", "pub enum RolloutAction"):
+            self.assertNotIn("pub enum RolloutAction", cli)
+        self.assertNotIn("Chat {", cli)
+        self.assertNotIn("Watch {", cli)
+        self.assertNotIn("Rollout {", cli)
+        driver = (REPOSITORY_ROOT / "crates/runtime/execution/src/lib.rs").read_text()
+        self.assertNotIn("resume_event,", driver)
+
 
 if __name__ == "__main__":
     unittest.main()
