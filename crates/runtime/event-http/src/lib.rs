@@ -198,4 +198,57 @@ mod tests {
         assert_eq!(status, 200);
         assert!(body.get("event_ref").is_some());
     }
+
+    #[test]
+    fn http_and_native_fulfill_share_the_application_result() {
+        let mut http = RuntimeService::default();
+        let mut native = RuntimeService::default();
+        let handshake = RuntimeHandshake {
+            protocol_version: RUNTIME_PROTOCOL_VERSION.to_owned(),
+        };
+        let reserved = native
+            .handle(
+                &handshake,
+                RuntimeRequest::EventReserve {
+                    request_id: "r".to_owned(),
+                    type_id: "UserInput".to_owned(),
+                },
+            )
+            .unwrap();
+        let apxm_runtime_protocol::RuntimeResult::EventReserved { event_ref, .. } = reserved else {
+            panic!("reserve");
+        };
+        let application = serde_json::json!({
+            "event_ref": event_ref,
+            "occurrence": {
+                "occurrence_id": "occ",
+                "source_kind": "human.terminal",
+                "mapping_digest": "m",
+                "source_record": "s",
+                "payload": "ok"
+            },
+            "idempotency_key": "k"
+        });
+        let native_result = native
+            .handle(
+                &handshake,
+                RuntimeRequest::EventFulfill {
+                    request_id: "f".to_owned(),
+                    application: serde_json::from_value(application.clone()).unwrap(),
+                },
+            )
+            .unwrap();
+        let (status, http_body) = dispatch(
+            &mut http,
+            "POST",
+            EventHttpMethod::Fulfill.path(),
+            &application.to_string(),
+        );
+        assert_eq!(status, 200);
+        assert!(matches!(
+            native_result,
+            apxm_runtime_protocol::RuntimeResult::EventApplied { .. }
+        ));
+        assert!(http_body.get("result").is_some());
+    }
 }
