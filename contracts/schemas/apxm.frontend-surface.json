@@ -16,9 +16,9 @@
     },
     "advanced": {
       "type": "array",
-      "description": "The advanced names imported only when their behavior is needed. `capability` declares a handler a package ships, as against `Capability`, which references one. `Skill` declares instructions a program can load; it is not a second way to declare a persona, it is the one way.",
+      "description": "The advanced names imported only when their behavior is needed. `capability` declares a handler a package ships, as against `Capability`, which references one. `Skill` declares instructions a program can load; it is not a second way to declare a persona, it is the one way, and like every other declaration it is stated at module scope and named by the body that loads it — no declaration is listed again on the Agent. `source` is the one name a TypeScript module states about itself, because JavaScript cannot read its own text back; Python infers the same fact.",
       "items": { "type": "string" },
-      "const": ["Capability", "capability", "Event", "Hook", "TaskGroup", "Skill"]
+      "const": ["Capability", "capability", "Event", "Hook", "TaskGroup", "Skill", "source"]
     },
     "non_public": {
       "type": "array",
@@ -122,13 +122,17 @@
     },
     "SurfaceProjection": {
       "type": "object",
-      "description": "How one language projects one declaration: the module that defines it, the exported symbol, the optional member the arguments are taken from, whether the authoring root exports it, and the author-facing signature.",
+      "description": "How one language projects one declaration: the module that defines it, the exported symbol, the optional member the arguments are taken from, whether the authoring root exports it, and the author-facing signature. A language that derives a declaration instead of asking the author for it says so with `inferred`, which is how an asymmetric obligation — one language states it, the other works it out — stays visible to the gate rather than being absent from the manifest.",
       "required": ["module", "symbol", "exported_from_root", "signature"],
       "properties": {
         "module": { "type": "string" },
         "symbol": { "type": "string" },
         "member": { "type": "string" },
         "exported_from_root": { "type": "boolean" },
+        "inferred": {
+          "type": "boolean",
+          "description": "This language derives the declaration rather than publishing an author-facing name for it. `symbol` then names the definition that does the deriving, the gate proves that definition exists and is not exported from the authoring root, and every argument must be projected `inferred` here."
+        },
         "signature": { "type": "string" }
       },
       "additionalProperties": false

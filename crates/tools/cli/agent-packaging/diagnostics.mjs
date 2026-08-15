@@ -23,6 +23,7 @@ export const CAPABILITY_HANDLER_READ_ONLY_UNDECLARED = "CapabilityHandlerReadOnl
 export const HOOK_TARGET_UNRESOLVED = "HookTargetUnresolved";
 export const HOOK_DYNAMIC_REGISTRATION = "HookDynamicRegistration";
 export const HOOK_ORDER_AMBIGUOUS = "HookOrderAmbiguous";
+export const HOOK_SCOPE_UNRESOLVED = "HookScopeUnresolved";
 export const EVENT_NOT_TYPED = "EventNotTyped";
 export const EVENT_WAIT_OUTSIDE_BODY = "EventWaitOutsideBody";
 export const SKILL_ID_NOT_EXACT = "SkillIdNotExact";
@@ -48,6 +49,7 @@ export const DIAGNOSTIC_CODES = Object.freeze([
   HOOK_TARGET_UNRESOLVED,
   HOOK_DYNAMIC_REGISTRATION,
   HOOK_ORDER_AMBIGUOUS,
+  HOOK_SCOPE_UNRESOLVED,
   EVENT_NOT_TYPED,
   EVENT_WAIT_OUTSIDE_BODY,
   SKILL_ID_NOT_EXACT,

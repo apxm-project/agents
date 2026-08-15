@@ -27,6 +27,7 @@ DiagnosticCode: TypeAlias = Literal[
     "HookTargetUnresolved",
     "HookDynamicRegistration",
     "HookOrderAmbiguous",
+    "HookScopeUnresolved",
     "EventNotTyped",
     "EventWaitOutsideBody",
     "SkillIdNotExact",
@@ -52,6 +53,7 @@ CAPABILITY_HANDLER_READ_ONLY_UNDECLARED: Final[DiagnosticCode] = "CapabilityHand
 HOOK_TARGET_UNRESOLVED: Final[DiagnosticCode] = "HookTargetUnresolved"
 HOOK_DYNAMIC_REGISTRATION: Final[DiagnosticCode] = "HookDynamicRegistration"
 HOOK_ORDER_AMBIGUOUS: Final[DiagnosticCode] = "HookOrderAmbiguous"
+HOOK_SCOPE_UNRESOLVED: Final[DiagnosticCode] = "HookScopeUnresolved"
 EVENT_NOT_TYPED: Final[DiagnosticCode] = "EventNotTyped"
 EVENT_WAIT_OUTSIDE_BODY: Final[DiagnosticCode] = "EventWaitOutsideBody"
 SKILL_ID_NOT_EXACT: Final[DiagnosticCode] = "SkillIdNotExact"
@@ -77,6 +79,7 @@ DIAGNOSTIC_CODES: Final[tuple[DiagnosticCode, ...]] = (
     HOOK_TARGET_UNRESOLVED,
     HOOK_DYNAMIC_REGISTRATION,
     HOOK_ORDER_AMBIGUOUS,
+    HOOK_SCOPE_UNRESOLVED,
     EVENT_NOT_TYPED,
     EVENT_WAIT_OUTSIDE_BODY,
     SKILL_ID_NOT_EXACT,
@@ -105,6 +108,7 @@ __all__ = [
     "HOOK_TARGET_UNRESOLVED",
     "HOOK_DYNAMIC_REGISTRATION",
     "HOOK_ORDER_AMBIGUOUS",
+    "HOOK_SCOPE_UNRESOLVED",
     "EVENT_NOT_TYPED",
     "EVENT_WAIT_OUTSIDE_BODY",
     "SKILL_ID_NOT_EXACT",

@@ -19,11 +19,12 @@ into both languages could not state it:
   reference per marker and calls the marker with it, so it can state the skill
   that names neither source — and does — but not the one that names two. The
   TypeScript frontend carries the same test for the same reason.
-* A Hook whose target names nothing. A Python Hook binds through the module
-  globals its Agent resolves, so a Hook nobody declares a target for is a fact
-  about a whole module, not about one authored program, and a corpus vector
-  authors its programs inside one shared module. The TypeScript frontend carries
-  the same test for the same reason.
+* A Hook whose target names nothing, and a Hook that names its target
+  declaration rather than the selector for it. A Python Hook binds through the
+  module globals its Agent resolves, so both are facts about a whole module, not
+  about one authored program, and a corpus vector authors its programs inside
+  one shared module. The TypeScript frontend carries the same tests for the same
+  reason.
 """
 
 from __future__ import annotations
@@ -33,6 +34,8 @@ import pytest
 from apxm_program import Agent, Event, Hook, Model, Skill
 from apxm_program._capture import CaptureError
 from apxm_program._generated.diagnostics import (
+    HOOK_DYNAMIC_REGISTRATION,
+    HOOK_SCOPE_UNRESOLVED,
     HOOK_TARGET_UNRESOLVED,
     SKILL_ENTRY_PATH_NOT_CANONICAL,
     SKILL_SOURCE_AMBIGUOUS,
@@ -83,6 +86,41 @@ def test_a_hook_target_no_declaration_names_is_refused() -> None:
 
     finally:
         del _StrayHook
+
+
+def test_a_hook_names_its_target_declaration_or_the_selector_for_it() -> None:
+    """``target=_StrayModel`` and ``target="_StrayModel"`` are one statement.
+
+    TypeScript has always taken the declaration; Python took only the selector,
+    so the same Hook had to be written two ways. Both resolve to the same bound
+    target here, which is what makes them one authoring shape rather than two.
+    """
+    global _StrayHook
+    captured = []
+    for target in (_StrayModel, "_StrayModel"):
+        _StrayHook = Hook.before(target=target, scope="model")(_stray_handler)
+        try:
+
+            @Agent(input=_Payload, output=_Payload)
+            async def HookTargetShape(agent, input):
+                return await _StrayModel(input)
+
+            captured.append(
+                HookTargetShape.frontend_graph()["hook_bindings"][0]["target_selector"]
+            )
+        finally:
+            del _StrayHook
+    assert captured[0] == captured[1]
+
+
+def test_a_hook_target_that_is_neither_declaration_nor_selector_is_refused() -> None:
+    with pytest.raises(TypeError, match=HOOK_DYNAMIC_REGISTRATION):
+        Hook.before(target=object(), scope="model")
+
+
+def test_a_hook_scope_outside_the_vocabulary_is_refused() -> None:
+    with pytest.raises(ValueError, match=HOOK_SCOPE_UNRESOLVED):
+        Hook.before(target=_StrayModel, scope="capabilities")
 
 
 def test_a_skill_states_one_instruction_source() -> None:

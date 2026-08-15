@@ -25,6 +25,10 @@
 //   calls the marker with it, so it can state the skill that names neither
 //   source — and does — but not the one that names two. The Python frontend
 //   carries the same test for the same reason.
+// * The scope a Hook states, resolved from the vocabulary symbol the module
+//   imported. Python holds the symbol's value by the time the decorator runs, so
+//   only TypeScript, which reads the scope back out of the AST, can resolve one
+//   wrongly or refuse one it cannot resolve.
 // * A Hook whose target names nothing. A Python Hook binds through the module
 //   globals its Agent resolves, so a Hook nobody declares a target for is a fact
 //   about a whole module rather than about one authored program, and a corpus
@@ -40,10 +44,12 @@ import { declaredSoFar } from "../src/declared.ts";
 import { decodeFact } from "../src/generated/runtime-evidence.ts";
 import { stableDigest } from "../src/markers.ts";
 import {
+  HOOK_SCOPE_UNRESOLVED,
   HOOK_TARGET_UNRESOLVED,
   SKILL_ENTRY_PATH_NOT_CANONICAL,
   SKILL_SOURCE_AMBIGUOUS,
 } from "../src/generated/diagnostics.ts";
+import { HOOK_SCOPE_CAPABILITY } from "../src/generated/frontend-graph.ts";
 
 source(import.meta.url);
 
@@ -51,6 +57,39 @@ type Input = any;
 type Output = any;
 
 void Agent;
+
+/** One module whose single Hook states `scope` exactly as `declared` writes it. */
+function capturedScope(
+  programId: string,
+  modelRef: string,
+  declared: { imports: string; scope: string },
+): { hook_bindings: Array<{ scope: string }> } {
+  return captureProgram({
+    programId,
+    entrypoint: "run",
+    declared: declaredSoFar(),
+    source: {
+      fileName: `${programId}.ts`,
+      text: `
+        import { Agent, Hook, Model } from "@apxm/frontend";
+        ${declared.imports}
+        const ScopedModel = Model<Input, Output>("${modelRef}");
+        const ${programId} = Agent<Input, Output>({
+          name: "${programId}",
+          async run(agent, input) {
+            return await ScopedModel(input);
+          },
+        });
+        const ScopedHook = Hook.before({
+          agent: ${programId},
+          target: ScopedModel,
+          scope: ${declared.scope},
+          async run(agent) {},
+        });
+      `,
+    },
+  }) as unknown as { hook_bindings: Array<{ scope: string }> };
+}
 
 describe("language-local TypeScript frontend facts", () => {
   it("emits standard SHA-256 digests without a Node-only root import", () => {
@@ -129,6 +168,44 @@ describe("language-local TypeScript frontend facts", () => {
 
     expect(graph.source_map.node_spans).toHaveLength(1);
     expect(graph.source_map.node_spans[0]?.source_file).toBe("<agent>");
+  });
+
+  it("resolves an imported scope symbol to the scope it names", () => {
+    void Model<Input, Output>("scope.symbol.model");
+    const graph = capturedScope("ScopeSymbol", "scope.symbol.model", {
+      imports: `import { CAPABILITY } from "@apxm/frontend/scopes";`,
+      scope: "CAPABILITY",
+    });
+    expect(graph.hook_bindings[0]?.scope).toBe(HOOK_SCOPE_CAPABILITY);
+  });
+
+  it("resolves an aliased scope symbol the same way", () => {
+    void Model<Input, Output>("scope.alias.model");
+    const graph = capturedScope("ScopeAlias", "scope.alias.model", {
+      imports: `import { CAPABILITY as Wraps } from "@apxm/frontend/scopes";`,
+      scope: "Wraps",
+    });
+    expect(graph.hook_bindings[0]?.scope).toBe(HOOK_SCOPE_CAPABILITY);
+  });
+
+  it("refuses a scope it cannot resolve rather than defaulting to node", () => {
+    void Model<Input, Output>("scope.dynamic.model");
+    expect(() =>
+      capturedScope("ScopeDynamic", "scope.dynamic.model", {
+        imports: "const chosen = process.env.SCOPE;",
+        scope: "chosen",
+      }),
+    ).toThrow(HOOK_SCOPE_UNRESOLVED);
+  });
+
+  it("refuses a scope literal the vocabulary does not mint", () => {
+    void Model<Input, Output>("scope.invented.model");
+    expect(() =>
+      capturedScope("ScopeInvented", "scope.invented.model", {
+        imports: "",
+        scope: `"capabilities"`,
+      }),
+    ).toThrow(HOOK_SCOPE_UNRESOLVED);
   });
 
   it("keeps runtime evidence decoding closed", () => {

@@ -2,7 +2,7 @@
   "schema_version": "apxm.frontend-surface",
   "surface_version": "apxm.frontend-graph",
   "everyday": ["Agent", "agent", "Context", "Tool", "Model"],
-  "advanced": ["Capability", "capability", "Event", "Hook", "TaskGroup", "Skill"],
+  "advanced": ["Capability", "capability", "Event", "Hook", "TaskGroup", "Skill", "source"],
   "non_public": [
     "AgentProgram",
     "AgentFacade",
@@ -436,7 +436,12 @@
         }
       ],
       "produces_intent": "none",
-      "diagnostics": ["HookTargetUnresolved", "HookDynamicRegistration", "HookOrderAmbiguous"]
+      "diagnostics": [
+        "HookTargetUnresolved",
+        "HookDynamicRegistration",
+        "HookOrderAmbiguous",
+        "HookScopeUnresolved"
+      ]
     },
     {
       "concept": "Durable Event value",
@@ -546,6 +551,36 @@
           "accepts": "callback_body",
           "required": true,
           "projected_as": { "python": ["context_manager_block"], "typescript": ["parameter"] }
+        }
+      ],
+      "produces_intent": "none",
+      "diagnostics": []
+    },
+    {
+      "concept": "Authored module source",
+      "tier": "advanced",
+      "bound_semantic_node": "AgentDecl",
+      "projections": {
+        "python": {
+          "module": "crates/compiler/frontend/python/apxm_program/_capture.py",
+          "symbol": "_source_reference",
+          "exported_from_root": false,
+          "inferred": true,
+          "signature": "inferred — the frontend reads the decorated def back through inspect"
+        },
+        "typescript": {
+          "module": "crates/compiler/frontend/typescript/src/node.ts",
+          "symbol": "source",
+          "exported_from_root": false,
+          "signature": "source(import.meta.url), once above the module's Agent definitions"
+        }
+      },
+      "arguments": [
+        {
+          "name": "url",
+          "accepts": "package_path",
+          "required": true,
+          "projected_as": { "python": ["inferred"], "typescript": ["parameter"] }
         }
       ],
       "produces_intent": "none",

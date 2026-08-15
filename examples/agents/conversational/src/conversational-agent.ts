@@ -3,6 +3,7 @@
 import { Agent, Capability, Context, Hook, Model, Skill, Tool } from "@apxm/frontend";
 import { COUNT_TOKENS, SEARCH_WEB } from "@apxm/frontend/capabilities";
 import { Allow, Ask } from "@apxm/frontend/permissions";
+import { CAPABILITY } from "@apxm/frontend/scopes";
 import { source } from "@apxm/frontend/node";
 
 source(import.meta.url);
@@ -129,13 +130,10 @@ export const ConversationalExample: ConversationalProgram = Agent<
 });
 
 // Measure the conversation and hand the measurement to the compactor.
-// `scope` is a literal here, not the `@apxm/frontend/scopes` symbol: the
-// TypeScript capture reads it off the AST as a string and silently falls back
-// to `node` for anything else. Python states `scope=CAPABILITY`.
 const PrepareSearchContext = Hook.before<ConversationContext>({
   agent: ConversationalExample,
   target: SearchWeb,
-  scope: "capability",
+  scope: CAPABILITY,
   async run(agent) {
     const budget = await CountTokens({ messages: agent.context.messages });
     const compacted = await CompactConversation({
@@ -155,7 +153,7 @@ const PrepareSearchContext = Hook.before<ConversationContext>({
 const RecordSearchContext = Hook.after<ConversationContext>({
   agent: ConversationalExample,
   target: SearchWeb,
-  scope: "capability",
+  scope: CAPABILITY,
   async run(agent) {
     agent.context = {
       messages: agent.context.messages,

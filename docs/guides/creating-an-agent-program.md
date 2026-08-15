@@ -61,6 +61,7 @@ The whole declaration surface, in the form each language projects it:
 | Durable Event value | `advanced` | `Event[Payload](ref), then await event.wait()` | `Event<Payload>(ref), then await event.wait()` |
 | Declared Agent Skill | `advanced` | `Skill(skill_id, entry=...) or Skill(skill_id, text=...), then await skill.load()` | `Skill(skillId, { entry }) or Skill(skillId, { text }), then await skill.load()` |
 | Structured task scope | `advanced` | `async with TaskGroup()` | `TaskGroup.run(async () => { ... })` |
+| Authored module source | `advanced` | `inferred — the frontend reads the decorated def back through inspect` | `source(import.meta.url), once above the module's Agent definitions` |
 <!-- END DECLARATION SURFACE -->
 
 Markers are statically recognized by imported symbol identity. Compiling does
@@ -91,22 +92,34 @@ the message text. The codes are the manifest's, projected into both frontends by
 | Imported Tool binding | `ToolRefNotCapability`, `ToolDisplayNameRejected` |
 | Imported Capability | `CapabilityRefNotExact`, `CapabilityDisplayNameRejected` |
 | Shipped Capability handler | `CapabilityHandlerUntypedSchema`, `CapabilityHandlerOpenObject`, `CapabilityHandlerReadOnlyUndeclared` |
-| Static Hook | `HookTargetUnresolved`, `HookDynamicRegistration`, `HookOrderAmbiguous` |
+| Static Hook | `HookTargetUnresolved`, `HookDynamicRegistration`, `HookOrderAmbiguous`, `HookScopeUnresolved` |
 | Durable Event value | `EventNotTyped`, `EventWaitOutsideBody` |
 | Declared Agent Skill | `SkillIdNotExact`, `SkillSourceMissing`, `SkillSourceAmbiguous`, `SkillEntryPathNotCanonical`, `SkillInstructionsOverlong`, `SkillLoadOutsideBody` |
 | Structured task scope | — |
+| Authored module source | — |
 <!-- END DIAGNOSTIC CODES -->
 
 ### 1.3 Authoring conventions
 
-Declare Models, Tools, Capabilities, Events, Context, and composed Agents at
-module scope: the declarations a module makes are its Agents' declarations, in
-both languages, and an author never lists again the names their own body already
-names. Python capture reads the decorated function source directly. A TypeScript
-module states its own source once with `source(import.meta.url)` from
-`@apxm/frontend/node`. This keeps symbol resolution exact, makes source maps
+Declare Models, Tools, Capabilities, Events, Skills, Context, and composed
+Agents at module scope: the declarations a module makes are its Agents'
+declarations, in both languages, and an author never lists again the names their
+own body already names. This applies to Skills exactly as it does to the rest —
+`Agent` takes no `skills` argument, just as it takes no `models` or `tools` one,
+because the body that writes `await PersonaSkill.load()` has already named the
+declaration and a second list could only disagree with it. Python capture reads
+the decorated function source directly. A TypeScript module states its own
+source once with `source(import.meta.url)` from `@apxm/frontend/node`, the one
+authoring obligation the two languages do not share; the surface manifest states
+it as a declaration TypeScript projects and Python infers, so the asymmetry is
+gated rather than folklore. This keeps symbol resolution exact, makes source maps
 portable, and lets the frontend reject dynamic lookup or shadowed marker names
 rather than infer behavior from text.
+
+A Hook states its target the same way: `target=SearchWeb` in Python and
+`target: SearchWeb` in TypeScript name the declaration itself. Python also takes
+the selector string, which is how a Hook reaches the Agent body or a loop —
+neither is a declaration an author holds a name for.
 
 A program's typed interface is the types themselves — `@Agent(input=Request,
 output=Reply)` and `Agent<Request, Reply>` — never strings naming them.

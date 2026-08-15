@@ -199,6 +199,15 @@ class SurfaceLanguage:
         """The argument shape of one projection, or None when it is absent."""
         raise NotImplementedError
 
+    def defines(self, projection: dict) -> bool:
+        """Whether the projected module defines the projected symbol at all.
+
+        An inferred projection has no signature to read: the language works the
+        declaration out instead of accepting it. What the manifest can still be
+        held to is that the derivation exists where it says it does.
+        """
+        raise NotImplementedError
+
     def diagnostic_codes(self) -> list[str]:
         """The diagnostic codes the generated module projects, in order."""
         raise NotImplementedError
@@ -307,6 +316,14 @@ class PythonLanguage(SurfaceLanguage):
 
     def root_exports(self) -> set[str]:
         return self._exported_names(self.authoring_root)
+
+    def defines(self, projection: dict) -> bool:
+        symbol = projection["symbol"]
+        return any(
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and node.name == symbol
+            for node in self._module(REPO_ROOT / projection["module"]).body
+        )
 
     def catalogue_symbols(self) -> set[str]:
         return self._exported_names(self.capability_catalogue)
@@ -684,6 +701,11 @@ class TypeScriptLanguage(SurfaceLanguage):
     def root_bound_names(self) -> set[str]:
         return self.root_exports()
 
+    def defines(self, projection: dict) -> bool:
+        text = self._source(REPO_ROOT / projection["module"])
+        symbol = re.escape(projection["symbol"])
+        return re.search(rf"\b(?:function|const|class|type)\s+{symbol}\b", text) is not None
+
     def vocabulary_drift(self, projection: dict) -> Optional[str]:
         # Unlike Python, a TypeScript import path is not a file path: the package
         # decides which subpaths exist, so a module can be checked in and still
@@ -836,7 +858,13 @@ class TypeScriptLanguage(SurfaceLanguage):
         return re.findall(r'"([^"]+)"', block.group(1))
 
     def import_patterns(self) -> tuple[str, ...]:
-        return (r"import\s*\{([^}]+)\}\s*from\s*[\"']@apxm/frontend[\"']",)
+        # `/node` is the second authoring path, not an internal one: `source` is
+        # published there and nowhere else, so a document teaching it was
+        # invisible to this scan until the path was named here.
+        return (
+            r"import\s*\{([^}]+)\}\s*from\s*[\"']@apxm/frontend[\"']",
+            r"import\s*\{([^}]+)\}\s*from\s*[\"']@apxm/frontend/node[\"']",
+        )
 
     source_suffixes = (".ts", ".mjs")
 
@@ -955,6 +983,10 @@ def check_declaration(
         )
         return
 
+    if projection.get("inferred"):
+        check_inferred(language, declaration, projection, failures)
+        return
+
     shape = language.shape(projection)
     if shape is None:
         member = f".{projection['member']}" if "member" in projection else ""
@@ -990,6 +1022,53 @@ def check_declaration(
             f"{language.id} projection of {concept!r} accepts undeclared arguments {extra}; "
             "the manifest is the surface, so an argument the manifest does not state is not one"
         )
+
+
+def check_inferred(
+    language: SurfaceLanguage,
+    declaration: dict,
+    projection: dict,
+    failures: list[str],
+) -> None:
+    """Prove one language really derives a declaration it says it infers.
+
+    An asymmetric obligation is the case this exists for: TypeScript asks the
+    author for `source(import.meta.url)` and Python works the same fact out, so
+    without a way to say "inferred" the declaration is absent from the manifest
+    and the gate cannot see the asymmetry at all. Saying it is not free — the
+    derivation has to exist where the projection points, the language must not
+    publish the name from its authoring root, and no argument may be projected
+    as something this language accepts.
+    """
+    concept = declaration["concept"]
+    if not language.defines(projection):
+        failures.append(
+            incomplete(
+                language.id,
+                concept,
+                f"{projection['module']} defines no `{projection['symbol']}`, so the "
+                "derivation the projection claims is not there",
+            )
+        )
+    if projection["symbol"] in language.root_exports() or projection["exported_from_root"]:
+        failures.append(
+            incomplete(
+                language.id,
+                concept,
+                f"the projection is inferred, so `{projection['symbol']}` is not a name "
+                "the authoring root publishes",
+            )
+        )
+    for argument in declaration["arguments"]:
+        if argument["projected_as"].get(language.id) != ["inferred"]:
+            failures.append(
+                incomplete(
+                    language.id,
+                    concept,
+                    f"the projection is inferred, so argument {argument['name']!r} is "
+                    "inferred here too, not accepted in some other form",
+                )
+            )
 
 
 def check_argument(
@@ -1187,10 +1266,16 @@ def check_schema_alignment(manifest: dict, failures: list[str]) -> None:
 
 
 def check_tiers(manifest: dict, failures: list[str]) -> None:
-    """Every projected symbol is a name the surface tiers actually publish."""
+    """Every projected symbol is a name the surface tiers actually publish.
+
+    An inferred projection publishes no author-facing name, so there is nothing
+    for a tier to name and nothing here to check.
+    """
     tiered = set(manifest["everyday"]) | set(manifest["advanced"])
     for declaration in manifest["declarations"]:
         for language_id, projection in declaration["projections"].items():
+            if projection.get("inferred"):
+                continue
             if projection["symbol"] not in tiered:
                 failures.append(
                     f"{language_id} projects {declaration['concept']!r} as "
@@ -1371,8 +1456,15 @@ DENIAL_TEMPLATES = (
     r"\b(?:does\s+not|doesn't|do\s+not|don't|never)\s+"
     r"(?:publish|export|declare|project|mint|expose|include|name|define)s?\s+"
     r"(?:an?\s+|the\s+)?{S}\b",
-    r"{S}\s+is\s+not\s+(?:declarable|authorable|exported|published|declared"
-    r"|projected|minted|available|a\s+(?:published|declared|surface|manifest)\b"
+    # Same denial with the surface noun spelled out, which lets it take the
+    # looser verbs — "does not ship a `Skill` marker" is about the surface,
+    # while "does not ship a `Tool` implementation" is about a package.
+    r"\b(?:does\s+not|doesn't|do\s+not|don't|never)\s+"
+    r"(?:publish|export|declare|project|mint|expose|include|name|define"
+    r"|ship|provide|offer|have)s?\s+(?:an?\s+|the\s+)?{S}\s+" + SURFACE_NOUN + r"\b",
+    r"{S}s?\s+(?:is|are)\s+not\s+(?:declarable|authorable|exported|published"
+    r"|declared|projected|minted|available"
+    r"|a\s+(?:published|declared|surface|manifest)\b"
     r"|(?:in|part\s+of)\s+the\s+surface)",
     r"{S}\s+(?:does\s+not|doesn't)\s+exist\b",
     r"{S}\s+(?:is|was)\s+(?:not|never)\s+(?:an?\s+)?" + SURFACE_NOUN + r"\b",
@@ -1387,6 +1479,12 @@ SURFACE_SCOPE = re.compile(
     r"|@apxm/frontend|either\s+language|both\s+languages|public\s+api",
     re.I,
 )
+
+#: A match that already ends in a surface noun carries its own scope — "there
+#: is no `Skill` marker" is a claim about the surface however plainly the rest
+#: of the sentence is written. Demanding a second scope word there is what let
+#: the plainest denial through.
+SELF_SCOPED = re.compile(SURFACE_NOUN + r"\b\s*$", re.I)
 
 
 def prose(text: str) -> str:
@@ -1430,7 +1528,9 @@ def denials(text: str, published: set[str]) -> list[tuple[str, str]]:
                 template.replace("{S}", symbol), text, flags=re.I
             ):
                 sentence = sentence_around(text, match.start(), match.end())
-                if SURFACE_SCOPE.search(sentence):
+                if SELF_SCOPED.search(match.group(0)) or SURFACE_SCOPE.search(
+                    sentence
+                ):
                     found.setdefault(name, sentence)
     return sorted(found.items())
 
@@ -1584,11 +1684,15 @@ def check() -> list[str]:
         check_roots(language, manifest, failures)
     check_vocabularies(languages, manifest, failures)
 
+    # Every author-facing name the manifest publishes, wherever it is published
+    # from. `check_roots` already pins which of them the authoring root exports,
+    # so a name published on its own path — `source` from `@apxm/frontend/node` —
+    # is a name a document may teach rather than one it may not.
     allowed = {
         projection["symbol"]
         for declaration in manifest["declarations"]
         for projection in declaration["projections"].values()
-        if projection["exported_from_root"]
+        if not projection.get("inferred")
     }
     check_samples(languages, allowed, failures)
     return failures

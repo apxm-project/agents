@@ -24,6 +24,7 @@ export type DiagnosticCode =
   | "HookTargetUnresolved"
   | "HookDynamicRegistration"
   | "HookOrderAmbiguous"
+  | "HookScopeUnresolved"
   | "EventNotTyped"
   | "EventWaitOutsideBody"
   | "SkillIdNotExact"
@@ -48,6 +49,7 @@ export const CAPABILITY_HANDLER_READ_ONLY_UNDECLARED = "CapabilityHandlerReadOnl
 export const HOOK_TARGET_UNRESOLVED = "HookTargetUnresolved" satisfies DiagnosticCode;
 export const HOOK_DYNAMIC_REGISTRATION = "HookDynamicRegistration" satisfies DiagnosticCode;
 export const HOOK_ORDER_AMBIGUOUS = "HookOrderAmbiguous" satisfies DiagnosticCode;
+export const HOOK_SCOPE_UNRESOLVED = "HookScopeUnresolved" satisfies DiagnosticCode;
 export const EVENT_NOT_TYPED = "EventNotTyped" satisfies DiagnosticCode;
 export const EVENT_WAIT_OUTSIDE_BODY = "EventWaitOutsideBody" satisfies DiagnosticCode;
 export const SKILL_ID_NOT_EXACT = "SkillIdNotExact" satisfies DiagnosticCode;
@@ -73,6 +75,7 @@ export const DIAGNOSTIC_CODES = [
   HOOK_TARGET_UNRESOLVED,
   HOOK_DYNAMIC_REGISTRATION,
   HOOK_ORDER_AMBIGUOUS,
+  HOOK_SCOPE_UNRESOLVED,
   EVENT_NOT_TYPED,
   EVENT_WAIT_OUTSIDE_BODY,
   SKILL_ID_NOT_EXACT,

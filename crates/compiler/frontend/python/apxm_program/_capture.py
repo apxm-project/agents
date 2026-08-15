@@ -13,6 +13,7 @@ from __future__ import annotations
 import ast
 import inspect
 import textwrap
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -1229,6 +1230,25 @@ class _Capture:
         )
         self._record_node(region_id, node_id)
 
+    def _resolve_hook_target_name(self, name: str, declaration: HookDecl) -> HookDecl:
+        """Give a Hook that named its target declaration the selector for it.
+
+        The rest of Hook resolution works from the module name a declaration is
+        bound to, which is what TypeScript reads off the authored identifier.
+        Naming the declaration is the same statement, so it is turned into that
+        name here rather than doubling every lookup below.
+        """
+        target = declaration.target_declaration
+        if target is None:
+            return declaration
+        for bound, binding in self.bindings.items():
+            if binding is target:
+                return replace(declaration, target_selector=bound)
+        raise CaptureError(
+            f"{HOOK_TARGET_UNRESOLVED}: Hook '{name}' targets a declaration this "
+            "module binds to no name"
+        )
+
     def _names_a_hook_target(self, target: str) -> bool:
         """Whether a Hook target names something a module can actually declare.
 
@@ -1259,6 +1279,7 @@ class _Capture:
         for name, declaration in self.bindings.items():
             if not isinstance(declaration, HookDecl):
                 continue
+            declaration = self._resolve_hook_target_name(name, declaration)
             if not self._names_a_hook_target(declaration.target_selector):
                 raise CaptureError(
                     f"{HOOK_TARGET_UNRESOLVED}: Hook '{name}' targets "

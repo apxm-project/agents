@@ -112,7 +112,7 @@ class ConversationContext:
     last_tool: str = ""
 
 
-@Hook.before(target="SearchWeb", scope=CAPABILITY)
+@Hook.before(target=SearchWeb, scope=CAPABILITY)
 async def PrepareSearchContext(agent) -> None:
     """Measure the conversation and hand the measurement to the compactor."""
     budget = await CountTokens({"messages": agent.context.messages})
@@ -127,7 +127,7 @@ async def PrepareSearchContext(agent) -> None:
     )
 
 
-@Hook.after(target="SearchWeb", scope=CAPABILITY)
+@Hook.after(target=SearchWeb, scope=CAPABILITY)
 async def RecordSearchContext(agent) -> None:
     """Record which Capability the conversation last dispatched."""
     agent.context = ConversationContext(

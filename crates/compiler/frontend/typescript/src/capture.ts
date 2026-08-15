@@ -54,9 +54,11 @@ import {
   CONTEXT_NOT_TYPED,
   HOOK_DYNAMIC_REGISTRATION,
   HOOK_ORDER_AMBIGUOUS,
+  HOOK_SCOPE_UNRESOLVED,
   HOOK_TARGET_UNRESOLVED,
   MODEL_UNTYPED_SCHEMA,
 } from "./generated/diagnostics.js";
+import * as scopeVocabulary from "./generated/scopes.js";
 import { READ_SKILL } from "./generated/capabilities.js";
 import type { Permission } from "./generated/permissions.js";
 import type {
@@ -141,6 +143,19 @@ const MARKER_BINDING_KINDS: Readonly<Record<string, Binding["kind"]>> = {
   Context: "context",
   Agent: "agent_definition",
 };
+
+/**
+ * The scope each published vocabulary name states, read off the generated
+ * module rather than restated here. `scope: CAPABILITY` is the spelling the
+ * surface teaches, so the capture resolves the symbol the author imported
+ * instead of only recognizing the string it happens to equal.
+ */
+const SCOPE_BY_SYMBOL: ReadonlyMap<string, HookScope> = new Map(
+  Object.entries(scopeVocabulary).filter(
+    (entry): entry is [string, HookScope] =>
+      typeof entry[1] === "string" && (HOOK_SCOPES as readonly string[]).includes(entry[1]),
+  ),
+);
 
 /** The stable declaration identity a bound name carries into the graph. */
 function declarationIdFor(name: string, binding: Binding): string {
@@ -1820,11 +1835,7 @@ class Capture {
       const hookName = ts.isIdentifier(hook.declaration.name)
         ? hook.declaration.name.text
         : `hook_${order + 1}`;
-      const declared = stringProperty(hook.options, "scope") ?? HOOK_SCOPE_NODE;
-      if (!(HOOK_SCOPES as readonly string[]).includes(declared)) {
-        throw new CaptureError(`Hook scope '${declared}' is not supported`);
-      }
-      const scope = declared as HookScope;
+      const scope = this.hookScope(hook.options, hookName);
       const run = functionProperty(hook.options, "run");
       if (run === undefined) {
         throw new CaptureError(
@@ -1921,6 +1932,71 @@ class Capture {
       return control.contract.parent_region_id;
     }
     return targetSelector;
+  }
+
+  /**
+   * The scope a Hook declares, resolved fail-closed.
+   *
+   * `scope: CAPABILITY` and `scope: "capability"` are the same declaration, so
+   * both resolve here. Anything else — a computed value, a name from somewhere
+   * other than the scope vocabulary, a literal the vocabulary does not mint —
+   * is rejected rather than defaulted: a mis-scoped Hook that still compiles is
+   * a Hook that runs somewhere its author never asked for.
+   */
+  private hookScope(options: ts.ObjectLiteralExpression, hookName: string): HookScope {
+    const property = namedProperty(options, "scope");
+    if (property === undefined) {
+      return HOOK_SCOPE_NODE;
+    }
+    const scope = ts.isPropertyAssignment(property)
+      ? this.resolveScopeExpression(property.initializer)
+      : undefined;
+    if (scope === undefined) {
+      throw new CaptureError(
+        `${HOOK_SCOPE_UNRESOLVED}: Hook '${hookName}' states a scope the frontend ` +
+          `cannot resolve to one of ${HOOK_SCOPES.join(", ")}; write the ` +
+          "`@apxm/frontend/scopes` symbol or the scope it names",
+      );
+    }
+    return scope;
+  }
+
+  /** One scope expression, as a vocabulary symbol or as the string it names. */
+  private resolveScopeExpression(expression: ts.Expression): HookScope | undefined {
+    if (ts.isStringLiteral(expression)) {
+      return (HOOK_SCOPES as readonly string[]).includes(expression.text)
+        ? (expression.text as HookScope)
+        : undefined;
+    }
+    if (ts.isPropertyAccessExpression(expression)) {
+      return this.isScopeNamespace(expression.expression)
+        ? SCOPE_BY_SYMBOL.get(expression.name.text)
+        : undefined;
+    }
+    if (!ts.isIdentifier(expression)) {
+      return undefined;
+    }
+    const imported = this.symbolAt(expression)?.declarations?.find(
+      (declaration): declaration is ts.ImportSpecifier =>
+        ts.isImportSpecifier(declaration) &&
+        isScopeModuleSpecifier(findImportDeclaration(declaration)),
+    );
+    return imported === undefined
+      ? undefined
+      : SCOPE_BY_SYMBOL.get(imported.propertyName?.text ?? imported.name.text);
+  }
+
+  /** Whether a name is a namespace import of the scope vocabulary. */
+  private isScopeNamespace(expression: ts.Expression): boolean {
+    return (
+      ts.isIdentifier(expression) &&
+      (this.symbolAt(expression)?.declarations?.some(
+        (declaration) =>
+          ts.isNamespaceImport(declaration) &&
+          isScopeModuleSpecifier(findImportDeclaration(declaration)),
+      ) ??
+        false)
+    );
   }
 
   private resolveHookTarget(target: ts.Identifier, scope: HookScope): string {
@@ -2149,6 +2225,15 @@ function isFrontendImportDeclaration(
 
 function isFrontendModuleSpecifier(specifier: string): boolean {
   return specifier === "@apxm/frontend" || specifier === "../src/index.ts";
+}
+
+/** The public path the Hook scope vocabulary is published on. */
+function isScopeModuleSpecifier(declaration: ts.ImportDeclaration | undefined): boolean {
+  if (declaration === undefined || !ts.isStringLiteral(declaration.moduleSpecifier)) {
+    return false;
+  }
+  const specifier = declaration.moduleSpecifier.text;
+  return specifier === "@apxm/frontend/scopes" || specifier === "../src/scopes.ts";
 }
 
 function callbackFromAgentCall(

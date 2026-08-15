@@ -1,14 +1,31 @@
 // Advanced authoring markers: static Hooks and structured task scopes.
 
+import type { AgentHandle } from "./agent.js";
 import {
   HOOK_PHASE_AFTER,
   HOOK_PHASE_BEFORE,
   HOOK_SCOPE_NODE,
   type HookPhase,
 } from "./generated/frontend-graph.js";
+import type { Scope } from "./generated/scopes.js";
 
 type HookAgent<C = unknown> = {
   context: C;
+};
+
+/**
+ * Anything a Hook can wrap: one declaration the module made, or the Agent
+ * itself. The kind is what the capture resolves the target through, so the
+ * type states the same closed set the capture does.
+ */
+export type HookTarget = {
+  readonly kind:
+    | "model_binding"
+    | "tool_binding"
+    | "capability_binding"
+    | "event_type"
+    | "skill"
+    | "agent_definition";
 };
 
 /**
@@ -19,15 +36,18 @@ type HookAgent<C = unknown> = {
  * captured `run` body, so the declaration cannot claim one thing while the body
  * does another. There is no `replace` option for the same reason.
  */
-export type HookDecl = {
+export type HookDecl<C = unknown> = {
   readonly phase: HookPhase;
-  readonly scope: string;
+  readonly scope: Scope;
+  readonly agent: AgentHandle<never, unknown, C>;
+  readonly target: HookTarget;
+  readonly run: (agent: HookAgent<C>) => Promise<unknown> | unknown;
 };
 
 export type HookOptions<C = unknown> = {
-  agent: unknown;
-  target: unknown;
-  scope?: string;
+  agent: AgentHandle<never, unknown, C>;
+  target: HookTarget;
+  scope?: Scope;
   run(agent: HookAgent<C>): Promise<unknown> | unknown;
 };
 
@@ -38,13 +58,24 @@ export type HookOptions<C = unknown> = {
  * subset, because the local is not a value the capture can resolve.
  */
 export const Hook = {
-  before<Context = unknown>(options: HookOptions<Context>): HookDecl {
-    return { phase: HOOK_PHASE_BEFORE, scope: options.scope ?? HOOK_SCOPE_NODE };
+  before<Context = unknown>(options: HookOptions<Context>): HookDecl<Context> {
+    return declare(HOOK_PHASE_BEFORE, options);
   },
-  after<Context = unknown>(options: HookOptions<Context>): HookDecl {
-    return { phase: HOOK_PHASE_AFTER, scope: options.scope ?? HOOK_SCOPE_NODE };
+  after<Context = unknown>(options: HookOptions<Context>): HookDecl<Context> {
+    return declare(HOOK_PHASE_AFTER, options);
   },
 };
+
+/** Hold one Hook's authored arguments, so nothing it was given is dropped. */
+function declare<C>(phase: HookPhase, options: HookOptions<C>): HookDecl<C> {
+  return {
+    phase,
+    scope: options.scope ?? HOOK_SCOPE_NODE,
+    agent: options.agent,
+    target: options.target,
+    run: options.run,
+  };
+}
 
 export const TaskGroup = {
   run(body: (group: unknown) => Promise<void> | void): Promise<void> {

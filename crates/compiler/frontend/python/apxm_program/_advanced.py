@@ -7,7 +7,7 @@ import inspect
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Optional
 
-from ._generated.diagnostics import HOOK_DYNAMIC_REGISTRATION
+from ._generated.diagnostics import HOOK_DYNAMIC_REGISTRATION, HOOK_SCOPE_UNRESOLVED
 from ._generated.frontend_graph import (
     HOOK_PHASE_AFTER,
     HOOK_PHASE_BEFORE,
@@ -15,6 +15,24 @@ from ._generated.frontend_graph import (
     HOOK_SCOPES,
     HookPhase,
     HookScope,
+)
+from ._markers import (
+    CapabilityBinding,
+    EventType,
+    ModelBinding,
+    SkillDecl,
+    ToolBinding,
+)
+
+#: The declarations a Hook may name directly, as against by selector. It is the
+#: same set TypeScript's `HookTarget` states, so `target=SearchWeb` is one
+#: authoring shape in both languages rather than one language's convenience.
+HOOK_TARGET_DECLARATIONS = (
+    ModelBinding,
+    ToolBinding,
+    CapabilityBinding,
+    EventType,
+    SkillDecl,
 )
 
 
@@ -31,6 +49,10 @@ class HookDecl:
     phase: HookPhase
     target_selector: str
     scope: HookScope = HOOK_SCOPE_NODE
+    #: The declaration the author named, when they named it rather than spelled
+    #: its selector. Capture resolves it back to the module name that binds it,
+    #: which is the name a selector would have carried.
+    target_declaration: Optional[Any] = None
     handler: Optional[Callable[..., Any]] = None
     handler_ref: Optional[str] = None
     handler_digest: Optional[str] = None
@@ -77,28 +99,44 @@ def _first_parameter_type(handler: Callable[..., Any]) -> str:
 class _Hook:
     """The Hook declaration surface exposing before/after bindings."""
 
-    def before(self, *, target: str, scope: str = HOOK_SCOPE_NODE) -> HookDecl:
+    def before(self, *, target: Any, scope: str = HOOK_SCOPE_NODE) -> HookDecl:
         return _declare(HOOK_PHASE_BEFORE, target, scope)
 
-    def after(self, *, target: str, scope: str = HOOK_SCOPE_NODE) -> HookDecl:
+    def after(self, *, target: Any, scope: str = HOOK_SCOPE_NODE) -> HookDecl:
         return _declare(HOOK_PHASE_AFTER, target, scope)
 
 
-def _declare(phase: HookPhase, target: str, scope: str) -> HookDecl:
+def _declare(phase: HookPhase, target: Any, scope: str) -> HookDecl:
     """Fail closed unless a Hook uses one closed static binding shape.
 
+    A target is the declaration itself — ``target=SearchWeb``, the shape
+    TypeScript takes — or the selector naming one, which is how a Hook reaches
+    the Agent body or a loop, neither of which is a declaration an author holds.
     There is no ``replace`` argument: whether a Hook observes or replaces is
     read off its captured body, so the declaration cannot claim one thing while
     the body does another.
     """
-    if not isinstance(target, str) or not target:
+    declaration: Optional[Any] = None
+    if isinstance(target, HOOK_TARGET_DECLARATIONS):
+        declaration, selector = target, ""
+    elif isinstance(target, str) and target:
+        selector = target
+    else:
         raise TypeError(
             f"{HOOK_DYNAMIC_REGISTRATION}: a Hook is registered statically, so its "
-            f"target is one non-empty source selector, not {target!r}"
+            f"target is one declaration or the selector naming one, not {target!r}"
         )
     if scope not in HOOK_SCOPES:
-        raise ValueError(f"a Hook scope is one of {', '.join(HOOK_SCOPES)}")
-    return HookDecl(phase=phase, target_selector=target, scope=scope)
+        raise ValueError(
+            f"{HOOK_SCOPE_UNRESOLVED}: a Hook scope is one of "
+            f"{', '.join(HOOK_SCOPES)}, not {scope!r}"
+        )
+    return HookDecl(
+        phase=phase,
+        target_selector=selector,
+        scope=scope,
+        target_declaration=declaration,
+    )
 
 
 class TaskGroup:
