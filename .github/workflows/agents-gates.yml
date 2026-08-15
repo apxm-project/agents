@@ -270,5 +270,14 @@ jobs:
       - name: Execute the Python Capability handler a package ships
         run: dekk agents test-python-handler-example
 
+      # The whole spine on the shipping path: authored source through the
+      # compilation service to canonical AIR, then admitted and executed. The
+      # suites above each cover one hop of it.
+      - name: Compile the canonical example through the compilation service
+        run: dekk agents compile-service-canonical
+
+      - name: Execute the canonical example
+        run: dekk agents execute-canonical
+
       - name: Run repository tooling tests
         run: python -m pytest tools/tests/
