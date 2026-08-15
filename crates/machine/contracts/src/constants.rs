@@ -623,6 +623,8 @@ pub mod session {
         pub const RUNTIME_GRAPH_METRICS: &str = "graph_metrics";
         pub const RUNTIME_OBSERVED_GRAPH: &str = "observed_graph";
         pub const RUNTIME_NODE_STATUSES: &str = "node_statuses";
+        // vLLM's own name, matching `supports_dispatch_ir_v1_internal`. A
+        // foreign id keeps its suffix; renaming it would break the contract.
         pub const RUNTIME_DISPATCH_IR_V1: &str = "dispatch_ir_v1";
         pub const BACKENDS_AGGREGATE: &str = "aggregate";
         pub const BACKENDS_PER_BACKEND: &str = "per_backend";

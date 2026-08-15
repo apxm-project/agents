@@ -8,12 +8,12 @@ use super::common::{
 };
 use super::policy::PromptPolicy;
 
-pub const CAPABILITY_TEMPLATE_SCHEMA_V1: &str = "apxm.capability-template";
-pub const CAPABILITY_DEFINITION_SCHEMA_V1: &str = "apxm.capability-definition";
+pub const CAPABILITY_TEMPLATE_SCHEMA: &str = "apxm.capability-template";
+pub const CAPABILITY_DEFINITION_SCHEMA: &str = "apxm.capability-definition";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CapabilityTemplateV1 {
+pub struct CapabilityTemplate {
     pub schema_version: String,
     pub template_key: String,
     pub capability_binding: String,
@@ -36,11 +36,11 @@ pub struct CapabilityTemplateV1 {
     pub description: Option<String>,
 }
 
-impl CapabilityTemplateV1 {
+impl CapabilityTemplate {
     pub fn validate(&self) -> Result<(), CapabilitySchemaError> {
-        if self.schema_version != CAPABILITY_TEMPLATE_SCHEMA_V1 {
+        if self.schema_version != CAPABILITY_TEMPLATE_SCHEMA {
             return Err(CapabilitySchemaError::InvalidSchemaVersion {
-                expected: CAPABILITY_TEMPLATE_SCHEMA_V1,
+                expected: CAPABILITY_TEMPLATE_SCHEMA,
                 actual: self.schema_version.clone(),
             });
         }
@@ -72,9 +72,9 @@ pub struct CapabilityDefinition {
 
 impl CapabilityDefinition {
     pub fn validate(&self) -> Result<(), CapabilitySchemaError> {
-        if self.schema_version != CAPABILITY_DEFINITION_SCHEMA_V1 {
+        if self.schema_version != CAPABILITY_DEFINITION_SCHEMA {
             return Err(CapabilitySchemaError::InvalidSchemaVersion {
-                expected: CAPABILITY_DEFINITION_SCHEMA_V1,
+                expected: CAPABILITY_DEFINITION_SCHEMA,
                 actual: self.schema_version.clone(),
             });
         }

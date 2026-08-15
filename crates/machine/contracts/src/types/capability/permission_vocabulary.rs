@@ -2,9 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::common::CapabilitySchemaError;
-
-pub const PERMISSION_POLICY_SCHEMA_V1: &str = "apxm.permission-policy";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -135,28 +132,4 @@ pub enum GrantState {
     Active,
     Revoked,
     Expired,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PermissionPolicyV1 {
-    pub schema_version: String,
-    pub operation_class: OperationClass,
-    pub risk_level: RiskLevel,
-    pub approval_posture: ApprovalPosture,
-    pub scope: PermissionScopeKind,
-    pub credential_scope: CredentialScope,
-    pub audit_payload: AuditPayloadPolicy,
-}
-
-impl PermissionPolicyV1 {
-    pub fn validate(&self) -> Result<(), CapabilitySchemaError> {
-        if self.schema_version != PERMISSION_POLICY_SCHEMA_V1 {
-            return Err(CapabilitySchemaError::InvalidSchemaVersion {
-                expected: PERMISSION_POLICY_SCHEMA_V1,
-                actual: self.schema_version.clone(),
-            });
-        }
-        Ok(())
-    }
 }

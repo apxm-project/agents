@@ -21,17 +21,17 @@ pub use common::{
     RuntimeLimits, RuntimeSurfaceLimit, RuntimeSurfaceMode, RuntimeSurfacePolicy, Sensitivity,
 };
 pub use definition::{
-    CAPABILITY_DEFINITION_SCHEMA_V1, CAPABILITY_TEMPLATE_SCHEMA_V1, CapabilityDefinition,
-    CapabilityMetadata, CapabilityTemplateV1,
+    CAPABILITY_DEFINITION_SCHEMA, CAPABILITY_TEMPLATE_SCHEMA, CapabilityDefinition,
+    CapabilityMetadata, CapabilityTemplate,
 };
-pub use grant::{CAPABILITY_GRANT_SCHEMA_V1, CapabilityGrant, GrantProvenance, GrantStatus};
+pub use grant::{CAPABILITY_GRANT_SCHEMA, CapabilityGrant, GrantProvenance, GrantStatus};
 pub use permission::{
     PermissionDecision, PermissionOperation, PermissionPolicy, PermissionRule, PermissionScope,
     ResourceHandle, ResourceSelector,
 };
 pub use permission_vocabulary::{
     ApprovalPosture, AuditPayloadPolicy, CredentialScope, GrantState, OperationClass,
-    PERMISSION_POLICY_SCHEMA_V1, PermissionPolicyV1, PermissionScopeKind, RiskLevel,
+    PermissionScopeKind, RiskLevel,
 };
 pub use policy::{
     AuthMethod, Principal, PrincipalKind, PromptMode, PromptPolicy, RoleAssignment, RoleDefinition,

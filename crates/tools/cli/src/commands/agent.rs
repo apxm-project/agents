@@ -33,7 +33,7 @@ use super::implementations::{Status, print_section_header, print_status_line};
 // On-disk manifest shapes (apxm.agent projections)
 // ---------------------------------------------------------------------
 
-const AGENT_SCHEMA_V1: &str = "apxm.agent";
+const AGENT_SCHEMA: &str = "apxm.agent";
 
 /// The published `apxm.agent` contract, embedded from its checked-in bytes.
 ///
@@ -394,7 +394,7 @@ fn agent_new_looped_agent(
         &format!(
             "id = \"{id}\"\n\
              version = \"0.1.0\"\n\
-             schema_version = \"{AGENT_SCHEMA_V1}\"\n\
+             schema_version = \"{AGENT_SCHEMA}\"\n\
              display_name = \"{display_name}\"\n\
              domain = \"{id}\"\n\
              kind = \"agent\"\n\
@@ -960,12 +960,12 @@ fn check_schema_shape(pkg: &LoadedAgent) -> Vec<String> {
         ));
     }
     match pkg.agent.schema_version.as_deref() {
-        Some(AGENT_SCHEMA_V1) => {}
+        Some(AGENT_SCHEMA) => {}
         Some(other) => errors.push(format!(
-            "agent.toml: schema_version '{other}' must be '{AGENT_SCHEMA_V1}'"
+            "agent.toml: schema_version '{other}' must be '{AGENT_SCHEMA}'"
         )),
         None => errors.push(format!(
-            "agent.toml: schema_version is required and must be '{AGENT_SCHEMA_V1}'"
+            "agent.toml: schema_version is required and must be '{AGENT_SCHEMA}'"
         )),
     }
     match declared_compile_source(&pkg.agent) {
@@ -1050,7 +1050,7 @@ pub(crate) fn agent_lint(path: &Path, org: Option<PathBuf>, json_output: bool) -
     errors.extend(check_permission_resolution(&pkg, &org_globals));
     for unrecognized in find_unrecognized_files(path)? {
         errors.push(format!(
-            "unrecognized file '{unrecognized}' is not part of the {AGENT_SCHEMA_V1} folder contract"
+            "unrecognized file '{unrecognized}' is not part of the {AGENT_SCHEMA} folder contract"
         ));
     }
 
@@ -1505,7 +1505,7 @@ mod tests {
         let agent: AgentToml = read_toml(&root.join("agent.toml")).unwrap();
         assert_eq!(agent.id, "demo");
         assert_eq!(agent.version, "0.1.0");
-        assert_eq!(agent.schema_version.as_deref(), Some(AGENT_SCHEMA_V1));
+        assert_eq!(agent.schema_version.as_deref(), Some(AGENT_SCHEMA));
         assert_eq!(
             agent
                 .compile
@@ -2467,10 +2467,10 @@ mod tests {
     fn the_schema_version_constant_is_read_from_the_published_contract() {
         let schema: serde_json::Value =
             serde_json::from_str(AGENT_SCHEMA_JSON).expect("the embedded contract is valid JSON");
-        assert_eq!(schema["$id"].as_str(), Some(AGENT_SCHEMA_V1));
+        assert_eq!(schema["$id"].as_str(), Some(AGENT_SCHEMA));
         assert_eq!(
             schema["$defs"]["AgentManifest"]["properties"]["schema_version"]["const"].as_str(),
-            Some(AGENT_SCHEMA_V1),
+            Some(AGENT_SCHEMA),
             "the schema_version constant drifted from the schema `const`",
         );
     }
@@ -2493,7 +2493,7 @@ mod tests {
                 "{package} carries paths outside the published folder contract: {unrecognized:?}"
             );
             let pkg = load_agent(&root).unwrap_or_else(|error| panic!("load {package}: {error}"));
-            assert_eq!(pkg.agent.schema_version.as_deref(), Some(AGENT_SCHEMA_V1));
+            assert_eq!(pkg.agent.schema_version.as_deref(), Some(AGENT_SCHEMA));
         }
     }
 }

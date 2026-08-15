@@ -249,7 +249,7 @@ impl From<CapabilityDefinition> for RuntimeCapability {
 mod tests {
     use super::*;
     use apxm_core::types::capability::{
-        CAPABILITY_DEFINITION_SCHEMA_V1, CapabilityBinding, CapabilityBindingHandler,
+        CAPABILITY_DEFINITION_SCHEMA, CapabilityBinding, CapabilityBindingHandler,
         CapabilityMetadata as ContractCapabilityMetadata, PermissionDecision, PermissionPolicy,
         PromptPolicy, ResourceSelector,
     };
@@ -257,7 +257,7 @@ mod tests {
     #[test]
     fn capability_definition_projects_to_runtime_capability() {
         let def = CapabilityDefinition {
-            schema_version: CAPABILITY_DEFINITION_SCHEMA_V1.to_string(),
+            schema_version: CAPABILITY_DEFINITION_SCHEMA.to_string(),
             id: "slack.post_message".to_string(),
             description: "Post a Slack message".to_string(),
             tool: CapabilityBinding {
@@ -296,7 +296,7 @@ mod tests {
     #[test]
     fn read_only_operations_project_to_read_only_runtime() {
         let def = CapabilityDefinition {
-            schema_version: CAPABILITY_DEFINITION_SCHEMA_V1.to_string(),
+            schema_version: CAPABILITY_DEFINITION_SCHEMA.to_string(),
             id: "files.read".to_string(),
             description: "Read a file".to_string(),
             tool: CapabilityBinding {

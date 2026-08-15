@@ -44,7 +44,7 @@ mod tests {
     use super::super::common::{
         Delegability, Lifecycle, LifecycleBound, RuntimeLimits, Sensitivity,
     };
-    use super::super::grant::{CAPABILITY_GRANT_SCHEMA_V1, GrantProvenance};
+    use super::super::grant::{CAPABILITY_GRANT_SCHEMA, GrantProvenance};
     use super::super::permission::{PermissionScope, ResourceHandle};
     use super::super::policy::{PromptMode, PromptPolicy, SubjectContext};
     use super::*;
@@ -52,7 +52,7 @@ mod tests {
 
     fn grant() -> CapabilityGrant {
         CapabilityGrant {
-            schema_version: CAPABILITY_GRANT_SCHEMA_V1.to_string(),
+            schema_version: CAPABILITY_GRANT_SCHEMA.to_string(),
             grant_id: "grant_01jz_wire_projection".to_string(),
             capability: "github.issue.create".to_string(),
             template_key: None,

@@ -9,7 +9,7 @@ use super::common::{
 use super::permission::{PermissionOperation, PermissionScope, ResourceHandle};
 use super::policy::{PromptPolicy, SubjectContext};
 
-pub const CAPABILITY_GRANT_SCHEMA_V1: &str = "apxm.capability-grant";
+pub const CAPABILITY_GRANT_SCHEMA: &str = "apxm.capability-grant";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -41,9 +41,9 @@ pub struct CapabilityGrant {
 
 impl CapabilityGrant {
     pub fn validate(&self) -> Result<(), CapabilitySchemaError> {
-        if self.schema_version != CAPABILITY_GRANT_SCHEMA_V1 {
+        if self.schema_version != CAPABILITY_GRANT_SCHEMA {
             return Err(CapabilitySchemaError::InvalidSchemaVersion {
-                expected: CAPABILITY_GRANT_SCHEMA_V1,
+                expected: CAPABILITY_GRANT_SCHEMA,
                 actual: self.schema_version.clone(),
             });
         }
@@ -157,7 +157,7 @@ mod tests {
 
     fn grant() -> CapabilityGrant {
         CapabilityGrant {
-            schema_version: CAPABILITY_GRANT_SCHEMA_V1.to_string(),
+            schema_version: CAPABILITY_GRANT_SCHEMA.to_string(),
             grant_id: "grant_01jz_runtime_minted".to_string(),
             capability: "github.issue.create".to_string(),
             template_key: Some("github.issue.create".to_string()),
@@ -256,7 +256,7 @@ mod tests {
     #[test]
     fn unknown_fields_are_rejected_in_enforcement_schema() {
         let raw = serde_json::json!({
-            "schema_version": CAPABILITY_GRANT_SCHEMA_V1,
+            "schema_version": CAPABILITY_GRANT_SCHEMA,
             "grant_id": "grant_01jz_runtime_minted",
             "capability": "github.issue.create",
             "capability_binding": "github.issue",

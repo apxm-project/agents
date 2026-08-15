@@ -35,25 +35,19 @@ pub mod session;
 pub mod source_format;
 
 pub use capability::{
-    AuthMethod, CAPABILITY_DEFINITION_SCHEMA_V1, CAPABILITY_GRANT_SCHEMA_V1,
-    CAPABILITY_TEMPLATE_SCHEMA_V1, CapabilityBinding, CapabilityBindingHandler,
-    CapabilityBindingMetadata, CapabilityDefinition, CapabilityGrant, CapabilityMetadata,
-    CapabilitySchemaError, CapabilityTemplateV1, Delegability, GrantProvenance, GrantStatus,
-    Lifecycle, LifecycleBound, PermissionDecision, PermissionOperation, PermissionPolicy,
-    PermissionRule, PermissionScope, PlannerVisibility, Principal, PrincipalKind, PromptMode,
-    PromptPolicy, ResourceHandle, ResourceSelector, RoleAssignment, RoleDefinition,
-    RuntimeCapabilityGrant, RuntimeLimits, RuntimeSurfaceLimit, RuntimeSurfaceMode,
-    RuntimeSurfacePolicy, Sensitivity, SubjectContext, SubjectSelector,
+    AuthMethod, CAPABILITY_DEFINITION_SCHEMA, CAPABILITY_GRANT_SCHEMA, CAPABILITY_TEMPLATE_SCHEMA,
+    CapabilityBinding, CapabilityBindingHandler, CapabilityBindingMetadata, CapabilityDefinition,
+    CapabilityGrant, CapabilityMetadata, CapabilitySchemaError, CapabilityTemplate, Delegability,
+    GrantProvenance, GrantStatus, Lifecycle, LifecycleBound, PermissionDecision,
+    PermissionOperation, PermissionPolicy, PermissionRule, PermissionScope, PlannerVisibility,
+    Principal, PrincipalKind, PromptMode, PromptPolicy, ResourceHandle, ResourceSelector,
+    RoleAssignment, RoleDefinition, RuntimeCapabilityGrant, RuntimeLimits, RuntimeSurfaceLimit,
+    RuntimeSurfaceMode, RuntimeSurfacePolicy, Sensitivity, SubjectContext, SubjectSelector,
 };
 pub use communicate::{CommunicateProtocol, UnknownProtocol};
 pub use compiler::{
-    BackendLegalityRequirements, CodegenOptions, CompilationStage, CompilerAnalysisKind,
-    CostProvenance, CostSummary, DagOptimizationSummaryV1, Determinism, EffectAuthoritySummary,
-    EmitFormat, OPTIMIZATION_SUMMARY_ARTIFACT_SECTION, OPTIMIZATION_SUMMARY_VERSION,
-    OperationOptimizationSummaryV1, OptimizationDecisionV1, OptimizationDisposition,
-    OptimizationLevel, OptimizationSummaryV1, OptimizationTarget, OptimizationTransformKind,
-    PassInfo, PassMetadata, PipelineConfig, PromptContractSummary, ReplaySafety,
-    TransformationLegality, find_pass_metadata, list_pass_metadata, stage_rank,
+    CodegenOptions, CompilationStage, EmitFormat, OptimizationLevel, OptimizationTarget, PassInfo,
+    PassMetadata, PipelineConfig, find_pass_metadata, list_pass_metadata, stage_rank,
 };
 pub use conversation::{
     ConversationMessageContext, ConversationMessageInput, ConversationMessageInputError,

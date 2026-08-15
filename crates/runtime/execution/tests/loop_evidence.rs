@@ -147,10 +147,9 @@ fn capability_nodes(air: &AirModule, capability_ref: &str) -> Vec<String> {
         .iter()
         .filter(|operation| operation.op == apxm_program::SemanticOpKind::CapabilityInvoke)
         .filter(|operation| {
-            operation
-                .operands
-                .iter()
-                .any(|operand| operand.slot == "capability_ref" && operand.value_id == capability_ref)
+            operation.operands.iter().any(|operand| {
+                operand.slot == "capability_ref" && operand.value_id == capability_ref
+            })
         })
         .map(|operation| operation.node_id.clone())
         .collect()
