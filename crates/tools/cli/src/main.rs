@@ -17,8 +17,6 @@
 )]
 
 mod commands;
-#[cfg(feature = "dev")]
-mod frontend;
 mod tui;
 
 use anyhow::Result;
@@ -112,9 +110,6 @@ async fn run_cli(cli: Cli) -> Result<()> {
         } => commands::interaction::run_command(agent_package, artifact, tui),
         Commands::Event { action } => commands::interaction::event_command(action),
         Commands::Runtime { action } => commands::interaction::runtime_command(action),
-        Commands::CompilationServe { socket } => {
-            commands::interaction::compilation_serve_command(socket)
-        }
         Commands::Resume { last } => commands::interaction::resume_command(last),
         Commands::Interact {
             agent_package,
@@ -138,9 +133,6 @@ async fn run_cli_no_driver(cli: Cli) -> Result<()> {
         } => commands::interaction::run_command(agent_package, artifact, tui),
         Commands::Event { action } => commands::interaction::event_command(action),
         Commands::Runtime { action } => commands::interaction::runtime_command(action),
-        Commands::CompilationServe { socket } => {
-            commands::interaction::compilation_serve_command(socket)
-        }
         Commands::Resume { last } => commands::interaction::resume_command(last),
         Commands::Interact {
             agent_package,

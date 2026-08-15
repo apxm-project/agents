@@ -163,15 +163,16 @@ const PYTHON_AGENT_PACKAGING_PACKAGE: &str = "APXM_PYTHON_AGENT_PACKAGING_PACKAG
 /// This is the whole language-specific surface. Discovery, bundling, and worker
 /// selection all read it, so adding a language is one arm rather than a search
 /// for every place the TypeScript pair was spelled.
-struct AgentPackaging {
-    extension: &'static str,
-    interpreter: &'static str,
-    package_variable: &'static str,
-    compiler: &'static str,
-    worker: &'static str,
+pub(crate) struct AgentPackaging {
+    pub(crate) extension: &'static str,
+    pub(crate) interpreter: &'static str,
+    pub(crate) package_variable: &'static str,
+    pub(crate) compiler: &'static str,
+    #[allow(dead_code)]
+    pub(crate) worker: &'static str,
 }
 
-const fn agent_packaging(language: HandlerLanguage) -> AgentPackaging {
+pub(crate) const fn agent_packaging(language: HandlerLanguage) -> AgentPackaging {
     match language {
         HandlerLanguage::Python => AgentPackaging {
             extension: "py",
@@ -194,7 +195,10 @@ const fn agent_packaging(language: HandlerLanguage) -> AgentPackaging {
 const HANDLER_LANGUAGES: [HandlerLanguage; 2] =
     [HandlerLanguage::Python, HandlerLanguage::TypeScript];
 
-fn installed_agent_packaging_entry(language: HandlerLanguage, relative: &str) -> Result<PathBuf> {
+pub(crate) fn installed_agent_packaging_entry(
+    language: HandlerLanguage,
+    relative: &str,
+) -> Result<PathBuf> {
     let variable = agent_packaging(language).package_variable;
     let package = std::env::var_os(variable).ok_or_else(|| {
         anyhow!("{variable} must point to the installed {language:?} agent-packaging package")
@@ -489,7 +493,7 @@ fn write_new_file(path: &Path, contents: &str) -> Result<()> {
     fs::write(path, contents).with_context(|| format!("Failed to write {}", path.display()))
 }
 
-fn load_tools_manifest(root: &Path) -> Result<HandlerManifest> {
+pub(crate) fn load_tools_manifest(root: &Path) -> Result<HandlerManifest> {
     let tools_path = root.join("capabilities/handlers/tools.json");
     if !tools_path.is_file() {
         return Ok(HandlerManifest::new(Vec::new()));
@@ -594,67 +598,6 @@ pub(crate) fn granted_capability_ids(root: &Path) -> Result<BTreeSet<String>> {
 /// nothing can dispatch, and a manifest entry with no handler source would be
 /// executable code the package never declared.
 ///
-/// A package that ships no handler supplies no implementation, which is `None`
-/// rather than an empty binding: the private worker is only resolved when there
-/// is something for it to evaluate.
-///
-/// # Errors
-///
-/// Returns an error when the package fails integrity verification, when its
-/// manifest is absent or non-conforming, when the manifest and the shipped
-/// handler sources disagree, or when a private worker the manifest needs is not
-/// installed.
-#[cfg(feature = "dev")]
-pub(crate) fn admitted_package_handlers(
-    root: &Path,
-) -> Result<Option<super::canonical_execute::AdmittedPackageHandlers>> {
-    verify_agent_integrity(root)?;
-    let manifest = load_tools_manifest(root)?;
-    let described: BTreeMap<String, HandlerLanguage> = manifest
-        .handlers
-        .iter()
-        .map(|entry| (entry.name.clone(), entry.language))
-        .collect();
-    let shipped = shipped_capability_handlers(root)?;
-    if described != shipped {
-        let names = |handlers: &BTreeMap<String, HandlerLanguage>| {
-            handlers
-                .iter()
-                .map(|(name, language)| format!("{name} ({language:?})"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        bail!(
-            "agent package '{}' would grant [{}] but ships executable handlers for [{}]; run \
-             'apxm build {}' so the ids the grant set claims are exactly the ids the \
-             runtime can dispatch",
-            root.display(),
-            names(&shipped),
-            names(&described),
-            root.display()
-        );
-    }
-    if manifest.handlers.is_empty() {
-        return Ok(None);
-    }
-    // Only the languages this manifest actually uses are resolved, so a package
-    // shipping one language never requires the other language's worker.
-    let mut workers = BTreeMap::new();
-    for language in described.into_values() {
-        if let std::collections::btree_map::Entry::Vacant(slot) = workers.entry(language) {
-            let packaging = agent_packaging(language);
-            slot.insert(super::canonical_execute::PackageHandlerWorkerCommand {
-                interpreter: packaging.interpreter.to_string(),
-                entry: installed_agent_packaging_entry(language, packaging.worker)?,
-            });
-        }
-    }
-    Ok(Some(super::canonical_execute::AdmittedPackageHandlers {
-        workers,
-        manifest,
-    }))
-}
-
 /// The capability ids this package ships a handler for, and the language of each.
 ///
 /// Discovery is the folder contract: `capabilities/<id>/handler.py` and
@@ -664,7 +607,9 @@ pub(crate) fn admitted_package_handlers(
 /// One id may be supplied once. A directory holding both handler sources would
 /// be two implementations of one capability with nothing to choose between them,
 /// so it is refused rather than resolved by an order this function picked.
-fn shipped_capability_handlers(root: &Path) -> Result<BTreeMap<String, HandlerLanguage>> {
+pub(crate) fn shipped_capability_handlers(
+    root: &Path,
+) -> Result<BTreeMap<String, HandlerLanguage>> {
     let caps_dir = root.join("capabilities");
     if !caps_dir.is_dir() {
         return Ok(BTreeMap::new());
@@ -1218,8 +1163,9 @@ pub(crate) fn verify_agent_integrity(root: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(all(test, feature = "driver"))]
-pub(super) fn seal_agent_integrity_for_test(root: &Path) -> Result<()> {
+#[cfg(test)]
+#[allow(dead_code)]
+pub(crate) fn seal_agent_integrity_for_test(root: &Path) -> Result<()> {
     let integrity = compute_integrity(&digest_recognized_files(root)?);
     write_integrity_toml(&root.join("integrity.toml"), &integrity)
 }
@@ -1689,38 +1635,6 @@ mod tests {
         assert!(
             error.to_string().contains("summarize"),
             "the refusal names the capability supplied twice: {error}"
-        );
-    }
-
-    /// The grant set and the dispatchable set are the same set, or the
-    /// composition root refuses to bind the package at all.
-    #[cfg(all(feature = "driver", feature = "dev"))]
-    #[test]
-    fn a_package_whose_manifest_lost_a_shipped_handler_is_refused() {
-        let tmp = tempdir().unwrap();
-        let root = tmp.path().join("drifted");
-        scaffold(&root, "drifted");
-        fs::create_dir_all(root.join("capabilities/propose_edit")).unwrap();
-        fs::write(
-            root.join("capabilities/propose_edit/handler.ts"),
-            "export function proposeEdit() {}\n",
-        )
-        .unwrap();
-        // The handler source is what `granted_capability_ids` reads, so the
-        // grant is already claimed; the manifest that would make it
-        // dispatchable was never built.
-        assert!(
-            granted_capability_ids(&root)
-                .unwrap()
-                .contains("propose_edit")
-        );
-        seal_agent_integrity_for_test(&root).unwrap();
-
-        let error = admitted_package_handlers(&root).expect_err("the drift must be refused");
-        let message = error.to_string();
-        assert!(
-            message.contains("propose_edit") && message.contains("apxm build"),
-            "the refusal names the id the grant set claims and how to make it true: {message}"
         );
     }
 
@@ -2236,71 +2150,6 @@ mod tests {
         );
         agent_lint(&root, None, true)
             .expect_err("a package still carrying capabilities.toml must fail lint");
-    }
-
-    // Spawns the package's Python entry, which imports the apxm_program frontend;
-    // it runs only where that package is installed on the subprocess path (as the
-    // packed-frontend gate arranges), not under the bare CLI test harness.
-    #[ignore = "requires the apxm_program frontend installed on the subprocess path"]
-    #[cfg(feature = "driver")]
-    #[test]
-    fn studio_style_source_package_builds_from_its_compile_entry_alone() {
-        let tmp = tempdir().unwrap();
-        let root = tmp.path().join("studio-generated");
-        fs::create_dir_all(root.join("python")).unwrap();
-        fs::write(
-            root.join("agent.toml"),
-            "id = \"studio-generated\"\n\
-             version = \"0.1.0\"\n\
-             schema_version = \"apxm.agent\"\n\n\
-             [compile]\n\
-             entry = \"python/main.py\"\n\
-             frontend = \"python\"\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("python/main.py"),
-            "from typing import TypedDict\n\
-             \n\
-             from apxm_program import Agent, Model\n\
-             \n\
-             \n\
-             class StudioInput(TypedDict):\n\
-             \x20\x20\x20\x20message: str\n\
-             \n\
-             \n\
-             class StudioOutput(TypedDict):\n\
-             \x20\x20\x20\x20message: str\n\
-             \n\
-             \n\
-             StudioModel = Model[StudioInput, StudioOutput](\"model.target\")\n\
-             \n\
-             \n\
-             @Agent(input=StudioInput, output=StudioOutput)\n\
-             async def StudioGenerated(agent, request):\n\
-             \x20\x20\x20\x20while request[\"message\"] != \"\":\n\
-             \x20\x20\x20\x20\x20\x20\x20\x20reply = await StudioModel(request)\n\
-             \x20\x20\x20\x20\x20\x20\x20\x20request = await agent.yield_(reply)\n\
-             \x20\x20\x20\x20raise ValueError(\"missing studio input\")\n\n\
-             if __name__ == \"__main__\":\n\
-             \x20\x20\x20\x20print(StudioGenerated.canonical_air(), end=\"\")\n",
-        )
-        .unwrap();
-        agent_build(&root, true).expect("a generated source package must build");
-        let agent: AgentToml = read_toml(&root.join("agent.toml")).unwrap();
-        assert_eq!(
-            agent
-                .compile
-                .as_ref()
-                .and_then(|compile| compile.entry.as_deref()),
-            Some("python/main.py")
-        );
-
-        let air =
-            super::super::compile_service_canonical::emit_canonical_air_from_agent(&root, None)
-                .expect("canonical compile-service must compile the package-level program entry");
-        assert!(air.contains("\"schema_version\":\"apxm.air\""));
-        assert!(air.contains("\"op\":\"model.call\""));
     }
 
     /// Sync regenerates the handler manifest and nothing else. It used to

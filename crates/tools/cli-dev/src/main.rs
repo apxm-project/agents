@@ -1,6 +1,7 @@
 //! Dekk-owned compiler and runtime conformance binary.
 
 #![allow(
+    dead_code,
     clippy::assigning_clones,
     clippy::case_sensitive_file_extension_comparisons,
     clippy::cast_possible_wrap,
@@ -13,9 +14,7 @@
 )]
 
 mod commands;
-#[cfg(feature = "dev")]
 mod frontend;
-mod tui;
 
 use anyhow::Result;
 use clap::Parser;
@@ -39,20 +38,9 @@ async fn main() -> ExitCode {
 async fn run_dev(cli: DevCli) -> Result<()> {
     match cli.command {
         DevCommands::CompileServiceCanonical { agent_dir } => {
-            #[cfg(feature = "driver")]
-            {
-                commands::compile_service_canonical::compile_service_canonical_command(
-                    agent_dir, cli.config,
-                )
-            }
-            #[cfg(not(feature = "driver"))]
-            {
-                let _ = agent_dir;
-                Err(anyhow::anyhow!(
-                    "apxm-dev compile-service-canonical requires the `driver` feature. Rebuild through `{}`.",
-                    commands::dekk_hints::BUILD
-                ))
-            }
+            commands::compile_service_canonical::compile_service_canonical_command(
+                agent_dir, cli.config,
+            )
         }
         DevCommands::ExecuteCanonical {
             input,
@@ -63,7 +51,7 @@ async fn run_dev(cli: DevCli) -> Result<()> {
         } => {
             let handlers = package
                 .as_deref()
-                .map(commands::agent::admitted_package_handlers)
+                .map(commands::canonical_execute::admitted_package_handlers)
                 .transpose()?
                 .flatten();
             execute_canonical_command(

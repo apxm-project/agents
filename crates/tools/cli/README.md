@@ -10,9 +10,10 @@ and an Interaction Client (`apxm run`, TUI, `apxm event`, `apxm resume`).
 `apxm runtime serve` / `--connect` supervise local stdio/Unix transports.
 
 `compile-service-canonical`, `execute-canonical`, `codegen`, and `canonical-air`
-live only on the Dekk-owned `apxm-dev` binary (`--features dev`). Production
-`apxm` does not compile those composition roots. `apxm build` regenerates
-package integrity and then commits an artifact through the Compilation Client.
+live only on the Dekk-owned `apxm-dev` binary in the `apxm-cli-dev` package.
+Production `apxm` does not compile those composition roots. `apxm build`
+regenerates package integrity and then commits an artifact through the
+Compilation Client.
 
 The CLI does not parse `chat`, `watch`, or `rollout`. OpenAI `/v1/chat/completions`
 is an independently owned protocol edge (ADR-0024 for non-loopback).

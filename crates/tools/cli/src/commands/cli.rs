@@ -3,8 +3,6 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use super::implementations::parse_header;
-
 #[derive(Parser)]
 #[command(name = "apxm")]
 #[command(about = "APxM CLI - canonical AIR authoring, compilation, and execution", long_about = None)]
@@ -130,13 +128,6 @@ pub enum Commands {
     Runtime {
         #[command(subcommand)]
         action: RuntimeAction,
-    },
-    /// Internal Compilation Service child. Product commands spawn this over JSONL.
-    #[command(hide = true, name = "compilation-serve")]
-    CompilationServe {
-        /// Optional absolute Unix socket path.
-        #[arg(long)]
-        socket: Option<PathBuf>,
     },
     /// Reopen a client interaction record against runtime truth.
     Resume {
@@ -345,49 +336,6 @@ pub enum CodegenAction {
 }
 
 #[derive(Subcommand)]
-pub enum SessionAction {
-    /// List all sessions
-    List {
-        /// Filter by status (running/completed/failed)
-        #[arg(long)]
-        status: Option<String>,
-        /// Limit number of sessions shown
-        #[arg(long, default_value = "20")]
-        limit: usize,
-        /// Explicit sessions root to inspect instead of local/global discovery
-        #[arg(long)]
-        session_root: Option<PathBuf>,
-    },
-    /// Show detailed information about a session
-    Inspect {
-        /// Session ID or path
-        session: String,
-    },
-    /// Compare two sessions
-    Diff {
-        /// First session ID or path
-        session1: String,
-        /// Second session ID or path
-        session2: String,
-    },
-    /// Clean aged sessions
-    Clean {
-        /// Remove sessions older than this duration (e.g., "7d", "30d", "1h")
-        #[arg(long)]
-        older_than: Option<String>,
-        /// Remove all sessions
-        #[arg(long)]
-        all: bool,
-        /// Dry run (show what would be deleted)
-        #[arg(long)]
-        dry_run: bool,
-        /// Explicit sessions root to clean instead of local/global discovery
-        #[arg(long)]
-        session_root: Option<PathBuf>,
-    },
-}
-
-#[derive(Subcommand)]
 pub enum ProcessAction {
     /// List APXM job processes visible from this worktree
     List {},
@@ -399,24 +347,6 @@ pub enum ProcessAction {
         /// Send SIGKILL instead of SIGTERM
         #[arg(long, short)]
         force: bool,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum CacheAction {
-    /// Show cache statistics (hit/miss rates, size, entries)
-    Stats,
-    /// Clear all cached entries
-    Clear {
-        /// Skip confirmation prompt
-        #[arg(long)]
-        yes: bool,
-    },
-    /// Export cache to JSON
-    Export {
-        /// Output file (defaults to stdout)
-        #[arg(short, long)]
-        output: Option<PathBuf>,
     },
 }
 
@@ -440,84 +370,6 @@ pub enum OpsAction {
     /// defined" (`apxm ops list`) and "ops actually used" is visible without
     /// a one-off corpus measurement.
     Usage,
-}
-
-#[derive(Subcommand)]
-pub enum BackendAction {
-    /// List all registered backends
-    List {
-        /// Output format (table or json)
-        #[arg(long, default_value = "table")]
-        format: String,
-    },
-    /// Register a new backend endpoint
-    Add {
-        /// Backend name (for example, "openai").
-        name: String,
-        /// Backend type (cloud, onprem, local). For Ollama, defaults to "local".
-        #[arg(long, default_value = "")]
-        r#type: String,
-        /// Protocol name (openai, anthropic, google, or ollama).
-        #[arg(long)]
-        protocol: String,
-        /// API endpoint URL
-        #[arg(long)]
-        endpoint: Option<String>,
-        /// Optional backend API-key reference (`env:VAR`; raw keys are rejected)
-        #[arg(long)]
-        api_key: Option<String>,
-        /// Extra headers as key=value pairs
-        #[arg(long, value_parser = parse_header)]
-        header: Vec<(String, String)>,
-    },
-    /// Remove a backend
-    Remove {
-        /// Backend name to remove
-        name: String,
-    },
-    /// Test backend connectivity
-    Test {
-        /// Backend name to test (omit to test all)
-        name: Option<String>,
-    },
-    /// Show backend registry status
-    Status {
-        /// Backend name (omit to show all)
-        name: Option<String>,
-    },
-    /// Sync installed Ollama models into a registered backend
-    SyncModels {
-        /// Backend name
-        name: String,
-        /// Override Ollama endpoint (default: use backend's registered endpoint)
-        #[arg(long)]
-        endpoint: Option<String>,
-    },
-    /// Add a model to an existing backend
-    AddModel {
-        /// Backend to add the model to
-        backend: String,
-        /// Model identifier (sent to API)
-        model_id: String,
-        /// Maximum context window in tokens
-        #[arg(long, default_value = "0")]
-        context_window: usize,
-        /// Model supports image inputs
-        #[arg(long)]
-        supports_vision: bool,
-        /// Model supports function/tool calling
-        #[arg(long)]
-        supports_functions: bool,
-        /// Model supports fine-tuning through this backend
-        #[arg(long)]
-        supports_fine_tuning: bool,
-        /// Model supports extended thinking
-        #[arg(long)]
-        supports_thinking: bool,
-        /// OpenAI-compatible requests use reasoning token fields
-        #[arg(long)]
-        uses_reasoning_token_fields: bool,
-    },
 }
 
 #[derive(Subcommand)]
@@ -603,32 +455,6 @@ pub enum OrgAction {
         /// Overwrite an existing install at the destination.
         #[arg(long)]
         force: bool,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum TeamAction {
-    /// List all defined teams
-    List,
-    /// Show members of a specific team
-    Show {
-        /// Team name to display
-        name: String,
-    },
-    /// Add a member to an existing team
-    Add {
-        /// Team name
-        #[arg(long)]
-        team: String,
-        /// Role/agent name for the new member
-        #[arg(long)]
-        role: String,
-        /// ACP profile for the member (e.g., "claude", "codex")
-        #[arg(long)]
-        profile: String,
-        /// Optional system prompt for this member
-        #[arg(long)]
-        system_prompt: Option<String>,
     },
 }
 

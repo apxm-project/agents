@@ -339,7 +339,7 @@ class CanonicalOnlyReachabilityTests(unittest.TestCase):
         run = command["run"]
 
         self.assertEqual(command["group"], "Compilation")
-        self.assertIn("build -p apxm-cli --features dev --bin apxm-dev", run)
+        self.assertIn("build -p apxm-cli-dev --bin apxm-dev", run)
         self.assertIn('debug/apxm-dev\" execute-canonical', run)
         self.assertIn("--invocation-admission", run)
         self.assertIn("--release", run)
@@ -349,11 +349,27 @@ class CanonicalOnlyReachabilityTests(unittest.TestCase):
 
     def test_production_cli_does_not_own_compiler_runtime_composition_roots(self) -> None:
         cargo = (REPOSITORY_ROOT / "crates/tools/cli/Cargo.toml").read_text()
-        self.assertIn('name = "apxm-dev"', cargo)
-        self.assertIn('required-features = ["dev"]', cargo)
-        self.assertIn("apxm-execution = { workspace = true, optional = true }", cargo)
-        self.assertIn("apxm-kernel = { workspace = true, optional = true }", cargo)
-        self.assertIn("apxm-source-port = { workspace = true, optional = true }", cargo)
+        self.assertNotIn('name = "apxm-dev"', cargo)
+        self.assertNotIn("apxm-execution", cargo)
+        self.assertNotIn("apxm-kernel", cargo)
+        self.assertNotIn("apxm-program", cargo)
+        self.assertNotIn("apxm-backends", cargo)
+        self.assertNotIn("apxm-backend-registry", cargo)
+        self.assertNotIn("apxm-compilation-service", cargo)
+        self.assertNotIn("apxm-runtime-service", cargo)
+        production = REPOSITORY_ROOT / "crates/tools/cli/src"
+        for path in production.rglob("*.rs"):
+            text = path.read_text(errors="ignore")
+            self.assertNotIn(
+                "CanonicalRuntime",
+                text,
+                f"production crate still names CanonicalRuntime: {path}",
+            )
+        dev_cargo = (REPOSITORY_ROOT / "crates/tools/cli-dev/Cargo.toml").read_text()
+        self.assertIn('name = "apxm-cli-dev"', dev_cargo)
+        self.assertIn('name = "apxm-dev"', dev_cargo)
+        members = tomllib.loads((REPOSITORY_ROOT / "Cargo.toml").read_text())["workspace"]["members"]
+        self.assertIn("crates/tools/cli-dev", members)
         cli = (REPOSITORY_ROOT / "crates/tools/cli/src/commands/cli.rs").read_text()
         self.assertNotIn("/// Regenerate package metadata and integrity.toml.", cli)
         self.assertNotIn("    Build {\n        /// Agent directory to build", cli)

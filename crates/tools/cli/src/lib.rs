@@ -1,7 +1,4 @@
-//! Reusable product-neutral canonical execution entry point.
+//! Production Interaction Client library. Compiler and runtime fixtures live in
+//! `apxm-cli-dev`.
 
 pub mod tui;
-
-#[cfg(feature = "dev")]
-#[path = "commands/canonical_execute.rs"]
-pub mod canonical_execute;

@@ -3,6 +3,7 @@
 use anyhow::Result;
 use colored::Colorize;
 
+#[allow(dead_code)]
 pub(crate) fn category_str(cat: apxm_core::types::OperationCategory) -> &'static str {
     use apxm_core::types::OperationCategory;
     match cat {
@@ -31,15 +32,18 @@ fn latency_to_ms(lat: apxm_core::types::OperationLatency) -> u64 {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn find_op_spec(op: &str) -> Option<&'static apxm_core::types::OperationSpec> {
     use apxm_core::types::AIS_OPERATIONS;
     AIS_OPERATIONS.iter().find(|s| s.op_type.to_string() == op)
 }
 
+#[allow(dead_code)]
 pub(super) fn op_latency_ms(op: &str) -> u64 {
     find_op_spec(op).map_or(100, |s| latency_to_ms(s.latency))
 }
 
+#[allow(dead_code)]
 pub(crate) fn parse_header(s: &str) -> Result<(String, String), String> {
     let pos = s
         .find('=')
@@ -83,6 +87,7 @@ pub(super) fn print_status_line(label: &str, status: Status, value: &str) {
     println!("  {} {:<14} [{}] {}", icon, label.bold(), status_str, value);
 }
 
+#[allow(dead_code)]
 pub(super) fn parse_duration(s: &str) -> Result<chrono::Duration> {
     let s = s.trim();
     if let Some(days_str) = s.strip_suffix('d') {

@@ -1791,6 +1791,64 @@ pub struct PackageHandlerWorkerCommand {
     pub entry: PathBuf,
 }
 
+/// Bind the package's shipped handlers only when the grant set and the
+/// dispatchable set are the same set.
+///
+/// # Errors
+///
+/// Returns an error when the package fails integrity verification, when its
+/// manifest is absent or non-conforming, when the manifest and the shipped
+/// handler sources disagree, or when a private worker the manifest needs is not
+/// installed.
+pub(crate) fn admitted_package_handlers(
+    root: &std::path::Path,
+) -> Result<Option<AdmittedPackageHandlers>> {
+    use std::collections::BTreeMap;
+
+    use apxm_core::types::HandlerLanguage;
+
+    super::agent::verify_agent_integrity(root)?;
+    let manifest = super::agent::load_tools_manifest(root)?;
+    let described: BTreeMap<String, HandlerLanguage> = manifest
+        .handlers
+        .iter()
+        .map(|entry| (entry.name.clone(), entry.language))
+        .collect();
+    let shipped = super::agent::shipped_capability_handlers(root)?;
+    if described != shipped {
+        let names = |handlers: &BTreeMap<String, HandlerLanguage>| {
+            handlers
+                .iter()
+                .map(|(name, language)| format!("{name} ({language:?})"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        anyhow::bail!(
+            "agent package '{}' would grant [{}] but ships executable handlers for [{}]; run \
+             'apxm build {}' so the ids the grant set claims are exactly the ids the \
+             runtime can dispatch",
+            root.display(),
+            names(&shipped),
+            names(&described),
+            root.display()
+        );
+    }
+    if manifest.handlers.is_empty() {
+        return Ok(None);
+    }
+    let mut workers = BTreeMap::new();
+    for language in described.into_values() {
+        if let std::collections::btree_map::Entry::Vacant(slot) = workers.entry(language) {
+            let packaging = super::agent::agent_packaging(language);
+            slot.insert(PackageHandlerWorkerCommand {
+                interpreter: packaging.interpreter.to_string(),
+                entry: super::agent::installed_agent_packaging_entry(language, packaging.worker)?,
+            });
+        }
+    }
+    Ok(Some(AdmittedPackageHandlers { workers, manifest }))
+}
+
 fn execute_via_runtime_service(
     artifact_bytes: &[u8],
     admission: InvocationAdmission,
@@ -3900,5 +3958,44 @@ mod tests {
                 .expect("authored target has exactly one local binding");
             assert_eq!(resolved.model_target.reference.0, target);
         }
+    }
+
+    /// The grant set and the dispatchable set are the same set, or the
+    /// composition root refuses to bind the package at all.
+    #[test]
+    fn a_package_whose_manifest_lost_a_shipped_handler_is_refused() {
+        use std::fs;
+
+        use tempfile::tempdir;
+
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("drifted");
+        crate::commands::agent::agent_new(
+            "drifted",
+            Some(root.clone()),
+            None,
+            "looped-agent",
+            true,
+        )
+        .expect("scaffold ok");
+        fs::create_dir_all(root.join("capabilities/propose_edit")).unwrap();
+        fs::write(
+            root.join("capabilities/propose_edit/handler.ts"),
+            "export function proposeEdit() {}\n",
+        )
+        .unwrap();
+        assert!(
+            crate::commands::agent::granted_capability_ids(&root)
+                .unwrap()
+                .contains("propose_edit")
+        );
+        crate::commands::agent::seal_agent_integrity_for_test(&root).unwrap();
+
+        let error = super::admitted_package_handlers(&root).expect_err("the drift must be refused");
+        let message = error.to_string();
+        assert!(
+            message.contains("propose_edit") && message.contains("apxm build"),
+            "the refusal names the id the grant set claims and how to make it true: {message}"
+        );
     }
 }

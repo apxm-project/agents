@@ -1,18 +1,17 @@
 //! Headless Compilation and Runtime Service clients owned by the command shell.
 
 use std::fs;
-use std::io::{self, BufReader, IsTerminal};
-use std::path::PathBuf;
+use std::io::{self, IsTerminal};
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::SystemTime;
 
 use anyhow::{Result, bail};
 use apxm_compilation_client::CompilationClient;
-use apxm_compilation_service::{CompilationService, UnixEndpoint as CompilationUnixEndpoint};
 use apxm_interaction_client::{
     CLIENT_RECORD_CONTRACT, ClientInteractionRecord, HeadlessOutcome, InteractionClient,
     render_outcome,
 };
-use apxm_runtime_service::{self, RuntimeService, UnixEndpoint};
 
 use super::cli::{EventAction, RuntimeAction};
 use crate::tui;
@@ -103,44 +102,32 @@ pub fn event_command(action: EventAction) -> Result<()> {
     }
 }
 
-/// Local Runtime Service supervise/connect.
+/// Local Runtime Service supervise/connect. The CLI execs the service binary.
 pub fn runtime_command(action: RuntimeAction) -> Result<()> {
     match action {
         RuntimeAction::Serve { socket } => {
-            let service = RuntimeService::from_env();
-            if let Some(path) = socket {
-                let path = path.display().to_string();
-                UnixEndpoint::new(path.clone()).map_err(|error| anyhow::anyhow!(error))?;
-                apxm_runtime_service::serve_unix(&path, service)
-                    .map_err(|error| anyhow::anyhow!(error))?;
-                return Ok(());
+            if let Some(path) = &socket {
+                require_absolute_socket(path)?;
             }
-            apxm_runtime_service::serve_stdio(io::stdin().lock(), io::stdout(), service)
-                .map_err(|error| anyhow::anyhow!(error))?;
+            let program = runtime_service_bin()?;
+            let mut cmd = Command::new(program);
+            if let Some(path) = socket {
+                cmd.arg("--socket").arg(path);
+            }
+            let status = cmd
+                .status()
+                .map_err(|error| anyhow::anyhow!("failed to exec apxm-runtime-service: {error}"))?;
+            if !status.success() {
+                bail!("apxm-runtime-service exited with {status}");
+            }
             Ok(())
         }
         RuntimeAction::Connect { socket } => {
-            UnixEndpoint::new(socket.display().to_string())
-                .map_err(|error| anyhow::anyhow!(error))?;
+            require_absolute_socket(&socket)?;
             println!("connected");
             Ok(())
         }
     }
-}
-
-/// Internal Compilation Service child over stdio or Unix.
-pub fn compilation_serve_command(socket: Option<PathBuf>) -> Result<()> {
-    let service = CompilationService::from_env();
-    if let Some(path) = socket {
-        let path = path.display().to_string();
-        CompilationUnixEndpoint::new(path.clone()).map_err(|error| anyhow::anyhow!(error))?;
-        apxm_compilation_service::serve_unix(&path, service)
-            .map_err(|error| anyhow::anyhow!(error))?;
-        return Ok(());
-    }
-    apxm_compilation_service::serve_stdio(BufReader::new(io::stdin()), io::stdout(), service)
-        .map_err(|error| anyhow::anyhow!(error))?;
-    Ok(())
 }
 
 /// Resume from runtime truth. The client file is not Program Context.
@@ -204,23 +191,44 @@ fn spawn_runtime_client() -> Result<InteractionClient> {
 }
 
 fn compilation_child() -> Result<(PathBuf, Vec<&'static str>)> {
-    if let Some(bin) = env_bin("APXM_COMPILATION_SERVICE_BIN") {
-        return Ok((bin, Vec::new()));
-    }
-    if let Some(bin) = sibling_bin("apxm-compilation-service") {
-        return Ok((bin, Vec::new()));
-    }
-    Ok((current_exe()?, vec!["compilation-serve"]))
+    Ok((compilation_service_bin()?, compilation_child_args()))
 }
 
 fn runtime_child() -> Result<(PathBuf, Vec<&'static str>)> {
-    if let Some(bin) = env_bin("APXM_RUNTIME_SERVICE_BIN") {
-        return Ok((bin, Vec::new()));
+    Ok((runtime_service_bin()?, runtime_child_args()))
+}
+
+fn compilation_child_args() -> Vec<&'static str> {
+    Vec::new()
+}
+
+fn runtime_child_args() -> Vec<&'static str> {
+    Vec::new()
+}
+
+fn compilation_service_bin() -> Result<PathBuf> {
+    resolve_service_bin("APXM_COMPILATION_SERVICE_BIN", "apxm-compilation-service")
+}
+
+fn runtime_service_bin() -> Result<PathBuf> {
+    resolve_service_bin("APXM_RUNTIME_SERVICE_BIN", "apxm-runtime-service")
+}
+
+fn resolve_service_bin(env_key: &str, name: &str) -> Result<PathBuf> {
+    if let Some(bin) = env_bin(env_key) {
+        return Ok(bin);
     }
-    if let Some(bin) = sibling_bin("apxm-runtime-service") {
-        return Ok((bin, Vec::new()));
+    if let Some(bin) = sibling_bin(name) {
+        return Ok(bin);
     }
-    Ok((current_exe()?, vec!["runtime", "serve"]))
+    bail!("{name} is not on PATH or next to apxm; build -p {name}")
+}
+
+fn require_absolute_socket(path: &Path) -> Result<()> {
+    if !path.is_absolute() {
+        bail!("unix socket path must be absolute");
+    }
+    Ok(())
 }
 
 fn env_bin(key: &str) -> Option<PathBuf> {
@@ -233,10 +241,6 @@ fn sibling_bin(name: &str) -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let path = exe.parent()?.join(name);
     path.is_file().then_some(path)
-}
-
-fn current_exe() -> Result<PathBuf> {
-    std::env::current_exe().map_err(|error| anyhow::anyhow!(error))
 }
 
 fn artifact_dir() -> Result<PathBuf> {
@@ -297,7 +301,11 @@ mod tests {
 
     #[test]
     fn artifact_run_does_not_name_compilation() {
-        let (_, args) = runtime_child().expect("runtime child");
-        assert!(!args.iter().any(|arg| arg.contains("compilation")));
+        assert!(
+            !runtime_child_args()
+                .iter()
+                .any(|arg| arg.contains("compilation")),
+            "the Runtime child argv must not start Compilation"
+        );
     }
 }

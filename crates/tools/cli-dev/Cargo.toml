@@ -1,10 +1,10 @@
 [package]
-name = "apxm-cli"
+name = "apxm-cli-dev"
 version.workspace = true
 edition.workspace = true
 build = "build.rs"
 publish = false
-description = "APxM CLI - canonical local and remote APXM command surface"
+description = "Dekk-owned apxm-dev compiler and runtime conformance binary"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
@@ -14,22 +14,43 @@ authors.workspace = true
 workspace = true
 
 [[bin]]
-name = "apxm"
+name = "apxm-dev"
 path = "src/main.rs"
+
+[[test]]
+name = "canonical_execute"
+
+[[test]]
+name = "canonical_capability_execute"
+
+[[test]]
+name = "canonical_skill_execute"
 
 [dependencies]
 apxm-core.workspace = true
 apxm-ais.workspace = true
+apxm-backends.workspace = true
+apxm-program.workspace = true
+apxm-capability.workspace = true
+apxm-source-port.workspace = true
+apxm-execution.workspace = true
+apxm-runtime-service.workspace = true
+apxm-runtime-protocol.workspace = true
+apxm-compilation-service.workspace = true
+apxm-compilation-protocol.workspace = true
 apxm-compilation-client.workspace = true
 apxm-interaction-client.workspace = true
+apxm-inference.workspace = true
+apxm-kernel.workspace = true
+apxm-backend-registry.workspace = true
 clap.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net", "io-util", "process", "sync"] }
+async-trait.workspace = true
 anyhow.workspace = true
 colored.workspace = true
 dirs.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tracing-subscriber = { workspace = true, optional = true }
 chrono.workspace = true
 reqwest = { version = "0.13", features = ["blocking", "stream", "json", "rustls"], default-features = false }
 walkdir.workspace = true
@@ -43,18 +64,3 @@ serde_json.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "io-util"] }
 tempfile.workspace = true
 toml.workspace = true
-
-[build-dependencies]
-apxm-core.workspace = true
-
-[features]
-default = []
-driver = [
-    "tokio/rt-multi-thread",
-    "tokio/io-std",
-    "tokio/io-util",
-    "tokio/sync",
-    "dep:tracing-subscriber",
-]
-metrics = ["driver"]
-no-trace = ["apxm-core/no-trace"]

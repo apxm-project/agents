@@ -28,6 +28,7 @@ members = [
 	"crates/orchestration/artifact",
 	# ── Tools (CLI + developer clients) ───────────
 	"crates/tools/cli",
+	"crates/tools/cli-dev",
 	"crates/tools/compilation-client",
 	"crates/tools/interaction-client",
 	# ── Observability (shared telemetry bootstrap, ) ─────────
