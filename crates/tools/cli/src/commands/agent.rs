@@ -906,9 +906,18 @@ fn find_unrecognized_files(root: &Path) -> Result<Vec<String>> {
     let mut out = Vec::new();
     for entry in walkdir::WalkDir::new(root).into_iter().filter_entry(|e| {
         let name = e.file_name().to_string_lossy();
+        // Build output and dependency metadata a working copy accumulates.
+        // Every name here is gitignored, so none can ever be in the integrity
+        // chain; scanning them would fail verification on the ordinary result
+        // of running a package's own build.
         !matches!(
             name.as_ref(),
-            ".git" | "__pycache__" | ".pytest_cache" | "node_modules" | "dist"
+            ".git"
+                | "__pycache__"
+                | ".pytest_cache"
+                | "node_modules"
+                | "dist"
+                | "package-lock.json"
         )
     }) {
         let entry = entry.with_context(|| format!("Failed to walk {}", root.display()))?;

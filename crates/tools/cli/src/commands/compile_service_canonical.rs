@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use apxm_core::constants::env as apxm_env;
-use apxm_core::types::ApxmPathFormat;
 use serde::Deserialize;
 
 use super::agent::{CompileToml, FrontendLanguage};
@@ -33,19 +32,19 @@ pub(crate) fn emit_canonical_air_from_agent(
             agent_dir.display()
         ));
     }
-    let entry = declared_agent_package_entry(agent_dir)?.ok_or_else(|| {
+    let (entry, frontend) = declared_agent_package_entry(agent_dir)?.ok_or_else(|| {
         anyhow::anyhow!(
             "{} must declare [compile].entry and [compile].frontend",
             agent_dir.join("agent.toml").display()
         )
     })?;
     super::agent::verify_agent_integrity(agent_dir)?;
-    if !ApxmPathFormat::from_path(&entry).is_python_frontend() {
-        return Err(anyhow::anyhow!(
-            "canonical compile-service currently supports a Python [compile].entry authored on the apxm_program frontend"
-        ));
-    }
-    let air_json = run_canonical_python_entry(&entry, config_path)?;
+    let air_json = match frontend {
+        FrontendLanguage::Python => run_canonical_python_entry(&entry, config_path)?,
+        FrontendLanguage::TypeScript => {
+            run_canonical_typescript_entry(agent_dir, &entry, config_path)?
+        }
+    };
     let module: apxm_program::air::AirModule =
         serde_json::from_str(&air_json).with_context(|| {
             format!(
@@ -177,25 +176,133 @@ fn run_canonical_python_entry(input: &Path, config_path: Option<&Path>) -> Resul
     let output = output.ok_or_else(|| {
         anyhow::anyhow!("Python interpreter not found on PATH (tried python3, python)")
     })?;
+    canonical_entry_air(input, &output)
+}
+
+/// Bootstrap that turns a built module into AIR on stdout.
+///
+/// `[compile].entry` names a path, not an export, so the module is imported and
+/// scanned for the single handle that can emit canonical AIR. Refusing an
+/// ambiguous module keeps the declared entry the thing that decides what
+/// compiles, rather than an export name the package could rename silently.
+const TYPESCRIPT_AIR_BOOTSTRAP: &str = r#"
+import { pathToFileURL } from "node:url";
+const module = await import(pathToFileURL(process.argv[1]).href);
+const handles = Object.entries(module).filter(
+  ([, value]) => value && typeof value.canonicalAir === "function",
+);
+if (handles.length !== 1) {
+  console.error(
+    "expected exactly one Agent export exposing canonicalAir(), saw: [" +
+      handles.map(([name]) => name).join(", ") +
+      "]",
+  );
+  process.exit(1);
+}
+process.stdout.write(handles[0][1].canonicalAir());
+"#;
+
+/// Run a TypeScript package entry through its built JavaScript.
+///
+/// The authored `.ts` is not executable: the capture pass and the AIR bridge
+/// are both JavaScript, so the package's own build output is what runs. The
+/// build is deliberately not invoked here — every other gate in the tree builds
+/// as its own step, and compiling should not mutate the package being compiled.
+fn run_canonical_typescript_entry(
+    agent_dir: &Path,
+    entry: &Path,
+    config_path: Option<&Path>,
+) -> Result<String> {
+    let built = built_typescript_entry(agent_dir, entry)?;
+
+    let mut command = std::process::Command::new("node");
+    // Run from the package root so the emitted source map names the authored
+    // entry package-relative, matching what the package's own compile script
+    // produces. The AIR is content-addressed, so a differing cwd is a differing
+    // artifact.
+    command
+        .current_dir(agent_dir)
+        .arg("--input-type=module")
+        .arg("--eval")
+        .arg(TYPESCRIPT_AIR_BOOTSTRAP)
+        .arg(&built);
+    if let Some(config_path) = config_path {
+        command.env(apxm_env::APXM_CONFIG, config_path);
+    }
+
+    let output = match command.output() {
+        Ok(output) => output,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Err(anyhow::anyhow!("Node interpreter not found on PATH"));
+        }
+        Err(err) => {
+            return Err(anyhow::anyhow!(
+                "Failed to run canonical TypeScript entry {} with node: {}",
+                entry.display(),
+                err
+            ));
+        }
+    };
+    canonical_entry_air(entry, &output)
+}
+
+/// Resolve the built JavaScript a TypeScript `[compile].entry` compiles to.
+///
+/// `tsc` places output under `outDir` keyed by the inferred or declared
+/// `rootDir`, so a package that compiles the whole tree emits `dist/src/main.js`
+/// while one rooted at `src/` emits `dist/main.js`. Both are probed rather than
+/// assumed, and a miss names every path tried plus the build that produces them.
+fn built_typescript_entry(agent_dir: &Path, entry: &Path) -> Result<PathBuf> {
+    let relative = entry.strip_prefix(agent_dir).unwrap_or(entry);
+    let package_rooted = Path::new("dist").join(relative.with_extension("js"));
+    let below_first_component: PathBuf = relative.iter().skip(1).collect();
+    let source_rooted = (!below_first_component.as_os_str().is_empty())
+        .then(|| Path::new("dist").join(below_first_component.with_extension("js")));
+
+    let candidates: Vec<PathBuf> = std::iter::once(package_rooted)
+        .chain(source_rooted)
+        .collect();
+    for candidate in &candidates {
+        if agent_dir.join(candidate).is_file() {
+            return Ok(candidate.clone());
+        }
+    }
+    anyhow::bail!(
+        "{} declares a TypeScript [compile].entry {:?}, but no built module was found at [{}]. \
+         Build the package first, for example with 'npm --prefix {} run build'",
+        agent_dir.join("agent.toml").display(),
+        relative.display(),
+        candidates
+            .iter()
+            .map(|candidate| candidate.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", "),
+        agent_dir.display(),
+    )
+}
+
+/// Shared stdout contract for every canonical entry: a successful process that
+/// wrote non-empty UTF-8 AIR. Both frontends fail the same way.
+fn canonical_entry_air(entry: &Path, output: &std::process::Output) -> Result<String> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(anyhow::anyhow!(
-            "canonical Python entry {} failed: {}",
-            input.display(),
+            "canonical entry {} failed: {}",
+            entry.display(),
             stderr.trim()
         ));
     }
-    let air = String::from_utf8(output.stdout).with_context(|| {
+    let air = String::from_utf8(output.stdout.clone()).with_context(|| {
         format!(
             "canonical entry {} did not emit valid UTF-8",
-            input.display()
+            entry.display()
         )
     })?;
     let trimmed = air.trim();
     if trimmed.is_empty() {
         return Err(anyhow::anyhow!(
             "canonical entry {} produced no AIR output on stdout",
-            input.display()
+            entry.display()
         ));
     }
     Ok(trimmed.to_string())
@@ -207,7 +314,7 @@ struct AgentPackageToml {
     compile: Option<CompileToml>,
 }
 
-fn declared_agent_package_entry(agent_dir: &Path) -> Result<Option<PathBuf>> {
+fn declared_agent_package_entry(agent_dir: &Path) -> Result<Option<(PathBuf, FrontendLanguage)>> {
     let agent_path = agent_dir.join("agent.toml");
     let source: AgentPackageToml = toml::from_str(
         &std::fs::read_to_string(&agent_path)
@@ -250,19 +357,14 @@ fn declared_agent_package_entry(agent_dir: &Path) -> Result<Option<PathBuf>> {
                     resolved.display()
                 );
             }
-            if frontend != FrontendLanguage::Python {
+            let expected_extension = frontend.source_extension();
+            if !entry.ends_with(expected_extension) {
                 anyhow::bail!(
-                    "canonical compile-service currently supports frontend = \"python\"; {} declares {frontend}",
-                    agent_path.display()
-                );
-            }
-            if !ApxmPathFormat::from_path(&resolved).is_python_frontend() {
-                anyhow::bail!(
-                    "{} declares [compile].frontend = {frontend}, but entry {entry:?} has the wrong source extension",
+                    "{} declares [compile].frontend = {frontend}, but entry {entry:?} does not end in {expected_extension}",
                     agent_path.display(),
                 );
             }
-            Ok(Some(resolved))
+            Ok(Some((resolved, frontend)))
         }
     }
 }
