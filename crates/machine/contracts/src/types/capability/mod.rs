@@ -5,7 +5,6 @@
 
 mod common;
 mod permission;
-mod permission_vocabulary;
 mod wire;
 
 pub use common::{
@@ -13,8 +12,4 @@ pub use common::{
     RuntimeSurfacePolicy,
 };
 pub use permission::{PermissionDecision, PermissionOperation, PermissionScope, ResourceHandle};
-pub use permission_vocabulary::{
-    ApprovalPosture, AuditPayloadPolicy, CredentialScope, GrantState, OperationClass,
-    PermissionScopeKind, RiskLevel,
-};
 pub use wire::{GrantStatus, RuntimeCapabilityGrant};

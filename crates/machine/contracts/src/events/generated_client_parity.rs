@@ -20,7 +20,9 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use super::payload::{CapabilityEffectDispatchPath, CapabilityEffectImplementationKind};
+use super::payload::{
+    ApprovalRiskLevel, CapabilityEffectDispatchPath, CapabilityEffectImplementationKind,
+};
 
 /// Repo-relative paths of the generated clients, for failure messages that
 /// point at the file an operator must look at rather than an absolute path
@@ -88,6 +90,29 @@ fn admitted_implementation_kinds() -> BTreeSet<String> {
             CapabilityEffectImplementationKind::Native
             | CapabilityEffectImplementationKind::Typescript
             | CapabilityEffectImplementationKind::Host => {}
+        }
+    }
+    ALL.iter().map(wire_name).collect()
+}
+
+/// Every approval-request `risk_level` name this runtime admits, pinned the
+/// same way.
+///
+/// This vocabulary is deliberately narrower than the policy-side
+/// [`RiskLevel`](crate::types::consent::RiskLevel), which carries a fourth
+/// `critical` level. `RiskLevel::to_approval` saturates onto this list, so the
+/// runtime cannot emit a name the clients reject. Widening this enum to admit
+/// `critical` is a change in the schema owner first — this gate is what turns
+/// doing it here into a failure instead of a silent client break.
+fn admitted_approval_risk_levels() -> BTreeSet<String> {
+    const ALL: &[ApprovalRiskLevel] = &[
+        ApprovalRiskLevel::Low,
+        ApprovalRiskLevel::Medium,
+        ApprovalRiskLevel::High,
+    ];
+    for variant in ALL {
+        match variant {
+            ApprovalRiskLevel::Low | ApprovalRiskLevel::Medium | ApprovalRiskLevel::High => {}
         }
     }
     ALL.iter().map(wire_name).collect()
@@ -168,4 +193,14 @@ fn generated_clients_publish_only_admitted_implementation_kinds() {
     let admitted = admitted_implementation_kinds();
     assert_vocabulary(TYPESCRIPT_CLIENT, "implementation_kind", &admitted);
     assert_vocabulary(PYTHON_CLIENT, "implementation_kind", &admitted);
+}
+
+/// The approval-request risk vocabulary must stay exactly what both clients
+/// publish, so the policy-side saturation in `RiskLevel::to_approval` cannot be
+/// widened here without the schema owner moving first.
+#[test]
+fn generated_clients_publish_only_admitted_approval_risk_levels() {
+    let admitted = admitted_approval_risk_levels();
+    assert_vocabulary(TYPESCRIPT_CLIENT, "risk_level", &admitted);
+    assert_vocabulary(PYTHON_CLIENT, "risk_level", &admitted);
 }

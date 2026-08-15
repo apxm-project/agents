@@ -201,9 +201,6 @@ impl AppMetrics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use apxm_core::types::capability::{
-        ApprovalPosture, OperationClass, PermissionScopeKind, RiskLevel,
-    };
     use opentelemetry::metrics::MeterProvider as _;
     use opentelemetry_sdk::metrics::SdkMeterProvider;
     use opentelemetry_sdk::metrics::data::Sum;
@@ -300,43 +297,5 @@ mod tests {
         assert_eq!(PermissionDecision::allow().as_str(), "allow");
         assert_eq!(PermissionDecision::ask("confirm").as_str(), "ask");
         assert_eq!(PermissionDecision::deny("refused").as_str(), "deny");
-    }
-
-    #[test]
-    fn cm3_enum_as_str_matches_serde_wire_values() {
-        for (value, expected) in [
-            (OperationClass::Read.as_str(), "read"),
-            (OperationClass::Write.as_str(), "write"),
-            (OperationClass::Destructive.as_str(), "destructive"),
-        ] {
-            assert_eq!(value, expected);
-        }
-        for (value, expected) in [
-            (RiskLevel::Low.as_str(), "low"),
-            (RiskLevel::Medium.as_str(), "medium"),
-            (RiskLevel::High.as_str(), "high"),
-            (RiskLevel::Critical.as_str(), "critical"),
-        ] {
-            assert_eq!(value, expected);
-        }
-        for (value, expected) in [
-            (ApprovalPosture::Auto.as_str(), "auto"),
-            (ApprovalPosture::Confirm.as_str(), "confirm"),
-            (ApprovalPosture::DualControl.as_str(), "dual_control"),
-            (
-                ApprovalPosture::ExternalSignoff.as_str(),
-                "external_signoff",
-            ),
-        ] {
-            assert_eq!(value, expected);
-        }
-        for (value, expected) in [
-            (PermissionScopeKind::Session.as_str(), "session"),
-            (PermissionScopeKind::Workspace.as_str(), "workspace"),
-            (PermissionScopeKind::Org.as_str(), "org"),
-            (PermissionScopeKind::Global.as_str(), "global"),
-        ] {
-            assert_eq!(value, expected);
-        }
     }
 }

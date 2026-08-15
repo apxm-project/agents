@@ -15,16 +15,51 @@ pub enum PromptMode {
     ExternalSignoff,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Policy risk vocabulary carried by a [`PermissionPrompt`].
+///
+/// This is the wider of the two risk vocabularies in the tree. The narrower
+/// [`ApprovalRiskLevel`](crate::events::payload::ApprovalRiskLevel) is the
+/// projection published on the approval-request event, whose variant list is
+/// owned by the contracts repository and pinned by the generated public
+/// clients; widening it has to land there first. Project across the boundary
+/// with [`RiskLevel::to_approval`] rather than restating the mapping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RiskLevel {
-    #[serde(rename = "low")]
     Low,
-    #[serde(rename = "medium")]
     Medium,
-    #[serde(rename = "high")]
     High,
-    #[serde(rename = "critical")]
     Critical,
+}
+
+impl RiskLevel {
+    /// Wire-shape (`snake_case`) string for this variant, so serde and
+    /// non-serde contexts cannot disagree.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Critical => "critical",
+        }
+    }
+
+    /// Narrow this policy risk onto the event vocabulary. `Critical` saturates
+    /// to `High` because the published event schema admits no fourth level.
+    pub const fn to_approval(self) -> crate::events::payload::ApprovalRiskLevel {
+        use crate::events::payload::ApprovalRiskLevel;
+        match self {
+            Self::Low => ApprovalRiskLevel::Low,
+            Self::Medium => ApprovalRiskLevel::Medium,
+            Self::High | Self::Critical => ApprovalRiskLevel::High,
+        }
+    }
+}
+
+impl std::fmt::Display for RiskLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 /// A per-call approval request sent to the host's prompt surface.
@@ -214,5 +249,39 @@ mod tests {
                 reason: APPROVAL_BROKER_UNAVAILABLE_REASON.to_string()
             }
         );
+    }
+
+    /// The policy vocabulary is one level wider than the published event
+    /// vocabulary, so the projection has to be total and `critical` has to
+    /// land somewhere. It saturates to `high` rather than dropping the prompt.
+    #[test]
+    fn risk_level_projects_onto_the_published_event_vocabulary() {
+        use crate::events::payload::ApprovalRiskLevel;
+
+        for (policy, expected) in [
+            (RiskLevel::Low, ApprovalRiskLevel::Low),
+            (RiskLevel::Medium, ApprovalRiskLevel::Medium),
+            (RiskLevel::High, ApprovalRiskLevel::High),
+            (RiskLevel::Critical, ApprovalRiskLevel::High),
+        ] {
+            assert_eq!(policy.to_approval(), expected, "projecting {policy}");
+        }
+    }
+
+    /// `as_str` and serde must not disagree; the label and the wire value are
+    /// the same vocabulary.
+    #[test]
+    fn risk_level_as_str_matches_its_serde_wire_value() {
+        for level in [
+            RiskLevel::Low,
+            RiskLevel::Medium,
+            RiskLevel::High,
+            RiskLevel::Critical,
+        ] {
+            assert_eq!(
+                serde_json::to_value(level).expect("serialize risk level"),
+                serde_json::Value::String(level.as_str().to_string())
+            );
+        }
     }
 }

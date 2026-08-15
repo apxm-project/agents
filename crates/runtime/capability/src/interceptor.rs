@@ -1,6 +1,6 @@
 //! Capability interception hooks.
 
-use apxm_core::events::payload::{ApprovalRiskLevel, ToolCallCorrelation};
+use apxm_core::events::payload::ToolCallCorrelation;
 use apxm_core::types::capability::PermissionDecision;
 use apxm_core::types::consent::{
     ConsentBroker, ConsentDecision, PermissionPrompt, PromptMode, RiskLevel,
@@ -176,12 +176,16 @@ pub(crate) async fn pre_invoke_policy_ctx(
         ))
     .to_rfc3339();
 
+    // One policy risk decides both the emitted event and the prompt. Stating it
+    // twice let the two drift the moment either became policy-derived.
+    let risk_level = RiskLevel::High;
+
     if let Some(emitter) = ctx.event_emitter {
         emitter.emit_approval_request_with_correlation(
             identity.agent_code,
             name,
             &prompt_id,
-            ApprovalRiskLevel::High,
+            risk_level.to_approval(),
             ctx.tool_call_correlation,
         );
     }
@@ -198,7 +202,7 @@ pub(crate) async fn pre_invoke_policy_ctx(
         subject: None,
         args_digest,
         args_preview,
-        risk_level: RiskLevel::High,
+        risk_level,
         expires_at,
         channel_id: None,
         description: Some(format!("Capability '{name}' requires explicit approval")),
