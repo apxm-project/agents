@@ -1791,10 +1791,22 @@ pub struct PackageHandlerWorkerCommand {
     pub entry: PathBuf,
 }
 
-fn admit_artifact_via_runtime_service(artifact_bytes: &[u8]) -> Result<()> {
-    let digest = format!("{:x}", Sha256::digest(artifact_bytes));
+fn execute_via_runtime_service(
+    artifact_bytes: &[u8],
+    admission: InvocationAdmission,
+    release_bytes: Vec<u8>,
+    provenance_bytes: Vec<u8>,
+) -> Result<Value> {
     let mut service = apxm_runtime_service::RuntimeService::default();
-    service
+    let digest = service.admit_artifact(artifact_bytes.to_vec());
+    if digest != admission.artifact_digest {
+        anyhow::bail!(
+            "artifact digest {} does not match Invocation Admission {}",
+            digest,
+            admission.artifact_digest
+        );
+    }
+    let created = service
         .handle(
             &apxm_runtime_protocol::RuntimeHandshake {
                 protocol_version: apxm_runtime_protocol::RUNTIME_PROTOCOL_VERSION.to_owned(),
@@ -1805,7 +1817,45 @@ fn admit_artifact_via_runtime_service(artifact_bytes: &[u8]) -> Result<()> {
             },
         )
         .map_err(|error| anyhow::anyhow!("Runtime Service refused the artifact: {error:?}"))?;
-    Ok(())
+    let apxm_runtime_protocol::RuntimeResult::ProgramInstanceCreated {
+        program_instance_id,
+        ..
+    } = created
+    else {
+        anyhow::bail!("Runtime Service did not create a Program Instance");
+    };
+    service
+        .bind_admission(
+            &program_instance_id,
+            apxm_runtime_service::InvocationMaterials {
+                admission,
+                release_bytes,
+                provenance_bytes,
+            },
+        )
+        .map_err(|error| anyhow::anyhow!(error))?;
+    let started = service
+        .handle(
+            &apxm_runtime_protocol::RuntimeHandshake {
+                protocol_version: apxm_runtime_protocol::RUNTIME_PROTOCOL_VERSION.to_owned(),
+            },
+            apxm_runtime_protocol::RuntimeRequest::ProgramInvocationStart {
+                request_id: "execute-canonical".to_owned(),
+                program_instance_id,
+                input: serde_json::json!({}),
+            },
+        )
+        .map_err(|error| anyhow::anyhow!("Runtime Service refused the invocation: {error:?}"))?;
+    match started {
+        apxm_runtime_protocol::RuntimeResult::ProgramInvocationStarted { .. } => service
+            .last_output()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("Runtime Service produced no committed output")),
+        apxm_runtime_protocol::RuntimeResult::Failed { code, .. } => {
+            anyhow::bail!("Runtime Service invocation failed: {code}")
+        }
+        other => anyhow::bail!("Runtime Service returned {other:?}"),
+    }
 }
 
 pub async fn execute_canonical_command(
@@ -1817,7 +1867,7 @@ pub async fn execute_canonical_command(
     package_root: Option<PathBuf>,
     json_output: bool,
 ) -> Result<()> {
-    let (air, artifact_bytes) = load_canonical_air(&input)?;
+    let (_air, artifact_bytes) = load_canonical_air(&input)?;
     let admission_bytes = read_exact_bytes(&invocation_admission, "Invocation Admission")?;
     let admission: InvocationAdmission =
         serde_json::from_slice(&admission_bytes).with_context(|| {
@@ -1829,16 +1879,9 @@ pub async fn execute_canonical_command(
         })?;
     let release_bytes = read_exact_bytes(&release, "release")?;
     let provenance_bytes = read_exact_bytes(&provenance, "provenance")?;
-    admit_artifact_via_runtime_service(&artifact_bytes)?;
-    let output = CanonicalRuntime::with_package(handlers, package_root)
-        .execute(
-            air,
-            &artifact_bytes,
-            &admission,
-            &release_bytes,
-            &provenance_bytes,
-        )
-        .await?;
+    let _ = (handlers, package_root);
+    let output =
+        execute_via_runtime_service(&artifact_bytes, admission, release_bytes, provenance_bytes)?;
     if json_output {
         println!("{}", serde_json::to_string(&output)?);
     } else {

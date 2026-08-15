@@ -491,11 +491,17 @@ dependencies = [
 name = "apxm-runtime-service"
 version = "0.1.0"
 dependencies = [
+ "apxm-ais",
  "apxm-execution",
+ "apxm-inference",
  "apxm-kernel",
+ "apxm-program",
  "apxm-runtime-protocol",
+ "async-trait",
  "serde",
  "serde_json",
+ "sha2",
+ "tokio",
 ]
 
 [[package]]

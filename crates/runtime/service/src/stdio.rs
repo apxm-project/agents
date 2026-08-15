@@ -124,13 +124,15 @@ mod tests {
 
     #[test]
     fn serve_stdio_handles_one_create() {
+        let mut service = RuntimeService::default();
+        let digest = service.admit_artifact(br#"{"schema_version":"apxm.air","semantic_operations":[],"structural_ir":[],"context_flow":[],"source_map":{"schema_version":"apxm.source-map","source_language":"python","node_spans":[],"region_annotations":[]}}"#.to_vec());
         let envelope = Envelope {
             handshake: RuntimeHandshake {
                 protocol_version: RUNTIME_PROTOCOL_VERSION.to_owned(),
             },
             request: RuntimeRequest::ProgramInstanceCreate {
                 request_id: "c".to_owned(),
-                artifact_digest: "artifact:abc".to_owned(),
+                artifact_digest: digest,
             },
         };
         let frame = StdioFrame {
@@ -138,12 +140,7 @@ mod tests {
             payload: serde_json::to_string(&envelope).unwrap(),
         };
         let mut out = Vec::new();
-        serve_stdio(
-            encode_jsonl(&frame).as_bytes(),
-            &mut out,
-            RuntimeService::default(),
-        )
-        .unwrap();
+        serve_stdio(encode_jsonl(&frame).as_bytes(), &mut out, service).unwrap();
         assert!(!out.is_empty());
     }
 }

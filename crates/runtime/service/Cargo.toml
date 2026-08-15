@@ -13,8 +13,14 @@ description = "Runtime Service Composition Root over the native runtime protocol
 workspace = true
 
 [dependencies]
-apxm-runtime-protocol.workspace = true
-apxm-kernel.workspace = true
+apxm-ais.workspace = true
 apxm-execution.workspace = true
+apxm-inference.workspace = true
+apxm-kernel.workspace = true
+apxm-program.workspace = true
+apxm-runtime-protocol.workspace = true
+async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
