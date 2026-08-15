@@ -94,6 +94,8 @@ pub mod config_keys {
     pub const SUPPORTS_THINKING: &str = "supports_thinking";
     pub const SUPPORTS_CUSTOM_TEMPERATURE: &str = "supports_custom_temperature";
     pub const SUPPORTS_STRUCTURED_OUTPUTS: &str = "supports_structured_outputs";
+    /// Exact profile admission for llama.cpp's `cache_prompt` lowering.
+    pub const GRAPH_HINT_CACHE_PROMPT_ADMITTED: &str = "graph_hint_cache_prompt_admitted";
     pub const USES_REASONING_TOKEN_FIELDS: &str = "uses_reasoning_token_fields";
     pub const CHAT_TEMPLATE_KWARGS: &str = "chat_template_kwargs";
     pub const ENABLE_THINKING: &str = "enable_thinking";

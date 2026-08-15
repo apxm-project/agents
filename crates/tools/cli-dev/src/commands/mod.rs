@@ -2,20 +2,20 @@
 
 use std::fmt;
 
+#[allow(dead_code)]
 #[path = "../../../cli/src/commands/agent.rs"]
 pub mod agent;
-#[path = "../../../cli/src/commands/cli.rs"]
-pub mod cli;
-#[path = "../../../cli/src/commands/dekk_hints.rs"]
-pub(crate) mod dekk_hints;
 #[path = "../../../cli/src/commands/implementations.rs"]
 pub mod implementations;
+#[allow(dead_code)]
 #[path = "../../../cli/src/commands/org.rs"]
 pub mod org;
 
+pub mod air_ops;
 pub mod analysis;
 pub mod canonical_air;
 pub mod canonical_execute;
+pub mod cli;
 pub mod codegen;
 pub mod compile_service_canonical;
 pub mod ops;

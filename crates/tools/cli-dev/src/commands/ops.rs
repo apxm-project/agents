@@ -5,8 +5,8 @@ use std::{collections::HashMap, io, path::Path};
 use anyhow::Result;
 use colored::Colorize;
 
+use super::air_ops::category_str;
 use super::cli::*;
-use super::implementations::category_str;
 
 pub fn ops_command(action: OpsAction, json_output: bool) -> Result<()> {
     use apxm_core::types::{AIS_OPERATIONS, OperationCategory};

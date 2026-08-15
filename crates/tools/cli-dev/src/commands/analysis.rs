@@ -5,9 +5,8 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use colored::Colorize;
 
-use super::implementations::{
-    Status, category_str, find_op_spec, op_latency_ms, print_section_header, print_status_line,
-};
+use super::air_ops::{category_str, find_op_spec, op_latency_ms};
+use super::implementations::{Status, print_section_header, print_status_line};
 use apxm_core::types::ApxmPathFormat;
 use apxm_program::air::{AirModule, SemanticOp, StructuralNode};
 

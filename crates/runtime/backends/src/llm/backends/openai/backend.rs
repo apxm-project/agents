@@ -21,7 +21,6 @@ use crate::llm::wire::{
 };
 use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
-use apxm_core::constants::llm::apxm::{APXM_FIELDS_HONORED_HEADER, FIELDS_HONORED_RECORD_KEY};
 use apxm_core::types::{FinishReason, ModelCapabilities, ModelInfo, TokenUsage, ToolCall};
 use async_trait::async_trait;
 use futures::StreamExt as _;
@@ -115,45 +114,6 @@ impl LLMRequest {
 /// Shared final admission guard used by every provider adapter.
 pub(crate) fn validate_provider_dispatch(request: &LLMRequest) -> Result<()> {
     request.validate_provider_dispatch()
-}
-
-/// Parse the APXM `x-apxm-fields-honored` response header, if present.
-///
-/// The APXM vLLM fork emits this header on every per-request response,
-/// listing the `vllm_xargs.apxm` fields the scheduler
-/// actually consumed in scheduling decisions (e.g.
-/// `x-apxm-fields-honored: priority,prefix_cohorts,pin_release`). The
-/// APXM runtime stores this in `LLMResponse.metadata["fields_honored"]`
-/// so per-execution aggregation can distinguish "the backend declares
-/// it CAN honor this field" (capability table) from "the backend
-/// reported it DID honor this field on this request" (runtime evidence).
-///
-/// Vanilla OpenAI and non-fork backends do not emit this header; the
-/// function returns `None`, and `fields_honored` is absent from metadata
-/// — which is the honest signal that no runtime evidence is available.
-fn parse_apxm_fields_honored_header(response: &reqwest::Response) -> Option<Vec<String>> {
-    let raw = response
-        .headers()
-        .get(APXM_FIELDS_HONORED_HEADER)?
-        .to_str()
-        .ok()?;
-    parse_apxm_fields_honored_value(raw)
-}
-
-/// Pure parser for the comma-separated `x-apxm-fields-honored` value.
-/// Empty strings, missing entries, and whitespace-only entries all
-/// collapse to `None` rather than `Some(vec![])` — an empty list and
-/// "header was absent" are equivalent honesty signals (the backend
-/// reported nothing was honored), so collapsing them keeps the
-/// `LLMResponse.metadata` shape consistent.
-fn parse_apxm_fields_honored_value(raw: &str) -> Option<Vec<String>> {
-    let fields: Vec<String> = raw
-        .split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_owned)
-        .collect();
-    (!fields.is_empty()).then_some(fields)
 }
 
 const PROTOCOL: ProviderProtocol = ProviderProtocol::OpenAI;
@@ -552,12 +512,6 @@ impl LLMBackend for OpenAIBackend {
             anyhow::bail!("OpenAI API error (status {}): {}", status, error_text);
         }
 
-        // Capture per-request runtime honor evidence before consuming
-        // the body. The APXM vLLM fork emits this header from its
-        // scheduler; vanilla OpenAI / non-fork backends
-        // return None and `fields_honored` remains absent in metadata.
-        let fields_honored = parse_apxm_fields_honored_header(&response);
-
         // Parse raw JSON first to handle multiple response formats.
         // The OpenAI-compatible gateway returns Claude responses in Anthropic format:
         //   {"model": "...", "response": {"type": "text", "text": "..."}}
@@ -607,16 +561,7 @@ impl LLMBackend for OpenAIBackend {
             ))
         }?;
 
-        let mut llm_response = Self::parse_response(api_response, &model)?;
-        if let Some(honored) = fields_honored {
-            llm_response.metadata.insert(
-                FIELDS_HONORED_RECORD_KEY.to_owned(),
-                serde_json::Value::Array(
-                    honored.into_iter().map(serde_json::Value::String).collect(),
-                ),
-            );
-        }
-        Ok(llm_response)
+        Self::parse_response(api_response, &model)
     }
 
     fn generate_stream(

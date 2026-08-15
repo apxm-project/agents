@@ -2,7 +2,8 @@
 
 use super::{LLMRequest, LLMResponse};
 use apxm_core::types::{
-    BackendGraphCapabilities, GraphMetadata, GraphStatusSnapshot, ModelCapabilities, ModelInfo,
+    ApxmGraphDescriptor, GraphHintProjector, GraphMetadata, GraphPreparationRef,
+    GraphPrepareOutcome, GraphReleaseOutcome, GraphStatusSnapshot, ModelCapabilities, ModelInfo,
     TokenUsage,
 };
 use async_trait::async_trait;
@@ -112,7 +113,7 @@ pub enum StreamChunk {
 /// Provides a unified interface for different providers (OpenAI, Anthropic, etc.)
 /// allowing seamless switching between implementations.
 #[async_trait]
-pub trait LLMBackend: Send + Sync {
+pub trait LLMBackend: Send + Sync + GraphHintProjector {
     /// Generate a response from the given request.
     async fn generate(&self, request: LLMRequest) -> anyhow::Result<LLMResponse>;
 
@@ -165,17 +166,6 @@ pub trait LLMBackend: Send + Sync {
         ModelCapabilities::default()
     }
 
-    /// Get graph-aware backend capability evidence.
-    ///
-    /// Generic providers default to no graph-aware support, while preserving
-    /// any structured-output support advertised by the model capability API.
-    fn graph_capabilities(&self) -> BackendGraphCapabilities {
-        BackendGraphCapabilities {
-            supports_structured_outputs: self.capabilities().structured_outputs,
-            ..BackendGraphCapabilities::default()
-        }
-    }
-
     /// Declare the cache layer that owns deterministic request reuse.
     fn response_memoization_policy(&self) -> ResponseMemoizationPolicy {
         ResponseMemoizationPolicy::RuntimeExact
@@ -193,18 +183,35 @@ pub trait LLMBackend: Send + Sync {
             "name": self.name(),
             "model": self.model(),
             "capabilities": serde_json::to_value(self.capabilities()).unwrap_or(Value::Null),
-            "graph_capabilities": serde_json::to_value(self.graph_capabilities()).unwrap_or(Value::Null),
         })
     }
 
     /// Register graph metadata for graph-aware backend scheduling.
     async fn register_graph(&self, _metadata: GraphMetadata) -> anyhow::Result<()> {
-        Ok(())
+        anyhow::bail!("legacy graph registration is not supported; use prepare_graph")
     }
 
     /// Release backend state associated with a registered graph.
     async fn release_graph(&self, _graph_id: &str) -> anyhow::Result<()> {
-        Ok(())
+        anyhow::bail!("legacy graph release is not supported; use release_graph_preparation")
+    }
+
+    /// Prepare graph facts on this exact admitted adapter only. The default is
+    /// an explicit not-needed outcome, never a successful no-op.
+    async fn prepare_graph(
+        &self,
+        _descriptor: ApxmGraphDescriptor,
+    ) -> anyhow::Result<GraphPrepareOutcome> {
+        Ok(GraphPrepareOutcome::NotNeeded)
+    }
+
+    /// Release a preparation issued by this exact adapter. The preparation
+    /// digest fences stale releases and keeps provider coordinates private.
+    async fn release_graph_preparation(
+        &self,
+        _preparation: GraphPreparationRef,
+    ) -> anyhow::Result<GraphReleaseOutcome> {
+        Ok(GraphReleaseOutcome::NotNeeded)
     }
 
     /// Whether the backend accepts `tool_choice="auto"`. Default `true`.

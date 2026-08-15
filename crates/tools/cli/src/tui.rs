@@ -52,7 +52,7 @@ impl TuiFrame {
     }
 
     /// Decode a headless protocol JSON fixture.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn decode_protocol(value: &serde_json::Value) -> Result<Self, String> {
         let outcome = match value.get("outcome").and_then(|item| item.as_str()) {
             Some("returned") => HeadlessOutcome::Returned,

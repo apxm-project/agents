@@ -26,7 +26,10 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use apxm_backends::llm::backends::{GraphAwareVllmBackend, LlamaCppBackend, MockLLMBackend};
+use apxm_backends::llm::backends::{
+    AnthropicBackend, GoogleBackend, GraphAwareVllmBackend, LlamaCppBackend, MockLLMBackend,
+    OllamaBackend, OpenAIBackend,
+};
 use apxm_core::constants::llm::apxm::graph_hints as hint_keys;
 use apxm_core::types::{
     ApxmGraphHints, GraphHintCapabilities, GraphHintDispatchProjection, GraphHintField,
@@ -119,6 +122,38 @@ async fn projectors() -> Vec<(&'static str, Box<dyn GraphHintProjector>)> {
                 GraphAwareVllmBackend::new("", config())
                     .await
                     .expect("configured vLLM backend"),
+            ),
+        ),
+        (
+            "openai",
+            Box::new(
+                OpenAIBackend::new("", config())
+                    .await
+                    .expect("configured OpenAI backend"),
+            ),
+        ),
+        (
+            "anthropic",
+            Box::new(
+                AnthropicBackend::new("", config())
+                    .await
+                    .expect("configured Anthropic backend"),
+            ),
+        ),
+        (
+            "google",
+            Box::new(
+                GoogleBackend::new("", config())
+                    .await
+                    .expect("configured Google backend"),
+            ),
+        ),
+        (
+            "ollama",
+            Box::new(
+                OllamaBackend::new("", config())
+                    .await
+                    .expect("configured Ollama backend"),
             ),
         ),
     ]
@@ -426,6 +461,10 @@ async fn each_binding_declares_exactly_the_fields_it_carries() {
             ],
             GraphHintFieldCapability::Derived,
         ),
+        ("openai", &[], GraphHintFieldCapability::Unsupported),
+        ("anthropic", &[], GraphHintFieldCapability::Unsupported),
+        ("google", &[], GraphHintFieldCapability::Unsupported),
+        ("ollama", &[], GraphHintFieldCapability::Unsupported),
     ];
 
     for (adapter, projector) in projectors().await {

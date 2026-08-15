@@ -168,8 +168,6 @@ pub(crate) struct AgentPackaging {
     pub(crate) interpreter: &'static str,
     pub(crate) package_variable: &'static str,
     pub(crate) compiler: &'static str,
-    #[allow(dead_code)]
-    pub(crate) worker: &'static str,
 }
 
 pub(crate) const fn agent_packaging(language: HandlerLanguage) -> AgentPackaging {
@@ -179,14 +177,12 @@ pub(crate) const fn agent_packaging(language: HandlerLanguage) -> AgentPackaging
             interpreter: "python3",
             package_variable: PYTHON_AGENT_PACKAGING_PACKAGE,
             compiler: "compile_handlers.py",
-            worker: "tool_worker.py",
         },
         HandlerLanguage::TypeScript => AgentPackaging {
             extension: "ts",
             interpreter: "node",
             package_variable: TYPESCRIPT_AGENT_PACKAGING_PACKAGE,
             compiler: "compile-handlers.mjs",
-            worker: "tool-worker.mjs",
         },
     }
 }
@@ -229,28 +225,13 @@ pub struct CompileToml {
 // agent new
 // ---------------------------------------------------------------------
 
-pub fn agent_command(action: super::AgentAction, json_output: bool) -> Result<()> {
-    match action {
-        super::AgentAction::New {
-            id,
-            path,
-            display_name,
-            template,
-        } => agent_new(&id, path, display_name, &template, json_output),
-        super::AgentAction::Sync { path } => agent_sync(&path, json_output),
-        super::AgentAction::Lint { path, org } => agent_lint(&path, org, json_output),
-        super::AgentAction::Install { path, force } => agent_install(&path, force, json_output),
-        super::AgentAction::Verify { path } => agent_verify(&path, json_output),
-    }
-}
-
 /// Hold a checked-in package against its own generated integrity chain.
 ///
 /// `agent lint` reads the package as authored and `agent build` writes the
 /// chain; neither notices a package edited after its last build. This does, so
 /// a package whose bytes moved without a rebuild fails a gate instead of
 /// shipping a chain that describes something else.
-fn agent_verify(path: &Path, json_output: bool) -> Result<()> {
+pub(crate) fn agent_verify(path: &Path, json_output: bool) -> Result<()> {
     verify_agent_integrity(path)?;
     let pkg = load_agent(path)?;
     let integrity: IntegrityToml = read_toml(&path.join("integrity.toml"))?;
@@ -1164,7 +1145,6 @@ pub(crate) fn verify_agent_integrity(root: &Path) -> Result<()> {
 }
 
 #[cfg(test)]
-#[allow(dead_code)]
 pub(crate) fn seal_agent_integrity_for_test(root: &Path) -> Result<()> {
     let integrity = compute_integrity(&digest_recognized_files(root)?);
     write_integrity_toml(&root.join("integrity.toml"), &integrity)
@@ -1376,7 +1356,7 @@ pub(crate) fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
-fn agent_install(path: &Path, force: bool, json_output: bool) -> Result<()> {
+pub(crate) fn agent_install(path: &Path, force: bool, json_output: bool) -> Result<()> {
     agent_install_to(path, &apxm_core::env::apxm_home(), force, json_output)
 }
 
@@ -1433,6 +1413,23 @@ mod tests {
 
     fn scaffold(dir: &Path, id: &str) {
         agent_new(id, Some(dir.to_path_buf()), None, "looped-agent", true).expect("scaffold ok");
+    }
+
+    #[test]
+    fn each_language_names_its_private_packaging_entries() {
+        let python = agent_packaging(HandlerLanguage::Python);
+        assert_eq!(python.compiler, "compile_handlers.py");
+        let typescript = agent_packaging(HandlerLanguage::TypeScript);
+        assert_eq!(typescript.compiler, "compile-handlers.mjs");
+    }
+
+    #[test]
+    fn sealing_integrity_matches_verify() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("sealed");
+        scaffold(&root, "sealed");
+        seal_agent_integrity_for_test(&root).unwrap();
+        verify_agent_integrity(&root).unwrap();
     }
 
     #[test]

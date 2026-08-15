@@ -9,9 +9,29 @@ use apxm_core::toolchain_env;
 use apxm_core::utils::build::MlirEnvReport;
 
 use super::dekk_hints;
-use super::implementations::{
-    Status, print_hint, print_section_header, print_status_line, print_subsection_header,
-};
+use super::implementations::{Status, print_section_header, print_status_line};
+use colored::Colorize;
+
+fn print_hint(message: &str) {
+    use apxm_core::constants::ui;
+    println!("  {} {}", ui::icons::INFO.cyan(), message);
+}
+
+fn print_subsection_header(title: &str) {
+    println!();
+    println!("  {}", title.bold());
+}
+
+fn print_warning_line(label: &str, value: &str) {
+    use apxm_core::constants::ui;
+    println!(
+        "  {} {:<14} [{}] {}",
+        ui::icons::WARNING.yellow(),
+        label.bold(),
+        ui::labels::WARN.yellow().bold(),
+        value
+    );
+}
 
 pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> {
     let report = MlirEnvReport::detect();
@@ -62,7 +82,7 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
     ] {
         match value {
             Some(v) => print_status_line(name, Status::Ok, v),
-            None => print_status_line(name, Status::Warning, "not set"),
+            None => print_warning_line(name, "not set"),
         }
     }
     if env_mlir_dir.is_none() || env_llvm_dir.is_none() {
@@ -78,8 +98,8 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
         .and_then(|value| value.as_str())
     {
         Some("ok") => print_status_line("agent.toml", Status::Ok, "apxm.agent"),
-        Some(status) => print_status_line("agent.toml", Status::Warning, status),
-        None => print_status_line("agent.toml", Status::Warning, "absent"),
+        Some(status) => print_warning_line("agent.toml", status),
+        None => print_warning_line("agent.toml", "absent"),
     }
 
     if !mlir_available {

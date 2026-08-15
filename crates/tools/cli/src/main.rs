@@ -13,8 +13,7 @@
     clippy::match_same_arms,
     clippy::match_wildcard_for_single_variants,
     clippy::option_option,
-    clippy::struct_field_names,
-    clippy::unused_async
+    clippy::struct_field_names
 )]
 
 mod commands;
@@ -28,7 +27,7 @@ use std::process::ExitCode;
 /// Initialize the tracing subscriber based on the --trace flag or RUST_LOG env var.
 /// If neither is provided, no subscriber is registered (zero overhead).
 #[cfg(feature = "driver")]
-fn initialize_tracing(level: &Option<String>, json_mode: bool) {
+fn initialize_tracing(level: Option<&String>, json_mode: bool) {
     use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
     if json_mode {
@@ -59,36 +58,12 @@ fn initialize_tracing(level: &Option<String>, json_mode: bool) {
         .init();
 }
 
-#[cfg(feature = "driver")]
-#[tokio::main]
-async fn main() -> ExitCode {
-    use clap::Parser;
-
-    let cli = Cli::parse();
-    let json_mode = cli.json;
-    match run_cli(cli).await {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(err) => {
-            emit_cli_error(&err, json_mode);
-            ExitCode::from(1)
-        }
-    }
-}
-
-#[cfg(not(feature = "driver"))]
 fn main() -> ExitCode {
     use clap::Parser;
 
     let cli = Cli::parse();
     let json_mode = cli.json;
-    let rt = match tokio::runtime::Runtime::new() {
-        Ok(rt) => rt,
-        Err(err) => {
-            emit_cli_error(&anyhow::Error::new(err), json_mode);
-            return ExitCode::from(1);
-        }
-    };
-    match rt.block_on(run_cli_no_driver(cli)) {
+    match run_cli(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             emit_cli_error(&err, json_mode);
@@ -97,34 +72,10 @@ fn main() -> ExitCode {
     }
 }
 
-#[cfg(feature = "driver")]
-async fn run_cli(cli: Cli) -> Result<()> {
-    // Initialize tracing if --trace flag is provided
-    initialize_tracing(&cli.trace, cli.json);
+fn run_cli(cli: Cli) -> Result<()> {
+    #[cfg(feature = "driver")]
+    initialize_tracing(cli.trace.as_ref(), cli.json);
 
-    match cli.command {
-        Commands::Build { agent_package } => commands::interaction::build_command(agent_package),
-        Commands::Run {
-            agent_package,
-            artifact,
-            tui,
-        } => commands::interaction::run_command(agent_package, artifact, tui),
-        Commands::Event { action } => commands::interaction::event_command(action),
-        Commands::Runtime { action } => commands::interaction::runtime_command(action),
-        Commands::Resume { last } => commands::interaction::resume_command(last),
-        Commands::Interact {
-            agent_package,
-            artifact,
-        } => commands::interaction::interact_command(agent_package, artifact),
-        Commands::Doctor => doctor_command(cli.config, cli.json),
-        Commands::Agent { action } => agent_command(action, cli.json),
-        Commands::Org { action } => org_command(action, cli.json),
-        Commands::Process { action } => process_command(action, cli.json),
-    }
-}
-
-#[cfg(not(feature = "driver"))]
-async fn run_cli_no_driver(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Build { agent_package } => commands::interaction::build_command(agent_package),
         Commands::Run {
@@ -147,13 +98,6 @@ async fn run_cli_no_driver(cli: Cli) -> Result<()> {
 }
 
 fn emit_cli_error(err: &anyhow::Error, json_mode: bool) {
-    if err
-        .downcast_ref::<commands::OutputAlreadyEmitted>()
-        .is_some()
-    {
-        return;
-    }
-
     if json_mode {
         let causes: Vec<String> = err.chain().skip(1).map(ToString::to_string).collect();
         println!(

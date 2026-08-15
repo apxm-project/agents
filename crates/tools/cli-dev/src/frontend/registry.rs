@@ -142,5 +142,5 @@ pub fn provider_protocols() -> Vec<&'static str> {
 }
 
 fn category_label(category: OperationCategory) -> &'static str {
-    crate::commands::implementations::category_str(category)
+    crate::commands::air_ops::category_str(category)
 }

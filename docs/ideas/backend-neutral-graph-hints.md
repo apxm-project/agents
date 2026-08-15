@@ -27,8 +27,10 @@ worker, slot, block, handle, endpoint, or extension envelope.
 
 Every inference adapter implements the same projection interface. An adapter
 may support all, some, or none of the fields. It must report, field by field,
-what it projected, approximated, omitted, and later observed. Supporting zero
-fields is a conforming implementation; silently claiming support is not.
+what it projected, approximated, or omitted. Provider acknowledgement and
+outcome measurement require separate producer contracts; no current adapter
+claims either. Supporting zero fields is a conforming implementation; silently
+claiming support is not.
 
 The common contract and provider-specific Port Contracts have different jobs:
 
@@ -45,7 +47,7 @@ compiler/runtime facts + intents
  vLLM lowering   llama.cpp lowering  provider-owned mechanisms
       |             |
       v             v
- provider request and response evidence
+ provider request + adapter projection evidence
 ```
 
 The provider-specific contract remains exact and independently conformant. A
@@ -80,7 +82,8 @@ direction already implemented elsewhere: one model effect resolves to one
 admitted driver, with no ranking, substitution, or fallback
 (`crates/runtime/inference/src/driver.rs:1-5`).
 
-The broadcast chain is gone rather than replaced.
+The broadcast chain is gone. It is replaced at the adapter boundary by a
+digest-fenced exact-binding lifecycle seam, not by another registry fan-out.
 `find_graph_aware_backends`, `pre_release_status_all`, the
 adapter-observation polling, and `GraphLifecycleOutcome` were deleted because
 nothing called them; `supports_graph_extensions` followed once its only
@@ -90,8 +93,10 @@ HTTP implementations behind them, and nothing in the runtime calls any of the
 three. What survives as a live surface is the declaration:
 `GraphLifecycleCapability` on `GraphHintCapabilities`
 (`crates/machine/contracts/src/types/graph_hints.rs`), which enters the
-capability digest and so is held against the admitted binding before send. No
-exact-binding prepare/release seam has been built to consume it.
+capability digest and so is held against the admitted binding before send.
+`prepare_graph` and `release_graph_preparation` consume the lifecycle
+declaration on one selected adapter; the general graph executor does not yet
+call that seam.
 
 The target design therefore preserves the portable facts, removes backend
 mechanisms from the common type, and makes projection and evidence explicit.
@@ -341,10 +346,11 @@ input, and it does not change field outcomes.
 every adapter to that: two attempts of one envelope carry one plan, one
 rendered request, and one projected-request digest.
 
-**Status: design.** Materialization as a separate step — binding a plan to an
-attempt-local provider resource such as a fenced llama.cpp slot lease, and
-rebinding physical coordinates after a proven pre-send failure without changing
-field outcomes — is not built. There is no attempt-local lease of any kind.
+**Status: partial.** The common descriptor and exact-binding lifecycle seam are
+implemented (§7), and an adapter-local preparation digest can fence lifecycle
+release. Attempt-local physical resource leases — such as a fenced llama.cpp
+slot lease and rebinding after a proven pre-send failure — are intentionally not
+implemented. No adapter advertises one.
 
 ### 6.1 Static capabilities
 
@@ -371,7 +377,9 @@ content-addressed (`GraphHintCapabilities::digest`) and the digest is optional
 binding evidence checked before send by
 `InferenceDriverBinding::authorize_graph_hint_capabilities`
 (`crates/runtime/inference/src/driver.rs`), so a health probe cannot silently
-widen them mid-effect.
+widen them mid-effect. Declarations are complete and closed: every
+`GraphHintField` is classified, and the projection seam rejects a plan that
+relabels an unsupported field or commits to a different envelope.
 
 An earlier draft of this section gave each supported field a set of
 `EvidenceKind` values — `AdapterProjection`, `BackendAcknowledgement`,
@@ -388,8 +396,7 @@ names fail validation instead of entering a stringly typed support table.
 
 ```rust
 pub struct GraphHintPlan {
-    pub graph_hints_digest: Digest,
-    pub binding_digest: Digest,
+    pub graph_hints_digest: Option<Digest>,
     pub capability_digest: Digest,
     pub outcomes: BTreeMap<GraphHintField, ProjectionOutcome>,
 }
@@ -397,7 +404,7 @@ pub struct GraphHintPlan {
 pub struct GraphHintProjection {
     pub plan_digest: Digest,
     pub attempt: u32,
-    pub mechanism_bindings: Vec<BackendMechanismBinding>,
+    pub mechanism_bindings: Vec<BackendMechanismRef>,
     pub projected_request_digest: Digest,
 }
 
@@ -411,7 +418,7 @@ pub enum ProjectionOutcome {
 
 `mechanism_ref` is a closed, adapter-owned identifier such as
 `llama.cache_prompt` or `vllm.request_priority`; it carries no secret values.
-An attempt-local `BackendMechanismBinding` may commit to a fenced resource by
+An attempt-local mechanism binding may later commit to a fenced resource by
 digest, but never exposes its raw coordinate. The actual provider request stays
 private to the adapter. Projection evidence must never include prompt content,
 credentials, slot-save filenames, or raw provider bodies.
@@ -453,7 +460,7 @@ and then removed, because nothing could populate it:
   already written out in full, so the whole type carried no information the
   other two did not.
 
-**Status: design.** The model of three separable claims is unchanged, and both
+**Status: intentionally incomplete.** The model of three separable claims is unchanged, and both
 missing layers are worth having. Building the measurement layer needs a
 reported-vs-zero signal the usage carrier deliberately does not have (it sums
 `cached_input_tokens` across calls) and a provider that actually reports the
@@ -470,13 +477,16 @@ remain namespaced adapter evidence.
 
 ## 7. Graph lifecycle
 
-**Status: design.** None of this section is built. `ApxmGraphDescriptor`,
-`prepare_graph`, and `release_graph` as described here do not exist; the
-broadcast chain they were meant to replace was deleted outright (§2). What
-exists is the per-binding declaration `GraphLifecycleCapability`
-(`PrepareRelease` for vLLM, `NotNeeded` for llama.cpp and by default), which
-enters the capability digest and is therefore held against the admitted
-binding — a declaration with nothing behind it yet.
+**Status: implemented at the adapter boundary.** `ApxmGraphDescriptor`,
+`prepare_graph`, and digest-fenced `release_graph_preparation` are implemented
+on `LLMBackend`. vLLM converts the fact-only descriptor to its adapter-owned
+registration request and retains the provider graph id only in an adapter-local
+preparation table. A transport or parse error after send returns
+`OutcomeUnknown`; a stale or malformed preparation fails before send. llama.cpp
+returns explicit `NotNeeded`, and the default backend path also returns
+`NotNeeded` rather than a successful no-op. There is no registry broadcast. The
+general graph executor does not yet call this seam because no live graph
+lifecycle caller exists in this branch; direct adapter callers are exact-bound.
 
 Some providers benefit from receiving static graph facts before the first
 request. Others need no graph lifecycle at all. The common companion object
@@ -494,16 +504,16 @@ prepare_graph(exact_binding, descriptor)
    | FailedBeforeSend
    | OutcomeUnknown
 
-release_graph(exact_binding, preparation_ref)
+release_graph_preparation(exact_binding, preparation_ref)
   -> Released
    | NotNeeded
    | FailedBeforeSend
    | OutcomeUnknown
 ```
 
-There would be no default successful no-op. `NotNeeded` and `Unsupported` are
-explicit outcomes. Preparation and release would be invoked only on the exact
-adapter bound to affected model calls, never across the registry.
+There is no default successful no-op. `NotNeeded` and `Unsupported` are
+explicit outcomes. Preparation and release are methods on one exact backend
+binding, never registry operations.
 
 Backend resource status is adapter evidence: `GraphStatusSnapshot` carries
 adapter-keyed observations, and neither provider's resource units enter
@@ -569,10 +579,11 @@ llama.cpp documents `cache_prompt` as reusing a common prompt prefix and
 processing only the unseen suffix. It also warns that different batching can
 make logits non-bit-identical. The projected field is therefore part of
 `projected_request_digest` and stable across attempts, which
-`graph_hint_projection_conformance.rs` asserts. **Status: design** — the
-adapter does not yet gate the lowering on a deployment whose admitted inference
-profile permits that numerical-determinism envelope; there is no
-`OmittedByProfile` path on the llama.cpp binding at all. See the official
+`graph_hint_projection_conformance.rs` asserts. The adapter now gates this
+lowering on the exact registration profile key
+`graph_hint_cache_prompt_admitted`; a false value produces
+`OmittedByProfile(ProfileWithholdsMechanism)` while still carrying the scope
+envelope. See the official
 [completion option documentation](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md#post-completion-given-a-prompt-it-returns-the-predicted-completion).
 
 The adapter records `Applied(llama.cache_prompt)` at projection time and claims
@@ -661,7 +672,7 @@ This is an in-place replacement, not a parallel legacy envelope.
 | `CompilerHints` | normalized fact fields with precise eligibility semantics |
 | boolean `BackendGraphCapabilities` | field-level `Direct` / `Derived` / `Unsupported` capability table |
 | `supports_graph_extensions()` | deleted; `GraphLifecycleCapability` is the declaration, and it enters the capability digest |
-| default successful `register_graph` / `release_graph` | callers deleted; the trait methods and the vLLM HTTP implementations remain, unreached |
+| default successful `register_graph` / `release_graph` | legacy methods fail closed; exact `prepare_graph` / `release_graph_preparation` returns typed lifecycle outcomes |
 | `register_graph_all` / `release_graph_all` | deleted |
 | `GraphAware` / `Generic` backend kind | capability evidence for the exact binding |
 | common pinned handle/block status | adapter-owned observations on `GraphStatusSnapshot` |
@@ -676,11 +687,11 @@ is behind the projectors.
 ## 12. Implementation plan
 
 Phases A, B, D, and F have landed. Phase C's projector exists but its provider
-wire has not been re-attested against an `apxm` vLLM branch. Phase E is not
-started, and two of its and Phase D's steps were closed by deletion rather than
-by building: the cached-token measurement (§6.3) and the exact-binding graph
-lifecycle. There is no fenced slot lease. Section 7's lifecycle is neither
-built nor called; only its per-binding declaration exists.
+wire has not been re-attested against an `apxm` vLLM branch. Phase E's exact
+binding seam is now landed, but there is no live graph-executor caller and no
+fenced llama.cpp slot lease. The cached-token measurement remains deliberately
+unbuilt because the current usage carrier cannot distinguish reported zero from
+absence (§6.3).
 
 ### Phase A — freeze semantics and vectors
 
@@ -695,8 +706,9 @@ Exit gate: two backend-independent vectors produce the same canonical hint
 digest, and unknown fields/invalid references fail closed.
 
 Landed as `contracts/schemas/apxm.inference-graph-hints.json` and its vectors,
-`ApxmGraphHints::{canonical_json, digest}`, the closed `ReasonCode` enum, and
-the numeric/reference limits published in both the schema and the type. The
+`ApxmGraphHints::{canonical_json, digest}`, the closed `ReasonCode` enum, the
+fact-only `ApxmGraphDescriptor` and digest-fenced lifecycle identities, and the
+numeric/reference limits published in both the schema and the type. The
 frontend-origination rule is enforced by
 `tools/tests/test_canonical_only_reachability.py`
 (`test_graph_hints_cannot_originate_in_authored_source`).
@@ -779,11 +791,13 @@ difference would show up as a measurement, and there is none (§6.3).
 Exit gate: crash, busy-slot, cancellation, restart, collision, and stale-lease
 vectors pass before llama.cpp advertises affinity or lifecycle support.
 
-Not started, and step 1 is now half of a different shape: the broadcast was
-deleted rather than replaced (§2), so there is no lifecycle seam to bind
-exactly. Step 2 has no instrument — measuring cache selection needs the
-measurement layer §6.3 explains is not built. llama.cpp advertises neither
-affinity nor lifecycle support, which is what the exit gate protects.
+Step 1 is implemented as an exact-binding seam rather than a broadcast: the
+vLLM adapter prepares/releases a digest-fenced registration, llama.cpp returns
+`NotNeeded`, and stale-release/invalid-descriptor/uncertain-transport outcomes
+are typed. Step 2 has no honest instrument — measuring cache selection needs the
+measurement layer §6.3 explains is not built. Steps 3 and 4 remain deliberately
+unstarted: llama.cpp advertises neither affinity nor lifecycle support, which is
+what the exit gate protects.
 
 ### Phase F — removal and consistency gates
 
@@ -840,10 +854,9 @@ vectors are the neutral *input*, and the assertions are this contract.
 - capability-digest drift fails before send
   (`crates/runtime/inference/tests/driver_binding_conformance.rs`).
 
-Not asserted anywhere: that no projector can change target, context, tools,
-output schema, budgets, sampling, or authority-bearing fields. The seam makes
-it structurally hard — a projector returns only a field map that is merged
-without overwriting — but nothing states it.
+The adapter unit suite now asserts that projection preserves target, context,
+tools, output schema, budgets, sampling, and existing provider extensions, and
+that conflicting or non-object extension bodies fail before send.
 
 ### vLLM
 
@@ -852,9 +865,10 @@ without overwriting — but nothing states it.
 - affinity and horizon lower into the provider extension envelope; and
 - the declared field set is exactly the nine in §8.
 
-**Status: design.** Graph preparation/release being exact-binding local is not
-testable, because there is no such seam (§2). Acknowledgement parsing is gone
-with the conformance join, along with the pinned external vectors.
+The exact-binding lifecycle seam is exercised in
+`graph_hint_dispatch.rs` for `NotNeeded`, invalid descriptors, and stale
+preparations. Acknowledgement parsing is gone with the conformance join, along
+with the pinned external vectors.
 
 ### llama.cpp
 
@@ -865,12 +879,11 @@ with the conformance join, along with the pinned external vectors.
   and never emit `id_slot`; and
 - the declared field set is exactly `scope` and the reuse preference.
 
-**Status: design.** The provider request digest changing when projected cache
-behavior changes is implied by the digest covering the rendered fields but is
-not asserted directly. Structured output, tool calling, and unavailable or
-post-send-uncertain outcomes are the delegated OpenAI adapter's behaviour and
-are not pinned for this provider. The two cached-token bullets this list used
-to carry are removed: see §6.3.
+The provider request digest changing when the profile withholds cache behavior
+is asserted directly. Structured output, tool calling, and unavailable or
+post-send-uncertain outcomes remain the delegated OpenAI adapter's behavior and
+are not separately pinned for this provider. The two cached-token bullets this
+list used to carry are removed: see §6.3.
 
 ### Exact binding and lifecycle
 
@@ -878,10 +891,10 @@ to carry are removed: see §6.3.
   by absence: the functions are deleted, and
   `tools/tests/test_canonical_only_reachability.py` keeps them out.
 
-**Status: design.** Everything else here — preparing only the adapters a graph
-execution actually uses, distinguishing `NotNeeded` from `Unsupported` from
-pre-send failure from uncertain post-send outcome, and refusing a release that
-targets a stale preparation — describes a lifecycle seam that does not exist.
+**Status: implemented at the exact adapter boundary.** The seam distinguishes
+`NotNeeded`, `Unsupported`, pre-send failure, and uncertain post-send outcome,
+and refuses a release that targets a stale preparation. A graph-executor caller
+that selects affected exact bindings is still outside this branch.
 
 ## 14. Acceptance criteria
 
@@ -903,8 +916,9 @@ where it currently stands.
    two distinguishable evidence layers. Backend acknowledgement and outcome
    measurement are not layers the machine has; §6.3 records why, and what
    producing either would require.
-7. **Partly met.** Nothing broadcasts. Nothing follows an exact admitted
-   binding either, because there is no lifecycle seam.
+7. **Met at the adapter boundary.** Nothing broadcasts; lifecycle preparation
+   and release are exact-binding local and digest-fenced. The general graph
+   executor has no caller for the seam yet.
 8. **Met by construction**, not by assertion — see §13.
 9. **Met** by retiring the vLLM join rather than keeping it independent
    (ADR 0021).

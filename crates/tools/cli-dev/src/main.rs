@@ -1,7 +1,6 @@
 //! Dekk-owned compiler and runtime conformance binary.
 
 #![allow(
-    dead_code,
     clippy::assigning_clones,
     clippy::case_sensitive_file_extension_comparisons,
     clippy::cast_possible_wrap,
@@ -10,24 +9,25 @@
     clippy::match_same_arms,
     clippy::match_wildcard_for_single_variants,
     clippy::option_option,
-    clippy::struct_field_names,
-    clippy::unused_async
+    clippy::struct_field_names
 )]
 
-mod commands;
-mod frontend;
-
 use anyhow::Result;
+use apxm_cli_dev::commands::{
+    DevCli, DevCommands, analyze_command, canonical_air_command, codegen_command, explain_command,
+    ops_command, template_command, validate_command,
+};
+use apxm_cli_dev::commands::{
+    OutputAlreadyEmitted, compile_service_canonical, execute_canonical_command,
+};
 use clap::Parser;
-use commands::*;
 use serde_json::json;
 use std::process::ExitCode;
 
-#[tokio::main]
-async fn main() -> ExitCode {
+fn main() -> ExitCode {
     let cli = DevCli::parse();
     let json_mode = cli.json;
-    match run_dev(cli).await {
+    match run_dev(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             emit_cli_error(&err, json_mode);
@@ -36,12 +36,10 @@ async fn main() -> ExitCode {
     }
 }
 
-async fn run_dev(cli: DevCli) -> Result<()> {
+fn run_dev(cli: DevCli) -> Result<()> {
     match cli.command {
         DevCommands::CompileServiceCanonical { agent_dir } => {
-            commands::compile_service_canonical::compile_service_canonical_command(
-                agent_dir, cli.config,
-            )
+            compile_service_canonical::compile_service_canonical_command(agent_dir, cli.config)
         }
         DevCommands::ExecuteCanonical {
             input,
@@ -52,7 +50,7 @@ async fn run_dev(cli: DevCli) -> Result<()> {
         } => {
             let handlers = package
                 .as_deref()
-                .map(commands::canonical_execute::admitted_package_handlers)
+                .map(apxm_cli_dev::commands::canonical_execute::admitted_package_handlers)
                 .transpose()?
                 .flatten();
             execute_canonical_command(
@@ -64,7 +62,6 @@ async fn run_dev(cli: DevCli) -> Result<()> {
                 package,
                 cli.json,
             )
-            .await
         }
         DevCommands::Codegen { action } => codegen_command(action, cli.json),
         DevCommands::CanonicalAir { input } => canonical_air_command(input),
@@ -80,10 +77,7 @@ async fn run_dev(cli: DevCli) -> Result<()> {
 }
 
 fn emit_cli_error(err: &anyhow::Error, json_mode: bool) {
-    if err
-        .downcast_ref::<commands::OutputAlreadyEmitted>()
-        .is_some()
-    {
+    if err.downcast_ref::<OutputAlreadyEmitted>().is_some() {
         return;
     }
 
