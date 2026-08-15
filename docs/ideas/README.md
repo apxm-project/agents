@@ -4,9 +4,6 @@ Documents in this directory are proposals, not shipped or canonical APXM
 contracts. Each document states its own status and identifies the evidence
 needed before promotion into a contract or architecture decision.
 
-- [Collapsing the org package onto one authored manifest](org-package-collapse.md)
-  — implemented: one authored `org.toml`, published `apxm.org` contract and
-  13 vectors, join deleted rather than relocated.
 - [Backend-neutral graph hints](backend-neutral-graph-hints.md) — a common
   APXM graph-fact and execution-intent contract with explicit backend
   projection, including llama.cpp and vLLM lowerings.
