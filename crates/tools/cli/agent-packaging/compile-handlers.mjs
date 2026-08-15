@@ -74,7 +74,11 @@ export async function compileHandlers(entryPaths, options = {}) {
       if (!isFunctionTool(value)) continue;
       const qualname = exportName === "default" ? value.qualname : exportName;
       const handler_id = makeHandlerId(module, qualname);
-      if (seen.has(handler_id)) continue;
+      if (seen.has(handler_id)) {
+        throw new Error(
+          `duplicate TypeScript handler ${handler_id} (${module}:${qualname})`,
+        );
+      }
       seen.add(handler_id);
       handlers.push({
         kind: "tool",

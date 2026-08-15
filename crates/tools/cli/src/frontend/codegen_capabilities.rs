@@ -11,6 +11,8 @@
 //! exactly `BUILTIN_GROUPS`. `STANDARD_BUILTINS` is projected as a named subset
 //! of the ids, never as a separate symbol family.
 
+use std::collections::BTreeMap;
+
 use apxm_ais::capabilities::{BUILTIN_GROUPS, BUILTINS, STANDARD_BUILTINS};
 
 pub const PYTHON_CAPABILITIES_FILE: &str = "capabilities.py";
@@ -36,6 +38,35 @@ fn group_symbols() -> Vec<Symbol> {
         .iter()
         .map(|group| symbol(GROUP_SYMBOL_PREFIX, group))
         .collect()
+}
+
+/// Return the first collision in the generated frontend namespace.
+///
+/// Frontend identifiers normalize punctuation to `_` and share one module
+/// namespace for capability and group symbols. A new AIS id such as
+/// `foo-bar` must therefore not be allowed to silently collide with
+/// `foo_bar`, or with a group such as `foo.bar`. The source catalogue is the
+/// authority for values, but this projection owns the additional identifier
+/// invariant and must fail codegen before it writes ambiguous files.
+fn first_symbol_collision(
+    capabilities: &[Symbol],
+    groups: &[Symbol],
+) -> Option<(String, &'static str, &'static str)> {
+    let mut seen: BTreeMap<String, &'static str> = BTreeMap::new();
+    for symbol in capabilities.iter().chain(groups) {
+        if let Some(previous) = seen.insert(symbol.ident.clone(), symbol.value) {
+            return Some((symbol.ident.clone(), previous, symbol.value));
+        }
+    }
+    None
+}
+
+fn assert_symbol_namespace_is_unique(capabilities: &[Symbol], groups: &[Symbol]) {
+    if let Some((ident, previous, current)) = first_symbol_collision(capabilities, groups) {
+        panic!(
+            "capability catalogue symbols collide after frontend normalization: {ident} maps both {previous:?} and {current:?}"
+        );
+    }
 }
 
 /// `STANDARD_BUILTINS` as identifiers already emitted for `BUILTINS`. A member
@@ -90,6 +121,7 @@ pub fn render_capabilities_python() -> String {
     let capabilities = capability_symbols();
     let groups = group_symbols();
     let standard = standard_capability_idents();
+    assert_symbol_namespace_is_unique(&capabilities, &groups);
 
     let mut buf = String::new();
     buf.push_str(PYTHON_HEADER);
@@ -170,6 +202,7 @@ pub fn render_capabilities_typescript() -> String {
     let capabilities = capability_symbols();
     let groups = group_symbols();
     let standard = standard_capability_idents();
+    assert_symbol_namespace_is_unique(&capabilities, &groups);
 
     let mut buf = String::new();
     buf.push_str(TYPESCRIPT_HEADER);
@@ -314,5 +347,25 @@ mod tests {
             typescript.contains("export const MCP_CALL = \"mcp.call\" satisfies CapabilityId;")
         );
         assert!(typescript.contains("export const GROUP_SKILLS = \"skills\""));
+    }
+
+    #[test]
+    fn normalized_capability_and_group_symbols_must_not_collide() {
+        let capabilities = vec![
+            Symbol {
+                ident: "FOO_BAR".to_string(),
+                value: "foo-bar",
+            },
+            Symbol {
+                ident: "FOO_BAR".to_string(),
+                value: "foo_bar",
+            },
+        ];
+        let groups = Vec::new();
+        let collision = first_symbol_collision(&capabilities, &groups)
+            .expect("the projection must detect a normalized identifier collision");
+        assert_eq!(collision.0, "FOO_BAR");
+        assert_eq!(collision.1, "foo-bar");
+        assert_eq!(collision.2, "foo_bar");
     }
 }

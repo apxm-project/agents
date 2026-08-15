@@ -24,6 +24,22 @@
           }
         ]
       }
+    },
+    {
+      "value_id": "fixture.search_skills.arguments",
+      "expression": {
+        "kind": "object",
+        "fields": [
+          {
+            "name": "query",
+            "value": { "kind": "string", "value": "context" }
+          },
+          {
+            "name": "root_id",
+            "value": { "kind": "string", "value": "project" }
+          }
+        ]
+      }
     }
   ],
   "semantic_operations": [
@@ -42,12 +58,23 @@
       "node_id": "fixture.capability.read_skill",
       "op": "capability.invoke",
       "parent_region_id": "fixture.root",
-      "execution_order": 1,
+      "execution_order": 2,
       "operands": [
         { "slot": "capability_ref", "value_id": "read_skill", "type_ref": "CapabilityRef" },
         { "slot": "arguments", "value_id": "fixture.read_skill.arguments", "type_ref": "ArgumentValue" }
       ],
       "result": { "value_id": "fixture.read_skill.output", "type_ref": "ToolOutput" }
+    },
+    {
+      "node_id": "fixture.capability.search_skills",
+      "op": "capability.invoke",
+      "parent_region_id": "fixture.root",
+      "execution_order": 1,
+      "operands": [
+        { "slot": "capability_ref", "value_id": "search_skills", "type_ref": "CapabilityRef" },
+        { "slot": "arguments", "value_id": "fixture.search_skills.arguments", "type_ref": "ArgumentValue" }
+      ],
+      "result": { "value_id": "fixture.search_skills.output", "type_ref": "ToolOutput" }
     }
   ],
   "structural_ir": [

@@ -17,6 +17,20 @@ use apxm_program::frontend_graph::HookBinding;
 use apxm_program::runtime_evidence::Fact;
 use std::collections::BTreeMap;
 
+/// The target state captured when a Hook body begins.
+///
+/// A captured body is ordinary AIR and may itself run model, Capability, or
+/// await operations. The Hook handler still has to observe the result and
+/// success state of the Hook's selected target, not the last operation the
+/// captured body happened to run. This snapshot is persisted when that body
+/// parks so resume cannot change what the after-Hook observes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HookTargetSnapshot {
+    pub result: Value,
+    pub succeeded: bool,
+    pub result_value_id: Option<String>,
+}
+
 /// One active structural loop frame persisted in exact nesting order.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -58,6 +72,10 @@ pub struct Continuation {
     pub values: BTreeMap<String, Value>,
     pub last_result: Value,
     pub last_result_value_id: Option<String>,
+    /// Target snapshots for captured Hook bodies that were active when this
+    /// continuation parked.
+    #[serde(default)]
+    pub hook_target_snapshots: BTreeMap<String, HookTargetSnapshot>,
     pub native_usage: Usage,
     pub external_agent_evidence: Vec<ExternalAgentEvidence>,
     pub evidence_batch: Vec<Fact>,

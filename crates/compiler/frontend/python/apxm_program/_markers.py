@@ -39,7 +39,7 @@ from ._generated.frontend_records import (
     SkillInlineSource,
     SkillInstructionSource,
 )
-from ._generated.permissions import Permission
+from ._generated.permissions import PERMISSION_DECISIONS, Permission
 from .handlers import CapabilityId
 
 #: The ceiling the skill-reading capability enforces on a body it loads. An
@@ -184,6 +184,7 @@ class _ToolFactory(_TypedFactory):
     ) -> ToolBinding:
         _require_exact_reference(capability_ref, "Tool", TOOL_DISPLAY_NAME_REJECTED)
         _require_capability_reference(capability_ref, "Tool", TOOL_REF_NOT_CAPABILITY)
+        _require_permission(permission, "Tool")
         return ToolBinding(target_ref=capability_ref, permission=permission)
 
 
@@ -195,6 +196,7 @@ class _CapabilityFactory(_TypedFactory):
     ) -> CapabilityBinding:
         _require_exact_reference(ref, "Capability", CAPABILITY_DISPLAY_NAME_REJECTED)
         _require_capability_reference(ref, "Capability", CAPABILITY_REF_NOT_EXACT)
+        _require_permission(permission, "Capability")
         return CapabilityBinding(target_ref=ref, permission=permission)
 
 
@@ -320,6 +322,33 @@ def _require_capability_reference(
         f"{code}: {marker} accepts a builtin catalogue id or the handler "
         f"declaration that implements one, not '{value}'"
     )
+
+
+def _require_permission(value: Any, marker: str) -> None:
+    """Keep runtime callers on the generated closed permission vocabulary.
+
+    Python type annotations do not run when a package is imported, and a
+    ``Permission`` dataclass can therefore be constructed with an invalid
+    decision or an empty reason. Refuse those values while the authored marker
+    is built so malformed ``requested_permission`` records never reach the
+    FrontendGraph bridge.
+    """
+    if value is None:
+        return
+    if not isinstance(value, Permission):
+        raise TypeError(
+            f"{marker} permission is one of the generated Allow, Ask, or Deny "
+            f"markers, not {value!r}"
+        )
+    if value.decision not in PERMISSION_DECISIONS:
+        raise ValueError(
+            f"{marker} permission decision must be one of "
+            f"{', '.join(PERMISSION_DECISIONS)}, not {value.decision!r}"
+        )
+    if value.reason is not None and (
+        not isinstance(value.reason, str) or not value.reason
+    ):
+        raise ValueError(f"{marker} permission reason must be a non-empty string")
 
 
 Model = _ModelFactory()

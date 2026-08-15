@@ -66,7 +66,9 @@
       "type": "object",
       "required": [
         "id",
-        "version"
+        "version",
+        "schema_version",
+        "compile"
       ],
       "properties": {
         "id": {
@@ -112,6 +114,9 @@
         "permissions": {
           "type": "object",
           "description": "The package layer of the permission stack: what this package decides about a capability its own tree can supply. Tighten-only — it may narrow a decision and may never decide for a capability nothing grants.",
+          "propertyNames": {
+            "$ref": "#/$defs/Identifier"
+          },
           "additionalProperties": {
             "$ref": "#/$defs/PermissionDecision"
           }
@@ -120,8 +125,12 @@
       "additionalProperties": false
     },
     "CompileDeclaration": {
-      "description": "The package's single compiled entry. Both keys are stated together or neither is.",
+      "description": "The package's single compiled entry. Both keys are required together.",
       "type": "object",
+      "required": [
+        "entry",
+        "frontend"
+      ],
       "properties": {
         "entry": {
           "type": "string",

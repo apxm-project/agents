@@ -64,7 +64,9 @@ use crate::ports::{
     CompositionReceiver, CompositionRequest, EventAwait, EventOutcome, EventPort, EventRef,
     EventRefError,
 };
-use crate::resume::{Continuation, ContinuationError, DurableLoopFrame, RunOutcome};
+use crate::resume::{
+    Continuation, ContinuationError, DurableLoopFrame, HookTargetSnapshot, RunOutcome,
+};
 use crate::structural::{ScheduleStep, build_schedule};
 
 /// The exact set of injected ports the driver drives. Every port is a single
@@ -689,6 +691,7 @@ struct DriveState {
     last_result: Value,
     values: BTreeMap<String, Value>,
     last_result_value_id: Option<String>,
+    hook_target_snapshots: BTreeMap<String, HookTargetSnapshot>,
     branch_decisions: BTreeMap<String, usize>,
     last_operation_succeeded: bool,
     batch: Vec<Fact>,
@@ -787,6 +790,7 @@ impl DriveState {
             last_result: Value::Null,
             values: initial_values,
             last_result_value_id: None,
+            hook_target_snapshots: BTreeMap::new(),
             branch_decisions: BTreeMap::new(),
             last_operation_succeeded: true,
             batch,
@@ -1265,6 +1269,19 @@ async fn drive_from(
     while schedule_position < schedule.len() {
         let step = &schedule[schedule_position];
         match step {
+            ScheduleStep::HookBodyBegin { binding } => {
+                // Capture the target state before any operation in the Hook's
+                // own region runs. In particular, an after-Hook must not see
+                // the result or success flag of its captured body.
+                state.hook_target_snapshots.insert(
+                    binding.body_region_id.clone(),
+                    HookTargetSnapshot {
+                        result: state.last_result.clone(),
+                        succeeded: state.last_operation_succeeded,
+                        result_value_id: state.last_result_value_id.clone(),
+                    },
+                );
+            }
             ScheduleStep::HookBefore { binding } => {
                 let (before, after) = apply_static_hook(&mut state, ports, air, binding).await?;
                 state.seq += 1;
@@ -1297,7 +1314,13 @@ async fn drive_from(
                 }
             }
             ScheduleStep::HookAfter { binding } => {
-                if state.last_operation_succeeded {
+                let target_succeeded = state
+                    .hook_target_snapshots
+                    .get(&binding.body_region_id)
+                    .map_or(state.last_operation_succeeded, |snapshot| {
+                        snapshot.succeeded
+                    });
+                if target_succeeded {
                     let (before, after) =
                         apply_static_hook(&mut state, ports, air, binding).await?;
                     state.seq += 1;
@@ -1328,6 +1351,16 @@ async fn drive_from(
                             state.seq,
                         ));
                     }
+                } else if let Some(snapshot) =
+                    state.hook_target_snapshots.get(&binding.body_region_id)
+                {
+                    // Preserve the target status for any outer after-Hooks;
+                    // the captured body is not the target operation.
+                    state.last_result = snapshot.result.clone();
+                    state
+                        .last_result_value_id
+                        .clone_from(&snapshot.result_value_id);
+                    state.last_operation_succeeded = snapshot.succeeded;
                 }
             }
             ScheduleStep::ContextEdge {
@@ -2064,6 +2097,14 @@ async fn apply_static_hook(
     binding: &HookBinding,
 ) -> Result<(Value, Value), ExecutionError> {
     let before = state.context.clone();
+    let target_snapshot = state
+        .hook_target_snapshots
+        .get(&binding.body_region_id)
+        .cloned();
+    let target_result = target_snapshot.as_ref().map_or_else(
+        || state.last_result.clone(),
+        |snapshot| snapshot.result.clone(),
+    );
     let captured_context = match binding.assigned_context_value_id.as_deref() {
         Some(value_id) => Some(materialize_ssa_value(
             air,
@@ -2079,7 +2120,7 @@ async fn apply_static_hook(
         .execute(StaticHookInvocation {
             binding,
             context: &state.context,
-            result: &state.last_result,
+            result: &target_result,
             captured_context,
         })
         .await
@@ -2118,14 +2159,23 @@ async fn apply_static_hook(
                 state.context = context;
             }
             state.last_result = result.clone();
-            if let Some(value_id) = &state.last_result_value_id {
+            if let Some(value_id) = target_snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.result_value_id.as_ref())
+                .or(state.last_result_value_id.as_ref())
+            {
                 state.values.insert(value_id.clone(), result.clone());
             }
             // A replacement has to reach the node outcome the evidence records,
             // or a Capability-scope Hook would replace the value the program
             // goes on to use while the committed outcome still reported the
             // original — two different answers to one question.
-            match state.node_outcomes.last_mut() {
+            match state
+                .node_outcomes
+                .iter_mut()
+                .rev()
+                .find(|outcome| node_outcome_id(outcome) == Some(binding.target_selector.as_str()))
+            {
                 Some(NodeOutcome::Model {
                     result: model_result,
                     replaced,
@@ -2146,7 +2196,40 @@ async fn apply_static_hook(
             }
         }
     }
+    if binding.phase == apxm_program::frontend_graph::HookPhase::After
+        && let Some(snapshot) = target_snapshot
+    {
+        state.last_result = match state
+            .node_outcomes
+            .iter()
+            .rev()
+            .find(|outcome| node_outcome_id(outcome) == Some(binding.target_selector.as_str()))
+        {
+            Some(NodeOutcome::Model { result, .. }) => result.clone(),
+            Some(NodeOutcome::Capability { outcome, .. }) => match outcome {
+                CapabilityOutcome::Completed { result }
+                | CapabilityOutcome::Failed { message: result }
+                | CapabilityOutcome::OutcomeUnknown { message: result } => {
+                    Value::String(result.clone())
+                }
+            },
+            _ => snapshot.result.clone(),
+        };
+        state.last_result_value_id = snapshot.result_value_id;
+        state.last_operation_succeeded = snapshot.succeeded;
+    }
     Ok((before, state.context.clone()))
+}
+
+fn node_outcome_id(outcome: &NodeOutcome) -> Option<&str> {
+    match outcome {
+        NodeOutcome::Model { node_id, .. }
+        | NodeOutcome::Capability { node_id, .. }
+        | NodeOutcome::ExternalAgent { node_id, .. }
+        | NodeOutcome::ProgramNew { node_id, .. }
+        | NodeOutcome::ProgramInvoke { node_id, .. }
+        | NodeOutcome::AwaitEvent { node_id, .. } => Some(node_id.as_str()),
+    }
 }
 
 /// Render a Hook's replacement value as the string a Capability outcome
@@ -2319,6 +2402,7 @@ fn validate_hook_bindings(
         .map(|region| region.region_id.as_str())
         .collect::<BTreeSet<_>>();
     let mut claimed = BTreeSet::new();
+    let mut claimed_hook_ids = BTreeSet::new();
     for binding in hook_bindings {
         if !regions.contains(binding.body_region_id.as_str()) {
             return Err(ExecutionError::InvalidAir {
@@ -2335,6 +2419,39 @@ fn validate_hook_bindings(
                     "hook {}: body_region_id {} is claimed by another Hook binding, so only \
                      one of them would run",
                     binding.hook_id, binding.body_region_id
+                ),
+            });
+        }
+        if !claimed_hook_ids.insert(binding.hook_id.as_str()) {
+            return Err(ExecutionError::InvalidAir {
+                message: format!(
+                    "hook {}: hook_id is claimed more than once in the execution request",
+                    binding.hook_id
+                ),
+            });
+        }
+    }
+
+    let carried: Vec<&HookBinding> = air
+        .structural_ir
+        .iter()
+        .filter_map(|region| region.hook.as_ref())
+        .collect();
+    if carried.len() != hook_bindings.len() {
+        return Err(ExecutionError::InvalidAir {
+            message: format!(
+                "AIR carries {} Hook bindings but the execution request supplies {}",
+                carried.len(),
+                hook_bindings.len()
+            ),
+        });
+    }
+    for (index, (carried, supplied)) in carried.iter().zip(hook_bindings).enumerate() {
+        if *carried != supplied {
+            return Err(ExecutionError::InvalidAir {
+                message: format!(
+                    "Hook binding at AIR order {index} ({}) differs from the binding carried by its AIR body region",
+                    supplied.hook_id
                 ),
             });
         }
@@ -2824,6 +2941,7 @@ async fn resume_from_continuation(
         values,
         last_result,
         last_result_value_id,
+        hook_target_snapshots,
         native_usage,
         external_agent_evidence,
         evidence_batch: _,
@@ -2888,6 +3006,7 @@ async fn resume_from_continuation(
         last_result,
         values,
         last_result_value_id,
+        hook_target_snapshots,
         branch_decisions,
         last_operation_succeeded: true,
         batch: Vec::new(),
@@ -2897,6 +3016,15 @@ async fn resume_from_continuation(
         last_model_node_execution_id: None,
         last_program_new_node_execution_id: None,
     };
+
+    let resume_value_id = resume_value_id.ok_or_else(|| {
+        ExecutionError::Continuation(ContinuationError::InvalidCommittedState {
+            message: "continuation is missing its exact resume SSA destination".into(),
+        })
+    })?;
+    state.last_result = delivered.clone();
+    state.last_result_value_id = Some(resume_value_id.clone());
+    state.last_operation_succeeded = true;
 
     if event_ref.is_some() {
         let event_ref =
@@ -2934,11 +3062,6 @@ async fn resume_from_continuation(
                 .push(parked_node_execution_id.clone());
         }
     }
-    let resume_value_id = resume_value_id.ok_or_else(|| {
-        ExecutionError::Continuation(ContinuationError::InvalidCommittedState {
-            message: "continuation is missing its exact resume SSA destination".into(),
-        })
-    })?;
     validate_resume_capability_arguments(&air, &resume_value_id)?;
     state.values.insert(resume_value_id, delivered);
 
@@ -3041,6 +3164,7 @@ async fn finish(
                 values: state.values.clone(),
                 last_result: state.last_result.clone(),
                 last_result_value_id: state.last_result_value_id.clone(),
+                hook_target_snapshots: state.hook_target_snapshots.clone(),
                 native_usage: state.native_usage,
                 external_agent_evidence: state.external_agent_evidence.clone(),
                 evidence_batch: state.batch.clone(),

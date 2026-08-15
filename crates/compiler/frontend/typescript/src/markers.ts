@@ -27,7 +27,10 @@ import {
   SKILL_INSTRUCTION_KIND_INLINE,
 } from "./generated/frontend-graph.js";
 import type { SkillInstructionSource } from "./generated/frontend-records.js";
-import type { Permission } from "./generated/permissions.js";
+import {
+  PERMISSION_DECISIONS,
+  type Permission,
+} from "./generated/permissions.js";
 // The generated catalogue's `CapabilityId` is the closed set of builtin ids; the
 // packaging surface's `CapabilityId` is the object a handler declaration hands
 // back. Two different concepts wearing one name, so each is renamed to the thing
@@ -268,6 +271,7 @@ export function Tool<Input, Output>(
   const targetRef = capabilityIdOf(capabilityRef);
   rejectDisplayName(targetRef, "Tool", TOOL_DISPLAY_NAME_REJECTED);
   rejectUnmintedCapability(capabilityRef, "Tool", TOOL_REF_NOT_CAPABILITY);
+  rejectInvalidPermission(options.permission, "Tool");
   return recordDeclaration(Object.assign(binding, {
     kind: "tool_binding" as const,
     targetRef,
@@ -285,6 +289,7 @@ export function Capability<Input, Output>(
   const targetRef = capabilityIdOf(ref);
   rejectDisplayName(targetRef, "Capability", CAPABILITY_DISPLAY_NAME_REJECTED);
   rejectUnmintedCapability(ref, "Capability", CAPABILITY_REF_NOT_EXACT);
+  rejectInvalidPermission(options.permission, "Capability");
   return recordDeclaration(Object.assign(binding, {
     kind: "capability_binding" as const,
     targetRef,
@@ -292,6 +297,37 @@ export function Capability<Input, Output>(
     outputTypeRef: "CapabilityOutput",
     permission: options.permission,
   }));
+}
+
+/** Keep JavaScript callers on the generated closed permission vocabulary. */
+function rejectInvalidPermission(
+  permission: Permission | undefined,
+  marker: string,
+): void {
+  if (permission === undefined) {
+    return;
+  }
+  const candidate = permission as unknown as {
+    decision?: unknown;
+    reason?: unknown;
+  };
+  const decision = candidate?.decision;
+  if (
+    (typeof permission !== "object" && typeof permission !== "function") ||
+    permission === null ||
+    typeof decision !== "string" ||
+    !(PERMISSION_DECISIONS as readonly string[]).includes(decision)
+  ) {
+    throw new TypeError(
+      `${marker} permission is one of the generated Allow, Ask, or Deny markers`,
+    );
+  }
+  if (
+    candidate.reason !== undefined &&
+    (typeof candidate.reason !== "string" || candidate.reason.length === 0)
+  ) {
+    throw new TypeError(`${marker} permission reason must be a non-empty string`);
+  }
 }
 
 export function Event<Payload>(ref: string): EventTypeBinding<Payload> {

@@ -1,8 +1,7 @@
 # Generating the source-first frontends from their contract
 
-**Status: partly landed, mostly design.** The vocabulary projection described in
-§3 is shipped and drift-gated; §4–§6 specify work that is *not* wired and must
-not be read as describing current behaviour.
+**Status: landed.** The vocabulary projection, contract records, serializers,
+and typed diagnostic wiring described below are shipped and drift-gated.
 
 ## 1. The problem this addresses
 
@@ -160,7 +159,7 @@ scope comparisons in `_capture.py`'s `_hook_target` and `capture.ts`'s
 `resolveHookTarget` bind the constants too, and `resolveHookTarget` now takes
 `HookScope` rather than `string`.
 
-## 4. Design: generating the record types
+## 4. Landed: generating the record types
 
 **Landed.** The contract records are generated into
 `_generated/frontend_records.py` and `generated/frontend-records.ts` by
@@ -195,15 +194,14 @@ The split that resolves it:
    contract counterpart and stay as they are. `BoundCall` and `BoundControl`
    become hand-written records that carry a generated contract record plus their
    `span` and `operands`.
-3. **Introduce the missing TypeScript layer.** TypeScript has no bound tree at
-   all today — `capture.ts` builds wire-shaped objects inline. `src/bound-tree.ts`
-   must mirror `_bound_tree.py` before the generated records can serve both
-   languages, and that mirroring is what makes the two frontends' parity
-   structural rather than reviewed.
+3. **TypeScript bound tree.** This layer is landed: `src/bound-tree.ts`
+   mirrors `_bound_tree.py`, and `capture.ts` builds that shared intermediate
+   representation before the generated records serve both languages. The
+   mirroring makes frontend parity structural rather than reviewed.
 
 ## 5. Generating the emitter
 
-Most of the old `_emit.py` was one rule applied once per record: build a dict
+**Landed.** Most of the old `_emit.py` was one rule applied once per record: build a dict
 with every required key, then add each optional key if and only if its source
 value is not `None`. `_declaration`, `_value`, `_region`, `_hook`, and
 `_capability_requirement` were five hand-written instances of it. That rule is
@@ -246,31 +244,26 @@ the lowering does not read it. The one visible consequence is
 so moves whenever key order does; it is language-local, and the parity
 projections exclude it for that reason.
 
-## 6. Design: wiring the diagnostic codes
+## 6. Landed: wiring the diagnostic codes
 
-**Not implemented.** The vocabulary from §3.2 exists; no raise site binds it
-yet. Python's `CaptureError` (`_capture.py:45`) and TypeScript's
-(`capture.ts:136`) are still untyped, and their 39 `raise CaptureError` and 32
-`throw new CaptureError` sites carry free text only.
+**Landed.** The vocabulary from §3.2 is bound at every source-capture
+rejection. Python's `CaptureError` and TypeScript's `CaptureError` both require
+the generated `DiagnosticCode` as their first argument, retain it as `.code`,
+and prefix the human-readable message with it. Nested Hook failures preserve
+the originating code.
 
 The wiring:
 
 1. `CaptureError` takes a required `code: DiagnosticCode` as its first argument
    in both languages. There is no default — a defaulted code is an open set
-   wearing a closed set's name, which is exactly what
-   `crates/machine/program/src/diagnostic.rs` refuses for the verification
-   vocabulary.
-2. Each raise site names its code. Messages are unchanged, so the codes are
-   additive to what a reader already sees.
-3. Sites whose reason the manifest does not yet name — the value-expression
-   subset rejections, the safe-integer domain check, the spread rejections — add
-   a code to `declarations[].diagnostics` for the marker that raises them.
-   `contracts/schemas/apxm.frontend-surface.json` already types `diagnostics` as
-   an array of strings, so no schema change is needed; the reviewer sees which
-   marker gained a rejection reason, and regeneration mints the symbol.
-4. `tools/scripts/check_frontend_surface.py` gains a check that no
+   wearing a closed set's name.
+2. Each raise site names a generated code. The current value-expression,
+   safe-integer, spread, and task-scope rejections are covered by the existing
+   `AgentDynamicArgument` code because they are closed-subset argument
+   rejections; the manifest remains the single code vocabulary.
+3. `tools/scripts/check_frontend_surface.py` checks that no
    `raise CaptureError(` or `throw new CaptureError(` in either package lacks a
-   code, so the migration cannot half-land.
+   generated code, so the migration cannot half-land.
 
 ## 7. Where this leaves the measurement
 
@@ -282,7 +275,6 @@ Counted with `wc -l` over the two packages after §3:
 | `@apxm/frontend` `src` | 550 | 2869 | 19.2% |
 
 Before §3 the same counts were 273 of 2412 (11.3%) and 207 of 2502 (8.3%).
-§4–§6 target the two largest hand-written files, `_capture.py` (1168 lines) and
-`capture.ts` (1774 lines), of which the emit halves and record types are the
-generable part; the AST walk and marker ergonomics are not, and are not meant to
-be.
+§4–§6 addressed the two largest hand-written files, `_capture.py` and
+`capture.ts`: the emit halves and record types are generated, while the AST walk
+and marker ergonomics remain intentionally hand-written.

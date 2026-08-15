@@ -84,6 +84,22 @@ ordinary Agent; do not make your program depend on an example name.
    dekk agents test-frontend-examples
    ```
 
+Before opening a change that affects the authoring contract, run the static
+and generated-doc gates as well. `check` is the aggregate metadata/parity/
+surface gate; `check-deversion` catches a reintroduced Agents-owned versioned
+identifier or filename; and `check-agent-skills` validates the discovery roots
+that the runtime serves.
+
+```sh
+dekk agents check
+dekk agents check-deversion
+dekk agents check-agent-skills
+```
+
+For a CI-equivalent local pass, add `dekk agents build`, `dekk agents test`,
+and `dekk agents test-all`, then run the focused shipping-path checks listed in
+the [verification runbook](../README.md#verification-and-ci).
+
 The frontend captures source intent; Rust selects and verifies AIR/AIS; an
 admitted runtime executes the artifact. This keeps source readable without
 turning Python or TypeScript into a second runtime

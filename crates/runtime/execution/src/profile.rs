@@ -7,23 +7,31 @@
 //! keeps shutdown state instance-local; it never discovers, replaces, or
 //! falls back to another implementation.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    future::Future,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
 };
 
 use serde_json::Value;
 
 use apxm_inference::ModelCallRequestMetadataPort;
-use apxm_kernel::{ExactPortBinding, ResourceCeilings, RuntimeAdmission};
+use apxm_kernel::{
+    EventRef, ExactPortBinding, ProgramInstanceRef, ResourceCeilings, RuntimeAdmission,
+};
 use apxm_program::artifact::SchemaDigestRef;
 
 use crate::bundle::ExecutionPortBundle;
 use crate::driver::{
     CapturedHookBodyHandler, ExecutionError, ExecutionPorts, ExecutionRequest, RunReport,
-    StaticHookHandlerPort, execute,
+    StaticHookHandlerPort, execute as drive_execute, execute_resumable as drive_execute_resumable,
+    resume as drive_resume, resume_event as drive_resume_event,
 };
 use crate::ports::{CompositionPort, EventPort};
+use crate::resume::RunOutcome;
 
 /// Why a profile could not be constructed or used.
 #[derive(Debug)]
@@ -39,6 +47,10 @@ pub enum RuntimeProfileError {
     Closed,
     /// The canonical driver rejected the invocation.
     Execution(ExecutionError),
+    /// The invocation exceeded the admitted wall-clock ceiling. The in-flight
+    /// driver future is cancelled by the owning timeout; no detached task is
+    /// left to continue after this error is returned.
+    WallTimeExceeded { max_wall_ms: u64 },
 }
 
 impl std::fmt::Display for RuntimeProfileError {
@@ -61,6 +73,12 @@ impl std::fmt::Display for RuntimeProfileError {
             }
             Self::Closed => formatter.write_str("runtime profile is closed"),
             Self::Execution(error) => error.fmt(formatter),
+            Self::WallTimeExceeded { max_wall_ms } => {
+                write!(
+                    formatter,
+                    "runtime profile exceeded max wall time of {max_wall_ms}ms"
+                )
+            }
         }
     }
 }
@@ -228,9 +246,68 @@ impl RuntimeProfile {
         if !self.accepting.load(Ordering::Acquire) {
             return Err(RuntimeProfileError::Closed);
         }
-        execute(&self.ports, request, initial_context)
-            .await
-            .map_err(RuntimeProfileError::Execution)
+        let max_wall_ms = self.resource_ceilings.max_wall_ms;
+        enforce_wall_time(max_wall_ms, async {
+            drive_execute(&self.ports, request, initial_context)
+                .await
+                .map_err(RuntimeProfileError::Execution)
+        })
+        .await
+    }
+
+    /// Execute one admitted request with durable park/resume semantics under
+    /// the same wall-clock ceiling as [`Self::execute`]. A parked continuation
+    /// is a successful result of this call; the timeout only owns the active
+    /// driver future and never spawns work that can outlive the caller.
+    pub async fn execute_resumable(
+        &self,
+        request: ExecutionRequest,
+        initial_context: Value,
+    ) -> Result<RunOutcome, RuntimeProfileError> {
+        if !self.accepting.load(Ordering::Acquire) {
+            return Err(RuntimeProfileError::Closed);
+        }
+        let max_wall_ms = self.resource_ceilings.max_wall_ms;
+        enforce_wall_time(max_wall_ms, async {
+            drive_execute_resumable(&self.ports, request, initial_context)
+                .await
+                .map_err(RuntimeProfileError::Execution)
+        })
+        .await
+    }
+
+    /// Resume an already admitted structural continuation under the active
+    /// call's wall-clock ceiling. Shutdown does not reject this method because
+    /// it completes work that was admitted before shutdown.
+    pub async fn resume(
+        &self,
+        program_instance_ref: &ProgramInstanceRef,
+        delivered: Value,
+    ) -> Result<RunOutcome, RuntimeProfileError> {
+        let max_wall_ms = self.resource_ceilings.max_wall_ms;
+        Box::pin(enforce_wall_time(max_wall_ms, async {
+            drive_resume(&self.ports, program_instance_ref, delivered)
+                .await
+                .map_err(RuntimeProfileError::Execution)
+        }))
+        .await
+    }
+
+    /// Resume an already admitted event continuation under the active call's
+    /// wall-clock ceiling.
+    pub async fn resume_event(
+        &self,
+        program_instance_ref: &ProgramInstanceRef,
+        event_ref: EventRef,
+        delivered: Value,
+    ) -> Result<RunOutcome, RuntimeProfileError> {
+        let max_wall_ms = self.resource_ceilings.max_wall_ms;
+        Box::pin(enforce_wall_time(max_wall_ms, async {
+            drive_resume_event(&self.ports, program_instance_ref, event_ref, delivered)
+                .await
+                .map_err(RuntimeProfileError::Execution)
+        }))
+        .await
     }
 
     /// Stop admitting new invocations. This operation is idempotent and has no
@@ -249,5 +326,126 @@ impl RuntimeProfile {
     #[must_use]
     pub fn resource_ceilings(&self) -> &ResourceCeilings {
         &self.resource_ceilings
+    }
+}
+
+/// Run one active driver future under an admitted wall-clock ceiling.
+///
+/// `tokio::time::timeout` owns the future directly. On expiry it drops that
+/// future before returning, so an invocation cannot keep executing in a
+/// detached task after the profile reports the limit. A zero ceiling is
+/// rejected explicitly because the admission contract defines zero as
+/// refusing the resource class, rather than relying on timer edge behavior.
+async fn enforce_wall_time<T, F>(max_wall_ms: u64, operation: F) -> Result<T, RuntimeProfileError>
+where
+    F: Future<Output = Result<T, RuntimeProfileError>>,
+{
+    if max_wall_ms == 0 {
+        return Err(RuntimeProfileError::WallTimeExceeded { max_wall_ms });
+    }
+
+    tokio::time::timeout(Duration::from_millis(max_wall_ms), operation)
+        .await
+        .map_err(|_| RuntimeProfileError::WallTimeExceeded { max_wall_ms })?
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    use super::*;
+
+    struct DropMarker(Arc<AtomicBool>);
+
+    impl Drop for DropMarker {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn wall_limit_cancels_the_owned_operation_at_the_deadline() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let marker = DropMarker(dropped.clone());
+        let operation = async move {
+            let _marker = marker;
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            Ok::<_, RuntimeProfileError>(())
+        };
+
+        let pending = enforce_wall_time(25, operation);
+        tokio::pin!(pending);
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_millis(25)).await;
+
+        let error = pending.await.expect_err("wall limit must terminate work");
+        assert!(matches!(
+            error,
+            RuntimeProfileError::WallTimeExceeded { max_wall_ms: 25 }
+        ));
+        assert!(
+            dropped.load(Ordering::Acquire),
+            "timeout must drop the owned operation rather than detach it"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn wall_limit_allows_normal_completion_before_the_deadline() {
+        let pending = enforce_wall_time(25, async {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            Ok::<_, RuntimeProfileError>("completed")
+        });
+        tokio::pin!(pending);
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_millis(5)).await;
+
+        assert_eq!(
+            pending.await.expect("normal work fits the ceiling"),
+            "completed"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn wall_limit_preserves_a_suspended_continuation_outcome() {
+        let pending = enforce_wall_time(25, async {
+            Ok::<_, RuntimeProfileError>(RunOutcome::Suspended {
+                continuation_id: "continuation.test".into(),
+                event_ref: None,
+                operational_usage:
+                    crate::operational_usage::CommittedNativeModelUsageOutcome::NotConfigured,
+            })
+        });
+
+        let outcome = pending.await.expect("parking is a normal bounded outcome");
+        assert!(matches!(
+            outcome,
+            RunOutcome::Suspended {
+                continuation_id,
+                event_ref: None,
+                ..
+            } if continuation_id == "continuation.test"
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn zero_wall_limit_refuses_the_operation_without_polling_it() {
+        let polled = Arc::new(AtomicBool::new(false));
+        let operation_polled = polled.clone();
+        let operation = async move {
+            operation_polled.store(true, Ordering::Release);
+            Ok::<_, RuntimeProfileError>(())
+        };
+
+        let error = enforce_wall_time(0, operation)
+            .await
+            .expect_err("zero means refuse the resource class");
+        assert!(matches!(
+            error,
+            RuntimeProfileError::WallTimeExceeded { max_wall_ms: 0 }
+        ));
+        assert!(!polled.load(Ordering::Acquire));
     }
 }

@@ -14,6 +14,7 @@ ports, and the runtime that executes admitted artifacts.
 6. [Authoring guides](guides/README.md).
 7. [Architecture decisions](adr/README.md).
 8. [Design ideas](ideas/README.md) — non-canonical proposals under review.
+9. [Authorable Agents implementation findings](agents/authorable-agents-implementation-findings.md) — audit disposition and reproducible verification evidence.
 
 ## Canonical pipeline
 
@@ -51,11 +52,43 @@ The historical PXM pages remain because they explain the ideas that shaped the
 current machine. They are theory and lineage only; no current implementation
 may depend on their retired operations or runtime state models.
 
-## Verification
+## Verification and CI
+
+Provision the declared toolchain once, then use the same named gates that CI
+uses. `check` includes every generated-metadata arm, including the generated
+documentation tables, and also runs frontend parity, frontend-surface, and
+workspace type checks. `check-deversion` is the focused guard for Agents-owned
+versioned ids and filenames; foreign-owner contract ids such as
+`apxm.contract-common.v1` are intentionally outside that guard.
 
 ```bash
+dekk agents setup
 dekk agents doctor
-dekk agents ops list
 dekk agents check
-dekk agents test-frontend-examples
+dekk agents check-deversion
+dekk agents build
+dekk agents test
+dekk agents test-all
+dekk agents test-compiler
+dekk agents test-cli
 ```
+
+The shipping-path E2E gates are explicit rather than inferred from unit tests:
+
+```bash
+dekk agents test-frontend-examples
+dekk agents check-agent-packages
+dekk agents check-example-artifacts
+dekk agents test-skill-example
+dekk agents test-package-handler-example
+dekk agents test-python-handler-example
+dekk agents compile-service-canonical
+dekk agents execute-canonical
+python -m pytest tools/tests/
+```
+
+When a contract changes, regenerate the checked-in reference tables with
+`dekk agents codegen-docs`; use `dekk agents check` to fail on drift. The
+workflow at [`.github/workflows/agents-gates.yml`](../.github/workflows/agents-gates.yml)
+keeps both the aggregate workspace suite and these frontend/package/compile/
+execute E2E gates required.

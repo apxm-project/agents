@@ -38,8 +38,8 @@
 import { describe, expect, it } from "vitest";
 
 import { source } from "../src/node.ts";
-import { Agent, Event, Model, Skill } from "../src/index.ts";
-import { captureProgram } from "../src/capture.ts";
+import { Agent, Event, Model, Skill, Tool } from "../src/index.ts";
+import { CaptureError, captureProgram } from "../src/capture.ts";
 import { declaredSoFar } from "../src/declared.ts";
 import { decodeFact } from "../src/generated/runtime-evidence.ts";
 import { stableDigest } from "../src/markers.ts";
@@ -50,6 +50,8 @@ import {
   SKILL_SOURCE_AMBIGUOUS,
 } from "../src/generated/diagnostics.ts";
 import { HOOK_SCOPE_CAPABILITY } from "../src/generated/frontend-graph.ts";
+import { ASK, Ask } from "../src/generated/permissions.ts";
+import { READ } from "../src/capabilities.ts";
 
 source(import.meta.url);
 
@@ -116,9 +118,20 @@ describe("language-local TypeScript frontend facts", () => {
     );
   });
 
+  it("keeps JavaScript permission values on the generated closed vocabulary", () => {
+    expect(() =>
+      Tool<Input, Output>(READ, { permission: "allow" as never }),
+    ).toThrow("generated Allow, Ask, or Deny");
+    expect(() =>
+      Tool<Input, Output>(READ, { permission: Ask("") }),
+    ).toThrow("reason must be a non-empty string");
+    expect(ASK).toBe("ask");
+  });
+
   it("refuses a Hook target no declaration names", () => {
     void Model<Input, Output>("stray.hook.model");
-    expect(() =>
+    let capturedError: unknown;
+    try {
       captureProgram({
         programId: "StrayHookTarget",
         entrypoint: "run",
@@ -142,8 +155,12 @@ describe("language-local TypeScript frontend facts", () => {
             });
           `,
         },
-      }),
-    ).toThrow(HOOK_TARGET_UNRESOLVED);
+      });
+    } catch (error) {
+      capturedError = error;
+    }
+    expect(capturedError).toBeInstanceOf(CaptureError);
+    expect((capturedError as CaptureError).code).toBe(HOOK_TARGET_UNRESOLVED);
   });
 
   it("redacts source tokens that escape the author workspace", () => {

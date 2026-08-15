@@ -31,8 +31,9 @@ from __future__ import annotations
 
 import pytest
 
-from apxm_program import Agent, Event, Hook, Model, Skill
+from apxm_program import Agent, Event, Hook, Model, Skill, Tool
 from apxm_program._capture import CaptureError
+from apxm_program._generated.capabilities import READ
 from apxm_program._generated.diagnostics import (
     HOOK_DYNAMIC_REGISTRATION,
     HOOK_SCOPE_UNRESOLVED,
@@ -40,6 +41,7 @@ from apxm_program._generated.diagnostics import (
     SKILL_ENTRY_PATH_NOT_CANONICAL,
     SKILL_SOURCE_AMBIGUOUS,
 )
+from apxm_program._generated.permissions import Permission
 from apxm_program._generated.runtime_evidence import (
     LoopIterationCompletedFact,
     decode_fact,
@@ -78,11 +80,13 @@ def test_a_hook_target_no_declaration_names_is_refused() -> None:
         _stray_handler
     )
     try:
-        with pytest.raises(CaptureError, match=HOOK_TARGET_UNRESOLVED):
+        with pytest.raises(CaptureError, match=HOOK_TARGET_UNRESOLVED) as error:
 
             @Agent(input=_Payload, output=_Payload)
             async def StrayHookTarget(agent, input):
                 return await _StrayModel(input)
+
+        assert error.value.code == HOOK_TARGET_UNRESOLVED
 
     finally:
         del _StrayHook
@@ -131,6 +135,17 @@ def test_a_skill_states_one_instruction_source() -> None:
 def test_a_file_carried_skill_names_the_path_its_id_resolves_to() -> None:
     with pytest.raises(ValueError, match=SKILL_ENTRY_PATH_NOT_CANONICAL):
         Skill("review", entry="prompts/review.md")
+
+
+def test_a_capability_permission_is_closed_before_graph_capture() -> None:
+    with pytest.raises(TypeError, match="generated Allow, Ask, or Deny"):
+        Tool[object, object](READ, permission="allow")
+
+    with pytest.raises(ValueError, match="decision must be one of"):
+        Tool[object, object](READ, permission=Permission("request", None))
+
+    with pytest.raises(ValueError, match="reason must be a non-empty string"):
+        Tool[object, object](READ, permission=Permission("ask", ""))
 
 
 def test_generated_runtime_evidence_binding_is_closed() -> None:

@@ -48,15 +48,19 @@ import type {
   ValueExpression,
 } from "./generated/frontend-records.js";
 import {
-  AGENT_BODY_NOT_ASYNC,
-  AGENT_DYNAMIC_ARGUMENT,
-  AGENT_MISSING_INPUT_OUTPUT,
-  CONTEXT_NOT_TYPED,
-  HOOK_DYNAMIC_REGISTRATION,
+    AGENT_BODY_NOT_ASYNC,
+    AGENT_DYNAMIC_ARGUMENT,
+    AGENT_MISSING_INPUT_OUTPUT,
+    CAPABILITY_REF_NOT_EXACT,
+    CONTEXT_NOT_TYPED,
+    EVENT_NOT_TYPED,
+    HOOK_DYNAMIC_REGISTRATION,
   HOOK_ORDER_AMBIGUOUS,
   HOOK_SCOPE_UNRESOLVED,
-  HOOK_TARGET_UNRESOLVED,
-  MODEL_UNTYPED_SCHEMA,
+    HOOK_TARGET_UNRESOLVED,
+    SKILL_LOAD_OUTSIDE_BODY,
+    MODEL_UNTYPED_SCHEMA,
+    type DiagnosticCode,
 } from "./generated/diagnostics.js";
 import * as scopeVocabulary from "./generated/scopes.js";
 import { READ_SKILL } from "./generated/capabilities.js";
@@ -178,7 +182,15 @@ function declarationIdFor(name: string, binding: Binding): string {
 }
 
 /** Source diagnostic raised when an Agent construct is outside the closed subset. */
-export class CaptureError extends Error {}
+export class CaptureError extends Error {
+  readonly code: DiagnosticCode;
+
+  constructor(code: DiagnosticCode, message: string) {
+    super(`${code}: ${message}`);
+    this.name = "CaptureError";
+    this.code = code;
+  }
+}
 
 class Capture {
   private counter = 0;
@@ -380,7 +392,8 @@ class Capture {
     const fn = definition.callback;
     if ((ts.getCombinedModifierFlags(fn as ts.Declaration) & ts.ModifierFlags.Async) === 0) {
       throw new CaptureError(
-        `${AGENT_BODY_NOT_ASYNC}: an Agent body is one async function`,
+        AGENT_BODY_NOT_ASYNC,
+        "an Agent body is one async function",
       );
     }
     this.rejectDynamicAgentName(definition.call);
@@ -473,7 +486,10 @@ class Capture {
     candidates.sort((left, right) => left.distance - right.distance);
     const selected = candidates[0];
     if (selected === undefined) {
-      throw new CaptureError("Agent requires a statically declared run callback");
+      throw new CaptureError(
+        AGENT_MISSING_INPUT_OUTPUT,
+        "Agent requires a statically declared run callback",
+      );
     }
     return {
       call: selected.call,
@@ -498,7 +514,8 @@ class Capture {
       // there would leave the program's typed interface unstated.
       if (this.sourceStatesTypes()) {
         throw new CaptureError(
-          `${AGENT_MISSING_INPUT_OUTPUT}: an Agent states its typed interface as ` +
+          AGENT_MISSING_INPUT_OUTPUT,
+          "an Agent states its typed interface as " +
             "Agent<Input, Output> or Agent<Input, Output, Context>",
         );
       }
@@ -530,8 +547,8 @@ class Capture {
       stringProperty(config, "name") === undefined
     ) {
       throw new CaptureError(
-        `${AGENT_DYNAMIC_ARGUMENT}: an Agent's name is static source, not a value ` +
-          "the module computes",
+        AGENT_DYNAMIC_ARGUMENT,
+        "an Agent's name is static source, not a value the module computes",
       );
     }
   }
@@ -598,6 +615,7 @@ class Capture {
       const expected = MARKER_BINDING_KINDS[entry.factory];
       if (value === undefined || value.kind !== expected) {
         throw new CaptureError(
+          AGENT_DYNAMIC_ARGUMENT,
           `'${entry.name}' is declared by ${entry.factory} at module scope but the ` +
             "frontend resolved a different declaration; declare markers at module " +
             "scope, unconditionally, above the Agent that uses them",
@@ -632,14 +650,15 @@ class Capture {
     }
     if (entry.factory === "Model" && entry.typeArgumentCount < 2) {
       throw new CaptureError(
-        `${MODEL_UNTYPED_SCHEMA}: Model '${entry.name}' states the request and ` +
-          "response it carries as Model<Input, Output>",
+        MODEL_UNTYPED_SCHEMA,
+        `Model '${entry.name}' states the request and response it carries as ` +
+          "Model<Input, Output>",
       );
     }
     if (entry.factory === "Context" && entry.typeArgumentCount < 1) {
       throw new CaptureError(
-        `${CONTEXT_NOT_TYPED}: Context '${entry.name}' states its schema as ` +
-          "Context<Schema>",
+        CONTEXT_NOT_TYPED,
+        `Context '${entry.name}' states its schema as Context<Schema>`,
       );
     }
   }
@@ -890,7 +909,7 @@ class Capture {
   ): string | undefined {
     const call = expr.expression;
     if (!ts.isCallExpression(call)) {
-      throw new CaptureError("await targets a typed effect call");
+      throw new CaptureError(AGENT_DYNAMIC_ARGUMENT, "await targets a typed effect call");
     }
     if (this.isYield(call)) {
       return this.recordYield(call, regionId, source);
@@ -961,7 +980,10 @@ class Capture {
           ? undefined
           : this.instances.get(this.symbolAt(receiver) as ts.Symbol);
         if (instance === undefined) {
-          throw new CaptureError("invoke receiver is a statically bound Agent definition or instance");
+          throw new CaptureError(
+            AGENT_DYNAMIC_ARGUMENT,
+            "invoke receiver is a statically bound Agent definition or instance",
+          );
         }
         return {
           intent: "agent_invocation",
@@ -973,7 +995,10 @@ class Capture {
       if (method === "new") {
         const programRef = this.programRefOfBinding(bindingName);
         if (programRef === undefined) {
-          throw new CaptureError("new receiver is a statically bound Agent definition");
+          throw new CaptureError(
+            AGENT_DYNAMIC_ARGUMENT,
+            "new receiver is a statically bound Agent definition",
+          );
         }
         return {
           intent: "agent_creation",
@@ -983,7 +1008,10 @@ class Capture {
       }
       if (method === "load") {
         if (this.skillIdOfLoad(call) === undefined) {
-          throw new CaptureError("load receiver is a statically declared Skill");
+          throw new CaptureError(
+            SKILL_LOAD_OUTSIDE_BODY,
+            "load receiver is a statically declared Skill",
+          );
         }
         return {
           intent: "capability_invocation",
@@ -994,7 +1022,10 @@ class Capture {
       if (method === "wait") {
         const bindingRef = this.bindingRefOfBinding(bindingName);
         if (bindingRef === undefined) {
-          throw new CaptureError("wait receiver is a statically bound Event");
+          throw new CaptureError(
+            EVENT_NOT_TYPED,
+            "wait receiver is a statically bound Event",
+          );
         }
         return {
           intent: "event_wait",
@@ -1002,7 +1033,7 @@ class Capture {
           slot: "event_ref",
         };
       }
-      throw new CaptureError(`unsupported call '.${method}(...)'`);
+      throw new CaptureError(AGENT_DYNAMIC_ARGUMENT, `unsupported call '.${method}(...)'`);
     }
     if (ts.isIdentifier(callee)) {
       const bindingName = this.bindingNameFor(callee);
@@ -1026,10 +1057,14 @@ class Capture {
         };
       }
       throw new CaptureError(
+        CAPABILITY_REF_NOT_EXACT,
         `call target '${callee.text}' is not a bound Model, Tool, or Capability`,
       );
     }
-    throw new CaptureError("computed or dynamic call targets are not supported");
+    throw new CaptureError(
+      AGENT_DYNAMIC_ARGUMENT,
+      "computed or dynamic call targets are not supported",
+    );
   }
 
   private bindingRefOfBinding(name: string | undefined): string | undefined {
@@ -1076,6 +1111,7 @@ class Capture {
     const callee = call.expression;
     if (!ts.isIdentifier(callee)) {
       throw new CaptureError(
+        CONTEXT_NOT_TYPED,
         "value expressions call only a bound Context schema by name",
       );
     }
@@ -1092,10 +1128,12 @@ class Capture {
       binding?.kind === "capability_binding"
     ) {
       throw new CaptureError(
+        CAPABILITY_REF_NOT_EXACT,
         `'${callee.text}' is a typed effect and is called with await, not used as a value`,
       );
     }
     throw new CaptureError(
+      CONTEXT_NOT_TYPED,
       `call target '${callee.text}' is not a bound Context schema`,
     );
   }
@@ -1137,7 +1175,10 @@ class Capture {
     if (ts.isNumericLiteral(expression)) {
       const value = Number(expression.text);
       if (!Number.isSafeInteger(value)) {
-        throw new CaptureError("integer exceeds the shared safe integer domain");
+        throw new CaptureError(
+          AGENT_DYNAMIC_ARGUMENT,
+          "integer exceeds the shared safe integer domain",
+        );
       }
       return { kind: "integer", value };
     }
@@ -1148,7 +1189,10 @@ class Capture {
     ) {
       const value = -Number(expression.operand.text);
       if (!Number.isSafeInteger(value)) {
-        throw new CaptureError("integer exceeds the shared safe integer domain");
+        throw new CaptureError(
+          AGENT_DYNAMIC_ARGUMENT,
+          "integer exceeds the shared safe integer domain",
+        );
       }
       return { kind: "integer", value };
     }
@@ -1170,13 +1214,19 @@ class Capture {
         if (ts.isShorthandPropertyAssignment(property)) {
           return { name: property.name.text, value: this.valueExpressionFor(property.name) };
         }
-        throw new CaptureError("object expressions admit only static fields");
+        throw new CaptureError(
+          AGENT_DYNAMIC_ARGUMENT,
+          "object expressions admit only static fields",
+        );
       });
       return { kind: "object", fields };
     }
     if (ts.isArrayLiteralExpression(expression)) {
       if (expression.elements.some(ts.isSpreadElement)) {
-        throw new CaptureError("array expressions do not admit spreads");
+        throw new CaptureError(
+          AGENT_DYNAMIC_ARGUMENT,
+          "array expressions do not admit spreads",
+        );
       }
       return {
         kind: "array",
@@ -1194,14 +1244,17 @@ class Capture {
         property_path: projection.path,
       };
     }
-    throw new CaptureError("unsupported pure value expression");
+    throw new CaptureError(AGENT_DYNAMIC_ARGUMENT, "unsupported pure value expression");
   }
 
   private staticPropertyName(name: ts.PropertyName): string {
     if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) {
       return name.text;
     }
-    throw new CaptureError("object expression keys are static strings");
+    throw new CaptureError(
+      AGENT_DYNAMIC_ARGUMENT,
+      "object expression keys are static strings",
+    );
   }
 
   private projectionParts(
@@ -1280,7 +1333,10 @@ class Capture {
     const skillId = this.skillIdOfLoad(call);
     if (skillId !== undefined) {
       if (call.arguments.length > 0) {
-        throw new CaptureError("a Skill load takes no authored operand");
+        throw new CaptureError(
+          SKILL_LOAD_OUTSIDE_BODY,
+          "a Skill load takes no authored operand",
+        );
       }
       return [{ value_id: this.skillArgumentValue(skillId), slot }];
     }
@@ -1288,11 +1344,17 @@ class Capture {
       return [];
     }
     if (call.arguments.length !== 1) {
-      throw new CaptureError("typed effect calls accept exactly one authored operand");
+      throw new CaptureError(
+        AGENT_DYNAMIC_ARGUMENT,
+        "typed effect calls accept exactly one authored operand",
+      );
     }
     for (const argument of call.arguments) {
       if (ts.isSpreadElement(argument)) {
-        throw new CaptureError("typed effect operands do not admit spreads");
+        throw new CaptureError(
+          AGENT_DYNAMIC_ARGUMENT,
+          "typed effect operands do not admit spreads",
+        );
       }
       // Every non-identifier argument still fails closed on unbound or
       // effectful calls before it is recorded as a literal value.
@@ -1419,7 +1481,10 @@ class Capture {
       scope === undefined ||
       (!ts.isArrowFunction(scope) && !ts.isFunctionExpression(scope))
     ) {
-      throw new CaptureError("TaskGroup.run requires one static callback");
+      throw new CaptureError(
+        AGENT_DYNAMIC_ARGUMENT,
+        "TaskGroup.run requires one static callback",
+      );
     }
     const nodeId = this.next("task_group");
     // Keep the region identity language-independent: the Python frontend
@@ -1628,8 +1693,9 @@ class Capture {
       projection.property_path.push(expression.argumentExpression.text);
       return projection;
     }
-    throw new CaptureError(
-      "control predicate reads a prior typed value through static properties",
+        throw new CaptureError(
+          AGENT_DYNAMIC_ARGUMENT,
+          "control predicate reads a prior typed value through static properties",
     );
   }
 
@@ -1659,12 +1725,16 @@ class Capture {
     if (integer !== undefined) {
       if (!Number.isSafeInteger(integer)) {
         throw new CaptureError(
+          AGENT_DYNAMIC_ARGUMENT,
           "predicate integer literal is within the shared safe-integer domain",
         );
       }
       return { scalar_type: "integer", value: integer };
     }
-    throw new CaptureError("predicate equality compares with a scalar literal");
+    throw new CaptureError(
+      AGENT_DYNAMIC_ARGUMENT,
+      "predicate equality compares with a scalar literal",
+    );
   }
 
   private predicateForExpression(expression: ts.Expression): BoundPredicate | undefined {
@@ -1736,6 +1806,7 @@ class Capture {
     if (this.hookBodyRegions.has(regionId)) {
       if (stmt.expression !== undefined) {
         throw new CaptureError(
+          HOOK_DYNAMIC_REGISTRATION,
           "a Hook returns its replacement by assigning agent.context",
         );
       }
@@ -1797,8 +1868,8 @@ class Capture {
         const options = node.initializer.arguments[0];
         if (options === undefined || !ts.isObjectLiteralExpression(options)) {
           throw new CaptureError(
-            `${HOOK_DYNAMIC_REGISTRATION}: a Hook is registered statically, so it ` +
-              "states one object-literal declaration",
+            HOOK_DYNAMIC_REGISTRATION,
+            "a Hook is registered statically, so it states one object-literal declaration",
           );
         }
         hooks.push({
@@ -1823,13 +1894,15 @@ class Capture {
       }
       if (namedProperty(hook.options, "target") === undefined) {
         throw new CaptureError(
-          `${HOOK_TARGET_UNRESOLVED}: a Hook states the target it wraps`,
+          HOOK_TARGET_UNRESOLVED,
+          "a Hook states the target it wraps",
         );
       }
       const target = identifierProperty(hook.options, "target");
       if (target === undefined) {
         throw new CaptureError(
-          `${HOOK_DYNAMIC_REGISTRATION}: a Hook target is one static bound declaration`,
+          HOOK_DYNAMIC_REGISTRATION,
+          "a Hook target is one static bound declaration",
         );
       }
       const hookName = ts.isIdentifier(hook.declaration.name)
@@ -1839,7 +1912,8 @@ class Capture {
       const run = functionProperty(hook.options, "run");
       if (run === undefined) {
         throw new CaptureError(
-          `${HOOK_DYNAMIC_REGISTRATION}: a Hook body is one static run callback`,
+          HOOK_DYNAMIC_REGISTRATION,
+          "a Hook body is one static run callback",
         );
       }
       const hookId = `hook.${hookName}`;
@@ -1883,7 +1957,10 @@ class Capture {
   ): string {
     const body = run.body;
     if (body === undefined || !ts.isBlock(body)) {
-      throw new CaptureError(`Hook '${hookId}' body is one static block`);
+      throw new CaptureError(
+        HOOK_DYNAMIC_REGISTRATION,
+        `Hook '${hookId}' body is one static block`,
+      );
     }
     const bodyRegionId = `${hookId}.body`;
     const parentRegionId = this.hookParentRegion(targetSelector);
@@ -1905,7 +1982,7 @@ class Capture {
       this.visitBlock(body.statements, bodyRegionId, source);
     } catch (error) {
       throw error instanceof CaptureError
-        ? new CaptureError(`in Hook '${hookId}' body: ${error.message}`)
+        ? new CaptureError(error.code, `in Hook '${hookId}' body: ${error.message}`)
         : error;
     } finally {
       this.facadeSymbol = outerFacade;
@@ -1953,9 +2030,10 @@ class Capture {
       : undefined;
     if (scope === undefined) {
       throw new CaptureError(
-        `${HOOK_SCOPE_UNRESOLVED}: Hook '${hookName}' states a scope the frontend ` +
-          `cannot resolve to one of ${HOOK_SCOPES.join(", ")}; write the ` +
-          "`@apxm/frontend/scopes` symbol or the scope it names",
+        HOOK_SCOPE_UNRESOLVED,
+        `Hook '${hookName}' states a scope the frontend cannot resolve to one of ` +
+          `${HOOK_SCOPES.join(", ")}; write the @apxm/frontend/scopes symbol or ` +
+          "the scope it names",
       );
     }
     return scope;
@@ -2017,7 +2095,8 @@ class Capture {
       // refuses: it admits a region for this scope and nothing else.
       if (!namesTheProgram && calls.length === 0) {
         throw new CaptureError(
-          `${HOOK_TARGET_UNRESOLVED}: Hook target '${named}' is not the Agent or a captured region`,
+          HOOK_TARGET_UNRESOLVED,
+          `Hook target '${named}' is not the Agent or a captured region`,
         );
       }
       return this.bodyRegionId;
@@ -2029,19 +2108,24 @@ class Capture {
       // loop instead of being silently discarded.
       if (calls.length > 1) {
         throw new CaptureError(
-          `${HOOK_ORDER_AMBIGUOUS}: Hook target '${named}' is ambiguous across invocations`,
+          HOOK_ORDER_AMBIGUOUS,
+          `Hook target '${named}' is ambiguous across invocations`,
         );
       }
       if (calls.length === 1) {
         const loopBody = this.enclosingLoopBody(calls[0].contract.node_id);
         if (loopBody === undefined) {
-          throw new CaptureError(`Hook target '${named}' is not inside a static loop`);
+          throw new CaptureError(
+            HOOK_TARGET_UNRESOLVED,
+            `Hook target '${named}' is not inside a static loop`,
+          );
         }
         return loopBody;
       }
       if (!namesTheProgram) {
         throw new CaptureError(
-          `${HOOK_TARGET_UNRESOLVED}: Hook target '${named}' has no static invocation`,
+          HOOK_TARGET_UNRESOLVED,
+          `Hook target '${named}' has no static invocation`,
         );
       }
       const loop = this.controls.find(
@@ -2049,18 +2133,23 @@ class Capture {
       );
       const region = loop?.contract.body_region_ids?.[0];
       if (region === undefined) {
-        throw new CaptureError("a loop Hook requires a static loop in the Agent body");
+        throw new CaptureError(
+          HOOK_TARGET_UNRESOLVED,
+          "a loop Hook requires a static loop in the Agent body",
+        );
       }
       return region;
     }
     if (calls.length === 0) {
       throw new CaptureError(
-        `${HOOK_TARGET_UNRESOLVED}: Hook target '${named}' has no static invocation`,
+        HOOK_TARGET_UNRESOLVED,
+        `Hook target '${named}' has no static invocation`,
       );
     }
     if (calls.length !== 1) {
       throw new CaptureError(
-        `${HOOK_ORDER_AMBIGUOUS}: Hook target '${named}' is ambiguous across invocations`,
+        HOOK_ORDER_AMBIGUOUS,
+        `Hook target '${named}' is ambiguous across invocations`,
       );
     }
     return calls[0].contract.node_id;
@@ -2188,7 +2277,10 @@ function createBoundSource(input: StaticSource): {
   });
   const source = program.getSourceFile(input.fileName);
   if (source === undefined) {
-    throw new CaptureError(`static source '${input.fileName}' is unavailable`);
+    throw new CaptureError(
+      AGENT_DYNAMIC_ARGUMENT,
+      `static source '${input.fileName}' is unavailable`,
+    );
   }
   return { source, checker: program.getTypeChecker() };
 }
@@ -2315,4 +2407,3 @@ function stringProperty(
   }
   return ts.isStringLiteral(property.initializer) ? property.initializer.text : undefined;
 }
-

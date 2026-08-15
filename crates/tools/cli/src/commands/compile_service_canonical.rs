@@ -5,9 +5,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use apxm_core::constants::env as apxm_env;
-use serde::Deserialize;
 
-use super::agent::{CompileToml, FrontendLanguage};
+use super::agent::{AgentToml, FrontendLanguage};
 
 /// Compile a canonical-authored agent package to canonical `apxm.air` JSON.
 pub fn compile_service_canonical_command(
@@ -32,6 +31,7 @@ pub(crate) fn emit_canonical_air_from_agent(
             agent_dir.display()
         ));
     }
+    super::agent::validate_agent_package(agent_dir)?;
     let (entry, frontend) = declared_agent_package_entry(agent_dir)?.ok_or_else(|| {
         anyhow::anyhow!(
             "{} must declare [compile].entry and [compile].frontend",
@@ -308,15 +308,9 @@ fn canonical_entry_air(entry: &Path, output: &std::process::Output) -> Result<St
     Ok(trimmed.to_string())
 }
 
-#[derive(Debug, Deserialize, Default)]
-struct AgentPackageToml {
-    #[serde(default)]
-    compile: Option<CompileToml>,
-}
-
 fn declared_agent_package_entry(agent_dir: &Path) -> Result<Option<(PathBuf, FrontendLanguage)>> {
     let agent_path = agent_dir.join("agent.toml");
-    let source: AgentPackageToml = toml::from_str(
+    let source: AgentToml = toml::from_str(
         &std::fs::read_to_string(&agent_path)
             .with_context(|| format!("Failed to read {}", agent_path.display()))?,
     )

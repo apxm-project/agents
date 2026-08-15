@@ -1724,7 +1724,7 @@ mod model_port {
 }
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
@@ -1938,8 +1938,11 @@ impl CanonicalRuntime {
         .map_err(|error| anyhow::anyhow!(error))?;
         // Resolved only once the admission has verified the artifact bytes, so
         // no decision is ever computed for an AIR the authority does not name.
-        let capability_permissions =
-            local_capability_permissions(&air, &capability.admitted_names())?;
+        let capability_permissions = local_capability_permissions(
+            &air,
+            &capability.admitted_names(),
+            self.package_root.as_deref(),
+        )?;
         let capability_invocations = local_capability_invocation_admissions(
             &air,
             &CapabilityGrantSet::from_registered_implementations(capability.registered_names()),
@@ -2219,9 +2222,9 @@ fn local_capability_invocation_admissions(
 fn local_capability_permissions(
     air: &AirModule,
     admitted: &BTreeSet<String>,
+    package_root: Option<&Path>,
 ) -> Result<Vec<AdmittedCapabilityPermission>> {
     let mut requested = LayerDecisions::new();
-    let mut shipped = LayerDecisions::new();
     for capability_ref in air.invoked_capability_refs() {
         let authored = air
             .capability_permission_requests
@@ -2229,8 +2232,70 @@ fn local_capability_permissions(
             .cloned()
             .unwrap_or_else(PermissionDecision::allow);
         requested.insert(capability_ref.to_string(), authored);
-        if !admitted.contains(capability_ref) {
-            shipped.insert(
+    }
+
+    let (package_layer, deployment_layer) = if let Some(package_root) = package_root {
+        // The package reader owns the package manifest, grantable surface,
+        // and code-over-package tighten-only rule. Project only the invoked
+        // decisions that actually narrow the AIR request: unchanged decisions
+        // need no second entry and retain their Code origin in evidence.
+        let package_decisions = canonical_package_permission_decisions(package_root, &requested)
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "canonical local package permission resolution failed for {}: {error}",
+                    package_root.display()
+                )
+            })?;
+        let package_layer = requested
+            .iter()
+            .filter_map(|(capability_ref, authored)| {
+                let resolved = package_decisions.get(capability_ref)?;
+                (resolved != authored).then(|| (capability_ref.clone(), resolved.clone()))
+            })
+            .collect();
+        (package_layer, denied_unadmitted_capabilities(air, admitted))
+    } else {
+        // Preserve the package-less canonical CLI's established diagnostic:
+        // the local root's read-only surface is its only effective narrowing.
+        (
+            denied_unadmitted_capabilities(air, admitted),
+            LayerDecisions::new(),
+        )
+    };
+
+    let layers = if package_root.is_some() {
+        BTreeMap::from([
+            (apxm_ais::permissions::PermissionLayer::Code, requested),
+            (
+                apxm_ais::permissions::PermissionLayer::Package,
+                package_layer,
+            ),
+            (
+                apxm_ais::permissions::PermissionLayer::Deployment,
+                deployment_layer,
+            ),
+        ])
+    } else {
+        BTreeMap::from([
+            (apxm_ais::permissions::PermissionLayer::Code, requested),
+            (
+                apxm_ais::permissions::PermissionLayer::Package,
+                package_layer,
+            ),
+        ])
+    };
+    let resolution = PermissionResolution::resolve(&layers).map_err(|error| {
+        anyhow::anyhow!("canonical local permission resolution failed: {error}")
+    })?;
+    Ok(admitted_capability_permissions(&resolution))
+}
+
+fn denied_unadmitted_capabilities(air: &AirModule, admitted: &BTreeSet<String>) -> LayerDecisions {
+    air.invoked_capability_refs()
+        .into_iter()
+        .filter(|capability_ref| !admitted.contains(*capability_ref))
+        .map(|capability_ref| {
+            (
                 capability_ref.to_string(),
                 PermissionDecision::deny(format!(
                     "canonical local execution binds no sandbox backend and no issued Capability \
@@ -2241,14 +2306,66 @@ fn local_capability_permissions(
                         .collect::<Vec<_>>()
                         .join(", ")
                 )),
-            );
+            )
+        })
+        .collect()
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct CanonicalPackageManifest {
+    #[serde(default)]
+    permissions: LayerDecisions,
+}
+
+fn canonical_package_permission_decisions(
+    package_root: &Path,
+    authored: &LayerDecisions,
+) -> Result<BTreeMap<String, PermissionDecision>> {
+    let manifest_path = package_root.join("agent.toml");
+    let manifest = std::fs::read_to_string(&manifest_path)
+        .with_context(|| format!("failed to read {}", manifest_path.display()))?;
+    let manifest: CanonicalPackageManifest = toml::from_str(&manifest)
+        .with_context(|| format!("failed to parse {}", manifest_path.display()))?;
+
+    let mut grantable = apxm_ais::capabilities::BUILTINS
+        .iter()
+        .map(|id| (*id).to_string())
+        .collect::<BTreeSet<_>>();
+    let capabilities_dir = package_root.join("capabilities");
+    if capabilities_dir.is_dir() {
+        for entry in std::fs::read_dir(&capabilities_dir)
+            .with_context(|| format!("failed to read {}", capabilities_dir.display()))?
+        {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+            let path = entry.path();
+            if path.join("handler.py").is_file() || path.join("handler.ts").is_file() {
+                grantable.insert(entry.file_name().to_string_lossy().into_owned());
+            }
         }
     }
-    let resolution =
-        PermissionResolution::resolve_code_over_package(requested, shipped).map_err(|error| {
-            anyhow::anyhow!("canonical local permission resolution failed: {error}")
-        })?;
-    Ok(admitted_capability_permissions(&resolution))
+
+    let requested_for_package = grantable
+        .into_iter()
+        .map(|capability_ref| {
+            let decision = authored
+                .get(&capability_ref)
+                .cloned()
+                .unwrap_or_else(PermissionDecision::allow);
+            (capability_ref, decision)
+        })
+        .collect();
+    let resolution = PermissionResolution::resolve_code_over_package(
+        requested_for_package,
+        manifest.permissions,
+    )
+    .map_err(|error| anyhow::anyhow!(error))?;
+    Ok(resolution
+        .iter()
+        .map(|(capability_ref, resolved)| (capability_ref.to_string(), resolved.decision.clone()))
+        .collect())
 }
 
 fn model_admission(air: &AirModule, model_binding_digest: &str) -> ModelBindingAdmission {
@@ -2819,7 +2936,7 @@ mod tests {
     fn local_admissions(air: &AirModule) -> BTreeMap<String, CapabilityInvocationAdmission> {
         let port =
             LocalCapabilityPort::with_package_root(None, None).expect("local capability port");
-        let permissions = local_capability_permissions(air, &port.admitted_names())
+        let permissions = local_capability_permissions(air, &port.admitted_names(), None)
             .expect("local permission resolution");
         local_capability_invocation_admissions(
             air,
@@ -3431,7 +3548,7 @@ mod tests {
             "the local root ships no write surface, so this test has something to narrow"
         );
 
-        let resolved = local_capability_permissions(&air, &admitted).expect("resolution");
+        let resolved = local_capability_permissions(&air, &admitted, None).expect("resolution");
         assert!(
             resolved
                 .iter()

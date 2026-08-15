@@ -19,9 +19,10 @@ serde.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
 sha2.workspace = true
+tokio = { workspace = true, features = ["rt", "time"] }
 
 [build-dependencies]
 sha2.workspace = true
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt", "macros"] }
+tokio = { workspace = true, features = ["rt", "macros", "time", "test-util"] }

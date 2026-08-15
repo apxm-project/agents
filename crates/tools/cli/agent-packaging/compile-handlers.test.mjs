@@ -129,13 +129,16 @@ function violations(node, instance, root) {
 const assertValid = (manifest) =>
   assert.deepEqual(violations(schema, manifest, schema), [], "manifest violates its own contract");
 
-async function compileFixture(source) {
+async function compileFixture(source, copies = 1) {
   const root = await mkdtemp(path.join(tmpdir(), "apxm-compile-handlers-test-"));
   try {
     const entry = path.join(root, "capabilities", "echo", "handler.mjs");
     await mkdir(path.dirname(entry), { recursive: true });
     await writeFile(entry, source, "utf8");
-    return await compileHandlers([entry], { rootDir: root });
+    return await compileHandlers(
+      Array.from({ length: copies }, () => entry),
+      { rootDir: root },
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -148,7 +151,6 @@ test("a compiled handler manifest satisfies the published schema", async () => {
       "export const echo = Tool.define({",
       '  name: "echo",',
       '  description: "Return an input message without executing a runtime effect.",',
-      '  readOnly: true,',
       '  readOnly: true,',
       "  input: Tool.object({ additionalProperties: false, properties: { message: Tool.text({ required: true, minLength: 1 }) } }),",
       "  run({ message }) { return Tool.answer({ message }); },",
@@ -172,6 +174,25 @@ test("a compiled handler manifest satisfies the published schema", async () => {
     `handlers/${handler.handler_id.slice("sha256:".length)}.mjs`,
   );
   assertValid(manifest);
+});
+
+test("compiling the same handler twice fails instead of silently dropping one", async () => {
+  await assert.rejects(
+    compileFixture(
+      [
+        'import { Tool } from "@apxm/agent-packaging";',
+        "export const echo = Tool.define({",
+        '  name: "echo",',
+        '  description: "Duplicate fixture.",',
+        "  readOnly: true,",
+        "  input: Tool.object({ additionalProperties: false, properties: { message: Tool.text({ required: true }) } }),",
+        "  run({ message }) { return Tool.answer({ message }); },",
+        "});",
+      ].join("\n"),
+      2,
+    ),
+    /duplicate TypeScript handler/,
+  );
 });
 
 test("the gate rejects a manifest the published schema rejects", () => {

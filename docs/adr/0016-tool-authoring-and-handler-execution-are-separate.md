@@ -17,6 +17,11 @@ executing a shipped Capability from Python are both supported.
 through the same chokepoint as `handler.ts`. Read §1, §3, and §4 of this ADR
 through that amendment.
 
+The original decision text below records the historical TypeScript-first
+boundary. ADR-0022 is the current authority where it conflicts with that
+baseline: Python package-local declarations and execution are now landed and
+are covered by the Python handler fixture and canonical execution gates.
+
 ## Context
 
 APXM source uses `Tool` to declare a typed, model-callable Capability. A
@@ -93,19 +98,20 @@ identity, read-only classification, approval, grants, and resource authority
 remain in the capability definition, Auth admission, and exact bound adapter;
 a handler cannot self-authorize.
 
-### 4. Language support is explicit
+### 4. Language support is explicit (historical baseline; amended)
 
-TypeScript package-local handlers may use the definition object above because
-the TypeScript bundler already produces `apxm.handler-manifest`. Python
-Agent Programs continue to declare the same typed `Tool` references and lower
-through the same FrontendGraph.
+The original decision permitted TypeScript package-local handlers because the
+TypeScript bundler already produced `apxm.handler-manifest`; Python Agent
+Programs continued to declare typed references and lower through the same
+FrontendGraph. That Python deferral is retained here as historical context and
+is superseded by ADR-0022.
 
-Python package-local handlers are not implied by Python Agent Program
-authoring. They are added only by a separate owner change that supplies an
-equivalent Python definition object, deterministic bundler, private admitted
-worker adapter, and conformance vectors against the same Rust-owned manifest.
-Until then, a Python Agent Program binds admitted Rust/host Capabilities rather
-than receiving a partial second packaging API.
+The landed behavior is symmetric at the package boundary: Python uses
+`apxm_program.handlers.capability(...)`, TypeScript uses `Tool.define`, and
+both produce the same Rust-owned handler manifest and execute through the same
+admitted Capability chokepoint. The implementation and its E2E fixture are
+described in [ADR-0022 §Python declares a shipped Capability, and now executes
+one](0022-capability-references-resolve-against-a-catalogue-and-permissions-are-declared-requests.md#python-declares-a-shipped-capability-and-now-executes-one).
 
 ### 5. The examples demonstrate the boundary
 
@@ -128,8 +134,9 @@ Capability implementation.
 - A handler result is a typed program value, not a user-authored JSON protocol
   envelope. The envelope used by build-worker conformance is not observable to
   Agent Program source or Model-facing Tool consumers.
-- A Python handler toolchain is a deliberate future capability, not a required
-  duplicate for this TypeScript-only example set.
+- The historical Python-handler deferral is superseded by ADR-0022; the
+  current package surface admits and executes Python and TypeScript handlers
+  through one manifest and one runtime boundary.
 
 ## Alternatives considered
 

@@ -817,7 +817,7 @@ pub(crate) fn agent_sync(root: &Path, json_output: bool) -> Result<()> {
 fn read_toml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
     let text =
         fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
-    toml::from_str(&text).with_context(|| format!("Failed to parse {}", path.display()))
+    toml::from_str(&text).map_err(|error| anyhow!("Failed to parse {}: {error}", path.display()))
 }
 
 struct LoadedAgent {
@@ -1026,6 +1026,13 @@ fn check_schema_shape(pkg: &LoadedAgent) -> Vec<String> {
     {
         errors.push("agent.toml: [hierarchy].parent must not be empty when present".to_string());
     }
+    for capability_ref in pkg.agent.permissions.keys() {
+        if !apxm_program::grammar::is_identifier(capability_ref) {
+            errors.push(format!(
+                "agent.toml: [permissions] key '{capability_ref}' is not a contract identifier"
+            ));
+        }
+    }
     errors
 }
 
@@ -1048,13 +1055,43 @@ fn declared_compile_source(agent: &AgentToml) -> Result<Option<(&str, FrontendLa
 }
 
 fn semver_like(version: &str) -> bool {
-    // SemVer core: MAJOR.MINOR.PATCH, optionally with -prerelease/+build.
-    let core = version.split(['-', '+']).next().unwrap_or(version);
-    let parts: Vec<&str> = core.split('.').collect();
-    parts.len() == 3
-        && parts
-            .iter()
-            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+    // Keep the executable check exactly aligned with the published contract's
+    // pattern. This is intentionally not a looser "three numeric components"
+    // check: the schema is the package boundary, so a value accepted here must
+    // also be structurally accepted there.
+    static SEMVER: OnceLock<Regex> = OnceLock::new();
+    SEMVER
+        .get_or_init(|| {
+            Regex::new(r"^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$")
+                .expect("the apxm.agent SemVer pattern is valid")
+        })
+        .is_match(version)
+}
+
+/// Validate the package shape without printing the human/JSON lint report.
+///
+/// The canonical compile service uses this before it executes a package entry.
+/// Parsing only a minimal `[compile]` projection would let a retired manifest
+/// key survive that path even though `agent lint` rejects it; this function is
+/// the shared admission-facing shape check.
+#[cfg_attr(not(feature = "driver"), allow(dead_code))]
+pub(crate) fn validate_agent_package(root: &Path) -> Result<()> {
+    let pkg = load_agent(root)?;
+    let mut errors = check_schema_shape(&pkg);
+    errors.extend(find_unrecognized_files(root)?.into_iter().map(|path| {
+        format!("unrecognized file '{path}' is not part of the {AGENT_SCHEMA} folder contract")
+    }));
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        bail!(
+            "{} package-shape error{} in {}: {}",
+            errors.len(),
+            if errors.len() == 1 { "" } else { "s" },
+            root.display(),
+            errors.join("; ")
+        )
+    }
 }
 
 pub(crate) fn agent_lint(path: &Path, org: Option<PathBuf>, json_output: bool) -> Result<()> {
@@ -1595,6 +1632,25 @@ mod tests {
                 "expected an unknown-field refusal for {retired:?}, got: {error}"
             );
         }
+    }
+
+    #[test]
+    fn package_shape_validation_rejects_retired_keys_before_compile() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("retired-key");
+        scaffold(&root, "retired-key");
+        let agent_path = root.join("agent.toml");
+        let mut text = fs::read_to_string(&agent_path).unwrap();
+        text.push_str("\ncapabilities = [\"read\"]\n");
+        fs::write(&agent_path, text).unwrap();
+
+        let error = validate_agent_package(&root)
+            .expect_err("the compile admission path must reject retired manifest keys");
+        assert!(
+            error.to_string().contains("unknown field")
+                || error.to_string().contains("capabilities"),
+            "the refusal must identify the retired key: {error}"
+        );
     }
 
     #[test]
@@ -2528,6 +2584,30 @@ mod tests {
             Some(AGENT_SCHEMA),
             "the schema_version constant drifted from the schema `const`",
         );
+    }
+
+    #[test]
+    fn the_published_manifest_requires_the_fields_the_lint_path_requires() {
+        let schema: serde_json::Value =
+            serde_json::from_str(AGENT_SCHEMA_JSON).expect("the embedded contract is valid JSON");
+        let required = schema["$defs"]["AgentManifest"]["required"]
+            .as_array()
+            .expect("AgentManifest.required");
+        for field in ["id", "version", "schema_version", "compile"] {
+            assert!(
+                required.iter().any(|value| value == field),
+                "AgentManifest must require {field}"
+            );
+        }
+        let compile_required = schema["$defs"]["CompileDeclaration"]["required"]
+            .as_array()
+            .expect("CompileDeclaration.required");
+        for field in ["entry", "frontend"] {
+            assert!(
+                compile_required.iter().any(|value| value == field),
+                "CompileDeclaration must require {field}"
+            );
+        }
     }
 
     /// Every checked-in agent package satisfies the folder contract it names.

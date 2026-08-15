@@ -9,8 +9,8 @@ needed before promotion into a contract or architecture decision.
   projection, including llama.cpp and vLLM lowerings.
 - [Generating the source-first frontends from their contract](frontend-vocabulary-generation.md)
   — where each authoring vocabulary's single source of truth lives, the closed
-  sets now projected into both frontends, and the record types, emitter, and
-  diagnostic wiring still to be generated.
+  sets, record types, serializers, and typed diagnostic wiring projected into
+  both frontends.
 - [CLI shell, Compilation Service, Runtime Service, OpenAI protocol API, and program-owned harness migration](cli-interaction-runtime-service-migration.md)
   — a full-replacement plan for a Crush-quality terminal client, canonical
   runtime lifecycle and source-neutral external-Event ingress spanning human,

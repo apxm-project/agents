@@ -42,9 +42,16 @@ from ._generated.frontend_graph import (
 )
 from ._generated.capabilities import READ_SKILL
 from ._generated.diagnostics import (
+    AGENT_DYNAMIC_ARGUMENT,
     AGENT_BODY_NOT_ASYNC,
+    AGENT_MISSING_INPUT_OUTPUT,
+    CAPABILITY_REF_NOT_EXACT,
+    CONTEXT_NOT_TYPED,
+    DiagnosticCode,
+    EVENT_NOT_TYPED,
     HOOK_ORDER_AMBIGUOUS,
     HOOK_TARGET_UNRESOLVED,
+    SKILL_LOAD_OUTSIDE_BODY,
 )
 from ._generated.frontend_records import CallIntent, ControlIntent, SkillRequirement
 from ._markers import (
@@ -70,11 +77,14 @@ SKILL_READER_OUTPUT = "SkillInstructions"
 class CaptureError(ValueError):
     """A source construct outside the supported authoring subset."""
 
-    def __init__(self, message: str, node: Optional[ast.AST] = None) -> None:
+    def __init__(
+        self, code: DiagnosticCode, message: str, node: Optional[ast.AST] = None
+    ) -> None:
+        self.code = code
         location = ""
         if node is not None and hasattr(node, "lineno"):
             location = f" (line {node.lineno})"
-        super().__init__(f"{message}{location}")
+        super().__init__(f"{code}: {message}{location}")
 
 
 class _Capture:
@@ -249,7 +259,10 @@ class _Capture:
                 )
             elif isinstance(binding, HookDecl):
                 if binding.handler_ref is None or binding.handler_digest is None:
-                    raise CaptureError(f"Hook '{name}' is missing its decorated async handler")
+                    raise CaptureError(
+                        HOOK_DYNAMIC_REGISTRATION,
+                        f"Hook '{name}' is missing its decorated async handler",
+                    )
             else:
                 program_reference = getattr(binding, "_program_reference", None)
                 if program_reference is not None and name in self._referenced_names:
@@ -309,6 +322,7 @@ class _Capture:
         args = func_ast.args.args
         if len(args) < 2:
             raise CaptureError(
+                AGENT_MISSING_INPUT_OUTPUT,
                 "an Agent callback takes an inferred agent facade and a typed input",
                 func_ast,
             )
@@ -410,6 +424,7 @@ class _Capture:
         elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
             if not isinstance(stmt.value.value, str):
                 raise CaptureError(
+                    AGENT_DYNAMIC_ARGUMENT,
                     "a bare constant is not an Agent source statement", stmt
                 )
             return
@@ -417,6 +432,7 @@ class _Capture:
             return
         else:
             raise CaptureError(
+                AGENT_DYNAMIC_ARGUMENT,
                 f"unsupported statement '{type(stmt).__name__}' in Agent source",
                 stmt,
             )
@@ -471,7 +487,9 @@ class _Capture:
     ) -> None:
         call = await_node.value
         if not isinstance(call, ast.Call):
-            raise CaptureError("await targets a typed effect call", await_node)
+            raise CaptureError(
+                AGENT_DYNAMIC_ARGUMENT, "await targets a typed effect call", await_node
+            )
 
         intent, binding_ref, receiver_kind, slot = self._resolve_call_target(call)
         if intent == "yield":
@@ -541,16 +559,28 @@ class _Capture:
                     receiver_kind = "program_ref"
                 binding_ref = self._binding_of(func.value)
                 if binding_ref not in {reference[0] for reference in self.imported_programs}:
-                    raise CaptureError("Agent.invoke resolves one static Agent reference", call)
+                    raise CaptureError(
+                        AGENT_DYNAMIC_ARGUMENT,
+                        "Agent.invoke resolves one static Agent reference",
+                        call,
+                    )
                 return "agent_invocation", binding_ref, receiver_kind, "input"
             if func.attr == "new":
                 binding_ref = self._binding_of(func.value)
                 if binding_ref not in {reference[0] for reference in self.imported_programs}:
-                    raise CaptureError("Agent.new resolves one static Agent reference", call)
+                    raise CaptureError(
+                        AGENT_DYNAMIC_ARGUMENT,
+                        "Agent.new resolves one static Agent reference",
+                        call,
+                    )
                 return "agent_creation", binding_ref, None, "initial_context"
             if func.attr == "load":
                 if self._skill_id_of_load(call) is None:
-                    raise CaptureError("load receiver is a statically declared Skill", call)
+                    raise CaptureError(
+                        SKILL_LOAD_OUTSIDE_BODY,
+                        "load receiver is a statically declared Skill",
+                        call,
+                    )
                 return (
                     "capability_invocation",
                     SKILL_READER_DECL_ID,
@@ -560,9 +590,15 @@ class _Capture:
             if func.attr == "wait":
                 binding_ref = self._binding_of(func.value)
                 if binding_ref not in {decl.decl_id for decl in self.declarations if decl.decl_kind == "event_type"}:
-                    raise CaptureError("Event.wait resolves one static Event value", call)
+                    raise CaptureError(
+                        EVENT_NOT_TYPED,
+                        "Event.wait resolves one static Event value",
+                        call,
+                    )
                 return "event_wait", binding_ref, None, "event_ref"
-            raise CaptureError(f"unsupported call '.{func.attr}(...)'", call)
+            raise CaptureError(
+                AGENT_DYNAMIC_ARGUMENT, f"unsupported call '.{func.attr}(...)'", call
+            )
         if isinstance(func, ast.Name):
             binding = self.bindings.get(func.id)
             decl_id = self._declared.get(func.id)
@@ -573,10 +609,15 @@ class _Capture:
             if isinstance(binding, CapabilityBinding):
                 return "capability_invocation", decl_id, None, "arguments"
             raise CaptureError(
+                CAPABILITY_REF_NOT_EXACT,
                 f"call target '{func.id}' is not a bound Model, Tool, or Capability",
                 call,
             )
-        raise CaptureError("computed or dynamic call targets are not supported", call)
+        raise CaptureError(
+            AGENT_DYNAMIC_ARGUMENT,
+            "computed or dynamic call targets are not supported",
+            call,
+        )
 
     def _binding_of(self, node: ast.AST) -> Optional[str]:
         if isinstance(node, ast.Name):
@@ -626,15 +667,18 @@ class _Capture:
                     binding, (ModelBinding, ToolBinding, CapabilityBinding)
                 ):
                     raise CaptureError(
+                        CAPABILITY_REF_NOT_EXACT,
                         f"'{callee.id}' is a typed effect and is called with await, "
                         "not used as a value",
                         node,
                     )
                 raise CaptureError(
+                    CONTEXT_NOT_TYPED,
                     f"call target '{callee.id}' is not a bound Context schema",
                     node,
                 )
             raise CaptureError(
+                CONTEXT_NOT_TYPED,
                 "value expressions call only a bound Context schema by name",
                 node,
             )
@@ -667,11 +711,19 @@ class _Capture:
                 return {"kind": "boolean", "value": expression.value}
             if isinstance(expression.value, int):
                 if abs(expression.value) > 9_007_199_254_740_991:
-                    raise CaptureError("integer exceeds the shared safe integer domain", expression)
+                    raise CaptureError(
+                        AGENT_DYNAMIC_ARGUMENT,
+                        "integer exceeds the shared safe integer domain",
+                        expression,
+                    )
                 return {"kind": "integer", "value": expression.value}
             if isinstance(expression.value, str):
                 return {"kind": "string", "value": expression.value}
-            raise CaptureError("value expression admits only JSON scalar literals", expression)
+            raise CaptureError(
+                AGENT_DYNAMIC_ARGUMENT,
+                "value expression admits only JSON scalar literals",
+                expression,
+            )
         if (
             isinstance(expression, ast.UnaryOp)
             and isinstance(expression.op, ast.USub)
@@ -681,18 +733,30 @@ class _Capture:
         ):
             value = -expression.operand.value
             if abs(value) > 9_007_199_254_740_991:
-                raise CaptureError("integer exceeds the shared safe integer domain", expression)
+                raise CaptureError(
+                    AGENT_DYNAMIC_ARGUMENT,
+                    "integer exceeds the shared safe integer domain",
+                    expression,
+                )
             return {"kind": "integer", "value": value}
         if isinstance(expression, (ast.Dict,)):
             fields: list[dict[str, object]] = []
             for key, value in zip(expression.keys, expression.values, strict=True):
                 if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
-                    raise CaptureError("object expression keys are static strings", expression)
+                    raise CaptureError(
+                        AGENT_DYNAMIC_ARGUMENT,
+                        "object expression keys are static strings",
+                        expression,
+                    )
                 fields.append({"name": key.value, "value": self._expression_for_value(value)})
             return {"kind": "object", "fields": fields}
         if isinstance(expression, (ast.List, ast.Tuple)):
             if any(isinstance(item, ast.Starred) for item in expression.elts):
-                raise CaptureError("array expression does not admit spreads", expression)
+                raise CaptureError(
+                    AGENT_DYNAMIC_ARGUMENT,
+                    "array expression does not admit spreads",
+                    expression,
+                )
             return {
                 "kind": "array",
                 "items": [self._expression_for_value(item) for item in expression.elts],
@@ -701,11 +765,17 @@ class _Capture:
             binding = self.bindings.get(expression.func.id)
             if isinstance(binding, ContextSchema):
                 if expression.args:
-                    raise CaptureError("Context values use named fields", expression)
+                    raise CaptureError(
+                        CONTEXT_NOT_TYPED, "Context values use named fields", expression
+                    )
                 fields = []
                 for keyword in expression.keywords:
                     if keyword.arg is None:
-                        raise CaptureError("Context values do not admit spreads", expression)
+                        raise CaptureError(
+                            CONTEXT_NOT_TYPED,
+                            "Context values do not admit spreads",
+                            expression,
+                        )
                     fields.append(
                         {"name": keyword.arg, "value": self._expression_for_value(keyword.value)}
                     )
@@ -720,7 +790,9 @@ class _Capture:
                 "root": {"kind": "ssa", "value_id": root},
                 "property_path": path,
             }
-        raise CaptureError("unsupported pure value expression", expression)
+        raise CaptureError(
+            AGENT_DYNAMIC_ARGUMENT, "unsupported pure value expression", expression
+        )
 
     def _projection_parts(self, expression: ast.AST) -> Optional[tuple[str, list[str]]]:
         path: list[str] = []
@@ -796,7 +868,11 @@ class _Capture:
         skill_id = self._skill_id_of_load(call)
         if skill_id is not None:
             if call.args or call.keywords:
-                raise CaptureError("a Skill load takes no authored operand", call)
+                raise CaptureError(
+                    SKILL_LOAD_OUTSIDE_BODY,
+                    "a Skill load takes no authored operand",
+                    call,
+                )
             return [
                 BoundOperand(value_id=self._skill_argument_value(skill_id), slot=slot)
             ]
@@ -805,11 +881,16 @@ class _Capture:
             return operands
         if argument_count != 1:
             raise CaptureError(
+                AGENT_DYNAMIC_ARGUMENT,
                 "typed effect calls accept exactly one authored operand",
                 call,
             )
         if call.keywords and call.keywords[0].arg is None:
-            raise CaptureError("typed effect operands do not admit spreads", call)
+            raise CaptureError(
+                AGENT_DYNAMIC_ARGUMENT,
+                "typed effect operands do not admit spreads",
+                call,
+            )
         expression = call.args[0] if call.args else call.keywords[0].value
         value_id = self._value_for_expression(expression, node_id)
         operands.append(BoundOperand(value_id=value_id, slot=slot))
@@ -820,9 +901,17 @@ class _Capture:
     ) -> None:
         """Capture the explicit stateful yield boundary and its resume input."""
         if region_id in self._hook_body_regions:
-            raise CaptureError("a Hook body does not park the Agent invocation", call)
+            raise CaptureError(
+                HOOK_DYNAMIC_REGISTRATION,
+                "a Hook body does not park the Agent invocation",
+                call,
+            )
         if assign_to is None:
-            raise CaptureError("agent.yield_ assigns its typed resume input", call)
+            raise CaptureError(
+                AGENT_MISSING_INPUT_OUTPUT,
+                "agent.yield_ assigns its typed resume input",
+                call,
+            )
         node_id = self._next("yield")
         resume_value = self._next("resume")
         self.values.append(
@@ -857,11 +946,19 @@ class _Capture:
         """Capture Agent.new as one typed Program Instance creation intent."""
         intent, binding_ref, receiver_kind, slot = self._resolve_call_target(call)
         if intent != "agent_creation":
-            raise CaptureError("only Agent.new may initialize a program instance", call)
+            raise CaptureError(
+                AGENT_DYNAMIC_ARGUMENT,
+                "only Agent.new may initialize a program instance",
+                call,
+            )
         if binding_ref is None or binding_ref not in {
             reference[0] for reference in self.imported_programs
         }:
-            raise CaptureError("Agent.new resolves one statically imported Agent", call)
+            raise CaptureError(
+                AGENT_DYNAMIC_ARGUMENT,
+                "Agent.new resolves one statically imported Agent",
+                call,
+            )
         node_id = self._next(intent)
         result_value = self._next("instance")
         self.values.append(
@@ -997,6 +1094,7 @@ class _Capture:
             root, path = self._predicate_projection(expression.value)
             return root, (*path, expression.slice.value)
         raise CaptureError(
+            AGENT_DYNAMIC_ARGUMENT,
             "control predicate reads a prior typed value through static properties",
             expression,
         )
@@ -1005,7 +1103,11 @@ class _Capture:
         try:
             value = ast.literal_eval(expression)
         except (ValueError, TypeError, SyntaxError):
-            raise CaptureError("predicate equality compares with a scalar literal", expression)
+            raise CaptureError(
+                AGENT_DYNAMIC_ARGUMENT,
+                "predicate equality compares with a scalar literal",
+                expression,
+            )
         if isinstance(value, bool):
             return {"scalar_type": "boolean", "value": value}
         if isinstance(value, str):
@@ -1013,13 +1115,18 @@ class _Capture:
         if isinstance(value, int):
             if abs(value) > 9_007_199_254_740_991:
                 raise CaptureError(
+                    AGENT_DYNAMIC_ARGUMENT,
                     "predicate integer literal is within the shared safe-integer domain",
                     expression,
                 )
             return {"scalar_type": "integer", "value": value}
         if value is None:
             return {"scalar_type": "null"}
-        raise CaptureError("predicate literal is boolean, string, integer, or null", expression)
+        raise CaptureError(
+            AGENT_DYNAMIC_ARGUMENT,
+            "predicate literal is boolean, string, integer, or null",
+            expression,
+        )
 
     def _predicate_for_expression(
         self, expression: ast.AST, node_id: str
@@ -1051,16 +1158,20 @@ class _Capture:
     def _visit_task_group(self, stmt: ast.AsyncWith, region_id: str) -> None:
         """Capture one lexical TaskGroup scope whose exit joins all child work."""
         if len(stmt.items) != 1:
-            raise CaptureError("TaskGroup has one static scope expression", stmt)
+            raise CaptureError(AGENT_DYNAMIC_ARGUMENT, "TaskGroup has one static scope expression", stmt)
         expression = stmt.items[0].context_expr
         if not (
             isinstance(expression, ast.Call)
             and isinstance(expression.func, ast.Name)
             and self.bindings.get(expression.func.id) is TaskGroup
         ):
-            raise CaptureError("async with uses the imported TaskGroup marker", stmt)
+            raise CaptureError(AGENT_DYNAMIC_ARGUMENT, "async with uses the imported TaskGroup marker", stmt)
         if expression.args or expression.keywords:
-            raise CaptureError("TaskGroup accepts no dynamic constructor arguments", expression)
+            raise CaptureError(
+                AGENT_DYNAMIC_ARGUMENT,
+                "TaskGroup accepts no dynamic constructor arguments",
+                expression,
+            )
 
         node_id = self._next("task_group")
         scope_region = f"{node_id}.scope"
@@ -1183,6 +1294,7 @@ class _Capture:
                 isinstance(stmt.value, ast.Constant) and stmt.value.value is None
             ):
                 raise CaptureError(
+                    HOOK_DYNAMIC_REGISTRATION,
                     "a Hook returns its replacement by assigning agent.context",
                     stmt,
                 )
@@ -1245,8 +1357,8 @@ class _Capture:
             if binding is target:
                 return replace(declaration, target_selector=bound)
         raise CaptureError(
-            f"{HOOK_TARGET_UNRESOLVED}: Hook '{name}' targets a declaration this "
-            "module binds to no name"
+            HOOK_TARGET_UNRESOLVED,
+            f"Hook '{name}' targets a declaration this module binds to no name",
         )
 
     def _names_a_hook_target(self, target: str) -> bool:
@@ -1282,8 +1394,9 @@ class _Capture:
             declaration = self._resolve_hook_target_name(name, declaration)
             if not self._names_a_hook_target(declaration.target_selector):
                 raise CaptureError(
-                    f"{HOOK_TARGET_UNRESOLVED}: Hook '{name}' targets "
-                    f"'{declaration.target_selector}', which this module declares nowhere"
+                    HOOK_TARGET_UNRESOLVED,
+                    f"Hook '{name}' targets '{declaration.target_selector}', which "
+                    "this module declares nowhere",
                 )
             if (
                 declaration.target_selector not in self._referenced_names
@@ -1292,7 +1405,10 @@ class _Capture:
             ):
                 continue
             if declaration.handler_ref is None or declaration.handler_digest is None:
-                raise CaptureError(f"Hook '{name}' is missing its decorated async handler")
+                raise CaptureError(
+                    HOOK_DYNAMIC_REGISTRATION,
+                    f"Hook '{name}' is missing its decorated async handler",
+                )
             hook_id = f"hook.{name}"
             target_selector = self._hook_target(declaration)
             body_region_id = self._capture_hook_body(hook_id, declaration, target_selector)
@@ -1332,10 +1448,16 @@ class _Capture:
         """
         handler_ast = _handler_ast(declaration)
         if handler_ast is None:
-            raise CaptureError(f"Hook '{hook_id}' handler source is not readable")
+            raise CaptureError(
+                HOOK_DYNAMIC_REGISTRATION,
+                f"Hook '{hook_id}' handler source is not readable",
+            )
         parameters = handler_ast.args.args
         if not parameters:
-            raise CaptureError(f"Hook '{hook_id}' takes the inferred agent facade")
+            raise CaptureError(
+                HOOK_DYNAMIC_REGISTRATION,
+                f"Hook '{hook_id}' takes the inferred agent facade",
+            )
 
         body_region_id = f"{hook_id}.body"
         parent_region_id = self._hook_parent_region(target_selector)
@@ -1354,7 +1476,9 @@ class _Capture:
         try:
             self._visit_block(handler_ast.body, body_region_id)
         except CaptureError as error:
-            raise CaptureError(f"in Hook '{hook_id}' body: {error}") from error
+            raise CaptureError(
+                error.code, f"in Hook '{hook_id}' body: {error}"
+            ) from error
         finally:
             self._facade_name = outer_facade
         return body_region_id
@@ -1392,8 +1516,8 @@ class _Capture:
             if target in {self.program_id, self.entrypoint} or matches:
                 return self.body_region_id
             raise CaptureError(
-                f"{HOOK_TARGET_UNRESOLVED}: Hook target '{target}' is not the Agent "
-                "or a captured region"
+                HOOK_TARGET_UNRESOLVED,
+                f"Hook target '{target}' is not the Agent or a captured region",
             )
         if target in {call.node_id for call in self.calls}:
             return target
@@ -1406,37 +1530,44 @@ class _Capture:
             # reach an inner loop instead of being silently discarded.
             if len(matches) > 1:
                 raise CaptureError(
-                    f"{HOOK_ORDER_AMBIGUOUS}: Hook target '{target}' is ambiguous "
-                    "across invocations"
+                    HOOK_ORDER_AMBIGUOUS,
+                    f"Hook target '{target}' is ambiguous across invocations",
                 )
             if matches:
                 loop_body = self._enclosing_loop_body(matches[0])
                 if loop_body is None:
-                    raise CaptureError(f"Hook target '{target}' is not inside a static loop")
+                    raise CaptureError(
+                        HOOK_TARGET_UNRESOLVED,
+                        f"Hook target '{target}' is not inside a static loop",
+                    )
                 return loop_body
             if target in {"loop", self.entrypoint}:
                 for control in self.controls:
                     if control.control_kind == "loop" and control.body_region_ids:
                         return control.body_region_ids[0]
-                raise CaptureError(f"Hook target '{target}' has no loop body region")
+                raise CaptureError(
+                    HOOK_TARGET_UNRESOLVED,
+                    f"Hook target '{target}' has no loop body region",
+                )
             raise CaptureError(
-                f"{HOOK_TARGET_UNRESOLVED}: Hook target '{target}' has no captured invocation"
+                HOOK_TARGET_UNRESOLVED,
+                f"Hook target '{target}' has no captured invocation",
             )
         if binding_ref is not None:
             if len(matches) == 1:
                 return matches[0]
             if not matches:
                 raise CaptureError(
-                    f"{HOOK_TARGET_UNRESOLVED}: Hook target '{target}' has no captured "
-                    "invocation"
+                    HOOK_TARGET_UNRESOLVED,
+                    f"Hook target '{target}' has no captured invocation",
                 )
             raise CaptureError(
-                f"{HOOK_ORDER_AMBIGUOUS}: Hook target '{target}' is ambiguous across "
-                "invocations"
+                HOOK_ORDER_AMBIGUOUS,
+                f"Hook target '{target}' is ambiguous across invocations",
             )
         raise CaptureError(
-            f"{HOOK_TARGET_UNRESOLVED}: Hook target '{target}' is not a static Agent "
-            "source target"
+            HOOK_TARGET_UNRESOLVED,
+            f"Hook target '{target}' is not a static Agent source target",
         )
 
     def _enclosing_loop_body(self, node_id: str) -> Optional[str]:
@@ -1491,7 +1622,7 @@ def capture_program(
             func_ast = node
             break
     if func_ast is None:
-        raise CaptureError(f"{AGENT_BODY_NOT_ASYNC}: an Agent is one async def")
+        raise CaptureError(AGENT_BODY_NOT_ASYNC, "an Agent is one async def")
     source_file = _source_reference(func)
 
     capture = _Capture(

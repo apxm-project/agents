@@ -6,10 +6,83 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline";
 
-import { isFunctionTool, isToolAnswer } from "./index.mjs";
+import { isFunctionTool, isToolAnswer, makeHandlerId } from "./index.mjs";
+
+const MANIFEST_VERSION = "apxm.handler-manifest";
+const HANDLER_ID_PATTERN = /^sha256:[0-9a-f]{64}$/u;
+
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function requireString(value, label) {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`handler manifest ${label} must be a non-empty string`);
+  }
+  return value;
+}
+
+function validateManifest(value) {
+  if (!isRecord(value) || value.version !== MANIFEST_VERSION) {
+    throw new Error(`handler manifest version must be ${MANIFEST_VERSION}`);
+  }
+  if (!Array.isArray(value.handlers)) {
+    throw new Error("handler manifest handlers must be an array");
+  }
+
+  const seen = new Set();
+  for (const [index, entry] of value.handlers.entries()) {
+    if (!isRecord(entry) || entry.kind !== "tool" || entry.language !== "typescript") {
+      throw new Error(`handler manifest entry ${index} is not a TypeScript Tool`);
+    }
+    const module = requireString(entry.module, `entry ${index} module`);
+    const qualname = requireString(entry.qualname, `entry ${index} qualname`);
+    const name = requireString(entry.name, `entry ${index} name`);
+    const handlerId = requireString(entry.handler_id, `entry ${index} handler_id`);
+    if (!HANDLER_ID_PATTERN.test(handlerId)) {
+      throw new Error(`handler manifest entry ${index} has an invalid handler_id`);
+    }
+    if (handlerId !== makeHandlerId(module, qualname)) {
+      throw new Error(
+        `handler manifest entry ${index} handler_id does not match ${module}:${qualname}`,
+      );
+    }
+    if (seen.has(handlerId)) {
+      throw new Error(`handler manifest contains duplicate handler_id ${handlerId}`);
+    }
+    seen.add(handlerId);
+
+    if (!isRecord(entry.source)) {
+      throw new Error(`handler manifest entry ${index} source must be an object`);
+    }
+    const expectedArtifact = `handlers/${handlerId.slice("sha256:".length)}.mjs`;
+    if (entry.source.artifact_path !== expectedArtifact) {
+      throw new Error(
+        `handler manifest entry ${index} artifact_path must be ${expectedArtifact}`,
+      );
+    }
+    if (typeof entry.source.content !== "string" || entry.source.content.length === 0) {
+      throw new Error(`handler manifest entry ${index} source content must be non-empty`);
+    }
+    if (!isRecord(entry.schema)) {
+      throw new Error(`handler manifest entry ${index} schema must be an object`);
+    }
+    if (entry.read_only !== undefined && typeof entry.read_only !== "boolean") {
+      throw new Error(`handler manifest entry ${index} read_only must be boolean`);
+    }
+    if (
+      entry.requires_approval !== undefined &&
+      typeof entry.requires_approval !== "boolean"
+    ) {
+      throw new Error(`handler manifest entry ${index} requires_approval must be boolean`);
+    }
+
+  }
+  return value;
+}
 
 async function loadHandlers(manifestPath) {
-  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  const manifest = validateManifest(JSON.parse(await readFile(manifestPath, "utf8")));
   const directory = await mkdtemp(path.join(tmpdir(), "apxm-handler-worker-"));
   const handlers = new Map();
   for (const entry of manifest.handlers ?? []) {
@@ -18,12 +91,23 @@ async function loadHandlers(manifestPath) {
     process.env.APXM_HANDLER_MODULE = entry.module;
     const exports = await import(pathToFileURL(sourcePath).href);
     const named = exports[entry.qualname];
-    const handler = isFunctionTool(named)
-      ? named
-      : Object.values(exports).find(
-          (value) => isFunctionTool(value) && value.name === entry.name,
+    let handler;
+    if (named !== undefined) {
+      if (!isFunctionTool(named) || named.name !== entry.name) {
+        throw new Error(
+          `bundled handler ${entry.handler_id} does not export ${entry.qualname} as ${entry.name}`,
         );
-    if (!handler) throw new Error(`bundled handler ${entry.handler_id} is missing`);
+      }
+      handler = named;
+    } else {
+      const candidates = Object.values(exports).filter(
+        (value) => isFunctionTool(value) && value.name === entry.name,
+      );
+      if (candidates.length !== 1) {
+        throw new Error(`bundled handler ${entry.handler_id} is missing or ambiguous`);
+      }
+      handler = candidates[0];
+    }
     handlers.set(entry.handler_id, handler.fn);
   }
   return { directory, handlers };

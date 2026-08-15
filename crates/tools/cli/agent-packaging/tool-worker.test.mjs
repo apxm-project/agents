@@ -2,19 +2,54 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
+
+import { makeHandlerId } from "./index.mjs";
+
 const packageDirectory = path.dirname(fileURLToPath(import.meta.url));
 const workerPath = path.join(packageDirectory, "tool-worker.mjs");
 const authoringModule = pathToFileURL(path.join(packageDirectory, "index.mjs")).href;
+const nodeExecutable =
+  process.env.APXM_NODE_BIN ??
+  process.env.PATH.split(path.delimiter)
+    .map((directory) => path.join(directory, "node"))
+    .find((candidate) => existsSync(candidate)) ??
+  process.argv0;
+
+function descriptor({ module, qualname, name, content }) {
+  const handlerId = makeHandlerId(module, qualname);
+  return {
+    kind: "tool",
+    language: "typescript",
+    handler_id: handlerId,
+    module,
+    qualname,
+    name,
+    source: {
+      artifact_path: `handlers/${handlerId.slice("sha256:".length)}.mjs`,
+      content,
+    },
+    schema: {
+      type: "object",
+      properties: { message: { type: "string", minLength: 1 } },
+      required: ["message"],
+      additionalProperties: false,
+    },
+    read_only: true,
+    requires_approval: false,
+  };
+}
 
 test("the worker rejects a handler result that bypasses Tool.answer", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "apxm-tool-worker-test-"));
   const manifestPath = path.join(directory, "handlers.json");
-  const handlerId = "sha256:plain-result-fixture";
+  const module = "fixtures/plain-result";
+  const qualname = "plainResult";
   const source = [
     `import { Tool } from ${JSON.stringify(authoringModule)};`,
     "export const plainResult = Tool.define({",
@@ -25,21 +60,15 @@ test("the worker rejects a handler result that bypasses Tool.answer", async () =
     "  run({ message }) { return { message }; },",
     "});",
   ].join("\n");
+  const handlerId = makeHandlerId(module, qualname);
   const manifest = {
     version: "apxm.handler-manifest",
-    handlers: [{
-      kind: "tool",
-      handler_id: handlerId,
-      module: "fixtures/plain-result",
-      qualname: "plainResult",
-      name: "plain_result",
-      source: { artifact_path: "handlers/plain-result.mjs", content: source },
-    }],
+    handlers: [descriptor({ module, qualname, name: "plain_result", content: source })],
   };
 
   try {
     await writeFile(manifestPath, JSON.stringify(manifest));
-    const child = spawn(process.execPath, [workerPath, manifestPath], {
+    const child = spawn(nodeExecutable, [workerPath, manifestPath], {
       stdio: ["pipe", "pipe", "pipe"],
     });
     child.stdin.end(`${JSON.stringify({
@@ -71,7 +100,8 @@ test("the worker rejects a handler result that bypasses Tool.answer", async () =
 test("the worker unwraps a typed Tool.answer only at its private boundary", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "apxm-tool-worker-test-"));
   const manifestPath = path.join(directory, "handlers.json");
-  const handlerId = "sha256:typed-answer-fixture";
+  const module = "fixtures/typed-answer";
+  const qualname = "typedAnswer";
   const source = [
     `import { Tool } from ${JSON.stringify(authoringModule)};`,
     "export const typedAnswer = Tool.define({",
@@ -82,21 +112,15 @@ test("the worker unwraps a typed Tool.answer only at its private boundary", asyn
     "  run({ message }) { return Tool.answer({ message }); },",
     "});",
   ].join("\n");
+  const handlerId = makeHandlerId(module, qualname);
   const manifest = {
     version: "apxm.handler-manifest",
-    handlers: [{
-      kind: "tool",
-      handler_id: handlerId,
-      module: "fixtures/typed-answer",
-      qualname: "typedAnswer",
-      name: "typed_answer",
-      source: { artifact_path: "handlers/typed-answer.mjs", content: source },
-    }],
+    handlers: [descriptor({ module, qualname, name: "typed_answer", content: source })],
   };
 
   try {
     await writeFile(manifestPath, JSON.stringify(manifest));
-    const child = spawn(process.execPath, [workerPath, manifestPath], {
+    const child = spawn(nodeExecutable, [workerPath, manifestPath], {
       stdio: ["pipe", "pipe", "pipe"],
     });
     child.stdin.end(`${JSON.stringify({
@@ -120,6 +144,47 @@ test("the worker unwraps a typed Tool.answer only at its private boundary", asyn
       ok: true,
       value: { message: "hello" },
     });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("the worker refuses a descriptor whose materialized identity is unsafe", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "apxm-tool-worker-test-"));
+  const manifestPath = path.join(directory, "handlers.json");
+  const module = "fixtures/unsafe";
+  const qualname = "unsafe";
+  const handlerId = makeHandlerId(module, qualname);
+  const manifest = {
+    version: "apxm.handler-manifest",
+    handlers: [{
+      ...descriptor({
+        module,
+        qualname,
+        name: "unsafe",
+        content: "export const unsafe = {};\n",
+      }),
+      source: {
+        artifact_path: "handlers/../../outside.mjs",
+        content: "export const unsafe = {};\n",
+      },
+    }],
+  };
+
+  try {
+    assert.equal(manifest.handlers[0].handler_id, handlerId);
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    const child = spawn(nodeExecutable, [workerPath, manifestPath], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    child.stdin.end();
+    const [stdout, stderr] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    const exitCode = await new Promise((resolve) => child.once("close", resolve));
+    assert.notEqual(exitCode, 0, stdout);
+    assert.match(stderr, /artifact_path must be handlers\//);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

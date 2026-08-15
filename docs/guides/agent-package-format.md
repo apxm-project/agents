@@ -63,13 +63,13 @@ write.)
 | --- | --- | --- |
 | `id` | yes | `^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,255}$`. Must be non-empty (`agent.rs` `check_schema_shape`). |
 | `version` | yes | SemVer core `MAJOR.MINOR.PATCH`, optional `-prerelease`/`+build`. Checked structurally by `semver_like` in `agent.rs`, not just by the schema's regex. |
-| `schema_version` | required by the CLI, though not in the schema's own `required` array | Must equal the constant `"apxm.agent"`. `agent lint` fails a package with it missing or set to anything else (`agent-schema-version-outside-the-published-constant-rejected` vector). |
+| `schema_version` | yes | Must equal the constant `"apxm.agent"`. The published schema and `agent lint` both reject a package with it missing or set to anything else (`agent-schema-version-outside-the-published-constant-rejected` vector). |
 | `display_name` | no | Free text. `apxm agent new` fills it from the id if you don't pass `--display-name`. |
 | `description` | no | Free text. |
 | `domain` | no | Free text. |
 | `kind` | no | Free text; the schema does not close its vocabulary. |
 | `license` | no | Free text. |
-| `[compile]` | required in practice | See below — the CLI rejects a manifest without one even though the schema alone would allow it. |
+| `[compile]` | yes | Both `entry` and `frontend` are required by the published `CompileDeclaration` and by `agent lint`; see below. |
 | `[source]` | no | Carried verbatim; the schema states only that it must be a table. Every shipped package uses `type = "local"`, but no shipped code branches on its value — it is authored metadata, not a consumed instruction. |
 | `[hierarchy]` | no | See [§3](#3-hierarchy). |
 | `[permissions]` | no | See [§4](#4-permissions-the-tighten-only-layer). |
@@ -82,11 +82,10 @@ entry = "python/agent.py"
 frontend = "python"
 ```
 
-Both keys are stated together or neither is — the schema's own
-`CompileDeclaration` says so — but in practice a package with neither also
-fails `agent lint`: `check_schema_shape` in `agent.rs` treats an absent or
-empty `[compile]` as an error, "an explicit `[compile].entry` is required;
-runtime loop declarations are unsupported." `entry` must be a
+Both keys are required together by the schema and by `agent lint`:
+`check_schema_shape` in `agent.rs` rejects an absent or empty `[compile]` with
+"an explicit `[compile].entry` is required; runtime loop declarations are
+unsupported." `entry` must be a
 package-relative path (no leading `/`, no `..` component) that exists on
 disk and ends in the extension `frontend` implies (`.py` for `python`,
 `.ts` for `typescript`).
@@ -440,11 +439,12 @@ path passed as `--template`; pass `--path` to choose the destination and
 `dekk agents check-agent-packages` (`tools/scripts/agent_packages.py`) is
 the whole-repo gate: it builds the CLI once and runs `agent lint` +
 `agent verify` over every checked-in package
-(`examples/agents/conversational`, `examples/agents/coder`, and the
-canonical-session fixture under
-`crates/compiler/frontend/python/tests_program/fixtures/`), so a package
-edited without a rebuild fails CI the same way it fails locally.
-`dekk agents build-agent-packages` runs the same three packages through
+(`examples/agents/conversational`, `examples/agents/coder`,
+`examples/agents/skilled`, the canonical-session fixture under
+`crates/compiler/frontend/python/tests_program/fixtures/`, and the Python
+handler fixture under `tools/tests/fixtures/`), so a package edited without a
+rebuild fails CI the same way it fails locally. The package rebuild command,
+`dekk agents build-agent-packages`, runs the same five packages through
 `agent build` instead, to regenerate every `integrity.toml` at once.
 
 ## 10. A complete example
@@ -475,10 +475,12 @@ permitted_children = []
 write = { decision = "ask", reason = "Writes files on the host." }
 ```
 
-Its sibling directory holds `integrity.toml` (generated), `prompts/`,
-`python/agent.py`, a TypeScript mirror under `src/`, `package.json` and
-`tsconfig.json`, `tests/`, and `README.md` — every one of them a path this
-guide's [§6](#6-the-recognized-file-layout) table names.
+Its sibling directory holds `integrity.toml` (generated), the two declared
+Skills under `skills/`, `python/agent.py`, a TypeScript mirror under `src/`,
+`package.json` and `tsconfig.json`, `tests/`, and `README.md` — every one of
+them a path this guide's [§6](#6-the-recognized-file-layout) table names. Older
+packages may also carry recognized `prompts/<name>.md` resources, but new
+reusable instructions should be declared as Skills in the Agent Program.
 
 ## Continue from here
 

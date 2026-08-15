@@ -225,6 +225,10 @@ class SurfaceLanguage:
         """
         raise NotImplementedError
 
+    def untyped_capture_errors(self, codes: list[str], manifest: dict) -> list[str]:
+        """Return source capture errors whose first argument is not a code."""
+        raise NotImplementedError
+
     def raise_site_sources(self, manifest: dict) -> list[Path]:
         """This language's own source files, from the manifest's own paths.
 
@@ -552,6 +556,29 @@ class PythonLanguage(SurfaceLanguage):
                             node.args[position], identifiers, values
                         )
         return raised
+
+    def untyped_capture_errors(self, codes: list[str], manifest: dict) -> list[str]:
+        identifiers = {screaming_snake(code) for code in codes}
+        errors: list[str] = []
+        for path in self.raise_site_sources(manifest):
+            module = self._module(path)
+            for node in ast.walk(module):
+                if not (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "CaptureError"
+                ):
+                    continue
+                first = node.args[0] if node.args else None
+                if isinstance(first, ast.Name) and first.id in identifiers:
+                    continue
+                if (
+                    isinstance(first, ast.Attribute)
+                    and first.attr == "code"
+                ):
+                    continue
+                errors.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}")
+        return errors
 
     @staticmethod
     def _codes_in(node: ast.AST, identifiers: dict[str, str], values: set[str]) -> set[str]:
@@ -890,6 +917,24 @@ class TypeScriptLanguage(SurfaceLanguage):
                             )
         return raised
 
+    def untyped_capture_errors(self, codes: list[str], manifest: dict) -> list[str]:
+        identifiers = {screaming_snake(code) for code in codes}
+        errors: list[str] = []
+        for path in self.raise_site_sources(manifest):
+            if path.name.endswith(".d.ts"):
+                continue
+            text = self._source(path)
+            for match in re.finditer(r"\bthrow\s+new\s+CaptureError\s*\(", text):
+                thrown = text[
+                    match.end() : matching_bracket(text, match.end() - 1) - 1
+                ]
+                arguments = split_top_level(thrown)
+                first = arguments[0].strip() if arguments else ""
+                if first in identifiers or re.fullmatch(r"[A-Za-z_$][\w$]*\.code", first):
+                    continue
+                errors.append(f"{path.relative_to(REPO_ROOT)}:CaptureError")
+        return errors
+
     @staticmethod
     def _codes_in(text: str, identifiers: dict[str, str], codes: list[str]) -> set[str]:
         found = {code for name, code in identifiers.items() if re.search(rf"\b{name}\b", text)}
@@ -1188,6 +1233,15 @@ def check_raise_sites(
     about a check the frontend does not run.
     """
     codes = declared_codes(manifest)
+    untyped = language.untyped_capture_errors(codes, manifest)
+    for site in untyped:
+        failures.append(
+            unsynced(
+                site,
+                f"{language.id} CaptureError must take a generated diagnostic code "
+                "as its first argument",
+            )
+        )
     raised = language.raise_sites(codes, manifest)
     for declaration in manifest["declarations"]:
         for code in declaration["diagnostics"]:

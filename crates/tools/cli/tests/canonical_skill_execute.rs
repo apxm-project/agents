@@ -1,12 +1,12 @@
 //! Live CLI coverage for the skill discovery capabilities: the shipped
-//! `execute-canonical` path listing a discovery root and loading one skill
-//! body, through an admitted `capability.invoke`.
+//! `execute-canonical` path listing and searching a discovery root, then
+//! loading one skill body, through admitted `capability.invoke` nodes.
 //!
 //! These three ids were once allowlisted with no handler behind them, which is
 //! why they were removed. The claim that they are back for real is only worth
-//! anything if a skill is readable through the same admitted path any other
-//! capability takes, in the shipped binary, against a real discovery root —
-//! which is exactly what this test does. It reads `.agents/skills`, the
+//! anything if a skill is discoverable and readable through the same admitted
+//! path any other capability takes, in the shipped binary, against a real
+//! discovery root — which is exactly what this test does. It reads `.agents/skills`, the
 //! repository's own project-tier root, so no fixture stands in for the thing
 //! being demonstrated.
 
@@ -92,6 +92,24 @@ fn an_authored_capability_invoke_lists_and_reads_a_real_skill() {
     assert!(
         !cards.contains("# APXM Context"),
         "listing a root must not load any instruction body: {cards}"
+    );
+
+    let searched = node_outcome(&result, "fixture.capability.search_skills");
+    assert_eq!(searched["kind"], "capability.invoke");
+    assert_eq!(
+        searched["outcome"]["status"], "completed",
+        "an admitted Tool(\"search_skills\") reaches SearchSkillsCapability: {result}"
+    );
+    let search_cards = searched["outcome"]["result"]
+        .as_str()
+        .expect("capability result text");
+    assert!(
+        search_cards.contains("\"skill_id\": \"context\""),
+        "searching by metadata returns the matching skill card: {search_cards}"
+    );
+    assert!(
+        !search_cards.contains("# APXM Context"),
+        "searching skills must remain metadata-only: {search_cards}"
     );
 
     let body = node_outcome(&result, "fixture.capability.read_skill");

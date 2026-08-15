@@ -8,6 +8,13 @@ use apxm_program::frontend_graph::{HookBinding, HookPhase};
 /// One runtime step derived from structural AIR plus the flat semantic op list.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ScheduleStep {
+    /// Snapshot the selected target before walking one captured Hook body.
+    ///
+    /// This is separate from the eventual Hook step because the captured body
+    /// is executable AIR and may change the driver's last-result accumulator.
+    HookBodyBegin {
+        binding: HookBinding,
+    },
     /// Run one exact statically compiled `before` handler.
     HookBefore {
         binding: HookBinding,
@@ -200,6 +207,11 @@ fn emit_children(
                     | StructuralOpKind::ParallelJoin
                     | StructuralOpKind::Try
                     | StructuralOpKind::Catch => {
+                        if let Some(binding) = hooks.get(region.region_id.as_str()) {
+                            schedule.push(ScheduleStep::HookBodyBegin {
+                                binding: (*binding).clone(),
+                            });
+                        }
                         emit_children(
                             air,
                             hooks,

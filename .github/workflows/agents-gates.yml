@@ -174,6 +174,13 @@ jobs:
       - name: Check generated metadata, parity, and compiler types
         run: dekk agents check
 
+      # Keep the shipping build visible as its own gate. Several later suites
+      # build release/debug binaries as prerequisites, but a direct build step
+      # makes the product artifact requirement discoverable and fails before
+      # the longer test battery when release linking is broken.
+      - name: Build the release CLI
+        run: dekk agents build
+
       # Clippy was never gated, so `-D warnings` violations accumulated
       # unnoticed across several crates until a sweep had to clear them in
       # bulk. It runs right after `check` to reuse that warm target dir, and
@@ -187,10 +194,15 @@ jobs:
       # `test` passes `--exclude apxm-compiler --exclude apxm-cli`, so until this
       # step the canonical AIR -> AIS lowering in crates/compiler/pipeline was
       # gated by nothing at all — `check` type-checks it and no step ran its
-      # tests. `test-cli` below covers the other exclusion; together the three
-      # steps close the workspace. The crate carries 5 unit tests and no
-      # integration target today, so this wires up a gate that is currently thin;
-      # it is the hook new pipeline tests land on rather than a broad net.
+      # tests. The aggregate suite below is the authoritative all-workspace
+      # Cargo gate; the focused compiler/CLI steps remain because they exercise
+      # release features and installed-frontends that the aggregate command
+      # does not cover.
+      - name: Run the aggregate all-workspace test suite
+        run: dekk agents test-all
+
+      # Keep a focused compiler gate as well: it gives pipeline failures a
+      # direct, readable check name instead of hiding them in the aggregate.
       - name: Run compiler AIR builder and pipeline tests
         run: dekk agents test-compiler
 

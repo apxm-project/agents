@@ -22,8 +22,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -103,7 +105,7 @@ def write_invocation_admission(air: Path, invocation_id: str) -> Path:
     return path
 
 
-def execute(air: Path, admission: Path, package: bool) -> subprocess.CompletedProcess:
+def execute(air: Path, admission: Path, package: bool | Path) -> subprocess.CompletedProcess:
     """Run the compiled AIR through exact Invocation Admission."""
     arguments = [
         "--json",
@@ -116,9 +118,39 @@ def execute(air: Path, admission: Path, package: bool) -> subprocess.CompletedPr
         "--provenance",
         str(FIXTURES / "canonical-execute.provenance.json"),
     ]
-    if package:
+    if package is True:
         arguments += ["--package", str(PACKAGE)]
+    elif isinstance(package, Path):
+        arguments += ["--package", str(package)]
     return run(*arguments)
+
+
+def agent_action(action: str, package: Path) -> subprocess.CompletedProcess:
+    """Run one package lifecycle action against a temporary package copy."""
+    return subprocess.run(
+        [str(apxm_binary()), "agent", action, str(package)],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        env={**os.environ},
+    )
+
+
+def copy_package(destination: Path) -> Path:
+    """Copy a checked-in package so lifecycle tests never dirty the fixture."""
+    package = destination / PACKAGE.name
+    shutil.copytree(PACKAGE, package)
+    return package
+
+
+def set_package_permission(package: Path, decision: str) -> None:
+    """Add one typed package-layer permission to a temporary package."""
+    manifest = package / "agent.toml"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8")
+        + f'\n[permissions]\nnormalize = {{ decision = "{decision}", reason = "Package test policy." }}\n',
+        encoding="utf-8",
+    )
 
 
 def capability_results(result: dict) -> list[str]:
@@ -190,11 +222,73 @@ def test_an_undeclared_argument_is_refused_by_the_shared_chokepoint() -> None:
     assert "shipped by python" not in combined, combined
 
 
+def test_package_integrity_refuses_a_post_build_edit() -> None:
+    """The package lifecycle rejects bytes changed after integrity sealing."""
+    with tempfile.TemporaryDirectory(prefix="apxm-python-package-") as directory:
+        package = copy_package(Path(directory))
+        verified = agent_action("verify", package)
+        assert verified.returncode == 0, verified.stdout + verified.stderr
+
+        manifest = package / "agent.toml"
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8") + "\n# changed after build\n",
+            encoding="utf-8",
+        )
+        refused = agent_action("verify", package)
+        combined = refused.stdout + refused.stderr
+        assert refused.returncode != 0, combined
+        assert "failed integrity verification" in combined, combined
+
+
+def test_package_ask_is_projected_and_fails_without_consent() -> None:
+    """A typed package Ask reaches the manifest and stops before the worker."""
+    with tempfile.TemporaryDirectory(prefix="apxm-python-package-") as directory:
+        package = copy_package(Path(directory))
+        set_package_permission(package, "ask")
+        built = agent_action("build", package)
+        assert built.returncode == 0, built.stdout + built.stderr
+
+        manifest = json.loads(
+            (package / "capabilities/handlers/tools.json").read_text(encoding="utf-8")
+        )
+        [handler] = manifest["handlers"]
+        assert handler["name"] == "normalize"
+        assert handler["requires_approval"] is True, manifest
+        verified = agent_action("verify", package)
+        assert verified.returncode == 0, verified.stdout + verified.stderr
+
+        air = WORKSPACE / "program.air.json"
+        admission = WORKSPACE / "program.invocation-admission.json"
+        completed = execute(air, admission, package)
+        combined = completed.stdout + completed.stderr
+        assert completed.returncode == 0, combined
+        result = json.loads(completed.stdout)
+        assert result["status"] == "completed", result
+        [outcome] = result["results"]["node_outcomes"]
+        assert outcome["outcome"]["status"] == "failed", result
+        assert "ask" in outcome["outcome"]["message"], result
+        assert "shipped by python" not in outcome["outcome"]["message"], result
+
+
+def test_package_deny_refuses_emitting_an_executable_handler() -> None:
+    """A typed package Deny cannot be hidden by emitting a worker descriptor."""
+    with tempfile.TemporaryDirectory(prefix="apxm-python-package-") as directory:
+        package = copy_package(Path(directory))
+        set_package_permission(package, "deny")
+        refused = agent_action("build", package)
+        combined = refused.stdout + refused.stderr
+        assert refused.returncode != 0, combined
+        assert "denied and cannot be emitted" in combined, combined
+
+
 def main() -> None:
     tests = [
         test_a_shipped_python_handler_runs_when_the_package_supplies_it,
         test_the_same_program_is_refused_at_the_gate_without_the_package,
         test_an_undeclared_argument_is_refused_by_the_shared_chokepoint,
+        test_package_integrity_refuses_a_post_build_edit,
+        test_package_ask_is_projected_and_fails_without_consent,
+        test_package_deny_refuses_emitting_an_executable_handler,
     ]
     for test in tests:
         test()

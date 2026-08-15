@@ -85,7 +85,7 @@ fn write_set() -> AtomicWriteSet {
 }
 
 fn air() -> AirModule {
-    let air: AirModule = serde_json::from_value(json!({
+    let mut air: AirModule = serde_json::from_value(json!({
         "schema_version": "apxm.air",
         "value_assemblies": [
             {"value_id": "value.model.request", "expression": {"kind": "object", "fields": [{"name": "prompt", "value": {"kind": "string", "value": "test"}}]}},
@@ -110,6 +110,26 @@ fn air() -> AirModule {
         "source_map": {"schema_version": "apxm.source-map", "source_language": "python", "node_spans": [], "region_annotations": []}
     }))
     .expect("valid AIR");
+    let binding = HookBinding {
+        hook_id: "hook.after.model".into(),
+        scope: HookScope::Model,
+        phase: HookPhase::After,
+        target_selector: "n.model".into(),
+        declaration_order: 0,
+        handler_ref: "hooks.after_model".into(),
+        handler_digest: digest('b'),
+        input_type_ref: "ModelResult".into(),
+        output_type_ref: "ModelResult".into(),
+        return_mode: HookReturnMode::ReplaceResult,
+        body_region_id: "hook.after.model.body".into(),
+        assigned_context_value_id: Some("value.hook.context".into()),
+    };
+    let body_region_id = binding.body_region_id.clone();
+    air.structural_ir
+        .iter_mut()
+        .find(|region| region.region_id == body_region_id)
+        .expect("model Hook body region")
+        .hook = Some(binding);
     assert!(air.verify().is_accepted());
     air
 }
@@ -778,7 +798,14 @@ impl StaticHookHandlerPort for OrderedToolHooks {
     }
 }
 
-fn typed_tool_request(air: AirModule, hook_bindings: Vec<HookBinding>) -> ExecutionRequest {
+fn typed_tool_request(mut air: AirModule, hook_bindings: Vec<HookBinding>) -> ExecutionRequest {
+    for binding in &hook_bindings {
+        air.structural_ir
+            .iter_mut()
+            .find(|region| region.region_id == binding.body_region_id)
+            .expect("typed Hook body region")
+            .hook = Some(binding.clone());
+    }
     ExecutionRequest {
         air,
         initial_values: BTreeMap::new(),
@@ -887,6 +914,7 @@ async fn typed_final_response_skips_the_declared_tool() {
 async fn a_replacing_hook_whose_body_assigned_nothing_fails_closed() {
     let mut request = request();
     request.hook_bindings[0].assigned_context_value_id = None;
+    request.air.structural_ir[1].hook = Some(request.hook_bindings[0].clone());
     let error = execute(
         &ports_with_model_composition_capability_external_and_hooks(
             Arc::new(FakeCommit::new()),
@@ -927,6 +955,7 @@ async fn an_observing_hook_whose_handler_replaces_fails_closed() {
     let mut request = request();
     request.hook_bindings[0].return_mode = HookReturnMode::Observe;
     request.hook_bindings[0].assigned_context_value_id = None;
+    request.air.structural_ir[1].hook = Some(request.hook_bindings[0].clone());
     let error = execute(
         &ports_with_model_composition_capability_external_and_hooks(
             Arc::new(FakeCommit::new()),
@@ -1011,6 +1040,127 @@ async fn a_replacing_capability_hook_patches_the_outcome_the_run_reports() {
         apxm_program::capability::CapabilityOutcome::Completed {
             result: "redacted".into()
         }
+    );
+}
+
+#[tokio::test]
+async fn a_captured_hook_body_cannot_replace_the_target_result_accumulator() {
+    struct RecordingHook {
+        results: Mutex<Vec<Value>>,
+    }
+
+    #[async_trait::async_trait]
+    impl StaticHookHandlerPort for RecordingHook {
+        async fn execute(
+            &self,
+            invocation: apxm_execution::StaticHookInvocation<'_>,
+        ) -> Result<StaticHookResult, apxm_execution::StaticHookExecutionError> {
+            self.results.lock().unwrap().push(invocation.result.clone());
+            Ok(StaticHookResult::Replace {
+                assigned_context: Some(json!({"iterations": 2})),
+                result: json!("hooked"),
+            })
+        }
+    }
+
+    let mut request = request();
+    request.air.value_assemblies.push(
+        serde_json::from_value(json!({
+            "value_id": "value.hook.body.arguments",
+            "expression": {"kind": "object", "fields": []}
+        }))
+        .expect("captured body arguments assembly"),
+    );
+    request.air.semantic_operations.push(
+        serde_json::from_value(json!({
+            "node_id": "n.hook.body.capability",
+            "op": "capability.invoke",
+            "parent_region_id": "hook.after.model.body",
+            "execution_order": 0,
+            "operands": [
+                {"slot": "capability_ref", "value_id": "cap.search", "type_ref": "CapabilityRef"},
+                {"slot": "arguments", "value_id": "value.hook.body.arguments", "type_ref": "CapabilityArguments"}
+            ],
+            "result": {"value_id": "value.hook.body.output", "type_ref": "CapabilityOutput"}
+        }))
+        .expect("captured body capability operation"),
+    );
+    request.capability_invocations.insert(
+        "n.hook.body.capability".into(),
+        request
+            .capability_invocations
+            .get("n.cap")
+            .expect("target capability admission")
+            .clone(),
+    );
+    assert!(request.air.verify().is_accepted());
+
+    let capability = Arc::new(RecordingCapability::with_results(["body-result"]));
+    let hook = Arc::new(RecordingHook {
+        results: Mutex::new(Vec::new()),
+    });
+    let report = execute(
+        &ports_with_model_composition_capability_external_and_hooks(
+            Arc::new(FakeCommit::new()),
+            Arc::new(FakeModel),
+            Arc::new(FakeComposition),
+            capability.clone(),
+            Arc::new(FakeAcpPeer),
+            hook.clone(),
+        ),
+        request,
+        json!({"iterations": 0}),
+    )
+    .await
+    .expect("captured body executes");
+
+    assert_eq!(
+        *hook.results.lock().unwrap(),
+        vec![Value::Null],
+        "the Hook handler sees the model target result, not its body's capability result"
+    );
+    assert_eq!(
+        capability
+            .requests()
+            .iter()
+            .filter(|request| request.capability_ref() == "cap.search")
+            .count(),
+        2,
+        "the ordinary target and captured Hook body both dispatch through the admitted Capability port"
+    );
+    assert!(report.node_outcomes.iter().any(|outcome| matches!(
+        outcome,
+        NodeOutcome::Capability { node_id, outcome: CapabilityOutcome::Completed { result }, .. }
+            if node_id == "n.hook.body.capability" && result == "body-result"
+    )));
+    assert!(report.node_outcomes.iter().any(|outcome| matches!(
+        outcome,
+        NodeOutcome::Model { node_id, result, replaced: true, .. }
+            if node_id == "n.model" && result == &json!("hooked")
+    )));
+}
+
+#[tokio::test]
+async fn a_supplied_hook_binding_must_match_the_air_carried_binding() {
+    let mut request = request();
+    request.hook_bindings[0].scope = HookScope::Node;
+    let error = execute(&ports(Arc::new(FakeCommit::new())), request, Value::Null)
+        .await
+        .expect_err("a binding altered outside AIR must be refused");
+    assert!(
+        matches!(error, ExecutionError::InvalidAir { message } if message.contains("differs from the binding carried"))
+    );
+}
+
+#[tokio::test]
+async fn an_air_carried_hook_cannot_be_omitted_from_execution() {
+    let mut request = request();
+    request.hook_bindings.clear();
+    let error = execute(&ports(Arc::new(FakeCommit::new())), request, Value::Null)
+        .await
+        .expect_err("omitting an AIR-carried Hook must be refused");
+    assert!(
+        matches!(error, ExecutionError::InvalidAir { message } if message.contains("carries 1 Hook bindings"))
     );
 }
 

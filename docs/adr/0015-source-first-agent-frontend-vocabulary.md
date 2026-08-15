@@ -17,9 +17,20 @@ than §4's table is where the cross-language surface is now decided, and §4's
 two bundled-handler rows are one row. Read §4 and §7 of this ADR through that
 amendment.
 
+## Landed implementation status
+
+The source-first vocabulary, generated FrontendGraph records/serializers, and
+typed capture diagnostics described by this ADR are landed on the current
+branch. The baseline/target language in the Context and Decision sections is
+the historical design record that explains the migration; it is not a claim
+that the retired recorder surface remains supported. The current implementation
+is guarded by `dekk agents check-frontend-surface`, generated-code drift checks,
+frontend parity, and the canonical compile/execute E2E gates documented in
+[`docs/README.md`](../README.md#verification-and-ci).
+
 ## Context
 
-ADR-0006 fixed `apxm.frontend-graph` as the versioned interchange contract
+ADR-0006 fixed `apxm.frontend-graph` as the canonical interchange contract
 and made Python/TypeScript pure authoring libraries over explicit compiler
 bridges. ADR-0010 and ADR-0014 assigned loop, Hook, Context, and composition
 behavior to source, made `ConversationalAgent`/Gao examples, and split AIS into

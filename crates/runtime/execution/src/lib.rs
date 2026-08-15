@@ -49,5 +49,7 @@ pub use readiness::{
     NodeLifecycle, NodeOccurrenceId, OperandSlotDecl, OperandValue, ReadinessError,
     ReadinessKernel, ReadinessKernelBuilder, ReadinessTransition, RunnableNode, SlotClaim,
 };
-pub use resume::{Continuation, ContinuationError, DurableLoopFrame, RunOutcome};
+pub use resume::{
+    Continuation, ContinuationError, DurableLoopFrame, HookTargetSnapshot, RunOutcome,
+};
 pub use session_ledger::{LedgerState, SessionLedger, SessionLedgerError, SessionLedgerStore};
