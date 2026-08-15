@@ -300,6 +300,12 @@ impl RuntimeService {
                     };
                 }
                 self.project_execution(&output, &invocation_id);
+                if let Some(dir) = &self.artifact_dir {
+                    let _ = std::fs::write(
+                        dir.join(format!("{}.output.json", invocation_id.replace(':', "-"))),
+                        serde_json::to_vec(&output).unwrap_or_else(|_| b"{}".to_vec()),
+                    );
+                }
                 self.last_output = Some(output);
                 RuntimeResult::ProgramInvocationStarted {
                     request_id,

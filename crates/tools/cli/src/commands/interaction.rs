@@ -69,8 +69,14 @@ pub fn event_command(action: EventAction) -> Result<()> {
         EventAction::Inspect {
             event_id,
             generation,
+        } => {
+            let result = runtime
+                .inspect_event(event_id, generation)
+                .map_err(|error| anyhow::anyhow!(error))?;
+            println!("{}", serde_json::to_string(&result)?);
+            Ok(())
         }
-        | EventAction::Expire {
+        EventAction::Expire {
             event_id,
             generation,
         }
@@ -78,7 +84,10 @@ pub fn event_command(action: EventAction) -> Result<()> {
             event_id,
             generation,
         } => {
-            println!("{event_id}#{generation}");
+            let result = runtime
+                .inspect_event(event_id, generation)
+                .map_err(|error| anyhow::anyhow!(error))?;
+            println!("{}", serde_json::to_string(&result)?);
             Ok(())
         }
         EventAction::Fulfill {
@@ -166,37 +175,8 @@ fn start_instance(
     let started = runtime
         .start_invocation(&instance, serde_json::json!({}))
         .map_err(|error| anyhow::anyhow!(error))?;
-    let outcome = classify_start(started, runtime.last_output());
+    let outcome = InteractionClient::classify_outcome(&started, runtime.last_output());
     Ok((artifact_digest, instance, outcome))
-}
-
-fn classify_start(
-    started: apxm_runtime_protocol::RuntimeResult,
-    last_output: Option<&serde_json::Value>,
-) -> HeadlessOutcome {
-    use apxm_runtime_protocol::RuntimeResult;
-    match started {
-        RuntimeResult::Failed { .. } => HeadlessOutcome::Failed,
-        RuntimeResult::Cancelled { .. } => HeadlessOutcome::Failed,
-        RuntimeResult::ProgramInvocationStarted { .. } => {
-            if last_output.is_some_and(output_is_waiting_event) {
-                HeadlessOutcome::WaitingEvent
-            } else {
-                HeadlessOutcome::Returned
-            }
-        }
-        _ => HeadlessOutcome::Failed,
-    }
-}
-
-fn output_is_waiting_event(output: &serde_json::Value) -> bool {
-    output["results"]["node_outcomes"]
-        .as_array()
-        .is_some_and(|nodes| {
-            nodes
-                .iter()
-                .any(|node| node["kind"] == "await.event" && node["outcome"]["status"] == "parked")
-        })
 }
 
 fn spawn_compilation_client() -> Result<CompilationClient> {

@@ -1,7 +1,7 @@
 //! Interaction Client shared by headless `apxm run` and the TUI.
 
 use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use apxm_kernel::event_api::{CanonicalEventRef, EventApplication, EventOccurrence};
@@ -54,6 +54,8 @@ struct StdioRuntime {
     child: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
+    artifact_dir: PathBuf,
+    last_output: Option<serde_json::Value>,
 }
 
 impl Default for InteractionClient {
@@ -96,7 +98,7 @@ impl InteractionClient {
         std::fs::create_dir_all(&artifact_dir).map_err(|error| error.to_string())?;
         let mut child = Command::new(program.as_ref())
             .args(args)
-            .env("APXM_ARTIFACT_DIR", artifact_dir)
+            .env("APXM_ARTIFACT_DIR", &artifact_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -115,6 +117,8 @@ impl InteractionClient {
                 child,
                 stdin,
                 stdout: BufReader::new(stdout),
+                artifact_dir,
+                last_output: None,
             }),
         })
     }
@@ -151,19 +155,79 @@ impl InteractionClient {
         program_instance_id: &str,
         input: serde_json::Value,
     ) -> Result<RuntimeResult, String> {
-        self.request(RuntimeRequest::ProgramInvocationStart {
+        let result = self.request(RuntimeRequest::ProgramInvocationStart {
             request_id: "invoke".to_owned(),
             program_instance_id: program_instance_id.to_owned(),
             input,
-        })
+        })?;
+        if let RuntimeInner::Stdio(stdio) = &mut self.inner {
+            if let RuntimeResult::ProgramInvocationStarted {
+                ref program_invocation_id,
+                ..
+            } = result
+            {
+                let path = stdio.artifact_dir.join(format!(
+                    "{}.output.json",
+                    program_invocation_id.replace(':', "-")
+                ));
+                if let Ok(bytes) = std::fs::read(&path) {
+                    stdio.last_output = serde_json::from_slice(&bytes).ok();
+                }
+            }
+        }
+        Ok(result)
     }
 
-    /// Last committed output when the client owns an in-process service.
+    /// Last committed output from the in-process service or the shared artifact dir.
     #[must_use]
     pub fn last_output(&self) -> Option<&serde_json::Value> {
         match &self.inner {
             RuntimeInner::InProcess(service) => service.last_output(),
-            RuntimeInner::Stdio(_) => None,
+            RuntimeInner::Stdio(stdio) => stdio.last_output.as_ref(),
+        }
+    }
+
+    /// Inspect one EventRef through the Runtime Service.
+    pub fn inspect_event(
+        &mut self,
+        event_id: String,
+        generation: u64,
+    ) -> Result<RuntimeResult, String> {
+        self.request(RuntimeRequest::EventInspect {
+            request_id: "event.inspect".to_owned(),
+            event_ref: CanonicalEventRef {
+                event_id,
+                generation,
+            },
+        })
+    }
+
+    /// Reserve one EventRef through the Runtime Service.
+    pub fn reserve_event(&mut self, type_id: &str) -> Result<RuntimeResult, String> {
+        self.request(RuntimeRequest::EventReserve {
+            request_id: "event.reserve".to_owned(),
+            type_id: type_id.to_owned(),
+        })
+    }
+
+    /// Classify a start result into the closed headless outcome set.
+    #[must_use]
+    pub fn classify_outcome(
+        started: &RuntimeResult,
+        last_output: Option<&serde_json::Value>,
+    ) -> HeadlessOutcome {
+        match started {
+            RuntimeResult::Failed { .. } | RuntimeResult::Cancelled { .. } => {
+                HeadlessOutcome::Failed
+            }
+            RuntimeResult::ProgramInvocationStarted { .. } => {
+                if last_output.is_some_and(output_is_waiting_event) {
+                    HeadlessOutcome::WaitingEvent
+                } else {
+                    HeadlessOutcome::Returned
+                }
+            }
+            _ => HeadlessOutcome::Failed,
         }
     }
 
@@ -250,6 +314,16 @@ impl InteractionClient {
     }
 }
 
+fn output_is_waiting_event(output: &serde_json::Value) -> bool {
+    output["results"]["node_outcomes"]
+        .as_array()
+        .is_some_and(|nodes| {
+            nodes
+                .iter()
+                .any(|node| node["kind"] == "await.event" && node["outcome"]["status"] == "parked")
+        })
+}
+
 /// Render one TUI/headless protocol fixture the same way.
 #[must_use]
 pub fn render_outcome(kind: HeadlessOutcome) -> &'static str {
@@ -290,5 +364,45 @@ mod tests {
             render_outcome(HeadlessOutcome::WaitingEvent),
             "waiting_event"
         );
+        assert_eq!(render_outcome(HeadlessOutcome::Returned), "returned");
+        assert_eq!(render_outcome(HeadlessOutcome::Failed), "failed");
+    }
+
+    #[test]
+    fn classify_outcome_distinguishes_returned_waiting_and_failed() {
+        let started = RuntimeResult::ProgramInvocationStarted {
+            request_id: "s".to_owned(),
+            program_invocation_id: "pi-1:inv-1".to_owned(),
+        };
+        assert_eq!(
+            InteractionClient::classify_outcome(&started, None),
+            HeadlessOutcome::Returned
+        );
+        let waiting = serde_json::json!({
+            "results": {
+                "node_outcomes": [{
+                    "kind": "await.event",
+                    "outcome": { "status": "parked" }
+                }]
+            }
+        });
+        assert_eq!(
+            InteractionClient::classify_outcome(&started, Some(&waiting)),
+            HeadlessOutcome::WaitingEvent
+        );
+        let failed = RuntimeResult::Failed {
+            request_id: "s".to_owned(),
+            code: "unknown_artifact".to_owned(),
+        };
+        assert_eq!(
+            InteractionClient::classify_outcome(&failed, None),
+            HeadlessOutcome::Failed
+        );
+    }
+
+    #[test]
+    fn compile_failure_does_not_create_an_instance() {
+        let mut client = InteractionClient::default();
+        assert!(client.run_artifact("sha256:not-admitted").is_err());
     }
 }
