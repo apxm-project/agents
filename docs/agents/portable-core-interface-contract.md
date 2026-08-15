@@ -100,8 +100,10 @@ Use closed generated types when a value controls APXM meaning:
 Rules:
 
 1. one owner schema defines discriminants and wire spellings;
-2. Rust matches exhaustively; Python/TypeScript generated unions use a
-   `never`/equivalent exhaustiveness test;
+2. Rust matches exhaustively. The generated Python/TypeScript unions carry no
+   exhaustiveness guard today — no `never` test, no `assertNever` — so a
+   language that gains a variant without regenerating fails at the boundary in
+   rule 5 rather than at compile time;
 3. storage, event, HTTP, evidence, and evidence projections use generated values;
 4. semantic/security unions have no generic `Other(String)`, `Unknown(raw)`,
    `Custom`, string fallback, or catch-all behavior; owner-defined epistemic
@@ -351,21 +353,23 @@ authority decision.
 
 The adapter returns attempt facts, not a source-level result envelope:
 
-```text
-ModelAdapterAttemptOutcome =
-  NotSent(reason)
-  | Accepted(stream_or_receipt)
-  | DeliveredTypedFailure(error)
-  | ProvenNotAccepted(reason)
-  | TransportLost(after_possible_accept)
-  | CancellationConfirmed
-  | CancellationUnconfirmed
+The shipped seam is `AttemptDisposition`
+(`crates/runtime/inference/src/effect.rs`):
 
-ModelReconciliationResult =
-  ProvenCommitted(output, usage_provenance)
-  | ProvenNotCommitted
-  | StillUnknown(usage_provenance)
+```text
+AttemptDisposition =
+  Success { usage, output }
+  | DeliveredTypedFailure(error)
+  | FailedBeforeSend(error)
+  | FailedAfterSend(error)
+  | Cancelled
 ```
+
+Reconciliation is not a separate result type. `ModelInferencePort` reports it as
+one predicate, `proves_idempotency()`: an attempt that failed before send is
+always safe to retry, and one that failed after send is retried only when the
+backend proves idempotency — otherwise the effect commits
+`ModelOutcome::ModelOutcomeUnknown` rather than duplicating the request.
 
 Runtime maps those facts to the closed Model NodeExecution outcome: committed
 success, typed failure, cancelled, or `ModelOutcomeUnknown`. `reconciled` is not

@@ -34,11 +34,15 @@ Focused programs may also use `Capability`, `Event`, `Hook`, and `TaskGroup`.
 A conversational Agent is ordinary source containing a loop and yield/resume;
 it is not a package export or runtime mode.
 
-Python expresses local declarations with `@Agent`, `@Context`, `@Tool`,
-`@Capability`, and static `@Hook` markers. TypeScript uses the equivalent typed
-`Agent(...)`, `Context(...)`, `Tool(...)`, `Capability(...)`, and `Hook(...)`
-declaration factories. Both bind to the same semantic-node matrix; neither
-executes user callbacks while compiling.
+Python expresses local declarations two ways. `@Agent(...)`, `@Context`, and
+`@Hook.before(...)` / `@Hook.after(...)` are decorators, because each attaches
+to a definition the author is already writing. `Tool`, `Capability`, `Model`,
+`Event`, and `Skill` are typed subscript factories bound to a name —
+`Tool[In, Out](ref)`, `Model[In, Out](ref)`, `Skill(id, entry=...)` — not
+decorators. TypeScript uses the equivalent typed `Agent(...)`, `Context(...)`,
+`Tool(...)`, `Capability(...)`, and `Hook(...)` declaration factories. Both bind
+to the same semantic-node matrix; neither executes user callbacks while
+compiling.
 
 The Python package is [`python/`](python/) and exports `apxm_program`.
 TypeScript is [`typescript/`](typescript/) and exports `@apxm/frontend`.

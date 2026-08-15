@@ -49,7 +49,8 @@ Optional:
 3. Expiry and nonce reuse fail closed.
 4. Audience must equal the runtime's expected audience.
 5. Every required Port is present exactly once; duplicates are ambiguous and fail.
-6. `execution_commit` and `confinement` are always required.
+6. `confinement` is always required. `execution_commit` is not a field on this
+   envelope — it is a Port slot, so law 5 already covers it.
 7. Each closed Port slot carries its exact contract schema id; a slot cannot be
    relabeled as another Port family.
 8. Confinement type `unconfined` (and equivalent digests) fail closed.

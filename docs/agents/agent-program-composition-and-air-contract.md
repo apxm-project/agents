@@ -63,8 +63,10 @@ one-shot `Program.invoke` is rejected when no default exists.
 `ProgramRef` pins the imported artifact and entrypoint by digest and declares a
 target Agent Identity requirement. The artifact declaration is not identity
 proof: admission MUST bind it to an authenticated, company-scoped Agent
-Identity and record that binding. `agent.identity` exposes only the admitted
-binding. A reference cannot resolve mutable “latest,” a filesystem path, a
+Identity and record that binding. No authored surface reads it back: the shipped
+Agent Facade has no `identity` member (§5.2), and the binding travels as
+`program_identity.agent_identity_binding` in runtime evidence.
+A reference cannot resolve mutable “latest,” a filesystem path, a
 runtime profile, an endpoint, or a runtime-selected arbitrary target.
 
 `ProgramInstanceRef` additionally identifies a stateful logical instance and
@@ -300,27 +302,19 @@ The following MUST be explicit program code:
 
 ### 5.2 Agent Facade
 
-Every Hook receives one portable `AgentFacade<I, O, C>` named `agent`. The
-facade MAY expose only typed fields valid at its static binding point:
+Every Hook receives one portable facade named `agent`. What ships is
+`AgentFacade<C>` (`crates/runtime/kernel/src/hook.rs`), and it exposes exactly
+one member:
 
 ```text
-agent.identity
 agent.context
-agent.input
-agent.output
-agent.current_node
-agent.current_model_call
-agent.current_capability_call
-agent.capabilities
-agent.skill_discovery
-agent.invocation
-agent.budget
-agent.deadline
-agent.cancelled
 ```
 
-`agent.identity` is the authenticated admission binding for the current
-program, never an authored artifact string or inherited parent identity.
+Assigning `agent.context` is the only way Hook source changes context; there is
+no hidden callback dispatcher and no mutable runtime Hook registry. Both
+frontends recognize `agent.context` and, in an Agent body, `agent.yield_` —
+nothing else. No `agent.identity`, `agent.budget`, `agent.deadline`, or
+`agent.capabilities` member exists; do not author against one.
 
 The facade MUST NOT expose runtime object identity, Execution Context,
 credentials, bearer grants, scheduler, broker, database, storage backend,

@@ -1514,7 +1514,7 @@ of payload type `T`.
 
 ### Service requests to the client
 
-Approvals are bidirectional requests rather than ordinary notifications:
+`Approvals are bidirectional requests rather than ordinary notifications:
 
 ```text
 approval.request {

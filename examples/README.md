@@ -53,8 +53,8 @@ input, and `Tool.answer` returns one typed answer object. Authors write ordinary
 TypeScript objects; the generated `capabilities/handlers/tools.json` sidecar is
 an internal build output and is never edited by hand.
 
-This TypeScript package helper is a build input, not an APXM runtime. The
-Rust-owned handler-manifest contract records its output, and the admitted Rust
-Capability port owns execution. The Node worker used by package tests only
-proves a TypeScript bundle conforms to that contract. A Python package helper
-is unnecessary until APXM supports a Python package-local handler bundle.
+These package helpers are build inputs, not an APXM runtime. The Rust-owned
+handler-manifest contract records their output, and the admitted Rust
+Capability port owns execution. There is one per language — a Node worker and a
+Python worker — because a package may ship a handler in either, and both
+register through the same port.

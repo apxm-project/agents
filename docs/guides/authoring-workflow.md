@@ -65,11 +65,13 @@ ordinary Agent; do not make your program depend on an example name.
 4. If a package supplies a local Tool implementation, keep it in a handler
    module — `Tool.define` from `@apxm/agent-packaging` in TypeScript,
    `capability(...)` from `apxm_program.handlers` in Python — never in the Agent
-   Program source. Only the TypeScript form becomes executable: the handler
-   manifest admits `typescript` alone, so a Python declaration states what a
-   package contains without producing a runnable handler
+   Program source. Both forms become executable: `HandlerLanguage` admits
+   `python` and `typescript`, and a package that ships
+   `capabilities/<id>/handler.py` or `handler.ts` is discovered, bundled,
+   registered, and executed through the same chokepoint
    ([ADR-0016](../adr/0016-tool-authoring-and-handler-execution-are-separate.md),
    as amended by [ADR-0022](../adr/0022-capability-references-resolve-against-a-catalogue-and-permissions-are-declared-requests.md)).
+   Only discovery, bundling, and the worker process differ by language.
    The generated manifest is build output; it is not source to edit and it does
    not make Node the Agent runtime or grant authority.
    If the package needs to narrow what its program asked for, state it in

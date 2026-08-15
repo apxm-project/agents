@@ -257,7 +257,7 @@ annotation at the marker
 (`crates/compiler/frontend/python/apxm_program/_agent.py`), as TypeScript already
 did through its type arguments.
 
-### Python declares a shipped Capability; it still cannot execute one
+### Python declares a shipped Capability, and now executes one
 
 ADR-0016 §4 deferred the whole Python handler surface, authoring included,
 because no Python bundler or worker adapter existed. That conflated two
@@ -331,9 +331,10 @@ it.
   are one row: a Capability a package ships, declared by `Tool.define` or by
   `apxm_program.handlers.capability(...)`, never by the `Tool` or `Capability`
   markers.
-- ADR-0016 §4's Python deferral covers execution only. Declaring a shipped
-  Capability from Python is supported; running one is still the separate owner
-  change that record describes.
+- ADR-0016 §4's Python deferral is fully closed. Declaring a shipped Capability
+  from Python is supported, and running one is too — `HandlerLanguage` admits
+  `python`, and `capabilities/<id>/handler.py` is discovered, bundled,
+  registered, and executed like its TypeScript counterpart.
 
 ## Open
 
