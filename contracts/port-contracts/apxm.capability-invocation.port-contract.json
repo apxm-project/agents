@@ -20,5 +20,5 @@
   "authority_data_classification_digest": "sha256:42b91f1eb0145a0579d4a9152c8fa6f9c15256e7ea5d0f7ecbc57e7c9e33ce78",
   "feature_vocabulary_digest": "sha256:e4c003d387b3d649cc6e3fef3ff9c16d6333528f3c114bc2028e6065860ef050",
   "configuration_contract_digest": "sha256:fcaa0877c79eac2e91758ce0eedc96f72d3bb9be1f841e1ad7ce7a3ab5e70ba5",
-  "conformance_vector_digest": "sha256:bfca9faa5afc3e1f373f731acfbcb4fb9df428fff6d3a610b2a6097d1571420d"
+  "conformance_vector_digest": "sha256:605266c7a7fa6c1fe3d97a7f3f15853efdfebf5383e1a81556c9caf5fd9d24ca"
 }

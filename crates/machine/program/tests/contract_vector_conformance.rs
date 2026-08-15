@@ -402,6 +402,20 @@ fn every_document_schema_either_identifies_itself_or_is_pinned_by_a_port() {
 /// both fail the digest test below.
 const UNPUBLISHED_PORT_SCHEMAS: &[&str] = &["apxm.execution-commit"];
 
+/// Every Port Contract must carry a `conformance_vector_digest` — the schema
+/// makes it required — but only two ports publish a vector file under their own
+/// id. These four pin a content address for material this repository does not
+/// publish, so there are no bytes to hold the digest against. Recorded by name
+/// for the same reason as the schema gap above: publishing one of these vector
+/// files, or a published one going missing, both fail the digest test rather
+/// than passing quietly.
+const UNPUBLISHED_PORT_VECTORS: &[&str] = &[
+    "apxm.durable-event",
+    "apxm.external-agent",
+    "apxm.model-inference",
+    "apxm.program-composition",
+];
+
 fn port_contract_files() -> Vec<String> {
     published_contract_files("port-contracts")
 }
@@ -444,10 +458,11 @@ fn every_port_contract_id_matches_the_file_that_publishes_it() {
     }
 }
 
-/// The load-bearing test: each Port Contract pins the schemas that cross it by
-/// the SHA-256 of their published bytes. Editing a schema without republishing
-/// every Port Contract that pins it fails here — which is the whole reason a
-/// content address is published rather than a version string.
+/// The load-bearing test: each Port Contract pins the schemas that cross it,
+/// and its conformance vectors, by the SHA-256 of their published bytes.
+/// Editing a schema or a vector file without republishing every Port Contract
+/// that pins it fails here — which is the whole reason a content address is
+/// published rather than a version string.
 #[test]
 fn every_port_contract_digest_pins_the_published_schema_bytes() {
     let mut unpublished = BTreeSet::new();
@@ -483,6 +498,49 @@ fn every_port_contract_digest_pins_the_published_schema_bytes() {
         checked > 0,
         "no Port Contract pinned a published schema, so nothing was verified"
     );
+
+    // `conformance_vector_digest` is required of every Port Contract but was
+    // checked by nothing, so it was the one published content address free to
+    // drift. It pins `contracts/vectors/<port_contract_id>.json`.
+    let mut unpublished_vectors = BTreeSet::new();
+    let mut vectors_checked = 0usize;
+    for file in port_contract_files() {
+        let document = load_contract(&format!("port-contracts/{file}"));
+        let port_contract_id = document["port_contract_id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{file}: no port_contract_id"));
+        let pinned = document["conformance_vector_digest"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{file}: pins no conformance_vector_digest"));
+        let relative = format!("vectors/{}", vector_file(port_contract_id));
+        if !contract_file_exists(&relative) {
+            unpublished_vectors.insert(port_contract_id.to_owned());
+            continue;
+        }
+        assert_eq!(
+            contract_file_digest(&relative),
+            pinned,
+            "{file}: conformance_vector_digest is not the published bytes of \
+             {relative} — either the vectors were edited without republishing this \
+             Port Contract, or the digest was written by hand"
+        );
+        vectors_checked += 1;
+    }
+    assert!(
+        vectors_checked > 0,
+        "no Port Contract pinned a published vector file, so nothing was verified"
+    );
+    assert_eq!(
+        unpublished_vectors,
+        UNPUBLISHED_PORT_VECTORS
+            .iter()
+            .map(|id| (*id).to_owned())
+            .collect::<BTreeSet<String>>(),
+        "the set of Port Contracts with no published vector file changed; a port \
+         that gained a vector file must be removed from UNPUBLISHED_PORT_VECTORS, \
+         and one that lost its file is a break, not a bookkeeping update"
+    );
+
     let expected: BTreeSet<String> = UNPUBLISHED_PORT_SCHEMAS
         .iter()
         .map(|id| (*id).to_owned())
