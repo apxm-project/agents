@@ -1,6 +1,7 @@
 ---
-status: proposed
+status: accepted-architecture
 date: 2026-08-14
+accepted: ADR-0023
 owner: APXM agents
 requires: ADR-0006, ADR-0007, ADR-0008, ADR-0009, ADR-0010, ADR-0011, ADR-0013, ADR-0015, ADR-0016, ADR-0018, ADR-0020
 ---

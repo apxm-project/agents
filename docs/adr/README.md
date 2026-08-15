@@ -20,6 +20,7 @@ from the active index; Git history retains their rationale.
 | [0020](0020-durable-coordination-enters-through-port-contracts-and-composition-root.md) | Managed durability is whatever the Composition Root binds behind the durable-event Port Contract, not a named product. |
 | [0021](0021-backend-neutral-graph-hints.md) | Graph hints are one Agents contract projected onto vLLM and llama.cpp `apxm` branches; the vLLM pin/join catalog is retired. |
 | [0022](0022-capability-references-resolve-against-a-catalogue-and-permissions-are-declared-requests.md) | Capability references resolve against a generated catalogue plus shipped handlers; a declared permission is a request the layer stack may only tighten. |
+| [0023](0023-compilation-and-runtime-services-and-program-owned-interaction.md) | Compilation Service and Runtime Service are separate contracts joined only by a committed artifact; interaction harnesses are Programs; Chat/Watch/Rollout are deleted at cutover. |
 
 ## Amending an accepted record
 
