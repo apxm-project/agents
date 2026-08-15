@@ -258,5 +258,10 @@ jobs:
       - name: Execute the Agent Skill example
         run: dekk agents test-skill-example
 
+      # Nothing else dispatches a shipped handler: the packaging gate checks the
+      # manifest and the package gate checks the chain. This runs one.
+      - name: Execute the Capability handlers a package ships
+        run: dekk agents test-package-handler-example
+
       - name: Run repository tooling tests
         run: python -m pytest tools/tests/

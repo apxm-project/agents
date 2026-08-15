@@ -110,10 +110,14 @@ and a test asserts it stays absent here.
 `crates/tools/cli/src/frontend/codegen_diagnostics.rs` unions
 `declarations[].diagnostics` from the manifest in manifest order with repeats
 dropped, and emits `DiagnosticCode`, one `SCREAMING_SNAKE` constant per code,
-and `DIAGNOSTIC_CODES`, into `apxm_program/_generated/diagnostics.py` and
-`typescript/src/generated/diagnostics.ts`. The 23 codes the manifest declares —
-`AgentBodyNotAsync`, `ModelRefNotExact`, `HookTargetUnresolved`, and the rest —
-existed nowhere but that manifest before this.
+and `DIAGNOSTIC_CODES`, into `apxm_program/_generated/diagnostics.py`,
+`typescript/src/generated/diagnostics.ts`, and — because the manifest projects
+TypeScript's shipped-handler declaration into the packaging package —
+`crates/tools/cli/agent-packaging/diagnostics.mjs`. The codes the manifest
+declares — `AgentBodyNotAsync`, `HookTargetUnresolved`, and the rest — existed
+nowhere but that manifest before this, and
+`tools/scripts/check_frontend_surface.py` now proves each one reaches a
+`raise`/`throw` in every registered language rather than only existing.
 
 ### 3.3 Where these modules sit
 

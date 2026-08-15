@@ -13,14 +13,21 @@ from typing import Any, Optional, TypeVar
 
 from ._generated.capabilities import BUILTIN_CAPABILITIES
 from ._generated.diagnostics import (
+    CAPABILITY_DISPLAY_NAME_REJECTED,
     CAPABILITY_REF_NOT_EXACT,
+    CONTEXT_NOT_TYPED,
     DiagnosticCode,
+    EVENT_NOT_TYPED,
+    EVENT_WAIT_OUTSIDE_BODY,
+    MODEL_DISPLAY_NAME_REJECTED,
+    MODEL_UNTYPED_SCHEMA,
     SKILL_ENTRY_PATH_NOT_CANONICAL,
     SKILL_ID_NOT_EXACT,
     SKILL_INSTRUCTIONS_OVERLONG,
     SKILL_LOAD_OUTSIDE_BODY,
     SKILL_SOURCE_AMBIGUOUS,
     SKILL_SOURCE_MISSING,
+    TOOL_DISPLAY_NAME_REJECTED,
     TOOL_REF_NOT_CAPABILITY,
 )
 from ._generated.frontend_graph import (
@@ -99,7 +106,9 @@ class EventType:
     target_ref: str
 
     def wait(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
-        raise RuntimeError("an Event is awaited inside a compiled Agent body")
+        raise RuntimeError(
+            f"{EVENT_WAIT_OUTSIDE_BODY}: an Event is awaited inside a compiled Agent body"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,23 +145,34 @@ class _TypedFactory:
     same arity a TypeScript marker states as ``<Input, Output>``, which is what
     lets the surface conformance gate compare the two by argument shape rather
     than by trusting that a subscript exists.
+
+    Subscription returns a *new* factory rather than the module singleton, so a
+    marker can tell a declaration that stated its types from one that did not.
     """
 
     _type_parameters: tuple[str, ...] = ()
+
+    def __init__(self, typed: bool = False) -> None:
+        self._typed = typed
 
     def __getitem__(self, types: Any) -> "_TypedFactory":
         supplied = types if isinstance(types, tuple) else (types,)
         if len(supplied) != len(self._type_parameters):
             expected = ", ".join(self._type_parameters)
             raise TypeError(f"{type(self).__name__} takes [{expected}]")
-        return self
+        return type(self)(typed=True)
 
 
 class _ModelFactory(_TypedFactory):
     _type_parameters = ("input", "output")
 
     def __call__(self, ref: str) -> ModelBinding:
-        _require_exact_reference(ref, "Model")
+        _require_exact_reference(ref, "Model", MODEL_DISPLAY_NAME_REJECTED)
+        if not self._typed:
+            raise ValueError(
+                f"{MODEL_UNTYPED_SCHEMA}: Model states the request and response it "
+                "carries as Model[Input, Output]"
+            )
         return ModelBinding(target_ref=ref)
 
 
@@ -162,7 +182,7 @@ class _ToolFactory(_TypedFactory):
     def __call__(
         self, capability_ref: str, *, permission: Optional[Permission] = None
     ) -> ToolBinding:
-        _require_exact_reference(capability_ref, "Tool")
+        _require_exact_reference(capability_ref, "Tool", TOOL_DISPLAY_NAME_REJECTED)
         _require_capability_reference(capability_ref, "Tool", TOOL_REF_NOT_CAPABILITY)
         return ToolBinding(target_ref=capability_ref, permission=permission)
 
@@ -173,7 +193,7 @@ class _CapabilityFactory(_TypedFactory):
     def __call__(
         self, ref: str, *, permission: Optional[Permission] = None
     ) -> CapabilityBinding:
-        _require_exact_reference(ref, "Capability")
+        _require_exact_reference(ref, "Capability", CAPABILITY_DISPLAY_NAME_REJECTED)
         _require_capability_reference(ref, "Capability", CAPABILITY_REF_NOT_EXACT)
         return CapabilityBinding(target_ref=ref, permission=permission)
 
@@ -185,7 +205,7 @@ class _TypedEventFactory:
         self._type_ref = type_ref
 
     def __call__(self, ref: str) -> EventType:
-        _require_exact_reference(ref, "Event")
+        _require_exact_reference(ref, "Event", EVENT_NOT_TYPED)
         return EventType(type_ref=self._type_ref, target_ref=ref)
 
 
@@ -197,14 +217,14 @@ class _EventFactory(_TypedFactory):
         return _TypedEventFactory(_type_name(types, "Event"))
 
     def __call__(self, ref: str) -> EventType:
-        _require_exact_reference(ref, "Event")
+        _require_exact_reference(ref, "Event", EVENT_NOT_TYPED)
         return EventType(type_ref="Event", target_ref=ref)
 
 
 def Context(schema: Any) -> ContextSchema:
     """Declare a typed Program Context schema from one typed class."""
     if not isinstance(schema, type):
-        raise TypeError("Context decorates one typed class")
+        raise TypeError(f"{CONTEXT_NOT_TYPED}: Context decorates one typed class")
     default_present = any(
         not name.startswith("__") for name in getattr(schema, "__annotations__", {})
     )
@@ -266,10 +286,11 @@ def _is_exact_reference(value: Any) -> bool:
     return isinstance(value, str) and value not in forbidden
 
 
-def _require_exact_reference(value: Any, marker: str) -> None:
+def _require_exact_reference(value: Any, marker: str, code: DiagnosticCode) -> None:
     if not _is_exact_reference(value):
         raise ValueError(
-            f"{marker} accepts an exact typed reference, not a display name '{value}'"
+            f"{code}: {marker} accepts an exact typed reference, not a "
+            f"display name '{value}'"
         )
 
 

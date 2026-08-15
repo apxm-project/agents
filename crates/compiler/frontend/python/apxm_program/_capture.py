@@ -40,6 +40,11 @@ from ._generated.frontend_graph import (
     REGION_ROLE_HOOK_BODY,
 )
 from ._generated.capabilities import READ_SKILL
+from ._generated.diagnostics import (
+    AGENT_BODY_NOT_ASYNC,
+    HOOK_ORDER_AMBIGUOUS,
+    HOOK_TARGET_UNRESOLVED,
+)
 from ._generated.frontend_records import CallIntent, ControlIntent, SkillRequirement
 from ._markers import (
     CapabilityBinding,
@@ -1224,12 +1229,41 @@ class _Capture:
         )
         self._record_node(region_id, node_id)
 
+    def _names_a_hook_target(self, target: str) -> bool:
+        """Whether a Hook target names something a module can actually declare.
+
+        A target naming a declaration this Agent never calls belongs to another
+        Agent in the same module and is skipped. A target naming nothing at all
+        belongs to no Agent and would otherwise disappear, so the two are told
+        apart here rather than folded into one silent drop.
+        """
+        if target in {self.program_id, self.entrypoint, "loop"}:
+            return True
+        binding = self.bindings.get(target)
+        if getattr(binding, "_program_reference", None) is not None:
+            return True
+        return isinstance(
+            binding,
+            (ModelBinding, ToolBinding, CapabilityBinding, EventType, SkillDecl),
+        )
+
     def _capture_hooks(self) -> None:
-        """Bind Hook decorators and capture their bodies as ordinary regions."""
-        for name in sorted(self.bindings):
-            declaration = self.bindings[name]
+        """Bind Hook decorators and capture their bodies as ordinary regions.
+
+        Hooks are visited in the order their module declared them, which is the
+        order ``declaration_order`` states and therefore the order the schedule
+        runs two same-phase Hooks on one target in. Numbering is dense over the
+        Hooks this Agent keeps, so the order does not depend on how many Hooks
+        the module wrote for some other Agent.
+        """
+        for name, declaration in self.bindings.items():
             if not isinstance(declaration, HookDecl):
                 continue
+            if not self._names_a_hook_target(declaration.target_selector):
+                raise CaptureError(
+                    f"{HOOK_TARGET_UNRESOLVED}: Hook '{name}' targets "
+                    f"'{declaration.target_selector}', which this module declares nowhere"
+                )
             if (
                 declaration.target_selector not in self._referenced_names
                 and declaration.target_selector not in {self.program_id, self.entrypoint}
@@ -1323,25 +1357,37 @@ class _Capture:
         target = declaration.target_selector
         if target in {region.region_id for region in self.regions}:
             return target
-        if target in {call.node_id for call in self.calls}:
-            return target
-        if target in {control.node_id for control in self.controls}:
-            return target
-        if declaration.scope == HOOK_SCOPE_AGENT and target in {self.program_id, self.entrypoint}:
-            return self.body_region_id
         binding_ref = self._declared.get(target)
         matches = (
             [call.node_id for call in self.calls if call.binding_ref == binding_ref]
             if binding_ref is not None
             else []
         )
+        if declaration.scope == HOOK_SCOPE_AGENT:
+            # The scope decides which boundary is wrapped, and the only boundary
+            # an Agent scope has is the Agent's own body region. Resolving to the
+            # invocation the target happened to name would emit a Hook lowering
+            # refuses: it admits a region for this scope and nothing else.
+            if target in {self.program_id, self.entrypoint} or matches:
+                return self.body_region_id
+            raise CaptureError(
+                f"{HOOK_TARGET_UNRESOLVED}: Hook target '{target}' is not the Agent "
+                "or a captured region"
+            )
+        if target in {call.node_id for call in self.calls}:
+            return target
+        if target in {control.node_id for control in self.controls}:
+            return target
         if declaration.scope == HOOK_SCOPE_LOOP:
             # A loop is not a name an author can write, so a loop Hook selects
             # its loop through something inside it. Falling back to the first
             # loop only when nothing was named is what lets an authored target
             # reach an inner loop instead of being silently discarded.
             if len(matches) > 1:
-                raise CaptureError(f"Hook target '{target}' is ambiguous across invocations")
+                raise CaptureError(
+                    f"{HOOK_ORDER_AMBIGUOUS}: Hook target '{target}' is ambiguous "
+                    "across invocations"
+                )
             if matches:
                 loop_body = self._enclosing_loop_body(matches[0])
                 if loop_body is None:
@@ -1352,14 +1398,25 @@ class _Capture:
                     if control.control_kind == "loop" and control.body_region_ids:
                         return control.body_region_ids[0]
                 raise CaptureError(f"Hook target '{target}' has no loop body region")
-            raise CaptureError(f"Hook target '{target}' has no captured invocation")
+            raise CaptureError(
+                f"{HOOK_TARGET_UNRESOLVED}: Hook target '{target}' has no captured invocation"
+            )
         if binding_ref is not None:
             if len(matches) == 1:
                 return matches[0]
             if not matches:
-                raise CaptureError(f"Hook target '{target}' has no captured invocation")
-            raise CaptureError(f"Hook target '{target}' is ambiguous across invocations")
-        raise CaptureError(f"Hook target '{target}' is not a static Agent source target")
+                raise CaptureError(
+                    f"{HOOK_TARGET_UNRESOLVED}: Hook target '{target}' has no captured "
+                    "invocation"
+                )
+            raise CaptureError(
+                f"{HOOK_ORDER_AMBIGUOUS}: Hook target '{target}' is ambiguous across "
+                "invocations"
+            )
+        raise CaptureError(
+            f"{HOOK_TARGET_UNRESOLVED}: Hook target '{target}' is not a static Agent "
+            "source target"
+        )
 
     def _enclosing_loop_body(self, node_id: str) -> Optional[str]:
         """Walk out from one captured node to the loop body region holding it."""
@@ -1413,7 +1470,7 @@ def capture_program(
             func_ast = node
             break
     if func_ast is None:
-        raise CaptureError("an Agent is one async def")
+        raise CaptureError(f"{AGENT_BODY_NOT_ASYNC}: an Agent is one async def")
     source_file = _source_reference(func)
 
     capture = _Capture(

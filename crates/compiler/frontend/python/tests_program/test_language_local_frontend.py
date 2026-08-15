@@ -19,14 +19,21 @@ into both languages could not state it:
   reference per marker and calls the marker with it, so it can state the skill
   that names neither source — and does — but not the one that names two. The
   TypeScript frontend carries the same test for the same reason.
+* A Hook whose target names nothing. A Python Hook binds through the module
+  globals its Agent resolves, so a Hook nobody declares a target for is a fact
+  about a whole module, not about one authored program, and a corpus vector
+  authors its programs inside one shared module. The TypeScript frontend carries
+  the same test for the same reason.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from apxm_program import Event, Skill
+from apxm_program import Agent, Event, Hook, Model, Skill
+from apxm_program._capture import CaptureError
 from apxm_program._generated.diagnostics import (
+    HOOK_TARGET_UNRESOLVED,
     SKILL_ENTRY_PATH_NOT_CANONICAL,
     SKILL_SOURCE_AMBIGUOUS,
 )
@@ -42,6 +49,40 @@ def test_a_bare_typed_marker_factory_is_not_yet_a_declaration() -> None:
 
     event = bare_typed_factory("event.session.input")
     assert event.target_ref == "event.session.input"
+
+
+class _Payload:
+    """A typed declaration this module's fixtures state an interface with."""
+
+
+_StrayModel = Model[_Payload, _Payload]("stray.hook.model")
+
+
+async def _stray_handler(agent) -> None:
+    return None
+
+
+def test_a_hook_target_no_declaration_names_is_refused() -> None:
+    """A typo'd Hook target is refused rather than dropped.
+
+    The Hook has to live in module globals for the capture to resolve it at all,
+    and it is removed again afterwards: a Hook left in scope binds into every
+    later capture in this module, which is what the generated corpus harness
+    does for the same reason.
+    """
+    global _StrayHook
+    _StrayHook = Hook.before(target="NoDeclarationNamesThis", scope="model")(
+        _stray_handler
+    )
+    try:
+        with pytest.raises(CaptureError, match=HOOK_TARGET_UNRESOLVED):
+
+            @Agent(input=_Payload, output=_Payload)
+            async def StrayHookTarget(agent, input):
+                return await _StrayModel(input)
+
+    finally:
+        del _StrayHook
 
 
 def test_a_skill_states_one_instruction_source() -> None:

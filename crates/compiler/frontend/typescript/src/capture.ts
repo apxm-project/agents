@@ -47,6 +47,16 @@ import type {
   SkillRequirement,
   ValueExpression,
 } from "./generated/frontend-records.js";
+import {
+  AGENT_BODY_NOT_ASYNC,
+  AGENT_DYNAMIC_ARGUMENT,
+  AGENT_MISSING_INPUT_OUTPUT,
+  CONTEXT_NOT_TYPED,
+  HOOK_DYNAMIC_REGISTRATION,
+  HOOK_ORDER_AMBIGUOUS,
+  HOOK_TARGET_UNRESOLVED,
+  MODEL_UNTYPED_SCHEMA,
+} from "./generated/diagnostics.js";
 import { READ_SKILL } from "./generated/capabilities.js";
 import type { Permission } from "./generated/permissions.js";
 import type {
@@ -353,6 +363,12 @@ class Capture {
     this.checker = checker;
     const definition = this.findAgentDefinition(source);
     const fn = definition.callback;
+    if ((ts.getCombinedModifierFlags(fn as ts.Declaration) & ts.ModifierFlags.Async) === 0) {
+      throw new CaptureError(
+        `${AGENT_BODY_NOT_ASYNC}: an Agent body is one async function`,
+      );
+    }
+    this.rejectDynamicAgentName(definition.call);
     this.readTypeArguments(definition.call);
     this.resolveModuleDeclarations(source, definition.call);
     this.collectReferencedNames(source, fn);
@@ -465,15 +481,44 @@ class Capture {
       // JavaScript has no type arguments to read, so a `.mjs` program keeps the
       // closed default identities. TypeScript source has them, so omitting them
       // there would leave the program's typed interface unstated.
-      if (/\.[cm]?tsx?$/.test(this.input.source.fileName)) {
+      if (this.sourceStatesTypes()) {
         throw new CaptureError(
-          "an Agent states its typed interface as Agent<Input, Output> or Agent<Input, Output, Context>",
+          `${AGENT_MISSING_INPUT_OUTPUT}: an Agent states its typed interface as ` +
+            "Agent<Input, Output> or Agent<Input, Output, Context>",
         );
       }
       return;
     }
     this.inputTypeRef = typeArguments[0].getText().trim();
     this.outputTypeRef = typeArguments[1].getText().trim();
+  }
+
+  /**
+   * Whether this source can state type arguments at all.
+   *
+   * JavaScript has none to state, so a `.mjs` program keeps the closed default
+   * identities; TypeScript source has them, so a declaration that omits them
+   * there leaves its typed interface unstated.
+   */
+  private sourceStatesTypes(): boolean {
+    return /\.[cm]?tsx?$/.test(this.input.source.fileName);
+  }
+
+  /** An Agent's own arguments are static source, never computed values. */
+  private rejectDynamicAgentName(call: ts.CallExpression): void {
+    const config = call.arguments[0];
+    if (config === undefined || !ts.isObjectLiteralExpression(config)) {
+      return;
+    }
+    if (
+      namedProperty(config, "name") !== undefined &&
+      stringProperty(config, "name") === undefined
+    ) {
+      throw new CaptureError(
+        `${AGENT_DYNAMIC_ARGUMENT}: an Agent's name is static source, not a value ` +
+          "the module computes",
+      );
+    }
   }
 
   /**
@@ -491,7 +536,12 @@ class Capture {
     agentCall: ts.CallExpression,
   ): void {
     const stop = agentCall.getStart(source);
-    const declared: Array<{ name: string; factory: string; typeArgument?: string }> = [];
+    const declared: Array<{
+      name: string;
+      factory: string;
+      typeArgument?: string;
+      typeArgumentCount: number;
+    }> = [];
     for (const statement of source.statements) {
       if (statement.getEnd() >= stop) {
         break;
@@ -519,6 +569,7 @@ class Capture {
           name: declaration.name.text,
           factory,
           typeArgument: initializer.typeArguments?.[0]?.getText().trim(),
+          typeArgumentCount: initializer.typeArguments?.length ?? 0,
         });
       }
     }
@@ -527,6 +578,7 @@ class Capture {
       this.input.declared.length - declared.length,
     );
     for (const [index, entry] of declared.entries()) {
+      this.requireStatedTypes(entry);
       const value = values[index] as Binding | undefined;
       const expected = MARKER_BINDING_KINDS[entry.factory];
       if (value === undefined || value.kind !== expected) {
@@ -549,6 +601,31 @@ class Capture {
         continue;
       }
       this.bindings.set(entry.name, value);
+    }
+  }
+
+  /**
+   * A declaration whose types the surface requires states them in the source.
+   *
+   * Only the declarations whose manifest entry names a diagnostic for the
+   * omission are checked: a rejection the published surface does not state is a
+   * rejection an author has no way to anticipate.
+   */
+  private requireStatedTypes(entry: { name: string; factory: string; typeArgumentCount: number }): void {
+    if (!this.sourceStatesTypes()) {
+      return;
+    }
+    if (entry.factory === "Model" && entry.typeArgumentCount < 2) {
+      throw new CaptureError(
+        `${MODEL_UNTYPED_SCHEMA}: Model '${entry.name}' states the request and ` +
+          "response it carries as Model<Input, Output>",
+      );
+    }
+    if (entry.factory === "Context" && entry.typeArgumentCount < 1) {
+      throw new CaptureError(
+        `${CONTEXT_NOT_TYPED}: Context '${entry.name}' states its schema as ` +
+          "Context<Schema>",
+      );
     }
   }
 
@@ -1703,26 +1780,42 @@ class Capture {
           node.initializer.expression.name.text === "after")
       ) {
         const options = node.initializer.arguments[0];
-        if (options !== undefined && ts.isObjectLiteralExpression(options)) {
-          hooks.push({
-            declaration: node,
-            phase: node.initializer.expression.name.text,
-            options,
-          });
+        if (options === undefined || !ts.isObjectLiteralExpression(options)) {
+          throw new CaptureError(
+            `${HOOK_DYNAMIC_REGISTRATION}: a Hook is registered statically, so it ` +
+              "states one object-literal declaration",
+          );
         }
+        hooks.push({
+          declaration: node,
+          phase: node.initializer.expression.name.text,
+          options,
+        });
       }
       ts.forEachChild(node, visit);
     };
     ts.forEachChild(source, visit);
 
+    // Hooks are visited in the order the module declared them, which is the order
+    // `declaration_order` states and therefore the order the schedule runs two
+    // same-phase Hooks on one target in. Numbering is dense over the Hooks this
+    // Agent keeps, so it does not depend on how many Hooks the module wrote for
+    // some other Agent.
     for (const [order, hook] of hooks.entries()) {
       const agent = identifierProperty(hook.options, "agent");
       if (agent === undefined || this.symbolAt(agent) !== this.programBindingSymbol) {
         continue;
       }
+      if (namedProperty(hook.options, "target") === undefined) {
+        throw new CaptureError(
+          `${HOOK_TARGET_UNRESOLVED}: a Hook states the target it wraps`,
+        );
+      }
       const target = identifierProperty(hook.options, "target");
       if (target === undefined) {
-        throw new CaptureError("Hook target is a static bound declaration");
+        throw new CaptureError(
+          `${HOOK_DYNAMIC_REGISTRATION}: a Hook target is one static bound declaration`,
+        );
       }
       const hookName = ts.isIdentifier(hook.declaration.name)
         ? hook.declaration.name.text
@@ -1734,7 +1827,9 @@ class Capture {
       const scope = declared as HookScope;
       const run = functionProperty(hook.options, "run");
       if (run === undefined) {
-        throw new CaptureError("Hook requires a static run callback");
+        throw new CaptureError(
+          `${HOOK_DYNAMIC_REGISTRATION}: a Hook body is one static run callback`,
+        );
       }
       const hookId = `hook.${hookName}`;
       const targetSelector = this.resolveHookTarget(target, scope);
@@ -1745,7 +1840,7 @@ class Capture {
         scope,
         phase: hook.phase,
         target_selector: targetSelector,
-        declaration_order: order,
+        declaration_order: this.hooks.length,
         handler_ref: hookName,
         handler_digest: stableDigest(run.getText(source)),
         input_type_ref: "AgentFacade",
@@ -1840,9 +1935,13 @@ class Capture {
     const namesTheProgram = this.symbolAt(target) === this.programBindingSymbol;
 
     if (scope === HOOK_SCOPE_AGENT) {
+      // The scope decides which boundary is wrapped, and the only boundary an
+      // Agent scope has is the Agent's own body region. Resolving to the
+      // invocation the target happened to name would emit a Hook lowering
+      // refuses: it admits a region for this scope and nothing else.
       if (!namesTheProgram && calls.length === 0) {
         throw new CaptureError(
-          `Hook target '${named}' is not the Agent or a captured region`,
+          `${HOOK_TARGET_UNRESOLVED}: Hook target '${named}' is not the Agent or a captured region`,
         );
       }
       return this.bodyRegionId;
@@ -1853,7 +1952,9 @@ class Capture {
       // when nothing was named is what lets an authored target reach an inner
       // loop instead of being silently discarded.
       if (calls.length > 1) {
-        throw new CaptureError(`Hook target '${named}' is ambiguous across invocations`);
+        throw new CaptureError(
+          `${HOOK_ORDER_AMBIGUOUS}: Hook target '${named}' is ambiguous across invocations`,
+        );
       }
       if (calls.length === 1) {
         const loopBody = this.enclosingLoopBody(calls[0].contract.node_id);
@@ -1863,7 +1964,9 @@ class Capture {
         return loopBody;
       }
       if (!namesTheProgram) {
-        throw new CaptureError(`Hook target '${named}' has no static invocation`);
+        throw new CaptureError(
+          `${HOOK_TARGET_UNRESOLVED}: Hook target '${named}' has no static invocation`,
+        );
       }
       const loop = this.controls.find(
         (control) => control.contract.control_kind === "loop",
@@ -1875,10 +1978,14 @@ class Capture {
       return region;
     }
     if (calls.length === 0) {
-      throw new CaptureError(`Hook target '${named}' has no static invocation`);
+      throw new CaptureError(
+        `${HOOK_TARGET_UNRESOLVED}: Hook target '${named}' has no static invocation`,
+      );
     }
     if (calls.length !== 1) {
-      throw new CaptureError(`Hook target '${named}' is ambiguous across invocations`);
+      throw new CaptureError(
+        `${HOOK_ORDER_AMBIGUOUS}: Hook target '${named}' is ambiguous across invocations`,
+      );
     }
     return calls[0].contract.node_id;
   }

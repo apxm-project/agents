@@ -25,6 +25,11 @@
 //   calls the marker with it, so it can state the skill that names neither
 //   source — and does — but not the one that names two. The Python frontend
 //   carries the same test for the same reason.
+// * A Hook whose target names nothing. A Python Hook binds through the module
+//   globals its Agent resolves, so a Hook nobody declares a target for is a fact
+//   about a whole module rather than about one authored program, and a corpus
+//   vector authors its programs inside one shared module. The Python frontend
+//   carries the same test for the same reason.
 
 import { describe, expect, it } from "vitest";
 
@@ -35,6 +40,7 @@ import { declaredSoFar } from "../src/declared.ts";
 import { decodeFact } from "../src/generated/runtime-evidence.ts";
 import { stableDigest } from "../src/markers.ts";
 import {
+  HOOK_TARGET_UNRESOLVED,
   SKILL_ENTRY_PATH_NOT_CANONICAL,
   SKILL_SOURCE_AMBIGUOUS,
 } from "../src/generated/diagnostics.ts";
@@ -69,6 +75,36 @@ describe("language-local TypeScript frontend facts", () => {
     expect(() => Skill("review", { entry: "prompts/review.md" })).toThrow(
       SKILL_ENTRY_PATH_NOT_CANONICAL,
     );
+  });
+
+  it("refuses a Hook target no declaration names", () => {
+    void Model<Input, Output>("stray.hook.model");
+    expect(() =>
+      captureProgram({
+        programId: "StrayHookTarget",
+        entrypoint: "run",
+        declared: declaredSoFar(),
+        source: {
+          fileName: "stray-hook.ts",
+          text: `
+            import { Agent, Hook, Model } from "@apxm/frontend";
+            const StrayModel = Model<Input, Output>("stray.hook.model");
+            const StrayHookTarget = Agent<Input, Output>({
+              name: "StrayHookTarget",
+              async run(agent, input) {
+                return await StrayModel(input);
+              },
+            });
+            const StrayHook = Hook.before({
+              agent: StrayHookTarget,
+              target: NoDeclarationNamesThis,
+              scope: "model",
+              async run(agent) {},
+            });
+          `,
+        },
+      }),
+    ).toThrow(HOOK_TARGET_UNRESOLVED);
   });
 
   it("redacts source tokens that escape the author workspace", () => {

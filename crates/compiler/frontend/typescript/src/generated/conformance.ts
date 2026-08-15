@@ -334,6 +334,20 @@ const EXPECTATIONS: Readonly<Record<string, Expectation[]>> = {
     {"includes_query":"graph:hook_bindings[0].target_selector","length":1,"query":"air:structural_ir[hook.hook_id=hook.AuditInnerIteration].parent_region_id"},
     {"includes_query":"graph:hook_bindings[0].body_region_id","query":"air:semantic_operations[op=capability.invoke].parent_region_id"},
   ],
+  "agent_scope_hook_wraps_the_agent_body": [
+    {"equals":["agent"],"query":"graph:hook_bindings[].scope"},
+    {"query":"graph:hook_bindings[0].target_selector","same_as":"graph:regions[region_role=function_body][0].region_id"},
+    {"differs_from":"graph:call_intents[intent_kind=tool_invocation][0].node_id","query":"graph:hook_bindings[0].target_selector"},
+    {"equals":null,"query":"diagnostics"},
+    {"includes_query":"graph:hook_bindings[0].target_selector","length":1,"query":"air:structural_ir[hook.hook_id=hook.AuditWholeAgent].parent_region_id"},
+  ],
+  "same_phase_hooks_run_in_declaration_order": [
+    {"equals":["ZebraRunsFirst","AlphaRunsSecond"],"query":"graph:hook_bindings[].handler_ref"},
+    {"equals":[0,1],"query":"graph:hook_bindings[].declaration_order"},
+    {"query":"graph:hook_bindings[0].target_selector","same_as":"graph:hook_bindings[1].target_selector"},
+    {"equals":null,"query":"diagnostics"},
+    {"differs_from":"air:structural_ir[hook.hook_id=hook.AlphaRunsSecond].execution_order","query":"air:structural_ir[hook.hook_id=hook.ZebraRunsFirst].execution_order"},
+  ],
   "negative_integer_at_safe_boundary": [
     {"equals":[{"kind":"integer","value":-9007199254740991}],"query":"graph:values[origin=literal].expression"},
     {"equals":null,"query":"diagnostics"},
@@ -451,6 +465,28 @@ function vector_nested_loop_hook_targets_inner_loop(): string[] {
   submitAuthoredSource({ fileName: "nested_loop_hook_targets_inner_loop.ts", text: source_nested_loop_hook_targets_inner_loop });
   const NestedLoops = Agent<Input, Output>({ name: "NestedLoops", context: NestedContext, async run() { return null; } });
   return check("nested_loop_hook_targets_inner_loop", NestedLoops, EXPECTATIONS["nested_loop_hook_targets_inner_loop"]);
+}
+
+const source_agent_scope_hook_wraps_the_agent_body = "import { Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\n\nconst AgentScopeTool = Tool<Input, Output>(\"search_web\");\nconst AgentScopeModel = Model<Input, Output>(\"agent.scope.model\");\n\nconst AgentScoped = Agent<Input, Output>({\n  name: \"AgentScoped\",\n  async run(agent, input) {\n    const found = await AgentScopeTool(input);\n    return await AgentScopeModel(found);\n  },\n});\n\nconst AuditWholeAgent = Hook.before<unknown>({\n  agent: AgentScoped,\n  target: AgentScopeTool,\n  scope: \"agent\",\n  async run(agent) {\n  },\n});\n";
+
+function vector_agent_scope_hook_wraps_the_agent_body(): string[] {
+  const AgentScopeTool = Tool<Input, Output>("search_web");
+  void AgentScopeTool;
+  const AgentScopeModel = Model<Input, Output>("agent.scope.model");
+  void AgentScopeModel;
+  submitAuthoredSource({ fileName: "agent_scope_hook_wraps_the_agent_body.ts", text: source_agent_scope_hook_wraps_the_agent_body });
+  const AgentScoped = Agent<Input, Output>({ name: "AgentScoped", async run() { return null; } });
+  return check("agent_scope_hook_wraps_the_agent_body", AgentScoped, EXPECTATIONS["agent_scope_hook_wraps_the_agent_body"]);
+}
+
+const source_same_phase_hooks_run_in_declaration_order = "import { Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\n\nconst OrderedModel = Model<Input, Output>(\"ordered.model\");\n\nconst OrderedHooks = Agent<Input, Output>({\n  name: \"OrderedHooks\",\n  async run(agent, input) {\n    return await OrderedModel(input);\n  },\n});\n\nconst ZebraRunsFirst = Hook.before<unknown>({\n  agent: OrderedHooks,\n  target: OrderedModel,\n  scope: \"model\",\n  async run(agent) {\n  },\n});\n\nconst AlphaRunsSecond = Hook.before<unknown>({\n  agent: OrderedHooks,\n  target: OrderedModel,\n  scope: \"model\",\n  async run(agent) {\n  },\n});\n";
+
+function vector_same_phase_hooks_run_in_declaration_order(): string[] {
+  const OrderedModel = Model<Input, Output>("ordered.model");
+  void OrderedModel;
+  submitAuthoredSource({ fileName: "same_phase_hooks_run_in_declaration_order.ts", text: source_same_phase_hooks_run_in_declaration_order });
+  const OrderedHooks = Agent<Input, Output>({ name: "OrderedHooks", async run() { return null; } });
+  return check("same_phase_hooks_run_in_declaration_order", OrderedHooks, EXPECTATIONS["same_phase_hooks_run_in_declaration_order"]);
 }
 
 const source_negative_integer_at_safe_boundary = "import { Agent, Capability, Context, Event, Hook, Model, Skill, TaskGroup, Tool } from \"@apxm/frontend\";\n\ntype Input = any;\ntype Output = any;\n\nconst NegativeValueModel = Model<Input, Output>(\"negative.value.model\");\n\nconst NegativeValue = Agent<Input, Output>({\n  name: \"NegativeValue\",\n  async run(agent, input) {\n    return await NegativeValueModel(-9007199254740991);\n  },\n});\n";
@@ -654,6 +690,8 @@ export const VECTOR_IDS: readonly string[] = [
   "composed_agent_event_and_task_group",
   "resumable_loop_block_arguments",
   "nested_loop_hook_targets_inner_loop",
+  "agent_scope_hook_wraps_the_agent_body",
+  "same_phase_hooks_run_in_declaration_order",
   "negative_integer_at_safe_boundary",
   "skill_carried_by_package_entry",
   "skill_written_inline_in_source",
@@ -676,6 +714,8 @@ const VECTORS: Readonly<Record<string, () => string[]>> = {
   "composed_agent_event_and_task_group": vector_composed_agent_event_and_task_group,
   "resumable_loop_block_arguments": vector_resumable_loop_block_arguments,
   "nested_loop_hook_targets_inner_loop": vector_nested_loop_hook_targets_inner_loop,
+  "agent_scope_hook_wraps_the_agent_body": vector_agent_scope_hook_wraps_the_agent_body,
+  "same_phase_hooks_run_in_declaration_order": vector_same_phase_hooks_run_in_declaration_order,
   "negative_integer_at_safe_boundary": vector_negative_integer_at_safe_boundary,
   "skill_carried_by_package_entry": vector_skill_carried_by_package_entry,
   "skill_written_inline_in_source": vector_skill_written_inline_in_source,

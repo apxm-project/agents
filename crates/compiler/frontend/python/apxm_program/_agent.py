@@ -14,6 +14,10 @@ from typing import Any, Callable, Optional
 from . import _bridge
 from ._capture import capture_program
 from ._emit import emit_frontend_graph
+from ._generated.diagnostics import (
+    AGENT_DYNAMIC_ARGUMENT,
+    AGENT_MISSING_INPUT_OUTPUT,
+)
 from ._markers import ContextSchema
 
 
@@ -136,15 +140,21 @@ def _type_ref(annotation: Any) -> str:
     """
     if isinstance(annotation, ContextSchema):
         return annotation.type_ref
+    if annotation is None:
+        raise TypeError(
+            f"{AGENT_MISSING_INPUT_OUTPUT}: an Agent states the typed input it "
+            "takes and the typed output it returns"
+        )
     if isinstance(annotation, str):
         raise TypeError(
-            "an Agent input, output, and Context are the typed declarations "
-            f"themselves, not the string {annotation!r} naming one"
+            f"{AGENT_DYNAMIC_ARGUMENT}: an Agent input, output, and Context are the "
+            f"typed declarations themselves, not the string {annotation!r} naming one"
         )
     name = getattr(annotation, "__name__", None)
     if name is None:
         raise TypeError(
-            f"an Agent input, output, and Context are typed declarations; got {annotation!r}"
+            f"{AGENT_DYNAMIC_ARGUMENT}: an Agent input, output, and Context are "
+            f"typed declarations; got {annotation!r}"
         )
     return name
 

@@ -7,6 +7,7 @@ import inspect
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Optional
 
+from ._generated.diagnostics import HOOK_DYNAMIC_REGISTRATION
 from ._generated.frontend_graph import (
     HOOK_PHASE_AFTER,
     HOOK_PHASE_BEFORE,
@@ -91,7 +92,10 @@ def _declare(phase: HookPhase, target: str, scope: str) -> HookDecl:
     the body does another.
     """
     if not isinstance(target, str) or not target:
-        raise TypeError("a Hook target is one non-empty static source selector")
+        raise TypeError(
+            f"{HOOK_DYNAMIC_REGISTRATION}: a Hook is registered statically, so its "
+            f"target is one non-empty source selector, not {target!r}"
+        )
     if scope not in HOOK_SCOPES:
         raise ValueError(f"a Hook scope is one of {', '.join(HOOK_SCOPES)}")
     return HookDecl(phase=phase, target_selector=target, scope=scope)

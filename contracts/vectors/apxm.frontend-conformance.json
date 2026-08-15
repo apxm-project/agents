@@ -931,6 +931,169 @@
       ]
     },
     {
+      "id": "agent_scope_hook_wraps_the_agent_body",
+      "covers": "An agent-scope Hook resolves to the Agent's own body region whichever declaration its target named, because a region is the only target lowering admits for that scope.",
+      "declarations": [
+        {
+          "name": "AgentScopeTool",
+          "marker": "Tool",
+          "target_ref": "search_web"
+        },
+        {
+          "name": "AgentScopeModel",
+          "marker": "Model",
+          "target_ref": "agent.scope.model"
+        }
+      ],
+      "programs": [
+        {
+          "program_id": "AgentScoped",
+          "input": "Input",
+          "output": "Output",
+          "hooks": [
+            {
+              "name": "AuditWholeAgent",
+              "phase": "before",
+              "target": "AgentScopeTool",
+              "scope": "agent",
+              "body": []
+            }
+          ],
+          "body": [
+            {
+              "stmt": "bind",
+              "name": "found",
+              "value": {
+                "expr": "effect",
+                "binding": "AgentScopeTool",
+                "arguments": [
+                  {
+                    "expr": "name",
+                    "name": "input"
+                  }
+                ]
+              }
+            },
+            {
+              "stmt": "return",
+              "value": {
+                "expr": "effect",
+                "binding": "AgentScopeModel",
+                "arguments": [
+                  {
+                    "expr": "name",
+                    "name": "found"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expect": [
+        {
+          "query": "graph:hook_bindings[].scope",
+          "equals": [
+            "agent"
+          ]
+        },
+        {
+          "query": "graph:hook_bindings[0].target_selector",
+          "same_as": "graph:regions[region_role=function_body][0].region_id"
+        },
+        {
+          "query": "graph:hook_bindings[0].target_selector",
+          "differs_from": "graph:call_intents[intent_kind=tool_invocation][0].node_id"
+        },
+        {
+          "query": "diagnostics",
+          "equals": null
+        },
+        {
+          "query": "air:structural_ir[hook.hook_id=hook.AuditWholeAgent].parent_region_id",
+          "includes_query": "graph:hook_bindings[0].target_selector",
+          "length": 1
+        }
+      ]
+    },
+    {
+      "id": "same_phase_hooks_run_in_declaration_order",
+      "covers": "Two same-phase Hooks on one target are numbered by the order their module declared them, densely from zero, so the schedule does not depend on what the Hooks were named.",
+      "declarations": [
+        {
+          "name": "OrderedModel",
+          "marker": "Model",
+          "target_ref": "ordered.model"
+        }
+      ],
+      "programs": [
+        {
+          "program_id": "OrderedHooks",
+          "input": "Input",
+          "output": "Output",
+          "hooks": [
+            {
+              "name": "ZebraRunsFirst",
+              "phase": "before",
+              "target": "OrderedModel",
+              "scope": "model",
+              "body": []
+            },
+            {
+              "name": "AlphaRunsSecond",
+              "phase": "before",
+              "target": "OrderedModel",
+              "scope": "model",
+              "body": []
+            }
+          ],
+          "body": [
+            {
+              "stmt": "return",
+              "value": {
+                "expr": "effect",
+                "binding": "OrderedModel",
+                "arguments": [
+                  {
+                    "expr": "name",
+                    "name": "input"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expect": [
+        {
+          "query": "graph:hook_bindings[].handler_ref",
+          "equals": [
+            "ZebraRunsFirst",
+            "AlphaRunsSecond"
+          ]
+        },
+        {
+          "query": "graph:hook_bindings[].declaration_order",
+          "equals": [
+            0,
+            1
+          ]
+        },
+        {
+          "query": "graph:hook_bindings[0].target_selector",
+          "same_as": "graph:hook_bindings[1].target_selector"
+        },
+        {
+          "query": "diagnostics",
+          "equals": null
+        },
+        {
+          "query": "air:structural_ir[hook.hook_id=hook.ZebraRunsFirst].execution_order",
+          "differs_from": "air:structural_ir[hook.hook_id=hook.AlphaRunsSecond].execution_order"
+        }
+      ]
+    },
+    {
       "id": "negative_integer_at_safe_boundary",
       "covers": "A negative authored integer at the shared safe-integer boundary survives capture exactly.",
       "declarations": [

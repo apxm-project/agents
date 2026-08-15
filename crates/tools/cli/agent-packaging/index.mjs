@@ -12,6 +12,12 @@
 
 import { createHash } from "node:crypto";
 
+import {
+  CAPABILITY_HANDLER_OPEN_OBJECT,
+  CAPABILITY_HANDLER_READ_ONLY_UNDECLARED,
+  CAPABILITY_HANDLER_UNTYPED_SCHEMA,
+} from "./diagnostics.mjs";
+
 const ANSWER_KIND = "apxm.tool-answer";
 const PROPERTY_KIND = Symbol("apxm.tool-property");
 const INPUT_KIND = Symbol("apxm.tool-input");
@@ -42,7 +48,9 @@ function isPlainObject(value) {
 
 function property(required, constraints) {
   if (typeof required !== "boolean") {
-    throw new TypeError("a Tool property states whether it is required");
+    throw new TypeError(
+      `${CAPABILITY_HANDLER_UNTYPED_SCHEMA}: a Tool property states whether it is required`,
+    );
   }
   const declared = mark({ ...constraints }, PROPERTY_KIND);
   Object.defineProperty(declared, "required", { value: required });
@@ -67,19 +75,25 @@ function integer({ required, minimum, description } = {}) {
 
 function object(schema) {
   if (!isPlainObject(schema)) {
-    throw new TypeError("Tool.object takes one schema declaration");
+    throw new TypeError(
+      `${CAPABILITY_HANDLER_UNTYPED_SCHEMA}: Tool.object takes one schema declaration`,
+    );
   }
   if (typeof schema.additionalProperties !== "boolean") {
     throw new TypeError(
-      "Tool.object states whether the Capability accepts undeclared arguments",
+      `${CAPABILITY_HANDLER_OPEN_OBJECT}: Tool.object states whether the Capability accepts undeclared arguments`,
     );
   }
   const entries = Object.entries(schema.properties ?? {});
   if (entries.length === 0) {
-    throw new TypeError("Tool.object requires at least one declared argument");
+    throw new TypeError(
+      `${CAPABILITY_HANDLER_UNTYPED_SCHEMA}: Tool.object requires at least one declared argument`,
+    );
   }
   if (entries.some(([, declared]) => declared?.[PROPERTY_KIND] !== true)) {
-    throw new TypeError("Tool.object properties come from Tool helpers");
+    throw new TypeError(
+      `${CAPABILITY_HANDLER_UNTYPED_SCHEMA}: Tool.object properties come from Tool helpers`,
+    );
   }
   return mark({
     type: "object",
@@ -94,31 +108,43 @@ function object(schema) {
 
 function answer(value) {
   if (!isPlainObject(value)) {
-    throw new TypeError("Tool.answer requires one plain answer object");
+    throw new TypeError(
+      `${CAPABILITY_HANDLER_UNTYPED_SCHEMA}: Tool.answer requires one plain answer object`,
+    );
   }
   return { kind: ANSWER_KIND, value };
 }
 
 function define(definition) {
   if (typeof definition !== "object" || definition === null) {
-    throw new TypeError("Tool.define requires one definition object");
+    throw new TypeError(
+      `${CAPABILITY_HANDLER_UNTYPED_SCHEMA}: Tool.define requires one definition object`,
+    );
   }
   if (typeof definition.name !== "string" || definition.name.length === 0) {
-    throw new TypeError("Tool.define requires a non-empty name");
+    throw new TypeError(
+      `${CAPABILITY_HANDLER_UNTYPED_SCHEMA}: Tool.define requires a non-empty name`,
+    );
   }
   if (typeof definition.description !== "string" || definition.description.length === 0) {
-    throw new TypeError("Tool.define requires a non-empty description");
+    throw new TypeError(
+      `${CAPABILITY_HANDLER_UNTYPED_SCHEMA}: Tool.define requires a non-empty description`,
+    );
   }
   if (typeof definition.readOnly !== "boolean") {
     throw new TypeError(
-      "Tool.define states whether the Capability mutates state outside itself",
+      `${CAPABILITY_HANDLER_READ_ONLY_UNDECLARED}: Tool.define states whether the Capability mutates state outside itself`,
     );
   }
   if (definition.input?.[INPUT_KIND] !== true) {
-    throw new TypeError("Tool.define input must come from Tool.object");
+    throw new TypeError(
+      `${CAPABILITY_HANDLER_UNTYPED_SCHEMA}: Tool.define input must come from Tool.object`,
+    );
   }
   if (typeof definition.run !== "function") {
-    throw new TypeError("Tool.define requires a run function");
+    throw new TypeError(
+      `${CAPABILITY_HANDLER_UNTYPED_SCHEMA}: Tool.define requires a run function`,
+    );
   }
   const module = handlerModule();
   const qualname = definition.run.name || "tool";

@@ -85,16 +85,16 @@ the message text. The codes are the manifest's, projected into both frontends by
 <!-- BEGIN DIAGNOSTIC CODES -->
 | Declaration | Rejection reasons |
 | --- | --- |
-| Agent definition | `AgentBodyNotAsync`, `AgentMissingInputOutput`, `AgentDynamicArgument`, `AgentFacadeImported` |
-| Context schema/default | `ContextNotTyped`, `ContextMutableGlobal`, `ContextDynamicDefault` |
-| Exact Model binding | `ModelRefNotExact`, `ModelDisplayNameRejected`, `ModelUntypedSchema` |
-| Imported Tool binding | `ToolRefNotCapability`, `ToolDisplayNameRejected`, `ToolCredentialInSource` |
+| Agent definition | `AgentBodyNotAsync`, `AgentMissingInputOutput`, `AgentDynamicArgument` |
+| Context schema/default | `ContextNotTyped` |
+| Exact Model binding | `ModelDisplayNameRejected`, `ModelUntypedSchema` |
+| Imported Tool binding | `ToolRefNotCapability`, `ToolDisplayNameRejected` |
 | Imported Capability | `CapabilityRefNotExact`, `CapabilityDisplayNameRejected` |
 | Shipped Capability handler | `CapabilityHandlerUntypedSchema`, `CapabilityHandlerOpenObject`, `CapabilityHandlerReadOnlyUndeclared` |
 | Static Hook | `HookTargetUnresolved`, `HookDynamicRegistration`, `HookOrderAmbiguous` |
 | Durable Event value | `EventNotTyped`, `EventWaitOutsideBody` |
 | Declared Agent Skill | `SkillIdNotExact`, `SkillSourceMissing`, `SkillSourceAmbiguous`, `SkillEntryPathNotCanonical`, `SkillInstructionsOverlong`, `SkillLoadOutsideBody` |
-| Structured task scope | `TaskGroupMissingJoin`, `TaskGroupDetachedWork`, `TaskGroupRawCoroutine` |
+| Structured task scope | — |
 <!-- END DIAGNOSTIC CODES -->
 
 ### 1.3 Authoring conventions

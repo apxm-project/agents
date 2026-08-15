@@ -7,12 +7,20 @@
 
 import { recordDeclaration } from "./declared.js";
 import {
+  CAPABILITY_DISPLAY_NAME_REJECTED,
+  CAPABILITY_REF_NOT_EXACT,
+  type DiagnosticCode,
+  EVENT_NOT_TYPED,
+  EVENT_WAIT_OUTSIDE_BODY,
+  MODEL_DISPLAY_NAME_REJECTED,
   SKILL_ENTRY_PATH_NOT_CANONICAL,
   SKILL_ID_NOT_EXACT,
   SKILL_INSTRUCTIONS_OVERLONG,
   SKILL_LOAD_OUTSIDE_BODY,
   SKILL_SOURCE_AMBIGUOUS,
   SKILL_SOURCE_MISSING,
+  TOOL_DISPLAY_NAME_REJECTED,
+  TOOL_REF_NOT_CAPABILITY,
 } from "./generated/diagnostics.js";
 import {
   SKILL_INSTRUCTION_KIND_ENTRY,
@@ -25,6 +33,7 @@ import type { Permission } from "./generated/permissions.js";
 // back. Two different concepts wearing one name, so each is renamed to the thing
 // it actually is at the point where both meet.
 import type { CapabilityId as BuiltinCapabilityId } from "./generated/capabilities.js";
+import { BUILTIN_CAPABILITIES } from "./generated/capabilities.js";
 
 /**
  * The ceiling the skill-reading capability enforces on a body it loads. An
@@ -54,10 +63,35 @@ function capabilityIdOf(reference: CapabilityReference): string {
   return typeof reference === "string" ? reference : reference?.capabilityId;
 }
 
-function rejectDisplayName(value: unknown, marker: string): void {
+function rejectDisplayName(value: unknown, marker: string, code: DiagnosticCode): void {
   if (typeof value !== "string" || FORBIDDEN_DISPLAY_NAMES.has(value)) {
     throw new Error(
-      `${marker} accepts an exact typed reference, not a display name '${value}'`,
+      `${code}: ${marker} accepts an exact typed reference, not a display name '${value}'`,
+    );
+  }
+}
+
+/**
+ * Refuse a Capability reference that neither catalogue nor package mints.
+ *
+ * The type union already settles this for TypeScript source. JavaScript source
+ * is authored against the same surface with no type-checker between it and the
+ * frontend, so the closed set is settled here too: a bare string is admitted
+ * only when the generated catalogue mints it, and any other reference has to be
+ * the object a handler declaration handed back.
+ */
+function rejectUnmintedCapability(
+  reference: CapabilityReference,
+  marker: string,
+  code: DiagnosticCode,
+): void {
+  if (typeof reference !== "string") {
+    return;
+  }
+  if (!(BUILTIN_CAPABILITIES as readonly string[]).includes(reference)) {
+    throw new Error(
+      `${code}: ${marker} accepts a builtin catalogue id or the handler ` +
+        `declaration that implements one, not '${reference}'`,
     );
   }
 }
@@ -216,7 +250,7 @@ function uncallable(marker: string): never {
 }
 
 export function Model<Input, Output>(ref: string): ModelBinding<Input, Output> {
-  rejectDisplayName(ref, "Model");
+  rejectDisplayName(ref, "Model", MODEL_DISPLAY_NAME_REJECTED);
   const binding = () => uncallable("Model");
   return recordDeclaration(Object.assign(binding, {
     kind: "model_binding" as const,
@@ -232,7 +266,8 @@ export function Tool<Input, Output>(
 ): ToolBinding<Input, Output> {
   const binding = () => uncallable("Tool");
   const targetRef = capabilityIdOf(capabilityRef);
-  rejectDisplayName(targetRef, "Tool");
+  rejectDisplayName(targetRef, "Tool", TOOL_DISPLAY_NAME_REJECTED);
+  rejectUnmintedCapability(capabilityRef, "Tool", TOOL_REF_NOT_CAPABILITY);
   return recordDeclaration(Object.assign(binding, {
     kind: "tool_binding" as const,
     targetRef,
@@ -248,7 +283,8 @@ export function Capability<Input, Output>(
 ): CapabilityBinding<Input, Output> {
   const binding = () => uncallable("Capability");
   const targetRef = capabilityIdOf(ref);
-  rejectDisplayName(targetRef, "Capability");
+  rejectDisplayName(targetRef, "Capability", CAPABILITY_DISPLAY_NAME_REJECTED);
+  rejectUnmintedCapability(ref, "Capability", CAPABILITY_REF_NOT_EXACT);
   return recordDeclaration(Object.assign(binding, {
     kind: "capability_binding" as const,
     targetRef,
@@ -259,12 +295,16 @@ export function Capability<Input, Output>(
 }
 
 export function Event<Payload>(ref: string): EventTypeBinding<Payload> {
-  rejectDisplayName(ref, "Event");
+  rejectDisplayName(ref, "Event", EVENT_NOT_TYPED);
   return recordDeclaration({
     kind: "event_type" as const,
     typeRef: "Event",
     targetRef: ref,
-    wait: () => uncallable("Event"),
+    wait: (): never => {
+      throw new Error(
+        `${EVENT_WAIT_OUTSIDE_BODY}: an Event is awaited inside a compiled Agent body`,
+      );
+    },
   });
 }
 

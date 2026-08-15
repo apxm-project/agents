@@ -267,6 +267,20 @@ _EXPECTATIONS: dict[str, list[dict[str, Any]]] = {
         {"includes_query": "graph:hook_bindings[0].target_selector", "length": 1, "query": "air:structural_ir[hook.hook_id=hook.AuditInnerIteration].parent_region_id"},
         {"includes_query": "graph:hook_bindings[0].body_region_id", "query": "air:semantic_operations[op=capability.invoke].parent_region_id"},
     ],
+    "agent_scope_hook_wraps_the_agent_body": [
+        {"equals": ["agent"], "query": "graph:hook_bindings[].scope"},
+        {"query": "graph:hook_bindings[0].target_selector", "same_as": "graph:regions[region_role=function_body][0].region_id"},
+        {"differs_from": "graph:call_intents[intent_kind=tool_invocation][0].node_id", "query": "graph:hook_bindings[0].target_selector"},
+        {"equals": None, "query": "diagnostics"},
+        {"includes_query": "graph:hook_bindings[0].target_selector", "length": 1, "query": "air:structural_ir[hook.hook_id=hook.AuditWholeAgent].parent_region_id"},
+    ],
+    "same_phase_hooks_run_in_declaration_order": [
+        {"equals": ["ZebraRunsFirst", "AlphaRunsSecond"], "query": "graph:hook_bindings[].handler_ref"},
+        {"equals": [0, 1], "query": "graph:hook_bindings[].declaration_order"},
+        {"query": "graph:hook_bindings[0].target_selector", "same_as": "graph:hook_bindings[1].target_selector"},
+        {"equals": None, "query": "diagnostics"},
+        {"differs_from": "air:structural_ir[hook.hook_id=hook.AlphaRunsSecond].execution_order", "query": "air:structural_ir[hook.hook_id=hook.ZebraRunsFirst].execution_order"},
+    ],
     "negative_integer_at_safe_boundary": [
         {"equals": [{"kind": "integer", "value": -9007199254740991}], "query": "graph:values[origin=literal].expression"},
         {"equals": None, "query": "diagnostics"},
@@ -434,6 +448,46 @@ del AuditInnerIteration
 def _vector_nested_loop_hook_targets_inner_loop() -> list[str]:
     return _check("nested_loop_hook_targets_inner_loop", NestedLoops, _EXPECTATIONS["nested_loop_hook_targets_inner_loop"])
 
+# vector: agent_scope_hook_wraps_the_agent_body
+AgentScopeTool = Tool[object, object]("search_web")
+AgentScopeModel = Model[object, object]("agent.scope.model")
+
+@Hook.before(target="AgentScopeTool", scope="agent")
+async def AuditWholeAgent(agent) -> None:
+    return None
+
+@Agent(input=Input, output=Output)
+async def AgentScoped(agent, input):
+    found = await AgentScopeTool(input)
+    return await AgentScopeModel(found)
+
+del AuditWholeAgent
+
+def _vector_agent_scope_hook_wraps_the_agent_body() -> list[str]:
+    return _check("agent_scope_hook_wraps_the_agent_body", AgentScoped, _EXPECTATIONS["agent_scope_hook_wraps_the_agent_body"])
+
+# vector: same_phase_hooks_run_in_declaration_order
+OrderedModel = Model[object, object]("ordered.model")
+
+@Hook.before(target="OrderedModel", scope="model")
+async def ZebraRunsFirst(agent) -> None:
+    return None
+
+@Hook.before(target="OrderedModel", scope="model")
+async def AlphaRunsSecond(agent) -> None:
+    return None
+
+@Agent(input=Input, output=Output)
+async def OrderedHooks(agent, input):
+    return await OrderedModel(input)
+
+del ZebraRunsFirst
+
+del AlphaRunsSecond
+
+def _vector_same_phase_hooks_run_in_declaration_order() -> list[str]:
+    return _check("same_phase_hooks_run_in_declaration_order", OrderedHooks, _EXPECTATIONS["same_phase_hooks_run_in_declaration_order"])
+
 # vector: negative_integer_at_safe_boundary
 NegativeValueModel = Model[object, object]("negative.value.model")
 
@@ -596,6 +650,8 @@ VECTOR_IDS: tuple[str, ...] = (
     "composed_agent_event_and_task_group",
     "resumable_loop_block_arguments",
     "nested_loop_hook_targets_inner_loop",
+    "agent_scope_hook_wraps_the_agent_body",
+    "same_phase_hooks_run_in_declaration_order",
     "negative_integer_at_safe_boundary",
     "skill_carried_by_package_entry",
     "skill_written_inline_in_source",
@@ -618,6 +674,8 @@ _VECTORS = {
     "composed_agent_event_and_task_group": _vector_composed_agent_event_and_task_group,
     "resumable_loop_block_arguments": _vector_resumable_loop_block_arguments,
     "nested_loop_hook_targets_inner_loop": _vector_nested_loop_hook_targets_inner_loop,
+    "agent_scope_hook_wraps_the_agent_body": _vector_agent_scope_hook_wraps_the_agent_body,
+    "same_phase_hooks_run_in_declaration_order": _vector_same_phase_hooks_run_in_declaration_order,
     "negative_integer_at_safe_boundary": _vector_negative_integer_at_safe_boundary,
     "skill_carried_by_package_entry": _vector_skill_carried_by_package_entry,
     "skill_written_inline_in_source": _vector_skill_written_inline_in_source,

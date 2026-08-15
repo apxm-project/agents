@@ -11,16 +11,11 @@ export type DiagnosticCode =
   | "AgentBodyNotAsync"
   | "AgentMissingInputOutput"
   | "AgentDynamicArgument"
-  | "AgentFacadeImported"
   | "ContextNotTyped"
-  | "ContextMutableGlobal"
-  | "ContextDynamicDefault"
-  | "ModelRefNotExact"
   | "ModelDisplayNameRejected"
   | "ModelUntypedSchema"
   | "ToolRefNotCapability"
   | "ToolDisplayNameRejected"
-  | "ToolCredentialInSource"
   | "CapabilityRefNotExact"
   | "CapabilityDisplayNameRejected"
   | "CapabilityHandlerUntypedSchema"
@@ -36,23 +31,15 @@ export type DiagnosticCode =
   | "SkillSourceAmbiguous"
   | "SkillEntryPathNotCanonical"
   | "SkillInstructionsOverlong"
-  | "SkillLoadOutsideBody"
-  | "TaskGroupMissingJoin"
-  | "TaskGroupDetachedWork"
-  | "TaskGroupRawCoroutine";
+  | "SkillLoadOutsideBody";
 export const AGENT_BODY_NOT_ASYNC = "AgentBodyNotAsync" satisfies DiagnosticCode;
 export const AGENT_MISSING_INPUT_OUTPUT = "AgentMissingInputOutput" satisfies DiagnosticCode;
 export const AGENT_DYNAMIC_ARGUMENT = "AgentDynamicArgument" satisfies DiagnosticCode;
-export const AGENT_FACADE_IMPORTED = "AgentFacadeImported" satisfies DiagnosticCode;
 export const CONTEXT_NOT_TYPED = "ContextNotTyped" satisfies DiagnosticCode;
-export const CONTEXT_MUTABLE_GLOBAL = "ContextMutableGlobal" satisfies DiagnosticCode;
-export const CONTEXT_DYNAMIC_DEFAULT = "ContextDynamicDefault" satisfies DiagnosticCode;
-export const MODEL_REF_NOT_EXACT = "ModelRefNotExact" satisfies DiagnosticCode;
 export const MODEL_DISPLAY_NAME_REJECTED = "ModelDisplayNameRejected" satisfies DiagnosticCode;
 export const MODEL_UNTYPED_SCHEMA = "ModelUntypedSchema" satisfies DiagnosticCode;
 export const TOOL_REF_NOT_CAPABILITY = "ToolRefNotCapability" satisfies DiagnosticCode;
 export const TOOL_DISPLAY_NAME_REJECTED = "ToolDisplayNameRejected" satisfies DiagnosticCode;
-export const TOOL_CREDENTIAL_IN_SOURCE = "ToolCredentialInSource" satisfies DiagnosticCode;
 export const CAPABILITY_REF_NOT_EXACT = "CapabilityRefNotExact" satisfies DiagnosticCode;
 export const CAPABILITY_DISPLAY_NAME_REJECTED = "CapabilityDisplayNameRejected" satisfies DiagnosticCode;
 export const CAPABILITY_HANDLER_UNTYPED_SCHEMA = "CapabilityHandlerUntypedSchema" satisfies DiagnosticCode;
@@ -69,23 +56,15 @@ export const SKILL_SOURCE_AMBIGUOUS = "SkillSourceAmbiguous" satisfies Diagnosti
 export const SKILL_ENTRY_PATH_NOT_CANONICAL = "SkillEntryPathNotCanonical" satisfies DiagnosticCode;
 export const SKILL_INSTRUCTIONS_OVERLONG = "SkillInstructionsOverlong" satisfies DiagnosticCode;
 export const SKILL_LOAD_OUTSIDE_BODY = "SkillLoadOutsideBody" satisfies DiagnosticCode;
-export const TASK_GROUP_MISSING_JOIN = "TaskGroupMissingJoin" satisfies DiagnosticCode;
-export const TASK_GROUP_DETACHED_WORK = "TaskGroupDetachedWork" satisfies DiagnosticCode;
-export const TASK_GROUP_RAW_COROUTINE = "TaskGroupRawCoroutine" satisfies DiagnosticCode;
 export const DIAGNOSTIC_CODES = [
   AGENT_BODY_NOT_ASYNC,
   AGENT_MISSING_INPUT_OUTPUT,
   AGENT_DYNAMIC_ARGUMENT,
-  AGENT_FACADE_IMPORTED,
   CONTEXT_NOT_TYPED,
-  CONTEXT_MUTABLE_GLOBAL,
-  CONTEXT_DYNAMIC_DEFAULT,
-  MODEL_REF_NOT_EXACT,
   MODEL_DISPLAY_NAME_REJECTED,
   MODEL_UNTYPED_SCHEMA,
   TOOL_REF_NOT_CAPABILITY,
   TOOL_DISPLAY_NAME_REJECTED,
-  TOOL_CREDENTIAL_IN_SOURCE,
   CAPABILITY_REF_NOT_EXACT,
   CAPABILITY_DISPLAY_NAME_REJECTED,
   CAPABILITY_HANDLER_UNTYPED_SCHEMA,
@@ -102,7 +81,4 @@ export const DIAGNOSTIC_CODES = [
   SKILL_ENTRY_PATH_NOT_CANONICAL,
   SKILL_INSTRUCTIONS_OVERLONG,
   SKILL_LOAD_OUTSIDE_BODY,
-  TASK_GROUP_MISSING_JOIN,
-  TASK_GROUP_DETACHED_WORK,
-  TASK_GROUP_RAW_COROUTINE,
 ] as const satisfies readonly DiagnosticCode[];

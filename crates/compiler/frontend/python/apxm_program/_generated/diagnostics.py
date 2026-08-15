@@ -14,16 +14,11 @@ DiagnosticCode: TypeAlias = Literal[
     "AgentBodyNotAsync",
     "AgentMissingInputOutput",
     "AgentDynamicArgument",
-    "AgentFacadeImported",
     "ContextNotTyped",
-    "ContextMutableGlobal",
-    "ContextDynamicDefault",
-    "ModelRefNotExact",
     "ModelDisplayNameRejected",
     "ModelUntypedSchema",
     "ToolRefNotCapability",
     "ToolDisplayNameRejected",
-    "ToolCredentialInSource",
     "CapabilityRefNotExact",
     "CapabilityDisplayNameRejected",
     "CapabilityHandlerUntypedSchema",
@@ -40,23 +35,15 @@ DiagnosticCode: TypeAlias = Literal[
     "SkillEntryPathNotCanonical",
     "SkillInstructionsOverlong",
     "SkillLoadOutsideBody",
-    "TaskGroupMissingJoin",
-    "TaskGroupDetachedWork",
-    "TaskGroupRawCoroutine",
 ]
 AGENT_BODY_NOT_ASYNC: Final[DiagnosticCode] = "AgentBodyNotAsync"
 AGENT_MISSING_INPUT_OUTPUT: Final[DiagnosticCode] = "AgentMissingInputOutput"
 AGENT_DYNAMIC_ARGUMENT: Final[DiagnosticCode] = "AgentDynamicArgument"
-AGENT_FACADE_IMPORTED: Final[DiagnosticCode] = "AgentFacadeImported"
 CONTEXT_NOT_TYPED: Final[DiagnosticCode] = "ContextNotTyped"
-CONTEXT_MUTABLE_GLOBAL: Final[DiagnosticCode] = "ContextMutableGlobal"
-CONTEXT_DYNAMIC_DEFAULT: Final[DiagnosticCode] = "ContextDynamicDefault"
-MODEL_REF_NOT_EXACT: Final[DiagnosticCode] = "ModelRefNotExact"
 MODEL_DISPLAY_NAME_REJECTED: Final[DiagnosticCode] = "ModelDisplayNameRejected"
 MODEL_UNTYPED_SCHEMA: Final[DiagnosticCode] = "ModelUntypedSchema"
 TOOL_REF_NOT_CAPABILITY: Final[DiagnosticCode] = "ToolRefNotCapability"
 TOOL_DISPLAY_NAME_REJECTED: Final[DiagnosticCode] = "ToolDisplayNameRejected"
-TOOL_CREDENTIAL_IN_SOURCE: Final[DiagnosticCode] = "ToolCredentialInSource"
 CAPABILITY_REF_NOT_EXACT: Final[DiagnosticCode] = "CapabilityRefNotExact"
 CAPABILITY_DISPLAY_NAME_REJECTED: Final[DiagnosticCode] = "CapabilityDisplayNameRejected"
 CAPABILITY_HANDLER_UNTYPED_SCHEMA: Final[DiagnosticCode] = "CapabilityHandlerUntypedSchema"
@@ -73,23 +60,15 @@ SKILL_SOURCE_AMBIGUOUS: Final[DiagnosticCode] = "SkillSourceAmbiguous"
 SKILL_ENTRY_PATH_NOT_CANONICAL: Final[DiagnosticCode] = "SkillEntryPathNotCanonical"
 SKILL_INSTRUCTIONS_OVERLONG: Final[DiagnosticCode] = "SkillInstructionsOverlong"
 SKILL_LOAD_OUTSIDE_BODY: Final[DiagnosticCode] = "SkillLoadOutsideBody"
-TASK_GROUP_MISSING_JOIN: Final[DiagnosticCode] = "TaskGroupMissingJoin"
-TASK_GROUP_DETACHED_WORK: Final[DiagnosticCode] = "TaskGroupDetachedWork"
-TASK_GROUP_RAW_COROUTINE: Final[DiagnosticCode] = "TaskGroupRawCoroutine"
 DIAGNOSTIC_CODES: Final[tuple[DiagnosticCode, ...]] = (
     AGENT_BODY_NOT_ASYNC,
     AGENT_MISSING_INPUT_OUTPUT,
     AGENT_DYNAMIC_ARGUMENT,
-    AGENT_FACADE_IMPORTED,
     CONTEXT_NOT_TYPED,
-    CONTEXT_MUTABLE_GLOBAL,
-    CONTEXT_DYNAMIC_DEFAULT,
-    MODEL_REF_NOT_EXACT,
     MODEL_DISPLAY_NAME_REJECTED,
     MODEL_UNTYPED_SCHEMA,
     TOOL_REF_NOT_CAPABILITY,
     TOOL_DISPLAY_NAME_REJECTED,
-    TOOL_CREDENTIAL_IN_SOURCE,
     CAPABILITY_REF_NOT_EXACT,
     CAPABILITY_DISPLAY_NAME_REJECTED,
     CAPABILITY_HANDLER_UNTYPED_SCHEMA,
@@ -106,9 +85,6 @@ DIAGNOSTIC_CODES: Final[tuple[DiagnosticCode, ...]] = (
     SKILL_ENTRY_PATH_NOT_CANONICAL,
     SKILL_INSTRUCTIONS_OVERLONG,
     SKILL_LOAD_OUTSIDE_BODY,
-    TASK_GROUP_MISSING_JOIN,
-    TASK_GROUP_DETACHED_WORK,
-    TASK_GROUP_RAW_COROUTINE,
 )
 
 __all__ = [
@@ -116,16 +92,11 @@ __all__ = [
     "AGENT_BODY_NOT_ASYNC",
     "AGENT_MISSING_INPUT_OUTPUT",
     "AGENT_DYNAMIC_ARGUMENT",
-    "AGENT_FACADE_IMPORTED",
     "CONTEXT_NOT_TYPED",
-    "CONTEXT_MUTABLE_GLOBAL",
-    "CONTEXT_DYNAMIC_DEFAULT",
-    "MODEL_REF_NOT_EXACT",
     "MODEL_DISPLAY_NAME_REJECTED",
     "MODEL_UNTYPED_SCHEMA",
     "TOOL_REF_NOT_CAPABILITY",
     "TOOL_DISPLAY_NAME_REJECTED",
-    "TOOL_CREDENTIAL_IN_SOURCE",
     "CAPABILITY_REF_NOT_EXACT",
     "CAPABILITY_DISPLAY_NAME_REJECTED",
     "CAPABILITY_HANDLER_UNTYPED_SCHEMA",
@@ -142,8 +113,5 @@ __all__ = [
     "SKILL_ENTRY_PATH_NOT_CANONICAL",
     "SKILL_INSTRUCTIONS_OVERLONG",
     "SKILL_LOAD_OUTSIDE_BODY",
-    "TASK_GROUP_MISSING_JOIN",
-    "TASK_GROUP_DETACHED_WORK",
-    "TASK_GROUP_RAW_COROUTINE",
     "DIAGNOSTIC_CODES",
 ]

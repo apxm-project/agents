@@ -144,7 +144,7 @@
         }
       ],
       "produces_intent": "none",
-      "diagnostics": ["AgentBodyNotAsync", "AgentMissingInputOutput", "AgentDynamicArgument", "AgentFacadeImported"]
+      "diagnostics": ["AgentBodyNotAsync", "AgentMissingInputOutput", "AgentDynamicArgument"]
     },
     {
       "concept": "Context schema/default",
@@ -179,7 +179,7 @@
         }
       ],
       "produces_intent": "none",
-      "diagnostics": ["ContextNotTyped", "ContextMutableGlobal", "ContextDynamicDefault"]
+      "diagnostics": ["ContextNotTyped"]
     },
     {
       "concept": "Exact Model binding",
@@ -220,7 +220,7 @@
         }
       ],
       "produces_intent": "model_invocation",
-      "diagnostics": ["ModelRefNotExact", "ModelDisplayNameRejected", "ModelUntypedSchema"]
+      "diagnostics": ["ModelDisplayNameRejected", "ModelUntypedSchema"]
     },
     {
       "concept": "Imported Tool binding",
@@ -267,7 +267,7 @@
         }
       ],
       "produces_intent": "tool_invocation",
-      "diagnostics": ["ToolRefNotCapability", "ToolDisplayNameRejected", "ToolCredentialInSource"]
+      "diagnostics": ["ToolRefNotCapability", "ToolDisplayNameRejected"]
     },
     {
       "concept": "Imported Capability",
@@ -549,7 +549,7 @@
         }
       ],
       "produces_intent": "none",
-      "diagnostics": ["TaskGroupMissingJoin", "TaskGroupDetachedWork", "TaskGroupRawCoroutine"]
+      "diagnostics": []
     }
   ]
 }

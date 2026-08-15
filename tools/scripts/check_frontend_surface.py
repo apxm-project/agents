@@ -22,6 +22,12 @@ one surface:
   that is an error rather than an omission nobody notices.
 * ``FrontendSurfaceUnsynced{artifact}`` — a generated artifact has drifted from
   the manifest it is generated from.
+* ``FrontendSurfaceUnraised{language, code}`` — a language projects a diagnostic
+  code the manifest declares but raises it nowhere. A code the vocabulary
+  publishes and no source ever throws is a promise the frontend does not keep,
+  so it is the same failure as an unimplemented declaration: either the
+  condition is detectable and the frontend rejects it, or the manifest should
+  not declare it.
 
 Adding a third language is adding one entry to `languages`, one projection per
 declaration, and one `SurfaceLanguage` subclass below. Everything else — the
@@ -91,6 +97,15 @@ class SurfaceFailure(Exception):
 def incomplete(language: str, declaration: str, detail: str) -> str:
     """Render the failure a language that does not implement the surface raises."""
     return f"FrontendSurfaceIncomplete{{language={language}, declaration={declaration!r}}}: {detail}"
+
+
+def unraised(language: str, code: str, detail: str) -> str:
+    return f"FrontendSurfaceUnraised{{{language}, {code}}}: {detail}"
+
+
+def screaming_snake(code: str) -> str:
+    """`AgentBodyNotAsync` -> `AGENT_BODY_NOT_ASYNC`, the constant naming it."""
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", code).upper()
 
 
 def unsynced(artifact: str, detail: str) -> str:
@@ -187,6 +202,46 @@ class SurfaceLanguage:
     def diagnostic_codes(self) -> list[str]:
         """The diagnostic codes the generated module projects, in order."""
         raise NotImplementedError
+
+    #: The file extensions this language's own sources are written in. A raise
+    #: site is looked for in these and nowhere else.
+    source_suffixes: tuple[str, ...] = ()
+
+    def raise_sites(self, codes: list[str], manifest: dict) -> set[str]:
+        """Which of `codes` this language's sources actually raise.
+
+        A code named in a comment, a docstring, or an import clause is not a
+        raise site: it has to reach a `raise`/`throw`, either directly or as an
+        argument to a function of this module that raises that argument.
+        """
+        raise NotImplementedError
+
+    def raise_site_sources(self, manifest: dict) -> list[Path]:
+        """This language's own source files, from the manifest's own paths.
+
+        The directories are the ones the manifest already names as this
+        language's projections, so a declaration this language projects out of a
+        different package — TypeScript's shipped-handler surface lives in the
+        packaging package — is searched where the manifest says it is. Each
+        directory is read without descending, which is what keeps generated
+        vocabularies, vendored packages, and fixtures out of the answer.
+        """
+        directories: list[Path] = []
+        for declaration in manifest["declarations"]:
+            projection = declaration["projections"].get(self.id)
+            if projection is None:
+                continue
+            directory = (REPO_ROOT / projection["module"]).parent
+            if directory not in directories:
+                directories.append(directory)
+        return [
+            path
+            for directory in directories
+            for path in sorted(directory.iterdir())
+            if path.is_file()
+            and path.suffix in self.source_suffixes
+            and ".test." not in path.name
+        ]
 
     def import_patterns(self) -> tuple[str, ...]:
         """Regexes matching an authoring import in documentation and examples."""
@@ -459,6 +514,67 @@ class PythonLanguage(SurfaceLanguage):
     def import_patterns(self) -> tuple[str, ...]:
         return (r"from\s+apxm_program\s+import\s+([^\n]+)",)
 
+    source_suffixes = (".py",)
+
+    def raise_sites(self, codes: list[str], manifest: dict) -> set[str]:
+        identifiers = {screaming_snake(code): code for code in codes}
+        values = set(codes)
+        raised: set[str] = set()
+        for path in self.raise_site_sources(manifest):
+            module = self._module(path)
+            forwarding = self._forwarding_raisers(module)
+            for node in ast.walk(module):
+                if isinstance(node, ast.Raise):
+                    raised |= self._codes_in(node, identifiers, values)
+                    continue
+                if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                    continue
+                for position in forwarding.get(node.func.id, set()):
+                    if position < len(node.args):
+                        raised |= self._codes_in(
+                            node.args[position], identifiers, values
+                        )
+        return raised
+
+    @staticmethod
+    def _codes_in(node: ast.AST, identifiers: dict[str, str], values: set[str]) -> set[str]:
+        """Every code this expression names, by constant or by literal."""
+        found: set[str] = set()
+        for child in ast.walk(node):
+            if isinstance(child, ast.Name) and child.id in identifiers:
+                found.add(identifiers[child.id])
+            elif isinstance(child, ast.Constant) and child.value in values:
+                found.add(child.value)
+        return found
+
+    @staticmethod
+    def _forwarding_raisers(module: ast.Module) -> dict[str, set[int]]:
+        """Functions that raise one of their own parameters, by position.
+
+        A rejection whose message and code are one helper's is still raised at
+        the call site that named the code, so the call site counts. Only a
+        parameter the helper actually raises does: an ordinary argument to an
+        ordinary function is not a raise site.
+        """
+        raisers: dict[str, set[int]] = {}
+        for node in ast.walk(module):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            positional = [
+                argument.arg
+                for argument in list(node.args.posonlyargs) + list(node.args.args)
+            ]
+            forwarded = {
+                positional.index(inner.id)
+                for statement in ast.walk(node)
+                if isinstance(statement, ast.Raise)
+                for inner in ast.walk(statement)
+                if isinstance(inner, ast.Name) and inner.id in positional
+            }
+            if forwarded:
+                raisers[node.name] = forwarded
+        return raisers
+
 
 # ---------------------------------------------------------------------------
 # TypeScript
@@ -722,6 +838,70 @@ class TypeScriptLanguage(SurfaceLanguage):
     def import_patterns(self) -> tuple[str, ...]:
         return (r"import\s*\{([^}]+)\}\s*from\s*[\"']@apxm/frontend[\"']",)
 
+    source_suffixes = (".ts", ".mjs")
+
+    def raise_sites(self, codes: list[str], manifest: dict) -> set[str]:
+        identifiers = {screaming_snake(code): code for code in codes}
+        raised: set[str] = set()
+        for path in self.raise_site_sources(manifest):
+            if path.name.endswith(".d.ts"):
+                continue
+            text = self._source(path)
+            forwarding = self._forwarding_raisers(text)
+            for thrown in self._thrown_expressions(text):
+                raised |= self._codes_in(thrown, identifiers, codes)
+            for name, positions in forwarding.items():
+                for call in re.finditer(rf"\b{re.escape(name)}\s*\(", text):
+                    arguments = split_top_level(
+                        text[call.end() : matching_bracket(text, call.end() - 1) - 1]
+                    )
+                    for position in positions:
+                        if position < len(arguments):
+                            raised |= self._codes_in(
+                                arguments[position], identifiers, codes
+                            )
+        return raised
+
+    @staticmethod
+    def _codes_in(text: str, identifiers: dict[str, str], codes: list[str]) -> set[str]:
+        found = {code for name, code in identifiers.items() if re.search(rf"\b{name}\b", text)}
+        found |= {code for code in codes if f'"{code}"' in text}
+        return found
+
+    def _thrown_expressions(self, text: str) -> list[str]:
+        """The argument list of every `throw new X(...)` in this source."""
+        return [
+            text[match.end() : matching_bracket(text, match.end() - 1) - 1]
+            for match in re.finditer(r"\bthrow\s+new\s+\w+\s*\(", text)
+        ]
+
+    def _forwarding_raisers(self, text: str) -> dict[str, set[int]]:
+        """Functions that throw one of their own parameters, by position.
+
+        The mirror of the Python layer's rule, and for the same reason: a helper
+        that formats one rejection is still raising the code its caller named.
+        """
+        raisers: dict[str, set[int]] = {}
+        for match in re.finditer(r"\bfunction\s+(\w+)\s*\(", text):
+            parameters_end = matching_bracket(text, match.end() - 1)
+            names = [
+                entry.split(":")[0].strip()
+                for entry in split_top_level(text[match.end() : parameters_end - 1])
+            ]
+            body_start = text.find("{", parameters_end)
+            if body_start == -1:
+                continue
+            body = text[body_start : matching_bracket(text, body_start)]
+            forwarded = {
+                index
+                for thrown in self._thrown_expressions(body)
+                for index, name in enumerate(names)
+                if name and re.search(rf"\b{re.escape(name)}\b", thrown)
+            }
+            if forwarded:
+                raisers[match.group(1)] = forwarded
+        return raisers
+
     def catalogue_symbols(self) -> set[str]:
         text = self._source(self.capability_catalogue)
         names = set(re.findall(r"^export\s+const\s+(\w+)", text, flags=re.M))
@@ -899,11 +1079,7 @@ def check_generated_diagnostics(
     language: SurfaceLanguage, manifest: dict, failures: list[str]
 ) -> None:
     """Prove the generated diagnostic vocabulary still matches the manifest."""
-    expected: list[str] = []
-    for declaration in manifest["declarations"]:
-        for code in declaration["diagnostics"]:
-            if code not in expected:
-                expected.append(code)
+    expected = declared_codes(manifest)
     artifact = language.registration["generated_diagnostics"]
     if not language.generated_diagnostics.exists():
         failures.append(unsynced(artifact, "the generated module is missing"))
@@ -920,6 +1096,42 @@ def check_generated_diagnostics(
         failures.append(
             unsynced(artifact, f"{detail}; run `dekk agents codegen-diagnostics`")
         )
+
+
+def check_raise_sites(
+    language: SurfaceLanguage, manifest: dict, failures: list[str]
+) -> None:
+    """Prove every code the manifest declares is a code this language raises.
+
+    The generated vocabulary already matches the manifest name for name, which
+    proves only that the code exists. This proves it is reachable: a declaration
+    that publishes a rejection reason no source ever raises has told authors
+    about a check the frontend does not run.
+    """
+    codes = declared_codes(manifest)
+    raised = language.raise_sites(codes, manifest)
+    for declaration in manifest["declarations"]:
+        for code in declaration["diagnostics"]:
+            if code in raised:
+                continue
+            failures.append(
+                unraised(
+                    language.id,
+                    code,
+                    f"{declaration['concept']!r} declares {code}, and no "
+                    f"{language.id} source raises it",
+                )
+            )
+
+
+def declared_codes(manifest: dict) -> list[str]:
+    """Every diagnostic the manifest names, in manifest order, once each."""
+    codes: list[str] = []
+    for declaration in manifest["declarations"]:
+        for code in declaration["diagnostics"]:
+            if code not in codes:
+                codes.append(code)
+    return codes
 
 
 def check_schema_alignment(manifest: dict, failures: list[str]) -> None:
@@ -1368,6 +1580,7 @@ def check() -> list[str]:
         for declaration in manifest["declarations"]:
             check_declaration(language, declaration, failures)
         check_generated_diagnostics(language, manifest, failures)
+        check_raise_sites(language, manifest, failures)
         check_roots(language, manifest, failures)
     check_vocabularies(languages, manifest, failures)
 

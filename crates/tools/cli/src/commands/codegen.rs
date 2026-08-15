@@ -355,11 +355,18 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
                 .join(crate::frontend::codegen_diagnostics::PYTHON_DIAGNOSTICS_FILE);
             let typescript_path = default_typescript_frontend_codegen_dir()
                 .join(crate::frontend::codegen_diagnostics::TYPESCRIPT_DIAGNOSTICS_FILE);
+            let javascript_path = default_agent_packaging_dir()
+                .join(crate::frontend::codegen_diagnostics::JAVASCRIPT_DIAGNOSTICS_FILE);
             let python = crate::frontend::codegen_diagnostics::render_diagnostics_python();
             let typescript = crate::frontend::codegen_diagnostics::render_diagnostics_typescript();
+            let javascript = crate::frontend::codegen_diagnostics::render_diagnostics_javascript();
 
             let files = write_or_check_files(
-                &[(&python_path, &python), (&typescript_path, &typescript)],
+                &[
+                    (&python_path, &python),
+                    (&typescript_path, &typescript),
+                    (&javascript_path, &javascript),
+                ],
                 check,
                 "diagnostics",
             )?;
@@ -685,6 +692,11 @@ fn default_typescript_codegen_path() -> PathBuf {
 
 fn default_typescript_frontend_codegen_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../compiler/frontend/typescript/src/generated")
+}
+
+/// The packaging package that carries TypeScript's shipped-handler declaration.
+fn default_agent_packaging_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("agent-packaging")
 }
 
 fn default_event_kinds_codegen_path() -> PathBuf {
