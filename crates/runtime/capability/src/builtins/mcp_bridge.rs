@@ -224,7 +224,13 @@ impl McpBridgeCapability {
         c
     }
 
-    async fn resolve_token(&self, credential: &str) -> Option<String> {
+    /// Exchange an apxm-auth connection id for its access token.
+    ///
+    /// Every failure is returned, never swallowed. A caller that names a
+    /// credential is saying "call as this connection"; degrading that to an
+    /// anonymous call is a different call to a different authority, and the MCP
+    /// server is the wrong place to discover it.
+    async fn resolve_token(&self, credential: &str) -> Result<String, String> {
         let base = self.base.clone().unwrap_or_else(auth_base);
         let mut req = shared_client().get(format!(
             "{}/v1/connections/{}/token?owner={}",
@@ -235,15 +241,27 @@ impl McpBridgeCapability {
         if let Some(b) = auth_bearer() {
             req = req.bearer_auth(b);
         }
-        let resp = req.send().await.ok()?;
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| format!("apxm-auth token request failed: {e}"))?;
         if !resp.status().is_success() {
-            return None;
+            let status = resp.status();
+            return Err(format!(
+                "apxm-auth returned {status} for connection '{credential}': {}",
+                resp.text().await.unwrap_or_default()
+            ));
         }
         resp.json::<JsonValue>()
             .await
-            .ok()?
+            .map_err(|e| format!("apxm-auth token response parse: {e}"))?
             .get("access_token")
             .and_then(|v| v.as_str().map(String::from))
+            .ok_or_else(|| {
+                format!(
+                    "apxm-auth token response for connection '{credential}' has no access_token"
+                )
+            })
     }
 }
 
@@ -282,9 +300,8 @@ impl CapabilityExecutor for McpBridgeCapability {
             .header("MCP-Protocol-Version", MCP_PROTOCOL_VERSION)
             .header("Accept", "application/json, text/event-stream")
             .json(&body);
-        if let Some(cred) = as_json("credential").and_then(|j| j.as_str().map(String::from))
-            && let Some(tok) = self.resolve_token(&cred).await
-        {
+        if let Some(cred) = as_json("credential").and_then(|j| j.as_str().map(String::from)) {
+            let tok = self.resolve_token(&cred).await.map_err(cap_err)?;
             req = req.bearer_auth(tok);
         }
 
@@ -406,6 +423,76 @@ mod tests {
         assert!(
             requests.is_empty(),
             "credential resolution must not run when server_url is rejected"
+        );
+    }
+
+    /// Every way credential resolution can fail must be an error the caller
+    /// sees. These used to return `None`, and the `tools/call` site had no
+    /// `else` branch — so a credential apxm-auth refused, or could not be
+    /// reached, or answered without a token, all became a `tools/call` sent with
+    /// no `Authorization` header. "Call as this connection" silently became
+    /// "call anonymously" against a server that would answer either way.
+    #[tokio::test]
+    async fn an_unresolvable_credential_is_an_error_not_an_anonymous_call() {
+        use wiremock::matchers::{method, path_regex};
+        use wiremock::{Mock, ResponseTemplate};
+
+        // apxm-auth refuses the connection.
+        let refusing = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"^/v1/connections/.*/token$"))
+            .respond_with(ResponseTemplate::new(403).set_body_string("connection revoked"))
+            .mount(&refusing)
+            .await;
+        let error = McpBridgeCapability::with_base(refusing.uri())
+            .resolve_token("conn1")
+            .await
+            .expect_err("a refused credential is not a token");
+        assert!(
+            error.contains("403") && error.contains("conn1"),
+            "the error names the status and the connection: {error}"
+        );
+
+        // apxm-auth answers, but the body carries no token.
+        let tokenless = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"^/v1/connections/.*/token$"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"expires_in": 3600})))
+            .mount(&tokenless)
+            .await;
+        let error = McpBridgeCapability::with_base(tokenless.uri())
+            .resolve_token("conn1")
+            .await
+            .expect_err("a response with no access_token is not a token");
+        assert!(
+            error.contains("access_token"),
+            "the error names what the response was missing: {error}"
+        );
+
+        // apxm-auth cannot be reached at all. Port 1 is never a listener.
+        let error = McpBridgeCapability::with_base("http://127.0.0.1:1")
+            .resolve_token("conn1")
+            .await
+            .expect_err("an unreachable apxm-auth is not a token");
+        assert!(
+            error.contains("token request failed"),
+            "the error says the request never landed: {error}"
+        );
+
+        // The success path still yields the token, so the failures above are
+        // the failures and not a broken resolver.
+        let serving = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"^/v1/connections/.*/token$"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"access_token": "tok"})))
+            .mount(&serving)
+            .await;
+        assert_eq!(
+            McpBridgeCapability::with_base(serving.uri())
+                .resolve_token("conn1")
+                .await
+                .expect("a resolvable credential yields its token"),
+            "tok"
         );
     }
 }
