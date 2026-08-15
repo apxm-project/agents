@@ -23,18 +23,26 @@ const schema = JSON.parse(
     "utf8",
   ),
 );
-// `apxm.contract-common.v1` is owned by the coordinating APXM workspace, not by
-// this repository, so it is only present in a full-workspace checkout. A
+// `apxm.contract-common.v1` is owned by the coordinating APXM workspace, so a
 // standalone `agents` clone (and CI, which checks out `workspace/agents` alone)
-// cannot resolve it. Skip rather than fail: an unreadable foreign contract is a
-// missing input, not a manifest violation.
+// has no copy. The handler manifest schema only reaches into it for
+// `Identifier`, so vendor that one definition and keep the gate running; the
+// workspace copy wins whenever it is present.
 const commonPath = path.join(workspaceRoot, "contracts/schemas/contract-common.v1.json");
-let common = null;
-let skip = false;
+const VENDORED_COMMON = {
+  $id: "apxm.contract-common.v1",
+  $defs: {
+    Identifier: {
+      type: "string",
+      pattern: "^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,255}$",
+    },
+  },
+};
+let common;
 try {
   common = JSON.parse(readFileSync(commonPath, "utf8"));
 } catch {
-  skip = `shared workspace contract not present at ${commonPath}`;
+  common = VENDORED_COMMON;
 }
 
 // The subset of JSON Schema the published handler-manifest contract uses. Each
@@ -133,7 +141,7 @@ async function compileFixture(source) {
   }
 }
 
-test("a compiled handler manifest satisfies the published schema", { skip }, async () => {
+test("a compiled handler manifest satisfies the published schema", async () => {
   const manifest = await compileFixture(
     [
       'import { Tool } from "@apxm/agent-packaging";',
@@ -166,7 +174,7 @@ test("a compiled handler manifest satisfies the published schema", { skip }, asy
   assertValid(manifest);
 });
 
-test("the gate rejects a manifest the published schema rejects", { skip }, () => {
+test("the gate rejects a manifest the published schema rejects", () => {
   // A build-host absolute path is exactly what `HandlerSource.artifact_path`
   // forbids; if this passed, the gate above would prove nothing.
   const handlerId = makeHandlerId("capabilities/echo/handler", "echo");
