@@ -1,7 +1,7 @@
 # The agent package format
 
 - Audience: authors packaging a compiled Agent Program for `apxm agent
-  install` or an org's `members.toml`
+  install` or an org's `org.toml [[members]]`
 - Format status: shipped and normative — `contracts/schemas/apxm.agent.json`,
   proven against 26 vectors in `contracts/vectors/apxm.agent.json` that
   `apxm agent lint`/`verify` materialize as real packages and validate
@@ -136,9 +136,9 @@ This is the whole shape — both keys optional, and `parent` must not be
 empty when present. It replaces the retired standalone `hierarchy.toml`
 outright: `HierarchyToml` in `agent.rs` is explicit that it is "absorbed
 from the retired `hierarchy.toml`: one manifest, one place." An org
-package's `members.toml` snapshots this same table so `org lint` can check
-a member's hierarchy against `topology.toml` without resolving the
-installed agent (`crates/tools/cli/src/commands/org.rs`); that snapshot-vs-
+package's `org.toml [[members]]` snapshots this same table so `org lint`
+can check a member's hierarchy against `[topology.tree]` without resolving
+the installed agent (`crates/tools/cli/src/commands/org.rs`); that snapshot-vs-
 tree consistency check is an org-package concern, not something this guide
 covers further.
 

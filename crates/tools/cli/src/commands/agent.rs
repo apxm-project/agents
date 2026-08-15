@@ -112,9 +112,9 @@ pub struct AgentToml {
 
 /// Projection of `agent.toml`'s `[hierarchy]` table.
 ///
-/// Shared with `org.rs`, whose `members.toml` entries carry a snapshot of this
-/// exact shape so org lint can check a member against `topology.toml` without
-/// resolving the installed agent.
+/// Shared with `org.rs`, whose `[[members]]` entries in `org.toml` carry a
+/// snapshot of this exact shape so org lint can check a member against
+/// `[topology.tree]` without resolving the installed agent.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HierarchyToml {
@@ -843,31 +843,34 @@ fn load_agent(root: &Path) -> Result<LoadedAgent> {
 // agent lint
 // ---------------------------------------------------------------------
 
-/// The recognized-path patterns published by
-/// `apxm.agent#/$defs/PackageFiles/patternProperties`, compiled once.
+/// Compile a contract's `PackageFiles.patternProperties` keys as regexes.
 ///
 /// The schema's property names are ECMA-262 regexes and are used here as Rust
 /// regexes; both are unanchored searches over the whole path, and every
 /// published pattern anchors itself with `^`/`$`, so the two agree by
 /// construction. Deriving the predicate rather than restating it is what keeps
-/// a retired path — `capabilities/capabilities.toml`, `hierarchy.toml` — from
-/// being tolerated by a `match` arm nobody remembered to delete.
+/// a retired path from being tolerated by a `match` arm nobody remembered to
+/// delete. Shared with `org.rs`.
+pub(super) fn package_file_patterns(schema_json: &str, schema_id: &str) -> Vec<Regex> {
+    let schema: serde_json::Value = serde_json::from_str(schema_json)
+        .unwrap_or_else(|error| panic!("the embedded {schema_id} contract is valid JSON: {error}"));
+    schema["$defs"]["PackageFiles"]["patternProperties"]
+        .as_object()
+        .unwrap_or_else(|| panic!("{schema_id} publishes PackageFiles.patternProperties"))
+        .keys()
+        .map(|pattern| {
+            Regex::new(pattern).unwrap_or_else(|error| {
+                panic!("{schema_id} publishes an uncompilable file pattern {pattern:?}: {error}")
+            })
+        })
+        .collect()
+}
+
+/// The recognized-path patterns published by
+/// `apxm.agent#/$defs/PackageFiles/patternProperties`, compiled once.
 fn recognized_relpath_patterns() -> &'static [Regex] {
     static PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
-    PATTERNS.get_or_init(|| {
-        let schema: serde_json::Value = serde_json::from_str(AGENT_SCHEMA_JSON)
-            .expect("the embedded apxm.agent contract is valid JSON");
-        schema["$defs"]["PackageFiles"]["patternProperties"]
-            .as_object()
-            .expect("apxm.agent publishes PackageFiles.patternProperties")
-            .keys()
-            .map(|pattern| {
-                Regex::new(pattern).unwrap_or_else(|error| {
-                    panic!("apxm.agent publishes an uncompilable file pattern {pattern:?}: {error}")
-                })
-            })
-            .collect()
-    })
+    PATTERNS.get_or_init(|| package_file_patterns(AGENT_SCHEMA_JSON, AGENT_SCHEMA))
 }
 
 /// Is `rel` a package-relative path the published folder contract recognizes?
@@ -900,9 +903,10 @@ fn walk_recognized_files(root: &Path) -> Result<Vec<(String, PathBuf)>> {
     Ok(out)
 }
 
-/// Find any file under the agent root that is *not* recognized by the
-/// schema's folder contract (excluding common noise and local build sidecars).
-fn find_unrecognized_files(root: &Path) -> Result<Vec<String>> {
+/// Walk `root` and return every file whose relative path matches none of
+/// `patterns` (excluding common noise and local build sidecars). Shared with
+/// `org.rs`.
+pub(super) fn unrecognized_files_under(root: &Path, patterns: &[Regex]) -> Result<Vec<String>> {
     let mut out = Vec::new();
     for entry in walkdir::WalkDir::new(root).into_iter().filter_entry(|e| {
         let name = e.file_name().to_string_lossy();
@@ -929,7 +933,7 @@ fn find_unrecognized_files(root: &Path) -> Result<Vec<String>> {
             .strip_prefix(root)
             .expect("walkdir yields paths under root");
         let rel_str = rel.to_string_lossy().replace('\\', "/");
-        if !recognized_relpath(&rel_str) {
+        if !patterns.iter().any(|pattern| pattern.is_match(&rel_str)) {
             out.push(rel_str);
         }
     }
@@ -937,11 +941,17 @@ fn find_unrecognized_files(root: &Path) -> Result<Vec<String>> {
     Ok(out)
 }
 
+/// Find any file under the agent root that is *not* recognized by the
+/// schema's folder contract (excluding common noise and local build sidecars).
+fn find_unrecognized_files(root: &Path) -> Result<Vec<String>> {
+    unrecognized_files_under(root, recognized_relpath_patterns())
+}
+
 /// Resolve the package's permission layer stack and report every refusal.
 ///
 /// See [`resolve_permission_layers`] for the two layers. `org_globals` extends
-/// the grantable surface with the org's own joined global capability set, so a
-/// member package may state a decision for a capability its org supplies.
+/// the grantable surface with the org's `[permissions]` keys, so a member
+/// package may state a decision for a capability its org supplies.
 fn check_permission_resolution(pkg: &LoadedAgent, org_globals: &BTreeSet<String>) -> Vec<String> {
     let mut grantable = match granted_capability_ids(&pkg.root) {
         Ok(grantable) => grantable,
@@ -1763,6 +1773,29 @@ mod tests {
             check_permission_resolution(&load_agent(&root).unwrap(), &org_globals).is_empty(),
             "an org-global capability must accept a package decision"
         );
+
+        let org_tmp = tempdir().unwrap();
+        let missing_org = org_tmp.path().join("missing-org");
+        fs::create_dir_all(&missing_org).unwrap();
+        agent_lint(&root, Some(missing_org), true)
+            .expect_err("agent lint --org must fail when org.toml is missing");
+
+        let org_root = org_tmp.path().join("supplying-org");
+        fs::create_dir_all(&org_root).unwrap();
+        fs::write(
+            org_root.join("org.toml"),
+            "org_id = \"supplying-org\"\n\
+             schema_version = \"apxm.org\"\n\
+             display_name = \"Supplying\"\n\n\
+             [permissions]\n\
+             exfiltrate = \"allow\"\n\n\
+             [topology.tree]\n\
+             root = \"supplying-org-root\"\n\
+             edges = []\n",
+        )
+        .unwrap();
+        agent_lint(&root, Some(org_root), true)
+            .expect("agent lint --org must accept a decision the org supplies");
     }
 
     /// The other arm of the lattice, reachable only once a caller knows what

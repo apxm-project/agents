@@ -1,127 +1,72 @@
 //! `apxm org new|lint|install` — the toolchain for the canonical
-//! organization-package folder format (`apxm.org-package` /
-//! `apxm.org-topology`).
+//! organization-package folder format (`apxm.org`).
 //!
-//! This module is the org-level sibling of [`super::agent`]: same
-//! module organization, same manifest-projection-from-schema approach (hand
-//! ported into Rust structs rather than loading the JSON schema at runtime —
-//! this repo does not vendor or path-depend on the sibling `contracts`
-//! repo), same lint reporting style, same install-to-`APXM_HOME` pattern.
-//! Where a check can reuse the agent command logic (installed-agent resolution,
-//! the `[hierarchy]` parent/permitted_children shape, recursive directory copy)
-//! it does — see the `use super::agent::{...}` imports below — rather than
-//! reimplementing it. The joined capabilities/permissions grammar is *not*
-//! shared: it is the org format's alone now that an agent package declares no
-//! capability inventory of its own.
+//! An org package is one authored file: `org.toml`. The org's global
+//! Capability set is the key set of `[permissions]`: a capability id with a
+//! decision is the declaration, so there is no second inventory for it to
+//! agree with. Members and topology are tables of the same manifest.
 //!
-//! An org package's `members.toml` entries carry a `hierarchy` snapshot
-//! (org-package.v1#/properties/members/items/properties/hierarchy) of the
-//! referenced agent's own `agent.toml [hierarchy]`. That snapshot — not a
-//! second resolve-and-read of the installed agent's manifest — is
-//! what `org lint`'s hierarchy-consistency check compares against
-//! `topology.toml`'s tree edges; this is the schema's own design ("carried
-//! here so org-package lint can check consistency ... without
-//! resolving the referenced agent") and matches the
-//! `invalid-member-hierarchy-contradicts-topology-tree` vector, which
-//! exercises exactly this snapshot-vs-tree contradiction with no reference
-//! to an installed agent at all.
+//! `[[members]]` entries carry a `hierarchy` snapshot of the referenced
+//! agent's own `agent.toml [hierarchy]`. That snapshot — not a second
+//! resolve-and-read of the installed agent's manifest — is what `org lint`
+//! compares against `[topology.tree]`.
+//!
+//! The recognized folder contract is derived from
+//! `contracts/schemas/apxm.org.json`'s `PackageFiles.patternProperties`.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use anyhow::{Context, Result, anyhow, bail};
+use apxm_ais::permissions::PermissionDecision;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use super::agent::{HierarchyToml, copy_dir_recursive, resolve_installed_agent};
+use super::agent::{
+    HierarchyToml, copy_dir_recursive, package_file_patterns, resolve_installed_agent,
+    unrecognized_files_under,
+};
 use super::implementations::{Status, print_section_header, print_status_line};
 
-// ---------------------------------------------------------------------
-// On-disk manifest shapes (org-package.v1 / org-topology.v1 projections)
-// ---------------------------------------------------------------------
+const ORG_SCHEMA: &str = "apxm.org";
 
-/// `capabilities/capabilities.toml` — the org's GLOBAL capability set.
-///
-/// This shape is the org format's alone. An agent package declares no
-/// capability inventory: what it can supply is the built-in allowlist plus the
-/// handlers it ships, so there is nothing at the agent level for these types to
-/// be shared with.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct CapabilitiesToml {
-    #[serde(default, rename = "capability")]
-    pub capability: Vec<CapabilityEntry>,
+/// The published `apxm.org` contract, embedded from its checked-in bytes.
+pub(crate) const ORG_SCHEMA_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../contracts/schemas/apxm.org.json"
+));
+
+fn recognized_relpath_patterns() -> &'static [Regex] {
+    static PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
+    PATTERNS.get_or_init(|| package_file_patterns(ORG_SCHEMA_JSON, ORG_SCHEMA))
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CapabilityEntry {
-    pub id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(flatten)]
-    pub extra: toml::Table,
-}
-
-/// `capabilities/permissions.toml` — one policy entry per joined global
-/// capability id. A global with no matching policy is not a capability and
-/// fails `org lint`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct PermissionsToml {
-    #[serde(default, rename = "permission")]
-    pub permission: Vec<PermissionEntry>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PermissionEntry {
-    pub capability: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub decision: Option<toml::Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-    #[serde(flatten)]
-    pub extra: toml::Table,
-}
-
-/// The org-global joined capability set (declared ∩ permitted — the same join
-/// `check_global_capability_join` enforces), read for `agent lint --org` so a
-/// member package's `agent.toml [permissions]` may state a decision for a
-/// capability the org supplies.
-///
-/// Missing files are an empty global set rather than an error: this is opt-in
-/// plumbing for a package that is a member of an org, not a requirement every
-/// org must satisfy.
-pub(super) fn load_org_global_capabilities(org_root: &Path) -> Result<BTreeSet<String>> {
-    let capabilities_path = org_root.join("capabilities/capabilities.toml");
-    let permissions_path = org_root.join("capabilities/permissions.toml");
-    let capabilities: CapabilitiesToml = if capabilities_path.is_file() {
-        read_toml(&capabilities_path)?
-    } else {
-        CapabilitiesToml::default()
-    };
-    let permissions: PermissionsToml = if permissions_path.is_file() {
-        read_toml(&permissions_path)?
-    } else {
-        PermissionsToml::default()
-    };
-    let declared: BTreeSet<&str> = capabilities
-        .capability
+#[cfg(test)]
+fn recognized_relpath(rel: &str) -> bool {
+    recognized_relpath_patterns()
         .iter()
-        .map(|c| c.id.as_str())
-        .collect();
-    let permitted: BTreeSet<&str> = permissions
-        .permission
-        .iter()
-        .map(|p| p.capability.as_str())
-        .collect();
-    Ok(declared
-        .intersection(&permitted)
-        .map(|id| (*id).to_string())
-        .collect())
+        .any(|pattern| pattern.is_match(rel))
 }
 
-/// Projection of `org.toml` (`org-package.v1#/properties/org`).
+fn find_unrecognized_files(root: &Path) -> Result<Vec<String>> {
+    unrecognized_files_under(root, recognized_relpath_patterns())
+}
+
+// ---------------------------------------------------------------------
+// On-disk manifest shapes (`apxm.org` projections)
+// ---------------------------------------------------------------------
+
+/// Projection of `org.toml`. Scalars first, tables last so a round-trip
+/// through `toml::to_string` emits valid TOML. `deny_unknown_fields` makes a
+/// retired key (`capability`, a leftover inventory) a parse error.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OrgToml {
     pub org_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_version: Option<String>,
     pub display_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -131,16 +76,25 @@ pub struct OrgToml {
     pub environment: Option<toml::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub models: Option<toml::Value>,
+    /// The org's global Capability set. A key with a decision is the
+    /// declaration — there is no second inventory for it to agree with.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub permissions: BTreeMap<String, PermissionDecision>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<MemberEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topology: Option<TopologyToml>,
 }
 
-/// Projection of `agents/members.toml` (`org-package.v1#/properties/members`).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct MembersToml {
-    #[serde(default, rename = "member")]
-    pub member: Vec<MemberEntry>,
+/// The org-global capability set, read for `agent lint --org` so a member
+/// package's `agent.toml [permissions]` may state a decision for a capability
+/// the org supplies.
+pub(super) fn load_org_global_capabilities(org_root: &Path) -> Result<BTreeSet<String>> {
+    Ok(load_org(org_root)?.org.permissions.into_keys().collect())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MemberEntry {
     pub id: String,
     pub package: String,
@@ -153,9 +107,6 @@ pub struct MemberEntry {
     pub enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capability_mask: Option<CapabilityMaskToml>,
-    /// Snapshot of the referenced agent's own `[hierarchy]` table
-    /// (`apxm.agent#/$defs/Hierarchy`). Reused verbatim from
-    /// [`super::agent::HierarchyToml`] — same shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hierarchy: Option<HierarchyToml>,
 }
@@ -169,6 +120,7 @@ fn default_enabled() -> bool {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CapabilityMaskToml {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub grant: Vec<String>,
@@ -176,8 +128,8 @@ pub struct CapabilityMaskToml {
     pub deny: Vec<String>,
 }
 
-/// Projection of `topology.toml`, conforming to `apxm.org-topology`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TopologyToml {
     pub tree: TreeToml,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -189,6 +141,7 @@ pub struct TopologyToml {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TreeToml {
     pub root: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -196,12 +149,14 @@ pub struct TreeToml {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EdgeToml {
     pub parent: String,
     pub child: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RelationToml {
     pub from: String,
     pub to: String,
@@ -272,64 +227,26 @@ fn org_new(
     let display_name = display_name.unwrap_or_else(|| titleize(id));
     let placeholder_root_member = format!("{id}-root");
 
-    // org.toml
     let org_toml = format!(
         "org_id = \"{id}\"\n\
+         schema_version = \"{ORG_SCHEMA}\"\n\
          display_name = \"{display_name}\"\n\
          description = \"Describe this org's purpose here.\"\n\n\
          [policy]\n\
          approval_default = \"manual\"\n\
-         autonomy_ceiling = \"supervised\"\n"
-    );
-    write_new_file(&root.join("org.toml"), &org_toml)?;
-
-    // capabilities/ — the GLOBAL capability set shared by every member
-    // unless masked by a member's capability_mask.
-    write_new_file(
-        &root.join("capabilities/capabilities.toml"),
-        "# capability-definition.v1 entries — the org's GLOBAL capability set.\n\
-         # Every entry here must have a matching capabilities/permissions.toml\n\
-         # entry (the joined capability) or `apxm org lint` fails.\n",
-    )?;
-    write_new_file(
-        &root.join("capabilities/permissions.toml"),
-        "# One [[permission]] per capabilities.toml entry (by id).\n",
-    )?;
-
-    // agents/members.toml — empty by default; author adds [[member]] blocks
-    // that reference real, installed apxm.agent agents.
-    write_new_file(
-        &root.join("agents/members.toml"),
-        "# One [[member]] per org member, by reference to an installed\n\
-         # agent (apxm.agent). No agent code lives here.\n\
-         #\n\
-         # [[member]]\n\
+         autonomy_ceiling = \"supervised\"\n\n\
+         # Global Capability set: a key with a decision is the declaration.\n\
+         # Dotted ids must be quoted: \"org.http_get\" = \"allow\"\n\
+         # [permissions]\n\n\
+         # [[members]]\n\
          # id = \"root-agent\"\n\
          # package = \"some.agent\"\n\
-         # version = \"0.1.0\"\n\
-         #\n\
-         # [member.capability_mask]\n\
-         # deny = [\"some.capability\"]\n\
-         #\n\
-         # [member.hierarchy]\n\
-         # permitted_children = [\"child-agent\"]\n",
-    )?;
-
-    // topology.toml — a single-node placeholder tree; update `root`/`edges`
-    // to match the members declared above.
-    let topology_toml = format!(
-        "[tree]\n\
+         # version = \"0.1.0\"\n\n\
+         [topology.tree]\n\
          root = \"{placeholder_root_member}\"\n\
-         edges = []\n\n\
-         # One [[relations]] entry per pairwise topology relation.\n\
-         # [[relations]]\n\
-         # from = \"root-agent\"\n\
-         # to = \"child-agent\"\n\
-         # type = \"delegates_to\"\n"
+         edges = []\n"
     );
-    write_new_file(&root.join("topology.toml"), &topology_toml)?;
-
-    // prompts/ and tests/ — optional, scaffolded for parity with `agent new`.
+    write_new_file(&root.join("org.toml"), &org_toml)?;
     write_new_file(
         &root.join("prompts/persona.md"),
         &format!("# {display_name}\n\nDescribe this org's collective persona/voice here.\n"),
@@ -372,10 +289,6 @@ fn read_toml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
 struct LoadedOrg {
     root: PathBuf,
     org: OrgToml,
-    capabilities: CapabilitiesToml,
-    permissions: PermissionsToml,
-    members: MembersToml,
-    topology: TopologyToml,
 }
 
 fn load_org(root: &Path) -> Result<LoadedOrg> {
@@ -387,39 +300,9 @@ fn load_org(root: &Path) -> Result<LoadedOrg> {
         bail!("missing required file: {}", org_path.display());
     }
     let org: OrgToml = read_toml(&org_path)?;
-
-    let members_path = root.join("agents/members.toml");
-    if !members_path.is_file() {
-        bail!("missing required file: {}", members_path.display());
-    }
-    let members: MembersToml = read_toml(&members_path)?;
-
-    let topology_path = root.join("topology.toml");
-    if !topology_path.is_file() {
-        bail!("missing required file: {}", topology_path.display());
-    }
-    let topology: TopologyToml = read_toml(&topology_path)?;
-
-    let capabilities_path = root.join("capabilities/capabilities.toml");
-    let capabilities = if capabilities_path.is_file() {
-        read_toml(&capabilities_path)?
-    } else {
-        CapabilitiesToml::default()
-    };
-    let permissions_path = root.join("capabilities/permissions.toml");
-    let permissions = if permissions_path.is_file() {
-        read_toml(&permissions_path)?
-    } else {
-        PermissionsToml::default()
-    };
-
     Ok(LoadedOrg {
         root: root.to_path_buf(),
         org,
-        capabilities,
-        permissions,
-        members,
-        topology,
     })
 }
 
@@ -427,9 +310,6 @@ fn load_org(root: &Path) -> Result<LoadedOrg> {
 // org lint
 // ---------------------------------------------------------------------
 
-/// Minimal SemVer core parse (`MAJOR.MINOR.PATCH`, prerelease/build metadata
-/// ignored) — uses `agent.rs::semver_like`'s tolerance, adding the
-/// numeric triple needed for requirement satisfaction.
 fn parse_semver_core(version: &str) -> Option<(u64, u64, u64)> {
     let core = version.split(['-', '+']).next().unwrap_or(version);
     let parts: Vec<&str> = core.split('.').collect();
@@ -442,12 +322,6 @@ fn parse_semver_core(version: &str) -> Option<(u64, u64, u64)> {
     Some((major, minor, patch))
 }
 
-/// Does `actual` satisfy the `requirement` string from a member's
-/// `version` field? Supports exact match, `^` (compatible: same major,
-/// `>=` requirement), and `~` (same major.minor, `>=` requirement).
-/// Unparseable requirements/versions fall back to an exact string
-/// comparison — no `semver` crate dependency exists in this workspace
-/// today (see `semver_like`, which only validates shape).
 fn version_satisfies(requirement: &str, actual: &str) -> bool {
     let requirement = requirement.trim();
     if let Some(rest) = requirement.strip_prefix('^') {
@@ -468,12 +342,9 @@ fn version_satisfies(requirement: &str, actual: &str) -> bool {
     }
 }
 
-/// Check 1: every member reference must resolve to an installed
-/// agent (`APXM_HOME/agents/<id>/`, 's install layout) whose
-/// version satisfies the member's version requirement.
-fn check_member_resolution(members: &MembersToml, apxm_home: &Path) -> Vec<String> {
+fn check_member_resolution(members: &[MemberEntry], apxm_home: &Path) -> Vec<String> {
     let mut errors = Vec::new();
-    for member in &members.member {
+    for member in members {
         match resolve_installed_agent(apxm_home, &member.package) {
             Ok(pack) => {
                 if !version_satisfies(&member.version, &pack.version) {
@@ -495,9 +366,6 @@ fn check_member_resolution(members: &MembersToml, apxm_home: &Path) -> Vec<Strin
     errors
 }
 
-/// Check 2: `topology.toml`'s tree must have exactly one root and
-/// no cycles. Real cycle detection via DFS coloring, not just "trust the
-/// format".
 fn check_tree_well_formed(tree: &TreeToml) -> Vec<String> {
     let mut errors = Vec::new();
 
@@ -528,8 +396,6 @@ fn check_tree_well_formed(tree: &TreeToml) -> Vec<String> {
         }
     }
 
-    // Single root: exactly one node with no incoming edge, and it must be
-    // the declared `root`.
     let roots: Vec<&str> = nodes
         .iter()
         .filter(|n| !parent_of.contains_key(*n))
@@ -548,9 +414,6 @@ fn check_tree_well_formed(tree: &TreeToml) -> Vec<String> {
         ));
     }
 
-    // Cycle detection: DFS from the declared root, tracking the recursion
-    // stack; any edge back into the stack is a cycle. Also verify every
-    // node is reachable from `root` exactly once (a well-formed tree).
     #[derive(PartialEq)]
     enum Color {
         InProgress,
@@ -618,11 +481,7 @@ fn check_tree_well_formed(tree: &TreeToml) -> Vec<String> {
     errors
 }
 
-/// Check 3: a member's own `hierarchy` snapshot (parent /
-/// permitted_children shape) must not contradict `topology.tree`'s
-/// edges. Uses the
-/// `invalid-member-hierarchy-contradicts-topology-tree` vector.
-fn check_hierarchy_consistency(members: &MembersToml, tree: &TreeToml) -> Vec<String> {
+fn check_hierarchy_consistency(members: &[MemberEntry], tree: &TreeToml) -> Vec<String> {
     let mut errors = Vec::new();
 
     let mut parent_of: HashMap<&str, &str> = HashMap::new();
@@ -635,7 +494,7 @@ fn check_hierarchy_consistency(members: &MembersToml, tree: &TreeToml) -> Vec<St
             .insert(edge.child.as_str());
     }
 
-    for member in &members.member {
+    for member in members {
         let Some(hierarchy) = &member.hierarchy else {
             continue;
         };
@@ -645,9 +504,8 @@ fn check_hierarchy_consistency(members: &MembersToml, tree: &TreeToml) -> Vec<St
                 Some(actual_parent) => {
                     errors.push(format!(
                         "members['{}'].hierarchy.parent ('{}') is inconsistent with \
-                         topology.tree (edge declares parent '{}') — organization-packages.md \
-                         'The package': a member's own agent.toml [hierarchy] must be consistent \
-                         with topology.toml, lint error otherwise.",
+                         topology.tree (edge declares parent '{}') — a member's own \
+                         agent.toml [hierarchy] must be consistent with org.toml [topology.tree]",
                         member.id, declared_parent, actual_parent
                     ));
                 }
@@ -683,77 +541,23 @@ fn check_hierarchy_consistency(members: &MembersToml, tree: &TreeToml) -> Vec<St
     errors
 }
 
-/// Check 4: every `capability_mask.grant`/`deny` entry must
-/// reference a capability declared in the org's own
-/// `capabilities/capabilities.toml` — no masking undeclared capabilities.
 fn check_capability_mask_validity(
-    members: &MembersToml,
-    capabilities: &CapabilitiesToml,
+    members: &[MemberEntry],
+    declared: &BTreeSet<String>,
 ) -> Vec<String> {
     let mut errors = Vec::new();
-    let declared: BTreeSet<&str> = capabilities
-        .capability
-        .iter()
-        .map(|c| c.id.as_str())
-        .collect();
-
-    for member in &members.member {
+    for member in members {
         let Some(mask) = &member.capability_mask else {
             continue;
         };
         for cap in mask.grant.iter().chain(mask.deny.iter()) {
-            if !declared.contains(cap.as_str()) {
+            if !declared.contains(cap) {
                 errors.push(format!(
-                    "member '{}' capability_mask references '{cap}', which is not declared in \
-                     capabilities/capabilities.toml — no masking undeclared capabilities",
+                    "member '{}' capability_mask references '{cap}', which is not a key of \
+                     org.toml [permissions] — no masking undeclared capabilities",
                     member.id
                 ));
             }
-        }
-    }
-
-    errors
-}
-
-/// Structural check using the joined-capability rule from
-/// org-package.v1's own description: "A global without a matching
-/// permissions.toml policy entry fails lint"): every
-/// `capabilities/capabilities.toml` entry needs a matching
-/// `capabilities/permissions.toml` entry to be a real (joined) global
-/// capability, and vice versa. Not one of the four required org checks,
-/// but the same  precedent `check_capability_mask_validity` (check 4)
-/// depends on: `declared` there is only meaningful once the global set
-/// itself is join-consistent.
-fn check_global_capability_join(
-    capabilities: &CapabilitiesToml,
-    permissions: &PermissionsToml,
-) -> Vec<String> {
-    let mut errors = Vec::new();
-    let declared: BTreeSet<&str> = capabilities
-        .capability
-        .iter()
-        .map(|c| c.id.as_str())
-        .collect();
-    let permitted: BTreeSet<&str> = permissions
-        .permission
-        .iter()
-        .map(|p| p.capability.as_str())
-        .collect();
-    for cap in &declared {
-        if !permitted.contains(cap) {
-            errors.push(format!(
-                "capability '{cap}' is declared in capabilities/capabilities.toml but has no \
-                 matching entry in capabilities/permissions.toml — an entry with no permission \
-                 policy is not a capability"
-            ));
-        }
-    }
-    for cap in &permitted {
-        if !declared.contains(cap) {
-            errors.push(format!(
-                "capabilities/permissions.toml declares a policy for '{cap}', which is not \
-                 defined in capabilities/capabilities.toml"
-            ));
         }
     }
     errors
@@ -763,10 +567,6 @@ fn org_lint(path: &Path, json_output: bool) -> Result<()> {
     org_lint_at(path, &apxm_core::env::apxm_home(), json_output)
 }
 
-/// Lints an org package against an explicit `apxm_home` root. Split out
-/// from [`org_lint`] so tests can point at a tempdir instead of mutating
-/// the process-global `APXM_HOME` env var — same pattern as
-/// `agent.rs::agent_install_to`.
 fn org_lint_at(path: &Path, apxm_home: &Path, json_output: bool) -> Result<()> {
     let org = load_org(path)?;
 
@@ -777,34 +577,44 @@ fn org_lint_at(path: &Path, apxm_home: &Path, json_output: bool) -> Result<()> {
     if org.org.display_name.trim().is_empty() {
         errors.push("org.toml: display_name must not be empty".to_string());
     }
+    match org.org.schema_version.as_deref() {
+        Some(ORG_SCHEMA) => {}
+        Some(other) => errors.push(format!(
+            "org.toml: schema_version '{other}' must be '{ORG_SCHEMA}'"
+        )),
+        None => errors.push(format!(
+            "org.toml: schema_version is required and must be '{ORG_SCHEMA}'"
+        )),
+    }
     {
         let mut seen: BTreeMap<&str, usize> = BTreeMap::new();
-        for member in &org.members.member {
+        for member in &org.org.members {
             *seen.entry(member.id.as_str()).or_insert(0) += 1;
         }
         for (id, count) in seen {
             if count > 1 {
                 errors.push(format!(
-                    "agents/members.toml: member id '{id}' is declared {count} times"
+                    "org.toml: member id '{id}' is declared {count} times"
                 ));
             }
         }
     }
 
-    errors.extend(check_global_capability_join(
-        &org.capabilities,
-        &org.permissions,
-    ));
-    errors.extend(check_member_resolution(&org.members, apxm_home));
-    errors.extend(check_tree_well_formed(&org.topology.tree));
-    errors.extend(check_hierarchy_consistency(
-        &org.members,
-        &org.topology.tree,
-    ));
-    errors.extend(check_capability_mask_validity(
-        &org.members,
-        &org.capabilities,
-    ));
+    errors.extend(check_member_resolution(&org.org.members, apxm_home));
+    if let Some(topology) = &org.org.topology {
+        errors.extend(check_tree_well_formed(&topology.tree));
+        errors.extend(check_hierarchy_consistency(
+            &org.org.members,
+            &topology.tree,
+        ));
+    }
+    let declared: BTreeSet<String> = org.org.permissions.keys().cloned().collect();
+    errors.extend(check_capability_mask_validity(&org.org.members, &declared));
+    for unrecognized in find_unrecognized_files(path)? {
+        errors.push(format!(
+            "unrecognized file '{unrecognized}' is not part of the {ORG_SCHEMA} folder contract"
+        ));
+    }
 
     if json_output {
         println!(
@@ -850,11 +660,6 @@ fn org_install(path: &Path, force: bool, json_output: bool) -> Result<()> {
     org_install_to(path, &apxm_core::env::apxm_home(), force, json_output)
 }
 
-/// Installs an org package under an explicit `apxm_home` root. Split out
-/// from [`org_install`] so tests can point at a tempdir instead of
-/// mutating the process-global `APXM_HOME` env var (same reasoning as
-/// `agent.rs::agent_install_to`: this crate denies `unsafe_code`,
-/// which `std::env::set_var` requires in Rust 2024).
 fn org_install_to(path: &Path, apxm_home: &Path, force: bool, json_output: bool) -> Result<()> {
     let org = load_org(path)?;
     let dest = orgs_dir(apxm_home).join(&org.org.org_id);
@@ -885,7 +690,7 @@ fn org_install_to(path: &Path, apxm_home: &Path, force: bool, json_output: bool)
         print_section_header("Org Installed");
         print_status_line(&org.org.org_id, Status::Ok, &dest.display().to_string());
     }
-    let _ = &org.root; // root retained on LoadedOrg for parity/debuggability
+    let _ = &org.root;
     Ok(())
 }
 
@@ -899,9 +704,6 @@ mod tests {
         org_new(id, Some(dir.to_path_buf()), None, true).expect("scaffold ok");
     }
 
-    /// Scaffold + install a minimal agent under `apxm_home`
-    /// so org-level member-resolution tests have something real to resolve
-    /// against, at the given version.
     fn install_agent_fixture(apxm_home: &Path, id: &str, version: &str) {
         let tmp = tempdir().unwrap();
         let root = tmp.path().join(id);
@@ -915,35 +717,154 @@ mod tests {
         agent_install_to(&root, apxm_home, false, true).expect("agent install ok");
     }
 
+    fn write_org_toml(root: &Path, contents: &str) {
+        fs::create_dir_all(root).unwrap();
+        fs::write(root.join("org.toml"), contents).unwrap();
+    }
+
+    fn two_member_org_toml(child_package: &str, child_version: &str, deny: &str) -> String {
+        format!(
+            "org_id = \"valid-org\"\n\
+             schema_version = \"apxm.org\"\n\
+             display_name = \"Valid Org\"\n\n\
+             [permissions]\n\
+             \"org.http_get\" = \"allow\"\n\n\
+             [[members]]\n\
+             id = \"root-agent\"\n\
+             package = \"root-pkg\"\n\
+             version = \"0.1.0\"\n\
+             [members.hierarchy]\n\
+             permitted_children = [\"child-agent\"]\n\n\
+             [[members]]\n\
+             id = \"child-agent\"\n\
+             package = \"{child_package}\"\n\
+             version = \"{child_version}\"\n\
+             [members.capability_mask]\n\
+             deny = [{deny}]\n\
+             [members.hierarchy]\n\
+             parent = \"root-agent\"\n\n\
+             [topology.tree]\n\
+             root = \"root-agent\"\n\
+             edges = [{{ parent = \"root-agent\", child = \"child-agent\" }}]\n\n\
+             [[topology.relations]]\n\
+             from = \"root-agent\"\n\
+             to = \"child-agent\"\n\
+             type = \"delegates_to\"\n"
+        )
+    }
+
+    fn build_valid_org(root: &Path, apxm_home: &Path) {
+        install_agent_fixture(apxm_home, "root-pkg", "0.1.0");
+        install_agent_fixture(apxm_home, "child-pkg", "0.2.0");
+        write_org_toml(
+            root,
+            &two_member_org_toml("child-pkg", "0.2.0", "\"org.http_get\""),
+        );
+    }
+
+    fn fixture_version(requirement: &str) -> &str {
+        requirement
+            .strip_prefix('^')
+            .or_else(|| requirement.strip_prefix('~'))
+            .unwrap_or(requirement)
+    }
+
+    fn org_vectors() -> Vec<serde_json::Value> {
+        let text = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../contracts/vectors/apxm.org.json"
+        ));
+        serde_json::from_str::<Vec<serde_json::Value>>(text)
+            .expect("the published apxm.org vectors are a JSON array")
+    }
+
+    fn manifest_toml(org: &serde_json::Value) -> Result<String, String> {
+        let from_json = toml::to_string(org).map_err(|error| error.to_string())?;
+        if toml::from_str::<OrgToml>(&from_json).is_ok() {
+            return Ok(from_json);
+        }
+        let typed: OrgToml =
+            serde_json::from_value(org.clone()).map_err(|error| error.to_string())?;
+        toml::to_string(&typed).map_err(|error| error.to_string())
+    }
+
+    fn lint_admits_vector(vector: &serde_json::Value) -> Result<(), String> {
+        let files = vector["files"].as_object().expect("vector files map");
+        for digest in files.values() {
+            let digest = digest.as_str().ok_or("a file digest must be a string")?;
+            if digest.len() != 64
+                || !digest
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            {
+                return Err(format!(
+                    "file digest {digest:?} is not lowercase sha256 hex"
+                ));
+            }
+        }
+
+        let tmp = tempdir().map_err(|error| error.to_string())?;
+        let root = tmp.path().join("package");
+        for path in files.keys() {
+            let file = root.join(path);
+            if let Some(parent) = file.parent() {
+                fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+            fs::write(&file, "").map_err(|error| error.to_string())?;
+        }
+        let manifest = manifest_toml(&vector["org"])?;
+        fs::write(root.join("org.toml"), manifest).map_err(|error| error.to_string())?;
+
+        let fake_home = tempdir().map_err(|error| error.to_string())?;
+        if let Some(members) = vector["org"]["members"].as_array() {
+            let mut installed: BTreeSet<(String, String)> = BTreeSet::new();
+            for member in members {
+                let Some(package) = member["package"].as_str() else {
+                    continue;
+                };
+                let Some(version) = member["version"].as_str() else {
+                    continue;
+                };
+                let install_version = fixture_version(version).to_string();
+                if installed.insert((package.to_string(), install_version.clone())) {
+                    install_agent_fixture(fake_home.path(), package, &install_version);
+                }
+            }
+        }
+
+        org_lint_at(&root, fake_home.path(), true).map_err(|error| error.to_string())
+    }
+
     #[test]
     fn new_scaffolds_schema_valid_tree() {
         let tmp = tempdir().unwrap();
         let root = tmp.path().join("demo-org");
         scaffold(&root, "demo-org");
 
-        for rel in [
-            "org.toml",
+        for rel in ["org.toml", "prompts/persona.md", "tests/README.md"] {
+            assert!(root.join(rel).is_file(), "missing scaffolded file: {rel}");
+        }
+        for retired in [
             "capabilities/capabilities.toml",
             "capabilities/permissions.toml",
             "agents/members.toml",
             "topology.toml",
-            "prompts/persona.md",
-            "tests/README.md",
         ] {
-            assert!(root.join(rel).is_file(), "missing scaffolded file: {rel}");
+            assert!(
+                !root.join(retired).exists(),
+                "scaffold must not write retired path {retired}"
+            );
         }
 
         let org: OrgToml = read_toml(&root.join("org.toml")).unwrap();
         assert_eq!(org.org_id, "demo-org");
+        assert_eq!(org.schema_version.as_deref(), Some(ORG_SCHEMA));
+        assert!(org.members.is_empty());
+        assert_eq!(
+            org.topology.as_ref().map(|t| t.tree.root.as_str()),
+            Some("demo-org-root")
+        );
 
-        let topology: TopologyToml = read_toml(&root.join("topology.toml")).unwrap();
-        assert_eq!(topology.tree.root, "demo-org-root");
-        assert!(topology.tree.edges.is_empty());
-
-        let members: MembersToml = read_toml(&root.join("agents/members.toml")).unwrap();
-        assert!(members.member.is_empty());
-
-        // The freshly scaffolded tree (no members yet) must lint clean.
         let fake_home = tempdir().unwrap();
         org_lint_at(&root, fake_home.path(), true).expect("scaffolded org should lint clean");
     }
@@ -955,59 +876,6 @@ mod tests {
         scaffold(&root, "demo-org");
         let err = org_new("demo-org", Some(root.clone()), None, true).unwrap_err();
         assert!(err.to_string().contains("already exists"));
-    }
-
-    /// Builds a valid two-member org package (root -> child), using the
-    ///  vector `valid-two-level-tree-with-global-capability-mask-and-delegation`.
-    fn build_valid_org(root: &Path, apxm_home: &Path) {
-        scaffold(root, "valid-org");
-        install_agent_fixture(apxm_home, "root-pkg", "0.1.0");
-        install_agent_fixture(apxm_home, "child-pkg", "0.2.0");
-
-        fs::write(
-            root.join("capabilities/capabilities.toml"),
-            "[[capability]]\nid = \"org.http_get\"\ndescription = \"demo\"\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("capabilities/permissions.toml"),
-            "[[permission]]\ncapability = \"org.http_get\"\ndecision = \"allow\"\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("agents/members.toml"),
-            "[[member]]\n\
-             id = \"root-agent\"\n\
-             package = \"root-pkg\"\n\
-             version = \"0.1.0\"\n\
-             \n\
-             [member.hierarchy]\n\
-             permitted_children = [\"child-agent\"]\n\
-             \n\
-             [[member]]\n\
-             id = \"child-agent\"\n\
-             package = \"child-pkg\"\n\
-             version = \"0.2.0\"\n\
-             \n\
-             [member.capability_mask]\n\
-             deny = [\"org.http_get\"]\n\
-             \n\
-             [member.hierarchy]\n\
-             parent = \"root-agent\"\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("topology.toml"),
-            "[tree]\n\
-             root = \"root-agent\"\n\
-             edges = [{ parent = \"root-agent\", child = \"child-agent\" }]\n\
-             \n\
-             [[relations]]\n\
-             from = \"root-agent\"\n\
-             to = \"child-agent\"\n\
-             type = \"delegates_to\"\n",
-        )
-        .unwrap();
     }
 
     #[test]
@@ -1025,15 +893,11 @@ mod tests {
         let tmp = tempdir().unwrap();
         let root = tmp.path().join("valid-org");
         let fake_home = tempdir().unwrap();
-        build_valid_org(&root, fake_home.path());
-
-        // Point a member at a package that was never installed.
-        let members_toml = fs::read_to_string(root.join("agents/members.toml")).unwrap();
-        fs::write(
-            root.join("agents/members.toml"),
-            members_toml.replace("package = \"child-pkg\"", "package = \"nowhere-pkg\""),
-        )
-        .unwrap();
+        install_agent_fixture(fake_home.path(), "root-pkg", "0.1.0");
+        write_org_toml(
+            &root,
+            &two_member_org_toml("nowhere-pkg", "0.2.0", "\"org.http_get\""),
+        );
 
         let err = org_lint_at(&root, fake_home.path(), true)
             .expect_err("unresolvable member must fail lint");
@@ -1045,18 +909,12 @@ mod tests {
         let tmp = tempdir().unwrap();
         let root = tmp.path().join("valid-org");
         let fake_home = tempdir().unwrap();
-        build_valid_org(&root, fake_home.path());
-
-        // Require a version the installed agent does not satisfy.
-        let members_toml = fs::read_to_string(root.join("agents/members.toml")).unwrap();
-        fs::write(
-            root.join("agents/members.toml"),
-            members_toml.replace(
-                "package = \"child-pkg\"\nversion = \"0.2.0\"",
-                "package = \"child-pkg\"\nversion = \"9.9.9\"",
-            ),
-        )
-        .unwrap();
+        install_agent_fixture(fake_home.path(), "root-pkg", "0.1.0");
+        install_agent_fixture(fake_home.path(), "child-pkg", "0.2.0");
+        write_org_toml(
+            &root,
+            &two_member_org_toml("child-pkg", "9.9.9", "\"org.http_get\""),
+        );
 
         let err = org_lint_at(&root, fake_home.path(), true)
             .expect_err("unsatisfied version requirement must fail lint");
@@ -1068,27 +926,28 @@ mod tests {
         let tmp = tempdir().unwrap();
         let root = tmp.path().join("valid-org");
         let fake_home = tempdir().unwrap();
-        build_valid_org(&root, fake_home.path());
-
-        // root -> child -> root: a cycle back to the declared root.
-        fs::write(
-            root.join("topology.toml"),
-            "[tree]\n\
+        install_agent_fixture(fake_home.path(), "root-pkg", "0.1.0");
+        install_agent_fixture(fake_home.path(), "child-pkg", "0.2.0");
+        write_org_toml(
+            &root,
+            "org_id = \"valid-org\"\n\
+             schema_version = \"apxm.org\"\n\
+             display_name = \"Valid Org\"\n\n\
+             [[members]]\n\
+             id = \"root-agent\"\n\
+             package = \"root-pkg\"\n\
+             version = \"0.1.0\"\n\n\
+             [[members]]\n\
+             id = \"child-agent\"\n\
+             package = \"child-pkg\"\n\
+             version = \"0.2.0\"\n\n\
+             [topology.tree]\n\
              root = \"root-agent\"\n\
              edges = [\n\
              \x20\x20{ parent = \"root-agent\", child = \"child-agent\" },\n\
              \x20\x20{ parent = \"child-agent\", child = \"root-agent\" },\n\
              ]\n",
-        )
-        .unwrap();
-        // Drop the hierarchy snapshots so this test isolates the tree
-        // well-formedness check from the hierarchy-consistency check.
-        fs::write(
-            root.join("agents/members.toml"),
-            "[[member]]\nid = \"root-agent\"\npackage = \"root-pkg\"\nversion = \"0.1.0\"\n\n\
-             [[member]]\nid = \"child-agent\"\npackage = \"child-pkg\"\nversion = \"0.2.0\"\n",
-        )
-        .unwrap();
+        );
 
         let err =
             org_lint_at(&root, fake_home.path(), true).expect_err("cyclic tree must fail lint");
@@ -1097,31 +956,6 @@ mod tests {
 
     #[test]
     fn lint_catches_malformed_multi_root_tree() {
-        let tmp = tempdir().unwrap();
-        let root = tmp.path().join("valid-org");
-        let fake_home = tempdir().unwrap();
-        build_valid_org(&root, fake_home.path());
-
-        // child-agent has no parent edge at all -> two roots, not a tree.
-        fs::write(
-            root.join("topology.toml"),
-            "[tree]\n\
-             root = \"root-agent\"\n\
-             edges = []\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("agents/members.toml"),
-            "[[member]]\nid = \"root-agent\"\npackage = \"root-pkg\"\nversion = \"0.1.0\"\n\n\
-             [[member]]\nid = \"child-agent\"\npackage = \"child-pkg\"\nversion = \"0.2.0\"\n",
-        )
-        .unwrap();
-
-        // This tree is trivially well-formed on its own (a single node
-        // `root-agent`, no edges) — the malformation here is instead
-        // exercised directly against the tree-check function with an
-        // explicit two-root edge set, since `child-agent` floating with no
-        // edges at all is indistinguishable from "not part of the tree".
         let bad_tree = TreeToml {
             root: "root-agent".to_string(),
             edges: vec![
@@ -1146,51 +980,40 @@ mod tests {
 
     #[test]
     fn lint_catches_hierarchy_contradicting_topology() {
-        // Uses the `invalid-member-hierarchy-contradicts-topology-tree`
-        // vector: child-agent's own hierarchy.parent says 'other-agent', but
-        // topology.tree declares its parent as 'root-agent'.
         let tmp = tempdir().unwrap();
         let root = tmp.path().join("bad-hierarchy-org");
         let fake_home = tempdir().unwrap();
-        scaffold(&root, "bad-hierarchy-org");
         install_agent_fixture(fake_home.path(), "root-pkg", "0.1.0");
         install_agent_fixture(fake_home.path(), "child-pkg", "0.2.0");
         install_agent_fixture(fake_home.path(), "other-pkg", "0.1.0");
-
-        fs::write(
-            root.join("agents/members.toml"),
-            "[[member]]\n\
+        write_org_toml(
+            &root,
+            "org_id = \"bad-hierarchy-org\"\n\
+             schema_version = \"apxm.org\"\n\
+             display_name = \"Bad Hierarchy\"\n\n\
+             [[members]]\n\
              id = \"root-agent\"\n\
              package = \"root-pkg\"\n\
              version = \"0.1.0\"\n\
-             \n\
-             [member.hierarchy]\n\
-             permitted_children = [\"child-agent\"]\n\
-             \n\
-             [[member]]\n\
+             [members.hierarchy]\n\
+             permitted_children = [\"child-agent\"]\n\n\
+             [[members]]\n\
              id = \"child-agent\"\n\
              package = \"child-pkg\"\n\
              version = \"0.2.0\"\n\
-             \n\
-             [member.hierarchy]\n\
-             parent = \"other-agent\"\n\
-             \n\
-             [[member]]\n\
+             [members.hierarchy]\n\
+             parent = \"other-agent\"\n\n\
+             [[members]]\n\
              id = \"other-agent\"\n\
              package = \"other-pkg\"\n\
-             version = \"0.1.0\"\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("topology.toml"),
-            "[tree]\n\
+             version = \"0.1.0\"\n\n\
+             [topology.tree]\n\
              root = \"root-agent\"\n\
              edges = [\n\
              \x20\x20{ parent = \"root-agent\", child = \"child-agent\" },\n\
              \x20\x20{ parent = \"root-agent\", child = \"other-agent\" },\n\
              ]\n",
-        )
-        .unwrap();
+        );
 
         let err = org_lint_at(&root, fake_home.path(), true)
             .expect_err("hierarchy/topology contradiction must fail lint");
@@ -1199,10 +1022,9 @@ mod tests {
             "expected a lint error, got: {err}"
         );
 
-        // Re-run just the targeted check to assert on the exact message
-        // shape from the vector's `expected_error`.
         let org = load_org(&root).unwrap();
-        let errors = check_hierarchy_consistency(&org.members, &org.topology.tree);
+        let tree = &org.org.topology.as_ref().unwrap().tree;
+        let errors = check_hierarchy_consistency(&org.org.members, tree);
         assert!(
             errors.iter().any(|e| {
                 e.contains("members['child-agent'].hierarchy.parent ('other-agent')")
@@ -1217,18 +1039,12 @@ mod tests {
         let tmp = tempdir().unwrap();
         let root = tmp.path().join("valid-org");
         let fake_home = tempdir().unwrap();
-        build_valid_org(&root, fake_home.path());
-
-        // Deny a capability that was never declared in capabilities.toml.
-        let members_toml = fs::read_to_string(root.join("agents/members.toml")).unwrap();
-        fs::write(
-            root.join("agents/members.toml"),
-            members_toml.replace(
-                "deny = [\"org.http_get\"]",
-                "deny = [\"org.http_get\", \"org.undeclared\"]",
-            ),
-        )
-        .unwrap();
+        install_agent_fixture(fake_home.path(), "root-pkg", "0.1.0");
+        install_agent_fixture(fake_home.path(), "child-pkg", "0.2.0");
+        write_org_toml(
+            &root,
+            &two_member_org_toml("child-pkg", "0.2.0", "\"org.http_get\", \"org.undeclared\""),
+        );
 
         let err = org_lint_at(&root, fake_home.path(), true)
             .expect_err("undeclared capability mask entry must fail lint");
@@ -1246,8 +1062,9 @@ mod tests {
 
         let dest = fake_home.path().join("orgs").join("installable-org");
         assert!(dest.join("org.toml").is_file());
-        assert!(dest.join("agents/members.toml").is_file());
-        assert!(dest.join("topology.toml").is_file());
+        assert!(dest.join("prompts/persona.md").is_file());
+        assert!(!dest.join("agents/members.toml").exists());
+        assert!(!dest.join("topology.toml").exists());
 
         let real_home = dirs::home_dir().unwrap_or_default();
         assert!(!real_home.join(".apxm/orgs/installable-org").exists());
@@ -1264,5 +1081,76 @@ mod tests {
         let second = org_install_to(&root, fake_home.path(), false, true);
         let err = second.expect_err("second install without --force must fail");
         assert!(err.to_string().contains("already exists"));
+    }
+
+    #[test]
+    fn org_vectors_match_the_lint_path() {
+        for vector in org_vectors() {
+            let name = vector["name"].as_str().expect("vector name");
+            let expected = vector["expected_valid"].as_bool().expect("expected_valid");
+            let verdict = lint_admits_vector(&vector["input"]);
+            assert_eq!(
+                verdict.is_ok(),
+                expected,
+                "vector '{name}' expected valid={expected} but org lint returned {verdict:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn the_recognized_folder_contract_is_the_published_one() {
+        for recognized in [
+            "org.toml",
+            "README.md",
+            "prompts/persona.md",
+            "tests/README.md",
+        ] {
+            assert!(
+                recognized_relpath(recognized),
+                "the published contract must recognize {recognized}"
+            );
+        }
+        for retired in [
+            "capabilities/capabilities.toml",
+            "capabilities/permissions.toml",
+            "agents/members.toml",
+            "topology.toml",
+            "notes.txt",
+        ] {
+            assert!(
+                !recognized_relpath(retired),
+                "the published contract must not recognize {retired}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_schema_version_constant_is_read_from_the_published_contract() {
+        let schema: serde_json::Value =
+            serde_json::from_str(ORG_SCHEMA_JSON).expect("the embedded contract is valid JSON");
+        assert_eq!(schema["$id"].as_str(), Some(ORG_SCHEMA));
+        assert_eq!(
+            schema["$defs"]["OrgManifest"]["properties"]["schema_version"]["const"].as_str(),
+            Some(ORG_SCHEMA),
+            "the schema_version constant drifted from the schema `const`",
+        );
+    }
+
+    #[test]
+    fn checked_in_packages_satisfy_the_published_folder_contract() {
+        let repository_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let package = "examples/orgs/demo";
+        let root = repository_root.join(package);
+        let unrecognized = find_unrecognized_files(&root)
+            .unwrap_or_else(|error| panic!("walk {package}: {error}"));
+        assert!(
+            unrecognized.is_empty(),
+            "{package} carries paths outside the published folder contract: {unrecognized:?}"
+        );
+        let pkg = load_org(&root).unwrap_or_else(|error| panic!("load {package}: {error}"));
+        assert_eq!(pkg.org.schema_version.as_deref(), Some(ORG_SCHEMA));
+        assert!(pkg.org.members.is_empty());
+        org_lint_at(&root, tempdir().unwrap().path(), true)
+            .unwrap_or_else(|error| panic!("lint {package}: {error}"));
     }
 }

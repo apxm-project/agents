@@ -72,7 +72,7 @@ A parent/child Program relationship is execution composition, and the three
 calls in §1 are the only things that invoke. It is a different thing from the
 `[hierarchy]` table a package declares: `parent` and `permitted_children` in
 `agent.toml` are packaging topology, checked for consistency against an org's
-`topology.toml` by `apxm org lint`
+`org.toml [topology.tree]` by `apxm org lint`
 (`crates/tools/cli/src/commands/org.rs`). No membership, edge, or declared
 parent causes an invocation.
 

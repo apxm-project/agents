@@ -146,6 +146,7 @@ const SCHEMAS_UNDER_TEST: &[SchemaUnderTest] = &[
 /// below is complete only because these are accounted for by name.
 const VECTORS_READ_ELSEWHERE: &[(&str, &str)] = &[
     ("apxm.agent.json", "crates/tools/cli/src/commands/agent.rs"),
+    ("apxm.org.json", "crates/tools/cli/src/commands/org.rs"),
     ("apxm.air.json", "tests/semantic_conformance.rs"),
     (
         "apxm.executable-artifact.json",

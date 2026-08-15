@@ -577,11 +577,11 @@ pub enum AgentAction {
         /// Agent directory to validate (default: current directory).
         #[arg(default_value = ".")]
         path: PathBuf,
-        /// An org package directory whose capabilities/{capabilities,
-        /// permissions}.toml are this agent's org-global capability set. Those
-        /// ids extend what this package can supply, so `agent.toml
-        /// [permissions]` may state a decision for a capability the org
-        /// provides rather than one this package ships itself.
+        /// An org package directory whose `org.toml [permissions]` keys are
+        /// this agent's org-global capability set. Those ids extend what this
+        /// package can supply, so `agent.toml [permissions]` may state a
+        /// decision for a capability the org provides rather than one this
+        /// package ships itself.
         #[arg(long)]
         org: Option<PathBuf>,
     },
@@ -610,7 +610,7 @@ pub enum AgentAction {
 
 #[derive(Subcommand)]
 pub enum OrgAction {
-    /// Scaffold a new organization-package folder tree (apxm.org-package).
+    /// Scaffold a new organization-package folder tree (apxm.org).
     New {
         /// Org id (also used as org.toml's org_id).
         id: String,
@@ -621,9 +621,9 @@ pub enum OrgAction {
         #[arg(long)]
         display_name: Option<String>,
     },
-    /// Validate an org-package folder: member resolution, tree
-    /// well-formedness, member-hierarchy/topology consistency, and
-    /// capability-mask validity against the org's global capability set.
+    /// Validate an org package: member resolution, tree well-formedness,
+    /// member-hierarchy/topology consistency, and capability-mask validity
+    /// against `org.toml [permissions]`.
     Lint {
         /// Org-package directory to validate (default: current directory).
         #[arg(default_value = ".")]

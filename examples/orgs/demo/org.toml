@@ -1,0 +1,12 @@
+org_id = "demo"
+schema_version = "apxm.org"
+display_name = "Demo"
+description = "A zero-member org package used to prove the published folder contract against real bytes."
+
+[policy]
+approval_default = "manual"
+autonomy_ceiling = "supervised"
+
+[topology.tree]
+root = "demo-root"
+edges = []

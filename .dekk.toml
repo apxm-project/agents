@@ -199,6 +199,13 @@ build = { run = "npm --prefix crates/tools/cli/agent-packaging ci --ignore-scrip
 verify = { run = "python tools/scripts/apxm_cli.py agent verify", description = "Verify an agent against its generated integrity chain", skill = true }
 install = { run = "python tools/scripts/apxm_cli.py agent install", description = "Install a built agent to APXM_HOME/agents/<id>" }
 
+[commands.org]
+description = "Scaffold, lint, and install organization packages"
+group = "Authoring"
+new = { run = "python tools/scripts/apxm_cli.py org new", description = "Scaffold a new org folder tree", skill = true }
+lint = { run = "python tools/scripts/apxm_cli.py org lint", description = "Validate an org against the apxm.org contract", skill = true }
+install = { run = "python tools/scripts/apxm_cli.py org install", description = "Install an org package to APXM_HOME/orgs/<id>" }
+
 [commands.cache]
 description = "Manage the MemoCache (response memoization)"
 group = "Configuration"

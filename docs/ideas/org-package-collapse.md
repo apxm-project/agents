@@ -1,9 +1,13 @@
 # Collapsing the org package onto one authored manifest
 
-**Status:** proposal, not implemented. The drafted contract and vectors live in
-`docs/ideas/org-package-collapse/` and are deliberately *not* under `contracts/`
-— a published vector with no reader fails
-`crates/machine/program/tests/contract_vector_conformance.rs`.
+**Status:** implemented. The published contract is
+`contracts/schemas/apxm.org.json`; the 13 vectors are
+`contracts/vectors/apxm.org.json`; the reader is
+`crates/tools/cli/src/commands/org.rs`. `apxm org new` scaffolds `org.toml`,
+`prompts/persona.md`, and `tests/README.md`. The declared-vs-permitted join was
+deleted, not relocated: `[permissions]` keys are the global Capability set.
+
+The rest of this document is the design record that landed that change.
 
 ## Why this exists
 
@@ -14,8 +18,10 @@ the published `contracts/schemas/apxm.agent.json`, and its folder contract is
 derived from that schema's `PackageFiles.patternProperties` rather than from a
 hand-written Rust `match`.
 
-The **org** package never moved. `crates/tools/cli/src/commands/org.rs` still
-reads and writes the exact files the agent collapse retired:
+The **org** package had not moved: `org.rs` still read and wrote the four files
+the agent collapse retired (`capabilities/capabilities.toml`,
+`capabilities/permissions.toml`, `agents/members.toml`, `topology.toml`). That
+is what this change retired.
 
 | path | written by | read by |
 |---|---|---|
@@ -24,9 +30,9 @@ reads and writes the exact files the agent collapse retired:
 | `agents/members.toml` | `org_new` | `load_org` |
 | `topology.toml` | `org_new` | `load_org` |
 
-So `apxm org new` scaffolds a four-manifest tree whose shape the rest of the
-repository has abandoned, and `apxm agent lint --org` joins two files to
-recover a capability set that one table could state directly.
+That tree is what `apxm org new` used to scaffold, and `apxm agent lint --org`
+used to join two files to recover a capability set that one table now states
+directly.
 
 ## What the collapse is
 
