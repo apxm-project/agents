@@ -197,13 +197,20 @@ jobs:
       - name: Run CLI tests
         run: dekk agents test-cli
 
+      # The CLI's only coverage of compiling a package-level Python entry is
+      # `#[ignore]`d, because it spawns a subprocess that imports the authoring
+      # frontend. Nothing passed `--ignored`, so it never ran and its fixture
+      # rotted against the current surface. This step installs the frontend and
+      # runs it.
+      - name: Run CLI tests that need the installed Python frontend
+        run: dekk agents test-cli-installed-frontend
+
       # `test-cli` installs crates/tools/cli/agent-packaging's locked
       # dependencies with `npm ci` and then never runs its suite. This step is
       # only `npm test` in that directory, so it must stay directly after the
-      # step that populates node_modules. Two of its seven tests skip by design
-      # in a standalone `agents` checkout: they assert against
-      # `apxm.contract-common`, which the coordinating workspace owns and CI
-      # does not check out.
+      # step that populates node_modules. It typechecks `index.d.ts` — the
+      # package's whole public type surface, which had no gate at all — before
+      # running the suite.
       - name: Run handler-packaging tests
         run: dekk agents test-handler-packaging
 

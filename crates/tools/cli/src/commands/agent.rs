@@ -2218,15 +2218,28 @@ mod tests {
         .unwrap();
         fs::write(
             root.join("python/main.py"),
-            "from apxm_program import Agent, Model\n\
+            "from typing import TypedDict\n\
              \n\
-             StudioModel = Model[object, object](\"model.target\")\n\
+             from apxm_program import Agent, Model\n\
              \n\
              \n\
-             @Agent(input=\"Input\", output=\"Output\")\n\
+             class StudioInput(TypedDict):\n\
+             \x20\x20\x20\x20message: str\n\
+             \n\
+             \n\
+             class StudioOutput(TypedDict):\n\
+             \x20\x20\x20\x20message: str\n\
+             \n\
+             \n\
+             StudioModel = Model[StudioInput, StudioOutput](\"model.target\")\n\
+             \n\
+             \n\
+             @Agent(input=StudioInput, output=StudioOutput)\n\
              async def StudioGenerated(agent, request):\n\
-             \x20\x20\x20\x20while True:\n\
-             \x20\x20\x20\x20\x20\x20\x20\x20reply = await StudioModel(request)\n\n\
+             \x20\x20\x20\x20while request[\"message\"] != \"\":\n\
+             \x20\x20\x20\x20\x20\x20\x20\x20reply = await StudioModel(request)\n\
+             \x20\x20\x20\x20\x20\x20\x20\x20request = await agent.yield_(reply)\n\
+             \x20\x20\x20\x20raise ValueError(\"missing studio input\")\n\n\
              if __name__ == \"__main__\":\n\
              \x20\x20\x20\x20print(StudioGenerated.canonical_air(), end=\"\")\n",
         )
