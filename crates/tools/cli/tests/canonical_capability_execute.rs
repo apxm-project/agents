@@ -21,7 +21,7 @@ fn fixture(name: &str) -> PathBuf {
 /// The fixture AIR authors a repository-relative path, so the CLI runs from the
 /// repository root exactly as `dekk agents execute-canonical` does.
 fn execute_capability_fixture() -> std::process::Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_apxm"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_apxm_dev"));
     command.current_dir(repository_root());
     command.args([
         "--json",

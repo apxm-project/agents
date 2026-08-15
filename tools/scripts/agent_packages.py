@@ -52,10 +52,15 @@ def build_cli() -> Path:
 
 
 def run_action(apxm: Path, action: str, package: str) -> bool:
-    """Run one `apxm agent <action>` over one package, reporting its verdict."""
+    """Run package integrity regeneration (`apxm build`) or `apxm agent` gates."""
 
+    command = (
+        [str(apxm), "build", package]
+        if action == "build"
+        else [str(apxm), "agent", action, package]
+    )
     completed = subprocess.run(
-        [str(apxm), "agent", action, package],
+        command,
         cwd=REPOSITORY_ROOT,
         capture_output=True,
         text=True,

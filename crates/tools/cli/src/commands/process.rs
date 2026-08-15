@@ -208,8 +208,7 @@ fn classify_process(cmdline: &[String], _scope: &ProcessScope) -> Option<String>
 
 fn matches_direct_apxm_job(cmdline: &[String]) -> bool {
     for idx in 0..cmdline.len() {
-        if (basename(&cmdline[idx]) == APXM_BINARY
-            || basename(&cmdline[idx]) == APXM_DEV_BINARY)
+        if (basename(&cmdline[idx]) == APXM_BINARY || basename(&cmdline[idx]) == APXM_DEV_BINARY)
             && is_direct_apxm_job_command(&cmdline[idx + 1..])
         {
             return true;

@@ -10,10 +10,13 @@ pub mod analysis;
 #[cfg(feature = "driver")]
 pub mod backend;
 pub mod cache;
+#[cfg(feature = "dev")]
 pub mod canonical_air;
+#[cfg(feature = "dev")]
 pub mod canonical_execute;
+#[cfg(feature = "dev")]
 pub mod codegen;
-#[cfg(feature = "driver")]
+#[cfg(all(feature = "dev", feature = "driver"))]
 pub mod compile_service_canonical;
 pub(crate) mod dekk_hints;
 pub mod interaction;
@@ -33,8 +36,11 @@ pub use analysis::*;
 #[cfg(feature = "driver")]
 pub use backend::*;
 pub use cache::*;
+#[cfg(feature = "dev")]
 pub use canonical_air::*;
+#[cfg(feature = "dev")]
 pub use canonical_execute::*;
+#[cfg(feature = "dev")]
 pub use codegen::*;
 pub use ops::*;
 pub use org::*;

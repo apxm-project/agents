@@ -20,23 +20,36 @@ path = "src/main.rs"
 [[bin]]
 name = "apxm-dev"
 path = "src/dev_main.rs"
+required-features = ["dev"]
+
+[[test]]
+name = "canonical_execute"
+required-features = ["dev"]
+
+[[test]]
+name = "canonical_capability_execute"
+required-features = ["dev"]
+
+[[test]]
+name = "canonical_skill_execute"
+required-features = ["dev"]
 
 [dependencies]
 apxm-core.workspace = true
 apxm-ais.workspace = true
 apxm-backends.workspace = true
 apxm-program.workspace = true
-apxm-capability.workspace = true
-apxm-source-port.workspace = true
-apxm-execution.workspace = true
+apxm-capability = { workspace = true, optional = true }
+apxm-source-port = { workspace = true, optional = true }
+apxm-execution = { workspace = true, optional = true }
 apxm-runtime-service.workspace = true
 apxm-runtime-protocol.workspace = true
 apxm-compilation-service.workspace = true
 apxm-compilation-protocol.workspace = true
 apxm-compilation-client.workspace = true
 apxm-interaction-client.workspace = true
-apxm-inference.workspace = true
-apxm-kernel.workspace = true
+apxm-inference = { workspace = true, optional = true }
+apxm-kernel = { workspace = true, optional = true }
 apxm-backend-registry.workspace = true
 clap.workspace = true
 # `process` and `sync` carry the private package-handler worker adapter: the
@@ -73,6 +86,13 @@ apxm-core.workspace = true
 
 [features]
 default = []
+dev = [
+    "dep:apxm-execution",
+    "dep:apxm-kernel",
+    "dep:apxm-source-port",
+    "dep:apxm-capability",
+    "dep:apxm-inference",
+]
 driver = [
     "tokio/rt-multi-thread",
     "tokio/io-std",

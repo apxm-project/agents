@@ -121,7 +121,7 @@ pub enum Commands {
         #[command(subcommand)]
         action: TeamAction,
     },
-    /// Scaffold, sync, lint, build, and install agents.
+    /// Lint, sync, verify, and install agents.
     Agent {
         #[command(subcommand)]
         action: AgentAction,
@@ -581,12 +581,6 @@ pub enum AgentAction {
         #[arg(long)]
         org: Option<PathBuf>,
     },
-    /// Regenerate package metadata and integrity.toml.
-    Build {
-        /// Agent directory to build (default: current directory).
-        #[arg(default_value = ".")]
-        path: PathBuf,
-    },
     /// Install a built agent to `APXM_HOME/agents/<id>/`.
     Install {
         /// Agent directory to install (default: current directory).
@@ -668,24 +662,31 @@ mod tests {
     use clap::Parser;
 
     #[test]
+    fn production_cli_rejects_agent_build() {
+        assert!(Cli::try_parse_from(["apxm", "agent", "build", "."]).is_err());
+    }
+
+    #[test]
     fn production_cli_rejects_compile_service_canonical() {
         assert!(Cli::try_parse_from(["apxm", "compile-service-canonical", "/tmp/agent"]).is_err());
     }
 
     #[test]
     fn production_cli_rejects_execute_canonical() {
-        assert!(Cli::try_parse_from([
-            "apxm",
-            "execute-canonical",
-            "/tmp/program.air",
-            "--invocation-admission",
-            "/tmp/admission.json",
-            "--release",
-            "/tmp/release.json",
-            "--provenance",
-            "/tmp/provenance.json",
-        ])
-        .is_err());
+        assert!(
+            Cli::try_parse_from([
+                "apxm",
+                "execute-canonical",
+                "/tmp/program.air",
+                "--invocation-admission",
+                "/tmp/admission.json",
+                "--release",
+                "/tmp/release.json",
+                "--provenance",
+                "/tmp/provenance.json",
+            ])
+            .is_err()
+        );
     }
 
     #[test]
@@ -745,11 +746,11 @@ mod tests {
 
     #[test]
     fn execute_canonical_rejects_missing_invocation_admission() {
-        let error = match DevCli::try_parse_from(["apxm-dev", "execute-canonical", "/tmp/program.air"])
-        {
-            Ok(_) => panic!("execute-canonical must require exact host authority"),
-            Err(error) => error,
-        };
+        let error =
+            match DevCli::try_parse_from(["apxm-dev", "execute-canonical", "/tmp/program.air"]) {
+                Ok(_) => panic!("execute-canonical must require exact host authority"),
+                Err(error) => error,
+            };
         assert_eq!(
             error.kind(),
             clap::error::ErrorKind::MissingRequiredArgument

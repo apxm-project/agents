@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::io::{self, IsTerminal};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::SystemTime;
 
 use anyhow::{Result, bail};
@@ -11,18 +11,16 @@ use apxm_interaction_client::{
     CLIENT_RECORD_CONTRACT, ClientInteractionRecord, HeadlessOutcome, InteractionClient,
     render_outcome,
 };
-use apxm_kernel::event_api::CanonicalEventRef;
 use apxm_runtime_service::{self, RuntimeService};
-use apxm_source_port::{Frontend, PACKAGE_SNAPSHOT_CONTRACT, PackageSnapshot, SnapshotContent};
 
 use super::cli::{EventAction, RuntimeAction};
 use crate::tui;
 
-/// `apxm build` over the Compilation Client.
+/// `apxm build` verifies package integrity, then compiles through the Compilation Client.
 pub fn build_command(agent_package: PathBuf) -> Result<()> {
-    let mut client = CompilationClient::default();
-    let digest = client
-        .build(snapshot_for(&agent_package, Frontend::Python))
+    super::agent::agent_build(&agent_package, false)?;
+    let digest = CompilationClient::default()
+        .build_package(&agent_package)
         .map_err(|error| anyhow::anyhow!(error))?;
     println!("{digest}");
     Ok(())
@@ -87,14 +85,7 @@ pub fn event_command(action: EventAction) -> Result<()> {
             idempotency_key,
         } => {
             runtime
-                .fulfill_event(
-                    CanonicalEventRef {
-                        event_id,
-                        generation,
-                    },
-                    serde_json::json!({}),
-                    idempotency_key,
-                )
+                .fulfill_event(event_id, generation, serde_json::json!({}), idempotency_key)
                 .map_err(|error| anyhow::anyhow!(error))?;
             Ok(())
         }
@@ -150,7 +141,7 @@ fn start_instance(
             bail!("apxm run requires a package or --artifact");
         };
         CompilationClient::default()
-            .build(snapshot_for(&package, Frontend::Python))
+            .build_package(&package)
             .map_err(|error| anyhow::anyhow!(error))?
     };
     let instance = runtime
@@ -179,14 +170,15 @@ fn persist_record(artifact_digest: &str, program_instance_id: &str) -> Result<()
 fn load_last_record() -> Result<ClientInteractionRecord> {
     let dir = client_dir();
     let mut latest: Option<(SystemTime, PathBuf)> = None;
-    for entry in fs::read_dir(&dir).map_err(|_| anyhow::anyhow!("no client records under .apxm/client"))?
+    for entry in
+        fs::read_dir(&dir).map_err(|_| anyhow::anyhow!("no client records under .apxm/client"))?
     {
         let entry = entry?;
-        let modified = entry.metadata()?.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-        if latest
-            .as_ref()
-            .is_none_or(|(time, _)| modified > *time)
-        {
+        let modified = entry
+            .metadata()?
+            .modified()
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        if latest.as_ref().is_none_or(|(time, _)| modified > *time) {
             latest = Some((modified, entry.path()));
         }
     }
@@ -195,19 +187,4 @@ fn load_last_record() -> Result<ClientInteractionRecord> {
     };
     let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(path)?)?;
     ClientInteractionRecord::decode(&value).map_err(|error| anyhow::anyhow!(error))
-}
-
-fn snapshot_for(path: &Path, frontend: Frontend) -> PackageSnapshot {
-    PackageSnapshot {
-        contract: PACKAGE_SNAPSHOT_CONTRACT.to_owned(),
-        frontend,
-        entrypoint: "agent".to_owned(),
-        contents: vec![SnapshotContent {
-            path: path.display().to_string(),
-            digest: "local".to_owned(),
-        }],
-        dependency_lock_digest: None,
-        compatibility_set: "apxm.compatibility-set/local".to_owned(),
-        snapshot_digest: path.display().to_string(),
-    }
 }

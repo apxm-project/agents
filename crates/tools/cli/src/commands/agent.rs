@@ -235,7 +235,6 @@ pub fn agent_command(action: super::AgentAction, json_output: bool) -> Result<()
         } => agent_new(&id, path, display_name, &template, json_output),
         super::AgentAction::Sync { path } => agent_sync(&path, json_output),
         super::AgentAction::Lint { path, org } => agent_lint(&path, org, json_output),
-        super::AgentAction::Build { path } => agent_build(&path, json_output),
         super::AgentAction::Install { path, force } => agent_install(&path, force, json_output),
         super::AgentAction::Verify { path } => agent_verify(&path, json_output),
     }
@@ -476,7 +475,7 @@ fn print_agent_scaffolded(id: &str, root: &Path, json_output: bool) -> Result<()
         println!("Next steps:");
         println!("  apxm agent sync {}", root.display());
         println!("  apxm agent lint {}", root.display());
-        println!("  apxm agent build {}", root.display());
+        println!("  apxm build {}", root.display());
         println!("  apxm agent install {}", root.display());
     }
     Ok(())
@@ -605,6 +604,7 @@ pub(crate) fn granted_capability_ids(root: &Path) -> Result<BTreeSet<String>> {
 /// manifest is absent or non-conforming, when the manifest and the shipped
 /// handler sources disagree, or when a private worker the manifest needs is not
 /// installed.
+#[cfg(feature = "dev")]
 pub(crate) fn admitted_package_handlers(
     root: &Path,
 ) -> Result<Option<super::canonical_execute::AdmittedPackageHandlers>> {
@@ -626,7 +626,7 @@ pub(crate) fn admitted_package_handlers(
         };
         bail!(
             "agent package '{}' would grant [{}] but ships executable handlers for [{}]; run \
-             'apxm agent build {}' so the ids the grant set claims are exactly the ids the \
+             'apxm build {}' so the ids the grant set claims are exactly the ids the \
              runtime can dispatch",
             root.display(),
             names(&shipped),
@@ -1182,7 +1182,7 @@ pub(crate) fn verify_agent_integrity(root: &Path) -> Result<()> {
     let integrity_path = root.join("integrity.toml");
     if !integrity_path.is_file() {
         bail!(
-            "agent package '{}' is missing integrity.toml; run 'apxm agent build {}' before compiling it",
+            "agent package '{}' is missing integrity.toml; run 'apxm build {}' before compiling it",
             root.display(),
             root.display()
         );
@@ -1200,7 +1200,7 @@ pub(crate) fn verify_agent_integrity(root: &Path) -> Result<()> {
     let unrecognized = find_unrecognized_files(root)?;
     if !unrecognized.is_empty() {
         bail!(
-            "agent package '{}' contains files outside the integrity schema: {}; move them into the declared package layout and run 'apxm agent build {}' again",
+            "agent package '{}' contains files outside the integrity schema: {}; move them into the declared package layout and run 'apxm build {}' again",
             root.display(),
             unrecognized.join(", "),
             root.display()
@@ -1210,7 +1210,7 @@ pub(crate) fn verify_agent_integrity(root: &Path) -> Result<()> {
     let expected = compute_integrity(&digest_recognized_files(root)?);
     if recorded != expected {
         bail!(
-            "agent package '{}' failed integrity verification; package contents changed after the last build, so run 'apxm agent build {}' again",
+            "agent package '{}' failed integrity verification; package contents changed after the last build, so run 'apxm build {}' again",
             root.display(),
             root.display()
         );
@@ -1694,7 +1694,7 @@ mod tests {
 
     /// The grant set and the dispatchable set are the same set, or the
     /// composition root refuses to bind the package at all.
-    #[cfg(feature = "driver")]
+    #[cfg(all(feature = "driver", feature = "dev"))]
     #[test]
     fn a_package_whose_manifest_lost_a_shipped_handler_is_refused() {
         let tmp = tempdir().unwrap();
@@ -1719,7 +1719,7 @@ mod tests {
         let error = admitted_package_handlers(&root).expect_err("the drift must be refused");
         let message = error.to_string();
         assert!(
-            message.contains("propose_edit") && message.contains("agent build"),
+            message.contains("propose_edit") && message.contains("apxm build"),
             "the refusal names the id the grant set claims and how to make it true: {message}"
         );
     }

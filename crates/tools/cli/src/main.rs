@@ -17,6 +17,7 @@
 )]
 
 mod commands;
+#[cfg(feature = "dev")]
 mod frontend;
 mod tui;
 

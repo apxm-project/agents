@@ -83,7 +83,8 @@ impl InteractionClient {
     /// Fulfill one exact EventRef. Invocation input is a different method.
     pub fn fulfill_event(
         &mut self,
-        event_ref: CanonicalEventRef,
+        event_id: String,
+        generation: u64,
         payload: serde_json::Value,
         idempotency_key: String,
     ) -> Result<RuntimeResult, String> {
@@ -95,7 +96,10 @@ impl InteractionClient {
                 RuntimeRequest::EventFulfill {
                     request_id: "event.fulfill".to_owned(),
                     application: EventApplication {
-                        event_ref,
+                        event_ref: CanonicalEventRef {
+                            event_id,
+                            generation,
+                        },
                         occurrence: EventOccurrence {
                             occurrence_id: idempotency_key.clone(),
                             source_kind: "human.terminal".to_owned(),

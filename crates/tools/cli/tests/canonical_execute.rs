@@ -14,7 +14,7 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 fn command(release: &std::path::Path) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_apxm"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_apxm_dev"));
     command.args([
         "--json",
         "execute-canonical",

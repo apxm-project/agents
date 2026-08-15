@@ -339,13 +339,24 @@ class CanonicalOnlyReachabilityTests(unittest.TestCase):
         run = command["run"]
 
         self.assertEqual(command["group"], "Compilation")
-        self.assertIn("build -p apxm-cli --bin apxm-dev", run)
+        self.assertIn("build -p apxm-cli --features dev --bin apxm-dev", run)
         self.assertIn('debug/apxm-dev\" execute-canonical', run)
         self.assertIn("--invocation-admission", run)
         self.assertIn("--release", run)
         self.assertIn("--provenance", run)
         self.assertNotIn("apxm_cli.py", run)
         self.assertNotIn("--features driver", run)
+
+    def test_production_cli_does_not_own_compiler_runtime_composition_roots(self) -> None:
+        cargo = (REPOSITORY_ROOT / "crates/tools/cli/Cargo.toml").read_text()
+        self.assertIn('name = "apxm-dev"', cargo)
+        self.assertIn('required-features = ["dev"]', cargo)
+        self.assertIn("apxm-execution = { workspace = true, optional = true }", cargo)
+        self.assertIn("apxm-kernel = { workspace = true, optional = true }", cargo)
+        self.assertIn("apxm-source-port = { workspace = true, optional = true }", cargo)
+        cli = (REPOSITORY_ROOT / "crates/tools/cli/src/commands/cli.rs").read_text()
+        self.assertNotIn("/// Regenerate package metadata and integrity.toml.", cli)
+        self.assertNotIn("    Build {\n        /// Agent directory to build", cli)
 
     def test_machine_operation_contract_has_no_retired_catalogue(self) -> None:
         offenders: list[str] = []
