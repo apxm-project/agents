@@ -29,7 +29,8 @@ use apxm_program::artifact::SchemaDigestRef;
 use apxm_program::capability::CapabilityInvocationAuthority;
 use apxm_program::frontend_graph::HookBinding;
 use apxm_program::runtime_evidence::{
-    Fact, LoopIterationCompletedFact, ProgramIdentity, RuntimeEvidence, RuntimeEvidenceVersion,
+    Fact, LoopIterationCompletedFact, PermissionDecision, PermissionLayer, ProgramIdentity,
+    ResolvedPermission, RuntimeEvidence, RuntimeEvidenceVersion,
 };
 
 fn digest(c: char) -> String {
@@ -181,7 +182,10 @@ fn request(air: AirModule, commit_id: &str) -> ExecutionRequest {
                         Vec::new(),
                     )
                     .expect("valid test authority"),
-                    permission: None,
+                    permission: ResolvedPermission {
+                        decision: PermissionDecision::allow(),
+                        layer: PermissionLayer::Code,
+                    },
                 },
             ))
         })

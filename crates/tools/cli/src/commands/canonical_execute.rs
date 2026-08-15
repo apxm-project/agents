@@ -2071,7 +2071,7 @@ fn local_capability_invocation_admissions(
                 )
             })?;
         let admission = grants
-            .admit(&capability_ref, authority, Some(permission))
+            .admit(&capability_ref, authority, permission)
             .map_err(|error| {
                 anyhow::anyhow!(
                     "canonical local execution cannot admit node {}: {error}",
@@ -3276,17 +3276,14 @@ mod tests {
     }
 
     /// Every authored capability node reaches the driver carrying a resolved
-    /// decision. `permission: None` used to be minted here unconditionally, so
-    /// the driver's enforcement and its evidence write — both gated on `Some` —
-    /// were dead on the shipped path.
+    /// decision. The admission type has no undecided state, so this holds the
+    /// shipped minting sequence to producing the right decision, not merely
+    /// some decision.
     #[test]
     fn every_admitted_capability_node_carries_the_layer_that_decided_it() {
         let admissions = local_admissions(&read_then_write_air("Cargo.toml", "/dev/null"));
 
-        let read = admissions["n.read"]
-            .permission
-            .as_ref()
-            .expect("an admitted capability carries its resolved decision");
+        let read = &admissions["n.read"].permission;
         assert_eq!(
             read,
             &ResolvedPermission {
@@ -3296,10 +3293,7 @@ mod tests {
             "an unnarrowed request keeps the code layer as its origin"
         );
 
-        let write = admissions["n.write"]
-            .permission
-            .as_ref()
-            .expect("a refused capability carries its resolved decision too");
+        let write = &admissions["n.write"].permission;
         assert_eq!(write.layer, PermissionLayer::Package);
         assert!(
             !write.decision.is_allow(),

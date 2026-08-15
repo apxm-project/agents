@@ -28,6 +28,7 @@ use apxm_kernel::{
 use apxm_program::air::AirModule;
 use apxm_program::artifact::SchemaDigestRef;
 use apxm_program::capability::CapabilityInvocationAuthority;
+use apxm_program::runtime_evidence::{PermissionDecision, PermissionLayer, ResolvedPermission};
 
 fn digest(c: char) -> String {
     format!("sha256:{}", c.to_string().repeat(64))
@@ -62,7 +63,10 @@ fn request(scope: &str) -> ExecutionRequest {
                 Vec::new(),
             )
             .expect("valid test authority"),
-            permission: None,
+            permission: ResolvedPermission {
+                decision: PermissionDecision::allow(),
+                layer: PermissionLayer::Code,
+            },
         },
     )]);
     ExecutionRequest {
@@ -687,7 +691,10 @@ async fn nested_loop_park_restores_exact_stack_without_duplicate_work() {
                 Vec::new(),
             )
             .expect("valid test authority"),
-            permission: None,
+            permission: ResolvedPermission {
+                decision: PermissionDecision::allow(),
+                layer: PermissionLayer::Code,
+            },
         },
     )]);
 

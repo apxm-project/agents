@@ -247,11 +247,16 @@ pub struct ExecutionRequest {
 pub struct CapabilityInvocationAdmission {
     pub capability_ref: String,
     pub authority: CapabilityInvocationAuthority,
-    /// The decision the resolution layer stack reached for this capability,
-    /// when the composition root resolved one. Anything short of an outright
-    /// allow refuses the effect before an argument reaches an implementation.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub permission: Option<ResolvedPermission>,
+    /// The decision the resolution layer stack reached for this capability.
+    /// Anything short of an outright allow refuses the effect before an
+    /// argument reaches an implementation.
+    ///
+    /// Required, with no serde default: an admission that carries no decision
+    /// is neither an allow nor a refusal, so a wire payload that omits the
+    /// field fails to deserialize rather than executing undecided. That covers
+    /// a `Continuation` rehydrated from persisted bytes as well as a
+    /// composition root that fills this map in directly.
+    pub permission: ResolvedPermission,
 }
 
 /// Where a [`CapabilityGrantSet`]'s names came from.
@@ -359,7 +364,9 @@ impl CapabilityGrantSet {
             })
     }
 
-    /// Admit one authored Capability reference under this grant set.
+    /// Admit one authored Capability reference under this grant set. The
+    /// caller must have a resolved decision to hand over; there is no way to
+    /// admit a reference the permission stack never ruled on.
     ///
     /// # Errors
     ///
@@ -368,7 +375,7 @@ impl CapabilityGrantSet {
         &self,
         authored: &str,
         authority: CapabilityInvocationAuthority,
-        permission: Option<ResolvedPermission>,
+        permission: ResolvedPermission,
     ) -> Result<CapabilityInvocationAdmission, CapabilityNotGranted> {
         Ok(CapabilityInvocationAdmission {
             capability_ref: self.resolve(authored)?.to_string(),
@@ -1683,42 +1690,32 @@ async fn drive_from(
                                     },
                                 );
                             }
-                            // A resolved decision is recorded before the effect
-                            // is attempted, so a refusal is in the committed
-                            // evidence rather than only in a log line.
-                            if let Some(resolved) = &admission.permission {
-                                state.seq += 1;
-                                let mut decided = fact(
-                                    &state.program_invocation_id,
-                                    state.seq,
-                                    FactKind::CapabilityAttemptRecorded,
-                                    None,
-                                    None,
-                                    Some(node_execution_id.clone()),
-                                    None,
-                                );
-                                let recorded = runtime_fact_mut(&mut decided);
-                                recorded.capability_ref = Some(capability_ref.clone());
-                                recorded.permission_decision = Some(resolved.clone());
-                                state.batch.push(decided);
-                            }
+                            // Every attempt records its decision before the
+                            // effect is attempted, so a refusal is in the
+                            // committed evidence rather than only in a log
+                            // line. There is no undecided attempt to skip:
+                            // the admission type has no "no decision" state.
+                            let resolved = &admission.permission;
+                            state.seq += 1;
+                            let mut decided = fact(
+                                &state.program_invocation_id,
+                                state.seq,
+                                FactKind::CapabilityAttemptRecorded,
+                                None,
+                                None,
+                                Some(node_execution_id.clone()),
+                                None,
+                            );
+                            let recorded = runtime_fact_mut(&mut decided);
+                            recorded.capability_ref = Some(capability_ref.clone());
+                            recorded.permission_decision = Some(resolved.clone());
+                            state.batch.push(decided);
 
                             // Anything the layer stack did not resolve to an
                             // outright allow refuses here: this driver has no
                             // approval broker, so `Ask` has nothing to ask.
                             let outcome =
-                                if let Some(resolved) = admission
-                                    .permission
-                                    .as_ref()
-                                    .filter(|resolved| !resolved.decision.is_allow())
-                                {
-                                    CapabilityOutcome::Failed {
-                                        message: format!(
-                                            "capability '{capability_ref}' is {} by the {} layer",
-                                            resolved.decision, resolved.layer
-                                        ),
-                                    }
-                                } else {
+                                if resolved.decision.is_allow() {
                                     let arguments_value_id = operand_str(op, "arguments")
                                         .ok_or_else(|| ExecutionError::MissingOperand {
                                             node_id: op.node_id.clone(),
@@ -1745,6 +1742,13 @@ async fn drive_from(
                                             .map_err(ExecutionError::CapabilityRequest)?,
                                         )
                                         .await
+                                } else {
+                                    CapabilityOutcome::Failed {
+                                        message: format!(
+                                            "capability '{capability_ref}' is {} by the {} layer",
+                                            resolved.decision, resolved.layer
+                                        ),
+                                    }
                                 };
                             state.last_operation_succeeded =
                                 matches!(&outcome, CapabilityOutcome::Completed { .. });
@@ -2293,10 +2297,57 @@ fn validate_commit_inputs(
         })
 }
 
+/// Hold every supplied Hook binding against the AIR it will be scheduled
+/// against.
+///
+/// `build_schedule` keys bindings by `body_region_id` and emits a Hook step
+/// only where a region matches, so a binding naming a region this AIR does not
+/// have is silently inert: the Hook's Observe/ReplaceResult contract never
+/// applies and no evidence says a Hook was even supposed to run. Two bindings
+/// on one region are the same failure with a different cause — the map keeps
+/// whichever comes last and drops the other without a word. The compile path
+/// catches both against a FrontendGraph; nothing did at this boundary, where
+/// AIR and bindings arrive from separate sources and a rehydrated
+/// `Continuation` arrives from persisted bytes.
+fn validate_hook_bindings(
+    air: &AirModule,
+    hook_bindings: &[HookBinding],
+) -> Result<(), ExecutionError> {
+    let regions = air
+        .structural_ir
+        .iter()
+        .map(|region| region.region_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut claimed = BTreeSet::new();
+    for binding in hook_bindings {
+        if !regions.contains(binding.body_region_id.as_str()) {
+            return Err(ExecutionError::InvalidAir {
+                message: format!(
+                    "hook {}: body_region_id {} names no region in this AIR, so the Hook \
+                     would never run",
+                    binding.hook_id, binding.body_region_id
+                ),
+            });
+        }
+        if !claimed.insert(binding.body_region_id.as_str()) {
+            return Err(ExecutionError::InvalidAir {
+                message: format!(
+                    "hook {}: body_region_id {} is claimed by another Hook binding, so only \
+                     one of them would run",
+                    binding.hook_id, binding.body_region_id
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn validate_execution_request(
     air: &AirModule,
     initial_values: &BTreeMap<String, Value>,
+    hook_bindings: &[HookBinding],
 ) -> Result<(), ExecutionError> {
+    validate_hook_bindings(air, hook_bindings)?;
     let verdict = air.verify();
     if !verdict.is_accepted() {
         let message = verdict
@@ -2607,7 +2658,11 @@ pub async fn execute(
     request: ExecutionRequest,
     initial_context: Value,
 ) -> Result<RunReport, ExecutionError> {
-    validate_execution_request(&request.air, &request.initial_values)?;
+    validate_execution_request(
+        &request.air,
+        &request.initial_values,
+        &request.hook_bindings,
+    )?;
     validate_commit_inputs(
         &request.program_instance_ref,
         &request.program_invocation_ref,
@@ -2665,7 +2720,11 @@ pub async fn execute_resumable(
     request: ExecutionRequest,
     initial_context: Value,
 ) -> Result<RunOutcome, ExecutionError> {
-    validate_execution_request(&request.air, &request.initial_values)?;
+    validate_execution_request(
+        &request.air,
+        &request.initial_values,
+        &request.hook_bindings,
+    )?;
     validate_commit_inputs(
         &request.program_instance_ref,
         &request.program_invocation_ref,
@@ -2783,6 +2842,9 @@ async fn resume_from_continuation(
         &commit_id,
         &write_set,
     )?;
+    // The rehydrated bindings and the rehydrated AIR are separate persisted
+    // fields, so resume checks the pairing the same way the entry paths do.
+    validate_hook_bindings(&air, &hook_bindings)?;
 
     if committed_program_instance_ref != *program_instance_ref {
         return Err(ExecutionError::Continuation(

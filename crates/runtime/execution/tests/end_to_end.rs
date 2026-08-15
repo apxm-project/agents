@@ -32,14 +32,23 @@ use apxm_program::runtime_evidence::{
 };
 
 use apxm_execution::{
-    CapabilityGrantSet, CapabilityOutcome, CapabilityPort, CapabilityRequest,
-    CommittedNativeModelUsage, CommittedNativeModelUsageError, CommittedNativeModelUsageGateError,
-    CommittedNativeModelUsageOutcome, CommittedNativeModelUsagePort, CompositionOutcome,
-    CompositionPort, CompositionReceiver, CompositionRequest, EventAwait, EventOutcome, EventPort,
-    EvidencePositionRef, EvidencePositionRefType, ExecutionError, ExecutionPortBundle,
-    ExecutionPorts, ExecutionRequest, NodeOutcome, StaticHookHandlerPort, StaticHookResult,
-    execute,
+    CapabilityGrantSet, CapabilityInvocationAdmission, CapabilityOutcome, CapabilityPort,
+    CapabilityRequest, CommittedNativeModelUsage, CommittedNativeModelUsageError,
+    CommittedNativeModelUsageGateError, CommittedNativeModelUsageOutcome,
+    CommittedNativeModelUsagePort, CompositionOutcome, CompositionPort, CompositionReceiver,
+    CompositionRequest, EventAwait, EventOutcome, EventPort, EvidencePositionRef,
+    EvidencePositionRefType, ExecutionError, ExecutionPortBundle, ExecutionPorts, ExecutionRequest,
+    NodeOutcome, StaticHookHandlerPort, StaticHookResult, execute,
 };
+
+/// The decision every admission in these fixtures carries unless a test
+/// replaces it. There is no "no decision" admission to write.
+fn code_allow() -> ResolvedPermission {
+    ResolvedPermission {
+        decision: PermissionDecision::allow(),
+        layer: PermissionLayer::Code,
+    }
+}
 
 fn digest(c: char) -> String {
     format!("sha256:{}", c.to_string().repeat(64))
@@ -787,7 +796,7 @@ fn typed_tool_request(air: AirModule, hook_bindings: Vec<HookBinding>) -> Execut
                         Vec::new(),
                     )
                     .expect("valid test authority"),
-                    None,
+                    code_allow(),
                 )
                 .expect("corpus grant"),
         )]),
@@ -1142,7 +1151,7 @@ fn request() -> ExecutionRequest {
                             ["approval.search.1".to_string()],
                         )
                         .expect("valid test authority"),
-                        None,
+                        code_allow(),
                     )
                     .expect("corpus grant"),
             ),
@@ -1158,7 +1167,7 @@ fn request() -> ExecutionRequest {
                             ["approval.acp.1".to_string()],
                         )
                         .expect("valid external-agent authority"),
-                        None,
+                        code_allow(),
                     )
                     .expect("corpus grant"),
             ),
@@ -1355,9 +1364,10 @@ async fn executes_all_five_ops_and_commits_atomically() {
 
     // The committed evidence records one NodeExecution per node, the successful
     // native model attempt, the static handler,
-    // its explicit Context transition, lifecycle facts, and one ChildAttached
-    // lineage fact for each of program.new and program.invoke.
-    assert_eq!(commit.facts().len(), 2 + 6 + 1 + 1 + 1 + 1 + 2);
+    // its explicit Context transition, lifecycle facts, one ChildAttached
+    // lineage fact for each of program.new and program.invoke, and one
+    // permission decision per capability invocation.
+    assert_eq!(commit.facts().len(), 2 + 6 + 1 + 1 + 1 + 1 + 2 + 2);
     assert!(
         commit
             .facts()
@@ -1464,10 +1474,10 @@ async fn a_denied_capability_is_refused_before_the_port_and_recorded_in_evidence
         .capability_invocations
         .get_mut("n.cap")
         .expect("test admission")
-        .permission = Some(ResolvedPermission {
+        .permission = ResolvedPermission {
         decision: PermissionDecision::deny("no egress from this deployment"),
         layer: PermissionLayer::Deployment,
-    });
+    };
 
     let report = execute(
         &ports_with_model_composition_and_capability(
@@ -1505,6 +1515,8 @@ async fn a_denied_capability_is_refused_before_the_port_and_recorded_in_evidence
         "the refusal names the reason and the layer that gave it: {refused}"
     );
 
+    // One decision, one fact — for every capability the program invokes, not
+    // only the refused one.
     let decided = commit
         .facts()
         .into_iter()
@@ -1513,10 +1525,13 @@ async fn a_denied_capability_is_refused_before_the_port_and_recorded_in_evidence
                 .then(|| fact.runtime().expect("runtime fact").clone())
         })
         .collect::<Vec<_>>();
-    assert_eq!(decided.len(), 1, "one decision, one fact");
-    assert_eq!(decided[0].capability_ref.as_deref(), Some("cap.search"));
+    assert_eq!(decided.len(), 2, "one decision per capability invocation");
+    let refused_fact = decided
+        .iter()
+        .find(|fact| fact.capability_ref.as_deref() == Some("cap.search"))
+        .expect("the refused capability has its own decision fact");
     assert_eq!(
-        decided[0].permission_decision,
+        refused_fact.permission_decision,
         Some(ResolvedPermission {
             decision: PermissionDecision::deny("no egress from this deployment"),
             layer: PermissionLayer::Deployment,
@@ -1536,10 +1551,10 @@ async fn an_admitted_allow_still_records_which_layer_allowed_it() {
         .capability_invocations
         .get_mut("n.cap")
         .expect("test admission")
-        .permission = Some(ResolvedPermission {
+        .permission = ResolvedPermission {
         decision: PermissionDecision::allow(),
         layer: PermissionLayer::Code,
-    });
+    };
 
     execute(
         &ports_with_model_composition_and_capability(
@@ -1564,13 +1579,90 @@ async fn an_admitted_allow_still_records_which_layer_allowed_it() {
     let decided = commit
         .facts()
         .into_iter()
-        .find(|fact| fact.is_kind(FactKind::CapabilityAttemptRecorded))
-        .and_then(|fact| fact.runtime().cloned())
+        .filter(|fact| fact.is_kind(FactKind::CapabilityAttemptRecorded))
+        .filter_map(|fact| fact.runtime().cloned())
+        .find(|fact| fact.capability_ref.as_deref() == Some("cap.search"))
         .expect("the allowed decision is recorded too");
-    assert_eq!(decided.capability_ref.as_deref(), Some("cap.search"));
     assert_eq!(
         decided.permission_decision.map(|resolved| resolved.layer),
         Some(PermissionLayer::Code)
+    );
+}
+
+/// An admission with no permission decision used to be neither an allow nor a
+/// refusal: the driver skipped the evidence fact and fell through to the effect,
+/// so the capability ran undecided and left nothing saying no decision existed.
+/// The decision is now a required field, so a payload that omits it — the only
+/// way such an admission can be built, since the struct no longer has that
+/// state — fails to deserialize instead. This covers the `Continuation` case:
+/// persisted bytes with no decision are refused at rehydration, not obeyed.
+#[test]
+fn an_admission_with_no_permission_decision_cannot_be_deserialized() {
+    let admitted = request()
+        .capability_invocations
+        .remove("n.cap")
+        .expect("test admission");
+    let mut wire = serde_json::to_value(&admitted).expect("admission serializes");
+
+    // With the decision present these are the exact bytes a composition root
+    // writes, and they round-trip.
+    let round_tripped: CapabilityInvocationAdmission =
+        serde_json::from_value(wire.clone()).expect("a decided admission round-trips");
+    assert_eq!(round_tripped, admitted);
+
+    // Drop only the decision. Nothing else about the payload changes, so the
+    // refusal below is the missing decision and not an unrelated shape problem.
+    wire.as_object_mut()
+        .expect("admission is a JSON object")
+        .remove("permission")
+        .expect("a decided admission serializes its decision");
+    let error = serde_json::from_value::<CapabilityInvocationAdmission>(wire)
+        .expect_err("an admission carrying no decision is not an admission");
+    assert!(
+        error.to_string().contains("permission"),
+        "the refusal names the missing decision field: {error}"
+    );
+}
+
+/// A Hook binding is matched to AIR by `body_region_id`, and the schedule
+/// emits a Hook step only where a region matches. A binding naming a region
+/// this AIR does not have used to be silently inert — the Hook's return
+/// contract never applied and no evidence said a Hook was meant to run. Two
+/// bindings on one region were the same failure by a different route: the
+/// schedule's map kept the last one and dropped the other. The compile path
+/// caught both against a FrontendGraph; this boundary, where AIR and bindings
+/// arrive from separate sources, caught neither.
+#[tokio::test]
+async fn a_hook_binding_that_matches_no_region_is_refused_before_execution() {
+    let mut stale = request();
+    stale.hook_bindings[0].body_region_id = "hook.body.that.moved".into();
+    let error = execute(&ports(Arc::new(FakeCommit::new())), stale, Value::Null)
+        .await
+        .expect_err("a Hook binding naming no region is refused, not ignored");
+    let ExecutionError::InvalidAir { message } = &error else {
+        panic!("expected an InvalidAir refusal, got {error}");
+    };
+    assert!(
+        message.contains("hook.after.model") && message.contains("hook.body.that.moved"),
+        "the refusal names the Hook and the region it could not find: {message}"
+    );
+}
+
+#[tokio::test]
+async fn two_hook_bindings_cannot_claim_the_same_body_region() {
+    let mut duplicated = request();
+    let mut second = duplicated.hook_bindings[0].clone();
+    second.hook_id = "hook.after.model.duplicate".into();
+    duplicated.hook_bindings.push(second);
+    let error = execute(&ports(Arc::new(FakeCommit::new())), duplicated, Value::Null)
+        .await
+        .expect_err("two Hooks on one body region is a refusal, not a last-wins race");
+    let ExecutionError::InvalidAir { message } = &error else {
+        panic!("expected an InvalidAir refusal, got {error}");
+    };
+    assert!(
+        message.contains("hook.after.model.duplicate") && message.contains("hook.after.model.body"),
+        "the refusal names the losing Hook and the contested region: {message}"
     );
 }
 
