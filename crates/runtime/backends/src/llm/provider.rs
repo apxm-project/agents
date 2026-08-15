@@ -8,7 +8,10 @@ use crate::llm::backends::{
     LlamaCppBackend, MockLLMBackend, OllamaBackend, OpenAIBackend, StreamChunk,
 };
 use crate::llm::{ProviderProtocol, ProviderSpec};
-use apxm_core::types::{BackendGraphCapabilities, ModelCapabilities, ModelInfo};
+use apxm_core::types::{
+    ApxmGraphDescriptor, ApxmGraphHints, GraphHintCapabilities, GraphHintPlan, GraphHintProjector,
+    GraphPreparationRef, GraphPrepareOutcome, GraphReleaseOutcome, ModelCapabilities, ModelInfo,
+};
 use async_trait::async_trait;
 use futures::Stream;
 use serde::{Deserialize, Serialize};
@@ -178,6 +181,36 @@ impl Provider {
             Provider::Mock(b) => b,
         }
     }
+
+    fn projector_ref(&self) -> &dyn GraphHintProjector {
+        match self {
+            Provider::OpenAI(b) => b,
+            Provider::Anthropic(b) => b,
+            Provider::Google(b) => b,
+            Provider::Ollama(b) => b,
+            Provider::Vllm(b) => b,
+            Provider::LlamaCpp(b) => b,
+            Provider::Mock(b) => b,
+        }
+    }
+}
+
+impl GraphHintProjector for Provider {
+    fn graph_hint_capabilities(&self) -> GraphHintCapabilities {
+        self.projector_ref().graph_hint_capabilities()
+    }
+
+    fn plan_graph_hints(&self, hints: Option<&ApxmGraphHints>) -> Result<GraphHintPlan, String> {
+        self.projector_ref().plan_graph_hints(hints)
+    }
+
+    fn render_graph_hint_fields(
+        &self,
+        hints: &ApxmGraphHints,
+        plan: &GraphHintPlan,
+    ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+        self.projector_ref().render_graph_hint_fields(hints, plan)
+    }
 }
 
 #[async_trait]
@@ -217,10 +250,6 @@ impl LLMBackend for Provider {
         self.backend_ref().capabilities()
     }
 
-    fn graph_capabilities(&self) -> BackendGraphCapabilities {
-        self.backend_ref().graph_capabilities()
-    }
-
     fn response_memoization_policy(
         &self,
     ) -> crate::llm::backends::traits::ResponseMemoizationPolicy {
@@ -236,6 +265,22 @@ impl LLMBackend for Provider {
 
     async fn release_graph(&self, graph_id: &str) -> anyhow::Result<()> {
         self.backend_ref().release_graph(graph_id).await
+    }
+
+    async fn prepare_graph(
+        &self,
+        descriptor: ApxmGraphDescriptor,
+    ) -> anyhow::Result<GraphPrepareOutcome> {
+        self.backend_ref().prepare_graph(descriptor).await
+    }
+
+    async fn release_graph_preparation(
+        &self,
+        preparation: GraphPreparationRef,
+    ) -> anyhow::Result<GraphReleaseOutcome> {
+        self.backend_ref()
+            .release_graph_preparation(preparation)
+            .await
     }
 
     fn supports_auto_tool_choice(&self) -> bool {

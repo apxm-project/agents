@@ -10,12 +10,9 @@ use serde::Serialize;
 
 use super::cli::ProcessAction;
 
-const CANONICAL_JOB_COMMANDS: &[&str] = &[
-    "canonical-air",
-    "compile-service-canonical",
-    "execute-canonical",
-];
+const CANONICAL_JOB_COMMANDS: &[&str] = &["compilation-serve", "runtime"];
 const APXM_BINARY: &str = "apxm";
+const APXM_DEV_BINARY: &str = "apxm-dev";
 const DEKK_BINARY: &str = "dekk";
 const DEKK_AGENTS_SURFACE: &str = "agents";
 
@@ -207,7 +204,8 @@ fn classify_process(cmdline: &[String], _scope: &ProcessScope) -> Option<String>
 
 fn matches_direct_apxm_job(cmdline: &[String]) -> bool {
     for idx in 0..cmdline.len() {
-        if basename(&cmdline[idx]) == APXM_BINARY && is_direct_apxm_job_command(&cmdline[idx + 1..])
+        if (basename(&cmdline[idx]) == APXM_BINARY || basename(&cmdline[idx]) == APXM_DEV_BINARY)
+            && is_direct_apxm_job_command(&cmdline[idx + 1..])
         {
             return true;
         }
@@ -430,26 +428,28 @@ mod tests {
         assert!(!matches_direct_apxm_job(&args(&[
             "apxm",
             "--config",
-            "execute-canonical",
+            "compilation-serve",
             "compile",
             "program.air",
         ])));
         assert!(!matches_direct_apxm_job(&args(&[
             "apxm",
             "--trace",
-            "canonical-air",
+            "runtime",
             "run",
             "program.air",
         ])));
     }
 
     #[test]
-    fn dekk_agents_canonical_job_is_matched() {
+    fn dekk_agents_service_child_is_matched() {
         assert!(matches_dekk_apxm_job(&args(&[
             "dekk",
             "agents",
-            "execute-canonical",
-            "program.air"
+            "compilation-serve",
+        ])));
+        assert!(matches_direct_apxm_job(&args(&[
+            "apxm", "runtime", "serve",
         ])));
     }
 

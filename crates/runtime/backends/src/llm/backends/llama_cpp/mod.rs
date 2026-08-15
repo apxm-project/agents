@@ -1,16 +1,20 @@
 //! llama.cpp adapter targeting the APXM-org `apxm` llama-server branch.
 
-use super::graph_hint_dispatch::{record_graph_hint_evidence, stream_with_graph_hint_evidence};
+use super::graph_hint_dispatch::{
+    merge_projected_provider_fields, record_graph_hint_evidence, stream_with_graph_hint_evidence,
+};
 use super::openai::OpenAIBackend;
 use super::openai::backend::validate_provider_dispatch;
 use super::traits::StreamChunk;
 use super::{LLMBackend, LLMRequest, LLMResponse};
+use crate::llm::wire::config_keys;
 use anyhow::Result;
-use apxm_core::constants::llm::apxm::HINTS_FIELD;
+use apxm_core::constants::llm::apxm::graph_hints as hint_keys;
 use apxm_core::types::{
-    ApxmGraphHints, BackendMechanismRef, GraphHintCapabilities, GraphHintDispatchProjection,
-    GraphHintField, GraphHintFieldCapability, GraphHintPlan, GraphHintProjector,
-    GraphLifecycleCapability, GraphMetadata, GraphStatusSnapshot, ModelCapabilities, ModelInfo,
+    ApxmGraphDescriptor, ApxmGraphHints, BackendMechanismRef, GraphHintCapabilities,
+    GraphHintDispatchProjection, GraphHintField, GraphHintFieldCapability, GraphHintPlan,
+    GraphHintProjector, GraphLifecycleCapability, GraphMetadata, GraphPreparationRef,
+    GraphPrepareOutcome, GraphReleaseOutcome, GraphStatusSnapshot, ModelCapabilities, ModelInfo,
     ProjectionOutcome,
 };
 use async_trait::async_trait;
@@ -34,12 +38,21 @@ fn mechanism(name: &str) -> BackendMechanismRef {
 
 pub struct LlamaCppBackend {
     inner: OpenAIBackend,
+    /// Whether this admitted profile permits the numerical-determinism tradeoff
+    /// documented by llama.cpp for `cache_prompt`.
+    cache_prompt_admitted: bool,
 }
 
 impl LlamaCppBackend {
     pub async fn new(api_key: &str, config: Option<serde_json::Value>) -> Result<Self> {
+        let cache_prompt_admitted = config
+            .as_ref()
+            .and_then(|config| config.get(config_keys::GRAPH_HINT_CACHE_PROMPT_ADMITTED))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true);
         Ok(Self {
             inner: OpenAIBackend::new(api_key, config).await?,
+            cache_prompt_admitted,
         })
     }
 
@@ -62,11 +75,8 @@ impl LlamaCppBackend {
             .extra_body
             .take()
             .unwrap_or_else(|| serde_json::json!({}));
-        if let serde_json::Value::Object(ref mut map) = extra {
-            for (key, value) in projected.provider_fields.clone() {
-                map.entry(key).or_insert(value);
-            }
-        }
+        merge_projected_provider_fields(&mut extra, &projected.provider_fields)
+            .map_err(|error| anyhow::anyhow!("llama.cpp graph-hint injection rejected: {error}"))?;
         request.extra_body = Some(extra);
         Ok((request, Some(projected)))
     }
@@ -113,11 +123,22 @@ impl LLMBackend for LlamaCppBackend {
     }
 
     async fn register_graph(&self, _metadata: GraphMetadata) -> Result<()> {
-        Ok(())
+        anyhow::bail!("llama.cpp graph lifecycle is not needed")
     }
 
     async fn get_graph_status(&self, _graph_id: &str) -> Result<Option<GraphStatusSnapshot>> {
         Ok(None)
+    }
+
+    async fn prepare_graph(&self, _descriptor: ApxmGraphDescriptor) -> Result<GraphPrepareOutcome> {
+        Ok(GraphPrepareOutcome::NotNeeded)
+    }
+
+    async fn release_graph_preparation(
+        &self,
+        _preparation: GraphPreparationRef,
+    ) -> Result<GraphReleaseOutcome> {
+        Ok(GraphReleaseOutcome::NotNeeded)
     }
 }
 
@@ -148,11 +169,18 @@ impl GraphHintProjector for LlamaCppBackend {
                 mechanism_ref: mechanism(mechanisms::APXM_ENVELOPE),
             },
         );
-        if hints.prefers_reuse() {
+        if hints.prefers_reuse() && self.cache_prompt_admitted {
             plan = plan.with_outcome(
                 GraphHintField::ReusePreference,
                 ProjectionOutcome::Applied {
                     mechanism_ref: mechanism(mechanisms::CACHE_PROMPT_MECHANISM),
+                },
+            );
+        } else if hints.prefers_reuse() {
+            plan = plan.with_outcome(
+                GraphHintField::ReusePreference,
+                ProjectionOutcome::OmittedByProfile {
+                    reason: apxm_core::types::ReasonCode::ProfileWithholdsMechanism,
                 },
             );
         }
@@ -166,7 +194,7 @@ impl GraphHintProjector for LlamaCppBackend {
     ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
         let mut fields = serde_json::Map::new();
         if let Some(envelope) = hints.project_envelope(plan) {
-            fields.insert(HINTS_FIELD.to_owned(), envelope);
+            fields.insert(hint_keys::ENVELOPE.to_owned(), envelope);
         }
         if plan.projects(GraphHintField::ReusePreference) {
             fields.insert(mechanisms::CACHE_PROMPT.to_owned(), serde_json::json!(true));

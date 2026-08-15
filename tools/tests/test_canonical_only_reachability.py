@@ -339,13 +339,40 @@ class CanonicalOnlyReachabilityTests(unittest.TestCase):
         run = command["run"]
 
         self.assertEqual(command["group"], "Compilation")
-        self.assertIn("build -p apxm-cli --bin apxm", run)
-        self.assertIn('debug/apxm\" execute-canonical', run)
+        self.assertIn("build -p apxm-cli-dev --bin apxm-dev", run)
+        self.assertIn('debug/apxm-dev\" execute-canonical', run)
         self.assertIn("--invocation-admission", run)
         self.assertIn("--release", run)
         self.assertIn("--provenance", run)
         self.assertNotIn("apxm_cli.py", run)
         self.assertNotIn("--features driver", run)
+
+    def test_production_cli_does_not_own_compiler_runtime_composition_roots(self) -> None:
+        cargo = (REPOSITORY_ROOT / "crates/tools/cli/Cargo.toml").read_text()
+        self.assertNotIn('name = "apxm-dev"', cargo)
+        self.assertNotIn("apxm-execution", cargo)
+        self.assertNotIn("apxm-kernel", cargo)
+        self.assertNotIn("apxm-program", cargo)
+        self.assertNotIn("apxm-backends", cargo)
+        self.assertNotIn("apxm-backend-registry", cargo)
+        self.assertNotIn("apxm-compilation-service", cargo)
+        self.assertNotIn("apxm-runtime-service", cargo)
+        production = REPOSITORY_ROOT / "crates/tools/cli/src"
+        for path in production.rglob("*.rs"):
+            text = path.read_text(errors="ignore")
+            self.assertNotIn(
+                "CanonicalRuntime",
+                text,
+                f"production crate still names CanonicalRuntime: {path}",
+            )
+        dev_cargo = (REPOSITORY_ROOT / "crates/tools/cli-dev/Cargo.toml").read_text()
+        self.assertIn('name = "apxm-cli-dev"', dev_cargo)
+        self.assertIn('name = "apxm-dev"', dev_cargo)
+        members = tomllib.loads((REPOSITORY_ROOT / "Cargo.toml").read_text())["workspace"]["members"]
+        self.assertIn("crates/tools/cli-dev", members)
+        cli = (REPOSITORY_ROOT / "crates/tools/cli/src/commands/cli.rs").read_text()
+        self.assertNotIn("/// Regenerate package metadata and integrity.toml.", cli)
+        self.assertNotIn("    Build {\n        /// Agent directory to build", cli)
 
     def test_machine_operation_contract_has_no_retired_catalogue(self) -> None:
         offenders: list[str] = []
@@ -387,6 +414,21 @@ class CanonicalOnlyReachabilityTests(unittest.TestCase):
                 text = path.read_text(errors="ignore")
                 for marker in forbidden_runtime_markers:
                     self.assertNotIn(marker, text, f"special Gao path in {path}")
+
+    def test_retired_chat_watch_rollout_commands_are_gone(self) -> None:
+        cli = (REPOSITORY_ROOT / "crates/tools/cli/src/commands/cli.rs").read_text()
+        for marker in ("Commands::Chat", "enum Commands {\n    Chat", "pub enum RolloutAction"):
+            self.assertNotIn("pub enum RolloutAction", cli)
+        self.assertNotIn("Chat {", cli)
+        self.assertNotIn("Watch {", cli)
+        self.assertNotIn("Rollout {", cli)
+        self.assertNotIn("    Session {", cli)
+        self.assertNotIn("    Cache {", cli)
+        self.assertNotIn("    Tokenize {", cli)
+        self.assertNotIn("    Team {", cli)
+        self.assertNotIn("    Backend {", cli)
+        driver = (REPOSITORY_ROOT / "crates/runtime/execution/src/lib.rs").read_text()
+        self.assertNotIn("resume_event,", driver)
 
 
 if __name__ == "__main__":

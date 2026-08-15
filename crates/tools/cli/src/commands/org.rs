@@ -169,18 +169,6 @@ pub struct RelationToml {
 // org new
 // ---------------------------------------------------------------------
 
-pub fn org_command(action: super::OrgAction, json_output: bool) -> Result<()> {
-    match action {
-        super::OrgAction::New {
-            id,
-            path,
-            display_name,
-        } => org_new(&id, path, display_name, json_output),
-        super::OrgAction::Lint { path } => org_lint(&path, json_output),
-        super::OrgAction::Install { path, force } => org_install(&path, force, json_output),
-    }
-}
-
 fn default_org_root(id: &str) -> PathBuf {
     PathBuf::from("orgs").join(id)
 }
@@ -207,7 +195,7 @@ fn write_new_file(path: &Path, contents: &str) -> Result<()> {
     fs::write(path, contents).with_context(|| format!("Failed to write {}", path.display()))
 }
 
-fn org_new(
+pub(crate) fn org_new(
     id: &str,
     path: Option<PathBuf>,
     display_name: Option<String>,
@@ -563,7 +551,7 @@ fn check_capability_mask_validity(
     errors
 }
 
-fn org_lint(path: &Path, json_output: bool) -> Result<()> {
+pub(crate) fn org_lint(path: &Path, json_output: bool) -> Result<()> {
     org_lint_at(path, &apxm_core::env::apxm_home(), json_output)
 }
 
@@ -656,7 +644,7 @@ fn orgs_dir(apxm_home: &Path) -> PathBuf {
     apxm_home.join("orgs")
 }
 
-fn org_install(path: &Path, force: bool, json_output: bool) -> Result<()> {
+pub(crate) fn org_install(path: &Path, force: bool, json_output: bool) -> Result<()> {
     org_install_to(path, &apxm_core::env::apxm_home(), force, json_output)
 }
 

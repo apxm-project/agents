@@ -1,19 +1,19 @@
 # APXM CLI
 
-`apxm` is the local authoring, compiler, admission, and runtime inspection
-surface. Invoke it through `dekk agents` so the managed toolchain and target
-directory remain consistent.
+`apxm` is the local command shell. Invoke it through `dekk agents` so the
+managed toolchain and target directory remain consistent.
 
-The canonical path is:
+[ADR-0023](../../../docs/adr/0023-compilation-and-runtime-services-and-program-owned-interaction.md)
+owns the architecture: the shell sequences a Compilation Client (`apxm build`)
+and an Interaction Client (`apxm run`, TUI, `apxm event`, `apxm resume`).
+`--artifact` invokes the Runtime Service without contacting compilation.
+`apxm runtime serve` / `--connect` supervise local stdio/Unix transports.
 
-```text
-agent source -> compile-service-canonical -> execute-canonical
-```
+`compile-service-canonical`, `execute-canonical`, `codegen`, and `canonical-air`
+live only on the Dekk-owned `apxm-dev` binary in the `apxm-cli-dev` package.
+Production `apxm` does not compile those composition roots. `apxm build`
+regenerates package integrity and then commits an artifact through the
+Compilation Client.
 
-The CLI also exposes focused commands for `doctor`, `backend`, `tool`, `agent`,
-`org`, `ops`, `validate`, `analyze`, `template`, `explain`, `codegen`,
-`canonical-air`, `session`, `process`, `cache`, and `tokenize`.
-
-The CLI does not own a server chat REPL, rollout archive, deployment fleet,
-model zoo, or product UI. Those surfaces belong to downstream hosts. Runtime
-implementations enter through exact admitted capability and model ports.
+The CLI does not parse `chat`, `watch`, or `rollout`. OpenAI `/v1/chat/completions`
+is an independently owned protocol edge (ADR-0024 for non-loopback).

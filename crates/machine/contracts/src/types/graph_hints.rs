@@ -37,6 +37,7 @@ const HINTS_DIGEST_DOMAIN: &[u8] = b"apxm.inference-graph-hints\0";
 const CAPABILITY_DIGEST_DOMAIN: &[u8] = b"apxm.graph-hint-capabilities\0";
 const PLAN_DIGEST_DOMAIN: &[u8] = b"apxm.graph-hint-plan\0";
 const PROJECTED_REQUEST_DIGEST_DOMAIN: &[u8] = b"apxm.graph-hint-projected-request\0";
+const LIFECYCLE_DIGEST_DOMAIN: &[u8] = b"apxm.graph-hint-lifecycle\0";
 
 /// Canonical JSON: object keys sorted, arrays order-preserving, absent values
 /// absent. Two semantically identical documents canonicalize byte-for-byte
@@ -80,6 +81,17 @@ fn require_opaque_ref(name: &str, value: &str) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+fn require_digest(name: &str, value: &str) -> Result<(), String> {
+    let valid = value.len() == 71
+        && value.starts_with("sha256:")
+        && value[7..].bytes().all(|byte| byte.is_ascii_hexdigit());
+    if valid {
+        Ok(())
+    } else {
+        Err(format!("{name} must be a sha256 digest"))
+    }
 }
 
 fn require_at_most(name: &str, value: Option<u32>, maximum: u32) -> Result<(), String> {
@@ -586,6 +598,37 @@ impl ApxmGraphHints {
         )
     }
 
+    /// Validate the graph-execution-scoped part of a node-hint collection.
+    ///
+    /// A single node hint can be admitted independently, but an execution
+    /// materializer must reject a collection that silently changes the
+    /// objective or reusable-context policy from one node to the next.
+    pub fn validate_execution_consistency(hints: &[Self]) -> Result<(), String> {
+        let Some(first) = hints.first() else {
+            return Ok(());
+        };
+        first.validate()?;
+        let graph_ref = &first.scope.graph_ref;
+        let execution_ref = &first.scope.graph_execution_ref;
+        for hint in &hints[1..] {
+            hint.validate()?;
+            if &hint.scope.graph_ref != graph_ref
+                || &hint.scope.graph_execution_ref != execution_ref
+            {
+                return Err(
+                    "graph-hint collection mixes graph or graph-execution references".to_owned(),
+                );
+            }
+            if hint.intents != first.intents {
+                return Err(
+                    "graph-execution-scoped graph-hint intents conflict across node hints"
+                        .to_owned(),
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// Render exactly the fields a plan projects.
     ///
     /// This is the only place the common envelope becomes a document bound for
@@ -901,7 +944,173 @@ pub enum GraphLifecycleCapability {
     Unsupported,
 }
 
+/// A fact-only graph description used by the exact adapter lifecycle seam.
+/// It contains no provider cache, scheduler, slot, worker, or route data.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApxmGraphDescriptor {
+    pub graph_ref: String,
+    pub graph_execution_ref: String,
+    pub nodes: Vec<ApxmGraphDescriptorNode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApxmGraphDescriptorNode {
+    pub node_ref: String,
+    pub facts: NodeGraphFacts,
+}
+
+impl ApxmGraphDescriptor {
+    pub fn validate(&self) -> Result<(), String> {
+        require_opaque_ref(hint_keys::GRAPH_REF, &self.graph_ref)?;
+        require_opaque_ref(hint_keys::GRAPH_EXECUTION_REF, &self.graph_execution_ref)?;
+        if self.nodes.is_empty() {
+            return Err("graph descriptor must contain at least one node".to_owned());
+        }
+        let mut node_refs = std::collections::BTreeSet::new();
+        for node in &self.nodes {
+            require_opaque_ref(hint_keys::NODE_REF, &node.node_ref)?;
+            if !node_refs.insert(&node.node_ref) {
+                return Err(format!("graph descriptor repeats node {}", node.node_ref));
+            }
+            node.facts.validate()?;
+        }
+        Ok(())
+    }
+
+    pub fn digest(&self) -> String {
+        domain_digest(LIFECYCLE_DIGEST_DOMAIN, &canonical_bytes(self))
+    }
+
+    /// Build the static descriptor only after all node hints have been
+    /// admitted and their graph-execution-scoped intents agree.
+    pub fn from_hints(hints: &[ApxmGraphHints]) -> Result<Self, String> {
+        ApxmGraphHints::validate_execution_consistency(hints)?;
+        let first = hints
+            .first()
+            .ok_or_else(|| "cannot describe an empty graph execution".to_owned())?;
+        let descriptor = Self {
+            graph_ref: first.scope.graph_ref.clone(),
+            graph_execution_ref: first.scope.graph_execution_ref.clone(),
+            nodes: hints
+                .iter()
+                .map(|hint| ApxmGraphDescriptorNode {
+                    node_ref: hint.scope.node_ref.clone(),
+                    facts: hint.facts.clone(),
+                })
+                .collect(),
+        };
+        descriptor.validate()?;
+        Ok(descriptor)
+    }
+}
+
+/// An adapter-local preparation identity. Raw provider handles and graph ids
+/// never leave the adapter; release accepts this digest-bound reference.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GraphPreparationRef {
+    pub descriptor_digest: String,
+    pub preparation_digest: String,
+}
+
+impl GraphPreparationRef {
+    pub fn mint(descriptor_digest: &str, adapter_material: &str) -> Result<Self, String> {
+        require_digest("descriptor_digest", descriptor_digest)?;
+        require_opaque_ref("adapter_material", adapter_material)?;
+        let preparation_digest = domain_digest(
+            LIFECYCLE_DIGEST_DOMAIN,
+            &canonical_bytes(&serde_json::json!({
+                "descriptor_digest": descriptor_digest,
+                "adapter_material": adapter_material,
+            })),
+        );
+        Ok(Self {
+            descriptor_digest: descriptor_digest.to_owned(),
+            preparation_digest,
+        })
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        require_digest("descriptor_digest", &self.descriptor_digest)?;
+        require_digest("preparation_digest", &self.preparation_digest)
+    }
+}
+
+/// Closed reasons for lifecycle calls that fail before a provider request is
+/// sent. An accepted response or an ambiguous transport error is represented
+/// by `OutcomeUnknown` instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LifecycleReasonCode {
+    InvalidDescriptor,
+    MechanismNotAdmitted,
+    ProfileWithholdsMechanism,
+    StalePreparation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "outcome")]
+pub enum GraphPrepareOutcome {
+    Prepared {
+        preparation: GraphPreparationRef,
+        projection_digest: String,
+    },
+    NotNeeded,
+    Unsupported,
+    FailedBeforeSend {
+        reason: LifecycleReasonCode,
+    },
+    OutcomeUnknown {
+        reconciliation_ref: String,
+    },
+}
+
+impl GraphPrepareOutcome {
+    pub fn validate(&self) -> Result<(), String> {
+        match self {
+            Self::Prepared {
+                preparation,
+                projection_digest,
+            } => {
+                preparation.validate()?;
+                require_digest("projection_digest", projection_digest)
+            }
+            Self::OutcomeUnknown { reconciliation_ref } => {
+                require_opaque_ref("reconciliation_ref", reconciliation_ref)
+            }
+            Self::NotNeeded | Self::Unsupported | Self::FailedBeforeSend { .. } => Ok(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "outcome")]
+pub enum GraphReleaseOutcome {
+    Released { preparation_digest: String },
+    NotNeeded,
+    Unsupported,
+    FailedBeforeSend { reason: LifecycleReasonCode },
+    OutcomeUnknown { reconciliation_ref: String },
+}
+
+impl GraphReleaseOutcome {
+    pub fn validate(&self) -> Result<(), String> {
+        match self {
+            Self::Released { preparation_digest } => {
+                require_digest("preparation_digest", preparation_digest)
+            }
+            Self::OutcomeUnknown { reconciliation_ref } => {
+                require_opaque_ref("reconciliation_ref", reconciliation_ref)
+            }
+            Self::NotNeeded | Self::Unsupported | Self::FailedBeforeSend { .. } => Ok(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GraphHintCapabilities {
     pub fields: BTreeMap<GraphHintField, GraphHintFieldCapability>,
     pub lifecycle: GraphLifecycleCapability,
@@ -930,6 +1139,20 @@ impl GraphHintCapabilities {
         self.fields
             .get(&field)
             .is_some_and(GraphHintFieldCapability::is_supported)
+    }
+
+    /// A capability declaration is complete and closed. An adapter may
+    /// support no fields, but it may not leave a field unclassified.
+    pub fn validate(&self) -> Result<(), String> {
+        for field in GraphHintField::ALL {
+            if !self.fields.contains_key(field) {
+                return Err(format!("graph-hint capability declaration omits {field:?}"));
+            }
+        }
+        if self.fields.len() != GraphHintField::ALL.len() {
+            return Err("graph-hint capability declaration contains an unknown field".to_owned());
+        }
+        Ok(())
     }
 }
 
@@ -1028,6 +1251,7 @@ impl GraphHintPlan {
     /// A projector cannot claim a mechanism for a field it declares
     /// unsupported, and a plan over present hints must cover every field.
     pub fn validate_against(&self, capabilities: &GraphHintCapabilities) -> Result<(), String> {
+        capabilities.validate()?;
         if self.capability_digest != capabilities.digest() {
             return Err(
                 "graph-hint capability digest changed between declaration and planning".to_owned(),
@@ -1047,11 +1271,33 @@ impl GraphHintPlan {
                     serde_json::to_string(field).unwrap_or_default()
                 ));
             };
-            if outcome.is_projected() && !capabilities.supports(*field) {
-                return Err(format!(
-                    "graph-hint plan projects {} through a mechanism the binding declares unsupported",
-                    serde_json::to_string(field).unwrap_or_default()
-                ));
+            match (capabilities.fields.get(field), outcome) {
+                (
+                    Some(GraphHintFieldCapability::Unsupported),
+                    ProjectionOutcome::OmittedUnsupported,
+                ) => {}
+                (Some(GraphHintFieldCapability::Unsupported), _) => {
+                    return Err(format!(
+                        "graph-hint plan gives unsupported field {} a non-unsupported outcome",
+                        serde_json::to_string(field).unwrap_or_default()
+                    ));
+                }
+                (Some(_), ProjectionOutcome::Applied { mechanism_ref })
+                | (Some(_), ProjectionOutcome::Approximated { mechanism_ref, .. }) => {
+                    if mechanism_ref.as_str().is_empty() {
+                        return Err(format!(
+                            "graph-hint plan gives {} an empty mechanism reference",
+                            serde_json::to_string(field).unwrap_or_default()
+                        ));
+                    }
+                }
+                (Some(_), _) => {}
+                (None, _) => {
+                    return Err(format!(
+                        "graph-hint capability declaration has no entry for {}",
+                        serde_json::to_string(field).unwrap_or_default()
+                    ));
+                }
             }
         }
         Ok(())
@@ -1134,8 +1380,20 @@ pub trait GraphHintProjector {
         attempt: u32,
     ) -> Result<GraphHintDispatchProjection, String> {
         let capabilities = self.graph_hint_capabilities();
+        capabilities.validate()?;
+        if let Some(hints) = hints {
+            // The seam owns admission as a defense in depth. An adapter's
+            // custom planner must not be able to bypass common validation.
+            hints.validate()?;
+        }
         let plan = self.plan_graph_hints(hints)?;
         plan.validate_against(&capabilities)?;
+        match hints {
+            Some(hints) if plan.graph_hints_digest.as_deref() == Some(hints.digest().as_str()) => {}
+            Some(_) => return Err("graph-hint plan commits to a different envelope".to_owned()),
+            None if plan.graph_hints_digest.is_none() => {}
+            None => return Err("a hint-free plan cannot carry a hint digest".to_owned()),
+        }
         let provider_fields = match hints {
             Some(hints) if plan.projects_any() => self.render_graph_hint_fields(hints, &plan)?,
             _ => Map::new(),
@@ -1163,16 +1421,6 @@ pub trait GraphHintProjector {
             provider_fields,
         })
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct BackendGraphCapabilities {
-    pub supports_graph_registration: bool,
-    pub supports_request_hints: bool,
-    pub supports_structured_outputs: bool,
-    pub supports_backend_queue_state: bool,
-    pub supports_backend_cache_state: bool,
-    pub supports_cancel_groups: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1442,6 +1690,79 @@ mod tests {
             },
         );
         assert!(plan.validate_against(&capabilities).is_err());
+    }
+
+    #[test]
+    fn a_plan_cannot_relabel_an_unsupported_field_as_profile_omitted() {
+        let capabilities = GraphHintCapabilities::none();
+        let hints = scoped();
+        let plan = GraphHintPlan::omitted_unsupported(&hints, &capabilities).with_outcome(
+            GraphHintField::Scope,
+            ProjectionOutcome::OmittedByProfile {
+                reason: ReasonCode::ProfileWithholdsMechanism,
+            },
+        );
+        assert!(plan.validate_against(&capabilities).is_err());
+    }
+
+    #[test]
+    fn execution_scoped_intents_must_match_across_node_hints() {
+        let first = scoped();
+        let mut second = first.clone();
+        second.scope.node_ref = "n2".into();
+        second.scope.node_execution_ref = "nx2".into();
+        second.intents.objective = Some(OptimizationObjective::MaximizeThroughput);
+        assert!(ApxmGraphHints::validate_execution_consistency(&[first, second]).is_err());
+    }
+
+    #[test]
+    fn a_descriptor_is_fact_only_and_mints_a_digest_bound_preparation() {
+        let descriptor = ApxmGraphDescriptor::from_hints(&[scoped()]).expect("descriptor");
+        assert!(descriptor.validate().is_ok());
+        let preparation = GraphPreparationRef::mint(&descriptor.digest(), "adapter-result.1")
+            .expect("preparation identity");
+        assert!(preparation.validate().is_ok());
+        let rendered = serde_json::to_string(&preparation).expect("serialize");
+        assert!(!rendered.contains("adapter-result.1"));
+    }
+
+    #[test]
+    fn lifecycle_outcomes_reject_unverifiable_digest_claims() {
+        let invalid = GraphPrepareOutcome::Prepared {
+            preparation: GraphPreparationRef {
+                descriptor_digest:
+                    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+                preparation_digest:
+                    "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+            },
+            projection_digest: "not-a-digest".into(),
+        };
+        assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn the_projector_seam_revalidates_custom_plans() {
+        struct InvalidPlan;
+
+        impl GraphHintProjector for InvalidPlan {
+            fn plan_graph_hints(
+                &self,
+                hints: Option<&ApxmGraphHints>,
+            ) -> Result<GraphHintPlan, String> {
+                let hints = hints.expect("fixture supplies hints");
+                Ok(
+                    GraphHintPlan::omitted_unsupported(hints, &GraphHintCapabilities::none())
+                        .with_outcome(
+                            GraphHintField::Scope,
+                            ProjectionOutcome::OmittedByProfile {
+                                reason: ReasonCode::ProfileWithholdsMechanism,
+                            },
+                        ),
+                )
+            }
+        }
+
+        assert!(InvalidPlan.project_graph_hints(Some(&scoped()), 0).is_err());
     }
 
     #[test]

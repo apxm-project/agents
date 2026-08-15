@@ -10,7 +10,7 @@
 
 use super::graph_meta::mechanisms;
 use crate::llm::backends::graph_hint_dispatch::{
-    record_graph_hint_evidence, stream_with_graph_hint_evidence,
+    merge_projected_provider_fields, record_graph_hint_evidence, stream_with_graph_hint_evidence,
 };
 use crate::llm::backends::http::llm_http_client;
 use crate::llm::backends::openai::OpenAIBackend;
@@ -22,15 +22,17 @@ use crate::llm::wire::{api_paths, backend_metadata, config_keys, headers};
 use crate::llm::{ProviderProtocol, normalize_endpoint_for_protocol};
 use anyhow::{Context, Result};
 use apxm_core::constants::graph::attrs::{BASE_URL, MODEL};
-use apxm_core::constants::llm::apxm as apxm_llm;
+use apxm_core::constants::llm::apxm::graph_hints as hint_keys;
 use apxm_core::types::{
-    BackendGraphCapabilities, BackendMechanismRef, GraphHintCapabilities,
-    GraphHintDispatchProjection, GraphHintField, GraphHintFieldCapability, GraphHintPlan,
-    GraphHintProjector, GraphLifecycleCapability, GraphMetadata, GraphStatusSnapshot,
-    ModelCapabilities, ModelInfo, OptimizationObjective, ProjectionOutcome, ReasonCode,
+    ApxmGraphDescriptor, BackendMechanismRef, GraphHintCapabilities, GraphHintDispatchProjection,
+    GraphHintField, GraphHintFieldCapability, GraphHintPlan, GraphHintProjector,
+    GraphLifecycleCapability, GraphMetadata, GraphPreparationRef, GraphPrepareOutcome,
+    GraphReleaseOutcome, GraphStatusSnapshot, LifecycleReasonCode, ModelCapabilities, ModelInfo,
+    NodeSpec, OptimizationObjective, ProjectionOutcome, ReasonCode,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::pin::Pin;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -231,6 +233,15 @@ pub struct GraphAwareVllmBackend {
     /// `supports_dispatch_ir_v1_internal` falls back to "routes exist"
     /// gating (set on successful synchronous probe).
     dispatch_ir_version: parking_lot::RwLock<Option<String>>,
+    /// Adapter-local fence for exact lifecycle preparations. The provider's
+    /// graph id is retained only here and is never returned as evidence.
+    prepared_graphs: parking_lot::RwLock<BTreeMap<String, PreparedGraph>>,
+}
+
+#[derive(Debug, Clone)]
+struct PreparedGraph {
+    graph_ref: String,
+    descriptor_digest: String,
 }
 
 impl GraphAwareVllmBackend {
@@ -291,6 +302,7 @@ impl GraphAwareVllmBackend {
             scheduler_policy_warned: AtomicBool::new(false),
             scheduler_policy: parking_lot::RwLock::new(None),
             dispatch_ir_version: parking_lot::RwLock::new(None),
+            prepared_graphs: parking_lot::RwLock::new(BTreeMap::new()),
         })
     }
 
@@ -508,25 +520,20 @@ impl GraphAwareVllmBackend {
         mut request: LLMRequest,
         attempt: u32,
     ) -> Result<(LLMRequest, Option<GraphHintDispatchProjection>)> {
+        let had_extra_body = request.extra_body.is_some();
         let mut extra = request
             .extra_body
             .take()
             .unwrap_or_else(|| serde_json::json!({}));
 
-        if !extra.is_object() {
-            request.extra_body = Some(extra);
-            return Ok((request, None));
-        }
-
         let projected = self
             .project_graph_hints(request.apxm_hints.as_ref(), attempt)
             .map_err(|error| anyhow::anyhow!("vLLM graph-hint projection rejected: {error}"))?;
 
-        if let serde_json::Value::Object(ref mut map) = extra {
-            for (key, value) in projected.provider_fields.clone() {
-                map.entry(key).or_insert(value);
-            }
+        merge_projected_provider_fields(&mut extra, &projected.provider_fields)
+            .map_err(|error| anyhow::anyhow!("vLLM graph-hint injection rejected: {error}"))?;
 
+        if let serde_json::Value::Object(ref mut map) = extra {
             if self.structured_outputs_supported
                 && !map.contains_key(request_keys::STRUCTURED_OUTPUTS)
                 && let Some(output_schema) = &request.output_schema
@@ -562,7 +569,12 @@ impl GraphAwareVllmBackend {
             }
         }
 
-        request.extra_body = Some(extra);
+        request.extra_body =
+            if !had_extra_body && extra.as_object().is_some_and(|map| map.is_empty()) {
+                None
+            } else {
+                Some(extra)
+            };
         Ok((request, Some(projected)))
     }
 }
@@ -720,32 +732,11 @@ impl LLMBackend for GraphAwareVllmBackend {
                 backend_metadata::BACKEND_TYPE.to_string(),
                 super::graph_meta::BACKEND_NAME.into(),
             );
-            map.insert(
-                "graph_capabilities".to_string(),
-                serde_json::to_value(self.graph_capabilities()).unwrap_or_default(),
-            );
             if let Some(policy) = self.scheduler_policy.read().clone() {
                 map.insert("scheduler_policy".to_string(), policy.into());
             }
         }
         meta
-    }
-
-    fn graph_capabilities(&self) -> BackendGraphCapabilities {
-        // A registered GraphAwareVllmBackend is guaranteed to have passed
-        // the synchronous /v1/apxm/* probe in `health_check`. If the fork
-        // process later drops the routes, health_check downgrades the backend
-        // instead of silently degrading the capability surface. Which graph
-        // hints this binding can carry is `graph_hint_capabilities`, not this
-        // coarse transport summary.
-        BackendGraphCapabilities {
-            supports_graph_registration: true,
-            supports_request_hints: true,
-            supports_structured_outputs: self.structured_outputs_supported,
-            supports_backend_queue_state: false,
-            supports_backend_cache_state: true,
-            supports_cancel_groups: false,
-        }
     }
 
     fn response_memoization_policy(
@@ -769,6 +760,112 @@ impl LLMBackend for GraphAwareVllmBackend {
     async fn register_graph(&self, metadata: GraphMetadata) -> Result<()> {
         GraphAwareVllmBackend::register_graph(self, metadata).await?;
         Ok(())
+    }
+
+    async fn prepare_graph(&self, descriptor: ApxmGraphDescriptor) -> Result<GraphPrepareOutcome> {
+        if let Err(_error) = descriptor.validate() {
+            return Ok(GraphPrepareOutcome::FailedBeforeSend {
+                reason: LifecycleReasonCode::InvalidDescriptor,
+            });
+        }
+        if apxm_disable_hints() {
+            return Ok(GraphPrepareOutcome::FailedBeforeSend {
+                reason: LifecycleReasonCode::ProfileWithholdsMechanism,
+            });
+        }
+
+        let descriptor_digest = descriptor.digest();
+        let metadata = GraphMetadata::new(
+            descriptor.graph_ref.clone(),
+            descriptor.graph_execution_ref.clone(),
+        )
+        .with_nodes(
+            descriptor
+                .nodes
+                .iter()
+                .map(|node| NodeSpec {
+                    node_ref: node.node_ref.clone(),
+                    successor_refs: node.facts.successor_refs.clone(),
+                    estimated_input_tokens: node.facts.estimated_input_tokens,
+                    is_critical_path: node.facts.critical_path.unwrap_or(false),
+                })
+                .collect(),
+        );
+
+        // A transport or response-parsing error after this call begins is
+        // ambiguous: the remote graph may already be registered. Preserve an
+        // explicit reconciliation state instead of returning a false failure.
+        let response = match self.register_graph(metadata).await {
+            Ok(response) => response,
+            Err(_error) => {
+                return Ok(GraphPrepareOutcome::OutcomeUnknown {
+                    reconciliation_ref: descriptor_digest,
+                });
+            }
+        };
+        let preparation = match GraphPreparationRef::mint(&descriptor_digest, &response.graph_id) {
+            Ok(preparation) => preparation,
+            Err(_error) => {
+                // Registration already reached the provider, but its returned
+                // handle cannot be represented by the opaque preparation
+                // contract. That is an uncertain external effect, not a
+                // local validation failure.
+                return Ok(GraphPrepareOutcome::OutcomeUnknown {
+                    reconciliation_ref: descriptor_digest,
+                });
+            }
+        };
+        self.prepared_graphs.write().insert(
+            preparation.preparation_digest.clone(),
+            PreparedGraph {
+                graph_ref: response.graph_id,
+                descriptor_digest: descriptor_digest.clone(),
+            },
+        );
+        Ok(GraphPrepareOutcome::Prepared {
+            projection_digest: preparation.preparation_digest.clone(),
+            preparation,
+        })
+    }
+
+    async fn release_graph_preparation(
+        &self,
+        preparation: GraphPreparationRef,
+    ) -> Result<GraphReleaseOutcome> {
+        if preparation.validate().is_err() {
+            return Ok(GraphReleaseOutcome::FailedBeforeSend {
+                reason: LifecycleReasonCode::StalePreparation,
+            });
+        }
+        let Some(prepared) = self
+            .prepared_graphs
+            .read()
+            .get(&preparation.preparation_digest)
+            .cloned()
+        else {
+            return Ok(GraphReleaseOutcome::FailedBeforeSend {
+                reason: LifecycleReasonCode::StalePreparation,
+            });
+        };
+        if prepared.descriptor_digest != preparation.descriptor_digest {
+            return Ok(GraphReleaseOutcome::FailedBeforeSend {
+                reason: LifecycleReasonCode::StalePreparation,
+            });
+        }
+
+        match GraphAwareVllmBackend::release_graph(self, &prepared.graph_ref).await {
+            Ok(_) => {
+                self.prepared_graphs
+                    .write()
+                    .remove(&preparation.preparation_digest);
+                Ok(GraphReleaseOutcome::Released {
+                    preparation_digest: preparation.preparation_digest,
+                })
+            }
+            Err(_error) => Ok(GraphReleaseOutcome::OutcomeUnknown {
+                reconciliation_ref: preparation.preparation_digest,
+            }),
+        }
     }
 
     async fn release_graph(&self, graph_id: &str) -> Result<()> {
@@ -927,7 +1024,7 @@ impl GraphHintProjector for GraphAwareVllmBackend {
         if let Some(envelope) = hints.project_envelope(plan) {
             fields.insert(
                 mechanisms::REQUEST_XARGS.to_owned(),
-                serde_json::json!({ apxm_llm::HINTS_FIELD: envelope }),
+                serde_json::json!({ hint_keys::ENVELOPE: envelope }),
             );
         }
         if plan.projects(GraphHintField::CriticalPath) && hints.facts.critical_path == Some(true) {

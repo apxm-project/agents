@@ -1,0 +1,18 @@
+id = "interaction-harness"
+version = "0.1.0"
+schema_version = "apxm.agent"
+display_name = "Interaction Harness"
+description = "Composes a child Program and keeps yield distinct from await.event."
+domain = "general"
+kind = "agent"
+license = "MIT"
+
+[compile]
+entry = "python/main.py"
+frontend = "python"
+
+[source]
+type = "local"
+
+[hierarchy]
+permitted_children = []

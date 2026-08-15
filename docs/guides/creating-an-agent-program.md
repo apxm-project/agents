@@ -285,7 +285,7 @@ request into AIR as `capability_permission_requests`
 (`crates/machine/program/src/lower.rs`), and a composition root handed nothing
 but AIR bytes reads it as the code layer: `local_capability_permissions` states
 your decision for a reference you wrote one for and a bare `allow` for one you
-did not (`crates/tools/cli/src/commands/canonical_execute.rs`). The canonical
+did not (`crates/tools/cli-dev/src/commands/canonical_execute.rs`). The canonical
 local driver brokers no approvals, so an `Ask` that reaches it refuses the
 effect and commits the refusal as evidence naming the code layer
 (`crates/runtime/execution/src/driver.rs`).
@@ -294,9 +294,9 @@ One caveat, so you don't expect more than the tree does: `agent lint` compiles
 no program, so it cannot see your request — it resolves `agent.toml` against a
 blanket `allow` floor (`crates/tools/cli/src/commands/agent.rs`). The caller
 that holds both your request and the package policy is
-`compile-service-canonical`, which refuses to emit AIR when `agent.toml` tries
+`apxm build`, which refuses to emit an artifact when `agent.toml` tries
 to widen what your source asked for
-(`crates/tools/cli/src/commands/compile_service_canonical.rs`).
+(`crates/compiler/service/src/lib.rs`).
 
 A Python package declares the handlers it ships with `capability(...)` from
 `apxm_program.handlers`, in the same shape `Tool.define` uses in TypeScript, and

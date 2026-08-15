@@ -37,8 +37,9 @@ use apxm_inference::{
     TargetCommitmentError, TypedError, Usage, dispatch_committed_inference,
 };
 use apxm_kernel::{
-    AtomicWriteSet, ExecutionCommitPort, ExecutionCommitRequest, ExecutionCommitResult,
-    ExecutionCommitTuple, PortSlot, ProgramInstanceRef, ProgramInvocationRef,
+    AtomicWriteSet, EventApplicationResult, ExecutionCommitPort, ExecutionCommitRequest,
+    ExecutionCommitResult, ExecutionCommitTuple, PortSlot, ProgramInstanceRef,
+    ProgramInvocationRef,
 };
 use apxm_program::air::{
     AirModule, ControlPredicate, PredicateComparator, PredicateLiteral, SemanticOp, SemanticOpKind,
@@ -490,6 +491,9 @@ pub enum ExecutionError {
     EventDeliveryRequiresRef {
         program_instance_ref: ProgramInstanceRef,
     },
+    UnprovenEventWake {
+        program_instance_ref: ProgramInstanceRef,
+    },
     InvalidCommitRequest {
         message: String,
     },
@@ -579,6 +583,15 @@ impl std::fmt::Display for ExecutionError {
                 write!(
                     f,
                     "continuation for Program Instance {} requires an EventRef delivery",
+                    program_instance_ref.as_str()
+                )
+            }
+            Self::UnprovenEventWake {
+                program_instance_ref,
+            } => {
+                write!(
+                    f,
+                    "Event wake for Program Instance {} requires a fulfilled application",
                     program_instance_ref.as_str()
                 )
             }
@@ -1946,7 +1959,7 @@ async fn drive_from(
                                 state.seq,
                                 FactKind::InvocationParked,
                                 None,
-                                Some(InvocationState::CommittedYield),
+                                Some(InvocationState::WaitingEvent),
                                 Some(op.node_id.clone()),
                                 None,
                             ));
@@ -2710,16 +2723,18 @@ async fn commit_suspension(
         .execution_commit
         .current_version(&continuation.program_instance_ref)
         .await;
-    state.seq += 1;
-    state.batch.push(fact(
-        &state.program_invocation_id,
-        state.seq,
-        FactKind::InvocationCommitted,
-        None,
-        Some(InvocationState::CommittedYield),
-        None,
-        Some(expected + 1),
-    ));
+    if continuation.event_ref.is_none() {
+        state.seq += 1;
+        state.batch.push(fact(
+            &state.program_invocation_id,
+            state.seq,
+            FactKind::InvocationCommitted,
+            None,
+            Some(InvocationState::CommittedYield),
+            None,
+            Some(expected + 1),
+        ));
+    }
     let mut committed_continuation = continuation.clone();
     committed_continuation.event_sequence = state.seq;
     committed_continuation
@@ -2875,8 +2890,8 @@ pub async fn execute_resumable(
 
 /// Resume a committed structural continuation for one Program Instance.
 ///
-/// Event continuations use [`resume_event`] so their durable identity is
-/// validated before the runtime advances the parked continuation.
+/// Event waits use [`wake_from_event_application`] so a raw delivered value
+/// cannot advance a parked Invocation without a proven terminal application.
 ///
 /// # Errors
 ///
@@ -2890,13 +2905,30 @@ pub async fn resume(
     resume_from_continuation(ports, program_instance_ref, None, delivered).await
 }
 
-/// Resume a committed `await.event` continuation with one exact EventRef.
+/// Wake a parked Event wait after a fulfilled Event application.
 ///
 /// # Errors
 ///
-/// Returns [`ExecutionError::EventRefMismatch`] when an OS delivery targets a
-/// different durable event than the one atomically registered at park time.
-pub async fn resume_event(
+/// Returns [`ExecutionError::UnprovenEventWake`] when the application is not
+/// fulfilled, or [`ExecutionError::EventRefMismatch`] when the EventRef does
+/// not match the parked wait.
+pub async fn wake_from_event_application(
+    ports: &ExecutionPorts,
+    program_instance_ref: &ProgramInstanceRef,
+    event_ref: EventRef,
+    application_result: EventApplicationResult,
+    delivered: Value,
+) -> Result<RunOutcome, ExecutionError> {
+    if application_result != EventApplicationResult::Fulfilled {
+        return Err(ExecutionError::UnprovenEventWake {
+            program_instance_ref: program_instance_ref.clone(),
+        });
+    }
+    resume_event(ports, program_instance_ref, event_ref, delivered).await
+}
+
+/// Internal runner entrypoint. Callers must already hold a fulfilled application.
+pub(crate) async fn resume_event(
     ports: &ExecutionPorts,
     program_instance_ref: &ProgramInstanceRef,
     event_ref: EventRef,

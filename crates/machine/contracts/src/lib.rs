@@ -35,10 +35,15 @@ pub use error::{
 pub use plan::{InnerPlanPayload, Plan, PlanStep};
 
 pub use types::{
-    AISOperation, AISOperationType, ApxmGraphHints, ApxmPathFormat, ArtifactFormat, DependencyType,
-    Edge, GraphHintProjector, GraphMetadata, GraphSourceFormat, InstructionConfig, LatencyClass,
-    Node, NodeGraphMetrics, NodeId, NodeMetadata, NodeSpec, Number, Token, TokenId, TokenStatus,
-    Value,
+    AISOperation, AISOperationType, ApxmGraphDescriptor, ApxmGraphDescriptorNode, ApxmGraphHints,
+    ApxmPathFormat, ArtifactFormat, BackendMechanismRef, DependencyType, Edge,
+    GraphHintCapabilities, GraphHintDispatchProjection, GraphHintField, GraphHintFieldCapability,
+    GraphHintPlan, GraphHintProjection, GraphHintProjector, GraphHintScope,
+    GraphLifecycleCapability, GraphMetadata, GraphPreparationRef, GraphPrepareOutcome,
+    GraphReleaseOutcome, GraphSourceFormat, GraphStatusSnapshot, InstructionConfig, LatencyClass,
+    LifecycleReasonCode, Node, NodeGraphFacts, NodeGraphMetrics, NodeId, NodeMetadata, NodeSpec,
+    Number, OptimizationObjective, ProjectionOutcome, ReasonCode, ReusableContextIntent,
+    ReusePreference, Token, TokenId, TokenStatus, Value, WorkClass,
 };
 
 pub use types::conformance;

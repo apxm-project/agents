@@ -1,0 +1,18 @@
+[package]
+name = "apxm-compilation-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+publish = false
+description = "Native Compilation Service protocol types and in-memory peer vectors"
+
+[lints]
+workspace = true
+
+[dependencies]
+apxm-source-port.workspace = true
+serde.workspace = true
+serde_json.workspace = true

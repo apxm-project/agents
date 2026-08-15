@@ -35,6 +35,7 @@
 
 pub mod diagnostic;
 mod frontend;
+pub mod package_snapshot;
 
 use std::path::{Path, PathBuf};
 
@@ -44,6 +45,10 @@ use apxm_program::source_map::SourceMap;
 
 pub use crate::diagnostic::{SourceDiagnostic, SourceDiagnosticCode};
 pub use crate::frontend::Frontend;
+pub use crate::package_snapshot::{
+    PACKAGE_SNAPSHOT_CONTRACT, PackageSnapshot, SnapshotContent, SnapshotError, content_digest,
+    snapshot_identity_digest,
+};
 
 /// The largest submitted source text the port accepts. A larger submission is a
 /// request rejection, not something handed to an interpreter.

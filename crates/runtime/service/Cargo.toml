@@ -1,0 +1,33 @@
+[package]
+name = "apxm-runtime-service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+publish = false
+description = "Runtime Service Composition Root over the native runtime protocol"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+apxm-ais.workspace = true
+apxm-backends.workspace = true
+apxm-backend-registry.workspace = true
+apxm-capability.workspace = true
+apxm-core.workspace = true
+apxm-execution.workspace = true
+apxm-inference.workspace = true
+apxm-kernel.workspace = true
+apxm-program.workspace = true
+apxm-runtime-protocol.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+toml.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "process", "sync", "io-util"] }

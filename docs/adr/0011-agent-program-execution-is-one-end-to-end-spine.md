@@ -3,7 +3,7 @@ status: accepted
 date: 2026-07-16
 decision: APXM-V1-E2E
 owner: APXM agents
-amended_by: ADR-0013
+amended_by: ADR-0013, ADR-0023
 ---
 
 # Agent Program execution is one end-to-end spine

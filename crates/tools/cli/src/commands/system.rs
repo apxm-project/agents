@@ -9,57 +9,29 @@ use apxm_core::toolchain_env;
 use apxm_core::utils::build::MlirEnvReport;
 
 use super::dekk_hints;
-use super::implementations::{
-    Status, print_hint, print_section_header, print_status_line, print_subsection_header,
-};
+use super::implementations::{Status, print_section_header, print_status_line};
+use colored::Colorize;
 
-const DOCTOR_FRONTEND_GRAPH_PROBE: &str = r#"{
-  "schema_version": "apxm.frontend-graph",
-  "source_language": "python",
-  "program_definitions": [
-    {
-      "program_id": "doctor_probe",
-      "entrypoint": "main",
-      "input_type_ref": "unit",
-      "output_type_ref": "unit",
-      "has_default_context": true
-    }
-  ],
-  "imported_program_refs": [],
-  "declarations": [],
-  "functions": [
-    {
-      "function_id": "main",
-      "parameters": [],
-      "result_type_ref": "unit",
-      "body_region_id": "doctor_probe.body",
-      "is_entrypoint": true
-    }
-  ],
-  "values": [],
-  "blocks": [],
-  "regions": [
-    {
-      "region_id": "doctor_probe.body",
-      "region_role": "function_body",
-      "execution_order": 0
-    }
-  ],
-  "data_edges": [],
-  "call_intents": [],
-  "control_intents": [],
-  "context_flow": [],
-  "hook_bindings": [],
-  "capability_requirements": [],
-  "model_requirements": [],
-  "skill_requirements": [],
-  "source_map": {
-    "schema_version": "apxm.source-map",
-    "source_language": "python",
-    "node_spans": [],
-    "region_annotations": []
-  }
-}"#;
+fn print_hint(message: &str) {
+    use apxm_core::constants::ui;
+    println!("  {} {}", ui::icons::INFO.cyan(), message);
+}
+
+fn print_subsection_header(title: &str) {
+    println!();
+    println!("  {}", title.bold());
+}
+
+fn print_warning_line(label: &str, value: &str) {
+    use apxm_core::constants::ui;
+    println!(
+        "  {} {:<14} [{}] {}",
+        ui::icons::WARNING.yellow(),
+        label.bold(),
+        ui::labels::WARN.yellow().bold(),
+        value
+    );
+}
 
 pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> {
     let report = MlirEnvReport::detect();
@@ -70,140 +42,47 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
         .as_ref()
         .map(|p| p.display().to_string());
     let mlir_version = report.llvm_version.clone();
-    let compiler_probe =
-        apxm_program::lower_frontend_graph_json(DOCTOR_FRONTEND_GRAPH_PROBE).map(|_| ());
-    let compiler_ready = compiler_probe.is_ok();
-    let compiler_error = compiler_probe.err();
 
-    // --- Backends ---
-    let (backend_count, backend_names): (usize, Vec<String>) =
-        match apxm_backend_registry::BackendStore::open() {
-            Ok(store) => match store.list() {
-                Ok(backends) => {
-                    let names: Vec<String> = backends.iter().map(|b| b.name.clone()).collect();
-                    (names.len(), names)
-                }
-                Err(_) => (0, vec![]),
-            },
-            Err(_) => (0, vec![]),
-        };
-
-    // --- Sandbox ---
-    // The CLI does not construct confinement backends. Composition roots supply
-    // admitted sandbox implementations when execution is prepared.
-    let sandbox_backends = Vec::<String>::new();
-
-    // --- Environment Variables ---
-    let env_apxm_backend = env::var(apxm_env::APXM_BACKEND).ok();
     let env_mlir_dir = env::var(apxm_env::MLIR_DIR).ok();
     let env_llvm_dir = env::var(apxm_env::LLVM_DIR).ok();
+    let package_contract = inspect_package_contract();
+    let _ = config;
 
-    let (config_found, config_path, config_backends) = inspect_backend_config(config);
-
-    // --- JSON output mode ---
     if json_output {
-        #[allow(unused_mut)]
-        let mut report_json = serde_json::json!({
-            "mlir": {
-                "available": mlir_available,
-                "prefix": mlir_prefix,
-                "version": mlir_version,
-                "compiler_ready": compiler_ready,
-                "compiler_error": compiler_error,
-            },
-            "backends": {
-                "count": backend_count,
-                "names": backend_names,
-            },
-            "sandbox": {
-                "available_backends": &sandbox_backends,
-            },
-            "environment": {
-                apxm_env::APXM_BACKEND: env_apxm_backend,
-                apxm_env::MLIR_DIR: env_mlir_dir,
-                apxm_env::LLVM_DIR: env_llvm_dir,
-            },
-        });
-        report_json["config"] = serde_json::json!({
-            "found": config_found,
-            "path": config_path,
-            "backends": config_backends,
-        });
-        println!("{}", serde_json::to_string_pretty(&report_json)?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "environment": {
+                    apxm_env::MLIR_DIR: env_mlir_dir,
+                    apxm_env::LLVM_DIR: env_llvm_dir,
+                    "mlir_available": mlir_available,
+                    "mlir_prefix": mlir_prefix,
+                    "mlir_version": mlir_version,
+                },
+                "package_contract": package_contract,
+            }))?
+        );
         return Ok(());
     }
 
-    // --- Human-readable output ---
-
-    // 1. MLIR toolchain (existing checks)
-    print_section_header("MLIR Toolchain");
+    print_section_header("Environment");
     print_minimal_mlir_status();
-
     if mlir_available {
         let detail = match &mlir_version {
-            Some(v) => format!("ready (LLVM {})", v),
-            None => "ready".to_string(),
+            Some(v) => format!("ready (LLVM {v})"),
+            None => "ready".to_owned(),
         };
         print_status_line("MLIR toolchain", Status::Ok, &detail);
     } else {
         print_status_line("MLIR toolchain", Status::Error, "missing");
     }
-
-    if compiler_ready {
-        print_status_line(
-            "Canonical AIR lowerer",
-            Status::Ok,
-            "FrontendGraph probe lowered successfully",
-        );
-    } else {
-        let detail = compiler_error
-            .as_deref()
-            .unwrap_or("FrontendGraph probe failed");
-        print_status_line("Canonical AIR lowerer", Status::Error, detail);
-        print_hint(
-            "If the canonical lowerer is unavailable, rebuild the APXM program surface before retrying CLI authoring commands.",
-        );
-    }
-
-    // 2. Backends
-    print_section_header("Backends");
-    if backend_count > 0 {
-        print_status_line(
-            "Backends",
-            Status::Ok,
-            &format!(
-                "{} backend{} registered",
-                backend_count,
-                if backend_count == 1 { "" } else { "s" }
-            ),
-        );
-    } else {
-        print_status_line("Backends", Status::Warning, "none registered");
-        print_hint(&format!(
-            "Register a backend first with `{}`.",
-            dekk_hints::BACKEND_ADD_GENERIC
-        ));
-    }
-
-    // 3. Sandbox
-    print_section_header("Sandbox");
-    if sandbox_backends.is_empty() {
-        print_status_line("OS isolation", Status::Warning, "not constructed by CLI");
-        print_hint(
-            "Runtime composition must supply an admitted confinement backend before executing sandboxed effects.",
-        );
-    }
-
-    // 4. Environment Variables
-    print_section_header("Environment");
     for (name, value) in [
-        (apxm_env::APXM_BACKEND, &env_apxm_backend),
         (apxm_env::MLIR_DIR, &env_mlir_dir),
         (apxm_env::LLVM_DIR, &env_llvm_dir),
     ] {
         match value {
             Some(v) => print_status_line(name, Status::Ok, v),
-            None => print_status_line(name, Status::Warning, "not set"),
+            None => print_warning_line(name, "not set"),
         }
     }
     if env_mlir_dir.is_none() || env_llvm_dir.is_none() {
@@ -213,76 +92,39 @@ pub fn doctor_command(config: Option<PathBuf>, json_output: bool) -> Result<()> 
         ));
     }
 
-    print_section_header("Configuration");
-    if config_found {
-        let path_display = config_path.as_deref().unwrap_or("~/.apxm/config.toml");
-        print_status_line(
-            "Config file",
-            Status::Ok,
-            &format!("found at {}", path_display),
-        );
-        print_status_line(
-            "Configured backends",
-            if config_backends > 0 {
-                Status::Ok
-            } else {
-                Status::Warning
-            },
-            &format!("{} configured", config_backends),
-        );
-    } else {
-        let path_display = config_path.as_deref().unwrap_or("~/.apxm/config.toml");
-        print_status_line(
-            "Config file",
-            Status::Warning,
-            &format!("not found ({})", path_display),
-        );
+    print_section_header("Package contract");
+    match package_contract
+        .get("status")
+        .and_then(|value| value.as_str())
+    {
+        Some("ok") => print_status_line("agent.toml", Status::Ok, "apxm.agent"),
+        Some(status) => print_warning_line("agent.toml", status),
+        None => print_warning_line("agent.toml", "absent"),
     }
 
-    if !config_found {
-        print_section_header("Backend Registration");
-        print_status_line("Config file", Status::Warning, "not configured");
-        print_hint(&format!(
-            "Register a backend explicitly with `{}`.",
-            dekk_hints::BACKEND_ADD_GENERIC
-        ));
-        print_hint(&format!(
-            "Then rerun `{}` to verify the registered backend set.",
-            dekk_hints::DOCTOR
-        ));
-    }
-
-    // Return error if MLIR is missing (critical dependency)
     if !mlir_available {
         return Err(anyhow::anyhow!("MLIR toolchain not detected"));
     }
-
     Ok(())
 }
 
-fn inspect_backend_config(config: Option<PathBuf>) -> (bool, Option<String>, usize) {
-    if let Some(path) = config {
-        let backends = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|contents| contents.parse::<toml::Value>().ok())
-            .and_then(|document| {
-                document
-                    .get("backends")
-                    .and_then(toml::Value::as_array)
-                    .cloned()
-            })
-            .map_or(0, |backends| backends.len());
-        return (path.exists(), Some(path.display().to_string()), backends);
+fn inspect_package_contract() -> serde_json::Value {
+    let path = PathBuf::from("agent.toml");
+    if !path.is_file() {
+        return serde_json::json!({"status": "absent"});
     }
-
-    match apxm_backend_registry::BackendStore::open() {
-        Ok(store) => {
-            let path = store.path().display().to_string();
-            let found = store.path().exists();
-            let backends = store.list().map_or(0, |backends| backends.len());
-            (found, Some(path), backends)
+    match std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| text.parse::<toml::Value>().ok())
+    {
+        Some(document)
+            if document.get("schema_version").and_then(toml::Value::as_str)
+                == Some("apxm.agent") =>
+        {
+            serde_json::json!({"status": "ok", "path": "agent.toml"})
         }
-        Err(_) => (false, None, 0),
+        Some(_) => serde_json::json!({"status": "unrecognized", "path": "agent.toml"}),
+        None => serde_json::json!({"status": "unreadable", "path": "agent.toml"}),
     }
 }
 

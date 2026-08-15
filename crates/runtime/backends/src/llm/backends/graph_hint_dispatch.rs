@@ -6,7 +6,8 @@
 use super::response::LLMResponse;
 use super::traits::StreamChunk;
 use apxm_core::constants::llm::apxm::graph_hints as hint_keys;
-use apxm_core::types::GraphHintDispatchProjection;
+use apxm_core::types::{GraphHintDispatchProjection, GraphHintProjector};
+use serde_json::{Map, Value};
 use std::pin::Pin;
 use tokio_stream::{Stream, StreamExt};
 
@@ -42,6 +43,65 @@ pub fn record_graph_hint_evidence(
     response
 }
 
+/// Merge fields selected by a projector without letting an authored/provider
+/// extension silently replace what the projection evidence claims was sent.
+/// Equal pre-existing values are harmless; a conflicting value is a
+/// pre-send contract error because graph hints cannot renegotiate a request.
+/// Nested provider extension objects are merged recursively so unrelated
+/// adapter-owned extensions survive projection.
+pub fn merge_projected_provider_fields(
+    extra: &mut Value,
+    fields: &Map<String, Value>,
+) -> Result<(), String> {
+    if fields.is_empty() {
+        return Ok(());
+    }
+    let Value::Object(map) = extra else {
+        return Err("graph-hint projection requires extra_body to be an object".to_owned());
+    };
+    for (key, value) in fields {
+        if let Some(existing) = map.get_mut(key) {
+            merge_projected_value(existing, value, key)?;
+        } else {
+            map.insert(key.clone(), value.clone());
+        }
+    }
+    Ok(())
+}
+
+fn merge_projected_value(
+    existing: &mut Value,
+    projected: &Value,
+    path: &str,
+) -> Result<(), String> {
+    match (existing, projected) {
+        (Value::Object(existing), Value::Object(projected)) => {
+            for (key, value) in projected {
+                let child_path = format!("{path}.{key}");
+                if let Some(existing_value) = existing.get_mut(key) {
+                    merge_projected_value(existing_value, value, &child_path)?;
+                } else {
+                    existing.insert(key.clone(), value.clone());
+                }
+            }
+            Ok(())
+        }
+        (existing, projected) if existing == projected => Ok(()),
+        _ => Err(format!(
+            "graph-hint projection conflicts with an existing provider field {path:?}"
+        )),
+    }
+}
+
+// These adapters have no provider mechanism admitted by the common contract.
+// Implementing the projector explicitly keeps that zero-capability declaration
+// visible at the adapter boundary and makes the LLMBackend supertrait enforce
+// conformance for every built-in backend.
+impl GraphHintProjector for super::anthropic::AnthropicBackend {}
+impl GraphHintProjector for super::google::GoogleBackend {}
+impl GraphHintProjector for super::ollama::OllamaBackend {}
+impl GraphHintProjector for super::openai::OpenAIBackend {}
+
 /// The streaming form: the same evidence lands on the terminal response.
 pub fn stream_with_graph_hint_evidence<'a>(
     inner: Pin<Box<dyn Stream<Item = anyhow::Result<StreamChunk>> + Send + 'a>>,
@@ -61,9 +121,11 @@ mod tests {
     use super::*;
     use crate::llm::backends::llama_cpp::LlamaCppBackend;
     use crate::llm::backends::request::LLMRequest;
+    use crate::llm::backends::traits::LLMBackend;
     use crate::llm::backends::vllm::GraphAwareVllmBackend;
     use apxm_core::types::{
-        ApxmGraphHints, GraphHintCapabilities, GraphHintField, GraphHintProjector, NodeGraphFacts,
+        ApxmGraphDescriptor, ApxmGraphHints, GraphHintCapabilities, GraphHintField,
+        GraphHintProjector, GraphPrepareOutcome, GraphReleaseOutcome, NodeGraphFacts,
         OptimizationObjective, ProjectionOutcome, ReusableContextIntent, ReusePreference,
         WorkClass,
     };
@@ -228,18 +290,210 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn llama_cpp_profile_withholds_cache_lowering_explicitly() {
+        let backend = LlamaCppBackend::new(
+            "",
+            Some(serde_json::json!({
+                "model": "deployment-model",
+                "base_url": "https://provider.example.test/v1",
+                "graph_hint_cache_prompt_admitted": false,
+            })),
+        )
+        .await
+        .expect("configured llama.cpp backend");
+        let (request, projected) = backend
+            .inject_hints(request_with_hints(), 0)
+            .expect("profile omission is not a projection error");
+        let projected = projected.expect("hints were present");
+        assert!(
+            request
+                .extra_body
+                .as_ref()
+                .is_some_and(|body| body.get("cache_prompt").is_none())
+        );
+        assert_eq!(
+            projected
+                .plan
+                .outcomes
+                .get(&GraphHintField::ReusePreference),
+            Some(&ProjectionOutcome::OmittedByProfile {
+                reason: apxm_core::types::ReasonCode::ProfileWithholdsMechanism,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn projection_rejects_conflicting_provider_fields_before_send() {
+        let backend = LlamaCppBackend::new("", config("deployment-model"))
+            .await
+            .expect("configured llama.cpp backend");
+        let request = request_with_hints().with_extra_body(serde_json::json!({
+            "cache_prompt": false,
+        }));
+        let error = backend
+            .inject_hints(request, 0)
+            .expect_err("conflict must fail");
+        assert!(error.to_string().contains("conflicts"));
+    }
+
+    #[tokio::test]
+    async fn projection_digest_commits_profile_lowering_changes() {
+        let admitted = LlamaCppBackend::new("", config("deployment-model"))
+            .await
+            .expect("configured llama.cpp backend");
+        let withheld = LlamaCppBackend::new(
+            "",
+            Some(serde_json::json!({
+                "model": "deployment-model",
+                "base_url": "https://provider.example.test/v1",
+                "graph_hint_cache_prompt_admitted": false,
+            })),
+        )
+        .await
+        .expect("configured llama.cpp backend");
+        let first = admitted
+            .project_graph_hints(Some(&full_hints()), 0)
+            .expect("projection");
+        let second = withheld
+            .project_graph_hints(Some(&full_hints()), 0)
+            .expect("projection");
+        assert_ne!(
+            first.projection.projected_request_digest,
+            second.projection.projected_request_digest
+        );
+    }
+
+    #[tokio::test]
+    async fn hints_do_not_change_model_semantics_or_non_hint_request_fields() {
+        let backend = LlamaCppBackend::new("", config("deployment-model"))
+            .await
+            .expect("configured llama.cpp backend");
+        let request = request_with_hints()
+            .with_model("request-model")
+            .with_output_schema(serde_json::json!({"type": "object"}))
+            .with_extra_body(serde_json::json!({"client_extension": true}));
+        let before = request.clone();
+        let (after, _) = backend.inject_hints(request, 0).expect("projection");
+        assert_eq!(after.prompt, before.prompt);
+        assert_eq!(
+            format!("{:?}", after.messages),
+            format!("{:?}", before.messages)
+        );
+        assert_eq!(after.model, before.model);
+        assert_eq!(after.output_schema, before.output_schema);
+        assert_eq!(format!("{:?}", after.tools), format!("{:?}", before.tools));
+        assert_eq!(after.temperature, before.temperature);
+        assert_eq!(after.max_tokens, before.max_tokens);
+        assert_eq!(
+            after
+                .extra_body
+                .as_ref()
+                .and_then(|body| body.get("client_extension")),
+            Some(&Value::Bool(true))
+        );
+    }
+
+    #[tokio::test]
+    async fn nested_provider_extensions_survive_graph_projection() {
+        let backend = LlamaCppBackend::new("", config("deployment-model"))
+            .await
+            .expect("configured llama.cpp backend");
+        let request = request_with_hints().with_extra_body(serde_json::json!({
+            "apxm": {"provider_extension": true},
+        }));
+        let (request, _) = backend.inject_hints(request, 0).expect("projection");
+        let apxm = request
+            .extra_body
+            .as_ref()
+            .and_then(Value::as_object)
+            .and_then(|body| body.get("apxm"))
+            .and_then(Value::as_object)
+            .expect("merged APXM extension");
+        assert_eq!(apxm.get("provider_extension"), Some(&Value::Bool(true)));
+        assert!(apxm.get("scope").is_some());
+    }
+
+    #[tokio::test]
+    async fn a_non_object_extra_body_cannot_claim_a_graph_projection_was_sent() {
+        let backend = LlamaCppBackend::new("", config("deployment-model"))
+            .await
+            .expect("configured llama.cpp backend");
+        let request = request_with_hints().with_extra_body(serde_json::json!("not-an-object"));
+        let error = backend
+            .inject_hints(request, 0)
+            .expect_err("invalid body must fail");
+        assert!(error.to_string().contains("extra_body"));
+    }
+
+    #[tokio::test]
+    async fn lifecycle_is_exact_binding_local_and_never_a_successful_default_noop() {
+        let llama = LlamaCppBackend::new("", config("deployment-model"))
+            .await
+            .expect("configured llama.cpp backend");
+        let descriptor = ApxmGraphDescriptor::from_hints(&[full_hints()]).expect("descriptor");
+        assert_eq!(
+            llama.prepare_graph(descriptor).await.expect("prepare"),
+            GraphPrepareOutcome::NotNeeded
+        );
+        let preparation =
+            apxm_core::types::GraphPreparationRef::mint(&full_hints().digest(), "fixture.1")
+                .expect("preparation identity");
+        assert_eq!(
+            llama
+                .release_graph_preparation(preparation)
+                .await
+                .expect("release"),
+            GraphReleaseOutcome::NotNeeded
+        );
+
+        let vllm = GraphAwareVllmBackend::new("", config("deployment-model"))
+            .await
+            .expect("configured vLLM backend");
+        let invalid = ApxmGraphDescriptor {
+            graph_ref: "g".into(),
+            graph_execution_ref: "gx".into(),
+            nodes: Vec::new(),
+        };
+        assert_eq!(
+            vllm.prepare_graph(invalid).await.expect("invalid prepare"),
+            GraphPrepareOutcome::FailedBeforeSend {
+                reason: apxm_core::types::LifecycleReasonCode::InvalidDescriptor,
+            }
+        );
+        let stale = apxm_core::types::GraphPreparationRef::mint(
+            &full_hints().digest(),
+            "stale-provider-ref.1",
+        )
+        .expect("preparation identity");
+        assert_eq!(
+            vllm.release_graph_preparation(stale)
+                .await
+                .expect("release"),
+            GraphReleaseOutcome::FailedBeforeSend {
+                reason: apxm_core::types::LifecycleReasonCode::StalePreparation,
+            }
+        );
+    }
+
+    #[tokio::test]
     async fn vllm_sends_the_envelope_it_declares_and_nothing_else() {
         let backend = GraphAwareVllmBackend::new("", config("deployment-model"))
             .await
             .expect("configured vLLM backend");
         let (request, projected) = backend
-            .inject_hints(request_with_hints(), 0)
+            .inject_hints(
+                request_with_hints().with_extra_body(serde_json::json!({
+                    "vllm_xargs": {"provider_extension": true},
+                })),
+                0,
+            )
             .expect("projection");
         let projected = projected.expect("hints were present");
         let extra = request.extra_body.expect("extra body");
         let envelope = &extra["vllm_xargs"]["apxm"];
 
         assert!(envelope.get("scope").is_some());
+        assert_eq!(extra["vllm_xargs"]["provider_extension"], Value::Bool(true));
         assert!(envelope["facts"].get("successor_refs").is_some());
         let rendered = envelope.to_string();
         for absent in [

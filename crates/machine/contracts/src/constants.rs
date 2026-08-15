@@ -418,24 +418,6 @@ pub mod orchestration {
 
 pub mod llm {
     pub mod apxm {
-        pub const OBJECT_GRAPH_REGISTRATION: &str = "apxm.graph.registration";
-        pub const OBJECT_GRAPH_STATUS: &str = "apxm.graph.status";
-        pub const OBJECT_GRAPH_RELEASE: &str = "apxm.graph.release";
-        pub const OBJECT: &str = "object";
-        /// Common envelope object on every `apxm` server request.
-        pub const HINTS_FIELD: &str = graph_hints::ENVELOPE;
-        pub const SCHEMA_VERSION: &str = "schema_version";
-        pub const GRAPH_ID: &str = graph_hints::GRAPH_REF;
-        pub const EXECUTION_ID: &str = graph_hints::GRAPH_EXECUTION_REF;
-        pub const NODE_ID: &str = graph_hints::NODE_REF;
-        pub const NODE_NAME: &str = graph_hints::NODE_REF;
-        pub const PRIORITY_CLASS: &str = graph_hints::CRITICAL_PATH;
-        pub const DOWNSTREAM_NODES: &str = graph_hints::SUCCESSOR_REFS;
-        pub const REUSE_GROUP: &str = graph_hints::AFFINITY_REF;
-        pub const COMPILER_HINTS: &str = "compiler_hints";
-        pub const SHARED_PREFIX_EST_TOKENS: &str = graph_hints::EXPECTED_SHARED_PREFIX_TOKENS;
-        pub const WARMUP_CANDIDATE: &str = graph_hints::PREFIX_WARMUP_ELIGIBLE;
-
         /// Closed APXM graph-hint envelope. Adapters and `apxm` servers
         /// must use these names; they must not invent parallel keys.
         pub mod graph_hints {
@@ -495,20 +477,6 @@ pub mod llm {
         pub const REGISTERED_NODES: &str = "registered_nodes";
         pub const CRITICAL_PATH_LENGTH: &str = "critical_path_length";
         pub const MAX_PARALLELISM: &str = "max_parallelism";
-
-        /// HTTP response-header contract for per-request runtime
-        /// evidence from an `apxm` server branch. The APXM-side ingestion
-        /// path (apxm-backends `vllm::backend` response handler) reads this
-        /// header and populates `fields_honored` in the per-node
-        /// dispatch record. This is runtime evidence, distinct from the
-        /// static `GraphHintCapabilities` table an adapter declares.
-        pub const APXM_FIELDS_HONORED_HEADER: &str = "x-apxm-fields-honored";
-
-        /// Per-request honor record key surfaced in
-        /// `dispatch_ir_metrics.fields_honored`. Per-request union of
-        /// all `x-apxm-fields-honored` header values observed during
-        /// the graph execution.
-        pub const FIELDS_HONORED_RECORD_KEY: &str = "fields_honored";
     }
 }
 

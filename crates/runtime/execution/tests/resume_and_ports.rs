@@ -11,7 +11,7 @@ use apxm_execution::{
     CapturedHookBodyHandler, CommittedNativeModelUsageOutcome, CompositionOutcome, CompositionPort,
     CompositionRequest, Continuation, EventAwait, EventOutcome, EventPort, EventRef,
     ExecutionPortBundle, ExecutionPorts, ExecutionRequest, NodeOutcome, RunOutcome,
-    execute_resumable, resume, resume_event,
+    execute_resumable, resume, wake_from_event_application,
 };
 use apxm_inference::{
     AttemptDisposition, IdempotencyKey, InferenceTargetCommitment, ModelBindingAdmission,
@@ -20,10 +20,10 @@ use apxm_inference::{
     Usage,
 };
 use apxm_kernel::{
-    AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, ExactPortBinding, ExecutionCommitPort,
-    ExecutionCommitRequest, ExecutionCommitResult, ExternalAgentCapabilityPort, PortBundle,
-    PortBundleSpec, PortImplementation, PortSlot, ProgramInstanceRef, ProgramInvocationRef,
-    PromptEffectState,
+    AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, EventApplicationResult, ExactPortBinding,
+    ExecutionCommitPort, ExecutionCommitRequest, ExecutionCommitResult,
+    ExternalAgentCapabilityPort, PortBundle, PortBundleSpec, PortImplementation, PortSlot,
+    ProgramInstanceRef, ProgramInvocationRef, PromptEffectState,
 };
 use apxm_program::air::AirModule;
 use apxm_program::artifact::SchemaDigestRef;
@@ -399,10 +399,11 @@ async fn resume_reads_the_committed_structural_continuation() {
     .await
     .expect("park");
 
-    let resumed = resume_event(
+    let resumed = wake_from_event_application(
         &ports(commit.clone()),
         &ProgramInstanceRef::new("instance.replay"),
         EventRef::new("evt-atomic").expect("non-empty event ref"),
+        EventApplicationResult::Fulfilled,
         json!({"iteration": 2}),
     )
     .await
@@ -548,10 +549,11 @@ async fn branch_decision_survives_an_await_inside_the_selected_arm() {
     .expect("typed continuation");
     assert_eq!(continuation.branch_decisions.get("branch.main"), Some(&0));
 
-    let resumed = resume_event(
+    let resumed = wake_from_event_application(
         &ports(commit),
         &ProgramInstanceRef::new("instance.branch-await"),
         EventRef::new("evt-atomic").unwrap(),
+        EventApplicationResult::Fulfilled,
         json!({"approved": true}),
     )
     .await
@@ -629,10 +631,11 @@ async fn final_await_resumes_directly_to_one_committed_back_edge() {
     .expect("typed continuation");
     assert_eq!(continuation.loop_frames.len(), 1);
 
-    resume_event(
+    wake_from_event_application(
         &ports(commit.clone()),
         &ProgramInstanceRef::new("instance.final-await"),
         EventRef::new("evt-atomic").unwrap(),
+        EventApplicationResult::Fulfilled,
         json!({"phase": "after"}),
     )
     .await
@@ -713,10 +716,11 @@ async fn nested_loop_park_restores_exact_stack_without_duplicate_work() {
         ["loop.outer", "loop.inner"]
     );
 
-    resume_event(
+    wake_from_event_application(
         &ports(commit.clone()),
         &ProgramInstanceRef::new("instance.nested"),
         EventRef::new("evt-atomic").unwrap(),
+        EventApplicationResult::Fulfilled,
         Value::Null,
     )
     .await
@@ -759,4 +763,62 @@ async fn nested_loop_park_restores_exact_stack_without_duplicate_work() {
         total,
         "resume duplicated a NodeExecution: {observed_node_ids:?}"
     );
+}
+
+#[tokio::test]
+async fn event_wait_parks_waiting_event_without_committed_yield() {
+    let commit = Arc::new(Commit::default());
+    execute_resumable(
+        &ports(commit.clone()),
+        request("instance.waiting-event"),
+        json!({"iteration": 1}),
+    )
+    .await
+    .expect("park");
+    let facts: Vec<_> = commit
+        .tuples
+        .lock()
+        .unwrap()
+        .iter()
+        .flat_map(|tuple| tuple.evidence.iter().cloned())
+        .collect();
+    assert!(facts.iter().any(|fact| {
+        matches!(
+            fact,
+            apxm_program::runtime_evidence::Fact::InvocationParked(runtime)
+                if runtime.invocation_state
+                    == Some(apxm_program::runtime_evidence::InvocationState::WaitingEvent)
+        )
+    }));
+    assert!(!facts.iter().any(|fact| {
+        matches!(
+            fact,
+            apxm_program::runtime_evidence::Fact::InvocationCommitted(_)
+        )
+    }));
+}
+
+#[tokio::test]
+async fn unproven_event_application_cannot_wake() {
+    let commit = Arc::new(Commit::default());
+    execute_resumable(
+        &ports(commit.clone()),
+        request("instance.unproven"),
+        json!({"iteration": 1}),
+    )
+    .await
+    .expect("park");
+    let error = wake_from_event_application(
+        &ports(commit),
+        &ProgramInstanceRef::new("instance.unproven"),
+        EventRef::new("evt-atomic").unwrap(),
+        EventApplicationResult::Rejected,
+        json!({}),
+    )
+    .await
+    .expect_err("raw wake is refused");
+    assert!(matches!(
+        error,
+        apxm_execution::ExecutionError::UnprovenEventWake { .. }
+    ));
 }
