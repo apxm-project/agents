@@ -35,14 +35,9 @@ pub mod session;
 pub mod source_format;
 
 pub use capability::{
-    AuthMethod, CAPABILITY_DEFINITION_SCHEMA, CAPABILITY_GRANT_SCHEMA, CAPABILITY_TEMPLATE_SCHEMA,
-    CapabilityBinding, CapabilityBindingHandler, CapabilityBindingMetadata, CapabilityDefinition,
-    CapabilityGrant, CapabilityMetadata, CapabilitySchemaError, CapabilityTemplate, Delegability,
-    GrantProvenance, GrantStatus, Lifecycle, LifecycleBound, PermissionDecision,
-    PermissionOperation, PermissionPolicy, PermissionRule, PermissionScope, PlannerVisibility,
-    Principal, PrincipalKind, PromptMode, PromptPolicy, ResourceHandle, ResourceSelector,
-    RoleAssignment, RoleDefinition, RuntimeCapabilityGrant, RuntimeLimits, RuntimeSurfaceLimit,
-    RuntimeSurfaceMode, RuntimeSurfacePolicy, Sensitivity, SubjectContext, SubjectSelector,
+    CapabilitySchemaError, GrantStatus, PermissionDecision, PermissionOperation, PermissionScope,
+    ResourceHandle, RuntimeCapabilityGrant, RuntimeLimits, RuntimeSurfaceLimit, RuntimeSurfaceMode,
+    RuntimeSurfacePolicy,
 };
 pub use communicate::{CommunicateProtocol, UnknownProtocol};
 pub use compiler::{

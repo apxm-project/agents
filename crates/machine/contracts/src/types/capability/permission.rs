@@ -2,8 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::common::{CapabilitySchemaError, LifecycleBound, RuntimeLimits, validate_non_empty};
-use super::policy::PromptPolicy;
+use super::common::{CapabilitySchemaError, validate_non_empty};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -22,57 +21,10 @@ pub enum PermissionOperation {
     Publish,
 }
 
-impl PermissionOperation {
-    /// Every permission operation accepted by the capability contract.
-    pub const ALL: [Self; 12] = [
-        Self::Read,
-        Self::List,
-        Self::Search,
-        Self::Create,
-        Self::Write,
-        Self::Append,
-        Self::Update,
-        Self::Delete,
-        Self::Execute,
-        Self::Send,
-        Self::Approve,
-        Self::Publish,
-    ];
-
-    pub fn is_mutating(self) -> bool {
-        matches!(
-            self,
-            Self::Create
-                | Self::Write
-                | Self::Append
-                | Self::Update
-                | Self::Delete
-                | Self::Execute
-                | Self::Send
-                | Self::Approve
-                | Self::Publish
-        )
-    }
-}
-
 /// The one permission decision vocabulary, owned by the AIS crate so the
 /// contracts, the Agent Program graph, the admission envelope, the runtime
 /// chokepoint, and both authoring frontends all resolve through one definition.
 pub use apxm_ais::permissions::PermissionDecision;
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ResourceSelector {
-    pub kind: String,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub selectors: BTreeMap<String, serde_json::Value>,
-}
-
-impl ResourceSelector {
-    pub fn validate(&self) -> Result<(), CapabilitySchemaError> {
-        validate_non_empty("resource_selector.kind", &self.kind)
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -110,57 +62,5 @@ impl PermissionScope {
     pub fn validate(&self) -> Result<(), CapabilitySchemaError> {
         validate_non_empty("scope.kind", &self.kind)?;
         validate_non_empty("scope.boundary", &self.boundary)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PermissionPolicy {
-    pub operations: Vec<PermissionOperation>,
-    pub resources: Vec<ResourceSelector>,
-    pub effect: PermissionDecision,
-    pub prompt_policy: PromptPolicy,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lifecycle_ceiling: Option<LifecycleBound>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limits: Option<RuntimeLimits>,
-}
-
-impl PermissionPolicy {
-    pub fn validate(&self) -> Result<(), CapabilitySchemaError> {
-        super::common::validate_operations(&self.operations)?;
-        for resource in &self.resources {
-            resource.validate()?;
-        }
-        self.prompt_policy
-            .validate_for_operations(&self.operations)?;
-        if let Some(limits) = &self.limits {
-            limits.validate()?;
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PermissionRule {
-    pub tool: String,
-    pub operations: Vec<PermissionOperation>,
-    pub resources: Vec<ResourceSelector>,
-    pub effect: PermissionDecision,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_lifecycle: Option<LifecycleBound>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub requires_prompt: Option<bool>,
-}
-
-impl PermissionRule {
-    pub fn validate(&self) -> Result<(), CapabilitySchemaError> {
-        validate_non_empty("permission_rule.tool", &self.tool)?;
-        super::common::validate_operations(&self.operations)?;
-        for resource in &self.resources {
-            resource.validate()?;
-        }
-        Ok(())
     }
 }

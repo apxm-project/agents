@@ -1,6 +1,6 @@
 //! Execution-time capability metadata.
 
-use apxm_core::types::capability::{CapabilityDefinition, PermissionOperation, PromptMode};
+use apxm_core::types::capability::PermissionOperation;
 use apxm_core::types::values::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -55,7 +55,7 @@ impl CapabilityGrantScopeRequirements {
     }
 }
 
-/// Execution-time capability metadata (projection of [`CapabilityDefinition`]).
+/// Execution-time capability metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeCapability {
     /// Unique capability name
@@ -114,16 +114,6 @@ pub struct RuntimeCapability {
 
 fn default_latency() -> u64 {
     100
-}
-
-fn operations_read_only(operations: &[PermissionOperation]) -> bool {
-    !operations.is_empty()
-        && operations.iter().all(|op| {
-            matches!(
-                op,
-                PermissionOperation::Read | PermissionOperation::List | PermissionOperation::Search
-            )
-        })
 }
 
 impl RuntimeCapability {
@@ -218,115 +208,5 @@ impl RuntimeCapability {
     pub fn with_metadata(mut self, key: String, value: Value) -> Self {
         self.metadata.insert(key, value);
         self
-    }
-}
-
-impl From<CapabilityDefinition> for RuntimeCapability {
-    fn from(def: CapabilityDefinition) -> Self {
-        let read_only = operations_read_only(&def.permissions.operations);
-        let requires_approval = !matches!(def.permissions.prompt_policy.default, PromptMode::Auto);
-        let tags: Vec<String> = def.metadata.tags.values().cloned().collect();
-        Self {
-            name: def.id,
-            description: def.description,
-            parameters_schema: def.tool.parameters_schema,
-            returns: def.tool.returns,
-            cost_estimate: 0.0,
-            latency_estimate_ms: default_latency(),
-            requires_auth: false,
-            requires_approval,
-            tags,
-            groups: vec![def.tool.id],
-            read_only,
-            required_grant_operations: Vec::new(),
-            grant_scope_requirements: CapabilityGrantScopeRequirements::default(),
-            metadata: HashMap::new(),
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use apxm_core::types::capability::{
-        CAPABILITY_DEFINITION_SCHEMA, CapabilityBinding, CapabilityBindingHandler,
-        CapabilityMetadata as ContractCapabilityMetadata, PermissionDecision, PermissionPolicy,
-        PromptPolicy, ResourceSelector,
-    };
-
-    #[test]
-    fn capability_definition_projects_to_runtime_capability() {
-        let def = CapabilityDefinition {
-            schema_version: CAPABILITY_DEFINITION_SCHEMA.to_string(),
-            id: "slack.post_message".to_string(),
-            description: "Post a Slack message".to_string(),
-            tool: CapabilityBinding {
-                id: "slack.post".to_string(),
-                handler: CapabilityBindingHandler::McpBridge,
-                parameters_schema: serde_json::json!({"type": "object"}),
-                returns: "json".to_string(),
-            },
-            permissions: PermissionPolicy {
-                operations: vec![PermissionOperation::Write],
-                resources: vec![ResourceSelector {
-                    kind: "capability".to_string(),
-                    selectors: Default::default(),
-                }],
-                effect: PermissionDecision::allow(),
-                prompt_policy: PromptPolicy {
-                    default: PromptMode::Confirm,
-                    by_operation: Default::default(),
-                },
-                lifecycle_ceiling: None,
-                limits: None,
-            },
-            metadata: ContractCapabilityMetadata {
-                default_sensitivity: None,
-                planner_visibility: None,
-                tags: Default::default(),
-            },
-        };
-        let runtime: RuntimeCapability = def.into();
-        assert_eq!(runtime.name, "slack.post_message");
-        assert!(runtime.requires_approval);
-        assert!(!runtime.read_only);
-        assert_eq!(runtime.groups, vec!["slack.post".to_string()]);
-    }
-
-    #[test]
-    fn read_only_operations_project_to_read_only_runtime() {
-        let def = CapabilityDefinition {
-            schema_version: CAPABILITY_DEFINITION_SCHEMA.to_string(),
-            id: "files.read".to_string(),
-            description: "Read a file".to_string(),
-            tool: CapabilityBinding {
-                id: "files.read".to_string(),
-                handler: CapabilityBindingHandler::Builtin,
-                parameters_schema: serde_json::json!({"type": "object"}),
-                returns: "json".to_string(),
-            },
-            permissions: PermissionPolicy {
-                operations: vec![PermissionOperation::Read, PermissionOperation::List],
-                resources: vec![ResourceSelector {
-                    kind: "capability".to_string(),
-                    selectors: Default::default(),
-                }],
-                effect: PermissionDecision::allow(),
-                prompt_policy: PromptPolicy {
-                    default: PromptMode::Auto,
-                    by_operation: Default::default(),
-                },
-                lifecycle_ceiling: None,
-                limits: None,
-            },
-            metadata: ContractCapabilityMetadata {
-                default_sensitivity: None,
-                planner_visibility: None,
-                tags: Default::default(),
-            },
-        };
-        let runtime: RuntimeCapability = def.into();
-        assert!(runtime.read_only);
-        assert!(!runtime.requires_approval);
     }
 }
