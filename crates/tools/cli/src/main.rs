@@ -18,6 +18,7 @@
 
 mod commands;
 mod frontend;
+mod tui;
 
 use anyhow::Result;
 use commands::*;
@@ -102,42 +103,19 @@ async fn run_cli(cli: Cli) -> Result<()> {
     initialize_tracing(&cli.trace, cli.json);
 
     match cli.command {
-        Commands::CompileServiceCanonical { agent_dir } => {
-            commands::compile_service_canonical::compile_service_canonical_command(
-                agent_dir, cli.config,
-            )
-        }
-        Commands::ExecuteCanonical {
-            input,
-            invocation_admission,
-            release,
-            provenance,
-            package,
-        } => {
-            let handlers = package
-                .as_deref()
-                .map(commands::agent::admitted_package_handlers)
-                .transpose()?
-                .flatten();
-            execute_canonical_command(
-                input,
-                invocation_admission,
-                release,
-                provenance,
-                handlers,
-                package,
-                cli.json,
-            )
-            .await
-        }
         Commands::Build { agent_package } => commands::interaction::build_command(agent_package),
         Commands::Run {
             agent_package,
             artifact,
-        } => commands::interaction::run_command(agent_package, artifact),
+            tui,
+        } => commands::interaction::run_command(agent_package, artifact, tui),
         Commands::Event { action } => commands::interaction::event_command(action),
         Commands::Runtime { action } => commands::interaction::runtime_command(action),
         Commands::Resume { last } => commands::interaction::resume_command(last),
+        Commands::Interact {
+            agent_package,
+            artifact,
+        } => commands::interaction::interact_command(agent_package, artifact),
         Commands::Doctor => doctor_command(cli.config, cli.json),
         Commands::Backend { action } => backend_command(action, cli.json).await,
         Commands::Team { action } => team_command(action, cli.json),
@@ -151,8 +129,6 @@ async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Analyze { input } => analyze_command(input, cli.json),
         Commands::Template { action } => template_command(action, cli.json),
         Commands::Explain { target } => explain_command(&target, cli.json),
-        Commands::Codegen { action } => codegen_command(action, cli.json),
-        Commands::CanonicalAir { input } => canonical_air_command(input),
         Commands::Session { action } => session_command(action, cli.json),
         Commands::Process { action } => process_command(action, cli.json),
         Commands::Cache { action } => cache_command(action, cli.json),
@@ -163,37 +139,19 @@ async fn run_cli(cli: Cli) -> Result<()> {
 #[cfg(not(feature = "driver"))]
 async fn run_cli_no_driver(cli: Cli) -> Result<()> {
     match cli.command {
-        Commands::ExecuteCanonical {
-            input,
-            invocation_admission,
-            release,
-            provenance,
-            package,
-        } => {
-            let handlers = package
-                .as_deref()
-                .map(commands::agent::admitted_package_handlers)
-                .transpose()?
-                .flatten();
-            execute_canonical_command(
-                input,
-                invocation_admission,
-                release,
-                provenance,
-                handlers,
-                package,
-                cli.json,
-            )
-            .await
-        }
         Commands::Build { agent_package } => commands::interaction::build_command(agent_package),
         Commands::Run {
             agent_package,
             artifact,
-        } => commands::interaction::run_command(agent_package, artifact),
+            tui,
+        } => commands::interaction::run_command(agent_package, artifact, tui),
         Commands::Event { action } => commands::interaction::event_command(action),
         Commands::Runtime { action } => commands::interaction::runtime_command(action),
         Commands::Resume { last } => commands::interaction::resume_command(last),
+        Commands::Interact {
+            agent_package,
+            artifact,
+        } => commands::interaction::interact_command(agent_package, artifact),
         Commands::Doctor => doctor_command(cli.config, cli.json),
         Commands::Team { action } => team_command(action, cli.json),
         Commands::Agent { action } => agent_command(action, cli.json),
@@ -206,17 +164,11 @@ async fn run_cli_no_driver(cli: Cli) -> Result<()> {
         Commands::Analyze { input } => analyze_command(input, cli.json),
         Commands::Template { action } => template_command(action, cli.json),
         Commands::Explain { target } => explain_command(&target, cli.json),
-        Commands::Codegen { action } => codegen_command(action, cli.json),
-        Commands::CanonicalAir { input } => canonical_air_command(input),
         Commands::Session { action } => session_command(action, cli.json),
         Commands::Process { action } => process_command(action, cli.json),
         Commands::Cache { action } => cache_command(action, cli.json),
         Commands::Tokenize { text, file, model } => tokenize_command(text, file, model, cli.json),
-        Commands::CompileServiceCanonical { .. } => Err(anyhow::anyhow!(
-            "apxm compile-service-canonical requires the `driver` feature. Rebuild through `{}`, then re-run the command.",
-            commands::dekk_hints::BUILD
-        )),
-        _ => Err(anyhow::anyhow!(
+        Commands::Backend { .. } => Err(anyhow::anyhow!(
             "Command requires the `driver` feature. Rebuild through `{}`, then re-run the command.",
             commands::dekk_hints::BUILD
         )),

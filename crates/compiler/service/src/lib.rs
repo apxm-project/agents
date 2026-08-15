@@ -5,7 +5,7 @@
 
 mod stdio;
 
-pub use stdio::{StdioFrame, decode_jsonl, encode_jsonl, handshake_cross_wired};
+pub use stdio::{StdioFrame, decode_jsonl, encode_jsonl, handshake_cross_wired, serve_stdio};
 
 use std::collections::BTreeMap;
 

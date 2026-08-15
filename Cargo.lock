@@ -355,6 +355,7 @@ dependencies = [
  "apxm-runtime-service",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -456,6 +457,7 @@ dependencies = [
  "apxm-runtime-service",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]

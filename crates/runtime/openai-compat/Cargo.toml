@@ -16,3 +16,4 @@ apxm-runtime-service.workspace = true
 apxm-runtime-protocol.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "net", "io-util", "sync"] }

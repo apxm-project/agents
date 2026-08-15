@@ -156,7 +156,7 @@ def apxm_binary() -> Path:
         text=True,
         check=True,
     ).stdout.strip()
-    binary = Path(target) / "debug/apxm"
+    binary = Path(target) / "debug/apxm-dev"
     if not binary.is_file():
         raise SystemExit(f"missing apxm binary: {binary}")
     return binary

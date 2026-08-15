@@ -25,41 +25,58 @@ pub struct Cli {
     pub command: Commands,
 }
 
+#[derive(Parser)]
+#[command(name = "apxm-dev")]
+#[command(about = "Dekk-owned compiler and runtime conformance binary", long_about = None)]
+pub struct DevCli {
+    /// Optional config path
+    #[arg(long, global = true)]
+    pub config: Option<PathBuf>,
+    /// Output in JSON format
+    #[arg(long, global = true)]
+    pub json: bool,
+    #[command(subcommand)]
+    pub command: DevCommands,
+}
+
 #[derive(Subcommand)]
-pub enum Commands {
-    /// Compile a canonical-authored agent session package to canonical
-    /// `apxm.air` (`AirModule`) JSON on stdout, through the canonical
-    /// `apxm_program` frontend. Stdout contains only canonical AIR JSON;
-    /// diagnostics use stderr and failures are nonzero.
+pub enum DevCommands {
+    /// Compile a package to canonical AIR JSON (conformance fixture).
     CompileServiceCanonical {
-        /// Agent directory (contains agent.toml with a canonical [compile].entry)
+        /// Agent directory
         agent_dir: PathBuf,
     },
-    /// Execute canonical `apxm.air` JSON through the canonical runtime.
+    /// Execute canonical AIR through the Runtime Service fixture path.
     ExecuteCanonical {
         /// Canonical AIR JSON file.
         input: PathBuf,
-        /// Exact product-neutral Invocation Admission JSON supplied by the host.
+        /// Invocation Admission JSON.
         #[arg(long, value_name = "PATH")]
         invocation_admission: PathBuf,
-        /// Exact release bytes named by the Invocation Admission.
+        /// Release bytes.
         #[arg(long, value_name = "PATH")]
         release: PathBuf,
-        /// Exact provenance bytes named by the Invocation Admission.
+        /// Provenance bytes.
         #[arg(long, value_name = "PATH")]
         provenance: PathBuf,
-        /// Agent package whose own Capability handlers and Skills this run may
-        /// reach.
-        ///
-        /// Supplying one is how a composition root binds a package's
-        /// implementations: without it only the built-in surface is
-        /// registered, and an AIR naming a package Capability is refused at
-        /// admission rather than at dispatch. It also publishes the package's
-        /// `skills/` directory as a discovery root, so a Skill the package
-        /// ships resolves instead of failing at `read_skill`.
+        /// Optional package root for handlers/skills.
         #[arg(long, value_name = "DIR")]
         package: Option<PathBuf>,
     },
+    /// Generate frontend assets from Rust-owned registries.
+    Codegen {
+        #[command(subcommand)]
+        action: CodegenAction,
+    },
+    /// Lower a FrontendGraph document to canonical AIR.
+    CanonicalAir {
+        /// Canonical frontend graph JSON file. Omit to read stdin.
+        input: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum Commands {
     /// Compile a package snapshot to a committed executable artifact.
     Build {
         /// Agent package directory.
@@ -72,6 +89,9 @@ pub enum Commands {
         /// Explicit artifact digest. Does not contact Compilation Service.
         #[arg(long)]
         artifact: Option<String>,
+        /// Force the TUI even when stdout is not a TTY.
+        #[arg(long)]
+        tui: bool,
     },
     /// Canonical Event ingress client.
     Event {
@@ -139,18 +159,13 @@ pub enum Commands {
         /// Error code (e.g., E511) or path to workflow source (.air)
         target: String,
     },
-    /// Generate frontend assets from Rust-owned registries
-    Codegen {
-        #[command(subcommand)]
-        action: CodegenAction,
-    },
-    /// Emit canonical AIR from a canonical FrontendGraph via the native bridge.
-    ///
-    /// Reads an `apxm.frontend-graph` document from a file or stdin and lowers
-    /// it in-process to canonical `apxm.air` JSON.
-    CanonicalAir {
-        /// Canonical frontend graph JSON file. Omit to read stdin.
-        input: Option<PathBuf>,
+    /// Open the Interaction Client TUI after a committed artifact.
+    Interact {
+        /// Agent package directory, unless `--artifact` is set.
+        agent_package: Option<PathBuf>,
+        /// Explicit artifact digest. Does not contact Compilation Service.
+        #[arg(long)]
+        artifact: Option<String>,
     },
     /// Manage and inspect execution sessions
     Session {
@@ -653,12 +668,33 @@ mod tests {
     use clap::Parser;
 
     #[test]
+    fn production_cli_rejects_compile_service_canonical() {
+        assert!(Cli::try_parse_from(["apxm", "compile-service-canonical", "/tmp/agent"]).is_err());
+    }
+
+    #[test]
+    fn production_cli_rejects_execute_canonical() {
+        assert!(Cli::try_parse_from([
+            "apxm",
+            "execute-canonical",
+            "/tmp/program.air",
+            "--invocation-admission",
+            "/tmp/admission.json",
+            "--release",
+            "/tmp/release.json",
+            "--provenance",
+            "/tmp/provenance.json",
+        ])
+        .is_err());
+    }
+
+    #[test]
     fn compile_service_canonical_accepts_explicit_package_path() {
-        let cli = Cli::try_parse_from(["apxm", "compile-service-canonical", "/tmp/agent"])
+        let cli = DevCli::try_parse_from(["apxm-dev", "compile-service-canonical", "/tmp/agent"])
             .expect("compile-service-canonical parses");
 
         match cli.command {
-            Commands::CompileServiceCanonical { agent_dir } => {
+            DevCommands::CompileServiceCanonical { agent_dir } => {
                 assert_eq!(agent_dir, PathBuf::from("/tmp/agent"));
             }
             _ => panic!("expected compile-service-canonical command"),
@@ -667,7 +703,7 @@ mod tests {
 
     #[test]
     fn compile_service_canonical_rejects_missing_package_path() {
-        let err = match Cli::try_parse_from(["apxm", "compile-service-canonical"]) {
+        let err = match DevCli::try_parse_from(["apxm-dev", "compile-service-canonical"]) {
             Ok(_) => panic!("compile-service-canonical requires an agent package path"),
             Err(err) => err,
         };
@@ -676,8 +712,8 @@ mod tests {
 
     #[test]
     fn execute_canonical_accepts_exact_admission_inputs() {
-        let cli = Cli::try_parse_from([
-            "apxm",
+        let cli = DevCli::try_parse_from([
+            "apxm-dev",
             "execute-canonical",
             "/tmp/program.air",
             "--invocation-admission",
@@ -690,7 +726,7 @@ mod tests {
         .expect("execute-canonical parses");
 
         match cli.command {
-            Commands::ExecuteCanonical {
+            DevCommands::ExecuteCanonical {
                 input,
                 invocation_admission,
                 release,
@@ -709,7 +745,8 @@ mod tests {
 
     #[test]
     fn execute_canonical_rejects_missing_invocation_admission() {
-        let error = match Cli::try_parse_from(["apxm", "execute-canonical", "/tmp/program.air"]) {
+        let error = match DevCli::try_parse_from(["apxm-dev", "execute-canonical", "/tmp/program.air"])
+        {
             Ok(_) => panic!("execute-canonical must require exact host authority"),
             Err(error) => error,
         };

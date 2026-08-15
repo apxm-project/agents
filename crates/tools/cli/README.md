@@ -9,8 +9,9 @@ and an Interaction Client (`apxm run`, TUI, `apxm event`, `apxm resume`).
 `--artifact` invokes the Runtime Service without contacting compilation.
 `apxm runtime serve` / `--connect` supervise local stdio/Unix transports.
 
-`compile-service-canonical` and `execute-canonical` remain Dekk fixture
-commands routed through those services. They are not a second product spine.
+`compile-service-canonical` and `execute-canonical` live on the Dekk-owned
+`apxm-dev` binary and are routed through Compilation and Runtime Services.
+They are not on the production `apxm` parser.
 
 The CLI does not parse `chat`, `watch`, or `rollout`. OpenAI `/v1/chat/completions`
 is an independently owned protocol edge (ADR-0024 for non-loopback).

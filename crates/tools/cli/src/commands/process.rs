@@ -16,6 +16,7 @@ const CANONICAL_JOB_COMMANDS: &[&str] = &[
     "execute-canonical",
 ];
 const APXM_BINARY: &str = "apxm";
+const APXM_DEV_BINARY: &str = "apxm-dev";
 const DEKK_BINARY: &str = "dekk";
 const DEKK_AGENTS_SURFACE: &str = "agents";
 
@@ -207,7 +208,9 @@ fn classify_process(cmdline: &[String], _scope: &ProcessScope) -> Option<String>
 
 fn matches_direct_apxm_job(cmdline: &[String]) -> bool {
     for idx in 0..cmdline.len() {
-        if basename(&cmdline[idx]) == APXM_BINARY && is_direct_apxm_job_command(&cmdline[idx + 1..])
+        if (basename(&cmdline[idx]) == APXM_BINARY
+            || basename(&cmdline[idx]) == APXM_DEV_BINARY)
+            && is_direct_apxm_job_command(&cmdline[idx + 1..])
         {
             return true;
         }

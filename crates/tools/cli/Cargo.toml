@@ -17,6 +17,10 @@ workspace = true
 name = "apxm"
 path = "src/main.rs"
 
+[[bin]]
+name = "apxm-dev"
+path = "src/dev_main.rs"
+
 [dependencies]
 apxm-core.workspace = true
 apxm-ais.workspace = true

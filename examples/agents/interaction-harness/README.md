@@ -7,3 +7,5 @@ select those children.
 Yield-driven successive input and `await.event` waits remain distinct: the
 former commits `CommittedYield`; the latter parks the same Invocation in
 `WaitingEvent`.
+
+Compile with `apxm build`, then `apxm run` or `apxm interact`.

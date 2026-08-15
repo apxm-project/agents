@@ -5,7 +5,9 @@
 
 mod stdio;
 
-pub use stdio::{StdioFrame, UnixEndpoint, decode_jsonl, encode_jsonl, handshake_cross_wired};
+pub use stdio::{
+    StdioFrame, UnixEndpoint, decode_jsonl, encode_jsonl, handshake_cross_wired, serve_stdio,
+};
 
 use apxm_runtime_protocol::{
     InMemoryRuntimePeer, ProtocolError, RuntimeHandshake, RuntimeRequest, RuntimeResult,
