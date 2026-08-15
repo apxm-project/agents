@@ -79,6 +79,14 @@ async fn run_dev(cli: DevCli) -> Result<()> {
         }
         DevCommands::Codegen { action } => codegen_command(action, cli.json),
         DevCommands::CanonicalAir { input } => canonical_air_command(input),
+        DevCommands::Validate {
+            input,
+            no_check_resources,
+        } => validate_command(input, cli.json, no_check_resources),
+        DevCommands::Analyze { input } => analyze_command(input, cli.json),
+        DevCommands::Ops { action } => ops_command(action, cli.json),
+        DevCommands::Template { action } => template_command(action, cli.json),
+        DevCommands::Explain { target } => explain_command(&target, cli.json),
     }
 }
 

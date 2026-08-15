@@ -121,22 +121,9 @@ async fn run_cli(cli: Cli) -> Result<()> {
             artifact,
         } => commands::interaction::interact_command(agent_package, artifact),
         Commands::Doctor => doctor_command(cli.config, cli.json),
-        Commands::Backend { action } => backend_command(action, cli.json).await,
-        Commands::Team { action } => team_command(action, cli.json),
         Commands::Agent { action } => agent_command(action, cli.json),
         Commands::Org { action } => org_command(action, cli.json),
-        Commands::Ops { action } => ops_command(action, cli.json),
-        Commands::Validate {
-            input,
-            no_check_resources,
-        } => validate_command(input, cli.json, no_check_resources),
-        Commands::Analyze { input } => analyze_command(input, cli.json),
-        Commands::Template { action } => template_command(action, cli.json),
-        Commands::Explain { target } => explain_command(&target, cli.json),
-        Commands::Session { action } => session_command(action, cli.json),
         Commands::Process { action } => process_command(action, cli.json),
-        Commands::Cache { action } => cache_command(action, cli.json),
-        Commands::Tokenize { text, file, model } => tokenize_command(text, file, model, cli.json),
     }
 }
 
@@ -160,25 +147,9 @@ async fn run_cli_no_driver(cli: Cli) -> Result<()> {
             artifact,
         } => commands::interaction::interact_command(agent_package, artifact),
         Commands::Doctor => doctor_command(cli.config, cli.json),
-        Commands::Team { action } => team_command(action, cli.json),
         Commands::Agent { action } => agent_command(action, cli.json),
         Commands::Org { action } => org_command(action, cli.json),
-        Commands::Ops { action } => ops_command(action, cli.json),
-        Commands::Validate {
-            input,
-            no_check_resources,
-        } => validate_command(input, cli.json, no_check_resources),
-        Commands::Analyze { input } => analyze_command(input, cli.json),
-        Commands::Template { action } => template_command(action, cli.json),
-        Commands::Explain { target } => explain_command(&target, cli.json),
-        Commands::Session { action } => session_command(action, cli.json),
         Commands::Process { action } => process_command(action, cli.json),
-        Commands::Cache { action } => cache_command(action, cli.json),
-        Commands::Tokenize { text, file, model } => tokenize_command(text, file, model, cli.json),
-        Commands::Backend { .. } => Err(anyhow::anyhow!(
-            "Command requires the `driver` feature. Rebuild through `{}`, then re-run the command.",
-            commands::dekk_hints::BUILD
-        )),
     }
 }
 

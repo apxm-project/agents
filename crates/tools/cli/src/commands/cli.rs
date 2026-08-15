@@ -73,6 +73,34 @@ pub enum DevCommands {
         /// Canonical frontend graph JSON file. Omit to read stdin.
         input: Option<PathBuf>,
     },
+    /// Validate canonical AIR source against the AIS contract.
+    Validate {
+        /// Input workflow source (.air)
+        input: PathBuf,
+        /// Skip Tier 2 environment checks.
+        #[arg(long)]
+        no_check_resources: bool,
+    },
+    /// Analyze an AIR workflow for parallelism, critical path, and execution phases.
+    Analyze {
+        /// Input workflow source (.air)
+        input: PathBuf,
+    },
+    /// Browse AIS operations (the agent instruction set).
+    Ops {
+        #[command(subcommand)]
+        action: OpsAction,
+    },
+    /// Browse workflow templates (starter patterns).
+    Template {
+        #[command(subcommand)]
+        action: TemplateAction,
+    },
+    /// Explain what a workflow does OR explain an error code.
+    Explain {
+        /// Error code (e.g., E511) or path to workflow source (.air)
+        target: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -116,18 +144,8 @@ pub enum Commands {
         #[arg(long)]
         last: bool,
     },
-    /// Diagnose compiler/runtime dependencies
+    /// Diagnose environment and package-contract readiness.
     Doctor,
-    /// Manage registered inference backend endpoints
-    Backend {
-        #[command(subcommand)]
-        action: BackendAction,
-    },
-    /// Manage agent teams from ~/.apxm/teams.toml
-    Team {
-        #[command(subcommand)]
-        action: TeamAction,
-    },
     /// Lint, sync, verify, and install agents.
     Agent {
         #[command(subcommand)]
@@ -138,34 +156,6 @@ pub enum Commands {
         #[command(subcommand)]
         action: OrgAction,
     },
-    /// Browse AIS operations (the agent instruction set)
-    Ops {
-        #[command(subcommand)]
-        action: OpsAction,
-    },
-    /// Validate canonical AIR source against the AIS contract
-    Validate {
-        /// Input workflow source (.air)
-        input: PathBuf,
-        /// Skip Tier 2 environment checks (registered backends, profiles, etc.)
-        #[arg(long)]
-        no_check_resources: bool,
-    },
-    /// Analyze an AIR workflow for parallelism, critical path, and execution phases
-    Analyze {
-        /// Input workflow source (.air)
-        input: PathBuf,
-    },
-    /// Browse workflow templates (starter patterns)
-    Template {
-        #[command(subcommand)]
-        action: TemplateAction,
-    },
-    /// Explain what a workflow does OR explain an error code
-    Explain {
-        /// Error code (e.g., E511) or path to workflow source (.air)
-        target: String,
-    },
     /// Open the Interaction Client TUI after a committed artifact.
     Interact {
         /// Agent package directory, unless `--artifact` is set.
@@ -174,31 +164,10 @@ pub enum Commands {
         #[arg(long)]
         artifact: Option<String>,
     },
-    /// Manage and inspect execution sessions
-    Session {
-        #[command(subcommand)]
-        action: SessionAction,
-    },
-    /// Inspect or stop APXM job processes
+    /// Inspect or stop Compilation and Runtime Service children.
     Process {
         #[command(subcommand)]
         action: ProcessAction,
-    },
-    /// Manage the MemoCache (response memoization cache)
-    Cache {
-        #[command(subcommand)]
-        action: CacheAction,
-    },
-    /// Report standalone token-accounting availability for text
-    Tokenize {
-        /// Text to tokenize. Use --file for larger inputs.
-        text: Option<String>,
-        /// Read text from a file instead of the positional argument.
-        #[arg(long, conflicts_with = "text")]
-        file: Option<PathBuf>,
-        /// Model name to echo in the diagnostic output.
-        #[arg(long)]
-        model: Option<String>,
     },
 }
 

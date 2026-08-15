@@ -143,13 +143,25 @@ pub fn compilation_serve_command(socket: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-/// Resume from a new client record only.
+/// Resume from runtime truth. The client file is not Program Context.
 pub fn resume_command(last: bool) -> Result<()> {
     if !last {
         bail!("apxm resume requires --last");
     }
     let record = load_last_record()?;
-    println!("{}", serde_json::to_string(&record)?);
+    let mut runtime = spawn_runtime_client()?;
+    let instance = runtime
+        .run_artifact(&record.artifact_digest)
+        .map_err(|error| anyhow::anyhow!(error))?;
+    println!(
+        "{}",
+        serde_json::json!({
+            "contract": record.contract,
+            "artifact_digest": record.artifact_digest,
+            "program_instance_id": instance,
+            "source": "runtime-inspect",
+        })
+    );
     Ok(())
 }
 

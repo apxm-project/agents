@@ -406,6 +406,11 @@ class CanonicalOnlyReachabilityTests(unittest.TestCase):
         self.assertNotIn("Chat {", cli)
         self.assertNotIn("Watch {", cli)
         self.assertNotIn("Rollout {", cli)
+        self.assertNotIn("    Session {", cli)
+        self.assertNotIn("    Cache {", cli)
+        self.assertNotIn("    Tokenize {", cli)
+        self.assertNotIn("    Team {", cli)
+        self.assertNotIn("    Backend {", cli)
         driver = (REPOSITORY_ROOT / "crates/runtime/execution/src/lib.rs").read_text()
         self.assertNotIn("resume_event,", driver)
 
