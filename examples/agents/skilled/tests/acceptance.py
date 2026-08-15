@@ -50,6 +50,43 @@ def load_program():
     return SkilledExample
 
 
+def typescript_source():
+    """Compile the TypeScript twin, when the TypeScript frontend is built.
+
+    `test-skill-example` builds only the Python frontend, so the twin is
+    compiled whenever the TypeScript one is on disk — which is what
+    `test-frontend-examples` and `build-example-artifacts` leave behind.
+    """
+    if not (REPOSITORY_ROOT / "crates/compiler/frontend/typescript/dist/index.js").is_file():
+        return None
+    for command in (
+        ["npm", "--prefix", str(EXAMPLE_ROOT), "install", "--ignore-scripts",
+         "--no-audit", "--no-fund", "--no-package-lock"],
+        ["npm", "--prefix", str(EXAMPLE_ROOT), "run", "build"],
+    ):
+        subprocess.run(command, cwd=REPOSITORY_ROOT, check=True, capture_output=True)
+    completed = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            "import { buildSkilled } from './dist/agent.js';"
+            "const p = buildSkilled();"
+            "console.log(JSON.stringify({"
+            "graph: p.frontendGraph(), air: p.canonicalAir(), diagnostics: p.diagnostics()"
+            "}));",
+        ],
+        cwd=EXAMPLE_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise SystemExit(f"TypeScript twin failed:\n{completed.stdout}\n{completed.stderr}")
+    payload = json.loads(completed.stdout)
+    assert payload["diagnostics"] is None, payload["diagnostics"]
+    return payload["graph"], payload["air"]
+
+
 def publish_declared_skills(graph: dict) -> list[str]:
     """Publish every skill the program declares into the local root.
 
@@ -153,31 +190,22 @@ def skill_bodies(result: dict) -> list[str]:
     return bodies
 
 
-def main() -> None:
-    """Compile, publish, execute, and check that both skills were read."""
-    program = load_program()
-    graph = program.frontend_graph()
-    assert program.diagnostics() is None, program.diagnostics()
-
+def check_language(language: str, graph: dict, air: str) -> None:
+    """Publish one source's declared skills and execute its compiled AIR."""
     # The declaration is visible where it has to be: in the graph, and in the
     # artifact's requirements as the authority to read instructions.
     declared = {
         requirement["skill_id"]: requirement["instruction_source"]["kind"]
         for requirement in graph["skill_requirements"]
     }
-    assert declared == {"review": "entry", "tone": "inline"}, declared
+    assert declared == {"review": "entry", "tone": "inline"}, (language, declared)
     assert [
         requirement["capability_ref"] for requirement in graph["capability_requirements"]
-    ] == ["read_skill"]
-    slots = [
-        requirement["typed_port_slot"]
-        for requirement in program.artifact()["artifact_semantic_requirements"]
-    ]
-    assert slots == ["read_skill"], slots
+    ] == ["read_skill"], language
 
     WORKSPACE.mkdir(parents=True, exist_ok=True)
-    air_path = WORKSPACE / "skilled.air.json"
-    air_path.write_text(program.canonical_air(), encoding="utf-8")
+    air_path = WORKSPACE / f"skilled-{language}.air.json"
+    air_path.write_text(air, encoding="utf-8")
 
     published = publish_declared_skills(graph)
     assert sorted(published) == ["review", "tone"], published
@@ -194,7 +222,28 @@ def main() -> None:
     # The program-written one returns the text the source bundle carries.
     assert "Answer in the register the author wrote in." in joined, joined
 
-    print("PASS the Skilled example declares two skills and reads both through read_skill")
+
+def main() -> None:
+    """Compile, publish, execute, and check that both skills were read."""
+    program = load_program()
+    assert program.diagnostics() is None, program.diagnostics()
+    slots = [
+        requirement["typed_port_slot"]
+        for requirement in program.artifact()["artifact_semantic_requirements"]
+    ]
+    assert slots == ["read_skill"], slots
+    check_language("python", program.frontend_graph(), program.canonical_air())
+
+    exercised = ["Python"]
+    twin = typescript_source()
+    if twin is not None:
+        check_language("typescript", *twin)
+        exercised.append("TypeScript")
+
+    print(
+        "PASS the Skilled example declares two skills and reads both through "
+        f"read_skill ({', '.join(exercised)})"
+    )
 
 
 if __name__ == "__main__":

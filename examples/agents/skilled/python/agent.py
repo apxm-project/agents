@@ -45,7 +45,8 @@ ToneSkill = Skill(
 async def SkilledExample(agent, request):
     """Load both declared skills and return the instructions they carry."""
     await ToneSkill.load()
-    return await ReviewSkill.load()
+    instructions = await ReviewSkill.load()
+    return {"instructions": instructions}
 
 
 def main() -> None:

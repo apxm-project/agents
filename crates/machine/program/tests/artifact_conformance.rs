@@ -121,9 +121,18 @@ fn conversational_example_artifacts_pin_typed_tool_control_and_hooks() {
             hooks[0]["target_selector"], hooks[1]["target_selector"],
             "{fixture}",
         );
-        let operations = artifact["air"]["semantic_operations"]
+        let all = artifact["air"]["semantic_operations"]
             .as_array()
             .expect("example semantic operations");
+        let in_hook = |operation: &&serde_json::Value| {
+            operation["parent_region_id"]
+                .as_str()
+                .is_some_and(|region| region.starts_with("hook."))
+        };
+
+        // A hook body carries its own effects, so the Agent's own calls are the
+        // ones outside every hook region.
+        let operations: Vec<_> = all.iter().filter(|node| !in_hook(node)).collect();
         assert_eq!(
             operations
                 .iter()
@@ -132,9 +141,28 @@ fn conversational_example_artifacts_pin_typed_tool_control_and_hooks() {
             2,
             "{fixture}",
         );
+
+        // The before-Hook measures the context and hands it to a second Model,
+        // so both effects are captured inside the hook rather than referenced.
+        let hook_ops: Vec<_> = all.iter().filter(in_hook).collect();
+        for op in ["capability.invoke", "model.call"] {
+            assert!(
+                hook_ops.iter().any(|node| node["op"] == op),
+                "{fixture}: hook body carries {op}",
+            );
+        }
+
+        // The Tool is the one sharing a region with the re-entry Model; the
+        // other invocations in the body are the Skills the program loads.
         let tool = operations
             .iter()
-            .find(|operation| operation["op"] == "capability.invoke")
+            .find(|operation| {
+                operation["op"] == "capability.invoke"
+                    && operations.iter().any(|other| {
+                        other["op"] == "model.call"
+                            && other["parent_region_id"] == operation["parent_region_id"]
+                    })
+            })
             .expect("declared Tool operation");
         let reentry_model = operations
             .iter()

@@ -1,7 +1,8 @@
 // The TypeScript conversational reference over generic Agent Program APIs.
 
-import { Agent, Capability, Context, Hook, Model, Tool } from "@apxm/frontend";
+import { Agent, Capability, Context, Hook, Model, Skill, Tool } from "@apxm/frontend";
 import { COUNT_TOKENS, SEARCH_WEB } from "@apxm/frontend/capabilities";
+import { Allow, Ask } from "@apxm/frontend/permissions";
 import { source } from "@apxm/frontend/node";
 
 source(import.meta.url);
@@ -13,7 +14,12 @@ type ConversationMessage = {
   content: string;
 };
 type CountTokensRequest = { messages: readonly ConversationMessage[] };
-type CountTokensResult = { total: number };
+type CountTokensResult = { total: number; over_budget: boolean };
+type CompactionRequest = {
+  messages: readonly ConversationMessage[];
+  budget: CountTokensResult;
+};
+type CompactionResult = { messages: readonly ConversationMessage[] };
 type ConversationContext = {
   messages: readonly ConversationMessage[];
   last_reply: string;
@@ -27,6 +33,8 @@ type SearchWebToolRequest = {
   arguments: SearchWebRequest;
 };
 type InitialModelRequest = {
+  persona: string;
+  context_policy: string;
   messages: readonly ConversationMessage[];
   incoming: ConversationInput;
 };
@@ -42,12 +50,28 @@ type ConversationalProgram = ReturnType<
 >;
 
 // Measuring the model-visible conversation is a Capability, not host code, so
-// the measurement is an ordinary `capability.invoke` the compiler can see.
-const CountTokens = Capability<CountTokensRequest, CountTokensResult>(
-  COUNT_TOKENS,
-);
-const SearchWeb = Tool<SearchWebRequest, SearchWebResult>(SEARCH_WEB);
+// the measurement is an ordinary `capability.invoke` the compiler can see. The
+// permission each binding carries is what the *program* asks for; a deployment
+// may narrow it in `agent.toml [permissions]` and may never widen it.
+const CountTokens = Capability<CountTokensRequest, CountTokensResult>(COUNT_TOKENS, {
+  permission: Allow("Counts tokens in the conversation this program already holds."),
+});
+const SearchWeb = Tool<SearchWebRequest, SearchWebResult>(SEARCH_WEB, {
+  permission: Ask("Sends a model-chosen query to a third-party search index."),
+});
 const SupportModel = Model<ModelRequest, ModelResponse>("model.target");
+
+// The second declared Model. It is called from a Hook body, so compaction is
+// workflow structure the compiler sees rather than host code behind a digest.
+const CompactConversation = Model<CompactionRequest, CompactionResult>("model.compaction");
+
+// The persona and the context policy are instructions, which is what a Skill
+// is. Loading one is an ordinary `capability.invoke` on `read_skill`.
+const PersonaSkill = Skill("persona", { entry: "skills/persona/SKILL.md" });
+const ContextPolicySkill = Skill("context-policy", {
+  entry: "skills/context-policy/SKILL.md",
+});
+
 const ConversationContext: ReturnType<typeof Context> = Context<ConversationContext>({
   messages: [],
   last_reply: "",
@@ -63,8 +87,12 @@ export const ConversationalExample: ConversationalProgram = Agent<
   name: "ConversationalExample",
   context: ConversationContext,
   async run(agent, incoming) {
+    const persona = await PersonaSkill.load();
+    const context_policy = await ContextPolicySkill.load();
     while (incoming.message !== "") {
       let response = await SupportModel({
+        persona,
+        context_policy,
         messages: agent.context.messages,
         incoming,
       });
@@ -73,6 +101,8 @@ export const ConversationalExample: ConversationalProgram = Agent<
         if (response.tool_request.kind === "search_web") {
           const toolResult = await SearchWeb(response.tool_request.arguments);
           response = await SupportModel({
+            persona,
+            context_policy,
             messages: agent.context.messages,
             incoming,
             tool_result: toolResult,
@@ -98,15 +128,22 @@ export const ConversationalExample: ConversationalProgram = Agent<
   },
 });
 
-// Measure the model-visible conversation before the Tool runs.
+// Measure the conversation and hand the measurement to the compactor.
+// `scope` is a literal here, not the `@apxm/frontend/scopes` symbol: the
+// TypeScript capture reads it off the AST as a string and silently falls back
+// to `node` for anything else. Python states `scope=CAPABILITY`.
 const PrepareSearchContext = Hook.before<ConversationContext>({
   agent: ConversationalExample,
   target: SearchWeb,
   scope: "capability",
   async run(agent) {
     const budget = await CountTokens({ messages: agent.context.messages });
-    agent.context = {
+    const compacted = await CompactConversation({
       messages: agent.context.messages,
+      budget,
+    });
+    agent.context = {
+      messages: compacted.messages,
       last_reply: agent.context.last_reply,
       context_budget: budget,
       last_tool: agent.context.last_tool,
@@ -128,8 +165,6 @@ const RecordSearchContext = Hook.after<ConversationContext>({
     };
   },
 });
-void PrepareSearchContext;
-void RecordSearchContext;
 
 export function buildConversational(): ConversationalProgram {
   return ConversationalExample;

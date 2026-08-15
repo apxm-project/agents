@@ -433,10 +433,20 @@ def test_conversational_tool_dispatch_is_model_directed_and_closed() -> None:
         tool_region = tool_loop["body_region_ids"][0]
         assert tool_loop["parent_region_id"] == outer_region
 
+        # The compaction Model is called from a Hook, so it is a model call the
+        # Agent body does not make; the dispatch shape below is about the body.
+        hook_region = graph["hook_bindings"][0]["body_region_id"]
         model_calls = [
             call
             for call in graph["call_intents"]
             if call["intent_kind"] == "model_invocation"
+            and call["parent_region_id"] != hook_region
+        ]
+        hook_model_calls = [
+            call
+            for call in graph["call_intents"]
+            if call["intent_kind"] == "model_invocation"
+            and call["parent_region_id"] == hook_region
         ]
         tool_calls = [
             call
@@ -444,6 +454,7 @@ def test_conversational_tool_dispatch_is_model_directed_and_closed() -> None:
             if call["intent_kind"] == "tool_invocation"
         ]
         assert len(model_calls) == 2
+        assert len(hook_model_calls) == 1
         assert len(tool_calls) == 1
         initial_model, reentry_model = model_calls
         tool_call = tool_calls[0]
@@ -488,9 +499,44 @@ def test_conversational_tool_dispatch_is_model_directed_and_closed() -> None:
         # is the assertion that used to pin the three namespaces disagreeing.
         # A Hook's own Capability is declared exactly like the Agent body's, so
         # a measurement made inside a Hook is a requirement the artifact states.
+        # The permission each entry carries is what the source asked for, so a
+        # request stated in code reaches the artifact rather than agent.toml.
         assert graph["capability_requirements"] == [
-            {"capability_ref": "count_tokens", "tool_schema_present": False},
-            {"capability_ref": "search_web", "tool_schema_present": True},
+            {
+                "capability_ref": "count_tokens",
+                "requested_permission": {
+                    "decision": "allow",
+                    "reason": (
+                        "Counts tokens in the conversation this program already holds."
+                    ),
+                },
+                "tool_schema_present": False,
+            },
+            {
+                "capability_ref": "search_web",
+                "requested_permission": {
+                    "decision": "ask",
+                    "reason": "Sends a model-chosen query to a third-party search index.",
+                },
+                "tool_schema_present": True,
+            },
+            {"capability_ref": "read_skill", "tool_schema_present": False},
+        ]
+        assert graph["skill_requirements"] == [
+            {
+                "skill_id": "context-policy",
+                "instruction_source": {
+                    "kind": "entry",
+                    "path": "skills/context-policy/SKILL.md",
+                },
+            },
+            {
+                "skill_id": "persona",
+                "instruction_source": {
+                    "kind": "entry",
+                    "path": "skills/persona/SKILL.md",
+                },
+            },
         ]
 
 
@@ -560,13 +606,21 @@ def test_conversational_artifacts_bind_and_schedule_hooks_deterministically() ->
             for hook in hooks
             if hook["body_region_id"] in bodies
         ]
-        measured = next(
+        # A Model call inside a Hook is the same kind of node as one in the
+        # Agent body: compaction is structure the compiler sees, not host code
+        # hidden behind the Hook's handler digest.
+        measured = [
             operation
             for operation in air["semantic_operations"]
             if operation["parent_region_id"] == "hook.PrepareSearchContext.body"
-        )
-        assert measured["op"] == "capability.invoke"
-        assert measured["operands"][0]["value_id"] == "count_tokens"
+        ]
+        assert [operation["op"] for operation in measured] == [
+            "capability.invoke",
+            "model.call",
+        ]
+        assert measured[0]["operands"][0]["value_id"] == "count_tokens"
+        assert measured[1]["operands"][0]["value_id"] == "model.compaction"
+        assert measured[0]["execution_order"] < measured[1]["execution_order"]
         assert [hook["return_mode"] for hook in hooks] == [
             "replace_result",
             "replace_result",

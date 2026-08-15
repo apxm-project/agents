@@ -16,5 +16,8 @@ type = "local"
 [hierarchy]
 permitted_children = []
 
+# The deployment layer, on top of what the source asked for. The program
+# requests `allow` for count_tokens; this narrows it to `ask`. It may only
+# tighten a request, never widen one.
 [permissions]
-write = { decision = "ask", reason = "Writes files on the host." }
+count_tokens = { decision = "ask", reason = "This deployment gates every measurement of user text." }

@@ -47,19 +47,46 @@ fn write_set() -> AtomicWriteSet {
     }
 }
 
-fn admission() -> ModelBindingAdmission {
-    ModelBindingAdmission::new(ResolvedModelBinding::from_target_commitment(
-        InferenceTargetCommitment::commit(
-            "model.target",
-            digest('9'),
-            "deployment.default",
-            digest('a'),
-            digest('b'),
-            digest('c'),
-            0,
-        )
-        .expect("target commitment"),
-    ))
+/// Admit every Model target the AIR names, as the shipping composition root
+/// does. A program may declare more than one — the conversational example's
+/// context hook calls a second — and admitting a fixed one fails the rest.
+fn admission(air: &apxm_program::AirModule) -> ModelBindingAdmission {
+    let mut targets: Vec<String> = air
+        .semantic_operations
+        .iter()
+        .filter(|operation| operation.op == apxm_program::SemanticOpKind::ModelCall)
+        .filter_map(|operation| {
+            operation
+                .operands
+                .iter()
+                .find(|operand| operand.slot == "model_ref")
+                .map(|operand| operand.value_id.clone())
+        })
+        .collect();
+    targets.sort();
+    targets.dedup();
+    if targets.is_empty() {
+        targets.push("model.target".to_string());
+    }
+    ModelBindingAdmission::for_invocation(
+        targets
+            .into_iter()
+            .map(|target| {
+                ResolvedModelBinding::from_target_commitment(
+                    InferenceTargetCommitment::commit(
+                        target,
+                        digest('9'),
+                        "deployment.default",
+                        digest('a'),
+                        digest('b'),
+                        digest('c'),
+                        0,
+                    )
+                    .expect("target commitment"),
+                )
+            })
+            .collect(),
+    )
 }
 
 struct TestModelRequestMetadata;
@@ -113,6 +140,22 @@ fn conversational_typescript_example() -> (AirModule, Vec<HookBinding>) {
     ))
 }
 
+/// The node ids invoking one Capability, so a test can name the Tool it means
+/// rather than assuming it is the only invocation in the program.
+fn capability_nodes(air: &AirModule, capability_ref: &str) -> Vec<String> {
+    air.semantic_operations
+        .iter()
+        .filter(|operation| operation.op == apxm_program::SemanticOpKind::CapabilityInvoke)
+        .filter(|operation| {
+            operation
+                .operands
+                .iter()
+                .any(|operand| operand.slot == "capability_ref" && operand.value_id == capability_ref)
+        })
+        .map(|operation| operation.node_id.clone())
+        .collect()
+}
+
 fn request(air: AirModule, commit_id: &str) -> ExecutionRequest {
     let capability_invocations = air
         .semantic_operations
@@ -144,6 +187,7 @@ fn request(air: AirModule, commit_id: &str) -> ExecutionRequest {
             ))
         })
         .collect::<BTreeMap<_, _>>();
+    let model_admission = admission(&air);
     ExecutionRequest {
         initial_values: air
             .semantic_operations
@@ -172,7 +216,7 @@ fn request(air: AirModule, commit_id: &str) -> ExecutionRequest {
             .collect(),
         air,
         hook_bindings: Vec::new(),
-        model_admission: admission(),
+        model_admission,
         capability_invocations,
         program_instance_ref: ProgramInstanceRef::new("instance.1"),
         program_invocation_ref: ProgramInvocationRef::new(format!("invocation.{commit_id}")),
@@ -650,6 +694,9 @@ async fn repository_example_artifacts_execute_only_generic_structural_semantics(
             output: json!({"kind": "final", "reply": {"message": "done"}}),
         }]));
         let hooks = Arc::new(ArtifactHooks::default());
+        // The program also loads Skills and measures its context in a Hook, so
+        // those invocations run on every turn. Only the Tool is conditional.
+        let tool_nodes = capability_nodes(&air, "search_web");
         let mut execution_request = request(air, commit_id);
         execution_request.hook_bindings = hook_bindings;
         let report = execute(
@@ -675,10 +722,11 @@ async fn repository_example_artifacts_execute_only_generic_structural_semantics(
             "{commit_id} uses structural yield rather than an await.event stand-in",
         );
         assert!(
-            report
-                .node_outcomes
-                .iter()
-                .all(|outcome| !matches!(outcome, apxm_execution::NodeOutcome::Capability { .. })),
+            report.node_outcomes.iter().all(|outcome| !matches!(
+                outcome,
+                apxm_execution::NodeOutcome::Capability { node_id, .. }
+                    if tool_nodes.contains(node_id)
+            )),
             "{commit_id} must skip Tool dispatch for an initial final response",
         );
         assert!(commit.completions().is_empty());
@@ -705,6 +753,14 @@ async fn repository_example_artifacts_execute_authored_tool_flow_and_real_hooks(
                     "tool_request": {"kind": "search_web", "arguments": {"query": "APXM"}}
                 }),
             },
+            // The before-Hook on the Tool compacts the context, so its Model
+            // answers with the context it replaces.
+            AttemptDisposition::Success {
+                usage: Usage::default(),
+                output: json!({
+                    "messages": [], "last_reply": "", "context_budget": null, "last_tool": ""
+                }),
+            },
             AttemptDisposition::Success {
                 usage: Usage::default(),
                 output: json!({"kind": "final", "reply": {"message": "done"}}),
@@ -724,10 +780,15 @@ async fn repository_example_artifacts_execute_authored_tool_flow_and_real_hooks(
         assert_eq!(
             model.requests(),
             [
-                json!({"messages": [], "incoming": {"message": "hello"}}),
                 json!({
-                    "messages": [],
-                    "incoming": {"message": "hello"},
+                    "messages": [], "incoming": {"message": "hello"},
+                    "persona": "ok", "context_policy": "ok"
+                }),
+                // The before-Hook's own Model call, carrying the measured budget.
+                json!({"messages": [], "budget": "ok"}),
+                json!({
+                    "messages": [], "incoming": {"message": "hello"},
+                    "persona": "ok", "context_policy": "ok",
                     "tool_result": "ok"
                 }),
             ],
@@ -813,11 +874,19 @@ async fn repository_example_resume_carries_exact_input_and_context_into_next_tur
         .expect("resume reaches the next authored yield"),
         RunOutcome::Suspended { .. }
     ));
+    // The Skills the program declares are loaded and threaded into the request,
+    // so the persona reaches the Model rather than sitting in an unread file.
     assert_eq!(
         model.requests(),
         [
-            json!({"messages": [], "incoming": {"message": "hello"}}),
-            json!({"messages": [], "incoming": {"message": "second turn"}}),
+            json!({
+                "messages": [], "incoming": {"message": "hello"},
+                "persona": "ok", "context_policy": "ok"
+            }),
+            json!({
+                "messages": [], "incoming": {"message": "second turn"},
+                "persona": "ok", "context_policy": "ok"
+            }),
         ]
     );
     let second_continuation: apxm_execution::Continuation = serde_json::from_value(

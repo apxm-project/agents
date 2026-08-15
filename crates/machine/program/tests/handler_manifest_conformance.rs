@@ -205,10 +205,15 @@ fn schema_constraints_are_each_enforced_by_the_decode_path() {
             with(tool(), "mode", serde_json::json!("observe")),
             false,
         ),
-        // `HandlerLanguage` is closed to `typescript`.
+        // `HandlerLanguage` is closed to the frontends that ship a worker.
         (
-            "python package-local handler language",
+            "python handler language",
             with(tool(), "language", serde_json::json!("python")),
+            true,
+        ),
+        (
+            "unpublished handler language",
+            with(tool(), "language", serde_json::json!("ruby")),
             false,
         ),
         // `HandlerSource.artifact_path` is artifact-confined and non-empty.
@@ -326,7 +331,7 @@ fn manifest_constants_are_read_from_the_published_schema() {
 
     // The closed language set is read off the Rust enum's own wire form, so a
     // variant added to either side without the other fails here.
-    let mut languages: Vec<String> = [HandlerLanguage::TypeScript]
+    let mut languages: Vec<String> = [HandlerLanguage::Python, HandlerLanguage::TypeScript]
         .iter()
         .map(|v| {
             serde_json::to_value(v)

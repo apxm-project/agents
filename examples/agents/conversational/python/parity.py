@@ -7,6 +7,7 @@ import sys
 
 from apxm_program import Agent, Capability, Context, Event, Hook, Model, TaskGroup, Tool
 from apxm_program.capabilities import COUNT_TOKENS, SEARCH_WEB
+from apxm_program.scopes import MODEL
 
 
 class Input:
@@ -33,7 +34,7 @@ async def ParityChild(agent, request):
     return await ParityModel(request)
 
 
-@Hook.before(target="ParityModel", scope="model")
+@Hook.before(target="ParityModel", scope=MODEL)
 async def RecordParityModelStart(agent) -> None:
     return None
 

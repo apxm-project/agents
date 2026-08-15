@@ -69,7 +69,6 @@ const RecordParityModelStart = Hook.before<ParityContext>({
     void agent.context;
   },
 });
-void RecordParityModelStart;
 
 export function buildParityCorpus(): ParityProgram {
   return ParityCorpus;

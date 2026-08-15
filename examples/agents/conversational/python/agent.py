@@ -6,8 +6,10 @@ import json
 import sys
 from typing import Literal, TypeAlias, TypedDict
 
-from apxm_program import Agent, Capability, Context, Hook, Model, Tool
+from apxm_program import Agent, Capability, Context, Hook, Model, Skill, Tool
 from apxm_program.capabilities import COUNT_TOKENS, SEARCH_WEB
+from apxm_program.permissions import Allow, Ask
+from apxm_program.scopes import CAPABILITY
 
 
 class ConversationInput(TypedDict):
@@ -37,6 +39,16 @@ class CountTokensRequest(TypedDict):
 
 class CountTokensResult(TypedDict):
     total: int
+    over_budget: bool
+
+
+class CompactionRequest(TypedDict):
+    messages: tuple[ConversationMessage, ...]
+    budget: CountTokensResult
+
+
+class CompactionResult(TypedDict):
+    messages: tuple[ConversationMessage, ...]
 
 
 class SearchWebToolRequest(TypedDict):
@@ -55,6 +67,8 @@ class ToolModelResponse(TypedDict):
 
 
 class InitialModelRequest(TypedDict):
+    persona: str
+    context_policy: str
     messages: tuple[ConversationMessage, ...]
     incoming: ConversationInput
 
@@ -67,10 +81,27 @@ ModelRequest: TypeAlias = InitialModelRequest | ToolResultModelRequest
 ModelResponse: TypeAlias = FinalModelResponse | ToolModelResponse
 
 # Measuring the model-visible conversation is a Capability, not host code, so
-# the measurement is an ordinary `capability.invoke` the compiler can see.
-CountTokens = Capability[CountTokensRequest, CountTokensResult](COUNT_TOKENS)
-SearchWeb = Tool[SearchWebRequest, SearchWebResult](SEARCH_WEB)
+# the measurement is an ordinary `capability.invoke` the compiler can see. The
+# permission each binding carries is what the *program* asks for; a deployment
+# may narrow it in `agent.toml [permissions]` and may never widen it.
+CountTokens = Capability[CountTokensRequest, CountTokensResult](
+    COUNT_TOKENS,
+    permission=Allow("Counts tokens in the conversation this program already holds."),
+)
+SearchWeb = Tool[SearchWebRequest, SearchWebResult](
+    SEARCH_WEB,
+    permission=Ask("Sends a model-chosen query to a third-party search index."),
+)
 SupportModel = Model[ModelRequest, ModelResponse]("model.target")
+
+# The second declared Model. It is called from a Hook body, so compaction is
+# workflow structure the compiler sees rather than host code behind a digest.
+CompactConversation = Model[CompactionRequest, CompactionResult]("model.compaction")
+
+# The persona and the context policy are instructions, which is what a Skill
+# is. Loading one is an ordinary `capability.invoke` on `read_skill`.
+PersonaSkill = Skill("persona", entry="skills/persona/SKILL.md")
+ContextPolicySkill = Skill("context-policy", entry="skills/context-policy/SKILL.md")
 
 
 @Context
@@ -81,19 +112,22 @@ class ConversationContext:
     last_tool: str = ""
 
 
-@Hook.before(target="SearchWeb", scope="capability")
+@Hook.before(target="SearchWeb", scope=CAPABILITY)
 async def PrepareSearchContext(agent) -> None:
-    """Measure the model-visible conversation before the Tool runs."""
+    """Measure the conversation and hand the measurement to the compactor."""
     budget = await CountTokens({"messages": agent.context.messages})
+    compacted = await CompactConversation(
+        {"messages": agent.context.messages, "budget": budget}
+    )
     agent.context = ConversationContext(
-        messages=agent.context.messages,
+        messages=compacted["messages"],
         last_reply=agent.context.last_reply,
         context_budget=budget,
         last_tool=agent.context.last_tool,
     )
 
 
-@Hook.after(target="SearchWeb", scope="capability")
+@Hook.after(target="SearchWeb", scope=CAPABILITY)
 async def RecordSearchContext(agent) -> None:
     """Record which Capability the conversation last dispatched."""
     agent.context = ConversationContext(
@@ -110,9 +144,16 @@ async def RecordSearchContext(agent) -> None:
     context=ConversationContext,
 )
 async def ConversationalExample(agent, incoming):
+    persona = await PersonaSkill.load()
+    context_policy = await ContextPolicySkill.load()
     while incoming["message"] != "":
         response = await SupportModel(
-            {"messages": agent.context.messages, "incoming": incoming}
+            {
+                "persona": persona,
+                "context_policy": context_policy,
+                "messages": agent.context.messages,
+                "incoming": incoming,
+            }
         )
 
         while response["kind"] == "tool_request":
@@ -120,6 +161,8 @@ async def ConversationalExample(agent, incoming):
                 tool_result = await SearchWeb(response["tool_request"]["arguments"])
                 response = await SupportModel(
                     {
+                        "persona": persona,
+                        "context_policy": context_policy,
                         "messages": agent.context.messages,
                         "incoming": incoming,
                         "tool_result": tool_result,

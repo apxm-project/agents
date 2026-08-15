@@ -1,0 +1,25 @@
+{
+  "name": "@apxm/example-agent-skilled",
+  "private": true,
+  "type": "module",
+  "main": "./dist/agent.js",
+  "types": "./dist/agent.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/agent.d.ts",
+      "default": "./dist/agent.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "compile": "node --input-type=module -e \"import { buildSkilled } from './dist/agent.js'; console.log(buildSkilled().canonicalAir())\"",
+    "run": "node --input-type=module -e \"import { buildSkilled } from './dist/agent.js'; console.log(JSON.stringify(buildSkilled().frontendGraph()))\""
+  },
+  "dependencies": {
+    "@apxm/frontend": "file:../../../crates/compiler/frontend/typescript"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "typescript": "^5.6.3"
+  }
+}

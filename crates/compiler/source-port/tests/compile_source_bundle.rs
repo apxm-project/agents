@@ -33,7 +33,7 @@ class Review:
 
 
 ReviewModel = Model[ReviewRequest, Review]("@MODEL@")
-SearchWeb = Tool[ReviewRequest, Review]("search.web.capability")
+SearchWeb = Tool[ReviewRequest, Review]("search_web")
 
 
 @Agent(input=ReviewRequest, output=Review)
@@ -50,7 +50,7 @@ type ReviewRequest = object;
 type Review = object;
 
 const ReviewModel = Model<ReviewRequest, Review>("@MODEL@");
-const SearchWeb = Tool<ReviewRequest, Review>("search.web.capability");
+const SearchWeb = Tool<ReviewRequest, Review>("search_web");
 
 export const Reviewer = Agent<ReviewRequest, Review>({
   name: "Reviewer",
