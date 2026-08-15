@@ -180,7 +180,9 @@ fn is_lock_path(path: &str) -> bool {
             | "yarn.lock"
             | "Cargo.lock"
             | "poetry.lock"
-    ) || name.ends_with(".lock")
+    ) || std::path::Path::new(name)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("lock"))
 }
 
 fn validate_lock_digest(snapshot: &PackageSnapshot) -> Result<(), SnapshotError> {

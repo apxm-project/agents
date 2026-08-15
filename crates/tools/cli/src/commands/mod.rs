@@ -30,6 +30,7 @@ impl fmt::Display for OutputAlreadyEmitted {
 
 impl std::error::Error for OutputAlreadyEmitted {}
 
+#[allow(dead_code)]
 pub(crate) fn output_already_emitted() -> anyhow::Error {
     anyhow::Error::new(OutputAlreadyEmitted)
 }

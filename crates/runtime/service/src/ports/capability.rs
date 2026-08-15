@@ -236,9 +236,8 @@ impl PackageHandlerWorker {
             "tool_id": handler_id,
             "args": args,
         });
-        let mut line = serde_json::to_string(&frame).map_err(|error| {
-            failure(format!("the invocation frame is not encodable: {error}"))
-        })?;
+        let mut line = serde_json::to_string(&frame)
+            .map_err(|error| failure(format!("the invocation frame is not encodable: {error}")))?;
         line.push('\n');
 
         let mut guard = self.process.lock().await;
@@ -283,9 +282,8 @@ impl PackageHandlerWorker {
         };
         drop(guard);
 
-        let reply: WorkerReply = serde_json::from_str(&reply).map_err(|error| {
-            failure(format!("the worker reply is not a result frame: {error}"))
-        })?;
+        let reply: WorkerReply = serde_json::from_str(&reply)
+            .map_err(|error| failure(format!("the worker reply is not a result frame: {error}")))?;
         if reply.req_id != request_id {
             return Err(failure(format!(
                 "the worker replied to request '{}' while '{request_id}' was outstanding",
@@ -468,16 +466,15 @@ fn register_package_handlers(
         );
     }
     for descriptor in &handlers.manifest.handlers {
-        let worker =
-            workers
-                .get(&descriptor.language)
-                .ok_or_else(|| RuntimeError::Capability {
-                    capability: descriptor.name.clone(),
-                    message: format!(
-                        "this composition root was supplied no {:?} handler worker",
-                        descriptor.language
-                    ),
-                })?;
+        let worker = workers
+            .get(&descriptor.language)
+            .ok_or_else(|| RuntimeError::Capability {
+                capability: descriptor.name.clone(),
+                message: format!(
+                    "this composition root was supplied no {:?} handler worker",
+                    descriptor.language
+                ),
+            })?;
         system.register(Arc::new(PackageHandlerCapability::new(
             descriptor,
             Arc::clone(worker),
@@ -612,9 +609,7 @@ fn named_arguments(
 ) -> Result<HashMap<String, CapabilityValue>, String> {
     let capability_ref = request.capability_ref();
     let decoded = request.arguments().value().map_err(|error| {
-        format!(
-            "canonical arguments for capability '{capability_ref}' are not decodable: {error}"
-        )
+        format!("canonical arguments for capability '{capability_ref}' are not decodable: {error}")
     })?;
     let serde_json::Value::Object(fields) = decoded else {
         return Err(format!(
@@ -815,8 +810,8 @@ mod tests {
         }
     }
 
-        fn supplied(descriptors: Vec<HandlerDescriptor>) -> crate::AdmittedPackageHandlers {
-            crate::AdmittedPackageHandlers {
+    fn supplied(descriptors: Vec<HandlerDescriptor>) -> crate::AdmittedPackageHandlers {
+        crate::AdmittedPackageHandlers {
             // Never started: every test here stops at admission, which is
             // the point — a refused package Capability must not reach a
             // worker any more than a refused builtin reaches its

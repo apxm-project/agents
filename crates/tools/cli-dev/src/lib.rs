@@ -1,6 +1,18 @@
 //! Dekk-owned compiler and runtime fixture library.
 
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    clippy::assigning_clones,
+    clippy::case_sensitive_file_extension_comparisons,
+    clippy::cast_possible_wrap,
+    clippy::format_push_string,
+    clippy::manual_let_else,
+    clippy::match_same_arms,
+    clippy::match_wildcard_for_single_variants,
+    clippy::option_option,
+    clippy::struct_field_names,
+    clippy::unused_async
+)]
 
 pub mod commands;
 pub mod frontend;

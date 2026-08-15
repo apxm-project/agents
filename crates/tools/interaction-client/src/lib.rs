@@ -160,19 +160,18 @@ impl InteractionClient {
             program_instance_id: program_instance_id.to_owned(),
             input,
         })?;
-        if let RuntimeInner::Stdio(stdio) = &mut self.inner {
-            if let RuntimeResult::ProgramInvocationStarted {
+        if let RuntimeInner::Stdio(stdio) = &mut self.inner
+            && let RuntimeResult::ProgramInvocationStarted {
                 ref program_invocation_id,
                 ..
             } = result
-            {
-                let path = stdio.artifact_dir.join(format!(
-                    "{}.output.json",
-                    program_invocation_id.replace(':', "-")
-                ));
-                if let Ok(bytes) = std::fs::read(&path) {
-                    stdio.last_output = serde_json::from_slice(&bytes).ok();
-                }
+        {
+            let path = stdio.artifact_dir.join(format!(
+                "{}.output.json",
+                program_invocation_id.replace(':', "-")
+            ));
+            if let Ok(bytes) = std::fs::read(&path) {
+                stdio.last_output = serde_json::from_slice(&bytes).ok();
             }
         }
         Ok(result)

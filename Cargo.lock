@@ -301,6 +301,7 @@ version = "0.1.0"
 dependencies = [
  "apxm-compilation-protocol",
  "apxm-compilation-service",
+ "apxm-interaction-client",
  "apxm-source-port",
  "serde",
  "serde_json",

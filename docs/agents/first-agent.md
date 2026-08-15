@@ -94,7 +94,7 @@ The catalogue is generated from `crates/machine/ais/src/capabilities.rs`, so a
 misspelled symbol fails at import — and so does a misspelled string, because the
 marker admits only a catalogue id or a handler declaration: TypeScript's
 `CapabilityReference` has no bare-string arm, and the Python constructor raises
-`ToolRefNotCapability`. `dekk agents compile-service-canonical` still holds
+`ToolRefNotCapability`. `apxm build` still holds
 every surviving reference against the granted set. The marker also refuses a
 mutable display name on sight:
 <!-- frontend-surface:quoted search-web the display name the marker refuses, quoted to show the refusal rather than taught as a reference to write -->
@@ -129,10 +129,12 @@ and its amending record
 
 ## Compile through the owner boundary
 
-Place source and its manifest in an Agent Program Source Bundle, then submit it
-through host compile-admission. Other tools follow the same source-first path.
-The compiler bridge is explicit and has no local fallback, raw-AIR input, or
-frontend runtime mode.
+Place source and its manifest in an Agent Program Source Bundle, then `apxm build`
+the package. That snapshots the files and compiles them through the Compilation
+Service. `apxm run` admits the committed artifact in the Runtime Service;
+`apxm run --artifact <digest>` skips compilation. Other tools follow the same
+source-first path. The compiler bridge is explicit and has no local fallback,
+raw-AIR input, or frontend runtime mode.
 
 For the complete author journey, including Context, Tools, Hooks, Events,
 composition, and yield/resume, read the [authoring guide](../guides/creating-an-agent-program.md)

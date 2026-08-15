@@ -72,10 +72,10 @@ impl RuntimeService {
             disconnected: false,
             artifact_dir: None,
         };
-        if let Ok(dir) = std::env::var("APXM_ARTIFACT_DIR") {
-            if !dir.trim().is_empty() {
-                service.artifact_dir = Some(PathBuf::from(dir));
-            }
+        if let Ok(dir) = std::env::var("APXM_ARTIFACT_DIR")
+            && !dir.trim().is_empty()
+        {
+            service.artifact_dir = Some(PathBuf::from(dir));
         }
         service
     }
@@ -204,10 +204,10 @@ impl RuntimeService {
         if artifact_digest.trim().is_empty() {
             return Err(ProtocolError::SourceAsExecutable);
         }
-        if self.artifacts.get(&artifact_digest).is_none() {
-            if let Some(bytes) = self.load_persisted_artifact(&artifact_digest) {
-                self.artifacts.commit_named(artifact_digest.clone(), bytes);
-            }
+        if self.artifacts.get(&artifact_digest).is_none()
+            && let Some(bytes) = self.load_persisted_artifact(&artifact_digest)
+        {
+            self.artifacts.commit_named(artifact_digest.clone(), bytes);
         }
         if self.artifacts.get(&artifact_digest).is_none() {
             return Ok(RuntimeResult::Failed {
@@ -258,14 +258,11 @@ impl RuntimeService {
             };
         };
         let bytes = bytes.to_vec();
-        let air = match serde_json::from_slice::<AirModule>(&bytes) {
-            Ok(air) => air,
-            Err(_) => {
-                return RuntimeResult::Failed {
-                    request_id,
-                    code: "invalid_artifact".to_owned(),
-                };
-            }
+        let Ok(air) = serde_json::from_slice::<AirModule>(&bytes) else {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "invalid_artifact".to_owned(),
+            };
         };
         if let Err(code) = block_on(self.resolve_asks(&air)) {
             return RuntimeResult::Failed { request_id, code };
@@ -453,6 +450,7 @@ impl RuntimeService {
         std::fs::read(dir.join(digest.replace(':', "-"))).ok()
     }
 
+    #[allow(clippy::unused_self)]
     fn inspect_event(
         &mut self,
         request_id: String,

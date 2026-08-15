@@ -112,10 +112,11 @@ impl InMemoryCompilationPeer {
                     .validate()
                     .map_err(|_| ProtocolError::ConflictingIdempotency)?;
                 let fingerprint = snapshot.snapshot_digest.clone();
-                if let Some((key, prior)) = &self.last_idempotency {
-                    if key == &idempotency_key && prior != &fingerprint {
-                        return Err(ProtocolError::ConflictingIdempotency);
-                    }
+                if let Some((key, prior)) = &self.last_idempotency
+                    && key == &idempotency_key
+                    && prior != &fingerprint
+                {
+                    return Err(ProtocolError::ConflictingIdempotency);
                 }
                 self.last_idempotency = Some((idempotency_key, fingerprint.clone()));
                 Ok(CompilationResult::ArtifactCommitted {

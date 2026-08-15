@@ -239,9 +239,7 @@ impl LocalModelInferencePort {
                         .chain(registration.models.iter().map(|model| model.id.clone()))
                         .collect::<Vec<_>>();
                     let shared = registry.clone();
-                    match backend_runtime
-                        .run(async move { registration.register(&shared).await })
-                    {
+                    match backend_runtime.run(async move { registration.register(&shared).await }) {
                         Ok(Ok(())) => bound_models.extend(models),
                         Ok(Err(error)) => {
                             skipped.push(format!("backend '{name}' did not register: {error}"));
@@ -498,9 +496,7 @@ fn model_attempt_disposition(
 ) -> AttemptDisposition {
     let (category, code) = match response.finish_reason {
         FinishReason::Error => (ErrorCategory::Internal, "model_reported_generation_error"),
-        FinishReason::ContentFilter => {
-            (ErrorCategory::Validation, "model_reported_content_filter")
-        }
+        FinishReason::ContentFilter => (ErrorCategory::Validation, "model_reported_content_filter"),
         FinishReason::Timeout => (ErrorCategory::Unavailable, "model_reported_timeout"),
         FinishReason::Stop
         | FinishReason::Length
@@ -588,12 +584,9 @@ mod tests {
 
     #[test]
     fn an_authored_request_reaches_a_real_backend_from_the_synchronous_seam() {
-        let port = LocalModelInferencePort::for_bound_backend(
-            "test-echo",
-            FIXTURE_MODEL,
-            echo_backend(),
-        )
-        .expect("bound inference port");
+        let port =
+            LocalModelInferencePort::for_bound_backend("test-echo", FIXTURE_MODEL, echo_backend())
+                .expect("bound inference port");
 
         let disposition = port.attempt(
             &model_request(FIXTURE_MODEL, json!({"prompt": "say something"})),
@@ -613,12 +606,9 @@ mod tests {
     /// driver actually calls it. A `block_on` bridge panics here.
     #[tokio::test]
     async fn the_bridge_runs_inside_an_async_caller_without_panicking() {
-        let port = LocalModelInferencePort::for_bound_backend(
-            "test-echo",
-            FIXTURE_MODEL,
-            echo_backend(),
-        )
-        .expect("bound inference port");
+        let port =
+            LocalModelInferencePort::for_bound_backend("test-echo", FIXTURE_MODEL, echo_backend())
+                .expect("bound inference port");
         let disposition = port.attempt(
             &model_request(FIXTURE_MODEL, json!({"prompt": "inside a runtime"})),
             0,
@@ -652,12 +642,9 @@ mod tests {
 
     #[test]
     fn an_authored_field_the_adapter_cannot_carry_is_rejected_not_dropped() {
-        let port = LocalModelInferencePort::for_bound_backend(
-            "test-echo",
-            FIXTURE_MODEL,
-            echo_backend(),
-        )
-        .expect("bound inference port");
+        let port =
+            LocalModelInferencePort::for_bound_backend("test-echo", FIXTURE_MODEL, echo_backend())
+                .expect("bound inference port");
 
         let disposition = port.attempt(
             &model_request(

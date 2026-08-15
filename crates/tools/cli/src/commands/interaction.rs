@@ -244,12 +244,12 @@ fn sibling_bin(name: &str) -> Option<PathBuf> {
 }
 
 fn artifact_dir() -> Result<PathBuf> {
-    if let Ok(dir) = std::env::var("APXM_ARTIFACT_DIR") {
-        if !dir.trim().is_empty() {
-            let path = PathBuf::from(dir);
-            fs::create_dir_all(&path)?;
-            return Ok(path);
-        }
+    if let Ok(dir) = std::env::var("APXM_ARTIFACT_DIR")
+        && !dir.trim().is_empty()
+    {
+        let path = PathBuf::from(dir);
+        fs::create_dir_all(&path)?;
+        return Ok(path);
     }
     let path = std::env::current_dir()?.join(".apxm/artifacts");
     fs::create_dir_all(&path)?;

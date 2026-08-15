@@ -22,13 +22,12 @@ use apxm_inference::{
 use apxm_kernel::{
     AcpPromptOutcome, AcpPromptRequest, AdmittedCapabilityPermission, AdmittedConfinement,
     AdmittedPortBinding, AtomicWriteSet, CapabilityOutcome, ConfinementAttestation,
-    ConfinementError, ConfinementPort, ConfinementRequest,
-    ExecutionCommitPort, ExecutionCommitRequest, ExecutionCommitResult,
-    ExternalAgentCapabilityPort, INVOCATION_ADMISSION_SCHEMA, InvocationAdmission,
-    InvocationAdmissionClaim, PortImplementation, PortSlot, ProgramInstanceRef,
-    ProgramInvocationRef, PromptEffectState, ResourceCeilings, RuntimeAdmission,
-    VerifiedInvocationAdmission, admitted_capability_permissions, digest_serializable,
-    verify_invocation_admission,
+    ConfinementError, ConfinementPort, ConfinementRequest, ExecutionCommitPort,
+    ExecutionCommitRequest, ExecutionCommitResult, ExternalAgentCapabilityPort,
+    INVOCATION_ADMISSION_SCHEMA, InvocationAdmission, InvocationAdmissionClaim, PortImplementation,
+    PortSlot, ProgramInstanceRef, ProgramInvocationRef, PromptEffectState, ResourceCeilings,
+    RuntimeAdmission, VerifiedInvocationAdmission, admitted_capability_permissions,
+    digest_serializable, verify_invocation_admission,
 };
 use apxm_program::CapabilityInvocationAuthority;
 use apxm_program::air::{AirModule, SemanticOpKind};
@@ -276,10 +275,7 @@ impl ExecutionCommitPort for DevCommit {
         *self.version.lock().expect("dev commit mutex poisoned")
     }
 
-    async fn load_continuation(
-        &self,
-        _program_instance_ref: &ProgramInstanceRef,
-    ) -> Option<Value> {
+    async fn load_continuation(&self, _program_instance_ref: &ProgramInstanceRef) -> Option<Value> {
         self.continuation
             .lock()
             .expect("dev commit continuation mutex poisoned")
@@ -345,8 +341,7 @@ pub async fn execute_admitted_artifact(
         LocalCapabilityPort::with_package_root(handlers, package_root)
             .map_err(|error| error.to_string())?,
     );
-    let capability_permissions =
-        local_capability_permissions(&air, &capability.admitted_names())?;
+    let capability_permissions = local_capability_permissions(&air, &capability.admitted_names())?;
     let capability_invocations = local_capability_invocation_admissions(
         &air,
         &CapabilityGrantSet::from_registered_implementations(capability.registered_names()),

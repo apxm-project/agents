@@ -21,14 +21,12 @@ pub mod compile_service_canonical;
 pub mod ops;
 pub mod template;
 
-pub use agent::*;
 pub use analysis::*;
 pub use canonical_air::*;
 pub use canonical_execute::*;
 pub use cli::*;
 pub use codegen::*;
 pub use ops::*;
-pub use org::*;
 pub use template::*;
 
 #[derive(Debug)]

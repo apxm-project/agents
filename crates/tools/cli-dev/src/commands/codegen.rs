@@ -686,9 +686,8 @@ fn default_structural_tablegen_declarations_path() -> PathBuf {
 }
 
 fn default_typescript_codegen_path() -> PathBuf {
-    // Generated TS lives in-repo so APXM is self-contained. Consumers
-    // Downstream tooling may vendor/import the generated asset.
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("generated/typescript/generated.ts")
+    // Generated TS lives next to production `apxm-cli` so APXM is self-contained.
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../cli/generated/typescript/generated.ts")
 }
 
 fn default_typescript_frontend_codegen_dir() -> PathBuf {
@@ -697,9 +696,9 @@ fn default_typescript_frontend_codegen_dir() -> PathBuf {
 
 /// The packaging package that carries TypeScript's shipped-handler declaration.
 fn default_agent_packaging_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("agent-packaging")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../cli/agent-packaging")
 }
 
 fn default_event_kinds_codegen_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("generated/typescript/core-event-kinds.ts")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../cli/generated/typescript/core-event-kinds.ts")
 }

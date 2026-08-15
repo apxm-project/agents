@@ -83,10 +83,10 @@ impl CompilationService {
     pub fn from_env() -> Self {
         let mut service =
             Self::with_frontends(declared_frontend_roots(), declared_frontend_drivers());
-        if let Ok(dir) = std::env::var("APXM_ARTIFACT_DIR") {
-            if !dir.trim().is_empty() {
-                service.artifact_dir = Some(PathBuf::from(dir));
-            }
+        if let Ok(dir) = std::env::var("APXM_ARTIFACT_DIR")
+            && !dir.trim().is_empty()
+        {
+            service.artifact_dir = Some(PathBuf::from(dir));
         }
         service
     }
@@ -134,20 +134,21 @@ impl CompilationService {
             return Ok(failed(&request_id, snapshot_error_code(error)));
         }
         let fingerprint = snapshot.snapshot_digest.clone();
-        if let Some((key, prior)) = &self.last_idempotency {
-            if key == &idempotency_key && prior != &fingerprint {
-                return Err(ProtocolError::ConflictingIdempotency);
-            }
+        if let Some((key, prior)) = &self.last_idempotency
+            && key == &idempotency_key
+            && prior != &fingerprint
+        {
+            return Err(ProtocolError::ConflictingIdempotency);
         }
         self.last_idempotency = Some((idempotency_key, fingerprint));
 
         match compile_snapshot(&snapshot, &self.roots, &self.drivers) {
             Ok(air_json) => {
                 let artifact_digest = format!("sha256:{:x}", Sha256::digest(air_json.as_bytes()));
-                if let Some(dir) = &self.artifact_dir {
-                    if persist_artifact(dir, &artifact_digest, air_json.as_bytes()).is_err() {
-                        return Ok(failed(&request_id, "artifact_persist"));
-                    }
+                if let Some(dir) = &self.artifact_dir
+                    && persist_artifact(dir, &artifact_digest, air_json.as_bytes()).is_err()
+                {
+                    return Ok(failed(&request_id, "artifact_persist"));
                 }
                 self.store.commit(artifact_digest.clone(), air_json);
                 Ok(CompilationResult::ArtifactCommitted {
@@ -216,16 +217,16 @@ fn compile_snapshot(
         drivers,
     )
     .map_err(|diagnostics| {
-        diagnostics
-            .first()
-            .map(|diagnostic| {
+        diagnostics.first().map_or_else(
+            || "compile_failed".to_owned(),
+            |diagnostic| {
                 if diagnostic.message.is_empty() {
                     diagnostic.code.slug().to_owned()
                 } else {
                     format!("{}: {}", diagnostic.code.slug(), diagnostic.message)
                 }
-            })
-            .unwrap_or_else(|| "compile_failed".to_owned())
+            },
+        )
     })?;
     check_capability_references(snapshot, &compiled.air)?;
     check_package_permissions(snapshot, &compiled.air, &manifest)?;
@@ -295,9 +296,9 @@ fn authored_program_name(frontend: Frontend, source: &str) -> Result<String, Str
                     if name.is_empty() {
                         break;
                     }
-                    if found.replace(name.to_owned()).is_some() {
-                        return Err("ambiguous_entrypoint".to_owned());
-                    }
+                    // A composition root may declare child Agent Programs in
+                    // the same file. The last `@Agent` is the package entry.
+                    found = Some(name.to_owned());
                     break;
                 }
             }
@@ -315,9 +316,7 @@ fn authored_program_name(frontend: Frontend, source: &str) -> Result<String, Str
                 if name.is_empty() {
                     continue;
                 }
-                if found.replace(name).is_some() {
-                    return Err("ambiguous_entrypoint".to_owned());
-                }
+                found = Some(name);
             }
         }
     }
@@ -628,6 +627,59 @@ export const Reviewer = Agent<ReviewRequest, Review>({
                 frontend.wire()
             );
         }
+    }
+
+    #[test]
+    fn last_agent_in_the_entry_file_is_the_package_root() {
+        if !frontend_present(Frontend::Python) {
+            return;
+        }
+        let source = r#"
+from typing import TypedDict
+from apxm_program import Agent, Event, Model
+
+class In(TypedDict):
+    message: str
+
+class Out(TypedDict):
+    message: str
+
+ChildModel = Model[In, Out]("model.child")
+Approval = Event[In]("event.harness.approval")
+
+@Agent(input=In, output=Out)
+async def Child(agent, request):
+    return await ChildModel(request)
+
+@Agent(input=In, output=Out)
+async def Harness(agent, request):
+    while True:
+        child = Child.new()
+        review = await child.invoke(request)
+        approved = await Approval.wait()
+        request = await agent.yield_(review)
+"#;
+        let mut service = CompilationService::default();
+        let result = service
+            .handle(
+                &handshake(),
+                CompilationRequest::Compile {
+                    request_id: "harness".to_owned(),
+                    idempotency_key: "harness".to_owned(),
+                    snapshot: package_snapshot(Frontend::Python, "src/agent.py", source),
+                },
+            )
+            .unwrap();
+        let CompilationResult::ArtifactCommitted {
+            artifact_digest, ..
+        } = result
+        else {
+            panic!("composed package must commit: {result:?}");
+        };
+        let air = service.store().get(&artifact_digest).expect("AIR");
+        assert!(air.contains("\"op\":\"program.new\""), "{air}");
+        assert!(air.contains("\"op\":\"program.invoke\""), "{air}");
+        assert!(air.contains("\"op\":\"await.event\""), "{air}");
     }
 
     #[test]

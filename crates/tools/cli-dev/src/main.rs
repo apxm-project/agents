@@ -10,7 +10,8 @@
     clippy::match_same_arms,
     clippy::match_wildcard_for_single_variants,
     clippy::option_option,
-    clippy::struct_field_names
+    clippy::struct_field_names,
+    clippy::unused_async
 )]
 
 mod commands;

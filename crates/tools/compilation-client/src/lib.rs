@@ -156,12 +156,11 @@ impl CompilationClient {
                     ref artifact_digest,
                     ..
                 } = result
-                {
-                    if let Ok(bytes) = fs::read_to_string(
+                    && let Ok(bytes) = fs::read_to_string(
                         stdio.artifact_dir.join(artifact_digest.replace(':', "-")),
-                    ) {
-                        stdio.last_bytes = Some((artifact_digest.clone(), bytes));
-                    }
+                    )
+                {
+                    stdio.last_bytes = Some((artifact_digest.clone(), bytes));
                 }
                 Ok(result)
             }
@@ -262,7 +261,9 @@ fn should_skip(name: &str) -> bool {
     matches!(
         name,
         ".git" | "node_modules" | "target" | "__pycache__" | ".apxm" | ".dekk" | ".DS_Store"
-    ) || name.ends_with(".pyc")
+    ) || std::path::Path::new(name)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("pyc"))
 }
 
 fn is_lock_name(path: &str) -> bool {
@@ -275,7 +276,9 @@ fn is_lock_name(path: &str) -> bool {
             | "yarn.lock"
             | "Cargo.lock"
             | "poetry.lock"
-    ) || name.ends_with(".lock")
+    ) || std::path::Path::new(name)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("lock"))
 }
 
 #[cfg(test)]
@@ -349,6 +352,137 @@ async def Reviewer(agent, request):
         assert!(digest.starts_with("sha256:"));
         let air = client.artifact_bytes(&digest).expect("committed bytes");
         assert!(air.contains("apxm.air"));
+    }
+
+    #[test]
+    fn conversational_example_compiles_through_the_service() {
+        if !frontend_present() {
+            return;
+        }
+        let root = workspace_root().join("examples/agents/conversational");
+        let mut client = CompilationClient::default();
+        let digest = client
+            .build_package(&root)
+            .expect("conversational example compiles through Compilation Service");
+        let air = client.artifact_bytes(&digest).expect("committed AIR");
+        assert!(air.contains("apxm.air"), "{air}");
+    }
+
+    #[test]
+    fn interaction_harness_compiles_program_new_invoke_and_await_event() {
+        if !frontend_present() {
+            return;
+        }
+        let root = workspace_root().join("examples/agents/interaction-harness");
+        let mut client = CompilationClient::default();
+        let digest = client
+            .build_package(&root)
+            .expect("harness package compiles through Compilation Service");
+        let air = client.artifact_bytes(&digest).expect("committed AIR");
+        assert!(air.contains("\"op\":\"program.new\""), "{air}");
+        assert!(air.contains("\"op\":\"program.invoke\""), "{air}");
+        assert!(air.contains("\"op\":\"await.event\""), "{air}");
+        assert!(
+            !air.contains("CommittedYield") || air.contains("await.event"),
+            "yield and await.event remain distinct operations"
+        );
+    }
+
+    #[test]
+    fn e2e_snapshot_stdio_compile_then_headless_artifact_run() {
+        if !frontend_present() {
+            return;
+        }
+        let dir = tempfile_dir();
+        fs::write(
+            dir.join("agent.toml"),
+            "id = \"echo\"\nversion = \"0.1.0\"\nschema_version = \"apxm.agent\"\n\n[compile]\nentry = \"src/agent.py\"\nfrontend = \"python\"\n",
+        )
+        .unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(
+            dir.join("src/agent.py"),
+            r#"from typing import TypedDict
+from apxm_program import Agent
+
+
+class Echo(TypedDict):
+    message: str
+
+
+@Agent(input=Echo, output=Echo)
+async def EchoAgent(agent, request):
+    return request
+"#,
+        )
+        .unwrap();
+
+        let snapshot = snapshot_package(&dir).expect("snapshot real package bytes");
+        assert_ne!(snapshot.snapshot_digest, "local");
+
+        let artifact_dir = tempfile_dir();
+        let service = CompilationService::default().with_artifact_dir(artifact_dir.clone());
+        let envelope = serde_json::json!({
+            "handshake": {
+                "protocol_version": COMPILATION_PROTOCOL_VERSION,
+            },
+            "request": CompilationRequest::Compile {
+                request_id: "e2e".to_owned(),
+                idempotency_key: snapshot.snapshot_digest.clone(),
+                snapshot,
+            }
+        });
+        let frame = StdioFrame {
+            channel: "compilation".to_owned(),
+            payload: envelope.to_string(),
+        };
+        let mut out = Vec::new();
+        apxm_compilation_service::serve_stdio(encode_jsonl(&frame).as_bytes(), &mut out, service)
+            .expect("compilation stdio");
+        let reply = decode_jsonl(std::str::from_utf8(&out).unwrap()).unwrap();
+        let result: CompilationResult = serde_json::from_str(&reply.payload).unwrap();
+        let CompilationResult::ArtifactCommitted {
+            artifact_digest, ..
+        } = result
+        else {
+            panic!("stdio compile must commit: {result:?}");
+        };
+        let air = fs::read(
+            artifact_dir.join(apxm_compilation_service::artifact_file_name(
+                &artifact_digest,
+            )),
+        )
+        .expect("persisted artifact bytes");
+        assert!(String::from_utf8_lossy(&air).contains("apxm.air"));
+
+        let mut runtime = apxm_interaction_client::InteractionClient::default();
+        let admitted = runtime
+            .admit_artifact(air)
+            .expect("Runtime Service admits compiled bytes");
+        assert_eq!(admitted, artifact_digest);
+        let instance = runtime
+            .run_artifact(&admitted)
+            .expect("--artifact creates a Program Instance without Compilation");
+        let started = runtime
+            .start_invocation(&instance, serde_json::json!({"message": "hello"}))
+            .expect("headless invoke");
+        let outcome = apxm_interaction_client::InteractionClient::classify_outcome(
+            &started,
+            runtime.last_output(),
+        );
+        assert_ne!(
+            outcome,
+            apxm_interaction_client::HeadlessOutcome::Failed,
+            "echo Program must return or wait, not fail: {started:?}"
+        );
+        assert!(
+            matches!(
+                outcome,
+                apxm_interaction_client::HeadlessOutcome::Returned
+                    | apxm_interaction_client::HeadlessOutcome::WaitingEvent
+            ),
+            "{outcome:?}"
+        );
     }
 
     #[test]
