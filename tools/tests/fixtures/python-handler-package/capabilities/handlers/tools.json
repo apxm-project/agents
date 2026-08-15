@@ -1,0 +1,33 @@
+{
+  "version": "apxm.handler-manifest",
+  "handlers": [
+    {
+      "kind": "tool",
+      "language": "python",
+      "handler_id": "sha256:d6e57dae891108dd8c29da51e39fac4b97ea7d7990a4952ee58068efa80cde10",
+      "module": "capabilities/normalize/handler",
+      "qualname": "run_normalize",
+      "name": "normalize",
+      "source": {
+        "artifact_path": "handlers/d6e57dae891108dd8c29da51e39fac4b97ea7d7990a4952ee58068efa80cde10.py",
+        "content": "\"\"\"The Capability this package supplies, declared and implemented in one place.\n\nIts directory name is the capability id, exactly as `capabilities/<id>/handler.ts`\nis for the other frontend, so shipping this file is the whole declaration that\nthe package can supply `normalize`.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom typing import Any, Mapping\n\nfrom apxm_program.handlers import answer, capability, schema, text\n\n\ndef run_normalize(args: Mapping[str, Any]) -> dict[str, Any]:\n    \"\"\"Collapse a label's whitespace and case, without touching anything else.\"\"\"\n    label = \" \".join(str(args[\"label\"]).split())\n    if not label:\n        raise ValueError(\"normalize requires a non-empty label\")\n    return answer({\"label\": label.lower(), \"words\": len(label.split()), \"mutates\": False})\n\n\nnormalize = capability(\n    {\n        \"name\": \"normalize\",\n        \"description\": \"Return a whitespace- and case-normalized label.\",\n        # The handler states this about itself; nothing else in the package does.\n        \"read_only\": True,\n        \"input\": schema(\n            additional_properties=False,\n            properties={\"label\": text(required=True, min_length=1)},\n        ),\n        \"run\": run_normalize,\n    }\n)\n"
+      },
+      "description": "Return a whitespace- and case-normalized label.",
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "type": "object"
+      },
+      "read_only": true,
+      "requires_approval": false
+    }
+  ]
+}

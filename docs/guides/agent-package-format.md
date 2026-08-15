@@ -153,8 +153,8 @@ the union of two sets, computed by `granted_capability_ids` in `agent.rs`:
    Agent Program imports the id from `apxm_program.capabilities` or
    `@apxm/frontend/capabilities` instead of retyping it.
 2. **Every id the package ships a handler for** — any subdirectory of
-   `capabilities/` that contains a `handler.ts`. The directory name *is*
-   the capability id.
+   `capabilities/` that contains a `handler.py` or `handler.ts`. The
+   directory name *is* the capability id.
 
 <!-- BEGIN CAPABILITY CATALOGUE -->
 | Capability id | Registered by `register_standard_tools` |
@@ -263,7 +263,7 @@ bytes, so the published schema and the enforced predicate cannot disagree.
 | `integrity.toml` | generated digest chain |
 | `README.md` | package readme |
 | `package.json`, `tsconfig.json` | TypeScript package metadata |
-| `capabilities/<id>/handler.ts` | one Tool handler, declaring capability `<id>` |
+| `capabilities/<id>/handler.py`/`.ts` | one Tool handler, declaring capability `<id>` |
 | `capabilities/handlers/<name>.py`/`.ts` | shared handler modules |
 | `capabilities/handlers/tools.json` | generated joined handler manifest (see §7) |
 | `prompts/<name>.md` | flat, Markdown-only instruction resources carried by packages written before skills |
@@ -342,8 +342,9 @@ are the gate that does.
 
 ## 8. Handlers: the layout for a package that ships them
 
-A TypeScript capability handler lives at `capabilities/<id>/handler.ts` and
-uses `Tool.define` from `@apxm/agent-packaging`:
+A capability handler lives at `capabilities/<id>/handler.py` or
+`capabilities/<id>/handler.ts`. A directory ships one or the other, never both.
+TypeScript uses `Tool.define` from `@apxm/agent-packaging`:
 
 ```ts
 // examples/agents/coder/capabilities/edit/handler.ts
@@ -373,8 +374,41 @@ export const proposeEdit = Tool.define({
 });
 ```
 
-`apxm agent sync` compiles every `capabilities/<id>/handler.ts` and every
-`capabilities/handlers/*.ts` shared module into the single generated
+Python states the same handler through `apxm_program.handlers`, with `required`
+written on the property and `additional_properties` mandatory:
+
+```python
+# tools/tests/fixtures/python-handler-package/capabilities/normalize/handler.py
+from apxm_program.handlers import answer, capability, schema, text
+
+
+def run_normalize(args):
+    label = " ".join(str(args["label"]).split())
+    if not label:
+        raise ValueError("normalize requires a non-empty label")
+    return answer({"label": label.lower(), "words": len(label.split()), "mutates": False})
+
+
+normalize = capability(
+    {
+        "name": "normalize",
+        "description": "Return a whitespace- and case-normalized label.",
+        "read_only": True,
+        "input": schema(
+            additional_properties=False,
+            properties={"label": text(required=True, min_length=1)},
+        ),
+        "run": run_normalize,
+    }
+)
+```
+
+Both languages produce the same `apxm.handler-manifest` entries and dispatch
+through the same chokepoint, so a handler's permission, argument schema,
+timeout and evidence do not depend on the language it was written in.
+
+`apxm agent sync` compiles every `capabilities/<id>/handler.py`/`.ts` and every
+`capabilities/handlers/*.py`/`*.ts` shared module into the single generated
 `capabilities/handlers/tools.json` (a `HandlerManifest`,
 `crates/machine/contracts/src/types/handler_manifest.rs`), and projects each
 handler's resolved permission decision onto that manifest entry's

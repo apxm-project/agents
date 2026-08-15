@@ -74,7 +74,8 @@ supplies it.
 Keep bindings at module scope and use exact references. A Model reference is a
 string naming an exact target, such as `model.summary`. A Capability reference
 has to name something an implementation exists for — a builtin id, or an id the
-package ships a handler for at `capabilities/<id>/handler.ts` — so import the
+package ships a handler for at `capabilities/<id>/handler.py` or `handler.ts`
+— so import the
 builtin from the generated catalogue instead of retyping it:
 
 ```python
@@ -115,14 +116,13 @@ marker takes that returned object, so the reference and the implementation are
 one object — referencing one Capability while implementing another is a
 sentence neither language can write.
 
-Declaring is not executing, and the split runs along the language. Only a
-TypeScript handler becomes an executable one: `HandlerLanguage` admits only
-`typescript` (`crates/machine/contracts/src/types/handler_manifest.rs`), and the
-package build recognizes only `capabilities/<id>/handler.ts`
-(`crates/tools/cli/src/commands/agent.rs`). A Python `capability(...)` states
-what a package contains; no bundler or admitted worker adapter turns it into a
-handler an artifact can run. Either way Rust owns the admitted Capability
-execution boundary. See
+Declaring is still not executing, but that split no longer runs along the
+language. `HandlerLanguage` admits `python` and `typescript`
+(`crates/machine/contracts/src/types/handler_manifest.rs`), and the package
+build recognizes `capabilities/<id>/handler.py` alongside `handler.ts`
+(`crates/tools/cli/src/commands/agent.rs`), so a handler written in either
+language becomes one an artifact can run. Rust still owns the admitted
+Capability execution boundary. See
 [ADR-0016](../adr/0016-tool-authoring-and-handler-execution-are-separate.md)
 and its amending record
 [ADR-0022](../adr/0022-capability-references-resolve-against-a-catalogue-and-permissions-are-declared-requests.md).

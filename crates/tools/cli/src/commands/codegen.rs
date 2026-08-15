@@ -239,7 +239,8 @@ pub fn codegen_command(action: CodegenAction, json_output: bool) -> Result<()> {
                 .join(crate::frontend::codegen_frontend_vocabulary::PYTHON_SCOPES_FILE);
             let typescript_scopes_path = default_typescript_frontend_codegen_dir()
                 .join(crate::frontend::codegen_frontend_vocabulary::TYPESCRIPT_SCOPES_FILE);
-            let python_scopes = crate::frontend::codegen_frontend_vocabulary::render_scopes_python();
+            let python_scopes =
+                crate::frontend::codegen_frontend_vocabulary::render_scopes_python();
             let typescript_scopes =
                 crate::frontend::codegen_frontend_vocabulary::render_scopes_typescript();
 

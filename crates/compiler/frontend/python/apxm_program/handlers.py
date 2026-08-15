@@ -25,17 +25,13 @@ id the generated catalogue mints, so referencing one Capability while
 implementing another is not a mistake this surface can express: there is no
 bare-string arm left to spell the second name in.
 
-**A Python declaration is not yet a dispatchable implementation.** Executing a
-package handler takes three things beyond the declaration: a deterministic
-bundler that turns the callable into the manifest's artifact-local ``source``,
-a private worker adapter a composition root can be supplied with, and a
-``language`` this manifest admits — and ``apxm.handler-manifest`` admits only
-``typescript`` today. Until all three land, ``apxm agent`` grants a package
-exactly the ids it ships a ``capabilities/<id>/handler.ts`` for, so a program
-naming a Python-declared handler is refused at compile rather than admitted
-against an implementation that is not there. The declaration is honest about
-what it is: the shape a package handler states about itself, in the fields the
-manifest names, waiting on the bundler that can carry it.
+A declaration made here is dispatchable, not merely stated: a package ships one
+at ``capabilities/<id>/handler.py``, ``apxm agent build`` bundles it into the
+package's ``apxm.handler-manifest``, and a composition root supplied with that
+package registers it as an executor. From there it goes through the one
+chokepoint the builtins and the TypeScript handlers use, so the approval gate,
+the interceptors, the argument schema, the timeout and the evidence are the same
+for all three.
 """
 
 from __future__ import annotations

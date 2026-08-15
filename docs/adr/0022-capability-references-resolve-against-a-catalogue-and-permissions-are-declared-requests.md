@@ -200,7 +200,7 @@ only authored permission surface in it.
 The grantable set is the builtin catalogue plus the handlers the package ships:
 `granted_capability_ids` is `BUILTINS` chained with
 `shipped_capability_handler_ids`, which is the set of directories under
-`capabilities/` containing a `handler.ts`
+`capabilities/` containing a `handler.py` or a `handler.ts`
 (`crates/tools/cli/src/commands/agent.rs`). The handler's existence is the
 declaration. The per-capability `capability.toml` and `permission.toml`, and
 the `capabilities.toml` / `permissions.toml` aggregates that restated them,
@@ -274,19 +274,16 @@ same shape `Tool.define` uses, and both return the Capability id they implement
 rather than a descriptor that has to agree with a string written elsewhere
 (`crates/compiler/frontend/python/apxm_program/handlers.py`).
 
-The execution half of ADR-0016 §4 stands unchanged, and is now pinned in more
-places than it was written in. `HandlerLanguage` admits only `typescript`
+The execution half of ADR-0016 §4 is now closed rather than deferred.
+`HandlerLanguage` admits `python` and `typescript`
 (`crates/machine/contracts/src/types/handler_manifest.rs`);
-`CapabilityBindingHandler` has no Python variant, so a Python package handler is
-not representable on the wire
-(`crates/machine/contracts/src/types/capability/capability_binding.rs`); and
-`shipped_capability_handler_ids` recognizes only
-`capabilities/<id>/handler.ts`, so a Python declaration never enters
-`granted_capability_ids` and a program naming it fails the grant check
-(`crates/tools/cli/src/commands/agent.rs`). A Python handler declaration
-therefore does not become an executable handler in a compiled artifact. That
-remains a deliberate future capability; what changed is that the authoring
-surface no longer pretends the declaration is one too.
+A Python declaration is executable. `shipped_capability_handler_ids` recognizes
+`capabilities/<id>/handler.py` alongside `handler.ts`, so shipping either file
+is the whole grant and a program naming it passes the grant check
+(`crates/tools/cli/src/commands/agent.rs`). Both languages emit the same
+`apxm.handler-manifest` descriptors and register through the same executor
+chokepoint, so the permission decision, argument schema, timeout and evidence
+are language-independent; only discovery, bundling and the worker process differ.
 
 ## What this does not change
 
@@ -397,11 +394,10 @@ execution (`crates/tools/cli/src/commands/canonical_execute.rs`), and
 and the package that ships it — refuses to emit AIR when `agent.toml` widens it
 (`crates/tools/cli/src/commands/compile_service_canonical.rs`).
 
-A Python-declared shipped Capability is not executable. No Python bundler or
-admitted worker adapter exists, and `HandlerLanguage` admits only `typescript`
-(`crates/machine/contracts/src/types/handler_manifest.rs`), so the declaration
-states something true about a package that the packaging path cannot yet honour.
-Closing it is the separate owner change ADR-0016 §4 describes.
+A Python-declared shipped Capability is executable, which closes the half of
+ADR-0016 §4 this record left open. The worker is a subprocess speaking the same
+line protocol the TypeScript one does rather than an embedded interpreter, so a
+handler body cannot hold the runtime's scheduler while it runs.
 
 `PermissionLayer::Deployment` has no producer. `PermissionResolution::resolve`
 applies the layer the moment a caller supplies one and the tighten-only rule

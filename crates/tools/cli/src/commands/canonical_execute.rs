@@ -36,8 +36,8 @@ mod capability_port {
     //! evidence are the builtin path rather than a parallel one; the only thing
     //! that differs is which implementation the registry hands back.
 
-    use std::collections::{BTreeSet, HashMap};
-    use std::path::{Path, PathBuf};
+    use std::collections::{BTreeMap, BTreeSet, HashMap};
+    use std::path::PathBuf;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -146,17 +146,21 @@ mod capability_port {
     ///
     /// ADR-0016 keeps the execution boundary in Rust and calls a language
     /// helper process a *private* adapter the Composition Root selects. This is
-    /// that adapter, and its privacy is structural: the worker entry and the
+    /// that adapter, and its privacy is structural: the worker command and the
     /// manifest are both handed in, the process is spawned lazily on the first
     /// invocation so a run that never invokes a package Capability never starts
     /// one, and nothing outside this module can address it.
+    ///
+    /// Every language's worker is this same type. The frame protocol is the
+    /// contract, not the interpreter, so a Python worker and a Node worker are
+    /// two commands rather than two adapters.
     ///
     /// Requests are serialized behind one lock. The frame protocol correlates
     /// by `req_id` and could pipeline, but a single in-flight request is what
     /// makes "the reply I read is the reply to the frame I wrote" a property of
     /// the code rather than of the worker's scheduling.
     struct PackageHandlerWorker {
-        worker_entry: PathBuf,
+        command: super::PackageHandlerWorkerCommand,
         /// The validated manifest, materialized so the worker evaluates exactly
         /// the bytes this root admitted rather than re-reading a package path
         /// that may have changed since verification.
@@ -174,7 +178,10 @@ mod capability_port {
 
     impl PackageHandlerWorker {
         /// Materialize the admitted manifest beside the selected worker entry.
-        fn new(worker_entry: &Path, manifest: &HandlerManifest) -> Result<Self, RuntimeError> {
+        fn new(
+            command: &super::PackageHandlerWorkerCommand,
+            manifest: &HandlerManifest,
+        ) -> Result<Self, RuntimeError> {
             let mut file = tempfile::NamedTempFile::new().map_err(|error| {
                 RuntimeError::Executor(format!(
                     "the package handler worker manifest could not be materialized: {error}"
@@ -186,7 +193,7 @@ mod capability_port {
                 ))
             })?;
             Ok(Self {
-                worker_entry: worker_entry.to_path_buf(),
+                command: command.clone(),
                 manifest_file: file.into_temp_path(),
                 process: tokio::sync::Mutex::new(None),
                 next_request: AtomicU64::new(1),
@@ -286,8 +293,8 @@ mod capability_port {
 
         /// Start the selected worker over the admitted manifest.
         fn spawn(&self) -> Result<WorkerProcess, String> {
-            let mut child = tokio::process::Command::new("node")
-                .arg(&self.worker_entry)
+            let mut child = tokio::process::Command::new(&self.command.interpreter)
+                .arg(&self.command.entry)
                 .arg(&self.manifest_file)
                 .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())
@@ -295,8 +302,9 @@ mod capability_port {
                 .spawn()
                 .map_err(|error| {
                     format!(
-                        "the package handler worker {} could not be started with node: {error}",
-                        self.worker_entry.display()
+                        "the package handler worker {} could not be started with {}: {error}",
+                        self.command.entry.display(),
+                        self.command.interpreter
                     )
                 })?;
             let stdin = child.stdin.take().ok_or("the worker has no input stream")?;
@@ -417,25 +425,49 @@ mod capability_port {
     /// duplicate, and that refusal is kept rather than softened into a
     /// replacement: a package that could shadow `read` could change what every
     /// program in it means by reading.
+    ///
+    /// One worker is started per language, shared by every descriptor in it, so
+    /// a package shipping both languages runs two processes rather than one per
+    /// capability. A descriptor whose language this root was supplied no worker
+    /// for is a registration failure, not a capability that registers and then
+    /// cannot be dispatched.
     fn register_package_handlers(
         system: &CapabilitySystem,
         handlers: &super::AdmittedPackageHandlers,
     ) -> Result<(), RuntimeError> {
-        let worker = Arc::new(PackageHandlerWorker::new(
-            &handlers.worker_entry,
-            &handlers.manifest,
-        )?);
+        let mut workers: BTreeMap<_, Arc<PackageHandlerWorker>> = BTreeMap::new();
+        for (language, command) in &handlers.workers {
+            // A worker is given only the descriptors it can evaluate, so
+            // "exactly the bytes this root admitted" is also exactly the bytes
+            // this interpreter can load.
+            let evaluable = HandlerManifest::new(
+                handlers
+                    .manifest
+                    .handlers
+                    .iter()
+                    .filter(|descriptor| descriptor.language == *language)
+                    .cloned()
+                    .collect(),
+            );
+            workers.insert(
+                *language,
+                Arc::new(PackageHandlerWorker::new(command, &evaluable)?),
+            );
+        }
         for descriptor in &handlers.manifest.handlers {
-            // Exhaustive rather than ignored. This root was supplied with one
-            // worker and that worker evaluates TypeScript, so a second manifest
-            // language has to select its own adapter here instead of silently
-            // inheriting this one.
-            match descriptor.language {
-                apxm_core::types::HandlerLanguage::TypeScript => {}
-            }
+            let worker =
+                workers
+                    .get(&descriptor.language)
+                    .ok_or_else(|| RuntimeError::Capability {
+                        capability: descriptor.name.clone(),
+                        message: format!(
+                            "this composition root was supplied no {:?} handler worker",
+                            descriptor.language
+                        ),
+                    })?;
             system.register(Arc::new(PackageHandlerCapability::new(
                 descriptor,
-                Arc::clone(&worker),
+                Arc::clone(worker),
             )?))?;
         }
         Ok(())
@@ -764,7 +796,15 @@ mod capability_port {
                 // the point — a refused package Capability must not reach a
                 // worker any more than a refused builtin reaches its
                 // implementation.
-                worker_entry: PathBuf::from("tool-worker.mjs"),
+                workers: [(
+                    apxm_core::types::HandlerLanguage::TypeScript,
+                    super::super::PackageHandlerWorkerCommand {
+                        interpreter: "node".to_string(),
+                        entry: PathBuf::from("tool-worker.mjs"),
+                    },
+                )]
+                .into_iter()
+                .collect(),
                 manifest: HandlerManifest::new(descriptors),
             }
         }
@@ -1637,16 +1677,27 @@ use model_port::{LocalModelInferencePort, LocalModelRequestMetadata};
 /// The exact package-handler implementation a composition root is supplied
 /// with when it binds a package's own Capabilities.
 ///
-/// The runtime never discovers a language worker. It is handed one, together
-/// with the manifest that worker may evaluate, exactly as it is handed every
-/// other implementation: `worker_entry` is the private `@apxm/agent-packaging`
-/// worker, and `manifest` is one package's validated `apxm.handler-manifest`.
+/// The runtime never discovers a language worker. It is handed one per language
+/// the manifest uses, together with the manifest those workers may evaluate,
+/// exactly as it is handed every other implementation.
 #[derive(Debug, Clone)]
 pub struct AdmittedPackageHandlers {
-    /// The private handler-worker entry the composition root selected.
-    pub worker_entry: PathBuf,
-    /// The validated manifest that worker may evaluate, and nothing else.
+    /// The private handler-worker the composition root selected for each
+    /// language its manifest carries. A language with no entry here was not
+    /// supplied, and a descriptor naming it is refused rather than dispatched.
+    pub workers:
+        std::collections::BTreeMap<apxm_core::types::HandlerLanguage, PackageHandlerWorkerCommand>,
+    /// The validated manifest those workers may evaluate, and nothing else.
     pub manifest: apxm_core::types::HandlerManifest,
+}
+
+/// How one language's private worker is started.
+#[derive(Debug, Clone)]
+pub struct PackageHandlerWorkerCommand {
+    /// The interpreter that runs the worker entry.
+    pub interpreter: String,
+    /// The private worker entry itself.
+    pub entry: PathBuf,
 }
 
 pub async fn execute_canonical_command(

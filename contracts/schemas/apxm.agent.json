@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "apxm.agent",
   "title": "AgentPackage",
-  "description": "The canonical authored agent package: one authored manifest (`agent.toml`) and the closed set of package-relative paths the folder contract recognizes. `files` is the digest map `apxm agent build` hashes into the generated `integrity.toml` chain, so the paths this schema recognizes and the paths that are hashed are one statement. A package declares no capability inventory and no permission inventory of its own: a Capability reference is satisfied by a built-in id or by a `capabilities/<id>/handler.ts` the package ships, and the only authored permission surface is the manifest's `[permissions]` table.",
+  "description": "The canonical authored agent package: one authored manifest (`agent.toml`) and the closed set of package-relative paths the folder contract recognizes. `files` is the digest map `apxm agent build` hashes into the generated `integrity.toml` chain, so the paths this schema recognizes and the paths that are hashed are one statement. A package declares no capability inventory and no permission inventory of its own: a Capability reference is satisfied by a built-in id or by a `capabilities/<id>/handler.py` or `capabilities/<id>/handler.ts` the package ships, and the only authored permission surface is the manifest's `[permissions]` table.",
   "type": "object",
   "required": [
     "agent",
@@ -178,7 +178,7 @@
         "^capabilities/handlers/[^/]+\\.(py|ts)$": {
           "$ref": "#/$defs/FileDigest"
         },
-        "^capabilities/[^/]+/handler\\.ts$": {
+        "^capabilities/[^/]+/handler\\.(py|ts)$": {
           "$ref": "#/$defs/FileDigest"
         },
         "^prompts/[^/]+\\.md$": {

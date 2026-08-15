@@ -28,7 +28,7 @@ compiling.
 
 A Capability reference has to name something an implementation exists for — a
 built-in id, or an id the package ships a handler for at
-`capabilities/<id>/handler.ts`.
+`capabilities/<id>/handler.py` or `handler.ts`.
 Import the catalogue symbol rather than retyping the string: a misspelled symbol
 is an `ImportError` at author time, while a misspelled string is a reference the
 compile service refuses later.

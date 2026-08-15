@@ -298,8 +298,9 @@ mod tests {
             "export const MODEL_UNTYPED_SCHEMA = \"ModelUntypedSchema\" satisfies DiagnosticCode;"
         ));
         let javascript = render_diagnostics_javascript();
-        assert!(javascript
-            .contains("export const CAPABILITY_HANDLER_OPEN_OBJECT = \"CapabilityHandlerOpenObject\";"));
+        assert!(javascript.contains(
+            "export const CAPABILITY_HANDLER_OPEN_OBJECT = \"CapabilityHandlerOpenObject\";"
+        ));
     }
 
     /// This vocabulary lands inside the installable authoring packages, so it

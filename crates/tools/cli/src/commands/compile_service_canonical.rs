@@ -87,7 +87,7 @@ fn check_package_permissions_only_tighten(
 /// can actually supply.
 ///
 /// This is the join the namespaces never made: the reference an author writes
-/// in program source, the `capabilities/<id>/handler.ts` handlers the package
+/// in program source, the `capabilities/<id>/handler.{py,ts}` handlers the package
 /// ships, and the runtime's builtin allowlist. Without it a program could name
 /// a Capability that is in none of them and still compile, produce an artifact,
 /// and run — the reference simply resolved to nothing at the registry, far past
@@ -125,7 +125,9 @@ fn check_capability_references_are_granted(
             "Capabilities"
         },
         ungranted.join(", "),
-        agent_dir.join("capabilities/<id>/handler.ts").display(),
+        agent_dir
+            .join("capabilities/<id>/handler.{py,ts}")
+            .display(),
     )
 }
 

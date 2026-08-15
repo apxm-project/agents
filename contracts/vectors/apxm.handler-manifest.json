@@ -105,7 +105,7 @@
     "expected_valid": false
   },
   {
-    "name": "python-package-handler-kind-rejected",
+    "name": "valid-python-tool-manifest",
     "input": {
       "version": "apxm.handler-manifest",
       "handlers": [
@@ -119,6 +119,30 @@
           "source": {
             "artifact_path": "handlers/echo.py",
             "content": "def echo(): pass\n"
+          },
+          "schema": {
+            "type": "object"
+          }
+        }
+      ]
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "unpublished-handler-language-rejected",
+    "input": {
+      "version": "apxm.handler-manifest",
+      "handlers": [
+        {
+          "kind": "tool",
+          "language": "ruby",
+          "handler_id": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+          "module": "capabilities/echo/handler",
+          "qualname": "echo",
+          "name": "echo",
+          "source": {
+            "artifact_path": "handlers/echo.rb",
+            "content": "def echo; end\n"
           },
           "schema": {
             "type": "object"

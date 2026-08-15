@@ -1,6 +1,6 @@
 //! Portable frontend handler-manifest contract.
 //!
-//! TypeScript package build tooling emits this artifact sidecar for
+//! Each frontend's package build tooling emits this artifact sidecar for
 //! every packaged tool. The manifest carries only artifact-local
 //! source, never a build-host path.
 
@@ -25,10 +25,15 @@ pub const HANDLER_MANIFEST_HANDLER_ID_HEX_LENGTH: usize = 64;
 /// Maximum character count of a `module`, `qualname`, or `name` identifier.
 pub const HANDLER_MANIFEST_IDENTIFIER_MAX_LENGTH: usize = 256;
 
-/// The authoring language for the private package-handler worker.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+/// The authoring language, which selects the private package-handler worker
+/// that evaluates the source. Both authoring frontends are admitted here, so a
+/// manifest is one artifact whichever frontend produced its descriptors.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HandlerLanguage {
+    /// Python handler source.
+    #[serde(rename = "python")]
+    Python,
     /// TypeScript handler source.
     #[serde(rename = "typescript")]
     TypeScript,

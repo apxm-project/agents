@@ -263,5 +263,12 @@ jobs:
       - name: Execute the Capability handlers a package ships
         run: dekk agents test-package-handler-example
 
+      # The same gate for the other frontend. A Python declaration that compiles
+      # but cannot be dispatched is the defect the TypeScript step above catches,
+      # and nothing else here would notice it: the packaging gate checks a
+      # manifest and the package gate checks a chain. This runs one.
+      - name: Execute the Python Capability handler a package ships
+        run: dekk agents test-python-handler-example
+
       - name: Run repository tooling tests
         run: python -m pytest tools/tests/

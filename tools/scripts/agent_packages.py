@@ -23,6 +23,7 @@ AGENT_PACKAGES = (
     "examples/agents/coder",
     "examples/agents/skilled",
     "crates/compiler/frontend/python/tests_program/fixtures/canonical_session_agent",
+    "tools/tests/fixtures/python-handler-package",
 )
 
 

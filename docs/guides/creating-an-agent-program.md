@@ -229,7 +229,8 @@ memory update.
 
 A `Tool` reference names an id that something can already satisfy: a builtin
 from the generated catalogue, or the handler declaration a package ships at
-`capabilities/<id>/handler.ts`. It is not a name an author invents, and it is
+`capabilities/<id>/handler.py` or `handler.ts`. It is not a name an author
+invents, and it is
 not one an author *can* invent — those two arms are the whole accepted set, in
 the TypeScript type and in the Python constructor alike.
 
@@ -317,15 +318,15 @@ edit = capability({
 ProposeEdit = Tool[dict, dict](edit)
 ```
 
-Declaring is not executing. `HandlerLanguage` admits only `typescript`
-(`crates/machine/contracts/src/types/handler_manifest.rs`),
-`CapabilityBindingHandler` has no Python variant
-(`crates/machine/contracts/src/types/capability/capability_binding.rs`), and the
-package build recognizes only `capabilities/<id>/handler.ts`
-(`crates/tools/cli/src/commands/agent.rs`). Python has neither a deterministic
-bundler nor an admitted worker adapter, so a Python handler declaration states
-something true about a package without becoming an executable handler in a
-compiled artifact. See
+Declaring is still not executing, but the split no longer runs along the
+language. `HandlerLanguage` admits `python` and `typescript`
+(`crates/machine/contracts/src/types/handler_manifest.rs`), and the package
+build recognizes `capabilities/<id>/handler.py` alongside `handler.ts`
+(`crates/tools/cli/src/commands/agent.rs`). Both emit the same manifest
+descriptors and register through the same executor chokepoint, so a handler's
+permission, argument schema, timeout and evidence do not depend on the language
+it was written in; only discovery, bundling and the worker process differ. Rust
+still owns the admitted Capability execution boundary. See
 [ADR-0016](../adr/0016-tool-authoring-and-handler-execution-are-separate.md) and
 its amending record
 [ADR-0022](../adr/0022-capability-references-resolve-against-a-catalogue-and-permissions-are-declared-requests.md).
@@ -436,7 +437,8 @@ export const normalizeAddress = Tool.define({
 ```
 
 This declaration lives in a package handler module at
-`capabilities/normalize_address/handler.ts`. The directory name *is* the
+`capabilities/normalize_address/handler.py` or `handler.ts`. The directory
+name *is* the
 capability id — the handler's existence is the whole declaration that the
 package supplies it — so the Agent Program binds the declaration itself:
 

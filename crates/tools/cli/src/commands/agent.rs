@@ -4,7 +4,7 @@
 //! An agent package is two files: the authored `agent.toml` and the generated
 //! `integrity.toml`. Everything a package can say about itself is said once —
 //! the capability ids it can satisfy are the built-in allowlist plus the
-//! `capabilities/<id>/handler.ts` handlers it ships, and the only authored
+//! `capabilities/<id>/handler.{py,ts}` handlers it ships, and the only authored
 //! permission surface is `agent.toml [permissions]`. There is no capability
 //! inventory, no permission inventory, and no separate hierarchy file to drift
 //! against each other.
@@ -154,17 +154,55 @@ impl fmt::Display for FrontendLanguage {
 }
 
 const TYPESCRIPT_AGENT_PACKAGING_PACKAGE: &str = "APXM_TYPESCRIPT_AGENT_PACKAGING_PACKAGE";
+const PYTHON_AGENT_PACKAGING_PACKAGE: &str = "APXM_PYTHON_AGENT_PACKAGING_PACKAGE";
 
-fn installed_typescript_agent_packaging_entry(relative: &str) -> Result<PathBuf> {
-    let package = std::env::var_os(TYPESCRIPT_AGENT_PACKAGING_PACKAGE).ok_or_else(|| {
-        anyhow!(
-            "{TYPESCRIPT_AGENT_PACKAGING_PACKAGE} must point to the installed @apxm/agent-packaging package"
-        )
+/// Everything one handler language differs by: the extension its shipped source
+/// has, which interpreter runs its private packaging entries, where that package
+/// root is named, and the two entry file names.
+///
+/// This is the whole language-specific surface. Discovery, bundling, and worker
+/// selection all read it, so adding a language is one arm rather than a search
+/// for every place the TypeScript pair was spelled.
+struct AgentPackaging {
+    extension: &'static str,
+    interpreter: &'static str,
+    package_variable: &'static str,
+    compiler: &'static str,
+    worker: &'static str,
+}
+
+const fn agent_packaging(language: HandlerLanguage) -> AgentPackaging {
+    match language {
+        HandlerLanguage::Python => AgentPackaging {
+            extension: "py",
+            interpreter: "python3",
+            package_variable: PYTHON_AGENT_PACKAGING_PACKAGE,
+            compiler: "compile_handlers.py",
+            worker: "tool_worker.py",
+        },
+        HandlerLanguage::TypeScript => AgentPackaging {
+            extension: "ts",
+            interpreter: "node",
+            package_variable: TYPESCRIPT_AGENT_PACKAGING_PACKAGE,
+            compiler: "compile-handlers.mjs",
+            worker: "tool-worker.mjs",
+        },
+    }
+}
+
+/// Every language a package may ship a handler in.
+const HANDLER_LANGUAGES: [HandlerLanguage; 2] =
+    [HandlerLanguage::Python, HandlerLanguage::TypeScript];
+
+fn installed_agent_packaging_entry(language: HandlerLanguage, relative: &str) -> Result<PathBuf> {
+    let variable = agent_packaging(language).package_variable;
+    let package = std::env::var_os(variable).ok_or_else(|| {
+        anyhow!("{variable} must point to the installed {language:?} agent-packaging package")
     })?;
     let entry = PathBuf::from(package).join(relative);
     if !entry.is_file() {
         bail!(
-            "installed @apxm/agent-packaging entry is missing: {}",
+            "installed {language:?} agent-packaging entry is missing: {}",
             entry.display()
         );
     }
@@ -371,7 +409,7 @@ fn agent_new_looped_agent(
              [hierarchy]\n\
              permitted_children = []\n\n\
              # Optional: tighten a capability this package can supply. A key\n\
-             # must name a built-in id or a capabilities/<id>/handler.ts this\n\
+             # must name a built-in id or a capabilities/<id>/handler this\n\
              # package ships.\n\
              [permissions]\n\
              write = \"ask\"\n"
@@ -452,7 +490,7 @@ fn write_new_file(path: &Path, contents: &str) -> Result<()> {
     fs::write(path, contents).with_context(|| format!("Failed to write {}", path.display()))
 }
 
-fn load_typescript_tools_manifest(root: &Path) -> Result<HandlerManifest> {
+fn load_tools_manifest(root: &Path) -> Result<HandlerManifest> {
     let tools_path = root.join("capabilities/handlers/tools.json");
     if !tools_path.is_file() {
         return Ok(HandlerManifest::new(Vec::new()));
@@ -468,13 +506,17 @@ fn load_typescript_tools_manifest(root: &Path) -> Result<HandlerManifest> {
     Ok(manifest)
 }
 
-/// Project each shipped TypeScript Tool's resolved permission decision onto
-/// its handler manifest entry.
+/// Project each shipped Tool's resolved permission decision onto its handler
+/// manifest entry.
 ///
 /// This is the handler plane's whole authority story now that the per-capability
 /// manifests are gone. `requires_approval` is not a second opinion about a
 /// capability: it is the one decision `resolve_permission_layers` produced for
 /// that capability id, carried to the only consumer that reads a manifest.
+///
+/// The decision is about a capability id, so it is projected onto every
+/// descriptor regardless of the language that emitted it: a Python handler and a
+/// TypeScript handler for the same id would be the same authority question.
 ///
 /// A handler the package ships for a capability the resolution denies is a hard
 /// error, not a filtered entry: emitting an executable handler for refused
@@ -483,9 +525,11 @@ fn apply_resolved_permissions_to_tools_manifest(
     manifest: &mut HandlerManifest,
     resolved: &BTreeMap<String, PermissionDecision>,
 ) -> Result<()> {
-    for entry in manifest.handlers.iter_mut().filter(|entry| {
-        entry.kind == HandlerKind::Tool && entry.language == HandlerLanguage::TypeScript
-    }) {
+    for entry in manifest
+        .handlers
+        .iter_mut()
+        .filter(|entry| entry.kind == HandlerKind::Tool)
+    {
         // The decision vocabulary is closed at decode, so there is no
         // unsupported-string arm left to write: only the three decisions and an
         // absent one can reach this match.
@@ -493,14 +537,15 @@ fn apply_resolved_permissions_to_tools_manifest(
             Some(PermissionDecision::Allow { .. }) => false,
             Some(PermissionDecision::Ask { .. }) => true,
             Some(PermissionDecision::Deny { .. }) => bail!(
-                "TypeScript capability '{}' is denied and cannot be emitted as an executable handler",
+                "capability '{}' is denied and cannot be emitted as an executable handler",
                 entry.name
             ),
             None => bail!(
-                "TypeScript handler '{}' has no matching capability; a handler must live at \
-                 capabilities/{}/handler.ts so the package can supply the capability it names",
+                "handler '{}' has no matching capability; a handler must live at \
+                 capabilities/{}/handler.{} so the package can supply the capability it names",
                 entry.name,
-                entry.name
+                entry.name,
+                agent_packaging(entry.language).extension,
             ),
         };
         entry.requires_approval = Some(requires_approval);
@@ -508,7 +553,7 @@ fn apply_resolved_permissions_to_tools_manifest(
     Ok(())
 }
 
-fn write_typescript_tools_manifest(root: &Path, manifest: &HandlerManifest) -> Result<()> {
+fn write_tools_manifest(root: &Path, manifest: &HandlerManifest) -> Result<()> {
     manifest
         .validate()
         .context("Invalid joined handler manifest")?;
@@ -529,15 +574,15 @@ fn write_typescript_tools_manifest(root: &Path, manifest: &HandlerManifest) -> R
 /// Every Capability id an Agent Program compiled from this package may name.
 ///
 /// The union of the runtime's built-in allowlist and the ids the package itself
-/// ships a `capabilities/<id>/handler.ts` for — the two namespaces a Capability
-/// reference can be satisfied from, now that no file declares an inventory. The
-/// handler's existence *is* the declaration: a package that ships a handler can
-/// supply the capability, and one that does not cannot.
+/// ships a `capabilities/<id>/handler.{py,ts}` for — the two namespaces a
+/// Capability reference can be satisfied from, now that no file declares an
+/// inventory. The handler's existence *is* the declaration: a package that ships
+/// a handler can supply the capability, and one that does not cannot.
 pub(crate) fn granted_capability_ids(root: &Path) -> Result<BTreeSet<String>> {
     Ok(apxm_ais::capabilities::BUILTINS
         .iter()
         .map(|id| (*id).to_string())
-        .chain(shipped_capability_handler_ids(root)?)
+        .chain(shipped_capability_handlers(root)?.into_keys())
         .collect())
 }
 
@@ -558,66 +603,101 @@ pub(crate) fn granted_capability_ids(root: &Path) -> Result<BTreeSet<String>> {
 ///
 /// Returns an error when the package fails integrity verification, when its
 /// manifest is absent or non-conforming, when the manifest and the shipped
-/// handler sources disagree, or when the private worker is not installed.
+/// handler sources disagree, or when a private worker the manifest needs is not
+/// installed.
 pub(crate) fn admitted_package_handlers(
     root: &Path,
 ) -> Result<Option<super::canonical_execute::AdmittedPackageHandlers>> {
     verify_agent_integrity(root)?;
-    let manifest = load_typescript_tools_manifest(root)?;
-    let described: BTreeSet<String> = manifest
+    let manifest = load_tools_manifest(root)?;
+    let described: BTreeMap<String, HandlerLanguage> = manifest
         .handlers
         .iter()
-        .map(|entry| entry.name.clone())
+        .map(|entry| (entry.name.clone(), entry.language))
         .collect();
-    let shipped = shipped_capability_handler_ids(root)?;
+    let shipped = shipped_capability_handlers(root)?;
     if described != shipped {
+        let names = |handlers: &BTreeMap<String, HandlerLanguage>| {
+            handlers
+                .iter()
+                .map(|(name, language)| format!("{name} ({language:?})"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
         bail!(
             "agent package '{}' would grant [{}] but ships executable handlers for [{}]; run \
              'apxm agent build {}' so the ids the grant set claims are exactly the ids the \
              runtime can dispatch",
             root.display(),
-            shipped.iter().cloned().collect::<Vec<_>>().join(", "),
-            described.iter().cloned().collect::<Vec<_>>().join(", "),
+            names(&shipped),
+            names(&described),
             root.display()
         );
     }
     if manifest.handlers.is_empty() {
         return Ok(None);
     }
+    // Only the languages this manifest actually uses are resolved, so a package
+    // shipping one language never requires the other language's worker.
+    let mut workers = BTreeMap::new();
+    for language in described.into_values() {
+        if let std::collections::btree_map::Entry::Vacant(slot) = workers.entry(language) {
+            let packaging = agent_packaging(language);
+            slot.insert(super::canonical_execute::PackageHandlerWorkerCommand {
+                interpreter: packaging.interpreter.to_string(),
+                entry: installed_agent_packaging_entry(language, packaging.worker)?,
+            });
+        }
+    }
     Ok(Some(super::canonical_execute::AdmittedPackageHandlers {
-        worker_entry: installed_typescript_agent_packaging_entry("tool-worker.mjs")?,
+        workers,
         manifest,
     }))
 }
 
-/// The capability ids this package ships a TypeScript handler for.
+/// The capability ids this package ships a handler for, and the language of each.
 ///
-/// TypeScript is the only language in this set, and that is the whole of the
-/// Python package-handler story: `apxm_program.handlers.capability` declares a
-/// handler in the manifest's own fields, but no Python bundler or admitted
-/// worker adapter exists, so a Python-declared id is not grantable and a
-/// program referencing one is refused at compile rather than admitted against
-/// an implementation that is not there.
-fn shipped_capability_handler_ids(root: &Path) -> Result<BTreeSet<String>> {
+/// Discovery is the folder contract: `capabilities/<id>/handler.py` and
+/// `capabilities/<id>/handler.ts` are the same declaration in the two frontends,
+/// so both are found here and the extension is the only thing that differs.
+///
+/// One id may be supplied once. A directory holding both handler sources would
+/// be two implementations of one capability with nothing to choose between them,
+/// so it is refused rather than resolved by an order this function picked.
+fn shipped_capability_handlers(root: &Path) -> Result<BTreeMap<String, HandlerLanguage>> {
     let caps_dir = root.join("capabilities");
     if !caps_dir.is_dir() {
-        return Ok(BTreeSet::new());
+        return Ok(BTreeMap::new());
     }
-    let mut ids = BTreeSet::new();
+    let mut shipped = BTreeMap::new();
     for entry in
         fs::read_dir(&caps_dir).with_context(|| format!("Failed to read {}", caps_dir.display()))?
     {
         let path = entry?.path();
-        if path.is_dir() && path.join("handler.ts").is_file() {
-            ids.insert(
-                path.file_name()
-                    .expect("a directory entry has a file name")
-                    .to_string_lossy()
-                    .into_owned(),
-            );
+        if !path.is_dir() {
+            continue;
+        }
+        let id = path
+            .file_name()
+            .expect("a directory entry has a file name")
+            .to_string_lossy()
+            .into_owned();
+        for language in HANDLER_LANGUAGES {
+            if !path
+                .join(format!("handler.{}", agent_packaging(language).extension))
+                .is_file()
+            {
+                continue;
+            }
+            if let Some(existing) = shipped.insert(id.clone(), language) {
+                bail!(
+                    "capability '{id}' ships both a {existing:?} and a {language:?} handler; one \
+                     capability is supplied by one implementation"
+                );
+            }
         }
     }
-    Ok(ids)
+    Ok(shipped)
 }
 
 /// Resolve the package's permission layer stack into one decision per capability
@@ -705,9 +785,9 @@ pub(crate) fn agent_sync(root: &Path, json_output: bool) -> Result<()> {
     let resolved = resolve_package_permission_layers(root, &LayerDecisions::new())?;
 
     compile_agent_handlers(root)?;
-    let mut tools_manifest = load_typescript_tools_manifest(root)?;
+    let mut tools_manifest = load_tools_manifest(root)?;
     apply_resolved_permissions_to_tools_manifest(&mut tools_manifest, &resolved)?;
-    write_typescript_tools_manifest(root, &tools_manifest)?;
+    write_tools_manifest(root, &tools_manifest)?;
 
     let handler_count = tools_manifest.handlers.len();
     if json_output {
@@ -1125,13 +1205,14 @@ pub(super) fn seal_agent_integrity_for_test(root: &Path) -> Result<()> {
     write_integrity_toml(&root.join("integrity.toml"), &integrity)
 }
 
-/// Every TypeScript handler source the package ships.
+/// Every handler source of one language the package ships.
 ///
-/// Discovery is the folder contract itself: a `capabilities/<id>/handler.ts` is
-/// the package's declaration that it supplies capability `<id>`, and a
-/// `capabilities/handlers/*.ts` is a shared handler module. Neither needs a
+/// Discovery is the folder contract itself: a `capabilities/<id>/handler.<ext>`
+/// is the package's declaration that it supplies capability `<id>`, and a
+/// `capabilities/handlers/*.<ext>` is a shared handler module. Neither needs a
 /// second file restating what the first one already says by existing.
-fn collect_typescript_handler_sources(root: &Path) -> Result<Vec<PathBuf>> {
+fn collect_handler_sources(root: &Path, language: HandlerLanguage) -> Result<Vec<PathBuf>> {
+    let extension = agent_packaging(language).extension;
     let mut sources = BTreeSet::new();
     let handlers_dir = root.join("capabilities/handlers");
     if handlers_dir.is_dir() {
@@ -1139,7 +1220,7 @@ fn collect_typescript_handler_sources(root: &Path) -> Result<Vec<PathBuf>> {
             .with_context(|| format!("Failed to read {}", handlers_dir.display()))?
         {
             let path = entry?.path();
-            if path.extension().and_then(|ext| ext.to_str()) == Some("ts") {
+            if path.extension().and_then(|ext| ext.to_str()) == Some(extension) {
                 sources.insert(path);
             }
         }
@@ -1150,7 +1231,7 @@ fn collect_typescript_handler_sources(root: &Path) -> Result<Vec<PathBuf>> {
         for entry in fs::read_dir(&caps_dir)
             .with_context(|| format!("Failed to read {}", caps_dir.display()))?
         {
-            let handler = entry?.path().join("handler.ts");
+            let handler = entry?.path().join(format!("handler.{extension}"));
             if handler.is_file() {
                 sources.insert(handler);
             }
@@ -1160,6 +1241,66 @@ fn collect_typescript_handler_sources(root: &Path) -> Result<Vec<PathBuf>> {
     Ok(sources.into_iter().collect())
 }
 
+/// Run one language's bundler over its sources and return what it emitted.
+///
+/// Each bundler writes a whole manifest to a path this chooses, rather than to
+/// the package's `tools.json`, so a package shipping both languages joins two
+/// manifests here instead of having one bundler overwrite the other's output.
+fn bundle_handlers(
+    root: &Path,
+    language: HandlerLanguage,
+    sources: &[PathBuf],
+) -> Result<HandlerManifest> {
+    let packaging = agent_packaging(language);
+    let compiler = installed_agent_packaging_entry(language, packaging.compiler)?;
+    let out = tempfile::NamedTempFile::new()
+        .context("Failed to materialize a handler-manifest build path")?
+        .into_temp_path();
+
+    let mut command = std::process::Command::new(packaging.interpreter);
+    match language {
+        // The Python bundler is a script with the same argv contract, so it is
+        // invoked directly.
+        HandlerLanguage::Python => {
+            command.arg(&compiler);
+        }
+        // The TypeScript bundler exports a function rather than running one, so
+        // the module is imported and called.
+        HandlerLanguage::TypeScript => {
+            command
+                .arg("--input-type=module")
+                .arg("--eval")
+                .arg(
+                    "import { pathToFileURL } from 'node:url'; import(pathToFileURL(process.argv[1]).href).then(async ({ compileHandlers }) => { const fs = await import('node:fs/promises'); const [out, root, ...sources] = process.argv.slice(2); const manifest = await compileHandlers(sources, { rootDir: root }); await fs.writeFile(out, `${JSON.stringify(manifest, null, 2)}\\n`); })",
+                )
+                .arg(&compiler);
+        }
+    }
+    let status = command
+        .arg(&out)
+        .arg(root)
+        .args(sources)
+        .status()
+        .with_context(|| {
+            format!(
+                "Failed to run installed {language:?} handler compiler {} (set {} to its package root)",
+                compiler.display(),
+                packaging.package_variable,
+            )
+        })?;
+    if !status.success() {
+        bail!("installed {language:?} handler compiler failed for agent handlers");
+    }
+
+    let manifest = HandlerManifest::from_json_slice(
+        &fs::read(&out).context("Failed to read the compiled handler manifest")?,
+    )
+    .with_context(|| {
+        format!("the {language:?} handler compiler emitted a non-conforming manifest")
+    })?;
+    Ok(manifest)
+}
+
 fn compile_agent_handlers(root: &Path) -> Result<()> {
     let root = root.canonicalize().with_context(|| {
         format!(
@@ -1167,47 +1308,27 @@ fn compile_agent_handlers(root: &Path) -> Result<()> {
             root.display()
         )
     })?;
-    let sources = collect_typescript_handler_sources(&root)?;
+    let mut handlers = Vec::new();
+    for language in HANDLER_LANGUAGES {
+        let sources = collect_handler_sources(&root, language)?;
+        if sources.is_empty() {
+            continue;
+        }
+        handlers.extend(bundle_handlers(&root, language, &sources)?.handlers);
+    }
+
     let out = root.join("capabilities/handlers/tools.json");
-    if sources.is_empty() {
+    if handlers.is_empty() {
         if out.is_file() {
             fs::remove_file(&out)
                 .with_context(|| format!("Failed to remove stale {}", out.display()))?;
         }
         return Ok(());
     }
-
+    handlers.sort_by(|left, right| left.name.cmp(&right.name));
     fs::create_dir_all(out.parent().expect("tools.json has parent"))
         .with_context(|| format!("Failed to create {}", out.parent().unwrap().display()))?;
-
-    let source_args: Vec<String> = sources
-        .iter()
-        .map(|source| source.to_string_lossy().into_owned())
-        .collect();
-
-    let compiler = installed_typescript_agent_packaging_entry("compile-handlers.mjs")?;
-    let status = std::process::Command::new("node")
-        .arg("--input-type=module")
-        .arg("--eval")
-        .arg(
-            "import { pathToFileURL } from 'node:url'; import(pathToFileURL(process.argv[1]).href).then(async ({ compileHandlers }) => { const fs = await import('node:fs/promises'); const [out, root, ...sources] = process.argv.slice(2); const manifest = await compileHandlers(sources, { rootDir: root }); await fs.writeFile(out, `${JSON.stringify(manifest, null, 2)}\\n`); })",
-        )
-        .arg(&compiler)
-        .arg(&out)
-        .arg(&root)
-        .args(&source_args)
-        .status()
-        .with_context(|| {
-            format!(
-                "Failed to run installed @apxm/agent-packaging handler compiler {} (set {} to its package root)",
-                compiler.display(),
-                TYPESCRIPT_AGENT_PACKAGING_PACKAGE,
-            )
-        })?;
-    if !status.success() {
-        bail!("installed @apxm/agent-packaging handler compiler failed for agent handlers");
-    }
-    Ok(())
+    write_tools_manifest(&root, &HandlerManifest::new(handlers))
 }
 
 pub(crate) fn agent_build(path: &Path, json_output: bool) -> Result<()> {
@@ -1491,36 +1612,64 @@ mod tests {
         assert_eq!(with_handler.len(), builtins_only.len() + 1);
     }
 
-    /// A Python-declared handler is not a shipped implementation.
+    /// A Python-shipped handler is grantable on the same terms a TypeScript one
+    /// is, and a shared Python module is not.
     ///
-    /// `apxm_program.handlers.capability` states every manifest field a
-    /// handler can state about itself, but no Python bundler and no admitted
-    /// Python worker adapter exist, so nothing can dispatch one. The grant set
-    /// must therefore not name it: a program referencing it is refused where
-    /// the author can see it rather than admitted against an implementation
-    /// that is not there.
+    /// The declaration is the folder contract in both frontends:
+    /// `capabilities/<id>/handler.py` says the package supplies `<id>`, while
+    /// `capabilities/handlers/*.py` is a module a handler may import and states
+    /// nothing about what the package can supply.
     #[test]
-    fn a_python_declared_handler_is_not_grantable() {
+    fn a_python_shipped_handler_is_grantable_and_a_shared_module_is_not() {
         let tmp = tempdir().unwrap();
         let root = tmp.path().join("python-handler");
         scaffold(&root, "python-handler");
-        fs::create_dir_all(root.join("python")).unwrap();
-        fs::write(
-            root.join("python/handlers.py"),
-            "from apxm_program.handlers import capability\n",
-        )
-        .unwrap();
         fs::create_dir_all(root.join("capabilities/handlers")).unwrap();
         fs::write(
-            root.join("capabilities/handlers/summarize.py"),
+            root.join("capabilities/handlers/shared.py"),
+            "def shared(): ...\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("capabilities/summarize")).unwrap();
+        fs::write(
+            root.join("capabilities/summarize/handler.py"),
             "def summarize(): ...\n",
         )
         .unwrap();
 
         let grantable = granted_capability_ids(&root).unwrap();
         assert!(
-            !grantable.contains("summarize"),
-            "no Python source makes a capability grantable while nothing can run one: {grantable:?}"
+            grantable.contains("summarize"),
+            "a shipped Python handler supplies its capability: {grantable:?}"
+        );
+        assert!(
+            !grantable.contains("shared"),
+            "a shared Python module declares no capability: {grantable:?}"
+        );
+    }
+
+    /// One capability is supplied by one implementation.
+    #[test]
+    fn a_capability_shipping_two_language_handlers_is_refused() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("two-languages");
+        scaffold(&root, "two-languages");
+        fs::create_dir_all(root.join("capabilities/summarize")).unwrap();
+        fs::write(
+            root.join("capabilities/summarize/handler.py"),
+            "def summarize(): ...\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("capabilities/summarize/handler.ts"),
+            "export function summarize() {}\n",
+        )
+        .unwrap();
+
+        let error = granted_capability_ids(&root).expect_err("two implementations must be refused");
+        assert!(
+            error.to_string().contains("summarize"),
+            "the refusal names the capability supplied twice: {error}"
         );
     }
 
@@ -1793,20 +1942,21 @@ mod tests {
         assert!(!destination.join("integrity.toml").exists());
     }
 
+    /// The decision is about a capability id, so both languages carry it.
     #[test]
-    fn typescript_manifest_carries_the_resolved_permission_decision() {
+    fn a_manifest_carries_the_resolved_permission_decision_in_either_language() {
         let tmp = tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("capabilities/handlers")).unwrap();
-        let descriptor = |name: &str, hash: char| HandlerDescriptor {
+        let descriptor = |name: &str, hash: char, language: HandlerLanguage| HandlerDescriptor {
             kind: HandlerKind::Tool,
-            language: HandlerLanguage::TypeScript,
+            language,
             handler_id: format!("sha256:{}", hash.to_string().repeat(64)),
             module: format!("capabilities/{name}/handler"),
             qualname: "run".to_string(),
             name: name.to_string(),
             source: HandlerSource {
-                artifact_path: format!("handlers/{name}.mjs"),
-                content: "export function run() {}\n".to_string(),
+                artifact_path: format!("handlers/{name}.{}", agent_packaging(language).extension),
+                content: "def run(): ...\n".to_string(),
             },
             description: None,
             schema: Some(serde_json::json!({})),
@@ -1814,8 +1964,8 @@ mod tests {
             requires_approval: None,
         };
         let mut manifest = HandlerManifest::new(vec![
-            descriptor("read_tool", 'a'),
-            descriptor("write_tool", 'b'),
+            descriptor("read_tool", 'a', HandlerLanguage::TypeScript),
+            descriptor("write_tool", 'b', HandlerLanguage::Python),
         ]);
         let resolved = BTreeMap::from([
             ("read_tool".to_string(), PermissionDecision::allow()),
@@ -1827,9 +1977,9 @@ mod tests {
 
         apply_resolved_permissions_to_tools_manifest(&mut manifest, &resolved)
             .expect("policy join");
-        write_typescript_tools_manifest(tmp.path(), &manifest).expect("manifest write");
+        write_tools_manifest(tmp.path(), &manifest).expect("manifest write");
 
-        let loaded = load_typescript_tools_manifest(tmp.path()).expect("manifest reload");
+        let loaded = load_tools_manifest(tmp.path()).expect("manifest reload");
         let by_name = loaded
             .handlers
             .iter()
@@ -1850,7 +2000,8 @@ mod tests {
             ),
             ("ungranted", BTreeMap::new()),
         ] {
-            let mut refused = HandlerManifest::new(vec![descriptor("read_tool", 'a')]);
+            let mut refused =
+                HandlerManifest::new(vec![descriptor("read_tool", 'a', HandlerLanguage::Python)]);
             assert!(
                 apply_resolved_permissions_to_tools_manifest(&mut refused, &decisions).is_err(),
                 "a {label} capability must not be emitted as an executable handler"
@@ -1859,7 +2010,7 @@ mod tests {
     }
 
     #[test]
-    fn load_typescript_tools_manifest_rejects_non_conforming_manifest() {
+    fn load_tools_manifest_rejects_non_conforming_manifest() {
         let tmp = tempdir().unwrap();
         let handlers_dir = tmp.path().join("capabilities/handlers");
         fs::create_dir_all(&handlers_dir).unwrap();
@@ -1891,7 +2042,7 @@ mod tests {
         )
         .unwrap();
 
-        let err = load_typescript_tools_manifest(tmp.path())
+        let err = load_tools_manifest(tmp.path())
             .expect_err("a build-host artifact path must not be admitted");
         assert!(
             err.to_string().contains("Invalid"),

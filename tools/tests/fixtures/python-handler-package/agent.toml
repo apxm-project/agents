@@ -1,0 +1,15 @@
+id = "python-handler-fixture"
+version = "0.1.0"
+schema_version = "apxm.agent"
+display_name = "Python Handler Fixture"
+description = "A package that ships a Python Capability handler and a program that invokes it."
+domain = "testing"
+kind = "agent"
+license = "MIT"
+
+[compile]
+entry = "python/program.py"
+frontend = "python"
+
+[source]
+type = "local"
