@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 
-SCRIPT_PATH = Path(__file__).with_name("apxm_mcp_install.py")
+SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "apxm_mcp_install.py"
 SPEC = importlib.util.spec_from_file_location("apxm_mcp_install", SCRIPT_PATH)
 assert SPEC and SPEC.loader
 installer = importlib.util.module_from_spec(SPEC)
