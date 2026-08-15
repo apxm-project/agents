@@ -4,11 +4,13 @@ The `.agents/` tree is the single source of truth (SSOT) for every coding
 agent that enters this repository (Claude Code, Codex CLI, Cursor, Aider,
 Gemini, etc.).
 
-Repo-root instruction files are generated from `.agents/project.md` (plus
-skill registration under `.agents/skills/`) by `dekk agents skills generate`.
-Edit `.agents/` sources, then run `dekk agents skills generate --target all`.
-Do not edit generated roots (`AGENTS.md`, `CLAUDE.md`, `CODEX.md`,
-`.cursorrules`, `.github/copilot-instructions.md`, `.agents.json`) by hand.
+The repo-root instruction files (`AGENTS.md`, `CLAUDE.md`, `CODEX.md`,
+`.cursorrules`, `.github/copilot-instructions.md`, `.agents.json`) mirror this
+file plus the skill table under `.agents/skills/`. **No command generates
+them.** There is no `dekk agents skills generate`; the roots are maintained by
+hand. Edit `.agents/project.md` first, then copy the change into every root
+yourself, keeping the bodies identical. `dekk agents check-agent-skills`
+validates the skill directories but does not write the roots.
 
 **Which file for which tool:** `CLAUDE.md` is the Claude Code entrypoint.
 `AGENTS.md` is the canonical portable instructions file (Codex CLI uses it
@@ -45,11 +47,19 @@ Command groups (see `dekk agents --help` for the live list):
 - **Compilation**: `canonical-air`, `compile-service-canonical`,
   `execute-canonical`
 - **Authoring**: `validate`, `analyze`, `explain`, `agent`
-- **Goals & Workflows**: `goal`
 - **Configuration**: `doctor`, `backend`, `cache`, `process`, `mcp`,
   `commit-lint`
 - **Discovery**: `ops`, `template`, `tokenize`
 - **Observability**: `session`
+
+`dekk agents --help` is the only live list; this one drifts.
+
+Most `dekk agents` recipes are fixed command chains with no argument
+placeholder, so an appended flag lands on whatever binary runs last. In
+particular `dekk agents test -p <crate>` does **not** scope the test run: `test`
+ends in `python -m pytest`, so `-p apxm-core` is read as a pytest plugin name.
+Use the per-crate recipes instead (`test-program`, `test-kernel`,
+`test-compiler`, `test-runtime-seams`, …).
 
 If a needed action isn't yet wrapped, **add a Dekk command** in `.dekk.toml`
 rather than shelling out — that is the project-wide pattern.
@@ -95,8 +105,9 @@ new content.
     operation definitions and generated catalogue.
   - `crates/machine/program/` — FrontendGraph, AIR structure, verification,
     and Rust lowering that consume the AIS catalogue.
-  - `crates/compiler/` — passes pipeline, frontend Python bindings,
-    TableGen-driven MLIR.
+  - `crates/compiler/` — canonical AIR lowering, frontend Python/TypeScript
+    bindings, TableGen-driven MLIR. Its `build.rs` emits the pass TableGen and
+    C-API dispatch from the AIS-owned pass specs; it does not define passes.
   - `crates/runtime/` — executor, handlers, backend adapters (LLM, local,
     tool).
   - `crates/runtime/backends/` — LLM provider implementations.
@@ -193,8 +204,14 @@ Both are non-negotiable: skipping either produces silent type drift
 between the Rust runtime, the Python frontend, and the MLIR layer.
 
 Canonical AIR → AIS MLIR lowering lives in
-`crates/compiler/pipeline/src/canonical.rs`; there is no separate optimization
-pass pipeline.
+`crates/compiler/pipeline/src/canonical.rs`. That is the lowering path, not the
+pass surface: `crates/machine/ais/src/passes/mod.rs` is the sole source of truth
+for compiler passes (14 AIS passes plus `canonicalizer`/`cse`/`symbol-dce`,
+across the Transform, Optimization, Analysis and Lowering categories).
+`crates/compiler/pipeline/build.rs` calls its `generate_passes_tablegen`,
+`generate_pass_dispatch`, and `generate_pass_descriptors` at build time to emit
+`Passes.generated.td`, `PassDispatch.inc`, and `PassDescriptors.inc`. Add or
+change a pass in the AIS owner; never register one in the compiler crate.
 
 Attribute names must be a single source of truth — see the
 `feedback_attribute_dual_naming` incident: the canonical enum lives in the AIS
@@ -229,12 +246,16 @@ keep code, schemas, and evidence aligned.
 - **Build outputs**: `/tmp/apxm-target-$USER` (456 GiB local). `/home`
   contention has caused random ENOSPC and invalid-rustc-cache SIGBUS in
   the past.
-- **Config resolver**: `load_scoped` is **first-wins, not merge**. A
-  project-local `.apxm/config.toml` with only a data-dir override will
-  shadow the backend block in `~/.apxm/config.toml` and produce a silent
-  "no backends configured". Either fully merge or use one config file.
-
-See the local `.apxm` configuration contract in the runtime crates.
+- **Backend config**: `BackendStore::open` reads exactly one file,
+  `$APXM_HOME/config.toml` (default `~/.apxm/config.toml`). A project-local
+  `.apxm/config.toml` is **intentionally ignored** for backend registration —
+  it is a per-instance concern, not a per-checkout one. If backends look
+  missing, check `APXM_HOME`, not the project directory.
+  (`crates/runtime/backend-registry/src/backend.rs`,
+  `crates/machine/contracts/src/env.rs`.)
+- **Read vs write roots**: `APXM_HOME` resolves config; `APXM_STATE_HOME`
+  resolves what the process writes (sessions, memory, checkpoints) and falls
+  back to `apxm_home()` when unset.
 
 ## 12. Boundaries (read before any potentially destructive action)
 

@@ -59,7 +59,7 @@ that crept in — the commit message owns "why now" and "by whom".
 ### 8. `.agents.json` contract
 
 If the change adds or changes any skill, run
-`dekk agents skills status` to confirm generated agent surfaces resolve.
+`dekk agents check-agent-skills` to confirm every skill directory validates.
 
 ### 9. Generated artifact placement
 

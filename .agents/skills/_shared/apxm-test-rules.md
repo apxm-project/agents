@@ -41,7 +41,7 @@ before claiming done.
 
 ## Dogfood
 
-Test-failure triage is a self-hosted workflow: the audit graph runs the
-suite, clusters failures, and fans out a fixer per cluster
-(`_shared/apxm-self-host-rules.md`). Prefer running that over hand-triaging
-a large failure set.
+No self-hosted triage workflow ships — see `_shared/apxm-self-host-rules.md`.
+Triage a large failure set by hand: cluster by owning crate, run that crate's
+named recipe (`test-program`, `test-kernel`, `test-compiler`, …), and fix one
+cluster at a time.

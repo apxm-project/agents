@@ -59,7 +59,7 @@ load `_shared/apxm-comment-rules.md`; when writing tests load
 
 ## Verification
 
-- Rust FrontendGraph lowering changed: `dekk agents test -p apxm-program`.
+- Rust FrontendGraph lowering changed: `dekk agents test-program`.
 - TypeScript frontend changed:
   `npm --prefix crates/compiler/frontend/typescript run typecheck` and
   `npm --prefix crates/compiler/frontend/typescript test`.

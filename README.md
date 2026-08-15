@@ -48,5 +48,7 @@ dekk agents check
 dekk agents test-frontend-examples
 ```
 
-Generated agent instructions come from `.agents/project.md`; edit that source
-and run `dekk agents skills generate --target all`.
+Agent instructions come from `.agents/project.md`. No command generates the
+repo-root mirrors (`AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `.cursorrules`,
+`.github/copilot-instructions.md`) — edit `.agents/project.md` first, then copy
+the change into each root by hand, keeping the bodies identical.

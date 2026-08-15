@@ -74,8 +74,8 @@ Right: `feat(benchmarks): add telecom workload`.
   not by a plan or ticket id.
 - `chore(agents)`: agent-facing contract and generated-instruction
   maintenance.
-- `docs(<scope>)`: when touching `.agents/` SSOT, remember to
-  `dekk agents skills generate --target all` so generated agent files stay synced.
+- `docs(<scope>)`: when touching `.agents/project.md`, mirror the change into
+  every repo root by hand in the same commit — no command syncs them.
 
 ## Enforcement
 

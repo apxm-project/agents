@@ -18,7 +18,8 @@ Run these in order. If any fail, do **not** claim completion:
 
 1. **Run `simplify` first** if not already.
 2. **Focused tests for touched crates**:
-   - `dekk agents test -p <crate>` per crate that changed.
+   - the named `test-*` recipe per crate that changed (`dekk agents --help`);
+     `dekk agents test -p <crate>` does not scope anything.
    - `dekk agents test-cli` if `crates/tools/cli/` changed.
    - `dekk agents test-python-frontend` if
      `crates/compiler/frontend/python/` changed.
@@ -26,9 +27,10 @@ Run these in order. If any fail, do **not** claim completion:
    stale MLIR.
 4. **Commit-message lint** for any queued commits:
    `dekk agents commit-lint --range origin/main..HEAD`.
-5. **Skills status** if anything under `.agents/` changed:
-   `dekk agents skills status`. Confirm generated agent files and
-   `.agents.json` are coherent.
+5. **Skills check** if anything under `.agents/` changed:
+   `dekk agents check-agent-skills`. If `.agents/project.md` changed, also
+   confirm by hand that every repo root carries the same edit — no command
+   syncs them.
 6. **`git status --short`** and **`git diff --stat`**. Read every
    line. Nothing should be unexpected.
 7. **Secrets scan** if settings/env/deploy files changed:
@@ -58,9 +60,9 @@ Run these in order. If any fail, do **not** claim completion:
 - ...
 
 ### Passed
-- dekk agents test -p <crate>: green
+- dekk agents test-<crate>: green
 - dekk agents doctor: green
-- skills status: coherent
+- dekk agents check-agent-skills: green
 
 ### Local-only
 - /tmp/apxm-target-$USER (build cache, not committed)

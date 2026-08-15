@@ -47,7 +47,8 @@ creep. Invoke only after `plan` and an explicit user approval.
 
 Use the smallest correct command:
 
-- Touched a `crates/<x>` source? `dekk agents test -p <x>`.
+- Touched a `crates/<x>` source? Run that crate's named `test-*` recipe
+  (`dekk agents --help`); `dekk agents test -p <x>` does not scope anything.
 - Touched the CLI? `dekk agents test-cli`.
 - Touched Python frontend? `dekk agents test-python-frontend`.
 - Touched `.td`? `build-dialect && codegen` *then* the test commands.

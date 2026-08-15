@@ -12,10 +12,12 @@ AIS dialect, MLIR passes, Python frontend codegen.
 
 ## Ownership
 
-- **`apxm-core`** defines AIS ops. No exceptions.
-- **Canonical pass list**:
-  `crates/compiler/pipeline/src/passes/pipeline.rs::build_pass_list()`.
-- **Attribute names** go through the canonical enum in `apxm-core` —
+- **`apxm-ais`** defines AIS ops
+  (`crates/machine/ais/src/operations/definitions.rs`). No exceptions.
+- **Canonical pass list**: `crates/machine/ais/src/passes/mod.rs`.
+  `crates/compiler/pipeline/build.rs` generates the TableGen and C-API dispatch
+  from it; the compiler crate registers no passes of its own.
+- **Attribute names** go through the canonical enum in `apxm-ais` —
   never literal strings in Python/MLIR/Rust. See
   `feedback_attribute_dual_naming`.
 
@@ -24,16 +26,16 @@ AIS dialect, MLIR passes, Python frontend codegen.
 ```bash
 dekk agents build-dialect   # rebuild MLIR (TableGen + C++ + Rust)
 dekk agents codegen         # regenerate Python frontend bindings
-dekk agents test -p apxm-compiler
+dekk agents test-compiler
 ```
 
 ## Docs
 
 - `docs/compiler/pipeline.md` — the pass pipeline.
-- `crates/compiler/pipeline/src/passes/` — pass implementations.
+- `crates/machine/ais/src/passes/mod.rs` — pass specs (source of truth).
+- `crates/compiler/pipeline/src/canonical.rs` — canonical AIR → AIS MLIR.
 - `crates/compiler/frontend/python/` — Python frontend.
 - `crates/compiler/frontend/typescript/` — TypeScript frontend.
-- `crates/compiler/pipeline/src/air_builder/` — Rust AIR graph and printer.
 
 ## Related rules
 

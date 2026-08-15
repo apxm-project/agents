@@ -1,44 +1,33 @@
 # Shared rule — APXM self-hosting (APXM builds itself)
 
-Load this file before authoring or editing a self-hosted development
-workflow (goal bundles or any graph that spawns agents to modify APXM
-itself). The toolchain that coordinates agents modifying the toolchain
-must follow the project's own dev rules.
+Load this file before writing an Agent Program that drives changes to APXM
+itself. The toolchain that coordinates agents modifying the toolchain must
+follow the project's own dev rules.
 
-Self-hosted dev tasks are authored as APXM graphs / goal bundles, never
-ad-hoc Python. The rule prose is the source of truth; the workflow is the
-machine-checking arm — mirror the way `apxm-commit-message-rules.md`
-pairs with `check_commit_message.py`.
+**Nothing self-hosted ships in this tree today.** There is no `.apxmw` workflow
+format, no `BRANCH_ON_VALUE` node, no goal bundle, no `autofix_workflow.py`, no
+`agent_council`, and no `dekk agents execute`. The only execution entry point is
+`dekk agents execute-canonical`, which runs one admitted canonical AIR module.
+Treat the rules below as constraints on any future self-hosted program, not as a
+description of something you can run now.
 
-## The four contracts
+## The three contracts
 
 1. **No raw build tooling in agent prompts.** Never instruct an agent to
    run `cargo`, `docker`, `srun`, or `sbatch` (banned by
-   `_shared/apxm-development-rules.md`). Workflows direct agents through
+   `_shared/apxm-development-rules.md`). Direct agents through
    `dekk agents <command>`, the same path a human uses.
 2. **No hardcoded source paths in prompts.** Paths drift and rot. Resolve
-   them at run time with an `ais.ask` "locate the enum/handler" node, or
-   read them from one shared facts file — never bake
+   them at run time, or read them from one shared facts file — never bake
    `crates/.../foo.rs` into a prompt string.
 3. **No hardcoded provider profiles.** Do not name `claude`, `codex`, or
-   any vendor in a workflow. Declare roles (`architect`, `dev`,
-   `reviewer`) and bind providers at the edge. No workflow should assume a
-   provider-specific host exists.
-4. **Control flow lives in the graph, not the agent.** Use
-   `BRANCH_ON_VALUE` / fan-in nodes; do not delegate "iterate until
-   tests pass" to an agent's internal loop. Design convergence as explicit
-   graph structure, not an agent instruction. Runtime iteration must use the
-   structural loop and yield/resume semantics exposed by the canonical
-   frontend and AIR contracts.
+   any vendor in a program. Declare roles (`architect`, `dev`, `reviewer`) and
+   bind providers at the edge.
 
-## Authoring checklist
+Control flow belongs in the program, not in an agent instruction: use the
+structural loop and yield/resume semantics the canonical frontend and AIR
+contracts expose, rather than delegating "iterate until tests pass" to an
+agent's internal loop.
 
-- Reuse the shipped skeletons: classify → fan-out → verify → report
-  (`autofix_workflow.py`), planner → executor → reviewer → synthesize
-  (`agent_council/workflow.apxmw`).
-- Dispatch with `dekk agents execute <workflow.py>`; obey
-  `_shared/apxm-agent-operating-rules.md` for any git mutation the
-  workflow performs.
-- Each new dev workflow should be referenced from the skill whose manual
-  checklist it replaces, so the skill becomes "run the workflow, then
-  verify."
+Any git mutation such a program performs still obeys
+`_shared/apxm-agent-operating-rules.md`.

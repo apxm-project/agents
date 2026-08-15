@@ -10,9 +10,11 @@ that points at one or more shared rules in `_shared/`.
 - `.agents/skills/_shared/*.md` — shared rules loaded by skills.
 - `.agents/skills/<name>/SKILL.md` — individual skills.
 
-The generated files (`AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `.agents.json`,
-`.cursorrules`, `.github/copilot-instructions.md`) come from running
-`dekk agents skills generate --target all`. Never edit them by hand. Today
+The repo-root files (`AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `.agents.json`,
+`.cursorrules`, `.github/copilot-instructions.md`) mirror `.agents/project.md`
+plus the skill table. **No command generates them** — there is no
+`dekk agents skills generate`. Edit `.agents/project.md`, then copy the change
+into each root by hand and keep the bodies identical. Today
 `AGENTS.md` and `CODEX.md` share the same body; Codex CLI is configured on
 `AGENTS.md` in `.agents.json` (see `.agents/domains/meta/README.md`).
 
@@ -77,6 +79,6 @@ Authoring rules (this repo's own SSOT convention):
 Steps:
 
 1. Add `.agents/skills/<name>/SKILL.md` from the convention above.
-2. `dekk agents skills status` — confirm registration.
-3. `dekk agents skills generate --target all` — regenerate config files.
-4. Commit both the skill and the regenerated outputs.
+2. `dekk agents check-agent-skills` — validate the skill directory.
+3. Add the skill by hand to the "Available Skills" table in each repo root.
+4. Commit the skill and the root updates together.

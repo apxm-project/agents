@@ -29,10 +29,12 @@ when writing tests load `_shared/apxm-test-rules.md`.
 - Edited a `.td` file (TableGen op) or TableGen-emitted C++ shim?
   `dekk agents build-dialect` **then** `dekk agents codegen` before
   building the Rust workspace or running Python frontend tests.
-- Iterating? Prefer focused commands:
-  `dekk agents test -p <crate>` over `dekk agents test-all`.
-  `dekk agents check` for a fast type-check, `dekk agents fmt` to format,
-  `dekk agents clippy` to lint (deny-warnings).
+- Iterating? Prefer the named per-crate recipes (`test-program`,
+  `test-kernel`, `test-compiler`, `test-runtime-seams`, …) over
+  `dekk agents test-all`. `dekk agents test -p <crate>` does **not** work:
+  `test` is a fixed command chain ending in `python -m pytest`, so `-p` is read
+  as a pytest plugin name. `dekk agents check` for a fast type-check,
+  `dekk agents fmt` to format, `dekk agents clippy` to lint (deny-warnings).
 - Pre-PR? `dekk agents test-all` + `dekk agents test-cli` (CLI requires the
   MLIR-linked binary, hence the separate command).
 
@@ -41,9 +43,12 @@ when writing tests load `_shared/apxm-test-rules.md`.
 - **`crates/machine/ais`** owns the AIS dialect. Every other crate consumes it.
   Never define an op outside that crate.
 - Canonical AIR → AIS lowering is
-  `crates/compiler/pipeline/src/canonical.rs`; there is no second
-  optimization pipeline.
-- Attribute names: canonical enum in `apxm-core`. Python kwargs, MLIR
+  `crates/compiler/pipeline/src/canonical.rs`.
+- Compiler passes are owned by the same crate as the ops:
+  `crates/machine/ais/src/passes/mod.rs` holds every `PassSpec`, and
+  `crates/compiler/pipeline/build.rs` generates the TableGen and C-API dispatch
+  from it. Never register a pass in the compiler crate.
+- Attribute names: canonical enum in `apxm-ais`. Python kwargs, MLIR
   attrs, Rust executors all resolve through it. See the
   `feedback_attribute_dual_naming` incident.
 
@@ -59,7 +64,8 @@ when writing tests load `_shared/apxm-test-rules.md`.
 After each phase of work, run the smallest correct check:
 
 - Need a fast compile-only signal? `dekk agents check`.
-- Touched one crate's source? `dekk agents test -p <crate>`.
+- Touched one crate's source? Run that crate's named recipe — see
+  `dekk agents --help` for the live `test-*` list.
 - Touched the CLI? `dekk agents test-cli`.
 - Touched a `.td`? `dekk agents build-dialect && dekk agents codegen`,
   *then* the test commands.

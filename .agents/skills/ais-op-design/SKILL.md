@@ -1,7 +1,7 @@
 ---
 name: ais-op-design
 group: Domain
-description: Use before adding or modifying an AIS op in apxm-core. Enforces the design-before-code gate, the canonical-attribute rule, the definitions.rs source-of-truth layer map, and the build-dialect + codegen cadence.
+description: Use before adding or modifying an AIS op in apxm-ais. Enforces the design-before-code gate, the canonical-attribute rule, the definitions.rs source-of-truth layer map, and the build-dialect + codegen cadence.
 user-invocable: true
 ---
 
@@ -78,7 +78,7 @@ generated — its `arguments` must match the spec's attribute fields by name.
 ```bash
 dekk agents build-dialect   # after any .td or C++ shim edit
 dekk agents codegen         # regenerate frontend bindings (do BEFORE testing)
-dekk agents test -p apxm-core -p apxm-compiler -p apxm-runtime
+dekk agents test-compiler   # plus the other named recipes the change touches
 dekk agents test-python-frontend
 dekk agents ops list | grep <new-op>
 ```
@@ -89,11 +89,11 @@ and the spec-field ↔ TableGen-attr parity test.
 
 ## Rules & anti-patterns
 
-- Add only to `apxm-core`; never define an op elsewhere.
+- Add only to `apxm-ais`; never define an op elsewhere.
 - Attribute names are `attrs.rs` constants — never literals.
 - No referential comments in `.td` (see `_shared/apxm-agent-operating-rules.md`).
 - Don't skip `build-dialect`/`codegen` — stale bindings cause phantom
   frontend errors.
 - Don't add an op for "future flexibility" with no current consumer.
-- Pass-list edits (`build_pass_list`) apply **only** if the op also ships
-  a new pass — not a normal add-op step.
+- Pass-list edits (`crates/machine/ais/src/passes/mod.rs`) apply **only** if
+  the op also ships a new pass — not a normal add-op step.

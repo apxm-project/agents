@@ -21,7 +21,7 @@ routes through these:
 - Typo fix or single-line edit: skip `context` and `plan`;
   still run `finish` + `commit`.
 - Doc-only edit: skip `plan`; `finish` still runs (secrets
-  scan, skills status).
+  scan, check-agent-skills).
 
 ## Related rules
 

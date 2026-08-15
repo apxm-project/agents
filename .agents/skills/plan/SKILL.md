@@ -25,7 +25,7 @@ local scope do not require this skill.
 1. **List affected files and subsystems**. Be specific: file paths,
    public API surface, downstream consumers.
 2. **Decide AIS-op-vs-compose** if the change adds or modifies behavior
-   currently expressed in `apxm-core`. Adding an op? Invoke
+   currently expressed in `apxm-ais`. Adding an op? Invoke
    `ais-op-design` first — it owns the design-before-code gate.
 3. **State expected verification**: which focused Dekk tests and checks,
    and which strict lints.
