@@ -5,7 +5,10 @@
 
 mod stdio;
 
-pub use stdio::{StdioFrame, decode_jsonl, encode_jsonl, handshake_cross_wired, serve_stdio};
+pub use stdio::{
+    StdioFrame, UnixEndpoint, decode_jsonl, encode_jsonl, handshake_cross_wired, serve_stdio,
+    serve_unix,
+};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -17,7 +20,7 @@ use apxm_compilation_protocol::{
 };
 use apxm_program::air::AirModule;
 use apxm_source_port::{
-    Frontend, FrontendDrivers, FrontendRoots, PackageSnapshot, SourceBundleRequest, SnapshotError,
+    Frontend, FrontendDrivers, FrontendRoots, PackageSnapshot, SnapshotError, SourceBundleRequest,
     compile_source_bundle, content_digest,
 };
 use sha2::{Digest, Sha256};
@@ -53,11 +56,12 @@ pub struct CompilationService {
     last_idempotency: Option<(String, String)>,
     roots: FrontendRoots,
     drivers: FrontendDrivers,
+    artifact_dir: Option<PathBuf>,
 }
 
 impl Default for CompilationService {
     fn default() -> Self {
-        Self::with_frontends(declared_frontend_roots(), declared_frontend_drivers())
+        Self::from_env()
     }
 }
 
@@ -70,7 +74,28 @@ impl CompilationService {
             last_idempotency: None,
             roots,
             drivers,
+            artifact_dir: None,
         }
+    }
+
+    /// Product handler. Persists committed artifacts when `APXM_ARTIFACT_DIR` is set.
+    #[must_use]
+    pub fn from_env() -> Self {
+        let mut service =
+            Self::with_frontends(declared_frontend_roots(), declared_frontend_drivers());
+        if let Ok(dir) = std::env::var("APXM_ARTIFACT_DIR") {
+            if !dir.trim().is_empty() {
+                service.artifact_dir = Some(PathBuf::from(dir));
+            }
+        }
+        service
+    }
+
+    /// Persist committed AIR under `dir` so a Runtime child can load the digest.
+    #[must_use]
+    pub fn with_artifact_dir(mut self, dir: PathBuf) -> Self {
+        self.artifact_dir = Some(dir);
+        self
     }
 
     /// Admit a handshake and request. Runtime methods are unrepresentable.
@@ -119,8 +144,12 @@ impl CompilationService {
         match compile_snapshot(&snapshot, &self.roots, &self.drivers) {
             Ok(air_json) => {
                 let artifact_digest = format!("sha256:{:x}", Sha256::digest(air_json.as_bytes()));
-                self.store
-                    .commit(artifact_digest.clone(), air_json);
+                if let Some(dir) = &self.artifact_dir {
+                    if persist_artifact(dir, &artifact_digest, air_json.as_bytes()).is_err() {
+                        return Ok(failed(&request_id, "artifact_persist"));
+                    }
+                }
+                self.store.commit(artifact_digest.clone(), air_json);
                 Ok(CompilationResult::ArtifactCommitted {
                     request_id,
                     artifact_digest,
@@ -137,6 +166,17 @@ fn failed(request_id: &str, code: &str) -> CompilationResult {
         request_id: request_id.to_owned(),
         code: code.to_owned(),
     }
+}
+
+/// File name for a digest in a shared artifact directory (`:` is not portable).
+#[must_use]
+pub fn artifact_file_name(digest: &str) -> String {
+    digest.replace(':', "-")
+}
+
+fn persist_artifact(dir: &Path, digest: &str, bytes: &[u8]) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
+    std::fs::write(dir.join(artifact_file_name(digest)), bytes).map_err(|error| error.to_string())
 }
 
 fn snapshot_error_code(error: SnapshotError) -> &'static str {
@@ -167,8 +207,8 @@ fn compile_snapshot(
     let entry = snapshot
         .file(&snapshot.entrypoint)
         .ok_or_else(|| "missing_entrypoint".to_owned())?;
-    let source = String::from_utf8(entry.bytes.clone())
-        .map_err(|_| "entrypoint_not_utf8".to_owned())?;
+    let source =
+        String::from_utf8(entry.bytes.clone()).map_err(|_| "entrypoint_not_utf8".to_owned())?;
     let program = authored_program_name(snapshot.frontend, &source)?;
     let compiled = compile_source_bundle(
         &SourceBundleRequest::new(snapshot.frontend, program, source),
@@ -216,13 +256,17 @@ fn declared_manifest(snapshot: &PackageSnapshot) -> Result<DeclaredManifest, Str
     let Some(agent) = snapshot.file("agent.toml") else {
         return Err("missing_frontend".to_owned());
     };
-    let text =
-        String::from_utf8(agent.bytes.clone()).map_err(|_| "invalid_manifest".to_owned())?;
-    let parsed: AgentManifest =
-        toml::from_str(&text).map_err(|_| "invalid_manifest".to_owned())?;
-    let compile = parsed.compile.ok_or_else(|| "missing_frontend".to_owned())?;
-    let frontend = compile.frontend.ok_or_else(|| "missing_frontend".to_owned())?;
-    let entry = compile.entry.ok_or_else(|| "missing_entrypoint".to_owned())?;
+    let text = String::from_utf8(agent.bytes.clone()).map_err(|_| "invalid_manifest".to_owned())?;
+    let parsed: AgentManifest = toml::from_str(&text).map_err(|_| "invalid_manifest".to_owned())?;
+    let compile = parsed
+        .compile
+        .ok_or_else(|| "missing_frontend".to_owned())?;
+    let frontend = compile
+        .frontend
+        .ok_or_else(|| "missing_frontend".to_owned())?;
+    let entry = compile
+        .entry
+        .ok_or_else(|| "missing_entrypoint".to_owned())?;
     Ok(DeclaredManifest {
         frontend,
         entry,
@@ -284,8 +328,8 @@ fn verify_integrity(snapshot: &PackageSnapshot) -> Result<(), String> {
     let Some(integrity) = snapshot.file("integrity.toml") else {
         return Ok(());
     };
-    let text = String::from_utf8(integrity.bytes.clone())
-        .map_err(|_| "integrity_invalid".to_owned())?;
+    let text =
+        String::from_utf8(integrity.bytes.clone()).map_err(|_| "integrity_invalid".to_owned())?;
     let recorded: IntegrityToml =
         toml::from_str(&text).map_err(|_| "integrity_invalid".to_owned())?;
     if recorded.algorithm != "sha256" {
@@ -673,5 +717,48 @@ export const Reviewer = Agent<ReviewRequest, Review>({
             .unwrap_err();
         assert_eq!(err, ProtocolError::IncompatibleVersion);
         assert!(service.store().get("artifact:x").is_none());
+    }
+
+    #[test]
+    fn jsonl_round_trip_compiles_python_when_frontend_present() {
+        if !frontend_present(Frontend::Python) {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!(
+            "apxm-compilation-jsonl-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let service = CompilationService::default().with_artifact_dir(dir.clone());
+        let envelope = serde_json::json!({
+            "handshake": handshake(),
+            "request": CompilationRequest::Compile {
+                request_id: "c".to_owned(),
+                idempotency_key: "k".to_owned(),
+                snapshot: package_snapshot(Frontend::Python, "src/agent.py", PYTHON_PROGRAM),
+            }
+        });
+        let frame = crate::StdioFrame {
+            channel: "compilation".to_owned(),
+            payload: envelope.to_string(),
+        };
+        let mut out = Vec::new();
+        crate::serve_stdio(crate::encode_jsonl(&frame).as_bytes(), &mut out, service).unwrap();
+        let reply = crate::decode_jsonl(std::str::from_utf8(&out).unwrap()).unwrap();
+        let result: CompilationResult = serde_json::from_str(&reply.payload).unwrap();
+        let CompilationResult::ArtifactCommitted {
+            artifact_digest, ..
+        } = result
+        else {
+            panic!("jsonl compile: {result:?}");
+        };
+        let persisted = dir.join(crate::artifact_file_name(&artifact_digest));
+        assert!(persisted.is_file(), "artifact bytes persisted for runtime");
+        let air = std::fs::read_to_string(persisted).unwrap();
+        assert!(air.contains("apxm.air"));
     }
 }

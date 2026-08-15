@@ -1,29 +1,89 @@
 //! Compilation Client: snapshot, submit, render diagnostics, return artifact refs.
 
 use std::fs;
-use std::path::Path;
+use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use apxm_compilation_protocol::{
     COMPILATION_PROTOCOL_VERSION, CompilationHandshake, CompilationRequest, CompilationResult,
 };
-use apxm_compilation_service::CompilationService;
+use apxm_compilation_service::{CompilationService, StdioFrame, decode_jsonl, encode_jsonl};
 use apxm_source_port::{Frontend, PackageSnapshot, SnapshotContent};
 use serde::Deserialize;
 
 /// Headless build client. Contains no frontend or compiler implementation.
 pub struct CompilationClient {
-    service: CompilationService,
+    inner: CompilationInner,
+}
+
+enum CompilationInner {
+    InProcess(CompilationService),
+    Stdio(StdioCompilation),
+}
+
+struct StdioCompilation {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+    artifact_dir: PathBuf,
+    last_bytes: Option<(String, String)>,
 }
 
 impl Default for CompilationClient {
     fn default() -> Self {
         Self {
-            service: CompilationService::default(),
+            inner: CompilationInner::InProcess(CompilationService::default()),
+        }
+    }
+}
+
+impl Drop for CompilationClient {
+    fn drop(&mut self) {
+        if let CompilationInner::Stdio(stdio) = &mut self.inner {
+            let _ = stdio.child.kill();
+            let _ = stdio.child.wait();
         }
     }
 }
 
 impl CompilationClient {
+    /// Speak JSONL to a Compilation Service child. The parent does not construct
+    /// the service handler.
+    pub fn spawn_stdio(
+        program: impl AsRef<Path>,
+        args: &[&str],
+        artifact_dir: impl AsRef<Path>,
+    ) -> Result<Self, String> {
+        let artifact_dir = artifact_dir.as_ref().to_path_buf();
+        fs::create_dir_all(&artifact_dir).map_err(|error| error.to_string())?;
+        let mut child = Command::new(program.as_ref())
+            .args(args)
+            .env("APXM_ARTIFACT_DIR", &artifact_dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .map_err(|error| error.to_string())?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "compilation stdin".to_owned())?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "compilation stdout".to_owned())?;
+        Ok(Self {
+            inner: CompilationInner::Stdio(StdioCompilation {
+                child,
+                stdin,
+                stdout: BufReader::new(stdout),
+                artifact_dir,
+                last_bytes: None,
+            }),
+        })
+    }
+
     /// Snapshot a local package directory and compile it. The CLI never
     /// constructs a `PackageSnapshot` itself.
     pub fn build_package(&mut self, package_root: &Path) -> Result<String, String> {
@@ -32,19 +92,11 @@ impl CompilationClient {
 
     /// Submit one exact snapshot. Failed or uncertain compiles return no digest.
     pub fn build(&mut self, snapshot: PackageSnapshot) -> Result<String, String> {
-        let result = self
-            .service
-            .handle(
-                &CompilationHandshake {
-                    protocol_version: COMPILATION_PROTOCOL_VERSION.to_owned(),
-                },
-                CompilationRequest::Compile {
-                    request_id: "build".to_owned(),
-                    idempotency_key: snapshot.snapshot_digest.clone(),
-                    snapshot,
-                },
-            )
-            .map_err(|error| format!("{error:?}"))?;
+        let result = self.request(CompilationRequest::Compile {
+            request_id: "build".to_owned(),
+            idempotency_key: snapshot.snapshot_digest.clone(),
+            snapshot,
+        })?;
         match result {
             CompilationResult::ArtifactCommitted {
                 artifact_digest, ..
@@ -57,17 +109,70 @@ impl CompilationClient {
     /// Committed artifact bytes for a digest this client produced.
     #[must_use]
     pub fn artifact_bytes(&self, digest: &str) -> Option<&str> {
-        self.service.store().get(digest)
+        match &self.inner {
+            CompilationInner::InProcess(service) => service.store().get(digest),
+            CompilationInner::Stdio(stdio) => stdio
+                .last_bytes
+                .as_ref()
+                .and_then(|(id, bytes)| (id == digest).then_some(bytes.as_str())),
+        }
+    }
+
+    fn request(&mut self, request: CompilationRequest) -> Result<CompilationResult, String> {
+        match &mut self.inner {
+            CompilationInner::InProcess(service) => service
+                .handle(
+                    &CompilationHandshake {
+                        protocol_version: COMPILATION_PROTOCOL_VERSION.to_owned(),
+                    },
+                    request,
+                )
+                .map_err(|error| format!("{error:?}")),
+            CompilationInner::Stdio(stdio) => {
+                let envelope = serde_json::json!({
+                    "handshake": {
+                        "protocol_version": COMPILATION_PROTOCOL_VERSION,
+                    },
+                    "request": request,
+                });
+                let frame = StdioFrame {
+                    channel: "compilation".to_owned(),
+                    payload: envelope.to_string(),
+                };
+                stdio
+                    .stdin
+                    .write_all(encode_jsonl(&frame).as_bytes())
+                    .map_err(|error| error.to_string())?;
+                stdio.stdin.flush().map_err(|error| error.to_string())?;
+                let mut line = String::new();
+                stdio
+                    .stdout
+                    .read_line(&mut line)
+                    .map_err(|error| error.to_string())?;
+                let reply = decode_jsonl(&line)?;
+                let result: CompilationResult =
+                    serde_json::from_str(&reply.payload).map_err(|error| error.to_string())?;
+                if let CompilationResult::ArtifactCommitted {
+                    ref artifact_digest,
+                    ..
+                } = result
+                {
+                    if let Ok(bytes) = fs::read_to_string(
+                        stdio.artifact_dir.join(artifact_digest.replace(':', "-")),
+                    ) {
+                        stdio.last_bytes = Some((artifact_digest.clone(), bytes));
+                    }
+                }
+                Ok(result)
+            }
+        }
     }
 }
 
 /// Walk a package root and bind every file's bytes into a validated snapshot.
 pub fn snapshot_package(package_root: &Path) -> Result<PackageSnapshot, String> {
     if !package_root.is_dir() {
-        return Err(format!(
-            "'{}' is not a directory",
-            package_root.display()
-        ));
+        return Err(format!("'{}' is not a directory", package_root.display()));
     }
     let manifest = read_manifest(package_root)?;
     let mut contents = Vec::new();
@@ -109,9 +214,15 @@ fn read_manifest(package_root: &Path) -> Result<DeclaredCompile, String> {
     let path = package_root.join("agent.toml");
     let text = fs::read_to_string(&path).map_err(|_| "missing_frontend".to_owned())?;
     let parsed: AgentToml = toml::from_str(&text).map_err(|error| error.to_string())?;
-    let compile = parsed.compile.ok_or_else(|| "missing_frontend".to_owned())?;
-    let frontend = compile.frontend.ok_or_else(|| "missing_frontend".to_owned())?;
-    let entry = compile.entry.ok_or_else(|| "missing_entrypoint".to_owned())?;
+    let compile = parsed
+        .compile
+        .ok_or_else(|| "missing_frontend".to_owned())?;
+    let frontend = compile
+        .frontend
+        .ok_or_else(|| "missing_frontend".to_owned())?;
+    let entry = compile
+        .entry
+        .ok_or_else(|| "missing_entrypoint".to_owned())?;
     Ok(DeclaredCompile { frontend, entry })
 }
 

@@ -15,6 +15,7 @@ pub use composition::{
 };
 pub use stdio::{
     StdioFrame, UnixEndpoint, decode_jsonl, encode_jsonl, handshake_cross_wired, serve_stdio,
+    serve_unix,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -44,11 +45,20 @@ pub struct RuntimeService {
     broker: Arc<dyn ApprovalBroker>,
     cancelled: BTreeSet<String>,
     disconnected: bool,
+    artifact_dir: Option<PathBuf>,
 }
 
 impl Default for RuntimeService {
     fn default() -> Self {
-        Self {
+        Self::from_env()
+    }
+}
+
+impl RuntimeService {
+    /// Product handler. Loads committed artifacts from `APXM_ARTIFACT_DIR`.
+    #[must_use]
+    pub fn from_env() -> Self {
+        let mut service = Self {
             artifacts: ArtifactStore::default(),
             instances: BTreeMap::new(),
             applications: Vec::new(),
@@ -60,7 +70,21 @@ impl Default for RuntimeService {
             broker: Arc::new(DenyBroker),
             cancelled: BTreeSet::new(),
             disconnected: false,
+            artifact_dir: None,
+        };
+        if let Ok(dir) = std::env::var("APXM_ARTIFACT_DIR") {
+            if !dir.trim().is_empty() {
+                service.artifact_dir = Some(PathBuf::from(dir));
+            }
         }
+        service
+    }
+
+    /// Load admitted artifacts from a shared directory written by Compilation Service.
+    #[must_use]
+    pub fn with_artifact_dir(mut self, dir: PathBuf) -> Self {
+        self.artifact_dir = Some(dir);
+        self
     }
 }
 
@@ -179,6 +203,11 @@ impl RuntimeService {
     ) -> Result<RuntimeResult, ProtocolError> {
         if artifact_digest.trim().is_empty() {
             return Err(ProtocolError::SourceAsExecutable);
+        }
+        if self.artifacts.get(&artifact_digest).is_none() {
+            if let Some(bytes) = self.load_persisted_artifact(&artifact_digest) {
+                self.artifacts.commit_named(artifact_digest.clone(), bytes);
+            }
         }
         if self.artifacts.get(&artifact_digest).is_none() {
             return Ok(RuntimeResult::Failed {
@@ -411,6 +440,11 @@ impl RuntimeService {
             request_id,
             result: EventApplicationResult::Fulfilled,
         })
+    }
+
+    fn load_persisted_artifact(&self, digest: &str) -> Option<Vec<u8>> {
+        let dir = self.artifact_dir.as_ref()?;
+        std::fs::read(dir.join(digest.replace(':', "-"))).ok()
     }
 
     fn inspect_event(

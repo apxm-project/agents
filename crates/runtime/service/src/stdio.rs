@@ -1,6 +1,7 @@
 //! Runtime Service stdio and Unix-socket framing.
 
 use std::io::{BufRead, Write};
+use std::os::unix::net::UnixListener;
 
 use serde::{Deserialize, Serialize};
 
@@ -60,8 +61,30 @@ pub fn decode_jsonl(line: &str) -> Result<StdioFrame, String> {
 /// Serve Runtime protocol frames until stdin EOF. Logs never share this stream.
 pub fn serve_stdio<R: BufRead, W: Write>(
     reader: R,
-    mut writer: W,
+    writer: W,
     mut service: RuntimeService,
+) -> Result<(), String> {
+    serve_frames(reader, writer, &mut service)
+}
+
+/// Bind an absolute Unix socket and serve one connection at a time.
+pub fn serve_unix(path: &str, mut service: RuntimeService) -> Result<(), String> {
+    let endpoint = UnixEndpoint::new(path)?;
+    let _ = std::fs::remove_file(&endpoint.path);
+    let listener = UnixListener::bind(&endpoint.path).map_err(|error| error.to_string())?;
+    for incoming in listener.incoming() {
+        let stream = incoming.map_err(|error| error.to_string())?;
+        let reader =
+            std::io::BufReader::new(stream.try_clone().map_err(|error| error.to_string())?);
+        serve_frames(reader, stream, &mut service)?;
+    }
+    Ok(())
+}
+
+fn serve_frames<R: BufRead, W: Write>(
+    reader: R,
+    mut writer: W,
+    service: &mut RuntimeService,
 ) -> Result<(), String> {
     for line in reader.lines() {
         let line = line.map_err(|error| error.to_string())?;
@@ -142,5 +165,65 @@ mod tests {
         let mut out = Vec::new();
         serve_stdio(encode_jsonl(&frame).as_bytes(), &mut out, service).unwrap();
         assert!(!out.is_empty());
+    }
+
+    #[test]
+    fn serve_stdio_rejects_cross_wired_compilation_handshake() {
+        let frame = StdioFrame {
+            channel: "apxm.compilation.protocol/1".to_owned(),
+            payload: "{}".to_owned(),
+        };
+        let err = serve_stdio(
+            encode_jsonl(&frame).as_bytes(),
+            &mut Vec::new(),
+            RuntimeService::default(),
+        )
+        .unwrap_err();
+        assert!(err.contains("cross-wired"));
+    }
+
+    #[test]
+    fn jsonl_invokes_a_persisted_artifact() {
+        let dir = std::env::temp_dir().join(format!(
+            "apxm-runtime-jsonl-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bytes = br#"{"schema_version":"apxm.air","semantic_operations":[],"structural_ir":[],"context_flow":[],"source_map":{"schema_version":"apxm.source-map","source_language":"python","node_spans":[],"region_annotations":[]}}"#;
+        let digest = crate::artifact_digest(bytes);
+        std::fs::write(dir.join(digest.replace(':', "-")), bytes).unwrap();
+        let service = RuntimeService::default().with_artifact_dir(dir);
+        let envelope = Envelope {
+            handshake: RuntimeHandshake {
+                protocol_version: RUNTIME_PROTOCOL_VERSION.to_owned(),
+            },
+            request: RuntimeRequest::ProgramInstanceCreate {
+                request_id: "c".to_owned(),
+                artifact_digest: digest,
+            },
+        };
+        let frame = StdioFrame {
+            channel: "runtime".to_owned(),
+            payload: serde_json::to_string(&envelope).unwrap(),
+        };
+        let mut out = Vec::new();
+        serve_stdio(encode_jsonl(&frame).as_bytes(), &mut out, service).unwrap();
+        let reply = decode_jsonl(std::str::from_utf8(&out).unwrap()).unwrap();
+        let result: apxm_runtime_protocol::RuntimeResult =
+            serde_json::from_str(&reply.payload).unwrap();
+        assert!(matches!(
+            result,
+            apxm_runtime_protocol::RuntimeResult::ProgramInstanceCreated { .. }
+        ));
+    }
+
+    #[test]
+    fn serve_unix_rejects_relative_path_before_bind() {
+        let err = serve_unix("runtime.sock", RuntimeService::default()).unwrap_err();
+        assert!(err.contains("absolute"));
     }
 }

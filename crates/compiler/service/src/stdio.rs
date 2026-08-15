@@ -3,6 +3,7 @@
 //! Protocol bytes never share a stream with service logs.
 
 use std::io::{BufRead, Write};
+use std::os::unix::net::UnixListener;
 
 use serde::{Deserialize, Serialize};
 
@@ -43,8 +44,48 @@ pub fn decode_jsonl(line: &str) -> Result<StdioFrame, String> {
 /// Serve Compilation protocol frames until stdin EOF.
 pub fn serve_stdio<R: BufRead, W: Write>(
     reader: R,
-    mut writer: W,
+    writer: W,
     mut service: CompilationService,
+) -> Result<(), String> {
+    serve_frames(reader, writer, &mut service)
+}
+
+/// Local Unix socket endpoint identity.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnixEndpoint {
+    /// Absolute socket path owned by this service.
+    pub path: String,
+}
+
+impl UnixEndpoint {
+    /// Reject empty or relative paths.
+    pub fn new(path: impl Into<String>) -> Result<Self, String> {
+        let path = path.into();
+        if !path.starts_with('/') {
+            return Err("unix socket path must be absolute".to_owned());
+        }
+        Ok(Self { path })
+    }
+}
+
+/// Bind an absolute Unix socket and serve one connection at a time.
+pub fn serve_unix(path: &str, mut service: CompilationService) -> Result<(), String> {
+    let endpoint = UnixEndpoint::new(path)?;
+    let _ = std::fs::remove_file(&endpoint.path);
+    let listener = UnixListener::bind(&endpoint.path).map_err(|error| error.to_string())?;
+    for incoming in listener.incoming() {
+        let stream = incoming.map_err(|error| error.to_string())?;
+        let reader =
+            std::io::BufReader::new(stream.try_clone().map_err(|error| error.to_string())?);
+        serve_frames(reader, stream, &mut service)?;
+    }
+    Ok(())
+}
+
+fn serve_frames<R: BufRead, W: Write>(
+    reader: R,
+    mut writer: W,
+    service: &mut CompilationService,
 ) -> Result<(), String> {
     for line in reader.lines() {
         let line = line.map_err(|error| error.to_string())?;
@@ -97,5 +138,32 @@ mod tests {
     fn runtime_handshake_is_cross_wired() {
         assert!(handshake_cross_wired("apxm.runtime.protocol/1"));
         assert!(!handshake_cross_wired("apxm.compilation.protocol/1"));
+    }
+
+    #[test]
+    fn relative_unix_path_is_rejected() {
+        assert!(UnixEndpoint::new("compilation.sock").is_err());
+        UnixEndpoint::new("/tmp/apxm-compilation.sock").unwrap();
+    }
+
+    #[test]
+    fn serve_stdio_rejects_cross_wired_runtime_handshake() {
+        let frame = StdioFrame {
+            channel: "apxm.runtime.protocol/1".to_owned(),
+            payload: "{}".to_owned(),
+        };
+        let err = serve_stdio(
+            encode_jsonl(&frame).as_bytes(),
+            &mut Vec::new(),
+            CompilationService::default(),
+        )
+        .unwrap_err();
+        assert!(err.contains("cross-wired"));
+    }
+
+    #[test]
+    fn serve_unix_rejects_relative_path_before_bind() {
+        let err = serve_unix("compilation.sock", CompilationService::default()).unwrap_err();
+        assert!(err.contains("absolute"));
     }
 }

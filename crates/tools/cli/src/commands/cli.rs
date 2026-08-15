@@ -103,6 +103,13 @@ pub enum Commands {
         #[command(subcommand)]
         action: RuntimeAction,
     },
+    /// Internal Compilation Service child. Product commands spawn this over JSONL.
+    #[command(hide = true, name = "compilation-serve")]
+    CompilationServe {
+        /// Optional absolute Unix socket path.
+        #[arg(long)]
+        socket: Option<PathBuf>,
+    },
     /// Reopen a client interaction record against runtime truth.
     Resume {
         /// Resume the most recent client record.

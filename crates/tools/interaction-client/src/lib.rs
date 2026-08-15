@@ -1,10 +1,14 @@
 //! Interaction Client shared by headless `apxm run` and the TUI.
 
+use std::io::{BufRead, BufReader, Write};
+use std::path::Path;
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+
 use apxm_kernel::event_api::{CanonicalEventRef, EventApplication, EventOccurrence};
 use apxm_runtime_protocol::{
     RUNTIME_PROTOCOL_VERSION, RuntimeHandshake, RuntimeRequest, RuntimeResult,
 };
-use apxm_runtime_service::RuntimeService;
+use apxm_runtime_service::{RuntimeService, StdioFrame, decode_jsonl, encode_jsonl};
 use serde::{Deserialize, Serialize};
 
 /// Versioned client interaction record under `.apxm/client/`.
@@ -37,9 +41,36 @@ impl ClientInteractionRecord {
 }
 
 /// Headless and TUI runtime client.
-#[derive(Default)]
 pub struct InteractionClient {
-    service: RuntimeService,
+    inner: RuntimeInner,
+}
+
+enum RuntimeInner {
+    InProcess(RuntimeService),
+    Stdio(StdioRuntime),
+}
+
+struct StdioRuntime {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+}
+
+impl Default for InteractionClient {
+    fn default() -> Self {
+        Self {
+            inner: RuntimeInner::InProcess(RuntimeService::default()),
+        }
+    }
+}
+
+impl Drop for InteractionClient {
+    fn drop(&mut self) {
+        if let RuntimeInner::Stdio(stdio) = &mut self.inner {
+            let _ = stdio.child.kill();
+            let _ = stdio.child.wait();
+        }
+    }
 }
 
 /// Distinct headless exit classification.
@@ -54,29 +85,85 @@ pub enum HeadlessOutcome {
 }
 
 impl InteractionClient {
+    /// Speak JSONL to a Runtime Service child. The parent does not construct
+    /// the service handler.
+    pub fn spawn_stdio(
+        program: impl AsRef<Path>,
+        args: &[&str],
+        artifact_dir: impl AsRef<Path>,
+    ) -> Result<Self, String> {
+        let artifact_dir = artifact_dir.as_ref().to_path_buf();
+        std::fs::create_dir_all(&artifact_dir).map_err(|error| error.to_string())?;
+        let mut child = Command::new(program.as_ref())
+            .args(args)
+            .env("APXM_ARTIFACT_DIR", artifact_dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .map_err(|error| error.to_string())?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "runtime stdin".to_owned())?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "runtime stdout".to_owned())?;
+        Ok(Self {
+            inner: RuntimeInner::Stdio(StdioRuntime {
+                child,
+                stdin,
+                stdout: BufReader::new(stdout),
+            }),
+        })
+    }
+
+    /// Admit bytes into an in-process service. Stdio children load from the
+    /// shared artifact directory instead.
+    pub fn admit_artifact(&mut self, bytes: Vec<u8>) -> Option<String> {
+        match &mut self.inner {
+            RuntimeInner::InProcess(service) => Some(service.admit_artifact(bytes)),
+            RuntimeInner::Stdio(_) => None,
+        }
+    }
+
     /// Invoke an explicit artifact. Never contacts Compilation Service.
     pub fn run_artifact(&mut self, artifact_digest: &str) -> Result<String, String> {
         if artifact_digest.trim().is_empty() {
             return Err("empty artifact".to_owned());
         }
-        match self
-            .service
-            .handle(
-                &RuntimeHandshake {
-                    protocol_version: RUNTIME_PROTOCOL_VERSION.to_owned(),
-                },
-                RuntimeRequest::ProgramInstanceCreate {
-                    request_id: "run".to_owned(),
-                    artifact_digest: artifact_digest.to_owned(),
-                },
-            )
-            .map_err(|error| format!("{error:?}"))?
-        {
+        match self.request(RuntimeRequest::ProgramInstanceCreate {
+            request_id: "run".to_owned(),
+            artifact_digest: artifact_digest.to_owned(),
+        })? {
             RuntimeResult::ProgramInstanceCreated {
                 program_instance_id,
                 ..
             } => Ok(program_instance_id),
             other => Err(format!("{other:?}")),
+        }
+    }
+
+    /// Start one invocation on an admitted instance.
+    pub fn start_invocation(
+        &mut self,
+        program_instance_id: &str,
+        input: serde_json::Value,
+    ) -> Result<RuntimeResult, String> {
+        self.request(RuntimeRequest::ProgramInvocationStart {
+            request_id: "invoke".to_owned(),
+            program_instance_id: program_instance_id.to_owned(),
+            input,
+        })
+    }
+
+    /// Last committed output when the client owns an in-process service.
+    #[must_use]
+    pub fn last_output(&self) -> Option<&serde_json::Value> {
+        match &self.inner {
+            RuntimeInner::InProcess(service) => service.last_output(),
+            RuntimeInner::Stdio(_) => None,
         }
     }
 
@@ -88,30 +175,78 @@ impl InteractionClient {
         payload: serde_json::Value,
         idempotency_key: String,
     ) -> Result<RuntimeResult, String> {
-        self.service
-            .handle(
-                &RuntimeHandshake {
-                    protocol_version: RUNTIME_PROTOCOL_VERSION.to_owned(),
+        self.request(RuntimeRequest::EventFulfill {
+            request_id: "event.fulfill".to_owned(),
+            application: EventApplication {
+                event_ref: CanonicalEventRef {
+                    event_id,
+                    generation,
                 },
-                RuntimeRequest::EventFulfill {
-                    request_id: "event.fulfill".to_owned(),
-                    application: EventApplication {
-                        event_ref: CanonicalEventRef {
-                            event_id,
-                            generation,
-                        },
-                        occurrence: EventOccurrence {
-                            occurrence_id: idempotency_key.clone(),
-                            source_kind: "human.terminal".to_owned(),
-                            mapping_digest: "client".to_owned(),
-                            source_record: idempotency_key.clone(),
-                            payload,
-                        },
-                        idempotency_key,
+                occurrence: EventOccurrence {
+                    occurrence_id: idempotency_key.clone(),
+                    source_kind: "human.terminal".to_owned(),
+                    mapping_digest: "client".to_owned(),
+                    source_record: idempotency_key.clone(),
+                    payload,
+                },
+                idempotency_key,
+            },
+        })
+    }
+
+    /// Cancel one invocation.
+    pub fn cancel_invocation(
+        &mut self,
+        program_invocation_id: &str,
+    ) -> Result<RuntimeResult, String> {
+        self.request(RuntimeRequest::ProgramInvocationCancel {
+            request_id: "cancel".to_owned(),
+            program_invocation_id: program_invocation_id.to_owned(),
+        })
+    }
+
+    /// Record disconnect without fabricating a successful stop.
+    pub fn disconnect(&mut self) {
+        if let RuntimeInner::InProcess(service) = &mut self.inner {
+            service.disconnect();
+        }
+    }
+
+    fn request(&mut self, request: RuntimeRequest) -> Result<RuntimeResult, String> {
+        match &mut self.inner {
+            RuntimeInner::InProcess(service) => service
+                .handle(
+                    &RuntimeHandshake {
+                        protocol_version: RUNTIME_PROTOCOL_VERSION.to_owned(),
                     },
-                },
-            )
-            .map_err(|error| format!("{error:?}"))
+                    request,
+                )
+                .map_err(|error| format!("{error:?}")),
+            RuntimeInner::Stdio(stdio) => {
+                let envelope = serde_json::json!({
+                    "handshake": {
+                        "protocol_version": RUNTIME_PROTOCOL_VERSION,
+                    },
+                    "request": request,
+                });
+                let frame = StdioFrame {
+                    channel: "runtime".to_owned(),
+                    payload: envelope.to_string(),
+                };
+                stdio
+                    .stdin
+                    .write_all(encode_jsonl(&frame).as_bytes())
+                    .map_err(|error| error.to_string())?;
+                stdio.stdin.flush().map_err(|error| error.to_string())?;
+                let mut line = String::new();
+                stdio
+                    .stdout
+                    .read_line(&mut line)
+                    .map_err(|error| error.to_string())?;
+                let reply = decode_jsonl(&line)?;
+                serde_json::from_str(&reply.payload).map_err(|error| error.to_string())
+            }
+        }
     }
 }
 
@@ -142,7 +277,11 @@ mod tests {
     fn run_artifact_does_not_accept_empty_digest() {
         let mut client = InteractionClient::default();
         assert!(client.run_artifact(" ").is_err());
-        assert!(client.run_artifact("artifact:abc").is_ok());
+        let digest = client
+            .admit_artifact(br#"{"schema_version":"apxm.air","semantic_operations":[],"structural_ir":[],"context_flow":[],"source_map":{"schema_version":"apxm.source-map","source_language":"python","node_spans":[],"region_annotations":[]}}"#.to_vec())
+            .expect("in-process admit");
+        assert!(client.run_artifact(&digest).is_ok());
+        assert!(client.run_artifact("sha256:missing").is_err());
     }
 
     #[test]
