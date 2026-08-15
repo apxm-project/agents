@@ -141,7 +141,7 @@ pub fn rust_frontend_selector_is_rejected() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use apxm_source_port::{PACKAGE_SNAPSHOT_CONTRACT, SnapshotContent};
+    use apxm_source_port::SnapshotContent;
 
     fn handshake() -> CompilationHandshake {
         CompilationHandshake {
@@ -150,18 +150,14 @@ mod tests {
     }
 
     fn snapshot() -> PackageSnapshot {
-        PackageSnapshot {
-            contract: PACKAGE_SNAPSHOT_CONTRACT.to_owned(),
-            frontend: Frontend::Python,
-            entrypoint: "src/agent.py".to_owned(),
-            contents: vec![SnapshotContent {
-                path: "src/agent.py".to_owned(),
-                digest: "c".to_owned(),
-            }],
-            dependency_lock_digest: None,
-            compatibility_set: "set".to_owned(),
-            snapshot_digest: "snap-1".to_owned(),
-        }
+        PackageSnapshot::assemble(
+            Frontend::Python,
+            "src/agent.py",
+            vec![SnapshotContent::from_bytes("src/agent.py", b"print('ok')")],
+            None,
+            "set",
+        )
+        .expect("protocol vector snapshot")
     }
 
     #[test]
@@ -198,7 +194,17 @@ mod tests {
     #[test]
     fn conflicting_idempotency_fails_closed() {
         let mut peer = InMemoryCompilationPeer::default();
-        let mut second = snapshot();
+        let second = PackageSnapshot::assemble(
+            Frontend::Python,
+            "src/agent.py",
+            vec![SnapshotContent::from_bytes(
+                "src/agent.py",
+                b"print('other')",
+            )],
+            None,
+            "set",
+        )
+        .expect("conflicting snapshot");
         peer.handle(
             &handshake(),
             CompilationRequest::Compile {
@@ -208,7 +214,6 @@ mod tests {
             },
         )
         .unwrap();
-        second.snapshot_digest = "other".to_owned();
         let err = peer
             .handle(
                 &handshake(),
@@ -231,9 +236,18 @@ mod tests {
     fn equivalent_python_and_typescript_snapshots_commit() {
         let mut peer = InMemoryCompilationPeer::default();
         for frontend in [Frontend::Python, Frontend::Typescript] {
-            let mut snap = snapshot();
-            snap.frontend = frontend;
-            snap.snapshot_digest = format!("{frontend:?}");
+            let entry = match frontend {
+                Frontend::Python => "src/agent.py",
+                Frontend::Typescript => "src/agent.ts",
+            };
+            let snap = PackageSnapshot::assemble(
+                frontend,
+                entry,
+                vec![SnapshotContent::from_bytes(entry, b"export {}")],
+                None,
+                "set",
+            )
+            .expect("frontend snapshot");
             peer.handle(
                 &handshake(),
                 CompilationRequest::Compile {

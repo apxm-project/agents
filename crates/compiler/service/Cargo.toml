@@ -13,7 +13,11 @@ description = "Compilation Service Composition Root over the native compilation 
 workspace = true
 
 [dependencies]
+apxm-ais.workspace = true
 apxm-compilation-protocol.workspace = true
+apxm-program.workspace = true
 apxm-source-port.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+toml.workspace = true

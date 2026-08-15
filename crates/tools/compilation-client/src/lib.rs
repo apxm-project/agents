@@ -1,11 +1,14 @@
 //! Compilation Client: snapshot, submit, render diagnostics, return artifact refs.
 
+use std::fs;
+use std::path::Path;
+
 use apxm_compilation_protocol::{
     COMPILATION_PROTOCOL_VERSION, CompilationHandshake, CompilationRequest, CompilationResult,
 };
 use apxm_compilation_service::CompilationService;
-use apxm_source_port::{Frontend, PACKAGE_SNAPSHOT_CONTRACT, PackageSnapshot, SnapshotContent};
-use std::path::Path;
+use apxm_source_port::{Frontend, PackageSnapshot, SnapshotContent};
+use serde::Deserialize;
 
 /// Headless build client. Contains no frontend or compiler implementation.
 pub struct CompilationClient {
@@ -24,18 +27,7 @@ impl CompilationClient {
     /// Snapshot a local package directory and compile it. The CLI never
     /// constructs a `PackageSnapshot` itself.
     pub fn build_package(&mut self, package_root: &Path) -> Result<String, String> {
-        self.build(PackageSnapshot {
-            contract: PACKAGE_SNAPSHOT_CONTRACT.to_owned(),
-            frontend: Frontend::Python,
-            entrypoint: "agent".to_owned(),
-            contents: vec![SnapshotContent {
-                path: package_root.display().to_string(),
-                digest: "local".to_owned(),
-            }],
-            dependency_lock_digest: None,
-            compatibility_set: "apxm.compatibility-set/local".to_owned(),
-            snapshot_digest: package_root.display().to_string(),
-        })
+        self.build(snapshot_package(package_root)?)
     }
 
     /// Submit one exact snapshot. Failed or uncertain compiles return no digest.
@@ -61,30 +53,211 @@ impl CompilationClient {
             CompilationResult::Cancelled { .. } => Err("cancelled".to_owned()),
         }
     }
+
+    /// Committed artifact bytes for a digest this client produced.
+    #[must_use]
+    pub fn artifact_bytes(&self, digest: &str) -> Option<&str> {
+        self.service.store().get(digest)
+    }
+}
+
+/// Walk a package root and bind every file's bytes into a validated snapshot.
+pub fn snapshot_package(package_root: &Path) -> Result<PackageSnapshot, String> {
+    if !package_root.is_dir() {
+        return Err(format!(
+            "'{}' is not a directory",
+            package_root.display()
+        ));
+    }
+    let manifest = read_manifest(package_root)?;
+    let mut contents = Vec::new();
+    collect_files(package_root, package_root, &mut contents)?;
+    if contents.is_empty() {
+        return Err("package snapshot is empty".to_owned());
+    }
+    let lock_digest = contents
+        .iter()
+        .find(|content| is_lock_name(&content.path))
+        .map(|content| content.digest.clone());
+    PackageSnapshot::assemble(
+        manifest.frontend,
+        manifest.entry,
+        contents,
+        lock_digest,
+        "apxm.compatibility-set/local",
+    )
+    .map_err(|error| error.to_string())
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentToml {
+    compile: Option<CompileToml>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CompileToml {
+    entry: Option<String>,
+    frontend: Option<Frontend>,
+}
+
+struct DeclaredCompile {
+    frontend: Frontend,
+    entry: String,
+}
+
+fn read_manifest(package_root: &Path) -> Result<DeclaredCompile, String> {
+    let path = package_root.join("agent.toml");
+    let text = fs::read_to_string(&path).map_err(|_| "missing_frontend".to_owned())?;
+    let parsed: AgentToml = toml::from_str(&text).map_err(|error| error.to_string())?;
+    let compile = parsed.compile.ok_or_else(|| "missing_frontend".to_owned())?;
+    let frontend = compile.frontend.ok_or_else(|| "missing_frontend".to_owned())?;
+    let entry = compile.entry.ok_or_else(|| "missing_entrypoint".to_owned())?;
+    Ok(DeclaredCompile { frontend, entry })
+}
+
+fn collect_files(
+    root: &Path,
+    current: &Path,
+    contents: &mut Vec<SnapshotContent>,
+) -> Result<(), String> {
+    let entries = fs::read_dir(current).map_err(|error| error.to_string())?;
+    for entry in entries {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if should_skip(&name) {
+            continue;
+        }
+        if path.is_dir() {
+            collect_files(root, &path, contents)?;
+            continue;
+        }
+        if !path.is_file() {
+            continue;
+        }
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|error| error.to_string())?
+            .to_string_lossy()
+            .replace('\\', "/");
+        let bytes = fs::read(&path).map_err(|error| error.to_string())?;
+        contents.push(SnapshotContent::from_bytes(relative, bytes));
+    }
+    Ok(())
+}
+
+fn should_skip(name: &str) -> bool {
+    matches!(
+        name,
+        ".git" | "node_modules" | "target" | "__pycache__" | ".apxm" | ".dekk" | ".DS_Store"
+    ) || name.ends_with(".pyc")
+}
+
+fn is_lock_name(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    matches!(
+        name,
+        "uv.lock"
+            | "package-lock.json"
+            | "pnpm-lock.yaml"
+            | "yarn.lock"
+            | "Cargo.lock"
+            | "poetry.lock"
+    ) || name.ends_with(".lock")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use apxm_source_port::{Frontend, PACKAGE_SNAPSHOT_CONTRACT, SnapshotContent};
+    use std::fs;
+    use std::path::PathBuf;
+
+    const PYTHON_PROGRAM: &str = r#"from apxm_program import Agent, Model, Tool
+
+
+class ReviewRequest:
+    pass
+
+
+class Review:
+    pass
+
+
+ReviewModel = Model[ReviewRequest, Review]("review.model")
+SearchWeb = Tool[ReviewRequest, Review]("search_web")
+
+
+@Agent(input=ReviewRequest, output=Review)
+async def Reviewer(agent, request):
+    evidence = await SearchWeb(request)
+    return await ReviewModel(evidence)
+"#;
+
+    fn workspace_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(3)
+            .expect("compilation-client sits three levels under the repository root")
+            .to_path_buf()
+    }
+
+    fn frontend_present() -> bool {
+        let root = workspace_root();
+        root.join(".dekk/env/bin/python").is_file()
+            && root
+                .join("crates/compiler/frontend/python/apxm_program/_native.so")
+                .is_file()
+    }
 
     #[test]
-    fn build_returns_a_committed_digest() {
+    fn build_package_snapshots_real_bytes_and_commits_air() {
+        if !frontend_present() {
+            return;
+        }
+        let dir = tempfile_dir();
+        fs::write(
+            dir.join("agent.toml"),
+            "id = \"tiny\"\nversion = \"0.1.0\"\nschema_version = \"apxm.agent\"\n\n[compile]\nentry = \"src/agent.py\"\nfrontend = \"python\"\n",
+        )
+        .unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src/agent.py"), PYTHON_PROGRAM).unwrap();
+
+        let snapshot = snapshot_package(&dir).unwrap();
+        assert!(
+            snapshot
+                .file("src/agent.py")
+                .is_some_and(|content| !content.bytes.is_empty())
+        );
+        assert_ne!(snapshot.snapshot_digest, "local");
+        assert!(snapshot.file("src/agent.py").unwrap().digest != "local");
+
         let mut client = CompilationClient::default();
-        let digest = client
-            .build(PackageSnapshot {
-                contract: PACKAGE_SNAPSHOT_CONTRACT.to_owned(),
-                frontend: Frontend::Python,
-                entrypoint: "a.py".to_owned(),
-                contents: vec![SnapshotContent {
-                    path: "a.py".to_owned(),
-                    digest: "d".to_owned(),
-                }],
-                dependency_lock_digest: None,
-                compatibility_set: "set".to_owned(),
-                snapshot_digest: "snap".to_owned(),
-            })
-            .unwrap();
-        assert!(digest.starts_with("artifact:"));
+        let digest = client.build_package(&dir).unwrap();
+        assert!(digest.starts_with("sha256:"));
+        let air = client.artifact_bytes(&digest).expect("committed bytes");
+        assert!(air.contains("apxm.air"));
+    }
+
+    #[test]
+    fn missing_frontend_is_rejected_before_compile() {
+        let dir = tempfile_dir();
+        fs::write(dir.join("agent.toml"), "id = \"x\"\nversion = \"0.1.0\"\n").unwrap();
+        fs::write(dir.join("src.py"), "print('x')").unwrap();
+        assert_eq!(snapshot_package(&dir).unwrap_err(), "missing_frontend");
+    }
+
+    fn tempfile_dir() -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "apxm-compilation-client-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&path).unwrap();
+        path
     }
 }

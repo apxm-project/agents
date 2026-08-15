@@ -279,6 +279,8 @@ dependencies = [
  "apxm-compilation-protocol",
  "apxm-compilation-service",
  "apxm-source-port",
+ "serde",
+ "toml",
 ]
 
 [[package]]
@@ -294,10 +296,14 @@ dependencies = [
 name = "apxm-compilation-service"
 version = "0.1.0"
 dependencies = [
+ "apxm-ais",
  "apxm-compilation-protocol",
+ "apxm-program",
  "apxm-source-port",
  "serde",
  "serde_json",
+ "sha2",
+ "toml",
 ]
 
 [[package]]
@@ -499,6 +505,7 @@ dependencies = [
  "apxm-program",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
