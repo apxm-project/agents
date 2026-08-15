@@ -30,7 +30,10 @@ declarations, the arguments, the diagnostics, the example scan — is inherited.
 The sample scan reads every authoring document — `examples/`, `docs/`, and both
 frontend READMEs — because a guide that teaches a name the surface does not
 publish is wrong in exactly the way an example that imports one is, and the
-guides are the copy authors actually copy.
+guides are the copy authors actually copy. It reads them in both directions: a
+document that *denies* a published name is wrong the same way and nothing
+positive can see it, because such a document misspells nothing and imports
+nothing — it just tells the reader a shipped marker does not exist.
 
 A document that *quotes* a name rather than teaching it — the marker's own
 rejection message, or an accepted ADR recording the signature it decided before
@@ -971,6 +974,36 @@ LITERAL_REFERENCE = re.compile(
     r"\b(?:Tool|Capability)(?:\[[^\]]*\]|<[^>]*>)?\(\s*[\"']([^\"']+)[\"']"
 )
 
+#: A Capability a package declares by shipping a handler for it, in the two
+#: forms a document writes one: the definition object `Tool.define` (TypeScript)
+#: and `capability` (Python) take, and the `capabilities/<id>/handler.<ext>`
+#: layout in which the directory name *is* the declaration.
+HANDLER_DECLARATION = (
+    re.compile(
+        r"(?:Tool\.define|capability)\s*\(\s*\{[^{}]*?[\"']?\bname[\"']?\s*[:=]\s*"
+        r"[\"']([^\"']+)[\"']",
+        re.S,
+    ),
+    re.compile(r"capabilities/([A-Za-z_][\w.\-]*)/handler\.\w+"),
+)
+
+
+def package_handler_ids() -> set[str]:
+    """Every Capability id a package in this repository ships a handler for.
+
+    `capabilities/<id>/handler.<ext>` is the whole declaration — the directory
+    name is the id — so the tree states these ids with no registry to read.
+    Built output is a copy of a declaration rather than a second one, and a
+    vendored package's handlers are not this repository's.
+    """
+    ignored = {"node_modules", "dist", "target", ".apxm"}
+    return {
+        path.parent.name
+        for root in ("examples", "crates", "tools")
+        for path in (REPO_ROOT / root).glob("**/capabilities/*/handler.*")
+        if not ignored & set(path.parts)
+    }
+
 
 def fold_reference(value: str) -> str:
     """Fold one written capability reference onto the id it is trying to name.
@@ -1014,16 +1047,118 @@ def quoted_exemptions(text: str, relative: Path, failures: list[str]) -> dict[st
     return declared
 
 
+#: The nouns that make a negated sentence a claim about the *surface* rather
+#: than about behaviour. "`Tool` does not execute a runtime tool" is a true
+#: statement about what the marker does; "there is no `Tool` marker" is a claim
+#: about what the surface publishes, and only the second can contradict the
+#: manifest.
+SURFACE_NOUN = (
+    r"(?:markers?|declarations?|symbols?|exports?|bindings?|forms?|concepts?"
+    r"|primitives?|nodes?|types?|decorators?|constructors?|entry\s+points?)"
+)
+
+#: The ways a document says a published name is not published. Each names the
+#: symbol and denies its existence, declarability, or publication — never its
+#: behaviour, which is the surface's business to describe and not this gate's.
+DENIAL_TEMPLATES = (
+    r"there\s+(?:is|are)\s+no\s+{S}\s+" + SURFACE_NOUN + r"\b",
+    r"there\s+(?:is|are)\s+no\s+{S}\s*(?=[,.;:)]|$)",
+    r"\bno\s+{S}\s+" + SURFACE_NOUN + r"\b",
+    r"\b(?:neither|none\s+of|no)\s+(?:\w+\s+){0,2}?"
+    r"(?:frontend|language|package|README|guide|catalogue|manifest)s?\s+"
+    r"(?:\w+\s+){0,3}?"
+    r"(?:declares?|exports?|publishes?|projects?|has|have|implements?|mints?"
+    r"|names?|defines?)\s+(?:an?\s+|the\s+)?{S}\b",
+    r"\b(?:does\s+not|doesn't|do\s+not|don't|never)\s+"
+    r"(?:publish|export|declare|project|mint|expose|include|name|define)s?\s+"
+    r"(?:an?\s+|the\s+)?{S}\b",
+    r"{S}\s+is\s+not\s+(?:declarable|authorable|exported|published|declared"
+    r"|projected|minted|available|a\s+(?:published|declared|surface|manifest)\b"
+    r"|(?:in|part\s+of)\s+the\s+surface)",
+    r"{S}\s+(?:does\s+not|doesn't)\s+exist\b",
+    r"{S}\s+(?:is|was)\s+(?:not|never)\s+(?:an?\s+)?" + SURFACE_NOUN + r"\b",
+)
+
+#: What the denial has to be *about* for this gate to own it. A sentence that
+#: denies a name somewhere other than the authoring surface — in a package's
+#: topology, in a runtime, in some other product — is not this gate's to judge,
+#: and requiring the scope keeps the denial scan quiet enough to stay on.
+SURFACE_SCOPE = re.compile(
+    r"surface|manifest|frontend|package|catalogue|authoring\s+root|apxm_program"
+    r"|@apxm/frontend|either\s+language|both\s+languages|public\s+api",
+    re.I,
+)
+
+
+def prose(text: str) -> str:
+    """The document with its fenced code blocks blanked out.
+
+    A denial is prose. Code in a sample is held to the surface by the import and
+    reference checks, which read what it *does*; running the sentence patterns
+    over it would only find English in comments.
+    """
+    lines: list[str] = []
+    fenced = False
+    for line in text.split("\n"):
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            lines.append("")
+            continue
+        lines.append("" if fenced else line)
+    return "\n".join(lines)
+
+
+def sentence_around(text: str, start: int, end: int) -> str:
+    """The sentence a match sits in, for quoting back in the failure."""
+    opening = max(text.rfind(". ", 0, start), text.rfind("\n\n", 0, start))
+    closing = text.find(". ", end)
+    closing = len(text) if closing == -1 else closing + 1
+    return " ".join(text[opening + 1 : closing].split())
+
+
+def denials(text: str, published: set[str]) -> list[tuple[str, str]]:
+    """Every sentence in this document that denies a name the manifest publishes.
+
+    Returned as `(name, sentence)`, at most one per name: a document denies a
+    name once as far as the reader is concerned, and the exemption that answers
+    the denial is per name too.
+    """
+    found: dict[str, str] = {}
+    for name in sorted(published):
+        symbol = r"`?" + re.escape(name) + r"`?"
+        for template in DENIAL_TEMPLATES:
+            for match in re.finditer(
+                template.replace("{S}", symbol), text, flags=re.I
+            ):
+                sentence = sentence_around(text, match.start(), match.end())
+                if SURFACE_SCOPE.search(sentence):
+                    found.setdefault(name, sentence)
+    return sorted(found.items())
+
+
 def check_samples(
     languages: list[SurfaceLanguage], allowed: set[str], failures: list[str]
 ) -> None:
-    """No authoring document teaches a name the surface does not publish.
+    """No authoring document teaches a name the surface does not publish, and
+    none denies one it does.
 
-    Three ways a document stops being true: it imports from the retired package,
-    it imports a name no frontend publishes, or it writes a capability reference
-    that folds onto a catalogue id without being one. The last is what turned
-    the guides stale before: an id no catalogue mints looks like authoring code
-    and compiles into nothing.
+    A document stops being true in four ways. It imports from the retired
+    package. It imports a name no frontend publishes. It binds a capability
+    reference that resolves to nothing — neither a minted catalogue id nor a
+    Capability some package ships a handler for — which is what turned the
+    guides stale before: an unresolvable id looks like authoring code and
+    compiles into nothing, whether it is a near-miss of a real id or an
+    invention that misses everything.
+
+    And it denies a name the manifest publishes. That failure runs the other
+    way from the first three and no positive check can see it: nothing is
+    imported and nothing is misspelled, the document simply tells the reader a
+    published marker does not exist. This branch shipped exactly that about
+    `Skill` in two documents while both frontends exported it. A document with
+    standing to record a position a later record superseded says so with the
+    same `<!-- frontend-surface:quoted NAME reason -->` marker that answers the
+    other three, because amending by a later record is the convention here and
+    the gate must not make the amended record unwritable.
     """
     surface_patterns = tuple(
         pattern for language in languages for pattern in language.import_patterns()
@@ -1037,6 +1172,7 @@ def check_samples(
         identifier for language in languages for identifier in language.catalogue_ids()
     }
     folded_ids = {fold_reference(identifier): identifier for identifier in catalogue_ids}
+    shipped = package_handler_ids()
 
     for sample in AUTHORING_SAMPLES:
         if not sample.exists():
@@ -1073,6 +1209,11 @@ def check_samples(
                             f"imports {name!r} from the capability catalogue, which "
                             "the generated catalogue does not publish",
                         )
+        declared = shipped | {
+            identifier
+            for pattern in HANDLER_DECLARATION
+            for identifier in pattern.findall(text)
+        }
         for match in LITERAL_REFERENCE.finditer(text):
             written = match.group(1)
             minted = folded_ids.get(fold_reference(written))
@@ -1083,6 +1224,23 @@ def check_samples(
                     f"mints; the id is {minted!r} and the symbol naming it is what an "
                     "Agent Program imports",
                 )
+            elif minted is None and written not in declared:
+                report(
+                    written,
+                    f"binds the capability reference {written!r}, which resolves to "
+                    "nothing: no catalogue mints it and no package declares a handler "
+                    "for it. A reference is a catalogue symbol imported from "
+                    "`apxm_program.capabilities` or `@apxm/frontend/capabilities`, or "
+                    "the declaration a shipped handler returns",
+                )
+
+        for name, sentence in denials(prose(text), allowed):
+            report(
+                name,
+                f"denies {name!r}, which the surface manifest publishes and both "
+                f"frontends project: {sentence!r}. A record whose position a later "
+                "record superseded keeps it by saying so",
+            )
 
         for name, reason in exempt.items():
             if name not in used:
