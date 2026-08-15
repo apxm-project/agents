@@ -77,6 +77,28 @@ impl ApprovalBroker for DenyBroker {
     }
 }
 
+/// Broker that times out, used to prove Ask cannot execute on timeout.
+#[derive(Default)]
+pub struct TimeoutBroker;
+
+#[async_trait]
+impl ApprovalBroker for TimeoutBroker {
+    async fn resolve_ask(&self, _ask_id: &str) -> ApprovalDecision {
+        ApprovalDecision::Timeout
+    }
+}
+
+/// Broker that allows Ask. Deny and Timeout remain the fail-closed defaults.
+#[derive(Default)]
+pub struct AllowBroker;
+
+#[async_trait]
+impl ApprovalBroker for AllowBroker {
+    async fn resolve_ask(&self, _ask_id: &str) -> ApprovalDecision {
+        ApprovalDecision::Allow
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -17,17 +17,21 @@ pub use stdio::{
     StdioFrame, UnixEndpoint, decode_jsonl, encode_jsonl, handshake_cross_wired, serve_stdio,
 };
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use apxm_ais::permissions::PermissionDecision;
+use apxm_execution::{
+    ApprovalBroker, ApprovalDecision, DenyBroker, ExecutionObserver, Observation, RecordingObserver,
+};
 use apxm_kernel::event_api::{CanonicalEventRef, EventApplication, EventApplicationResult};
 use apxm_program::air::AirModule;
 use apxm_runtime_protocol::{ProtocolError, RuntimeHandshake, RuntimeRequest, RuntimeResult};
 use serde_json::Value;
 
 /// Runtime Service handler over the native protocol.
-#[derive(Default)]
 pub struct RuntimeService {
     artifacts: ArtifactStore,
     instances: BTreeMap<String, InstanceState>,
@@ -36,6 +40,28 @@ pub struct RuntimeService {
     last_output: Option<Value>,
     handlers: Option<AdmittedPackageHandlers>,
     package_root: Option<PathBuf>,
+    observer: RecordingObserver,
+    broker: Arc<dyn ApprovalBroker>,
+    cancelled: BTreeSet<String>,
+    disconnected: bool,
+}
+
+impl Default for RuntimeService {
+    fn default() -> Self {
+        Self {
+            artifacts: ArtifactStore::default(),
+            instances: BTreeMap::new(),
+            applications: Vec::new(),
+            next_generation: 0,
+            last_output: None,
+            handlers: None,
+            package_root: None,
+            observer: RecordingObserver::default(),
+            broker: Arc::new(DenyBroker),
+            cancelled: BTreeSet::new(),
+            disconnected: false,
+        }
+    }
 }
 
 struct InstanceState {
@@ -88,6 +114,26 @@ impl RuntimeService {
         self.artifacts.get(digest)
     }
 
+    /// Bind an approval broker. Headless default is [`DenyBroker`].
+    pub fn bind_approval_broker(&mut self, broker: Arc<dyn ApprovalBroker>) {
+        self.broker = broker;
+    }
+
+    /// Projected observations in driver order. Payloads are never included.
+    #[must_use]
+    pub fn observations(&self) -> Vec<Observation> {
+        self.observer
+            .observations
+            .lock()
+            .expect("observer lock")
+            .clone()
+    }
+
+    /// Record a client disconnect. This does not fabricate `finish_reason: stop`.
+    pub fn disconnect(&mut self) {
+        self.disconnected = true;
+    }
+
     /// Admit a handshake and request. Source is not executable truth.
     pub fn handle(
         &mut self,
@@ -117,9 +163,10 @@ impl RuntimeService {
                 request_id,
                 event_ref,
             } => self.inspect_event(request_id, event_ref),
-            RuntimeRequest::ProgramInvocationCancel { request_id, .. } => {
-                Ok(RuntimeResult::Cancelled { request_id })
-            }
+            RuntimeRequest::ProgramInvocationCancel {
+                request_id,
+                program_invocation_id,
+            } => Ok(self.cancel_invocation(request_id, program_invocation_id)),
         }
     }
 }
@@ -159,6 +206,16 @@ impl RuntimeService {
         request_id: String,
         program_instance_id: String,
     ) -> RuntimeResult {
+        let invocation_id = format!("{program_instance_id}:inv-1");
+        if self.disconnected {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "disconnected".to_owned(),
+            };
+        }
+        if self.invocation_is_cancelled(&program_instance_id, &invocation_id) {
+            return RuntimeResult::Cancelled { request_id };
+        }
         let Some(instance) = self.instances.get(&program_instance_id) else {
             return RuntimeResult::Failed {
                 request_id,
@@ -181,6 +238,9 @@ impl RuntimeService {
                 };
             }
         };
+        if let Err(code) = block_on(self.resolve_asks(&air)) {
+            return RuntimeResult::Failed { request_id, code };
+        }
         let materials = match &instance.materials {
             Some(materials) => InvocationMaterials {
                 admission: materials.admission.clone(),
@@ -189,7 +249,7 @@ impl RuntimeService {
             },
             None => materials_for_artifact(
                 &bytes,
-                format!("{program_instance_id}:inv-1"),
+                invocation_id.clone(),
                 b"{}".to_vec(),
                 b"{}".to_vec(),
             ),
@@ -202,14 +262,101 @@ impl RuntimeService {
             self.package_root.as_deref(),
         )) {
             Ok(output) => {
+                if self.disconnected
+                    || self.invocation_is_cancelled(&program_instance_id, &invocation_id)
+                {
+                    return RuntimeResult::Failed {
+                        request_id,
+                        code: "disconnected".to_owned(),
+                    };
+                }
+                self.project_execution(&output, &invocation_id);
                 self.last_output = Some(output);
                 RuntimeResult::ProgramInvocationStarted {
                     request_id,
-                    program_invocation_id: format!("{program_instance_id}:inv-1"),
+                    program_invocation_id: invocation_id,
                 }
             }
             Err(code) => RuntimeResult::Failed { request_id, code },
         }
+    }
+
+    fn cancel_invocation(
+        &mut self,
+        request_id: String,
+        program_invocation_id: String,
+    ) -> RuntimeResult {
+        self.cancelled.insert(program_invocation_id);
+        RuntimeResult::Cancelled { request_id }
+    }
+
+    fn invocation_is_cancelled(&self, program_instance_id: &str, invocation_id: &str) -> bool {
+        self.cancelled.contains(invocation_id)
+            || self.cancelled.contains(program_instance_id)
+            || self
+                .cancelled
+                .iter()
+                .any(|id| id.starts_with(program_instance_id))
+    }
+
+    async fn resolve_asks(&self, air: &AirModule) -> Result<(), String> {
+        for (capability_ref, decision) in &air.capability_permission_requests {
+            if !matches!(decision, PermissionDecision::Ask { .. }) {
+                continue;
+            }
+            match self.broker.resolve_ask(capability_ref).await {
+                ApprovalDecision::Allow => {}
+                ApprovalDecision::Deny => return Err("ask_denied".to_owned()),
+                ApprovalDecision::Timeout => return Err("ask_timeout".to_owned()),
+            }
+        }
+        Ok(())
+    }
+
+    fn project_execution(&self, output: &Value, commit_id: &str) {
+        if let Some(nodes) = output
+            .pointer("/results/node_outcomes")
+            .and_then(Value::as_array)
+        {
+            for node in nodes {
+                let kind = node.get("kind").and_then(Value::as_str).unwrap_or("");
+                match kind {
+                    "model.call" => {
+                        let content_ref = node
+                            .get("node_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or("model")
+                            .to_owned();
+                        self.observer
+                            .observe(Observation::ProvisionalContent { content_ref });
+                    }
+                    "await.event" => {
+                        let event_id = node
+                            .pointer("/outcome/event_ref")
+                            .and_then(Value::as_str)
+                            .or_else(|| node.get("node_id").and_then(Value::as_str))
+                            .unwrap_or("event")
+                            .to_owned();
+                        let phase = node
+                            .pointer("/outcome/status")
+                            .and_then(Value::as_str)
+                            .unwrap_or("applied")
+                            .to_owned();
+                        self.observer
+                            .observe(Observation::EventLifecycle { event_id, phase });
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if output.get("content").is_some() {
+            self.observer.observe(Observation::ProvisionalContent {
+                content_ref: format!("content:{commit_id}"),
+            });
+        }
+        self.observer.observe(Observation::TerminalCommit {
+            commit_id: commit_id.to_owned(),
+        });
     }
 
     fn reserve_event(
@@ -465,5 +612,178 @@ mod tests {
     #[test]
     fn source_packages_are_not_accepted() {
         assert!(!accepts_source_packages());
+    }
+
+    fn create_started(service: &mut RuntimeService, bytes: Vec<u8>) -> String {
+        let digest = service.admit_artifact(bytes);
+        let created = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInstanceCreate {
+                    request_id: "c".to_owned(),
+                    artifact_digest: digest,
+                },
+            )
+            .unwrap();
+        let RuntimeResult::ProgramInstanceCreated {
+            program_instance_id,
+            ..
+        } = created
+        else {
+            panic!("create");
+        };
+        program_instance_id
+    }
+
+    fn ask_air_bytes() -> Vec<u8> {
+        let mut air: serde_json::Value = serde_json::from_slice(&fixture_air_bytes()).unwrap();
+        air["capability_permission_requests"] = serde_json::json!({
+            "cap.send": { "decision": "ask", "reason": "confirm" }
+        });
+        serde_json::to_vec(&air).unwrap()
+    }
+
+    #[test]
+    fn execute_projects_stream_then_terminal() {
+        let mut service = RuntimeService::default();
+        let instance = create_started(&mut service, fixture_air_bytes());
+        let started = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "s".to_owned(),
+                    program_instance_id: instance,
+                    input: serde_json::json!({}),
+                },
+            )
+            .unwrap();
+        assert!(matches!(
+            started,
+            RuntimeResult::ProgramInvocationStarted { .. }
+        ));
+        let observations = service.observations();
+        assert!(
+            observations
+                .iter()
+                .any(|item| matches!(item, Observation::EventLifecycle { .. })),
+            "event lifecycle without payload: {observations:?}"
+        );
+        assert!(
+            observations
+                .iter()
+                .any(|item| matches!(item, Observation::ProvisionalContent { .. })),
+            "provisional content-ref: {observations:?}"
+        );
+        let last = observations.last().expect("terminal");
+        assert!(
+            matches!(last, Observation::TerminalCommit { .. }),
+            "terminal commit last: {observations:?}"
+        );
+        for item in &observations {
+            if let Observation::EventLifecycle { event_id, phase } = item {
+                assert!(!event_id.is_empty());
+                assert!(!phase.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn denied_ask_never_executes() {
+        let mut service = RuntimeService::default();
+        let instance = create_started(&mut service, ask_air_bytes());
+        let result = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "s".to_owned(),
+                    program_instance_id: instance,
+                    input: serde_json::json!({}),
+                },
+            )
+            .unwrap();
+        assert!(
+            matches!(result, RuntimeResult::Failed { ref code, .. } if code == "ask_denied"),
+            "{result:?}"
+        );
+        assert!(service.last_output().is_none());
+        assert!(service.observations().is_empty());
+    }
+
+    #[test]
+    fn timed_out_ask_never_executes() {
+        let mut service = RuntimeService::default();
+        service.bind_approval_broker(std::sync::Arc::new(apxm_execution::TimeoutBroker));
+        let instance = create_started(&mut service, ask_air_bytes());
+        let result = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "s".to_owned(),
+                    program_instance_id: instance,
+                    input: serde_json::json!({}),
+                },
+            )
+            .unwrap();
+        assert!(
+            matches!(result, RuntimeResult::Failed { ref code, .. } if code == "ask_timeout"),
+            "{result:?}"
+        );
+        assert!(service.last_output().is_none());
+    }
+
+    #[test]
+    fn cancel_prevents_execute() {
+        let mut service = RuntimeService::default();
+        let instance = create_started(&mut service, fixture_air_bytes());
+        let cancelled = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationCancel {
+                    request_id: "x".to_owned(),
+                    program_invocation_id: format!("{instance}:inv-1"),
+                },
+            )
+            .unwrap();
+        assert!(matches!(cancelled, RuntimeResult::Cancelled { .. }));
+        let started = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "s".to_owned(),
+                    program_instance_id: instance,
+                    input: serde_json::json!({}),
+                },
+            )
+            .unwrap();
+        assert!(matches!(started, RuntimeResult::Cancelled { .. }));
+        assert!(service.last_output().is_none());
+    }
+
+    #[test]
+    fn disconnect_does_not_fabricate_stop() {
+        let mut service = RuntimeService::default();
+        let instance = create_started(&mut service, fixture_air_bytes());
+        service.disconnect();
+        let result = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "s".to_owned(),
+                    program_instance_id: instance,
+                    input: serde_json::json!({}),
+                },
+            )
+            .unwrap();
+        assert!(
+            matches!(result, RuntimeResult::Failed { ref code, .. } if code == "disconnected"),
+            "{result:?}"
+        );
+        assert!(service.last_output().is_none());
+        if let Some(output) = service.last_output() {
+            assert_ne!(
+                output.get("finish_reason").and_then(Value::as_str),
+                Some("stop")
+            );
+        }
     }
 }

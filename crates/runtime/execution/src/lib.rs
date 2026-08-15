@@ -36,7 +36,8 @@ pub use driver::{
     StaticHookResult, execute, execute_resumable, resume, wake_from_event_application,
 };
 pub use observe::{
-    ApprovalBroker, ApprovalDecision, DenyBroker, ExecutionObserver, Observation, RecordingObserver,
+    AllowBroker, ApprovalBroker, ApprovalDecision, DenyBroker, ExecutionObserver, Observation,
+    RecordingObserver, TimeoutBroker,
 };
 pub use operational_usage::{
     CommittedNativeModelUsage, CommittedNativeModelUsageError, CommittedNativeModelUsageGateError,
