@@ -25,6 +25,10 @@ pub enum SourceLanguage {
 }
 
 impl SourceLanguage {
+    /// Every authoring language, so a drift guard reads the closure off the
+    /// enum instead of restating it.
+    pub const ALL: &'static [Self] = &[Self::Python, Self::Typescript];
+
     /// The canonical wire string, identical to the schema `source_language` enum.
     #[must_use]
     pub const fn wire(self) -> &'static str {
@@ -41,6 +45,12 @@ impl SourceLanguage {
 pub enum RegionAnnotationKind {
     None,
     StructuralLoop,
+}
+
+impl RegionAnnotationKind {
+    /// Every region annotation, so a drift guard reads the closure off the enum
+    /// instead of restating it.
+    pub const ALL: &'static [Self] = &[Self::None, Self::StructuralLoop];
 }
 
 /// A forward source span. Column is 0-based; line is 1-based.

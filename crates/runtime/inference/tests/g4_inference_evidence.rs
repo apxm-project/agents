@@ -448,7 +448,12 @@ fn lease_is_target_and_purpose_bound_and_lives_only_in_adapter_memory() {
     let text = wire.to_string();
     assert!(!text.contains("super-secret-material"));
     assert!(text.contains("model_inference"));
-    assert!(std::mem::size_of_val(&lease) > 0);
+
+    // The material lives only in the lease, and only while the lease does:
+    // revoking takes it away rather than leaving a live handle behind.
+    lease.revoke();
+    assert!(lease.is_revoked());
+    assert!(lease.expose().is_err());
 }
 
 #[test]
@@ -823,10 +828,19 @@ fn exporter_loss_keeps_canonical_owner_lineage_authoritative() {
         .expect("bind");
 
     // Exporter failed after commit: no successful republish is required for
-    // owner evidence to remain authoritative.
-    let exporter_failed = true;
-    assert!(exporter_failed);
+    // owner evidence to remain authoritative, and an exporter that comes back
+    // naming a different commit is refused rather than believed.
     assert_eq!(lineage.commit_id.as_deref(), Some("commit.1"));
+    assert!(matches!(
+        lineage.authorize_exporter_claim(
+            "commit.2",
+            Usage {
+                input_tokens: 2,
+                output_tokens: 3,
+            }
+        ),
+        Err(apxm_inference::LineageError::CommitMismatch)
+    ));
     assert!(
         lineage
             .authorize_exporter_claim(

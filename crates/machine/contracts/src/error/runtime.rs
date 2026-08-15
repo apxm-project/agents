@@ -277,9 +277,73 @@ mod tests {
 
     /// One representative value of every `RuntimeError` variant.
     ///
-    /// Keep one representative here for every `RuntimeError` variant so the
-    /// wire-kind guard below remains exhaustive.
+    /// `variant_name` below is the proof of completeness: its match has no
+    /// wildcard arm, so a variant added to `RuntimeError` does not compile until
+    /// it is named there, and this list is only accepted once every named arm is
+    /// reached by a representative. A hand-written count could see neither.
     fn every_runtime_error_variant() -> Vec<RuntimeError> {
+        let variants = representatives();
+        let reached: std::collections::BTreeSet<&'static str> =
+            variants.iter().map(variant_name).collect();
+        assert_eq!(
+            reached.len(),
+            variants.len(),
+            "two representatives are the same variant, so the scan does not reach them all"
+        );
+        assert_eq!(
+            reached,
+            EVERY_VARIANT_NAME.iter().copied().collect(),
+            "the representative list does not cover every RuntimeError variant"
+        );
+        variants
+    }
+
+    /// Every `RuntimeError` variant name, in declaration order.
+    ///
+    /// Paired with the wildcard-free match in `variant_name`: a new variant
+    /// breaks that match, and adding its arm without adding it here fails the
+    /// coverage assertion above.
+    const EVERY_VARIANT_NAME: &[&str] = &[
+        "Scheduler",
+        "SchedulerMissingToken",
+        "SchedulerDuplicateProducer",
+        "SchedulerDeadlock",
+        "SchedulerCancelled",
+        "SchedulerRetryExhausted",
+        "Operation",
+        "OperationParked",
+        "Capability",
+        "LLM",
+        "Security",
+        "Timeout",
+        "Serialization",
+        "Executor",
+        "State",
+        "InvalidTask",
+    ];
+
+    fn variant_name(error: &RuntimeError) -> &'static str {
+        match error {
+            RuntimeError::Scheduler { .. } => "Scheduler",
+            RuntimeError::SchedulerMissingToken { .. } => "SchedulerMissingToken",
+            RuntimeError::SchedulerDuplicateProducer { .. } => "SchedulerDuplicateProducer",
+            RuntimeError::SchedulerDeadlock { .. } => "SchedulerDeadlock",
+            RuntimeError::SchedulerCancelled => "SchedulerCancelled",
+            RuntimeError::SchedulerRetryExhausted { .. } => "SchedulerRetryExhausted",
+            RuntimeError::Operation { .. } => "Operation",
+            RuntimeError::OperationParked { .. } => "OperationParked",
+            RuntimeError::Capability { .. } => "Capability",
+            RuntimeError::LLM { .. } => "LLM",
+            RuntimeError::Security(_) => "Security",
+            RuntimeError::Timeout { .. } => "Timeout",
+            RuntimeError::Serialization(_) => "Serialization",
+            RuntimeError::Executor(_) => "Executor",
+            RuntimeError::State(_) => "State",
+            RuntimeError::InvalidTask { .. } => "InvalidTask",
+        }
+    }
+
+    fn representatives() -> Vec<RuntimeError> {
         vec![
             RuntimeError::Scheduler {
                 message: "m".to_string(),
@@ -343,12 +407,6 @@ mod tests {
     #[test]
     fn no_runtime_error_kind_reports_a_failed_selection() {
         let variants = every_runtime_error_variant();
-        assert_eq!(
-            variants.len(),
-            16,
-            "the guard must scan every RuntimeError variant, not a hand-picked subset"
-        );
-
         let kinds: Vec<&'static str> = variants.iter().map(RuntimeError::kind).collect();
         let distinct: std::collections::BTreeSet<&'static str> = kinds.iter().copied().collect();
         assert_eq!(

@@ -1705,12 +1705,44 @@ mod tests {
         );
     }
 
+    /// The body of one rendered function, from its opening line to the next
+    /// top-level definition.
+    ///
+    /// The corpus is inlined verbatim into every projection, so searching a
+    /// whole rendered file for an operator name finds the copy the renderer put
+    /// there rather than the arm that implements it. Only the evaluator body
+    /// answers the question this test asks.
+    fn function_body<'a>(rendered: &'a str, opening: &str, next: &str) -> &'a str {
+        let body = rendered
+            .split_once(opening)
+            .unwrap_or_else(|| panic!("the projection renders {opening}"))
+            .1;
+        body.split_once(next).map_or(body, |(head, _)| head)
+    }
+
+    /// The operators an evaluator body dispatches on, read off its own arms.
+    fn dispatched_operators(body: &str, marker: &[&str]) -> std::collections::BTreeSet<String> {
+        body.lines()
+            .filter(|line| marker.iter().any(|needle| line.contains(needle)))
+            .flat_map(|line| line.split('"').skip(1).step_by(2))
+            .map(str::to_owned)
+            .collect()
+    }
+
     /// Every operator the corpus uses is one the projected evaluators implement.
     #[test]
     fn every_corpus_operator_is_implemented() {
         let corpus = corpus();
         let python = render_conformance_python();
         let typescript = render_conformance_typescript();
+        let python_arms = dispatched_operators(
+            function_body(&python, "def _apply(", "\ndef "),
+            &["operator ==", "operator in ("],
+        );
+        let typescript_arms = dispatched_operators(
+            function_body(&typescript, "function apply(", "\nfunction "),
+            &["case "],
+        );
         for vector in vectors(&corpus) {
             for expectation in array(vector, "expect") {
                 for operator in expectation
@@ -1722,13 +1754,14 @@ mod tests {
                         continue;
                     }
                     assert!(
-                        python.contains("_apply(subject, operator")
-                            && python.contains(&format!("{operator:?}")),
-                        "python evaluator does not implement {operator}"
+                        python_arms.contains(operator),
+                        "python evaluator does not implement {operator}; it dispatches on \
+                         {python_arms:?}"
                     );
                     assert!(
-                        typescript.contains(&format!("case {operator:?}:")),
-                        "typescript evaluator does not implement {operator}"
+                        typescript_arms.contains(operator),
+                        "typescript evaluator does not implement {operator}; it dispatches on \
+                         {typescript_arms:?}"
                     );
                 }
             }

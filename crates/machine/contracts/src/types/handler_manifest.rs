@@ -39,6 +39,12 @@ pub enum HandlerLanguage {
     TypeScript,
 }
 
+impl HandlerLanguage {
+    /// Every admitted handler language, so a drift guard reads the closure off
+    /// the enum instead of restating it.
+    pub const ALL: &'static [Self] = &[Self::Python, Self::TypeScript];
+}
+
 /// The runtime role of a handler. Lifecycle hooks are captured bodies in
 /// AIR (`hook_bindings`), not manifest descriptors, so a manifest handler is
 /// always a tool.

@@ -297,20 +297,16 @@ fn source_scope_enum_does_not_drift() {
         .collect();
     expected.sort();
 
-    let mut actual: Vec<String> = [
-        PortSourceScope::ArtifactSemantic,
-        PortSourceScope::DeploymentInfrastructure,
-        PortSourceScope::InvocationAuthority,
-    ]
-    .iter()
-    .map(|v| {
-        serde_json::to_value(v)
-            .unwrap()
-            .as_str()
-            .unwrap()
-            .to_string()
-    })
-    .collect();
+    let mut actual: Vec<String> = PortSourceScope::ALL
+        .iter()
+        .map(|v| {
+            serde_json::to_value(v)
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
     actual.sort();
     assert_eq!(
         actual, expected,

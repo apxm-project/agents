@@ -331,7 +331,7 @@ fn manifest_constants_are_read_from_the_published_schema() {
 
     // The closed language set is read off the Rust enum's own wire form, so a
     // variant added to either side without the other fails here.
-    let mut languages: Vec<String> = [HandlerLanguage::Python, HandlerLanguage::TypeScript]
+    let mut languages: Vec<String> = HandlerLanguage::ALL
         .iter()
         .map(|v| {
             serde_json::to_value(v)

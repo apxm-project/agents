@@ -148,13 +148,44 @@ fn assert_rejects(
     request: &SourceBundleRequest,
     expected: SourceDiagnosticCode,
 ) {
+    assert_rejection(frontend, class, &reject(request), expected);
+}
+
+/// The same, plus the rejection has to *say* what it rejected.
+///
+/// `SourceRejected` is the umbrella code for every authoring rejection — an
+/// unbound name carries it too — so a test named after one rejection proves
+/// nothing about that rule until it holds the message to it.
+fn assert_rejects_naming(
+    frontend: Frontend,
+    class: &str,
+    request: &SourceBundleRequest,
+    expected: SourceDiagnosticCode,
+    naming: &str,
+) {
     let diagnostics = reject(request);
+    assert_rejection(frontend, class, &diagnostics, expected);
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains(naming)),
+        "{} {class} rejects saying {naming:?}; got {diagnostics:?}",
+        frontend.wire()
+    );
+}
+
+fn assert_rejection(
+    frontend: Frontend,
+    class: &str,
+    diagnostics: &[SourceDiagnostic],
+    expected: SourceDiagnosticCode,
+) {
     assert!(
         diagnostics.iter().any(|d| d.code == expected),
         "{} {class} rejects with {expected}; got {diagnostics:?}",
         frontend.wire()
     );
-    assert_reason_was_decoded(frontend, &diagnostics);
+    assert_reason_was_decoded(frontend, diagnostics);
     assert!(
         diagnostics
             .iter()
@@ -368,15 +399,22 @@ fn a_raw_ais_spelling_rejects_with_no_graph() {
         if !frontend_present(frontend) {
             continue;
         }
+        // `ais` is bound in both fixtures. Left unbound it is an ordinary
+        // unknown name, which rejects under the same umbrella code and would
+        // prove nothing about this rule.
         let body = match frontend {
-            Frontend::Python => "    return await ais.model_call(request)",
-            Frontend::Typescript => "    return await ais.model_call(request);",
+            Frontend::Python => "    ais = agent\n    return await ais.model_call(request)",
+            Frontend::Typescript => {
+                "    const ais = { model_call: async (r: ReviewRequest): Promise<Review> => r };\n\
+                 \x20   return await ais.model_call(request);"
+            }
         };
-        assert_rejects(
+        assert_rejects_naming(
             frontend,
             "a raw AIS spelling",
             &request(frontend, "review.model", body),
             SourceDiagnosticCode::SourceRejected,
+            "unsupported call '.model_call(...)'",
         );
     }
 }
@@ -390,14 +428,18 @@ fn a_raw_structural_ais_spelling_rejects_with_no_graph() {
             continue;
         }
         let body = match frontend {
-            Frontend::Python => "    return await ais.loop(request)",
-            Frontend::Typescript => "    return await ais.loop(request);",
+            Frontend::Python => "    ais = agent\n    return await ais.loop(request)",
+            Frontend::Typescript => {
+                "    const ais = { loop: async (r: ReviewRequest): Promise<Review> => r };\n\
+                 \x20   return await ais.loop(request);"
+            }
         };
-        assert_rejects(
+        assert_rejects_naming(
             frontend,
             "a raw structural AIS spelling",
             &request(frontend, "review.model", body),
             SourceDiagnosticCode::SourceRejected,
+            "unsupported call '.loop(...)'",
         );
     }
 }

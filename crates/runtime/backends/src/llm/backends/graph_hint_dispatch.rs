@@ -158,10 +158,23 @@ mod tests {
             .expect("projection");
         assert!(projected.provider_fields.is_empty());
 
-        let mut without_hints = request_with_hints();
-        without_hints.apxm_hints = None;
-        let with_hints = request_with_hints();
-        assert_eq!(with_hints.extra_body, without_hints.extra_body);
+        // And the request really goes through an adapter's injection path: with
+        // no field authorized, what comes out of `inject_hints` is what went in.
+        let injector = LlamaCppBackend::new("", config("deployment-model"))
+            .await
+            .expect("configured llama.cpp backend");
+        let mut unhinted = request_with_hints();
+        unhinted.apxm_hints = None;
+        let before = unhinted.extra_body.clone();
+        let (dispatched, projection) = injector.inject_hints(unhinted, 0).expect("injection");
+        assert!(
+            projection
+                .expect("an injection always reports its plan")
+                .provider_fields
+                .is_empty(),
+            "a request with no hints authorized a provider field",
+        );
+        assert_eq!(dispatched.extra_body, before);
     }
 
     #[tokio::test]

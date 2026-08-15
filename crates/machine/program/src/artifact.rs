@@ -122,6 +122,16 @@ pub enum PortSourceScope {
     InvocationAuthority,
 }
 
+impl PortSourceScope {
+    /// Every source scope, so a drift guard reads the closure off the enum
+    /// instead of restating it.
+    pub const ALL: &'static [Self] = &[
+        Self::ArtifactSemantic,
+        Self::DeploymentInfrastructure,
+        Self::InvocationAuthority,
+    ];
+}
+
 /// The closed semantic-owner set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

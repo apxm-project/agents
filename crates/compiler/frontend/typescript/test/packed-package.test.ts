@@ -107,7 +107,10 @@ describe("packed @apxm/frontend", () => {
       writeFileSync(absentScript, `import "@apxm/frontend/${subpath}";\n`);
       const absent = run("node", [absentScript], temp);
       expect(absent.status).not.toBe(0);
-      expect(readFileSync(absentScript, "utf8")).toContain(subpath);
+      // Node names the unresolved subpath and why, so the failure is the
+      // missing export and not some unrelated error on the way to it.
+      expect(absent.stderr).toContain("ERR_PACKAGE_PATH_NOT_EXPORTED");
+      expect(absent.stderr).toContain(`'./${subpath}'`);
     }
   }, PACKED_PACKAGE_INSTALL_TIMEOUT_MS);
 });

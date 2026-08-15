@@ -438,13 +438,7 @@ fn wire_members<T: serde::Serialize>(variants: &[T]) -> Vec<String> {
 fn air_semantic_op_enum_does_not_drift() {
     let schema = load_contract("schemas/apxm.air.json");
     let expected = schema_enum(&schema, "SemanticOp", "op");
-    let actual = wire_members(&[
-        SemanticOpKind::ModelCall,
-        SemanticOpKind::CapabilityInvoke,
-        SemanticOpKind::ProgramNew,
-        SemanticOpKind::ProgramInvoke,
-        SemanticOpKind::AwaitEvent,
-    ]);
+    let actual = wire_members(&SemanticOpKind::all());
     assert_eq!(
         actual, expected,
         "AIR semantic op closure drifted from schema"
@@ -524,21 +518,7 @@ fn load_example_artifact(name: &str) -> Value {
 fn air_structural_kind_enum_does_not_drift() {
     let schema = load_contract("schemas/apxm.air.json");
     let expected = schema_enum(&schema, "StructuralNode", "kind");
-    let actual = wire_members(&[
-        StructuralOpKind::Function,
-        StructuralOpKind::Region,
-        StructuralOpKind::Block,
-        StructuralOpKind::Value,
-        StructuralOpKind::Branch,
-        StructuralOpKind::Switch,
-        StructuralOpKind::Loop,
-        StructuralOpKind::ParallelJoin,
-        StructuralOpKind::Try,
-        StructuralOpKind::Throw,
-        StructuralOpKind::Catch,
-        StructuralOpKind::Return,
-        StructuralOpKind::Yield,
-    ]);
+    let actual = wire_members(&StructuralOpKind::all());
     assert_eq!(
         actual, expected,
         "structural IR closure drifted from schema"
@@ -554,10 +534,7 @@ fn source_map_enums_do_not_drift() {
     let schema = load_contract("schemas/apxm.source-map.json");
     let annotations = schema_enum(&schema, "RegionAnnotation", "annotation");
     assert_eq!(
-        wire_members(&[
-            RegionAnnotationKind::None,
-            RegionAnnotationKind::StructuralLoop
-        ]),
+        wire_members(RegionAnnotationKind::ALL),
         annotations,
         "region annotation closure drifted from schema",
     );
@@ -571,7 +548,7 @@ fn source_map_enums_do_not_drift() {
             .collect();
     languages.sort();
     assert_eq!(
-        wire_members(&[SourceLanguage::Python, SourceLanguage::Typescript]),
+        wire_members(SourceLanguage::ALL),
         languages,
         "source language closure drifted from schema",
     );
