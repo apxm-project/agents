@@ -14,12 +14,12 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 65532 apxm \
     && useradd --system --uid 65532 --gid 65532 --home-dir /nonexistent --shell /usr/sbin/nologin apxm \
-    && mkdir -p /var/lib/apxm/artifacts \
-    && chown -R 65532:65532 /var/lib/apxm
+    && mkdir -p /run/apxm /var/lib/apxm/artifacts \
+    && chown -R 65532:65532 /run/apxm /var/lib/apxm
 
 COPY target/release/apxm-runtime-service /usr/local/bin/apxm-runtime-service
 
 ENV APXM_ARTIFACT_DIR=/var/lib/apxm/artifacts
 USER 65532:65532
-VOLUME ["/var/lib/apxm/artifacts"]
+VOLUME ["/run/apxm", "/var/lib/apxm/artifacts"]
 ENTRYPOINT ["/usr/local/bin/apxm-runtime-service"]

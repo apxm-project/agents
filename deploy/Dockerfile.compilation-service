@@ -14,9 +14,10 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 65532 apxm \
     && useradd --system --uid 65532 --gid 65532 --home-dir /nonexistent --shell /usr/sbin/nologin apxm \
-    && mkdir -p /workspace/.dekk/env/bin /var/lib/apxm/artifacts \
+    && mkdir -p /workspace/.dekk/env/bin /run/apxm /var/lib/apxm/artifacts \
     && ln -s /usr/bin/python3 /workspace/.dekk/env/bin/python \
-    && ln -s /usr/bin/node /workspace/.dekk/env/bin/node
+    && ln -s /usr/bin/node /workspace/.dekk/env/bin/node \
+    && chown -R 65532:65532 /run/apxm /var/lib/apxm
 
 COPY target/release/apxm-compilation-service /workspace/target/release/apxm-compilation-service
 COPY crates/compiler/frontend/python /workspace/crates/compiler/frontend/python
@@ -26,6 +27,6 @@ RUN chown -R 65532:65532 /workspace /var/lib/apxm
 
 ENV APXM_ARTIFACT_DIR=/var/lib/apxm/artifacts
 USER 65532:65532
+VOLUME ["/run/apxm", "/var/lib/apxm/artifacts"]
 WORKDIR /workspace
-VOLUME ["/var/lib/apxm/artifacts"]
 ENTRYPOINT ["/workspace/target/release/apxm-compilation-service"]
