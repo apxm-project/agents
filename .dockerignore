@@ -1,0 +1,12 @@
+.git
+.dekk
+.apxm
+target/*
+!target/release/
+target/release/*
+!target/release/apxm-compilation-service
+!target/release/apxm-runtime-service
+!target/release/lib_native.so
+!target/release/libapxm_frontend_typescript.so
+crates/compiler/frontend/python/**/__pycache__
+crates/compiler/frontend/typescript/node_modules/.cache

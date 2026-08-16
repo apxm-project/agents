@@ -1,0 +1,25 @@
+FROM debian:bookworm-slim
+
+ARG APXM_SOURCE_REVISION
+ARG APXM_RUNTIME_SERVICE_DIGEST
+
+LABEL org.opencontainers.image.title="APXM Runtime Service" \
+      org.opencontainers.image.source="https://github.com/apxm-project/agents.git" \
+      org.opencontainers.image.revision="${APXM_SOURCE_REVISION}" \
+      io.apxm.service="runtime-service" \
+      io.apxm.service-digest="${APXM_RUNTIME_SERVICE_DIGEST}"
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libstdc++6 \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 65532 apxm \
+    && useradd --system --uid 65532 --gid 65532 --home-dir /nonexistent --shell /usr/sbin/nologin apxm \
+    && mkdir -p /var/lib/apxm/artifacts \
+    && chown -R 65532:65532 /var/lib/apxm
+
+COPY target/release/apxm-runtime-service /usr/local/bin/apxm-runtime-service
+
+ENV APXM_ARTIFACT_DIR=/var/lib/apxm/artifacts
+USER 65532:65532
+VOLUME ["/var/lib/apxm/artifacts"]
+ENTRYPOINT ["/usr/local/bin/apxm-runtime-service"]
