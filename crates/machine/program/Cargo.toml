@@ -13,13 +13,12 @@ workspace = true
 
 [dependencies]
 apxm-ais.workspace = true
+apxm-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 
 # The conformance harness holds owner-published schemas against the Rust types
-# that decode them. `apxm-core` owns the handler-manifest type and does not
-# depend on this crate, so this stays a test-only edge.
+# that decode them.
 [dev-dependencies]
-apxm-core.workspace = true
 jsonschema.workspace = true

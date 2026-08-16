@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -32,12 +34,18 @@ EXEMPTIONS = {
 def test_retired_program_coordinates_are_absent_from_active_surfaces() -> None:
     # `cwd=` rather than `git -C`: the latter needs git >= 1.8.5, and this repo
     # is developed on hosts carrying git 1.8.3.1, where `-C` is a usage error.
+    git_env = os.environ.copy()
+    if sys.platform == "darwin":
+        # Dekk's conda libiconv must not interpose on the host Git ABI.
+        git_env.pop("DYLD_LIBRARY_PATH", None)
+        git_env.pop("DYLD_FALLBACK_LIBRARY_PATH", None)
     tracked = subprocess.run(
         ["git", "ls-files", *ACTIVE_ROOTS],
         cwd=ROOT,
         check=True,
         capture_output=True,
         text=True,
+        env=git_env,
     ).stdout.splitlines()
     findings: list[str] = []
     for relative in tracked:

@@ -77,6 +77,11 @@ impl Frontend {
                 // versions used by the repository toolchain.
                 "--no-warnings".to_string(),
                 "--experimental-permission".to_string(),
+                // Node's ESM loader hooks run in a worker. Granting the
+                // loader worker explicitly keeps the permission wall active
+                // while allowing the closed module table in the harness to
+                // install its hooks.
+                "--allow-worker".to_string(),
                 format!("--allow-fs-read={}", frontend_root.display()),
                 "--input-type=module".to_string(),
                 "--eval".to_string(),

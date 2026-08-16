@@ -200,7 +200,7 @@ class DekkCliWrapperTests(unittest.TestCase):
         self.assertEqual(exit_code, 31)
         run_mock.assert_called_once()
 
-    def test_dekk_manifest_pins_exact_apxm_run_target(self) -> None:
+    def test_dekk_manifest_pins_compiler_dev_run_target(self) -> None:
         manifest = tomllib.loads(DEKK_MANIFEST_PATH.read_text(encoding="utf-8"))
         expected_commands = {
             "check",
@@ -215,9 +215,9 @@ class DekkCliWrapperTests(unittest.TestCase):
         for name in expected_commands:
             run = commands[name]["run"]
             self.assertIn(
-                "cargo.py run -p apxm-cli --bin apxm",
+                "cargo.py run -p apxm-cli-dev --bin apxm-dev",
                 run,
-                f"`dekk agents {name}` must select the canonical apxm binary exactly",
+                f"`dekk agents {name}` must select the compiler-dev binary exactly",
             )
 
 

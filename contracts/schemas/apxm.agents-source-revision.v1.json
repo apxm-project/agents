@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.agents-source-revision.v1",
+  "title": "AgentsSourceRevision",
+  "description": "Immutable product-neutral source cohort declaration for one APXM service release.",
+  "type": "object",
+  "required": ["schema_version", "semantic_owner", "selection", "source_revision"],
+  "properties": {
+    "schema_version": {"const": "apxm.agents-source-revision.v1"},
+    "semantic_owner": {"const": "agents"},
+    "selection": {"const": "immutable-source-cohort"},
+    "source_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+  },
+  "additionalProperties": false
+}

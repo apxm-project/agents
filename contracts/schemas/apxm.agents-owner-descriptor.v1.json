@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.agents-owner-descriptor.v1",
+  "title": "AgentsOwnerDescriptor",
+  "description": "Product-neutral identity of the source, exact protocols, and artifact kind owned by Agents.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "semantic_owner",
+    "source_revision",
+    "source_descriptor_digest",
+    "artifact_kind",
+    "compilation_protocol",
+    "runtime_protocol"
+  ],
+  "properties": {
+    "schema_version": {"const": "apxm.agents-owner-descriptor.v1"},
+    "semantic_owner": {"const": "agents"},
+    "source_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "source_descriptor_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "artifact_kind": {"const": "compilation-runtime-services"},
+    "compilation_protocol": {"const": "apxm.compilation.protocol/1"},
+    "runtime_protocol": {"const": "apxm.runtime.protocol/1"}
+  },
+  "additionalProperties": false
+}

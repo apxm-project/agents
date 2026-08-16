@@ -57,23 +57,20 @@ jobs:
           # depth-1 checkout cannot reach. The whole history is 36 MB.
           fetch-depth: 0
 
-      # `.dekk.toml [tools]` requires cargo >= 1.70 on PATH. ubuntu-24.04 ships
-      # rustup but no toolchain, so install one rather than depending on a
-      # third-party action.
+      # `.dekk.toml` and rust-toolchain.toml require this exact toolchain. Keep
+      # the compiler identity fixed so a target cache can never mix metadata
+      # from different rustc versions; the target directory is intentionally
+      # not cached below.
       - name: Install the Rust toolchain
         run: |
-          rustup toolchain install stable --profile minimal --no-self-update
-          rustup default stable
+          rustup toolchain install 1.91.1 --profile minimal --no-self-update
+          rustup default 1.91.1
           cargo --version
           rustc --version
 
-      # `.dekk.toml [env]` pins RUSTUP_HOME and CARGO_HOME to this project's HPC
-      # paths, and dekk OVERWRITES the ambient values when it runs a project
-      # command. Neither path exists on a runner, so rustup's own shims in
-      # ~/.cargo/bin cannot resolve a toolchain and cargo cannot create its
-      # registry. Developer machines already solve this with a wrapper on
-      # ~/.local/bin, which `.dekk.toml [paths] bin` ranks above ~/.cargo/bin;
-      # CI installs the same shape so no shared env contract has to change.
+      # `.dekk.toml [env]` resolves RUSTUP_HOME and CARGO_HOME under the Dekk
+      # user's home. Install shims with the same values so Dekk cannot select a
+      # host rustup context different from the pinned project toolchain.
       - name: Shim the Rust toolchain for the dekk env contract
         run: |
           toolchain_bin="$(dirname "$(rustup which cargo)")"
@@ -116,17 +113,22 @@ jobs:
           restore-keys: |
             conda-${{ runner.os }}-
 
-      - name: Cache Cargo registry and target dir
+      - name: Cache Cargo registry
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-            ${{ github.workspace }}/.apxm-cargo-target
-          key: cargo-${{ runner.os }}-${{ hashFiles('workspace/agents/Cargo.lock') }}
+          # Do not cache the compiler target directory. It contains rustc
+          # metadata whose producer version is part of the artifact identity;
+          # a floating stable toolchain can otherwise restore .rmeta files
+          # produced by a different rustc and fail with E0514 before gates run.
+          # Version the key because older archives with the same Cargo.lock
+          # still contain the target directory.
+          key: cargo-registry-v2-rust-1.91.1-${{ runner.os }}-${{ hashFiles('workspace/agents/Cargo.lock') }}
           restore-keys: |
-            cargo-${{ runner.os }}-
+            cargo-registry-v2-rust-1.91.1-${{ runner.os }}-
 
       - name: Install the pinned public Dekk runner
         run: python -m pip install --disable-pip-version-check "dekk==1.11.5"
@@ -300,3 +302,9 @@ jobs:
 
       - name: Run repository tooling tests
         run: python -m pytest tools/tests/
+
+      # Validate owner qualification logic and fail-closed metadata behavior.
+      # This intentionally does not manufacture a release artifact or claim
+      # that current main is runtime-ready.
+      - name: Test owner release qualification
+        run: dekk agents test-release-qualification

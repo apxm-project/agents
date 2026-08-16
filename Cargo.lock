@@ -226,7 +226,6 @@ dependencies = [
  "apxm-compilation-client",
  "apxm-core",
  "apxm-interaction-client",
- "apxm-program",
  "clap",
  "colored",
  "dirs",

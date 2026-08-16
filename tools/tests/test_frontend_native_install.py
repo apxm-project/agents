@@ -36,10 +36,35 @@ class FrontendNativeInstallTests(unittest.TestCase):
             source.write_bytes(b"native bridge")
 
             with mock.patch.object(self.installer, "REPO_ROOT", root):
-                destination = self.installer.install_python(release)
+                with mock.patch.object(self.installer.sys, "platform", "linux"):
+                    destination = self.installer.install_python(release)
 
             self.assertEqual(
                 destination,
                 root / "crates/compiler/frontend/python/apxm_program/_native.so",
             )
             self.assertEqual(destination.read_bytes(), b"native bridge")
+
+    def test_macos_install_resigns_the_final_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir_name:
+            root = Path(temp_dir_name)
+            release = root / "release"
+            release.mkdir()
+            source = release / "lib_native.dylib"
+            source.write_bytes(b"native bridge")
+
+            with (
+                mock.patch.object(self.installer, "REPO_ROOT", root),
+                mock.patch.object(self.installer.sys, "platform", "darwin"),
+                mock.patch.object(self.installer.subprocess, "run") as run,
+            ):
+                destination = self.installer.install_python(release)
+
+            self.assertEqual(destination.read_bytes(), b"native bridge")
+            run.assert_called_once_with(
+                ["codesign", "--force", "--sign", "-", str(destination)],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )

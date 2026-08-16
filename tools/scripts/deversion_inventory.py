@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -167,8 +168,20 @@ PRESERVED_PREFIXES = ("docs/pxm/",)
 def tracked_files() -> list[str]:
     # cwd= rather than `git -C`: the deployment host runs git 1.8.3.1, which has no
     # -C flag. Output order is git's own sort, so the scan is deterministic.
+    git_env = os.environ.copy()
+    if sys.platform == "darwin":
+        # Dekk's conda environment ships libiconv, while the host Git links
+        # against Homebrew's ABI. Do not let the conda loader path interpose
+        # on Git, or the inventory gate aborts before it can scan the tree.
+        git_env.pop("DYLD_LIBRARY_PATH", None)
+        git_env.pop("DYLD_FALLBACK_LIBRARY_PATH", None)
     out = subprocess.run(
-        ["git", "ls-files"], cwd=REPO_ROOT, capture_output=True, text=True, check=True
+        ["git", "ls-files"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+        env=git_env,
     )
     return [line for line in out.stdout.splitlines() if line]
 

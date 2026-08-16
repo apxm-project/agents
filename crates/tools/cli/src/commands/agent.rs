@@ -953,7 +953,7 @@ fn check_schema_shape(pkg: &LoadedAgent) -> Vec<String> {
         errors.push("agent.toml: [hierarchy].parent must not be empty when present".to_string());
     }
     for capability_ref in pkg.agent.permissions.keys() {
-        if !apxm_program::grammar::is_identifier(capability_ref) {
+        if !apxm_core::grammar::is_identifier(capability_ref) {
             errors.push(format!(
                 "agent.toml: [permissions] key '{capability_ref}' is not a contract identifier"
             ));

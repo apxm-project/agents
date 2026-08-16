@@ -21,9 +21,8 @@ capture errors.
 The worktree is intentionally uncommitted, but it is fully revalidated in its
 current dirty state. No commit or push was requested.
 
-The working tree used for this audit is the separate clone at
-`/lustre/parot/MiguelRosas/ELIS/3/agents-authorable`, on branch
-`apxm/authorable-agents`. The original `/agents` worktree was left untouched
+The working tree used for this audit is a separate temporary qualification
+clone on an isolated feature branch. The source worktree was left untouched
 because it contains unrelated user changes on another branch.
 
 This closure pass used six parallel audits followed by a second runtime-focused

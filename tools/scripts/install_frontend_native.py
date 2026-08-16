@@ -55,6 +55,25 @@ def _first_existing(directory: Path, names: tuple[str, ...]) -> Path:
     )
 
 
+def _resign_macos(destination: Path) -> None:
+    """Re-sign a copied Mach-O bridge after its destination bytes are final."""
+
+    if sys.platform != "darwin":
+        return
+    try:
+        subprocess.run(
+            ["codesign", "--force", "--sign", "-", str(destination)],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise SystemExit(
+            f"error: unable to ad-hoc sign the installed native bridge {destination}: {error}"
+        ) from error
+
+
 def install_python(release: Path) -> Path:
     source = _first_existing(release, PYTHON_CANDIDATES)
     destination = (
@@ -62,6 +81,7 @@ def install_python(release: Path) -> Path:
     )
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, destination)
+    _resign_macos(destination)
     print(f"installed {source.name} -> {destination.relative_to(REPO_ROOT)}")
     return destination
 
@@ -79,6 +99,7 @@ def install_typescript(release: Path) -> Path:
     )
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, destination)
+    _resign_macos(destination)
     print(f"installed {source.name} -> {destination.relative_to(REPO_ROOT)}")
     return destination
 

@@ -15,6 +15,7 @@ pub mod constants;
 pub mod env;
 pub mod error;
 pub mod events;
+pub mod grammar;
 pub mod logging;
 pub mod observability;
 pub mod paths;

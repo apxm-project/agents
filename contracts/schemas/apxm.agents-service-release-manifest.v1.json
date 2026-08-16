@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.agents-service-release-manifest.v1",
+  "title": "AgentsServiceReleaseManifest",
+  "description": "Content-addressed APXM Compilation and Runtime service release manifest.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "semantic_owner",
+    "source_revision",
+    "artifact_kind",
+    "services",
+    "owner_descriptor_digest",
+    "integrity_algorithm"
+  ],
+  "properties": {
+    "schema_version": {"const": "apxm.agents-service-release-manifest.v1"},
+    "semantic_owner": {"const": "agents"},
+    "source_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "artifact_kind": {"const": "compilation-runtime-services"},
+    "services": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "required": ["name", "path", "digest"],
+        "properties": {
+          "name": {"enum": ["compilation-service", "runtime-service"]},
+          "path": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+          "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "owner_descriptor_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "integrity_algorithm": {"const": "sha256"}
+  },
+  "additionalProperties": false
+}
