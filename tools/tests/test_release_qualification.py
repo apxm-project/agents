@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -171,6 +172,46 @@ class ReleaseQualificationTests(unittest.TestCase):
                 runtime_service_path=str(artifacts["runtime-service"]),
                 run_gates=False,
             )
+        self.assertTrue(result.ok, [item.render() for item in result.diagnostics])
+
+    def test_qualification_accepts_exact_cross_platform_service_coordinates(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, tempfile.TemporaryDirectory() as external:
+            root = Path(temporary)
+            external_root = Path(external)
+            revision, artifacts = make_clean_owner_checkout(root)
+            self.qualification.generate_descriptors(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                output_dir=root,
+                source_revision=revision,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "add", "deploy", "contracts"],
+                check=True,
+                env=git_environment(),
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-qm", "publish fixture"],
+                check=True,
+                env=git_environment(),
+            )
+            bound: dict[str, str] = {}
+            for name, artifact in artifacts.items():
+                target = external_root / artifact.name
+                target.write_bytes(artifact.read_bytes())
+                target.chmod(0o755)
+                bound[
+                    "CLIC_APXM_COMPILATION_SERVICE"
+                    if name == "compilation-service"
+                    else "CLIC_APXM_RUNTIME_SERVICE"
+                ] = f"{target}@{self.qualification._digest_file(target)}"
+            # The host-native checkout no longer contains the published bytes;
+            # only the exact external coordinates satisfy the manifest.
+            artifacts["compilation-service"].write_bytes(b"host-native rebuild")
+            artifacts["runtime-service"].write_bytes(b"host-native rebuild")
+            with patch.dict(os.environ, bound, clear=False):
+                result = self.qualification.qualify(root, run_gates=False)
         self.assertTrue(result.ok, [item.render() for item in result.diagnostics])
 
     def test_generation_refuses_to_overwrite_different_release_input(self) -> None:

@@ -264,6 +264,29 @@ def _rooted_path(root: Path, raw: str | Path) -> Path:
     return candidate if candidate.is_absolute() else root / candidate
 
 
+def _external_service_binding(name: str) -> Path | None:
+    """Return an exact externally materialized service artifact, if bound."""
+
+    environment_name = (
+        "CLIC_APXM_COMPILATION_SERVICE"
+        if name == "compilation-service"
+        else "CLIC_APXM_RUNTIME_SERVICE"
+    )
+    value = os.environ.get(environment_name, "").strip()
+    match = re.fullmatch(r"(.+)@(sha256:[0-9a-f]{64})", value)
+    if match is None:
+        return None
+    artifact = Path(match.group(1)).expanduser()
+    if artifact.is_symlink() or not artifact.is_file() or not os.access(artifact, os.X_OK):
+        return None
+    try:
+        if _digest_file(artifact) != match.group(2):
+            return None
+    except OSError:
+        return None
+    return artifact.resolve()
+
+
 def _validate_source_descriptor(
     root: Path, value: Mapping[str, Any] | None, diagnostics: list[Diagnostic]
 ) -> str | None:
@@ -527,15 +550,25 @@ def _validate_release_manifest(
             continue
         declared_path = _resolve_regular_file(root, root / str(service["path"]))
         selected = artifacts.get(name)
-        if declared_path is None:
+        external = _external_service_binding(name)
+        selected_is_external = (
+            selected is not None
+            and external is not None
+            and selected.resolve() == external
+        )
+        digest_matches_selected = (
+            selected is not None
+            and _digest_file(selected) == str(service.get("digest", ""))
+        )
+        if declared_path is None and not (selected_is_external and digest_matches_selected):
             diagnostics.append(
                 Diagnostic(
                     "missing-publishable-service-artifact",
                     f"release manifest service {name!r} does not name a regular file inside the owner checkout: {service['path']}",
-                    "publish the exact APXM service executable at the manifest path; symlinks, traversal, and external files are rejected",
+                    "publish the exact APXM service executable at the manifest path, or bind an immutable qualified service coordinate for a cross-platform release",
                 )
             )
-        elif selected is not None and declared_path != selected:
+        elif selected is not None and declared_path != selected and not (selected_is_external and digest_matches_selected):
             diagnostics.append(
                 Diagnostic(
                     "service-artifact-path-mismatch",
@@ -621,6 +654,12 @@ def _find_artifacts(
     } if isinstance(manifest_services, list) else {}
     for name, binary in SERVICE_ARTIFACTS:
         candidates: list[Path] = []
+        external = _external_service_binding(name)
+        if external is not None:
+            # A release may be qualified on Linux and consumed from a
+            # macOS/Windows owner checkout. The immutable coordinate carries
+            # the exact bytes; manifest validation still binds its digest.
+            candidates.append(external)
         if explicit.get(name):
             candidates.append(_rooted_path(root, explicit[name] or ""))
         env_name = (
@@ -638,6 +677,8 @@ def _find_artifacts(
         candidates.append(root / "deploy" / "services" / binary)
         for candidate in candidates:
             resolved = _resolve_regular_file(root, candidate)
+            if resolved is None and external is not None and candidate == external:
+                resolved = external
             if resolved is not None:
                 found[name] = resolved
                 break
