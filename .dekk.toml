@@ -68,7 +68,11 @@ lib = ["{project}/target/release/lib", "{environment}/lib"]
 [commands]
 build = { run = "python tools/scripts/cargo.py build -p apxm-cli --features driver,metrics --release", description = "Build the APXM CLI", skill = true, group = "Build & Test" }
 build-dialect = { run = "python tools/scripts/cargo.py build-dialect", description = "Rebuild MLIR dialect (TableGen + C++ + Rust) after editing .td or .cpp files", skill = true, group = "Build & Test" }
-test = { run = "python tools/scripts/check_frontend_parity.py && python tools/scripts/cargo.py test --workspace --exclude apxm-compiler --exclude apxm-cli && python -m pytest crates/compiler/frontend/python/tests_program -q", description = "Run frontend parity, workspace, and canonical authoring tests", skill = true, group = "Build & Test" }
+# The workspace includes source-capture tests that launch the isolated Python
+# frontend. Keep each Rust test binary's cases serial so the owner gate does
+# not overload the host with concurrent frontend interpreters and turn valid
+# submitted source into nondeterministic capture diagnostics.
+test = { run = "python tools/scripts/check_frontend_parity.py && python tools/scripts/cargo.py test --workspace --exclude apxm-compiler --exclude apxm-cli -- --test-threads=1 && python -m pytest crates/compiler/frontend/python/tests_program -q", description = "Run frontend parity, workspace, and canonical authoring tests", skill = true, group = "Build & Test" }
 # This deliberately does NOT carry the `env -u CC -u CXX` of the frontend
 # commands below. Those unset the pair so a PyO3/napi module is not linked by the
 # conda cross-compiler wrapper; this command instead builds the MLIR dialect,
