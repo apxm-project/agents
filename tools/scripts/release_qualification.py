@@ -955,9 +955,24 @@ def generate_descriptors(
     return source_out, owner_out, sidecar_out, manifest_out
 
 
-def _print_result(result: Qualification, *, as_json: bool) -> None:
+def _print_result(result: Qualification, *, as_json: bool, root: Path = REPOSITORY_ROOT) -> None:
+    root = root.resolve()
+    source = _load_json(root, SOURCE_DESCRIPTOR_REL, [], "source descriptor") or {}
+    owner = _load_json(root, OWNER_DESCRIPTOR_REL, [], "owner descriptor") or {}
+    manifest = _load_json(root, RELEASE_MANIFEST_REL, [], "release manifest") or {}
+    source_file = _resolve_regular_file(root, root / SOURCE_DESCRIPTOR_REL)
+    owner_file = _resolve_regular_file(root, root / OWNER_DESCRIPTOR_REL)
+    manifest_file = _resolve_regular_file(root, root / RELEASE_MANIFEST_REL)
     payload = {
+        "schema": "apxm.agents.release-qualification.v1",
+        "owner": "agents",
+        "evidence_root": str(root),
         "qualified": result.ok,
+        "source_revision": source.get("source_revision"),
+        "source_descriptor_digest": _digest_file(source_file) if source_file else None,
+        "owner_descriptor_digest": _digest_file(owner_file) if owner_file else None,
+        "release_manifest_digest": _digest_file(manifest_file) if manifest_file else None,
+        "manifest_services": manifest.get("services"),
         "services": {name: str(path) for name, path in result.artifacts.items()},
         "service_digests": result.artifact_digests,
         "gates": result.gates,
@@ -1014,7 +1029,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         runtime_service_path=args.runtime_service,
         run_gates=not args.skip_gates,
     )
-    _print_result(result, as_json=args.as_json)
+    _print_result(result, as_json=args.as_json, root=args.root)
     return 0 if result.ok else 1
 
 

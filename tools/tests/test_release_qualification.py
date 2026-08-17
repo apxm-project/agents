@@ -174,6 +174,26 @@ class ReleaseQualificationTests(unittest.TestCase):
             )
         self.assertTrue(result.ok, [item.render() for item in result.diagnostics])
 
+    def test_dirty_checkout_never_qualifies_even_with_matching_release_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            revision, artifacts = make_clean_owner_checkout(root)
+            self.qualification.generate_descriptors(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                output_dir=root,
+                source_revision=revision,
+            )
+            result = self.qualification.qualify(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                run_gates=False,
+            )
+        self.assertFalse(result.ok)
+        self.assertTrue(any(item.code == "dirty-checkout" for item in result.diagnostics))
+
     def test_qualification_accepts_exact_cross_platform_service_coordinates(self) -> None:
         with tempfile.TemporaryDirectory() as temporary, tempfile.TemporaryDirectory() as external:
             root = Path(temporary)
@@ -310,8 +330,8 @@ class ReleaseQualificationTests(unittest.TestCase):
         runs = {name: commands[name]["run"] for name in names}
         self.assertEqual(len(set(runs.values())), len(names))
         for name, run in runs.items():
-            self.assertIn("dekk agents release-qualification", run, name)
-            self.assertIn("&&", run, name)
+            self.assertEqual(run, f"python tools/scripts/p80_owner.py {name}")
+            self.assertNotIn("&&", run, name)
 
 
 if __name__ == "__main__":
