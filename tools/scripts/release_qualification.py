@@ -22,6 +22,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from typing import Any, Iterable, Mapping, Sequence
 
 
@@ -35,6 +36,12 @@ OWNER_DESCRIPTOR_SIDECAR_REL = Path(
 RELEASE_MANIFEST_REL = Path(
     "contracts/services/manifests/apxm.agents-service-release-manifest.v1.json"
 )
+PROTOCOL_DESCRIPTORS = (
+    ("compilation-protocol", Path("crates/compiler/service-protocol/src/lib.rs")),
+    ("runtime-protocol", Path("crates/runtime/service-protocol/src/lib.rs")),
+)
+LOCAL_ARTIFACT_SCHEMA = "apxm.agents.local-release-artifact.v1"
+LOCAL_ARTIFACT_MANIFEST_REL = Path("apxm.agents-local-release-artifact.v1.json")
 
 SOURCE_DESCRIPTOR_SCHEMA = "apxm.agents-source-revision.v1"
 OWNER_DESCRIPTOR_SCHEMA = "apxm.agents-owner-descriptor.v1"
@@ -77,6 +84,7 @@ class Qualification:
     gates: list[dict[str, Any]] = field(default_factory=list)
     artifacts: dict[str, Path] = field(default_factory=dict)
     artifact_digests: dict[str, str] = field(default_factory=dict)
+    protocol_descriptors: dict[str, dict[str, str]] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -221,6 +229,20 @@ def _git_text(root: Path, *args: str) -> str | None:
     if completed.returncode != 0:
         return None
     return completed.stdout.strip()
+
+
+def _git_bytes(root: Path, *args: str) -> bytes | None:
+    git_env = os.environ.copy()
+    if sys.platform == "darwin":
+        git_env.pop("DYLD_LIBRARY_PATH", None)
+        git_env.pop("DYLD_FALLBACK_LIBRARY_PATH", None)
+    completed = subprocess.run(
+        ["git", "-C", str(root), *args],
+        check=False,
+        capture_output=True,
+        env=git_env,
+    )
+    return completed.stdout if completed.returncode == 0 else None
 
 
 def _git_revision(root: Path) -> str | None:
@@ -423,6 +445,58 @@ def _validate_owner_descriptor(
         )
 
 
+def _validate_protocol_descriptors(
+    root: Path, source_revision: str | None, result: Qualification
+) -> None:
+    """Bind protocol implementation descriptors to the selected source cohort."""
+
+    if source_revision is None:
+        return
+    for name, relative in PROTOCOL_DESCRIPTORS:
+        current = _resolve_regular_file(root, root / relative)
+        source_bytes = _git_bytes(root, "show", f"{source_revision}:{relative.as_posix()}")
+        if current is None:
+            result.diagnostics.append(
+                Diagnostic(
+                    "missing-protocol-descriptor",
+                    f"{name} protocol descriptor is not a regular file: {relative}",
+                    "publish the exact Compilation/Runtime protocol source descriptor in the owner checkout",
+                )
+            )
+            continue
+        if source_bytes is None:
+            result.diagnostics.append(
+                Diagnostic(
+                    "unresolvable-protocol-descriptor",
+                    f"{name} protocol descriptor is not present at source revision {source_revision}: {relative}",
+                    "fetch the complete immutable source cohort before qualifying the release",
+                )
+            )
+            continue
+        current_digest = _digest_file(current)
+        source_digest = _digest_bytes(source_bytes)
+        if current.read_bytes() != source_bytes:
+            result.diagnostics.append(
+                Diagnostic(
+                    "protocol-descriptor-drift",
+                    f"{name} protocol descriptor bytes differ from source revision {source_revision}",
+                    "qualify the service binaries and protocol descriptors from one immutable source cohort",
+                )
+            )
+            continue
+        if current_digest != source_digest:
+            result.diagnostics.append(
+                Diagnostic(
+                    "protocol-descriptor-digest-mismatch",
+                    f"{name} protocol descriptor digest does not match its source revision",
+                    "regenerate the local release artifact from the exact source revision",
+                )
+            )
+            continue
+        result.protocol_descriptors[name] = {
+            "path": relative.as_posix(),
+            "digest": current_digest,
+        }
 def _validate_release_manifest(
     root: Path,
     value: Mapping[str, Any] | None,
@@ -685,7 +759,13 @@ def _find_artifacts(
     return found
 
 
-def _run_gates(root: Path, gates: Sequence[str], result: Qualification) -> None:
+def _run_gates(
+    root: Path,
+    gates: Sequence[str],
+    result: Qualification,
+    *,
+    emit_output: bool = True,
+) -> None:
     dekk = os.environ.get("DEKK", "").strip() or shutil.which("dekk")
     if not dekk:
         result.diagnostics.append(
@@ -704,9 +784,9 @@ def _run_gates(root: Path, gates: Sequence[str], result: Qualification) -> None:
             capture_output=True,
             text=True,
         )
-        if completed.stdout:
+        if emit_output and completed.stdout:
             print(completed.stdout, end="")
-        if completed.stderr:
+        if emit_output and completed.stderr:
             print(completed.stderr, end="", file=sys.stderr)
         record = {"command": f"dekk agents {gate}", "returncode": completed.returncode}
         result.gates.append(record)
@@ -740,11 +820,12 @@ def qualify(
     runtime_service_path: str | None = None,
     run_gates: bool = True,
     gates: Sequence[str] = OWNER_GATES,
+    emit_gate_output: bool = True,
 ) -> Qualification:
     result = Qualification()
     root = root.resolve()
     if run_gates:
-        _run_gates(root, gates, result)
+        _run_gates(root, gates, result, emit_output=emit_gate_output)
 
     if not _is_clean(root):
         result.diagnostics.append(
@@ -773,6 +854,7 @@ def qualify(
         source_descriptor_digest=source_descriptor_digest,
         diagnostics=result.diagnostics,
     )
+    _validate_protocol_descriptors(root, source_revision, result)
     owner_descriptor_file = _resolve_regular_file(root, owner_path)
     owner_descriptor_digest = (
         _digest_file(owner_descriptor_file) if owner_descriptor_file is not None else None
@@ -955,23 +1037,54 @@ def generate_descriptors(
     return source_out, owner_out, sidecar_out, manifest_out
 
 
-def _print_result(result: Qualification, *, as_json: bool, root: Path = REPOSITORY_ROOT) -> None:
-    root = root.resolve()
-    source = _load_json(root, SOURCE_DESCRIPTOR_REL, [], "source descriptor") or {}
-    owner = _load_json(root, OWNER_DESCRIPTOR_REL, [], "owner descriptor") or {}
-    manifest = _load_json(root, RELEASE_MANIFEST_REL, [], "release manifest") or {}
+def _write_once(path: Path, payload: bytes) -> None:
+    """Create a package file once; never replace bytes under an existing path."""
+
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise ValueError(f"immutable release package target is not a regular file: {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        if path.read_bytes() != payload:
+            raise ValueError(f"refusing to overwrite immutable release package file: {path}")
+        return
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            if path.read_bytes() != payload:
+                raise ValueError(f"refusing to overwrite immutable release package file: {path}")
+    finally:
+        if temporary.exists() or temporary.is_symlink():
+            temporary.unlink()
+
+
+def _package_payload(result: Qualification, root: Path) -> dict[str, Any]:
+    source = _load_json(root, root / SOURCE_DESCRIPTOR_REL, [], "source descriptor") or {}
+    owner = _load_json(root, root / OWNER_DESCRIPTOR_REL, [], "owner descriptor") or {}
+    manifest = _load_json(root, root / RELEASE_MANIFEST_REL, [], "release manifest") or {}
     source_file = _resolve_regular_file(root, root / SOURCE_DESCRIPTOR_REL)
     owner_file = _resolve_regular_file(root, root / OWNER_DESCRIPTOR_REL)
     manifest_file = _resolve_regular_file(root, root / RELEASE_MANIFEST_REL)
-    payload = {
+    return {
         "schema": "apxm.agents.release-qualification.v1",
         "owner": "agents",
-        "evidence_root": str(root),
+        "qualification_scope": "owner-local",
+        "external_live_approval": False,
+        "evidence_root": str(root.resolve()),
         "qualified": result.ok,
         "source_revision": source.get("source_revision"),
         "source_descriptor_digest": _digest_file(source_file) if source_file else None,
         "owner_descriptor_digest": _digest_file(owner_file) if owner_file else None,
         "release_manifest_digest": _digest_file(manifest_file) if manifest_file else None,
+        "protocol_descriptors": result.protocol_descriptors,
         "manifest_services": manifest.get("services"),
         "services": {name: str(path) for name, path in result.artifacts.items()},
         "service_digests": result.artifact_digests,
@@ -981,6 +1094,157 @@ def _print_result(result: Qualification, *, as_json: bool, root: Path = REPOSITO
             for item in result.diagnostics
         ],
     }
+
+
+def package_release(
+    root: Path,
+    *,
+    output_dir: Path,
+    compilation_service_path: str | None = None,
+    runtime_service_path: str | None = None,
+    run_gates: bool = True,
+    gates: Sequence[str] = OWNER_GATES,
+    emit_gate_output: bool = True,
+) -> dict[str, Any]:
+    """Materialize and qualify one write-once local service release package."""
+
+    root = root.resolve()
+    result = qualify(
+        root,
+        compilation_service_path=compilation_service_path,
+        runtime_service_path=runtime_service_path,
+        run_gates=run_gates,
+        gates=gates,
+        emit_gate_output=emit_gate_output,
+    )
+    payload = _package_payload(result, root)
+    payload["schema"] = LOCAL_ARTIFACT_SCHEMA
+    payload["package"] = None
+    if not result.ok:
+        return payload
+
+    source_revision = payload["source_revision"]
+    if not isinstance(source_revision, str) or not HEX40.fullmatch(source_revision):
+        raise ValueError("qualified release has no immutable source revision to package")
+    package_root = output_dir.expanduser()
+    if not package_root.is_absolute():
+        package_root = root / package_root
+    package_root = package_root.resolve()
+    if package_root == root:
+        raise ValueError("release package must be outside the owner source root")
+    if package_root.is_symlink() or (package_root.exists() and not package_root.is_dir()):
+        raise ValueError(f"release package root is not a regular directory: {package_root}")
+    package_root.mkdir(parents=True, exist_ok=True)
+
+    manifest = _load_json(
+        root, root / RELEASE_MANIFEST_REL, result.diagnostics, "release manifest"
+    )
+    if manifest is None:
+        raise ValueError("qualified release has no release manifest to package")
+    manifest_services = manifest.get("services")
+    service_paths = {
+        item["name"]: Path(item["path"])
+        for item in manifest_services
+        if isinstance(item, dict)
+        and isinstance(item.get("name"), str)
+        and isinstance(item.get("path"), str)
+    } if isinstance(manifest_services, list) else {}
+
+    files: list[dict[str, Any]] = []
+    source_files = (
+        ("source-descriptor", SOURCE_DESCRIPTOR_REL),
+        ("owner-descriptor", OWNER_DESCRIPTOR_REL),
+        ("owner-descriptor-sidecar", OWNER_DESCRIPTOR_SIDECAR_REL),
+        ("release-manifest", RELEASE_MANIFEST_REL),
+    )
+    for name, relative in (*source_files, *PROTOCOL_DESCRIPTORS):
+        source = _resolve_regular_file(root, root / relative)
+        if source is None:
+            raise ValueError(f"qualified release input is not a regular file: {relative}")
+        payload_bytes = source.read_bytes()
+        files.append({"name": name, "path": relative.as_posix(), "digest": _digest_bytes(payload_bytes)})
+        _write_once(package_root / relative, payload_bytes)
+
+    for name, binary in SERVICE_ARTIFACTS:
+        source = result.artifacts.get(name)
+        manifest_path = service_paths.get(name)
+        if source is None or manifest_path is None:
+            raise ValueError(f"qualified release has no local {name} service path")
+        try:
+            source_relative = source.resolve().relative_to(root)
+        except ValueError as error:
+            raise ValueError(
+                f"cannot package externally bound {name}; local owner packaging requires source-local executable bytes"
+            ) from error
+        if source_relative != manifest_path:
+            raise ValueError(
+                f"manifest path for {name} does not select the qualified executable: {manifest_path} != {source_relative}"
+            )
+        if not os.access(source, os.X_OK):
+            raise ValueError(f"qualified {name} service is not executable: {source}")
+        payload_bytes = source.read_bytes()
+        entry = {
+            "name": name,
+            "path": manifest_path.as_posix(),
+            "digest": _digest_bytes(payload_bytes),
+            "executable": True,
+            "bytes": len(payload_bytes),
+        }
+        files.append(entry)
+        destination = package_root / manifest_path
+        _write_once(destination, payload_bytes)
+        if not os.access(destination, os.X_OK):
+            destination.chmod(source.stat().st_mode & 0o777)
+        if not os.access(destination, os.X_OK):
+            raise ValueError(f"packaged {name} service is not executable: {destination}")
+
+    files.sort(key=lambda item: item["path"])
+    package_manifest = {
+        "schema": LOCAL_ARTIFACT_SCHEMA,
+        "semantic_owner": "agents",
+        "qualification_scope": "owner-local",
+        "external_live_approval": False,
+        "source_revision": source_revision,
+        "source_descriptor_digest": payload["source_descriptor_digest"],
+        "owner_descriptor_digest": payload["owner_descriptor_digest"],
+        "release_manifest_digest": payload["release_manifest_digest"],
+        "protocol_descriptors": payload["protocol_descriptors"],
+        "files": files,
+    }
+    package_manifest_bytes = _canonical_json(package_manifest)
+    _write_once(package_root / LOCAL_ARTIFACT_MANIFEST_REL, package_manifest_bytes)
+
+    expected_paths = {item["path"] for item in files} | {LOCAL_ARTIFACT_MANIFEST_REL.as_posix()}
+    actual_paths = {
+        path.relative_to(package_root).as_posix()
+        for path in package_root.rglob("*")
+        if path.is_file()
+    }
+    if actual_paths != expected_paths:
+        raise ValueError(
+            "release package contains files outside its immutable manifest: "
+            + ", ".join(sorted(actual_paths ^ expected_paths))
+        )
+    for item in files:
+        packaged = package_root / item["path"]
+        if _digest_file(packaged) != item["digest"]:
+            raise ValueError(f"packaged bytes do not match the immutable manifest: {item['path']}")
+        if item.get("executable") and not os.access(packaged, os.X_OK):
+            raise ValueError(f"packaged service lost executable permission: {item['path']}")
+
+    package_manifest_digest = _digest_bytes(package_manifest_bytes)
+    payload["package"] = {
+        "root": str(package_root),
+        "manifest": LOCAL_ARTIFACT_MANIFEST_REL.as_posix(),
+        "manifest_digest": package_manifest_digest,
+        "files": files,
+    }
+    return payload
+
+
+def _print_result(result: Qualification, *, as_json: bool, root: Path = REPOSITORY_ROOT) -> None:
+    root = root.resolve()
+    payload = _package_payload(result, root)
     if as_json:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
@@ -1006,6 +1270,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     generate_parser.add_argument("--runtime-service", required=True)
     generate_parser.add_argument("--output-dir", type=Path, required=True)
     generate_parser.add_argument("--source-revision")
+    package_parser = subparsers.add_parser(
+        "package", help="package and qualify one immutable local service release artifact"
+    )
+    package_parser.add_argument("--root", type=Path, default=REPOSITORY_ROOT)
+    package_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path(".apxm/release-artifacts/current"),
+    )
+    package_parser.add_argument("--compilation-service")
+    package_parser.add_argument("--runtime-service")
+    package_parser.add_argument("--skip-gates", action="store_true")
+    package_parser.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args(list(argv) if argv is not None else None)
     mode = args.mode or "qualify"
     if mode == "generate":
@@ -1023,6 +1300,39 @@ def main(argv: Sequence[str] | None = None) -> int:
         for path in outputs:
             print(path)
         return 0
+    if mode == "package":
+        try:
+            payload = package_release(
+                args.root,
+                output_dir=args.output_dir,
+                compilation_service_path=args.compilation_service,
+                runtime_service_path=args.runtime_service,
+                run_gates=not args.skip_gates,
+                emit_gate_output=not args.as_json,
+            )
+        except (OSError, ValueError) as exc:
+            payload = {
+                "schema": LOCAL_ARTIFACT_SCHEMA,
+                "owner": "agents",
+                "qualification_scope": "owner-local",
+                "external_live_approval": False,
+                "qualified": False,
+                "package": None,
+                "diagnostics": [{"code": "package-failed", "message": str(exc)}],
+            }
+        if args.as_json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(
+                "APXM local release artifact qualification: "
+                + ("PASS" if payload.get("qualified") else "FAIL")
+            )
+            for diagnostic in payload.get("diagnostics", []):
+                print(
+                    f"[{diagnostic.get('code')}] {diagnostic.get('message')}",
+                    file=sys.stderr,
+                )
+        return 0 if payload.get("qualified") else 1
     result = qualify(
         args.root,
         compilation_service_path=args.compilation_service,

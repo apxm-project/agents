@@ -52,8 +52,21 @@ def make_clean_owner_checkout(root: Path) -> tuple[str, dict[str, Path]]:
     )
     (root / ".gitignore").write_text("target/\n", encoding="utf-8")
     (root / "README.md").write_text("fixture\n", encoding="utf-8")
+    for relative, contents in (
+        (
+            "crates/compiler/service-protocol/src/lib.rs",
+            b"pub const COMPILATION_PROTOCOL_VERSION: &str = \"apxm.compilation.protocol/1\";\n",
+        ),
+        (
+            "crates/runtime/service-protocol/src/lib.rs",
+            b"pub const RUNTIME_PROTOCOL_VERSION: &str = \"apxm.runtime.protocol/1\";\n",
+        ),
+    ):
+        protocol = root / relative
+        protocol.parent.mkdir(parents=True, exist_ok=True)
+        protocol.write_bytes(contents)
     subprocess.run(
-        ["git", "-C", str(root), "add", ".gitignore", "README.md"],
+        ["git", "-C", str(root), "add", ".gitignore", "README.md", "crates"],
         check=True,
         env=git_environment(),
     )
@@ -302,12 +315,113 @@ class ReleaseQualificationTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertTrue(any(item.code == "invalid-schema" for item in result.diagnostics))
 
+    def test_protocol_descriptor_drift_is_rejected_against_source_revision(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            revision, artifacts = make_clean_owner_checkout(root)
+            self.qualification.generate_descriptors(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                output_dir=root,
+                source_revision=revision,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "add", "deploy", "contracts"],
+                check=True,
+                env=git_environment(),
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-qm", "publish fixture"],
+                check=True,
+                env=git_environment(),
+            )
+            (root / "crates/compiler/service-protocol/src/lib.rs").write_bytes(
+                b"drifted protocol bytes\n"
+            )
+            result = self.qualification.qualify(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                run_gates=False,
+            )
+        self.assertFalse(result.ok)
+        self.assertTrue(any(item.code == "protocol-descriptor-drift" for item in result.diagnostics))
+
+    def test_package_release_is_write_once_and_binds_all_exact_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, tempfile.TemporaryDirectory() as package_dir:
+            root = Path(temporary)
+            revision, artifacts = make_clean_owner_checkout(root)
+            self.qualification.generate_descriptors(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                output_dir=root,
+                source_revision=revision,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "add", "deploy", "contracts"],
+                check=True,
+                env=git_environment(),
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-qm", "publish fixture"],
+                check=True,
+                env=git_environment(),
+            )
+            output = self.qualification.package_release(
+                root,
+                output_dir=Path(package_dir),
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                run_gates=False,
+            )
+            self.assertTrue(output["qualified"], output["diagnostics"])
+            self.assertEqual(output["qualification_scope"], "owner-local")
+            self.assertFalse(output["external_live_approval"])
+            package = output["package"]
+            self.assertIsInstance(package, dict)
+            self.assertEqual(
+                {item["name"] for item in package["files"] if "name" in item},
+                {
+                    "source-descriptor",
+                    "owner-descriptor",
+                    "owner-descriptor-sidecar",
+                    "release-manifest",
+                    "compilation-protocol",
+                    "runtime-protocol",
+                    "compilation-service",
+                    "runtime-service",
+                },
+            )
+            package_manifest = Path(package["root"]) / package["manifest"]
+            before = package_manifest.read_bytes()
+            repeated = self.qualification.package_release(
+                root,
+                output_dir=Path(package_dir),
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                run_gates=False,
+            )
+            self.assertEqual(repeated["package"]["manifest_digest"], package["manifest_digest"])
+            self.assertEqual(package_manifest.read_bytes(), before)
+            (Path(package["root"]) / "target/release/apxm-runtime-service").write_bytes(b"tampered")
+            with self.assertRaisesRegex(ValueError, "immutable release package file"):
+                self.qualification.package_release(
+                    root,
+                    output_dir=Path(package_dir),
+                    compilation_service_path=str(artifacts["compilation-service"]),
+                    runtime_service_path=str(artifacts["runtime-service"]),
+                    run_gates=False,
+                )
+
     def test_dekk_manifest_exposes_owner_qualification_commands(self) -> None:
         import tomllib
 
         manifest = tomllib.loads((ROOT / ".dekk.toml").read_text(encoding="utf-8"))
         commands = manifest["commands"]
         self.assertIn("release-qualification", commands)
+        self.assertIn("package-release", commands)
         self.assertIn("release-descriptors", commands)
         self.assertIn("release_qualification.py", commands["release-qualification"]["run"])
         descriptor_command = commands["release-descriptors"]["run"]
