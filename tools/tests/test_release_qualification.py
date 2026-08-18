@@ -415,6 +415,128 @@ class ReleaseQualificationTests(unittest.TestCase):
                     run_gates=False,
                 )
 
+    def test_consumer_verification_accepts_exact_package_and_emits_neutral_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, tempfile.TemporaryDirectory() as package_dir:
+            root = Path(temporary)
+            revision, artifacts = make_clean_owner_checkout(root)
+            self.qualification.generate_descriptors(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                output_dir=root,
+                source_revision=revision,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "add", "deploy", "contracts"],
+                check=True,
+                env=git_environment(),
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-qm", "publish fixture"],
+                check=True,
+                env=git_environment(),
+            )
+            packaged = self.qualification.package_release(
+                root,
+                output_dir=Path(package_dir),
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                run_gates=False,
+            )
+            verified = self.qualification.verify_package(Path(package_dir))
+        self.assertTrue(verified["qualified"], verified["diagnostics"])
+        self.assertEqual(verified["qualification_scope"], "consumer-local")
+        self.assertFalse(verified["external_live_approval"])
+        self.assertEqual(
+            verified["package_manifest_digest"], packaged["package"]["manifest_digest"]
+        )
+        self.assertEqual(len(verified["verified_files"]), 8)
+
+    def test_consumer_verification_rejects_tampered_bytes_and_extra_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, tempfile.TemporaryDirectory() as package_dir:
+            root = Path(temporary)
+            revision, artifacts = make_clean_owner_checkout(root)
+            self.qualification.generate_descriptors(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                output_dir=root,
+                source_revision=revision,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "add", "deploy", "contracts"],
+                check=True,
+                env=git_environment(),
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-qm", "publish fixture"],
+                check=True,
+                env=git_environment(),
+            )
+            self.qualification.package_release(
+                root,
+                output_dir=Path(package_dir),
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                run_gates=False,
+            )
+            runtime = Path(package_dir) / "target/release/apxm-runtime-service"
+            runtime.write_bytes(b"tampered package bytes")
+            (Path(package_dir) / "unexpected.txt").write_bytes(b"extra")
+            verified = self.qualification.verify_package(Path(package_dir))
+        self.assertFalse(verified["qualified"])
+        codes = {item["code"] for item in verified["diagnostics"]}
+        self.assertIn("package-file-digest-mismatch", codes)
+        self.assertIn("package-file-set-mismatch", codes)
+
+    def test_consumer_verification_rejects_manifest_digest_rebinding(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, tempfile.TemporaryDirectory() as package_dir:
+            root = Path(temporary)
+            revision, artifacts = make_clean_owner_checkout(root)
+            self.qualification.generate_descriptors(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                output_dir=root,
+                source_revision=revision,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "add", "deploy", "contracts"],
+                check=True,
+                env=git_environment(),
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-qm", "publish fixture"],
+                check=True,
+                env=git_environment(),
+            )
+            self.qualification.package_release(
+                root,
+                output_dir=Path(package_dir),
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                run_gates=False,
+            )
+            package_manifest = Path(package_dir) / self.qualification.LOCAL_ARTIFACT_MANIFEST_REL
+            manifest = json.loads(package_manifest.read_text(encoding="utf-8"))
+            manifest["source_descriptor_digest"] = "sha256:" + "0" * 64
+            package_manifest.write_bytes(self.qualification._canonical_json(manifest))
+            verified = self.qualification.verify_package(Path(package_dir))
+        self.assertFalse(verified["qualified"])
+        codes = {item["code"] for item in verified["diagnostics"]}
+        self.assertIn("package-digest-binding-mismatch", codes)
+
+    def test_dekk_manifest_exposes_consumer_verification_command(self) -> None:
+        import tomllib
+
+        manifest = tomllib.loads((ROOT / ".dekk.toml").read_text(encoding="utf-8"))
+        command = manifest["commands"]["verify-package"]
+        self.assertEqual(
+            command["run"],
+            "python tools/scripts/release_qualification.py verify-package --json",
+        )
+        self.assertIn("consumer boundary", command["description"])
+
     def test_dekk_manifest_exposes_owner_qualification_commands(self) -> None:
         import tomllib
 

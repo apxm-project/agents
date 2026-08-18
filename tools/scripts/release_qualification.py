@@ -42,6 +42,7 @@ PROTOCOL_DESCRIPTORS = (
 )
 LOCAL_ARTIFACT_SCHEMA = "apxm.agents.local-release-artifact.v1"
 LOCAL_ARTIFACT_MANIFEST_REL = Path("apxm.agents-local-release-artifact.v1.json")
+CONSUMER_VERIFICATION_SCHEMA = "apxm.agents.release-consumer-verification.v1"
 
 SOURCE_DESCRIPTOR_SCHEMA = "apxm.agents-source-revision.v1"
 OWNER_DESCRIPTOR_SCHEMA = "apxm.agents-owner-descriptor.v1"
@@ -1242,6 +1243,456 @@ def package_release(
     return payload
 
 
+def verify_package(package_dir: Path) -> dict[str, Any]:
+    """Verify one packaged release from the consumer side of the boundary."""
+
+    root = package_dir.expanduser().resolve()
+    diagnostics: list[Diagnostic] = []
+    manifest_path = root / LOCAL_ARTIFACT_MANIFEST_REL
+    manifest_file = _resolve_regular_file(root, manifest_path)
+    package_manifest_digest: str | None = None
+    manifest: dict[str, Any] | None = None
+    if manifest_file is None:
+        diagnostics.append(
+            Diagnostic(
+                "missing-package-manifest",
+                f"consumer release package manifest is not a regular file: {LOCAL_ARTIFACT_MANIFEST_REL}",
+                "provide the exact immutable package produced by the APXM owner release packager",
+            )
+        )
+    else:
+        try:
+            manifest_bytes = manifest_file.read_bytes()
+            package_manifest_digest = _digest_bytes(manifest_bytes)
+            decoded = json.loads(manifest_bytes)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            diagnostics.append(
+                Diagnostic(
+                    "invalid-package-manifest",
+                    f"consumer release package manifest is not canonical UTF-8 JSON ({error})",
+                    "restore the exact package manifest emitted by the APXM owner release packager",
+                )
+            )
+        else:
+            if not isinstance(decoded, dict):
+                diagnostics.append(
+                    Diagnostic(
+                        "invalid-package-manifest",
+                        "consumer release package manifest root must be a JSON object",
+                        "restore the exact package manifest emitted by the APXM owner release packager",
+                    )
+                )
+            else:
+                manifest = decoded
+                if manifest_bytes != _canonical_json(manifest):
+                    diagnostics.append(
+                        Diagnostic(
+                            "non-canonical-package-manifest",
+                            "consumer release package manifest bytes are not canonical",
+                            "regenerate or restore the package; consumer verification never normalizes identity bytes",
+                        )
+                    )
+
+    payload: dict[str, Any] = {
+        "schema": CONSUMER_VERIFICATION_SCHEMA,
+        "owner": "agents",
+        "qualification_scope": "consumer-local",
+        "external_live_approval": False,
+        "package_root": str(root),
+        "package_manifest_digest": package_manifest_digest,
+        "qualified": False,
+        "verified_files": [],
+        "diagnostics": [],
+    }
+    if manifest is None:
+        payload["diagnostics"] = [
+            {"code": item.code, "message": item.message, "remediation": item.remediation}
+            for item in diagnostics
+        ]
+        return payload
+
+    required_fields = {
+        "schema",
+        "semantic_owner",
+        "qualification_scope",
+        "external_live_approval",
+        "source_revision",
+        "source_descriptor_digest",
+        "owner_descriptor_digest",
+        "release_manifest_digest",
+        "protocol_descriptors",
+        "files",
+    }
+    unknown = sorted(set(manifest) - required_fields)
+    missing = sorted(required_fields - set(manifest))
+    if unknown or missing:
+        diagnostics.append(
+            Diagnostic(
+                "invalid-package-schema",
+                "consumer release package manifest has missing or unknown fields"
+                + (f" (missing: {', '.join(missing)})" if missing else "")
+                + (f" (unknown: {', '.join(unknown)})" if unknown else ""),
+                "restore the exact APXM local release artifact schema",
+            )
+        )
+    if manifest.get("schema") != LOCAL_ARTIFACT_SCHEMA:
+        diagnostics.append(
+            Diagnostic(
+                "invalid-package-schema",
+                "consumer release package manifest schema is not the APXM local release artifact schema",
+                "restore the exact APXM local release artifact schema",
+            )
+        )
+    if manifest.get("semantic_owner") != "agents":
+        diagnostics.append(
+            Diagnostic(
+                "invalid-package-owner",
+                "consumer release package manifest is not owned by agents",
+                "consume an APXM Agents release package, not an untrusted or foreign artifact",
+            )
+        )
+    if manifest.get("qualification_scope") != "owner-local" or manifest.get("external_live_approval") is not False:
+        diagnostics.append(
+            Diagnostic(
+                "invalid-package-scope",
+                "consumer release package does not carry the neutral owner-local scope",
+                "publish a package with owner-local qualification and no external approval claim",
+            )
+        )
+    source_revision = manifest.get("source_revision")
+    if not isinstance(source_revision, str) or not HEX40.fullmatch(source_revision):
+        diagnostics.append(
+            Diagnostic(
+                "invalid-package-source",
+                "consumer release package source_revision is not a full lowercase Git revision",
+                "package the exact immutable APXM source cohort",
+            )
+        )
+    for field in (
+        "source_descriptor_digest",
+        "owner_descriptor_digest",
+        "release_manifest_digest",
+    ):
+        if not isinstance(manifest.get(field), str) or not DIGEST.fullmatch(manifest[field]):
+            diagnostics.append(
+                Diagnostic(
+                    "invalid-package-digest",
+                    f"consumer release package {field} is not a sha256 digest",
+                    "restore the exact package manifest emitted by the APXM owner release packager",
+                )
+            )
+
+    file_entries = manifest.get("files")
+    by_name: dict[str, dict[str, Any]] = {}
+    by_path: dict[str, dict[str, Any]] = {}
+    if not isinstance(file_entries, list):
+        diagnostics.append(
+            Diagnostic(
+                "invalid-package-files",
+                "consumer release package files must be an array",
+                "restore the exact package file inventory emitted by the APXM owner release packager",
+            )
+        )
+        file_entries = []
+    for index, entry in enumerate(file_entries):
+        if not isinstance(entry, dict):
+            diagnostics.append(
+                Diagnostic(
+                    "invalid-package-files",
+                    f"consumer release package files[{index}] must be an object",
+                    "restore the exact package file inventory emitted by the APXM owner release packager",
+                )
+            )
+            continue
+        name = entry.get("name")
+        path = entry.get("path")
+        digest = entry.get("digest")
+        if (
+            not isinstance(name, str)
+            or not isinstance(path, str)
+            or not SAFE_RELATIVE_PATH.fullmatch(path)
+            or not isinstance(digest, str)
+            or not DIGEST.fullmatch(digest)
+        ):
+            diagnostics.append(
+                Diagnostic(
+                    "invalid-package-files",
+                    f"consumer release package files[{index}] has an invalid name, path, or digest",
+                    "restore the exact package file inventory emitted by the APXM owner release packager",
+                )
+            )
+            continue
+        allowed_fields = {"name", "path", "digest"}
+        if name in {service_name for service_name, _ in SERVICE_ARTIFACTS}:
+            allowed_fields |= {"executable", "bytes"}
+        if set(entry) != allowed_fields:
+            diagnostics.append(
+                Diagnostic(
+                    "invalid-package-files",
+                    f"consumer release package files[{index}] has fields outside its declared file kind",
+                    "restore the exact package file inventory emitted by the APXM owner release packager",
+                )
+            )
+            continue
+        if name in {service_name for service_name, _ in SERVICE_ARTIFACTS} and (
+            entry.get("executable") is not True
+            or not isinstance(entry.get("bytes"), int)
+            or entry["bytes"] < 0
+        ):
+            diagnostics.append(
+                Diagnostic(
+                    "invalid-package-service",
+                    f"consumer release package service entry {name!r} does not bind executable bytes",
+                    "restore the exact executable service entry emitted by the APXM owner release packager",
+                )
+            )
+            continue
+        if name in by_name or path in by_path:
+            diagnostics.append(
+                Diagnostic(
+                    "duplicate-package-file",
+                    f"consumer release package repeats file identity {name!r} or path {path!r}",
+                    "package each release input exactly once",
+                )
+            )
+            continue
+        by_name[name] = entry
+        by_path[path] = entry
+
+    expected_names = {
+        "source-descriptor",
+        "owner-descriptor",
+        "owner-descriptor-sidecar",
+        "release-manifest",
+        "compilation-protocol",
+        "runtime-protocol",
+        "compilation-service",
+        "runtime-service",
+    }
+    if set(by_name) != expected_names:
+        diagnostics.append(
+            Diagnostic(
+                "invalid-package-files",
+                "consumer release package does not contain exactly the eight required owner and service files",
+                "package the source, owner, sidecar, manifest, protocol, and two service files exactly once",
+            )
+        )
+
+    actual_paths: set[str] = set()
+    if root.is_symlink() or not root.is_dir():
+        diagnostics.append(
+            Diagnostic(
+                "invalid-package-root",
+                "consumer release package root is not a regular directory",
+                "provide a regular package directory under consumer control",
+            )
+        )
+    elif root.exists():
+        for candidate in root.rglob("*"):
+            if candidate.is_symlink():
+                diagnostics.append(
+                    Diagnostic(
+                        "package-symlink",
+                        f"consumer release package contains a symlink: {candidate.relative_to(root).as_posix()}",
+                        "materialize regular package files; symlinks cannot carry release identity",
+                    )
+                )
+            elif candidate.is_file():
+                actual_paths.add(candidate.relative_to(root).as_posix())
+    expected_paths = set(by_path) | {LOCAL_ARTIFACT_MANIFEST_REL.as_posix()}
+    if actual_paths != expected_paths:
+        diagnostics.append(
+            Diagnostic(
+                "package-file-set-mismatch",
+                "consumer release package contains missing or extra files outside its immutable manifest",
+                "restore the exact write-once package file set",
+            )
+        )
+
+    for path, entry in by_path.items():
+        candidate = _resolve_regular_file(root, root / path)
+        if candidate is None:
+            diagnostics.append(
+                Diagnostic(
+                    "missing-package-file",
+                    f"consumer release package file is not a regular file: {path}",
+                    "restore the exact package file named by the immutable manifest",
+                )
+            )
+            continue
+        digest = _digest_file(candidate)
+        if digest != entry["digest"]:
+            diagnostics.append(
+                Diagnostic(
+                    "package-file-digest-mismatch",
+                    f"consumer release package bytes do not match the immutable digest: {path}",
+                    "discard the tampered package and obtain the exact owner-produced release artifact",
+                )
+            )
+            continue
+        if entry.get("executable") is True:
+            if not os.access(candidate, os.X_OK):
+                diagnostics.append(
+                    Diagnostic(
+                        "package-service-not-executable",
+                        f"consumer release package service is not executable: {path}",
+                        "restore executable permission without changing the service bytes, or obtain a fresh package",
+                    )
+                )
+            if entry.get("bytes") != candidate.stat().st_size:
+                diagnostics.append(
+                    Diagnostic(
+                        "package-service-size-mismatch",
+                        f"consumer release package service byte count is not bound: {path}",
+                        "restore the exact service bytes described by the package manifest",
+                    )
+                )
+        payload["verified_files"].append({"path": path, "digest": digest})
+
+    digest_bindings = {
+        "source_descriptor_digest": "source-descriptor",
+        "owner_descriptor_digest": "owner-descriptor",
+        "release_manifest_digest": "release-manifest",
+    }
+    for field, name in digest_bindings.items():
+        if manifest.get(field) != by_name.get(name, {}).get("digest"):
+            diagnostics.append(
+                Diagnostic(
+                    "package-digest-binding-mismatch",
+                    f"consumer package {field} does not match the corresponding package file digest",
+                    "restore the exact package manifest and its descriptor cohort",
+                )
+            )
+
+    protocol_descriptors = manifest.get("protocol_descriptors")
+    if not isinstance(protocol_descriptors, dict) or set(protocol_descriptors) != {
+        "compilation-protocol",
+        "runtime-protocol",
+    }:
+        diagnostics.append(
+            Diagnostic(
+                "invalid-package-protocols",
+                "consumer package protocol_descriptors does not name exactly the Compilation and Runtime protocols",
+                "restore the exact protocol descriptor bindings from the owner release packager",
+            )
+        )
+    else:
+        for name, _ in PROTOCOL_DESCRIPTORS:
+            descriptor = protocol_descriptors.get(name)
+            file_entry = by_name.get(name)
+            if (
+                not isinstance(descriptor, dict)
+                or set(descriptor) != {"path", "digest"}
+                or not isinstance(file_entry, dict)
+                or descriptor.get("path") != file_entry.get("path")
+                or descriptor.get("digest") != file_entry.get("digest")
+            ):
+                diagnostics.append(
+                    Diagnostic(
+                        "package-protocol-binding-mismatch",
+                        f"consumer package protocol binding does not match its immutable file entry: {name}",
+                        "restore the exact protocol descriptor bindings from the owner release packager",
+                    )
+                )
+
+    source_file = _resolve_regular_file(root, root / str(by_name.get("source-descriptor", {}).get("path", "")))
+    owner_file = _resolve_regular_file(root, root / str(by_name.get("owner-descriptor", {}).get("path", "")))
+    sidecar_file = _resolve_regular_file(root, root / str(by_name.get("owner-descriptor-sidecar", {}).get("path", "")))
+    release_file = _resolve_regular_file(root, root / str(by_name.get("release-manifest", {}).get("path", "")))
+    source = _load_json(root, source_file, diagnostics, "package source descriptor") if source_file else None
+    owner = _load_json(root, owner_file, diagnostics, "package owner descriptor") if owner_file else None
+    release = _load_json(root, release_file, diagnostics, "package release manifest") if release_file else None
+    if source is not None:
+        if (
+            set(source) != {"schema_version", "semantic_owner", "selection", "source_revision"}
+            or source.get("schema_version") != SOURCE_DESCRIPTOR_SCHEMA
+            or source.get("semantic_owner") != "agents"
+            or source.get("selection") != "immutable-source-cohort"
+            or source.get("source_revision") != source_revision
+        ):
+            diagnostics.append(
+                Diagnostic(
+                    "package-source-binding-mismatch",
+                    "consumer package source descriptor does not bind the package source revision",
+                    "restore the exact source descriptor from the owner release cohort",
+                )
+            )
+    if owner is not None:
+        if (
+            set(owner) != {
+                "schema_version",
+                "semantic_owner",
+                "source_revision",
+                "source_descriptor_digest",
+                "artifact_kind",
+                "compilation_protocol",
+                "runtime_protocol",
+            }
+            or owner.get("schema_version") != OWNER_DESCRIPTOR_SCHEMA
+            or owner.get("semantic_owner") != "agents"
+            or owner.get("source_revision") != source_revision
+            or owner.get("source_descriptor_digest") != manifest.get("source_descriptor_digest")
+            or owner.get("artifact_kind") != ARTIFACT_KIND
+            or owner.get("compilation_protocol") != COMPILATION_PROTOCOL_VERSION
+            or owner.get("runtime_protocol") != RUNTIME_PROTOCOL_VERSION
+        ):
+            diagnostics.append(
+                Diagnostic(
+                    "package-owner-binding-mismatch",
+                    "consumer package owner descriptor does not bind the package source and protocols",
+                    "restore the exact owner descriptor from the owner release cohort",
+                )
+            )
+    if sidecar_file is not None and _sidecar_digest(sidecar_file) != manifest.get("owner_descriptor_digest"):
+        diagnostics.append(
+            Diagnostic(
+                "package-sidecar-mismatch",
+                "consumer package owner descriptor sidecar does not match the package owner descriptor digest",
+                "restore the exact sidecar from the owner release cohort",
+            )
+        )
+    if release is not None:
+        service_files = {
+            name: root / str(by_name.get(name, {}).get("path", ""))
+            for name, _ in SERVICE_ARTIFACTS
+        }
+        artifact_digests = {
+            name: str(by_name.get(name, {}).get("digest", ""))
+            for name, _ in SERVICE_ARTIFACTS
+        }
+        _validate_release_manifest(
+            root,
+            release,
+            source_revision=source_revision if isinstance(source_revision, str) else None,
+            owner_descriptor_digest=manifest.get("owner_descriptor_digest")
+            if isinstance(manifest.get("owner_descriptor_digest"), str)
+            else None,
+            artifacts=service_files,
+            artifact_digests=artifact_digests,
+            diagnostics=diagnostics,
+        )
+        release_digest_matches = (
+            release_file is not None
+            and _digest_file(release_file) == manifest.get("release_manifest_digest")
+        )
+        if not release_digest_matches:
+            diagnostics.append(
+                Diagnostic(
+                    "package-release-manifest-digest-mismatch",
+                    "consumer package release manifest digest is not bound to its exact bytes",
+                    "restore the exact release manifest from the owner release cohort",
+                )
+            )
+
+    payload["source_revision"] = source_revision
+    payload["qualified"] = not diagnostics
+    payload["diagnostics"] = [
+        {"code": item.code, "message": item.message, "remediation": item.remediation}
+        for item in diagnostics
+    ]
+    return payload
+
+
 def _print_result(result: Qualification, *, as_json: bool, root: Path = REPOSITORY_ROOT) -> None:
     root = root.resolve()
     payload = _package_payload(result, root)
@@ -1283,6 +1734,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     package_parser.add_argument("--runtime-service")
     package_parser.add_argument("--skip-gates", action="store_true")
     package_parser.add_argument("--json", action="store_true", dest="as_json")
+    verify_parser = subparsers.add_parser(
+        "verify-package", help="verify one immutable local service release package as a consumer"
+    )
+    verify_parser.add_argument(
+        "--package-dir", type=Path, default=Path(".apxm/release-artifacts/current")
+    )
+    verify_parser.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args(list(argv) if argv is not None else None)
     mode = args.mode or "qualify"
     if mode == "generate":
@@ -1325,6 +1783,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             print(
                 "APXM local release artifact qualification: "
+                + ("PASS" if payload.get("qualified") else "FAIL")
+            )
+            for diagnostic in payload.get("diagnostics", []):
+                print(
+                    f"[{diagnostic.get('code')}] {diagnostic.get('message')}",
+                    file=sys.stderr,
+                )
+        return 0 if payload.get("qualified") else 1
+    if mode == "verify-package":
+        payload = verify_package(args.package_dir)
+        if args.as_json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(
+                "APXM consumer release package verification: "
                 + ("PASS" if payload.get("qualified") else "FAIL")
             )
             for diagnostic in payload.get("diagnostics", []):
