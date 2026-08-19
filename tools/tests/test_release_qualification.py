@@ -234,11 +234,9 @@ class ReleaseQualificationTests(unittest.TestCase):
                 target = external_root / artifact.name
                 target.write_bytes(artifact.read_bytes())
                 target.chmod(0o755)
-                bound[
-                    "CLIC_APXM_COMPILATION_SERVICE"
-                    if name == "compilation-service"
-                    else "CLIC_APXM_RUNTIME_SERVICE"
-                ] = f"{target}@{self.qualification._digest_file(target)}"
+                bound[self.qualification.SERVICE_COORDINATE_ENV[name]] = (
+                    f"{target}@{self.qualification._digest_file(target)}"
+                )
             # The host-native checkout no longer contains the published bytes;
             # only the exact external coordinates satisfy the manifest.
             artifacts["compilation-service"].write_bytes(b"host-native rebuild")

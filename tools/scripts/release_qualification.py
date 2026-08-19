@@ -55,6 +55,10 @@ SERVICE_ARTIFACTS = (
     ("compilation-service", "apxm-compilation-service"),
     ("runtime-service", "apxm-runtime-service"),
 )
+SERVICE_COORDINATE_ENV = {
+    "compilation-service": "APXM_COMPILATION_SERVICE",
+    "runtime-service": "APXM_RUNTIME_SERVICE",
+}
 
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -290,11 +294,7 @@ def _rooted_path(root: Path, raw: str | Path) -> Path:
 def _external_service_binding(name: str) -> Path | None:
     """Return an exact externally materialized service artifact, if bound."""
 
-    environment_name = (
-        "CLIC_APXM_COMPILATION_SERVICE"
-        if name == "compilation-service"
-        else "CLIC_APXM_RUNTIME_SERVICE"
-    )
+    environment_name = SERVICE_COORDINATE_ENV[name]
     value = os.environ.get(environment_name, "").strip()
     match = re.fullmatch(r"(.+)@(sha256:[0-9a-f]{64})", value)
     if match is None:
