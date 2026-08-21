@@ -59,6 +59,9 @@ SERVICE_COORDINATE_ENV = {
     "compilation-service": "APXM_COMPILATION_SERVICE",
     "runtime-service": "APXM_RUNTIME_SERVICE",
 }
+LINUX_X86_64_ELF_CLASS = 2
+LINUX_X86_64_ELF_DATA = 1
+LINUX_X86_64_MACHINE = 62
 
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -1693,6 +1696,69 @@ def verify_package(package_dir: Path) -> dict[str, Any]:
     return payload
 
 
+def verify_linux_package(package_dir: Path) -> dict[str, Any]:
+    """Verify that a consumer package contains Linux x86_64 service bytes."""
+
+    payload = verify_package(package_dir)
+    if payload.get("qualified") is not True:
+        return payload
+
+    root = package_dir.expanduser().resolve()
+    manifest_path = root / LOCAL_ARTIFACT_MANIFEST_REL
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        # The base verifier already reports the authoritative manifest error.
+        return payload
+
+    diagnostics: list[dict[str, str]] = list(payload.get("diagnostics", []))
+    files = manifest.get("files") if isinstance(manifest, dict) else None
+    service_files = {
+        entry.get("name"): entry.get("path")
+        for entry in files
+        if isinstance(entry, dict)
+        and entry.get("name") in {name for name, _ in SERVICE_ARTIFACTS}
+    } if isinstance(files, list) else {}
+    for name, _ in SERVICE_ARTIFACTS:
+        relative = service_files.get(name)
+        if not isinstance(relative, str):
+            continue
+        artifact = root / relative
+        try:
+            header = artifact.read_bytes()[:20]
+        except OSError:
+            continue
+        if (
+            len(header) < 20
+            or header[:4] != b"\x7fELF"
+            or header[4] != LINUX_X86_64_ELF_CLASS
+            or header[5] != LINUX_X86_64_ELF_DATA
+            or header[6] != 1
+        ):
+            diagnostics.append(
+                {
+                    "code": "non-linux-service-artifact",
+                    "message": f"consumer package {name!r} is not a Linux ELF executable: {relative}",
+                    "remediation": "obtain the exact APXM Linux x86_64 service package for the declared source revision; a host-native build is not sufficient",
+                }
+            )
+            continue
+        machine = int.from_bytes(header[18:20], byteorder="little")
+        if machine != LINUX_X86_64_MACHINE:
+            diagnostics.append(
+                {
+                    "code": "unsupported-linux-service-architecture",
+                    "message": f"consumer package {name!r} is Linux ELF but not x86_64 (e_machine={machine}): {relative}",
+                    "remediation": "obtain the exact APXM Linux x86_64 service package required by the runtime owner",
+                }
+            )
+
+    payload["qualification_scope"] = "consumer-linux-x86_64"
+    payload["qualified"] = not diagnostics
+    payload["diagnostics"] = diagnostics
+    return payload
+
+
 def _print_result(result: Qualification, *, as_json: bool, root: Path = REPOSITORY_ROOT) -> None:
     root = root.resolve()
     payload = _package_payload(result, root)
@@ -1741,6 +1807,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--package-dir", type=Path, default=Path(".apxm/release-artifacts/current")
     )
     verify_parser.add_argument("--json", action="store_true", dest="as_json")
+    verify_linux_parser = subparsers.add_parser(
+        "verify-linux-package",
+        help="verify one immutable package contains Linux x86_64 service executables",
+    )
+    verify_linux_parser.add_argument(
+        "--package-dir", type=Path, default=Path(".apxm/release-artifacts/current")
+    )
+    verify_linux_parser.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args(list(argv) if argv is not None else None)
     mode = args.mode or "qualify"
     if mode == "generate":
@@ -1798,6 +1872,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             print(
                 "APXM consumer release package verification: "
+                + ("PASS" if payload.get("qualified") else "FAIL")
+            )
+            for diagnostic in payload.get("diagnostics", []):
+                print(
+                    f"[{diagnostic.get('code')}] {diagnostic.get('message')}",
+                    file=sys.stderr,
+                )
+        return 0 if payload.get("qualified") else 1
+    if mode == "verify-linux-package":
+        payload = verify_linux_package(args.package_dir)
+        if args.as_json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(
+                "APXM Linux x86_64 release package verification: "
                 + ("PASS" if payload.get("qualified") else "FAIL")
             )
             for diagnostic in payload.get("diagnostics", []):
