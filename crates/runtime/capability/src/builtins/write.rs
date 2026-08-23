@@ -1,3 +1,4 @@
+use super::fs_boundary::secure_write_under_root;
 use super::{
     canonicalize_path_or_existing_ancestor, canonicalize_policy_path, normalize_path_lexically,
     require_string_arg,
@@ -13,49 +14,6 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
 };
-use tokio::io::AsyncWriteExt;
-
-/// Atomic write with backup: writes to a temp file, then renames.
-/// If the target file already exists, a backup is created and restored on failure.
-async fn atomic_write_with_backup(path: &Path, content: &str) -> std::io::Result<()> {
-    let temp_name = format!("{}.apxm_tmp_{}", path.display(), uuid::Uuid::now_v7());
-    let temp_path = PathBuf::from(&temp_name);
-
-    // Create backup if file exists
-    let backup_path = if path.exists() {
-        let backup = PathBuf::from(format!(
-            "{}.apxm_bak_{}",
-            path.display(),
-            uuid::Uuid::now_v7()
-        ));
-        tokio::fs::copy(path, &backup).await?;
-        Some(backup)
-    } else {
-        None
-    };
-
-    // Write content to temp file
-    tokio::fs::write(&temp_path, content).await?;
-
-    // Atomic rename
-    match tokio::fs::rename(&temp_path, path).await {
-        Ok(()) => {
-            // Success - clean up backup
-            if let Some(backup) = backup_path {
-                let _ = tokio::fs::remove_file(&backup).await;
-            }
-            Ok(())
-        }
-        Err(e) => {
-            // Failure - restore backup, clean temp
-            if let Some(backup) = &backup_path {
-                let _ = tokio::fs::rename(backup, path).await;
-            }
-            let _ = tokio::fs::remove_file(&temp_path).await;
-            Err(e)
-        }
-    }
-}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WriteConfig {
@@ -84,7 +42,9 @@ impl Default for WriteConfig {
         Self {
             enabled: true,
             blocked_paths: Vec::new(),
-            allowed_paths: None,
+            // An unconstrained write capability is ambient host mutation.
+            // Hosts must explicitly provide a root (or base_directory).
+            allowed_paths: Some(Vec::new()),
             allowed_extensions: None,
             blocked_extensions: Vec::new(),
             create_directories: true,
@@ -131,6 +91,14 @@ impl WriteCapability {
         }
     }
 
+    pub fn new_with_base_directory(base_directory: PathBuf) -> Self {
+        Self::with_config(WriteConfig {
+            allowed_paths: Some(vec![base_directory.clone()]),
+            base_directory: Some(base_directory),
+            ..Default::default()
+        })
+    }
+
     pub fn safe() -> Self {
         Self::with_config(WriteConfig {
             blocked_extensions: vec![
@@ -154,6 +122,16 @@ impl WriteCapability {
             raw_path.to_path_buf()
         };
         let path = normalize_path_lexically(&path);
+        let path = if path.is_absolute() {
+            path
+        } else {
+            std::env::current_dir()
+                .map_err(|error| RuntimeError::Capability {
+                    capability: self.metadata.name.clone(),
+                    message: format!("Failed to resolve current directory: {error}"),
+                })?
+                .join(path)
+        };
 
         if let Some(base_directory) = &self.config.base_directory {
             let base_directory =
@@ -187,11 +165,58 @@ impl WriteCapability {
         Ok(path)
     }
 
+    fn secure_root_for(&self, path: &Path) -> CapabilityResult<PathBuf> {
+        let mut roots = Vec::new();
+        if let Some(base) = &self.config.base_directory {
+            roots.push(base.clone());
+        }
+        if let Some(allowed) = &self.config.allowed_paths {
+            roots.extend(allowed.iter().cloned());
+        }
+        if roots.is_empty() {
+            return Err(RuntimeError::Capability {
+                capability: self.metadata.name.clone(),
+                message: "No configured filesystem root; refusing ambient host mutation"
+                    .to_string(),
+            });
+        }
+        let requested = canonicalize_path_or_existing_ancestor(path).map_err(|error| {
+            RuntimeError::Capability {
+                capability: self.metadata.name.clone(),
+                message: format!(
+                    "Failed to resolve requested path '{}': {error}",
+                    path.display()
+                ),
+            }
+        })?;
+        roots
+            .into_iter()
+            .find_map(|root| {
+                let canonical = std::fs::canonicalize(&root).ok()?;
+                if !requested.starts_with(&canonical) {
+                    return None;
+                }
+                let absolute = if root.is_absolute() {
+                    root
+                } else {
+                    std::env::current_dir().ok()?.join(root)
+                };
+                Some(absolute)
+            })
+            .ok_or_else(|| RuntimeError::Capability {
+                capability: self.metadata.name.clone(),
+                message: format!(
+                    "Path '{}' is not inside a configured filesystem root",
+                    path.display()
+                ),
+            })
+    }
+
     fn validate_path_and_content(
         &self,
         path: &Path,
         content_len: usize,
-        append: bool,
+        _append: bool,
     ) -> CapabilityResult<()> {
         let policy_path = canonicalize_policy_path(path, &self.metadata.name, "requested")?;
         if let Some(blocked_path) = self
@@ -260,22 +285,14 @@ impl WriteCapability {
             });
         }
 
-        let effective_len = if append {
-            std::fs::metadata(path)
-                .map_or(0, |metadata| metadata.len() as usize)
-                .saturating_add(content_len)
-        } else {
-            content_len
-        };
-
         if let Some(max_file_size) = self.config.max_file_size
-            && effective_len > max_file_size
+            && content_len > max_file_size
         {
             return Err(RuntimeError::Capability {
                 capability: self.metadata.name.clone(),
                 message: format!(
                     "Content too large ({} bytes > {} bytes)",
-                    effective_len, max_file_size
+                    content_len, max_file_size
                 ),
             });
         }
@@ -309,51 +326,23 @@ impl CapabilityExecutor for WriteCapability {
         let path = self.resolve_path(file_path)?;
         self.validate_path_and_content(&path, content.len(), append)?;
 
-        if !self.config.overwrite_existing && !append && path.exists() {
-            return Err(RuntimeError::Capability {
-                capability: self.metadata.name.clone(),
-                message: "File already exists and overwrite_existing=false".to_string(),
-            });
-        }
-
-        if self.config.create_directories
-            && let Some(parent) = path.parent()
-        {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|error| RuntimeError::Capability {
-                    capability: self.metadata.name.clone(),
-                    message: format!(
-                        "Failed to create parent directory '{}': {error}",
-                        parent.display()
-                    ),
-                })?;
-        }
-
-        if append {
-            let mut file = tokio::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&path)
-                .await
-                .map_err(|error| RuntimeError::Capability {
-                    capability: self.metadata.name.clone(),
-                    message: format!("Failed to open file '{}': {error}", path.display()),
-                })?;
-            file.write_all(content.as_bytes())
-                .await
-                .map_err(|error| RuntimeError::Capability {
-                    capability: self.metadata.name.clone(),
-                    message: format!("Failed to append file '{}': {error}", path.display()),
-                })?;
-        } else {
-            atomic_write_with_backup(&path, content)
-                .await
-                .map_err(|error| RuntimeError::Capability {
-                    capability: self.metadata.name.clone(),
-                    message: format!("Failed to write file '{}': {error}", path.display()),
-                })?;
-        }
+        let root = self.secure_root_for(&path)?;
+        secure_write_under_root(
+            &root,
+            &path,
+            content.as_bytes(),
+            append,
+            self.config.create_directories,
+            self.config.overwrite_existing,
+            self.config.max_file_size,
+        )
+        .map_err(|error| RuntimeError::Capability {
+            capability: self.metadata.name.clone(),
+            message: format!(
+                "Failed to securely write file '{}': {error}",
+                path.display()
+            ),
+        })?;
 
         Ok(Value::String(format!(
             "Wrote {} bytes to {}",
@@ -370,6 +359,9 @@ impl CapabilityExecutor for WriteCapability {
 #[cfg(test)]
 mod tests {
     use super::{WriteCapability, WriteConfig};
+    use crate::executor::CapabilityExecutor;
+    use apxm_core::types::Value;
+    use std::collections::HashMap;
 
     #[test]
     fn configured_base_directory_rejects_escape_paths() {
@@ -396,5 +388,110 @@ mod tests {
 
         let path = cap.resolve_path("nested/output.txt").unwrap();
         assert!(path.starts_with(dir.path()));
+    }
+
+    #[tokio::test]
+    async fn default_writer_refuses_ambient_host_mutation() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let path = temporary.path().join("ambient.txt");
+        let error = WriteCapability::new()
+            .execute(HashMap::from([
+                (
+                    "file_path".to_owned(),
+                    Value::String(path.display().to_string()),
+                ),
+                ("content".to_owned(), Value::String("secret".to_owned())),
+            ]))
+            .await
+            .expect_err("an unconfigured writer must not mutate host paths");
+        assert!(format!("{error}").contains("Path not in allowed list"));
+        assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn configured_writer_supports_nested_atomic_write_and_append() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let capability = WriteCapability::new_with_base_directory(temporary.path().to_path_buf());
+        let args = |append: bool, content: &str| {
+            HashMap::from([
+                (
+                    "file_path".to_owned(),
+                    Value::String("nested/output.txt".to_owned()),
+                ),
+                ("content".to_owned(), Value::String(content.to_owned())),
+                ("append".to_owned(), Value::Bool(append)),
+            ])
+        };
+        capability
+            .execute(args(false, "one"))
+            .await
+            .expect("initial write");
+        capability
+            .execute(args(true, "-two"))
+            .await
+            .expect("append write");
+        assert_eq!(
+            std::fs::read_to_string(temporary.path().join("nested/output.txt")).unwrap(),
+            "one-two"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_overwrite_is_published_atomically() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let capability = WriteCapability::with_config(WriteConfig {
+            allowed_paths: Some(vec![temporary.path().to_path_buf()]),
+            base_directory: Some(temporary.path().to_path_buf()),
+            overwrite_existing: false,
+            ..Default::default()
+        });
+        let args = |content: &str| {
+            HashMap::from([
+                (
+                    "file_path".to_owned(),
+                    Value::String("output.txt".to_owned()),
+                ),
+                ("content".to_owned(), Value::String(content.to_owned())),
+            ])
+        };
+        capability
+            .execute(args("first"))
+            .await
+            .expect("initial write");
+        let error = capability
+            .execute(args("second"))
+            .await
+            .expect_err("overwrite_existing=false must reject an existing target");
+        assert!(format!("{error}").contains("securely write"));
+        assert_eq!(
+            std::fs::read_to_string(temporary.path().join("output.txt")).unwrap(),
+            "first"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn configured_writer_rejects_symlink_target_without_touching_outside() {
+        use std::os::unix::fs::symlink;
+
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let outside = tempfile::tempdir().expect("outside directory");
+        let outside_file = outside.path().join("outside.txt");
+        std::fs::write(&outside_file, "original").expect("outside file");
+        let link = temporary.path().join("link.txt");
+        symlink(&outside_file, &link).expect("target symlink");
+        let capability = WriteCapability::new_with_base_directory(temporary.path().to_path_buf());
+        let error = capability
+            .execute(HashMap::from([
+                ("file_path".to_owned(), Value::String("link.txt".to_owned())),
+                ("content".to_owned(), Value::String("overwrite".to_owned())),
+            ]))
+            .await
+            .expect_err("a symlink target must fail closed");
+        assert!(
+            format!("{error}").contains("outside base_directory")
+                || format!("{error}").contains("securely write")
+        );
+        assert_eq!(std::fs::read_to_string(outside_file).unwrap(), "original");
     }
 }

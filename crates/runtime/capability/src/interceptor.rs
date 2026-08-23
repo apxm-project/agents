@@ -6,9 +6,15 @@ use apxm_core::types::consent::{
     ConsentBroker, ConsentDecision, PermissionPrompt, PromptMode, RiskLevel,
 };
 use apxm_core::types::values::Value;
+use apxm_program::capability::CapabilityInvocationAuthority;
 use async_trait::async_trait;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
+
+const MAX_APPROVAL_PREVIEW_BYTES: usize = 8 * 1024;
+const MAX_APPROVAL_PREVIEW_DEPTH: usize = 4;
+const MAX_APPROVAL_PREVIEW_STRING_BYTES: usize = 512;
+const MAX_APPROVAL_PREVIEW_ITEMS: usize = 32;
 
 // Imported directly from the interface crate (not via `crate::ExecutionEventEmitter`,
 // which is only a re-export at the `apxm-runtime` lib root) — capability's
@@ -114,18 +120,114 @@ impl<'a> PreInvokeContext<'a> {
 
 /// Deterministic digest of capability args for consent signing.
 pub fn args_digest_for(args: &HashMap<String, Value>) -> String {
-    let json: HashMap<String, serde_json::Value> = args
+    let json: BTreeMap<String, serde_json::Value> = args
         .iter()
-        .map(|(k, v)| {
-            (
-                k.clone(),
-                v.to_json()
-                    .unwrap_or_else(|_| serde_json::Value::String(v.to_string())),
-            )
-        })
+        .map(|(k, v)| (k.clone(), canonical_arg_value(v)))
         .collect();
     let canonical = serde_json::to_string(&json).unwrap_or_default();
     format!("blake3:{}", blake3::hash(canonical.as_bytes()).to_hex())
+}
+
+fn canonical_arg_value(value: &Value) -> serde_json::Value {
+    match value {
+        Value::Array(values) => {
+            serde_json::Value::Array(values.iter().map(canonical_arg_value).collect())
+        }
+        Value::Object(values) => {
+            let mut object = serde_json::Map::new();
+            for (key, value) in values {
+                object.insert(key.clone(), canonical_arg_value(value));
+            }
+            serde_json::Value::Object(object)
+        }
+        Value::Token(id) => serde_json::json!({"$token": id}),
+        _ => value
+            .to_json()
+            .unwrap_or_else(|_| serde_json::Value::String(value.to_string())),
+    }
+}
+
+fn sensitive_preview_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    [
+        "authorization",
+        "api_key",
+        "apikey",
+        "bearer",
+        "cookie",
+        "credential",
+        "password",
+        "secret",
+        "token",
+    ]
+    .iter()
+    .any(|needle| key == *needle || key.contains(needle))
+}
+
+/// Build the only argument representation allowed into an approval prompt.
+/// Sensitive fields are replaced, nested data is bounded, and the final
+/// serialized preview has a hard byte ceiling. The full arguments remain
+/// represented by `args_digest`.
+fn redacted_bounded_preview(args: &HashMap<String, Value>) -> serde_json::Value {
+    fn sanitize(value: serde_json::Value, depth: usize) -> serde_json::Value {
+        if depth >= MAX_APPROVAL_PREVIEW_DEPTH {
+            return serde_json::json!("[REDACTED: depth limit]");
+        }
+        match value {
+            serde_json::Value::String(mut text) => {
+                if text.len() > MAX_APPROVAL_PREVIEW_STRING_BYTES {
+                    let mut limit = MAX_APPROVAL_PREVIEW_STRING_BYTES;
+                    while !text.is_char_boundary(limit) {
+                        limit -= 1;
+                    }
+                    text.truncate(limit);
+                    text.push_str("...[truncated]");
+                }
+                serde_json::Value::String(text)
+            }
+            serde_json::Value::Array(values) => serde_json::Value::Array(
+                values
+                    .into_iter()
+                    .take(MAX_APPROVAL_PREVIEW_ITEMS)
+                    .map(|value| sanitize(value, depth + 1))
+                    .collect(),
+            ),
+            serde_json::Value::Object(values) => serde_json::Value::Object(
+                values
+                    .into_iter()
+                    .take(MAX_APPROVAL_PREVIEW_ITEMS)
+                    .map(|(key, value)| {
+                        let value = if sensitive_preview_key(&key) {
+                            serde_json::json!("[REDACTED]")
+                        } else {
+                            sanitize(value, depth + 1)
+                        };
+                        (key, value)
+                    })
+                    .collect(),
+            ),
+            other => other,
+        }
+    }
+
+    let mut object = serde_json::Map::new();
+    let mut keys: Vec<_> = args.keys().collect();
+    keys.sort();
+    for key in keys.into_iter().take(MAX_APPROVAL_PREVIEW_ITEMS) {
+        let value = if sensitive_preview_key(key) {
+            serde_json::json!("[REDACTED]")
+        } else {
+            sanitize(canonical_arg_value(&args[key]), 0)
+        };
+        object.insert(key.clone(), value);
+    }
+    let preview = serde_json::Value::Object(object);
+    let encoded = serde_json::to_vec(&preview).unwrap_or_default();
+    if encoded.len() <= MAX_APPROVAL_PREVIEW_BYTES {
+        preview
+    } else {
+        serde_json::json!({"_redacted": "approval preview exceeds byte limit"})
+    }
 }
 
 /// Approval gate for capabilities declaring `requires_approval` in metadata.
@@ -169,7 +271,7 @@ pub(crate) async fn pre_invoke_policy_ctx(
 
     let prompt_id = uuid::Uuid::new_v4().to_string();
     let args_digest = args_digest_for(args);
-    let args_preview = serde_json::to_value(args).unwrap_or_else(|_| serde_json::json!({}));
+    let args_preview = redacted_bounded_preview(args);
     let expires_at = (chrono::Utc::now()
         + chrono::Duration::seconds(
             i64::try_from(ctx.permission_timeout.as_secs()).unwrap_or(i64::MAX),
@@ -324,22 +426,33 @@ pub trait CapabilityInterceptor: Send + Sync {
         InterceptDecision::allow()
     }
 
+    /// Called before an invocation that crossed the typed canonical request
+    /// boundary. The authority is a trusted projection of admission, not a
+    /// caller-controlled argument. The default preserves compatibility for
+    /// interceptors that only need the capability name and arguments.
+    async fn pre_invoke_with_authority(
+        &self,
+        name: &str,
+        args: &HashMap<String, Value>,
+        _authority: &CapabilityInvocationAuthority,
+    ) -> InterceptDecision {
+        self.pre_invoke(name, args).await
+    }
+
     /// Called after capability execution (success path).
     async fn post_invoke(&self, _name: &str, _result: &Value) {}
 }
 
-/// Permission gate registered at the trusted invoke chokepoint to complement
-/// the in-handler write boundary. It activates
-/// the `requires_auth` capability-metadata flag: a capability that declares it
-/// needs authentication but is invoked without a resolved credential is denied in
-/// strict mode, or warned about otherwise (advisory is the default so legitimate
-/// unauthenticated tools keep working). Because every tool call — both the graph
-/// `INV_CAP` path and the in-`ASK`-node model loop — funnels through
-/// `invoke_with_timeout`, this is a single always-invoked policy-enforcement
-/// point. It is composed by the trusted runtime, never by the AIR program.
+/// Permission gate registered at the trusted invoke chokepoint. A capability
+/// that declares `requires_auth` is denied unless the typed invocation carries
+/// validated authority from admission. Caller-controlled arguments (including
+/// `credential` and Authorization headers) are never proof of admission. The
+/// historical `strict` argument remains for source compatibility but is
+/// intentionally ignored: authentication cannot be advisory at an effect
+/// boundary.
 pub struct PermissionInterceptor {
     requires_auth: HashSet<String>,
-    strict: bool,
+    _strict_compat: bool,
 }
 
 impl PermissionInterceptor {
@@ -348,26 +461,8 @@ impl PermissionInterceptor {
     pub fn new(requires_auth: HashSet<String>, strict: bool) -> Self {
         Self {
             requires_auth,
-            strict,
+            _strict_compat: strict,
         }
-    }
-
-    /// Whether the call carries a resolved credential: an explicit `credential`
-    /// connection id, a top-level auth arg, or an injected
-    /// `headers.Authorization` (the provider.call resolve-and-inject shape).
-    fn args_have_credential(args: &HashMap<String, Value>) -> bool {
-        if args.contains_key("credential")
-            || args.contains_key("authorization")
-            || args.contains_key("api_key")
-        {
-            return true;
-        }
-        if let Some(Value::Object(headers)) = args.get("headers") {
-            return headers
-                .keys()
-                .any(|k| k.eq_ignore_ascii_case("authorization"));
-        }
-        false
     }
 }
 
@@ -378,18 +473,28 @@ impl CapabilityInterceptor for PermissionInterceptor {
     }
 
     async fn pre_invoke(&self, name: &str, args: &HashMap<String, Value>) -> InterceptDecision {
-        if self.requires_auth.contains(name) && !Self::args_have_credential(args) {
-            if self.strict {
-                return InterceptDecision::deny(format!(
-                    "capability '{name}' requires authentication but no credential was \
-                     resolved; bind one (e.g. `--tool-auth {name}=<connection_id>`)"
-                ));
-            }
-            tracing::warn!(
-                capability = %name,
-                "requires_auth capability invoked without a resolved credential \
-                 (advisory; set APXM_REQUIRE_AUTH_STRICT=1 to enforce)"
-            );
+        let _ = args;
+        if self.requires_auth.contains(name) {
+            return InterceptDecision::deny(format!(
+                "capability '{name}' requires typed invocation authority from admission"
+            ));
+        }
+        InterceptDecision::allow()
+    }
+
+    async fn pre_invoke_with_authority(
+        &self,
+        name: &str,
+        _args: &HashMap<String, Value>,
+        authority: &CapabilityInvocationAuthority,
+    ) -> InterceptDecision {
+        if !self.requires_auth.contains(name) {
+            return InterceptDecision::allow();
+        }
+        if let Err(error) = authority.validate() {
+            return InterceptDecision::deny(format!(
+                "capability '{name}' carries invalid invocation authority: {error}"
+            ));
         }
         InterceptDecision::allow()
     }
@@ -490,6 +595,84 @@ mod tests {
             }
         }
         Arc::new(GatedEcho { meta })
+    }
+
+    #[test]
+    fn consent_argument_digest_is_order_independent() {
+        let mut first = HashMap::new();
+        first.insert("b".to_string(), Value::String("two".to_string()));
+        first.insert("a".to_string(), Value::String("one".to_string()));
+        let mut second = HashMap::new();
+        second.insert("a".to_string(), Value::String("one".to_string()));
+        second.insert("b".to_string(), Value::String("two".to_string()));
+        assert_eq!(args_digest_for(&first), args_digest_for(&second));
+
+        let mut nested_first = HashMap::new();
+        nested_first.insert("b".to_string(), Value::String("two".to_string()));
+        nested_first.insert("a".to_string(), Value::String("one".to_string()));
+        let mut nested_second = HashMap::new();
+        nested_second.insert("a".to_string(), Value::String("one".to_string()));
+        nested_second.insert("b".to_string(), Value::String("two".to_string()));
+        let mut outer_first = HashMap::new();
+        outer_first.insert("nested".to_string(), Value::Object(nested_first));
+        let mut outer_second = HashMap::new();
+        outer_second.insert("nested".to_string(), Value::Object(nested_second));
+        assert_eq!(
+            args_digest_for(&outer_first),
+            args_digest_for(&outer_second)
+        );
+    }
+
+    #[tokio::test]
+    async fn auth_interceptor_requires_typed_authority_not_caller_arguments() {
+        let interceptor = PermissionInterceptor::new(HashSet::from(["provider".to_owned()]), true);
+        let caller_args = HashMap::from([(
+            "credential".to_owned(),
+            Value::String("caller-controlled".to_owned()),
+        )]);
+        let denied = interceptor.pre_invoke("provider", &caller_args).await;
+        assert!(denied.denial_reason().is_some());
+
+        let authority = CapabilityInvocationAuthority::new(
+            "principal.user.1",
+            "agent.identity.1",
+            "grant.provider.1",
+            Vec::new(),
+        )
+        .expect("valid authority");
+        let allowed = interceptor
+            .pre_invoke_with_authority("provider", &caller_args, &authority)
+            .await;
+        assert_eq!(allowed, InterceptDecision::allow());
+    }
+
+    #[test]
+    fn approval_preview_redacts_credentials_and_is_bounded() {
+        let args = HashMap::from([
+            (
+                "credential".to_owned(),
+                Value::String("connection-secret-id".to_owned()),
+            ),
+            (
+                "headers".to_owned(),
+                Value::Object(HashMap::from([(
+                    "Authorization".to_owned(),
+                    Value::String("Bearer super-secret".to_owned()),
+                )])),
+            ),
+            (
+                "body".to_owned(),
+                Value::String("x".repeat(MAX_APPROVAL_PREVIEW_STRING_BYTES + 100)),
+            ),
+        ]);
+        let preview = redacted_bounded_preview(&args);
+        let wire = serde_json::to_vec(&preview).expect("preview serializes");
+        assert!(wire.len() <= MAX_APPROVAL_PREVIEW_BYTES);
+        let text = String::from_utf8(wire).expect("preview is UTF-8");
+        assert!(!text.contains("connection-secret-id"));
+        assert!(!text.contains("super-secret"));
+        assert!(text.contains("[REDACTED]"));
+        assert!(text.contains("truncated"));
     }
 
     /// The chokepoint that gates every capability invocation can say exactly

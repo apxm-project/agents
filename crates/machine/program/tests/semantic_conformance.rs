@@ -3,6 +3,10 @@
 //! from the owning schemas.
 
 mod common;
+#[path = "common/published.rs"]
+mod published;
+#[path = "common/schema_enum.rs"]
+mod schema_enum;
 
 use std::collections::{BTreeSet, HashSet};
 
@@ -15,7 +19,9 @@ use apxm_program::source_map::{RegionAnnotationKind, SourceLanguage};
 use apxm_program::{
     FrontendGraph, verify_air_json, verify_frontend_graph_json, verify_source_map_json,
 };
-use common::{Vector, load_contract, load_vectors, published_contract_files, schema_enum};
+use common::{Vector, load_contract, load_vectors};
+use published::published_contract_files;
+use schema_enum::schema_enum;
 use serde_json::Value;
 use serde_json::json;
 

@@ -5,17 +5,24 @@
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore};
 
 use apxm_runtime_protocol::{
     RUNTIME_PROTOCOL_VERSION, RuntimeHandshake, RuntimeRequest, RuntimeResult,
 };
 use apxm_runtime_service::RuntimeService;
+
+pub const READ_CHUNK_BYTES: usize = 8 * 1024;
+pub const MAX_REQUEST_BYTES: usize = 8 * 1024 * 1024;
+pub const HTTP_IO_TIMEOUT_MS: u64 = 5_000;
+pub const MAX_IN_FLIGHT_CONNECTIONS: usize = 32;
 
 /// Published serving alias. Source packages are not accepted.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -164,16 +171,19 @@ fn invoke_alias(
     ) {
         Ok(RuntimeResult::ProgramInstanceCreated {
             program_instance_id,
+            owner_claim,
             ..
-        }) => program_instance_id,
+        }) => (program_instance_id, owner_claim),
         Ok(other) => return (400, json!({"error": format!("{other:?}")})),
         Err(error) => return (400, json!({"error": format!("{error:?}")})),
     };
+    let (created, owner_claim) = created;
     match service.handle(
         &handshake,
         RuntimeRequest::ProgramInvocationStart {
             request_id: "openai.invoke".to_owned(),
             program_instance_id: created.clone(),
+            owner_claim,
             input: json!({}),
         },
     ) {
@@ -203,36 +213,181 @@ pub async fn serve_loopback(
     let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
         .await
         .map_err(|error| error.to_string())?;
-    let state = Mutex::new(service);
+    let state = Arc::new(Mutex::new(service));
+    let permits = Arc::new(Semaphore::new(MAX_IN_FLIGHT_CONNECTIONS));
     loop {
-        let (mut stream, _) = listener.accept().await.map_err(|error| error.to_string())?;
-        let mut buf = vec![0_u8; 8192];
-        let n = stream
-            .read(&mut buf)
+        let (stream, _) = listener.accept().await.map_err(|error| error.to_string())?;
+        let Ok(permit) = permits.clone().try_acquire_owned() else {
+            continue;
+        };
+        let state = Arc::clone(&state);
+        let aliases = map.clone();
+        tokio::spawn(async move {
+            let _permit = permit;
+            let mut stream = stream;
+            let Ok(Ok(bytes)) = tokio::time::timeout(
+                Duration::from_millis(HTTP_IO_TIMEOUT_MS),
+                read_request(&mut stream),
+            )
             .await
-            .map_err(|error| error.to_string())?;
-        let request = String::from_utf8_lossy(&buf[..n]);
-        let body = request
-            .rsplit("\r\n\r\n")
-            .next()
-            .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
-            .unwrap_or_else(|| json!({}));
-        let start = request.split("\r\n").next().unwrap_or_default();
-        let mut parts = start.split_whitespace();
-        let method = parts.next().unwrap_or("POST");
-        let path = parts.next().unwrap_or("/v1/responses");
-        let mut service = state.lock().await;
-        let (status, payload) = dispatch(&mut service, &map, method, path, &body);
-        let body = serde_json::to_string(&payload).map_err(|error| error.to_string())?;
-        let response = format!(
-            "HTTP/1.1 {status} OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{body}",
-            body.len()
-        );
-        stream
-            .write_all(response.as_bytes())
-            .await
-            .map_err(|error| error.to_string())?;
+            else {
+                return;
+            };
+            let Ok(request) = parse_request(&bytes) else {
+                return;
+            };
+            let Ok(body) = serde_json::from_str::<Value>(request.body) else {
+                return;
+            };
+            let (status, payload) = {
+                let mut service = state.lock().await;
+                dispatch(&mut service, &aliases, request.method, request.path, &body)
+            };
+            let Ok(response) = encode_response(status, &payload) else {
+                return;
+            };
+            let _ = tokio::time::timeout(
+                Duration::from_millis(HTTP_IO_TIMEOUT_MS),
+                stream.write_all(response.as_bytes()),
+            )
+            .await;
+        });
     }
+}
+
+struct HttpRequest<'a> {
+    method: &'a str,
+    path: &'a str,
+    body: &'a str,
+}
+
+fn content_length(header: &str) -> Result<usize, String> {
+    let mut length = None;
+    for line in header.lines().skip(1) {
+        let Some((name, value)) = line.split_once(':') else {
+            return Err("invalid HTTP header".to_owned());
+        };
+        if name.eq_ignore_ascii_case("transfer-encoding")
+            && !value.trim().eq_ignore_ascii_case("identity")
+        {
+            return Err("chunked transfer encoding is not supported".to_owned());
+        }
+        if name.eq_ignore_ascii_case("content-length") {
+            if length.is_some() {
+                return Err("duplicate content-length header".to_owned());
+            }
+            length = Some(
+                value
+                    .trim()
+                    .parse::<usize>()
+                    .map_err(|_| "invalid content-length header".to_owned())?,
+            );
+        }
+    }
+    Ok(length.unwrap_or(0))
+}
+
+fn parse_request(bytes: &[u8]) -> Result<HttpRequest<'_>, String> {
+    let marker = b"\r\n\r\n";
+    let header_end = bytes
+        .windows(marker.len())
+        .position(|window| window == marker)
+        .ok_or_else(|| "HTTP headers are incomplete".to_owned())?;
+    let header = std::str::from_utf8(&bytes[..header_end])
+        .map_err(|_| "HTTP headers are not valid UTF-8".to_owned())?;
+    let mut parts = header
+        .lines()
+        .next()
+        .ok_or_else(|| "HTTP request line is missing".to_owned())?
+        .split_whitespace();
+    let method = parts
+        .next()
+        .ok_or_else(|| "HTTP method is missing".to_owned())?;
+    let path = parts
+        .next()
+        .ok_or_else(|| "HTTP path is missing".to_owned())?;
+    let version = parts
+        .next()
+        .ok_or_else(|| "HTTP version is missing".to_owned())?;
+    if parts.next().is_some() || !matches!(version, "HTTP/1.0" | "HTTP/1.1") {
+        return Err("invalid HTTP request line".to_owned());
+    }
+    let body_len = content_length(header)?;
+    let body_start = header_end + marker.len();
+    let body_end = body_start
+        .checked_add(body_len)
+        .filter(|length| *length <= MAX_REQUEST_BYTES)
+        .ok_or_else(|| "HTTP request exceeds the request-size limit".to_owned())?;
+    if bytes.len() != body_end {
+        return Err("HTTP request body length does not match content-length".to_owned());
+    }
+    let body = std::str::from_utf8(&bytes[body_start..body_end])
+        .map_err(|_| "HTTP request body is not valid UTF-8".to_owned())?;
+    Ok(HttpRequest { method, path, body })
+}
+
+async fn read_request(stream: &mut tokio::net::TcpStream) -> Result<Vec<u8>, String> {
+    let marker = b"\r\n\r\n";
+    let mut bytes = Vec::with_capacity(READ_CHUNK_BYTES);
+    let header_end = loop {
+        let mut chunk = [0_u8; READ_CHUNK_BYTES];
+        let read = stream
+            .read(&mut chunk)
+            .await
+            .map_err(|error| error.to_string())?;
+        if read == 0 {
+            return Err("HTTP request ended before headers completed".to_owned());
+        }
+        bytes.extend_from_slice(&chunk[..read]);
+        if bytes.len() > MAX_REQUEST_BYTES {
+            return Err("HTTP request exceeds the request-size limit".to_owned());
+        }
+        if let Some(end) = bytes
+            .windows(marker.len())
+            .position(|window| window == marker)
+        {
+            break end;
+        }
+    };
+    let header = std::str::from_utf8(&bytes[..header_end])
+        .map_err(|_| "HTTP headers are not valid UTF-8".to_owned())?;
+    let body_len = content_length(header)?;
+    let expected = (header_end + marker.len())
+        .checked_add(body_len)
+        .filter(|length| *length <= MAX_REQUEST_BYTES)
+        .ok_or_else(|| "HTTP request exceeds the request-size limit".to_owned())?;
+    if bytes.len() > expected {
+        return Err("HTTP request contains bytes beyond its declared body".to_owned());
+    }
+    while bytes.len() < expected {
+        let remaining = expected - bytes.len();
+        let mut chunk = vec![0_u8; remaining.min(READ_CHUNK_BYTES)];
+        stream
+            .read_exact(&mut chunk)
+            .await
+            .map_err(|error| error.to_string())?;
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
+fn status_reason(status: u16) -> &'static str {
+    match status {
+        200 => "OK",
+        400 => "Bad Request",
+        404 => "Not Found",
+        500 => "Internal Server Error",
+        _ => "Unknown Status",
+    }
+}
+
+fn encode_response(status: u16, payload: &Value) -> Result<String, String> {
+    let body = serde_json::to_string(payload).map_err(|error| error.to_string())?;
+    Ok(format!(
+        "HTTP/1.1 {status} {}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+        status_reason(status),
+        body.len()
+    ))
 }
 
 #[cfg(test)]
@@ -257,10 +412,26 @@ mod tests {
     }
 
     fn committed_demo(service: &mut RuntimeService) -> BTreeMap<String, String> {
-        let digest = service.admit_artifact(
-            br#"{"schema_version":"apxm.air","semantic_operations":[],"structural_ir":[],"context_flow":[],"source_map":{"schema_version":"apxm.source-map","source_language":"python","node_spans":[],"region_annotations":[]}}"#
-                .to_vec(),
-        );
+        let bytes = br#"{"schema_version":"apxm.air","semantic_operations":[],"structural_ir":[],"context_flow":[],"source_map":{"schema_version":"apxm.source-map","source_language":"python","node_spans":[],"region_annotations":[]}}"#
+            .to_vec();
+        let digest = service.admit_artifact(bytes.clone());
+        service
+            .bind_admission_for_artifact(
+                &digest,
+                apxm_runtime_service::materials_for_artifact(
+                    &bytes,
+                    "openai.invocation.1",
+                    include_bytes!(
+                        "../../../../tools/tests/fixtures/canonical-execute.release.json"
+                    )
+                    .to_vec(),
+                    include_bytes!(
+                        "../../../../tools/tests/fixtures/canonical-execute.provenance.json"
+                    )
+                    .to_vec(),
+                ),
+            )
+            .expect("bind exact canonical admission fixture");
         let mut aliases = BTreeMap::new();
         aliases.insert("demo".to_owned(), digest);
         aliases
@@ -306,5 +477,28 @@ mod tests {
         assert_eq!(status, 200);
         assert_eq!(sse["sse"], true);
         assert_eq!(sse["choices"][0]["finish_reason"], "returned");
+    }
+
+    #[test]
+    fn request_parser_requires_exact_body_framing() {
+        let valid = b"POST /v1/responses HTTP/1.1\r\ncontent-length: 2\r\n\r\n{}";
+        let request = parse_request(valid).expect("valid request");
+        assert_eq!(request.path, "/v1/responses");
+        assert_eq!(request.body, "{}");
+        assert!(
+            parse_request(b"POST /v1/responses HTTP/1.1\r\ncontent-length: 4\r\n\r\n{}").is_err()
+        );
+        assert!(
+            parse_request(
+                b"POST /v1/responses HTTP/1.1\r\ntransfer-encoding: chunked\r\n\r\n0\r\n\r\n"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn response_status_line_preserves_error_status() {
+        let response = encode_response(404, &json!({"error": "missing"})).expect("response");
+        assert!(response.starts_with("HTTP/1.1 404 Not Found\r\n"));
     }
 }

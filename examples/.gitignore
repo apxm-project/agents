@@ -1,3 +1,3 @@
-# Example packages are intentionally source-only; the repository-level
-# ignore policy covers build outputs and Python caches.
-package-lock.json
+# Example packages keep npm lockfiles so the checked-in TypeScript toolchain
+# is reproducible. The repository-level ignore policy covers build outputs and
+# Python caches.

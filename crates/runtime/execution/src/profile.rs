@@ -27,8 +27,10 @@ use apxm_program::artifact::SchemaDigestRef;
 use crate::bundle::ExecutionPortBundle;
 use crate::driver::{
     CapturedHookBodyHandler, ExecutionError, ExecutionPorts, ExecutionRequest, RunReport,
-    StaticHookHandlerPort, execute as drive_execute, execute_resumable as drive_execute_resumable,
-    resume as drive_resume, resume_event as drive_resume_event,
+    StaticHookHandlerPort, execute_resumable_with_resource_ceilings as drive_execute_resumable,
+    execute_with_resource_ceilings as drive_execute,
+    resume_event_with_resource_ceilings as drive_resume_event,
+    resume_with_resource_ceilings as drive_resume,
 };
 use crate::ports::{CompositionPort, EventPort};
 use crate::resume::RunOutcome;
@@ -163,7 +165,8 @@ impl RuntimeProfile {
             crate::driver::ExecutionPortsError::MissingAdmittedPort(slot) => {
                 RuntimeProfileError::MissingDriverPort(slot)
             }
-        })?;
+        })?
+        .with_resource_ceilings(resource_ceilings.clone());
         Ok(Self {
             _bundle: bundle,
             ports,
@@ -192,7 +195,8 @@ impl RuntimeProfile {
             crate::driver::ExecutionPortsError::MissingAdmittedPort(slot) => {
                 RuntimeProfileError::MissingDriverPort(slot)
             }
-        })?;
+        })?
+        .with_resource_ceilings(resource_ceilings.clone());
         Ok(Self {
             _bundle: bundle,
             ports,
@@ -248,9 +252,14 @@ impl RuntimeProfile {
         }
         let max_wall_ms = self.resource_ceilings.max_wall_ms;
         enforce_wall_time(max_wall_ms, async {
-            drive_execute(&self.ports, request, initial_context)
-                .await
-                .map_err(RuntimeProfileError::Execution)
+            drive_execute(
+                &self.ports,
+                request,
+                initial_context,
+                Some(&self.resource_ceilings),
+            )
+            .await
+            .map_err(RuntimeProfileError::Execution)
         })
         .await
     }
@@ -269,9 +278,14 @@ impl RuntimeProfile {
         }
         let max_wall_ms = self.resource_ceilings.max_wall_ms;
         enforce_wall_time(max_wall_ms, async {
-            drive_execute_resumable(&self.ports, request, initial_context)
-                .await
-                .map_err(RuntimeProfileError::Execution)
+            drive_execute_resumable(
+                &self.ports,
+                request,
+                initial_context,
+                Some(&self.resource_ceilings),
+            )
+            .await
+            .map_err(RuntimeProfileError::Execution)
         })
         .await
     }
@@ -286,9 +300,14 @@ impl RuntimeProfile {
     ) -> Result<RunOutcome, RuntimeProfileError> {
         let max_wall_ms = self.resource_ceilings.max_wall_ms;
         Box::pin(enforce_wall_time(max_wall_ms, async {
-            drive_resume(&self.ports, program_instance_ref, delivered)
-                .await
-                .map_err(RuntimeProfileError::Execution)
+            drive_resume(
+                &self.ports,
+                program_instance_ref,
+                delivered,
+                Some(&self.resource_ceilings),
+            )
+            .await
+            .map_err(RuntimeProfileError::Execution)
         }))
         .await
     }
@@ -303,9 +322,15 @@ impl RuntimeProfile {
     ) -> Result<RunOutcome, RuntimeProfileError> {
         let max_wall_ms = self.resource_ceilings.max_wall_ms;
         Box::pin(enforce_wall_time(max_wall_ms, async {
-            drive_resume_event(&self.ports, program_instance_ref, event_ref, delivered)
-                .await
-                .map_err(RuntimeProfileError::Execution)
+            drive_resume_event(
+                &self.ports,
+                program_instance_ref,
+                event_ref,
+                delivered,
+                Some(&self.resource_ceilings),
+            )
+            .await
+            .map_err(RuntimeProfileError::Execution)
         }))
         .await
     }

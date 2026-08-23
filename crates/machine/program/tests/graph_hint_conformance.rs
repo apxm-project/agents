@@ -4,12 +4,15 @@
 //! against each other, so a limit can not drift out of one of the three.
 
 mod common;
+#[path = "common/schema_basic.rs"]
+mod schema;
 
 use apxm_core::types::{
     ApxmGraphHints, GraphHintCapabilities, GraphHintField, GraphHintPlan, GraphHintProjector,
     ProjectionOutcome,
 };
-use common::{Vector, compile_schema, load_vectors};
+use common::{Vector, load_vectors};
+use schema::compile_schema;
 use serde_json::Value;
 
 const VECTORS: &str = "apxm.inference-graph-hints.json";

@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
-use super::require_string_arg;
+use super::{fs_boundary::secure_read_under_root, require_string_arg, untrusted_content_value};
 use crate::{
     executor::{CapabilityExecutor, CapabilityResult},
     metadata::RuntimeCapability,
@@ -43,7 +43,7 @@ const INSTRUCTIONS: &str = "SKILL.md";
 /// Ceiling on one instruction body. A skill is trusted context that lands in a
 /// model's window, so an oversized one is a context-budget failure, not a file
 /// the reader should quietly truncate.
-const MAX_INSTRUCTION_BYTES: u64 = 128 * 1024;
+const MAX_INSTRUCTION_BYTES: usize = 128 * 1024;
 
 /// One configured discovery root.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -82,6 +82,7 @@ impl Default for SkillsConfig {
 #[derive(Clone, Debug)]
 struct IndexedSkill {
     root_id: String,
+    root_path: PathBuf,
     skill_id: String,
     card: BTreeMap<String, serde_json::Value>,
     instructions: PathBuf,
@@ -138,9 +139,37 @@ fn capability_error(capability: &str, message: impl Into<String>) -> RuntimeErro
 /// Read one skill directory into a card, or explain why it is not one.
 fn index_one(
     root: &SkillRootConfig,
+    root_canonical: &Path,
     directory: &Path,
     capability: &str,
 ) -> CapabilityResult<Option<IndexedSkill>> {
+    let directory_metadata = std::fs::symlink_metadata(directory).map_err(|error| {
+        capability_error(capability, format!("stat {}: {error}", directory.display()))
+    })?;
+    if directory_metadata.file_type().is_symlink() {
+        return Err(capability_error(
+            capability,
+            format!("skill directory '{}' is a symlink", directory.display()),
+        ));
+    }
+    if !directory_metadata.is_dir() {
+        return Ok(None);
+    }
+    let directory_canonical = std::fs::canonicalize(directory).map_err(|error| {
+        capability_error(
+            capability,
+            format!("canonicalize {}: {error}", directory.display()),
+        )
+    })?;
+    if !directory_canonical.starts_with(root_canonical) {
+        return Err(capability_error(
+            capability,
+            format!(
+                "skill directory '{}' escapes its configured root",
+                directory.display()
+            ),
+        ));
+    }
     let instructions = directory.join(INSTRUCTIONS);
     if !instructions.is_file() {
         return Ok(None);
@@ -170,13 +199,15 @@ fn index_one(
         return Ok(None);
     };
 
-    let bytes = std::fs::read(&instructions).map_err(|error| {
-        capability_error(
-            capability,
-            format!("read {}: {error}", instructions.display()),
-        )
-    })?;
-    let size = bytes.len() as u64;
+    let bytes = secure_read_under_root(&root.path, &instructions, MAX_INSTRUCTION_BYTES).map_err(
+        |error| {
+            capability_error(
+                capability,
+                format!("securely read {}: {error}", instructions.display()),
+            )
+        },
+    )?;
+    let size = bytes.len();
     if size > MAX_INSTRUCTION_BYTES {
         return Err(capability_error(
             capability,
@@ -266,6 +297,7 @@ fn index_one(
 
     Ok(Some(IndexedSkill {
         root_id: root.root_id.clone(),
+        root_path: root.path.clone(),
         skill_id: skill_id.to_string(),
         card,
         instructions,
@@ -275,9 +307,34 @@ fn index_one(
 /// Scan one configured root, verify the discovery document it produces, and
 /// return its indexed skills.
 fn index_root(root: &SkillRootConfig, capability: &str) -> CapabilityResult<Vec<IndexedSkill>> {
-    if !root.path.is_dir() {
+    let root_metadata = match std::fs::symlink_metadata(&root.path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(capability_error(
+                capability,
+                format!("stat {}: {error}", root.path.display()),
+            ));
+        }
+    };
+    if root_metadata.file_type().is_symlink() {
+        return Err(capability_error(
+            capability,
+            format!(
+                "configured skill root '{}' is a symlink",
+                root.path.display()
+            ),
+        ));
+    }
+    if !root_metadata.is_dir() {
         return Ok(Vec::new());
     }
+    let root_canonical = std::fs::canonicalize(&root.path).map_err(|error| {
+        capability_error(
+            capability,
+            format!("canonicalize {}: {error}", root.path.display()),
+        )
+    })?;
     let mut entries: Vec<PathBuf> = std::fs::read_dir(&root.path)
         .map_err(|error| {
             capability_error(capability, format!("read {}: {error}", root.path.display()))
@@ -288,13 +345,12 @@ fn index_root(root: &SkillRootConfig, capability: &str) -> CapabilityResult<Vec<
         })?
         .into_iter()
         .map(|entry| entry.path())
-        .filter(|path| path.is_dir())
         .collect();
     entries.sort();
 
     let mut skills = Vec::new();
     for directory in entries {
-        if let Some(skill) = index_one(root, &directory, capability)? {
+        if let Some(skill) = index_one(root, &root_canonical, &directory, capability)? {
             skills.push(skill);
         }
     }
@@ -350,10 +406,37 @@ fn index_all(roots: &[SkillRootConfig], capability: &str) -> CapabilityResult<Ve
 }
 
 /// Render cards as deterministic JSON text.
-fn render_cards(skills: &[IndexedSkill]) -> Value {
+fn render_cards(capability: &str, skills: &[IndexedSkill]) -> CapabilityResult<Value> {
     let cards: Vec<&BTreeMap<String, serde_json::Value>> =
         skills.iter().map(|skill| &skill.card).collect();
-    Value::String(serde_json::to_string_pretty(&cards).unwrap_or_else(|_| "[]".to_string()))
+    let content = serde_json::to_string_pretty(&cards).unwrap_or_else(|_| "[]".to_string());
+    untrusted_content_value(capability, "skill://discovery", content)
+}
+
+/// Re-check the indexed body immediately before loading it. Indexing is a
+/// discovery pass, not a capability grant: a root or body replaced after that
+/// pass must not turn `read_skill` into a path traversal primitive.
+fn read_instruction(
+    root: &Path,
+    instructions: &Path,
+    capability: &str,
+) -> CapabilityResult<String> {
+    // The descriptor boundary opens the body without following any component
+    // and caps the read itself. The index is only discovery; the body is
+    // intentionally opened again by read_skill.
+    let bytes =
+        secure_read_under_root(root, instructions, MAX_INSTRUCTION_BYTES).map_err(|error| {
+            capability_error(
+                capability,
+                format!("securely read {}: {error}", instructions.display()),
+            )
+        })?;
+    String::from_utf8(bytes).map_err(|error| {
+        capability_error(
+            capability,
+            format!("{} is not valid UTF-8: {error}", instructions.display()),
+        )
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -384,7 +467,7 @@ impl ListSkillsCapability {
                     }
                 }),
             )
-            .with_returns("string (JSON array of skill cards)")
+            .with_returns("object (untrusted quoted JSON array of skill cards)")
             .with_groups(vec![
                 capabilities::groups::SKILLS.to_string(),
                 capabilities::groups::DISCOVERY.to_string(),
@@ -408,7 +491,7 @@ impl CapabilityExecutor for ListSkillsCapability {
     async fn execute(&self, args: HashMap<String, Value>) -> CapabilityResult<Value> {
         let skills = index_all(&self.config.roots, &self.metadata.name)?;
         let filtered = filter_by_root(skills, &args);
-        Ok(render_cards(&filtered))
+        render_cards(&self.metadata.name, &filtered)
     }
 
     fn metadata(&self) -> &RuntimeCapability {
@@ -456,7 +539,7 @@ impl SearchSkillsCapability {
                     "required": ["query"]
                 }),
             )
-            .with_returns("string (JSON array of matching skill cards)")
+            .with_returns("object (untrusted quoted JSON array of matching skill cards)")
             .with_groups(vec![
                 capabilities::groups::SKILLS.to_string(),
                 capabilities::groups::DISCOVERY.to_string(),
@@ -494,7 +577,7 @@ impl CapabilityExecutor for SearchSkillsCapability {
                     .any(|value| value.to_string().to_lowercase().contains(&query))
             })
             .collect::<Vec<_>>();
-        Ok(render_cards(&matched))
+        render_cards(&self.metadata.name, &matched)
     }
 
     fn metadata(&self) -> &RuntimeCapability {
@@ -535,7 +618,7 @@ impl ReadSkillCapability {
                     "required": ["skill_id"]
                 }),
             )
-            .with_returns("string (the skill's instruction document)")
+            .with_returns("object (untrusted quoted skill instruction document)")
             .with_groups(vec![
                 capabilities::groups::SKILLS.to_string(),
                 capabilities::groups::READ.to_string(),
@@ -587,13 +670,13 @@ impl CapabilityExecutor for ReadSkillCapability {
                 ),
             )),
             [skill] => {
-                let body = std::fs::read_to_string(&skill.instructions).map_err(|error| {
-                    capability_error(
-                        &self.metadata.name,
-                        format!("read {}: {error}", skill.instructions.display()),
-                    )
-                })?;
-                Ok(Value::String(body))
+                let body =
+                    read_instruction(&skill.root_path, &skill.instructions, &self.metadata.name)?;
+                untrusted_content_value(
+                    &self.metadata.name,
+                    format!("skill://{}/{}", skill.root_id, skill.skill_id),
+                    body,
+                )
             }
         }
     }
@@ -606,6 +689,24 @@ impl CapabilityExecutor for ReadSkillCapability {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn direct_skill_read_enforces_instruction_bound() {
+        let temporary = tempfile::tempdir().expect("temporary root");
+        let directory = temporary.path().join("oversized");
+        std::fs::create_dir(&directory).expect("create skill directory");
+        let instructions = directory.join(INSTRUCTIONS);
+        std::fs::write(&instructions, vec![b'x'; MAX_INSTRUCTION_BYTES + 1])
+            .expect("write oversized instructions");
+
+        let error = read_instruction(temporary.path(), &instructions, "read_skill")
+            .expect_err("an oversized body must fail closed");
+        let error = format!("{error}");
+        assert!(
+            error.contains("byte instruction limit") || error.contains("exceeds configured size"),
+            "unexpected bounded-read refusal: {error}"
+        );
+    }
 
     fn write_skill(root: &Path, id: &str, front: &str, body: &str) {
         let directory = root.join(id);
@@ -626,6 +727,16 @@ mod tests {
                 path: path.to_path_buf(),
             }],
         }
+    }
+
+    fn envelope_content(value: &Value) -> String {
+        let wire = serde_json::to_value(value).expect("serialize untrusted skill envelope");
+        assert_eq!(wire["kind"], "untrusted_content");
+        assert_eq!(wire["trust"], "untrusted");
+        wire["items"][0]["content"]
+            .as_str()
+            .expect("untrusted skill envelope content")
+            .to_owned()
     }
 
     #[tokio::test]
@@ -649,7 +760,7 @@ mod tests {
             .execute(HashMap::new())
             .await
             .expect("listing succeeds");
-        let listed = listed.as_str().expect("cards render as text");
+        let listed = envelope_content(&listed);
         assert!(listed.contains("\"skill_id\": \"review\""), "{listed}");
         assert!(listed.contains("\"skill_id\": \"triage\""), "{listed}");
         // Discovery is metadata-only: a listing advertises, it does not activate.
@@ -662,7 +773,7 @@ mod tests {
             )]))
             .await
             .expect("reading succeeds");
-        let body = body.as_str().expect("a body is text");
+        let body = envelope_content(&body);
         assert!(body.contains("Do the review."), "{body}");
         assert!(
             !body.contains("Sort it."),
@@ -694,7 +805,7 @@ mod tests {
             )]))
             .await
             .expect("search succeeds");
-        let hits = hits.as_str().expect("cards render as text");
+        let hits = envelope_content(&hits);
         assert!(hits.contains("\"skill_id\": \"review\""), "{hits}");
         assert!(!hits.contains("triage"), "{hits}");
         assert!(!hits.contains("secret body text"), "{hits}");
@@ -783,7 +894,7 @@ mod tests {
             .execute(HashMap::new())
             .await
             .expect("a global root of shared skills lists");
-        assert!(listed.as_str().expect("text").contains("\"shared\": true"));
+        assert!(envelope_content(&listed).contains("\"shared\": true"));
     }
 
     #[tokio::test]
@@ -799,7 +910,45 @@ mod tests {
             .execute(HashMap::new())
             .await
             .expect("an absent root is not an error");
-        assert_eq!(listed.as_str().expect("text"), "[]");
+        assert_eq!(envelope_content(&listed), "[]");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn symlinked_root_and_skill_directory_are_refused() {
+        use std::os::unix::fs::symlink;
+
+        let temporary = tempfile::tempdir().expect("temporary root");
+        let outside = tempfile::tempdir().expect("outside root");
+        write_skill(
+            outside.path(),
+            "secret",
+            "name: secret\ndescription: outside",
+            "do not expose",
+        );
+
+        let root_link = temporary.path().join("root-link");
+        symlink(outside.path(), &root_link).expect("root symlink");
+        let root_error = ListSkillsCapability::with_config(root_of(&root_link))
+            .execute(HashMap::new())
+            .await
+            .expect_err("a configured root symlink is not trusted");
+        assert!(
+            format!("{root_error}").contains("root") && format!("{root_error}").contains("symlink")
+        );
+
+        let root = temporary.path().join("skills");
+        std::fs::create_dir(&root).expect("real root");
+        symlink(outside.path().join("secret"), root.join("secret"))
+            .expect("skill directory symlink");
+        let skill_error = ListSkillsCapability::with_config(root_of(&root))
+            .execute(HashMap::new())
+            .await
+            .expect_err("a symlinked skill directory is not trusted");
+        assert!(
+            format!("{skill_error}").contains("skill directory")
+                && format!("{skill_error}").contains("symlink")
+        );
     }
 
     #[test]

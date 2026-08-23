@@ -1282,8 +1282,11 @@ impl GraphHintPlan {
                         serde_json::to_string(field).unwrap_or_default()
                     ));
                 }
-                (Some(_), ProjectionOutcome::Applied { mechanism_ref })
-                | (Some(_), ProjectionOutcome::Approximated { mechanism_ref, .. }) => {
+                (
+                    Some(_),
+                    ProjectionOutcome::Applied { mechanism_ref }
+                    | ProjectionOutcome::Approximated { mechanism_ref, .. },
+                ) => {
                     if mechanism_ref.as_str().is_empty() {
                         return Err(format!(
                             "graph-hint plan gives {} an empty mechanism reference",

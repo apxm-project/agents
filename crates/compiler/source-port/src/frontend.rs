@@ -7,9 +7,12 @@
 //! interpreter each selector runs, how the interpreter is confined, and how its
 //! exit is translated into one closed diagnostic.
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, mpsc};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -20,6 +23,12 @@ use crate::diagnostic::{SourceDiagnostic, SourceDiagnosticCode};
 /// The Python harness has interpreter resource limits, but the TypeScript
 /// harness runs under Node's permission model, which does not bound CPU time.
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(30);
+/// A frontend must not be able to make capture retain unbounded output. The
+/// readers continue draining after this budget is full so noisy output cannot
+/// deadlock the child on a full pipe.
+const CAPTURE_MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
+const CAPTURE_READ_BUFFER_BYTES: usize = 16 * 1024;
+const CAPTURE_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 /// The closed authoring-frontend selector. It matches the source-language
 /// closure of the semantic surface exactly: there is no third frontend and no
@@ -202,36 +211,31 @@ fn spawn_with_timeout(
     })?;
 
     let started = Instant::now();
-    let stdin = child.stdin.take();
-    let request = request.to_vec();
-    let writer = std::thread::spawn(move || {
-        if let Some(mut stdin) = stdin {
-            // A harness that exits before reading closes the pipe; that is a
-            // rejection to read from its status, not a failure to report here.
-            let _ = stdin.write_all(&request);
-        }
-    });
+    let deadline = started + timeout;
+    let output_budget = Arc::new(AtomicUsize::new(0));
+    let writer = spawn_writer(child.stdin.take(), request.to_vec());
+    let stdout = spawn_reader(child.stdout.take(), Arc::clone(&output_budget));
+    let stderr = spawn_reader(child.stderr.take(), Arc::clone(&output_budget));
 
     loop {
         match child.try_wait() {
-            Ok(Some(_)) => {
-                let output = child.wait_with_output().map_err(|error| {
-                    SourceDiagnostic::new(
-                        SourceDiagnosticCode::FrontendUnavailable,
-                        format!(
-                            "the declared {} authoring frontend driver '{}' did not complete: {error}",
-                            frontend.wire(),
-                            driver.display()
-                        ),
-                    )
-                });
-                let _ = writer.join();
-                return output;
+            Ok(Some(status)) => {
+                let output = collect_output(status, stdout, stderr, writer, deadline).map_err(
+                    |error| {
+                        SourceDiagnostic::new(
+                            SourceDiagnosticCode::FrontendUnavailable,
+                            format!(
+                                "the declared {} authoring frontend driver '{}' did not complete capture: {error}",
+                                frontend.wire(),
+                                driver.display()
+                            ),
+                        )
+                    },
+                )?;
+                return Ok(output);
             }
-            Ok(None) if started.elapsed() >= timeout => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = writer.join();
+            Ok(None) if Instant::now() >= deadline => {
+                terminate(&mut child);
                 return Err(SourceDiagnostic::new(
                     SourceDiagnosticCode::FrontendUnavailable,
                     format!(
@@ -242,11 +246,13 @@ fn spawn_with_timeout(
                     ),
                 ));
             }
-            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+            Ok(None) => {
+                thread::sleep(
+                    CAPTURE_POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now())),
+                );
+            }
             Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = writer.join();
+                terminate(&mut child);
                 return Err(SourceDiagnostic::new(
                     SourceDiagnosticCode::FrontendUnavailable,
                     format!(
@@ -258,6 +264,105 @@ fn spawn_with_timeout(
             }
         }
     }
+}
+
+type CaptureReceiver<T> = mpsc::Receiver<std::io::Result<T>>;
+
+fn spawn_writer(stdin: Option<ChildStdin>, request: Vec<u8>) -> CaptureReceiver<()> {
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let result = stdin.map_or(Ok(()), |mut stdin| stdin.write_all(&request));
+        let _ = sender.send(result);
+    });
+    receiver
+}
+
+fn spawn_reader<R>(reader: Option<R>, output_budget: Arc<AtomicUsize>) -> CaptureReceiver<Vec<u8>>
+where
+    R: Read + Send + 'static,
+{
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let result = reader.map_or_else(
+            || Ok(Vec::new()),
+            |reader| read_stream(reader, output_budget),
+        );
+        let _ = sender.send(result);
+    });
+    receiver
+}
+
+fn read_stream<R: Read>(
+    mut reader: R,
+    output_budget: Arc<AtomicUsize>,
+) -> std::io::Result<Vec<u8>> {
+    let mut captured = Vec::new();
+    let mut buffer = [0_u8; CAPTURE_READ_BUFFER_BYTES];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(captured);
+        }
+
+        let retained = reserve_output(&output_budget, CAPTURE_MAX_OUTPUT_BYTES, read);
+        captured.extend_from_slice(&buffer[..retained]);
+    }
+}
+
+fn reserve_output(budget: &AtomicUsize, limit: usize, requested: usize) -> usize {
+    loop {
+        let used = budget.load(Ordering::Acquire);
+        let available = limit.saturating_sub(used);
+        let retained = available.min(requested);
+        if retained == 0 {
+            return 0;
+        }
+        if budget
+            .compare_exchange_weak(used, used + retained, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            return retained;
+        }
+    }
+}
+
+fn collect_output(
+    status: std::process::ExitStatus,
+    stdout: CaptureReceiver<Vec<u8>>,
+    stderr: CaptureReceiver<Vec<u8>>,
+    writer: CaptureReceiver<()>,
+    deadline: Instant,
+) -> std::io::Result<std::process::Output> {
+    // Use one absolute deadline for all pipe workers. A successful child must
+    // not extend the lifecycle merely because a worker failed to close.
+    let stdout = receive_until(stdout, deadline)?;
+    let stderr = receive_until(stderr, deadline)?;
+    receive_until(writer, deadline)?;
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+fn receive_until<T>(receiver: CaptureReceiver<T>, deadline: Instant) -> std::io::Result<T> {
+    receiver
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .map_err(|error| match error {
+            mpsc::RecvTimeoutError::Timeout => std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "capture pipe worker timed out",
+            ),
+            mpsc::RecvTimeoutError::Disconnected => std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "capture pipe worker disconnected",
+            ),
+        })?
+}
+
+fn terminate(child: &mut Child) {
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 /// Translate a harness exit into one closed diagnostic. The first stderr line is
@@ -356,6 +461,35 @@ mod tests {
         let _ = fs::remove_file(&path);
         assert_eq!(diagnostic.code, SourceDiagnosticCode::FrontendUnavailable);
         assert!(diagnostic.message.contains("capture timeout"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_capture_drains_large_stdout_and_stderr_while_writing_input() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = unique_test_path("large-output-driver");
+        fs::write(
+            &path,
+            "#!/bin/sh\ncat >/dev/null\ndd if=/dev/zero bs=131072 count=1 2>/dev/null\ndd if=/dev/zero bs=131072 count=1 1>&2 2>/dev/null\n",
+        )
+        .expect("write large-output driver");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+            .expect("make large-output driver executable");
+
+        let output = spawn_with_timeout(
+            Frontend::Python,
+            std::path::Path::new("/tmp"),
+            &path,
+            &[b'x'; 512 * 1024],
+            Duration::from_secs(2),
+        )
+        .expect("large bidirectional output must not deadlock capture");
+
+        let _ = fs::remove_file(&path);
+        assert!(output.status.success());
+        assert_eq!(output.stdout.len(), 131_072);
+        assert_eq!(output.stderr.len(), 131_072);
     }
 
     #[test]

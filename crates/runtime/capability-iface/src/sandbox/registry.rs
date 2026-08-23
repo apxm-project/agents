@@ -10,7 +10,7 @@
 
 use super::backend::{SandboxBackend, ValidationResult};
 use super::error::SandboxError;
-use super::manifest::SecurityManifest;
+use super::manifest::{SandboxRequirements, SecurityManifest};
 use super::types::{ExecRequest, IsolationLevel, SandboxCapabilities};
 use std::sync::Arc;
 
@@ -22,6 +22,8 @@ const NO_COMPATIBLE_BACKEND_PREFIX: &str = "no compatible backend for request re
 const NO_COMPATIBLE_BACKEND_MIDDLE: &str = " isolation (registered: ";
 const NO_COMPATIBLE_BACKEND_REJECTED_SEPARATOR: &str = "; rejected: ";
 const NO_COMPATIBLE_BACKEND_SUFFIX: &str = ")";
+const INVALID_MANIFEST_PREFIX: &str = "invalid security manifest: ";
+const MANIFEST_REJECTED_SEPARATOR: &str = "; rejected: ";
 
 /// Selected backend together with its validation outcome for a request.
 pub struct SandboxSelection {
@@ -232,7 +234,84 @@ impl SandboxRegistry {
         &self,
         manifest: &SecurityManifest,
     ) -> Result<Arc<dyn SandboxBackend>, SandboxError> {
-        self.select(manifest.min_isolation)
+        Ok(self.select_for_manifest_with_validation(manifest)?.backend)
+    }
+
+    /// Select a backend only after validating the complete typed manifest
+    /// requirements and the backend's full enforcement surface.
+    pub fn select_for_manifest_with_validation(
+        &self,
+        manifest: &SecurityManifest,
+    ) -> Result<SandboxSelection, SandboxError> {
+        let requirements = manifest.requirements().map_err(|error| {
+            SandboxError::RequirementsNotMet(format!("{INVALID_MANIFEST_PREFIX}{error}"))
+        })?;
+        self.select_for_requirements(&requirements)
+    }
+
+    fn select_for_requirements(
+        &self,
+        requirements: &SandboxRequirements,
+    ) -> Result<SandboxSelection, SandboxError> {
+        let mut rejected = Vec::new();
+
+        for backend in &self.backends {
+            let capabilities = backend.capabilities();
+            if !backend.is_available() {
+                rejected.push(format!(
+                    "{}{}",
+                    capabilities.name, REJECTED_UNAVAILABLE_SUFFIX
+                ));
+                continue;
+            }
+
+            let missing = requirements.missing_backend_capabilities(&capabilities);
+            if !missing.is_empty() {
+                rejected.push(format!(
+                    "{} unsupported: missing {}",
+                    capabilities.name,
+                    missing.join(", ")
+                ));
+                continue;
+            }
+
+            match backend.validate_manifest(requirements) {
+                ValidationResult::Ok => {
+                    return Ok(SandboxSelection {
+                        backend: Arc::clone(backend),
+                        validation: ValidationResult::Ok,
+                    });
+                }
+                ValidationResult::Degraded { warnings } => rejected.push(format!(
+                    "{} degraded: {}",
+                    capabilities.name,
+                    warnings.join(", ")
+                )),
+                ValidationResult::Unsupported { reason } => rejected.push(format!(
+                    "{}{}{}",
+                    capabilities.name, REJECTED_UNSUPPORTED_SEPARATOR, reason
+                )),
+            }
+        }
+
+        let registered = self
+            .backends
+            .iter()
+            .map(|backend| {
+                let capabilities = backend.capabilities();
+                format!("{}({})", capabilities.name, capabilities.isolation_level)
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let rejected_text = if rejected.is_empty() {
+            "none".to_string()
+        } else {
+            rejected.join(MANIFEST_REJECTED_SEPARATOR)
+        };
+        Err(SandboxError::RequirementsNotMet(format!(
+            "{NO_COMPATIBLE_BACKEND_PREFIX}{}{NO_COMPATIBLE_BACKEND_MIDDLE}{registered}{NO_COMPATIBLE_BACKEND_REJECTED_SEPARATOR}{rejected_text}{NO_COMPATIBLE_BACKEND_SUFFIX}",
+            requirements.min_isolation
+        )))
     }
 
     /// Get the default backend (first registered, regardless of isolation level).
@@ -274,5 +353,91 @@ impl std::fmt::Debug for SandboxSelection {
             .field("backend", &self.backend.capabilities())
             .field("validation", &self.validation)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sandbox::backend::DefaultBackend;
+    use crate::sandbox::manifest::tier;
+    use crate::sandbox::{ExecResult, NodeSandboxReq};
+    use apxm_core::types::operations::AISOperationType;
+    use std::sync::Arc;
+
+    fn capabilities(name: &str) -> SandboxCapabilities {
+        SandboxCapabilities {
+            isolation_level: IsolationLevel::OsLevel,
+            supports_filesystem_restriction: true,
+            supports_network_restriction: true,
+            supports_syscall_filtering: true,
+            supports_process_restriction: true,
+            supports_resource_limits: true,
+            name: name.to_string(),
+            version: "test".to_string(),
+        }
+    }
+
+    fn io_manifest() -> SecurityManifest {
+        SecurityManifest {
+            max_tier: tier::IO,
+            min_isolation: IsolationLevel::OsLevel,
+            node_requirements: vec![NodeSandboxReq {
+                node_id: 1,
+                op: AISOperationType::CapabilityInvoke,
+                tier: tier::IO,
+                min_isolation: IsolationLevel::OsLevel,
+                capabilities_used: vec!["demo".to_string()],
+            }],
+            needs_network: true,
+            needs_filesystem_write: true,
+            needs_process_spawn: true,
+            tool_capabilities_used: vec!["demo".to_string()],
+        }
+    }
+
+    #[test]
+    fn manifest_selection_validates_the_complete_typed_requirements() {
+        let backend = DefaultBackend::new(capabilities("complete"), |_request| async {
+            Ok(ExecResult {
+                success: true,
+                exit_code: Some(0),
+                stdout: String::new(),
+                stderr: String::new(),
+                duration: std::time::Duration::ZERO,
+                timed_out: false,
+            })
+        });
+        let mut registry = SandboxRegistry::new();
+        registry.register(Arc::new(backend));
+
+        let selection = registry
+            .select_for_manifest_with_validation(&io_manifest())
+            .expect("complete backend satisfies complete manifest");
+        assert!(matches!(selection.validation, ValidationResult::Ok));
+    }
+
+    #[test]
+    fn manifest_selection_fails_closed_for_incomplete_os_enforcement() {
+        let mut incomplete = capabilities("incomplete");
+        incomplete.supports_resource_limits = false;
+        let backend = DefaultBackend::new(incomplete, |_request| async {
+            Ok(ExecResult {
+                success: true,
+                exit_code: Some(0),
+                stdout: String::new(),
+                stderr: String::new(),
+                duration: std::time::Duration::ZERO,
+                timed_out: false,
+            })
+        });
+        let mut registry = SandboxRegistry::new();
+        registry.register(Arc::new(backend));
+
+        let error = match registry.select_for_manifest(&io_manifest()) {
+            Ok(_) => panic!("resource enforcement cannot be silently degraded"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("resource-limits"));
     }
 }

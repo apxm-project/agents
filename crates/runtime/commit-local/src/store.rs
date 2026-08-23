@@ -7,8 +7,8 @@
 use std::collections::{HashMap, HashSet};
 
 use apxm_kernel::{
-    ExecutionCommitRequest, ExecutionCommitResult, ExecutionCommitTuple, ProgramInstanceRef,
-    ProgramInvocationRef,
+    CommittedContinuation, ExecutionCommitRequest, ExecutionCommitResult, ExecutionCommitTuple,
+    ProgramInstanceRef, ProgramInvocationRef,
 };
 use apxm_program::runtime_evidence::Fact;
 use serde::{Deserialize, Serialize};
@@ -22,6 +22,11 @@ pub const COMMIT_LOCAL_SCHEMA: &str = "apxm.execution-commit-local.v2";
 /// Maximum serialized tuple bytes accepted by owner-local adapters (8 MiB).
 /// Larger payloads fail closed; hosted multi-tenant retention is out of scope.
 pub const MAX_TUPLE_BYTES: usize = 8 * 1024 * 1024;
+
+/// Maximum serialized owner-local store accepted during restart recovery.
+/// Persisted state is local, but a damaged or unexpectedly replaced file must
+/// not turn recovery into an unbounded allocation before JSON validation.
+pub const MAX_STORE_BYTES: usize = 64 * 1024 * 1024;
 
 /// Maximum retained idempotent commit results per store (restart / retention bound).
 pub const MAX_COMMIT_RESULTS: usize = 10_000;
@@ -40,6 +45,9 @@ pub enum CommitLocalError {
     SchemaMismatch { found: String },
     #[error("checkpoint/output tuple exceeds owner-local bound ({MAX_TUPLE_BYTES} bytes)")]
     TupleTooLarge { bytes: usize },
+    /// The persisted owner-local store exceeds the recovery allocation bound.
+    #[error("commit-local store exceeds owner-local bound ({bytes} bytes)")]
+    StoreTooLarge { bytes: u64 },
     #[error("commit-local retention bound exceeded ({MAX_COMMIT_RESULTS} commit results)")]
     RetentionExceeded,
     #[error("commit-local request is invalid: {0}")]
@@ -52,6 +60,8 @@ pub enum CommitLocalError {
     Io(String),
     #[error("commit-local encode/decode error: {0}")]
     Codec(String),
+    #[error("commit-local persistence authentication failed: {0}")]
+    AuthenticationFailed(String),
     #[error("session output exceeds owner-local bound ({MAX_OUTPUT_BYTES} bytes)")]
     OutputTooLarge { bytes: usize },
     #[error("session output field is invalid: {0}")]
@@ -241,6 +251,10 @@ impl From<&StoredCommitResult> for ExecutionCommitResult {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct CommitLocalStore {
     pub schema_version: String,
+    /// HMAC over the canonical store body with this field empty. The key is
+    /// held outside the JSON record by the filesystem owner-local adapter.
+    #[serde(default)]
+    pub integrity_tag: String,
     pub instances: HashMap<String, CommitLocalRecord>,
     pub by_commit_scope: HashMap<String, StoredCommit>,
     /// Prepared bytes are durable but not visible until their commit wins.
@@ -259,6 +273,7 @@ impl CommitLocalStore {
     pub fn new() -> Self {
         Self {
             schema_version: COMMIT_LOCAL_SCHEMA.to_string(),
+            integrity_tag: String::new(),
             instances: HashMap::new(),
             by_commit_scope: HashMap::new(),
             prepared_outputs: HashMap::new(),
@@ -290,6 +305,26 @@ impl CommitLocalStore {
         self.instances
             .get(program_instance_ref.as_str())
             .and_then(|r| r.continuation.clone())
+    }
+
+    /// Read the payload and its write-set digest from one authoritative record.
+    /// The filesystem adapter exposes this pair without a second lookup, so a
+    /// resume caller can verify it before deserializing the continuation.
+    pub fn load_continuation_with_integrity(
+        &self,
+        program_instance_ref: &ProgramInstanceRef,
+    ) -> Option<CommittedContinuation> {
+        self.instances
+            .get(program_instance_ref.as_str())
+            .and_then(|record| {
+                record
+                    .continuation
+                    .clone()
+                    .map(|payload| CommittedContinuation {
+                        digest: record.write_set.continuation_digest.clone(),
+                        payload,
+                    })
+            })
     }
 
     pub fn prepare_output(

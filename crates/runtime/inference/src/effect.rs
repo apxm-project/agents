@@ -6,6 +6,9 @@
 //! resolution for its authored target, so a request cannot carry a binding for a
 //! different target — there is no substitution.
 
+use std::future::Future;
+use std::pin::Pin;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -395,12 +398,36 @@ pub enum AttemptDisposition {
     Cancelled,
 }
 
+/// The future returned by the cancellation-aware model port seam.
+///
+/// The legacy [`ModelInferencePort::attempt`] method remains available for
+/// synchronous callers, but canonical runtime execution must use this future
+/// so dropping an invocation drops the provider future too.
+pub type ModelAttemptFuture<'a> = Pin<Box<dyn Future<Output = AttemptDisposition> + Send + 'a>>;
+
 /// The typed model inference Port Contract seam. A backend reports per-attempt
 /// dispositions and whether it can prove idempotent reconciliation after a send.
 pub trait ModelInferencePort {
     /// Perform one attempt for the given request. Attempts share the request's
     /// stable identity.
     fn attempt(&self, request: &ModelCallRequest, attempt: u32) -> AttemptDisposition;
+
+    /// Perform one attempt without introducing a blocking bridge.
+    ///
+    /// The default preserves compatibility for synchronous test and embedded
+    /// ports. A native async adapter overrides this method and awaits its
+    /// provider directly; the owning runtime can then cancel the future at its
+    /// wall deadline without leaving detached provider work behind.
+    fn attempt_async<'a>(
+        &'a self,
+        request: &'a ModelCallRequest,
+        attempt: u32,
+    ) -> ModelAttemptFuture<'a>
+    where
+        Self: Sync,
+    {
+        Box::pin(async move { self.attempt(request, attempt) })
+    }
 
     /// Whether the backend proves idempotency/reconciliation, permitting an
     /// automatic retry after a send.
@@ -503,6 +530,91 @@ pub fn execute_with_attempt<P: ModelInferencePort + ?Sized>(
         }
     }
     // Unreachable for max >= 1, but fail closed rather than assume success.
+    ModelExecution {
+        outcome: ModelOutcome::ModelOutcomeUnknown {
+            uncertain_usage: None,
+        },
+        committed_attempt: None,
+        output: None,
+    }
+}
+
+/// Async counterpart to [`execute`]. The attempt future is owned directly by
+/// the caller, so cancellation propagates through retries into the provider
+/// adapter rather than parking a caller thread on a detached runtime task.
+#[must_use]
+pub async fn execute_async<P: ModelInferencePort + Sync + ?Sized>(
+    port: &P,
+    request: &ModelCallRequest,
+    policy: RetryPolicy,
+) -> ModelOutcome {
+    execute_with_attempt_async(port, request, policy)
+        .await
+        .outcome
+}
+
+/// Async counterpart to [`execute_with_attempt`].
+#[must_use]
+pub async fn execute_with_attempt_async<P: ModelInferencePort + Sync + ?Sized>(
+    port: &P,
+    request: &ModelCallRequest,
+    policy: RetryPolicy,
+) -> ModelExecution {
+    let max = policy.max_attempts.max(1);
+    for attempt in 0..max {
+        let last = attempt + 1 == max;
+        match port.attempt_async(request, attempt).await {
+            AttemptDisposition::Success { usage, output } => {
+                return ModelExecution {
+                    outcome: ModelOutcome::CommittedSuccess { usage },
+                    committed_attempt: Some(attempt),
+                    output: Some(output),
+                };
+            }
+            AttemptDisposition::DeliveredTypedFailure(error) => {
+                return ModelExecution {
+                    outcome: ModelOutcome::TypedFailure { error },
+                    committed_attempt: None,
+                    output: None,
+                };
+            }
+            AttemptDisposition::Cancelled => {
+                return ModelExecution {
+                    outcome: ModelOutcome::Cancelled,
+                    committed_attempt: None,
+                    output: None,
+                };
+            }
+            AttemptDisposition::FailedBeforeSend(error) => {
+                if last {
+                    return ModelExecution {
+                        outcome: ModelOutcome::TypedFailure { error },
+                        committed_attempt: None,
+                        output: None,
+                    };
+                }
+            }
+            AttemptDisposition::FailedAfterSend(error) => {
+                if port.proves_idempotency() {
+                    if last {
+                        return ModelExecution {
+                            outcome: ModelOutcome::TypedFailure { error },
+                            committed_attempt: None,
+                            output: None,
+                        };
+                    }
+                } else {
+                    return ModelExecution {
+                        outcome: ModelOutcome::ModelOutcomeUnknown {
+                            uncertain_usage: None,
+                        },
+                        committed_attempt: None,
+                        output: None,
+                    };
+                }
+            }
+        }
+    }
     ModelExecution {
         outcome: ModelOutcome::ModelOutcomeUnknown {
             uncertain_usage: None,

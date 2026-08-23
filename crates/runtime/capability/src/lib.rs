@@ -40,9 +40,10 @@ pub mod registry;
 pub mod tool_write_lock;
 
 use approval::ApprovalStore;
-use apxm_capability_iface::sandbox::{SandboxRegistry, ValidationResult};
+use apxm_capability_iface::sandbox::{ExecRequest, SandboxRegistry, ValidationResult};
 use apxm_capability_iface::{ApprovalContext, CapabilityFacade, CapabilityInvocation};
 use apxm_core::{error::RuntimeError, types::values::Value};
+use apxm_program::capability::{CapabilityInvocationAuthority, CapabilityRequest};
 use executor::{CapabilityExecutionResult, CapabilityExecutor, exec_result_to_value};
 use interceptor::{
     CapabilityInterceptor, InterceptDecision, PreInvokeContext, pre_invoke_policy_ctx,
@@ -109,6 +110,102 @@ impl CapabilitySystem {
     /// instead of calling `execute()` directly.
     pub fn set_sandbox_registry(&self, registry: Arc<SandboxRegistry>) {
         *self.sandbox_registry.write() = Some(registry);
+    }
+
+    async fn execute_sandboxed(
+        name: &str,
+        registry: Arc<SandboxRegistry>,
+        exec_req: ExecRequest,
+        timeout: Duration,
+    ) -> CapabilityResult<CapabilityExecutionResult> {
+        if registry.is_empty() {
+            return Err(RuntimeError::Capability {
+                capability: name.to_string(),
+                message:
+                    "Capability requires sandbox execution but no sandbox backend is available"
+                        .to_string(),
+            });
+        }
+
+        let selection =
+            registry
+                .select_for_request(&exec_req)
+                .map_err(|error| RuntimeError::Capability {
+                    capability: name.to_string(),
+                    message: format!("sandbox select: {error}"),
+                })?;
+        let backend = selection.backend;
+        if let ValidationResult::Degraded { warnings } = &selection.validation {
+            tracing::warn!(
+                capability = %name,
+                backend = %backend.capabilities().name,
+                warnings = ?warnings,
+                "sandbox backend selected with degraded guarantees"
+            );
+            return Err(RuntimeError::Capability {
+                capability: name.to_string(),
+                message: format!("{SANDBOX_DEGRADED_GUARANTEES}: {}", warnings.join("; ")),
+            });
+        }
+        tracing::debug!(
+            capability = %name,
+            backend = %backend.capabilities().name,
+            "routing capability through sandbox backend"
+        );
+
+        let started = std::time::Instant::now();
+        let remaining = || timeout.saturating_sub(started.elapsed());
+        let session = tokio::time::timeout(remaining(), backend.create_session())
+            .await
+            .map_err(|_| RuntimeError::Timeout { op_id: 0, timeout })?
+            .map_err(|error| RuntimeError::Capability {
+                capability: name.to_string(),
+                message: format!("sandbox session: {error}"),
+            })?;
+
+        let exec_result =
+            tokio::time::timeout(remaining(), backend.execute(&session, exec_req)).await;
+        match exec_result {
+            Ok(Ok(result)) => {
+                let cleanup = backend.destroy_session(session).await;
+                if let Err(error) = cleanup {
+                    return Err(RuntimeError::Capability {
+                        capability: name.to_string(),
+                        message: format!("sandbox cleanup: {error}"),
+                    });
+                }
+                Ok(CapabilityExecutionResult::new(exec_result_to_value(result)))
+            }
+            Ok(Err(error)) => {
+                if let Err(cleanup_error) = backend.destroy_session(session).await {
+                    tracing::error!(
+                        capability = %name,
+                        error = %cleanup_error,
+                        "sandbox cleanup failed after execution error"
+                    );
+                }
+                Err(RuntimeError::Capability {
+                    capability: name.to_string(),
+                    message: format!("sandbox execute: {error}"),
+                })
+            }
+            Err(_) => {
+                // The execute future is cancelled by timeout. Cleanup must not
+                // be cancelled with it, so detach the backend-owned teardown.
+                let cleanup_backend = Arc::clone(&backend);
+                let cleanup_name = name.to_string();
+                tokio::spawn(async move {
+                    if let Err(error) = cleanup_backend.destroy_session(session).await {
+                        tracing::error!(
+                            capability = %cleanup_name,
+                            error = %error,
+                            "sandbox cleanup failed after timeout"
+                        );
+                    }
+                });
+                Err(RuntimeError::Timeout { op_id: 0, timeout })
+            }
+        }
     }
 
     /// Register a capability interceptor.
@@ -209,7 +306,40 @@ impl CapabilitySystem {
         args: HashMap<String, Value>,
         timeout: Duration,
     ) -> CapabilityResult<Value> {
-        self.invoke_with_timeout_ctx_raw(name, args, timeout, None, None)
+        self.invoke_with_timeout_ctx_raw(name, args, timeout, None, None, None)
+            .await
+    }
+
+    /// Invoke one immutable canonical Capability request.
+    ///
+    /// This is the authority-preserving entry point for exact service ports.
+    /// The request digest binds the capability reference, canonical arguments,
+    /// invocation coordinates, and authority together; validation therefore
+    /// happens before the request is projected into the implementation's
+    /// named argument map. The authority is then supplied to interceptors as a
+    /// typed admission fact, never reconstructed from caller arguments.
+    pub async fn invoke_request(&self, request: CapabilityRequest) -> CapabilityResult<Value> {
+        self.invoke_request_with_timeout(request, self.default_timeout)
+            .await
+    }
+
+    /// Authority-preserving canonical request entry point with a custom
+    /// execution timeout.
+    pub async fn invoke_request_with_timeout(
+        &self,
+        request: CapabilityRequest,
+        timeout: Duration,
+    ) -> CapabilityResult<Value> {
+        request
+            .validate()
+            .map_err(|error| RuntimeError::Capability {
+                capability: request.capability_ref().to_string(),
+                message: format!("invalid canonical Capability request: {error}"),
+            })?;
+        let name = request.capability_ref().to_string();
+        let authority = request.authority().clone();
+        let args = named_arguments_from_request(&request)?;
+        self.invoke_with_timeout_ctx_raw(&name, args, timeout, None, None, Some(&authority))
             .await
     }
 
@@ -223,6 +353,7 @@ impl CapabilitySystem {
         args: HashMap<String, Value>,
         requires_approval: bool,
         pre_ctx: Option<&PreInvokeContext<'_>>,
+        authority: Option<&CapabilityInvocationAuthority>,
     ) -> CapabilityResult<HashMap<String, Value>> {
         if requires_approval && pre_ctx.is_none() {
             return Err(RuntimeError::Capability {
@@ -257,7 +388,15 @@ impl CapabilitySystem {
 
         let interceptors = self.interceptors.read().clone();
         for interceptor in &interceptors {
-            if let Some(error) = refusal(interceptor.pre_invoke(name, &args).await) {
+            let decision = match authority {
+                Some(authority) => {
+                    interceptor
+                        .pre_invoke_with_authority(name, &args, authority)
+                        .await
+                }
+                None => interceptor.pre_invoke(name, &args).await,
+            };
+            if let Some(error) = refusal(decision) {
                 return Err(error);
             }
         }
@@ -279,6 +418,7 @@ impl CapabilitySystem {
         timeout: Duration,
         pre_ctx: Option<&PreInvokeContext<'_>>,
         invocation: Option<&CapabilityInvocation>,
+        authority: Option<&CapabilityInvocationAuthority>,
     ) -> CapabilityResult<Value> {
         // Get capability
         let capability = self
@@ -294,7 +434,13 @@ impl CapabilitySystem {
             })?;
 
         let args = self
-            .admit_invocation_ctx_raw(name, args, capability.metadata().requires_approval, pre_ctx)
+            .admit_invocation_ctx_raw(
+                name,
+                args,
+                capability.metadata().requires_approval,
+                pre_ctx,
+                authority,
+            )
             .await?;
         if let Some(invocation) = invocation {
             invocation
@@ -311,88 +457,38 @@ impl CapabilitySystem {
 
         tracing::debug!(capability = %name, "Invoking capability");
 
-        // Execute with timeout — route through sandbox if the capability
-        // provides an ExecRequest, otherwise execute directly.
+        // Route sandbox execution through a cleanup-aware path. Direct
+        // capabilities retain the ordinary invocation timeout.
         let sandbox_reg = self.sandbox_registry.read().clone();
-        let execution = tokio::time::timeout(timeout, async {
-            // Check if capability wants sandbox execution
-            if let Some(exec_req) = capability.to_exec_request(&args) {
-                // Route through sandbox backend
-                let Some(registry) = sandbox_reg else {
-                    // Capability requires sandbox but no registry configured
-                    return Err(RuntimeError::Capability {
-                        capability: name.to_string(),
-                        message: "Capability requires sandbox execution but sandbox registry is not configured".to_string(),
-                    });
-                };
-                if registry.is_empty() {
-                    // Capability requires sandbox but registry is empty
-                    return Err(RuntimeError::Capability {
-                        capability: name.to_string(),
-                        message: "Capability requires sandbox execution but no sandbox backend is available".to_string(),
-                    });
-                }
-
-                let selection = registry
-                    .select_for_request(&exec_req)
-                    .map_err(|e| RuntimeError::Capability {
-                        capability: name.to_string(),
-                        message: format!("sandbox select: {e}"),
-                    })?;
-                let backend = selection.backend;
-                if let ValidationResult::Degraded { warnings } = &selection.validation {
-                    tracing::warn!(
-                        capability = %name,
-                        backend = %backend.capabilities().name,
-                        warnings = ?warnings,
-                        "sandbox backend selected with degraded guarantees"
-                    );
-                    return Err(RuntimeError::Capability {
-                        capability: name.to_string(),
-                        message: format!(
-                            "{SANDBOX_DEGRADED_GUARANTEES}: {}",
-                            warnings.join("; ")
-                        ),
-                    });
-                }
-                tracing::debug!(
-                    capability = %name,
-                    backend = %backend.capabilities().name,
-                    "routing capability through sandbox backend"
-                );
-                let session = backend.create_session().await
-                    .map_err(|e| RuntimeError::Capability {
-                        capability: name.to_string(),
-                        message: format!("sandbox session: {e}"),
-                    })?;
-                let exec_result = match backend.execute(&session, exec_req).await {
-                    Ok(result) => result,
-                    Err(error) => {
-                        let _ = backend.destroy_session(session).await;
-                        return Err(RuntimeError::Capability {
-                            capability: name.to_string(),
-                            message: format!("sandbox execute: {error}"),
-                        });
+        let execution = if let Some(exec_req) = capability.to_exec_request(&args) {
+            let registry = sandbox_reg.ok_or_else(|| RuntimeError::Capability {
+                capability: name.to_string(),
+                message:
+                    "Capability requires sandbox execution but sandbox registry is not configured"
+                        .to_string(),
+            })?;
+            Self::execute_sandboxed(name, registry, exec_req, timeout).await
+        } else {
+            tokio::time::timeout(timeout, async {
+                match invocation {
+                    Some(invocation) => {
+                        capability
+                            .execute_with_effect_receipt(args, invocation)
+                            .await
                     }
-                };
-                let _ = backend.destroy_session(session).await;
-                return Ok(CapabilityExecutionResult::new(exec_result_to_value(exec_result)));
-            }
-
-            // Capability doesn't need sandbox, execute directly.
-            match invocation {
-                Some(invocation) => {
-                    capability.execute_with_effect_receipt(args, invocation).await
+                    None => capability
+                        .execute(args)
+                        .await
+                        .map(CapabilityExecutionResult::new),
                 }
-                None => capability.execute(args).await.map(CapabilityExecutionResult::new),
-            }
-        })
+            })
             .await
             .map_err(|_| RuntimeError::Timeout { op_id: 0, timeout })?
-            .map_err(|e| {
-                tracing::error!(capability = %name, error = %e, "Capability execution failed");
-                e
-            })?;
+        }
+        .map_err(|e| {
+            tracing::error!(capability = %name, error = %e, "Capability execution failed");
+            e
+        })?;
 
         if let Some(receipt) = execution.effect_receipt.as_ref() {
             receipt
@@ -576,6 +672,38 @@ impl Default for CapabilitySystem {
     }
 }
 
+/// Project canonical request arguments into the named values accepted by a
+/// capability executor. A non-object root is rejected because inventing an
+/// argument name would change the authored request.
+fn named_arguments_from_request(
+    request: &CapabilityRequest,
+) -> CapabilityResult<HashMap<String, Value>> {
+    let decoded = request
+        .arguments()
+        .value()
+        .map_err(|error| RuntimeError::Capability {
+            capability: request.capability_ref().to_string(),
+            message: format!("canonical arguments are not decodable: {error}"),
+        })?;
+    let serde_json::Value::Object(fields) = decoded else {
+        return Err(RuntimeError::Capability {
+            capability: request.capability_ref().to_string(),
+            message: "canonical capability arguments must be a JSON object".to_string(),
+        });
+    };
+    fields
+        .into_iter()
+        .map(|(name, value)| {
+            Value::try_from(value)
+                .map(|value| (name.clone(), value))
+                .map_err(|error| RuntimeError::Capability {
+                    capability: request.capability_ref().to_string(),
+                    message: format!("argument '{name}' has no runtime value mapping: {error}"),
+                })
+        })
+        .collect()
+}
+
 /// Executor's actual `CapabilitySystem` usage surface, expressed as a trait
 /// so `ExecutionContext.capability_system` can be `Arc<dyn CapabilityFacade>`
 /// instead of the concrete type — the fourth and final step in breaking
@@ -601,7 +729,7 @@ impl CapabilityFacade for CapabilitySystem {
             grant_id: approval.grant_id,
             permission_timeout: approval.permission_timeout,
         };
-        self.admit_invocation_ctx_raw(name, args, requires_approval, Some(&pre_ctx))
+        self.admit_invocation_ctx_raw(name, args, requires_approval, Some(&pre_ctx), None)
             .await
     }
 
@@ -623,7 +751,7 @@ impl CapabilityFacade for CapabilitySystem {
             grant_id: approval.grant_id,
             permission_timeout: approval.permission_timeout,
         };
-        self.invoke_with_timeout_ctx_raw(name, args, timeout, Some(&pre_ctx), None)
+        self.invoke_with_timeout_ctx_raw(name, args, timeout, Some(&pre_ctx), None, None)
             .await
     }
 
@@ -646,8 +774,15 @@ impl CapabilityFacade for CapabilitySystem {
             grant_id: approval.grant_id,
             permission_timeout: approval.permission_timeout,
         };
-        self.invoke_with_timeout_ctx_raw(name, args, timeout, Some(&pre_ctx), Some(invocation))
-            .await
+        self.invoke_with_timeout_ctx_raw(
+            name,
+            args,
+            timeout,
+            Some(&pre_ctx),
+            Some(invocation),
+            Some(invocation.canonical_request().authority()),
+        )
+        .await
     }
 
     fn has_capability(&self, name: &str) -> bool {
@@ -680,5 +815,184 @@ impl CapabilityFacade for CapabilitySystem {
         args: &HashMap<String, Value>,
     ) -> CapabilityResult<CapabilitySandboxPreflight> {
         CapabilitySystem::sandbox_preflight(self, name, args)
+    }
+}
+
+#[cfg(test)]
+mod sandbox_cleanup_tests {
+    use super::*;
+    use apxm_capability_iface::sandbox::{
+        ExecResult, IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxContext,
+        SandboxError,
+    };
+    use async_trait::async_trait;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct HangingCapability {
+        metadata: RuntimeCapability,
+    }
+
+    #[async_trait]
+    impl CapabilityExecutor for HangingCapability {
+        async fn execute(&self, _args: HashMap<String, Value>) -> CapabilityResult<Value> {
+            Err(RuntimeError::Capability {
+                capability: self.metadata.name.clone(),
+                message: "sandbox route expected".to_string(),
+            })
+        }
+
+        fn metadata(&self) -> &RuntimeCapability {
+            &self.metadata
+        }
+
+        fn to_exec_request(&self, _args: &HashMap<String, Value>) -> Option<ExecRequest> {
+            Some(ExecRequest {
+                min_isolation: IsolationLevel::PolicyOnly,
+                ..ExecRequest::default()
+            })
+        }
+    }
+
+    struct HangingBackend {
+        destroyed: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl SandboxBackend for HangingBackend {
+        fn capabilities(&self) -> SandboxCapabilities {
+            SandboxCapabilities {
+                isolation_level: IsolationLevel::PolicyOnly,
+                supports_filesystem_restriction: true,
+                supports_network_restriction: true,
+                supports_syscall_filtering: true,
+                supports_process_restriction: true,
+                supports_resource_limits: true,
+                name: "test-hanging-backend".to_string(),
+                version: "test".to_string(),
+            }
+        }
+
+        fn is_available(&self) -> bool {
+            true
+        }
+
+        fn validate(&self, _request: &ExecRequest) -> ValidationResult {
+            ValidationResult::Ok
+        }
+
+        async fn create_session(&self) -> Result<SandboxContext, SandboxError> {
+            Ok(SandboxContext::new(
+                "test-session",
+                "test-hanging-backend",
+                IsolationLevel::PolicyOnly,
+                (),
+            ))
+        }
+
+        async fn execute(
+            &self,
+            _ctx: &SandboxContext,
+            _request: ExecRequest,
+        ) -> Result<ExecResult, SandboxError> {
+            std::future::pending::<Result<ExecResult, SandboxError>>().await
+        }
+
+        async fn destroy_session(&self, _ctx: SandboxContext) -> Result<(), SandboxError> {
+            self.destroyed.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn sandbox_timeout_detaches_cleanup_after_execute_cancellation() {
+        let system = CapabilitySystem::new();
+        system
+            .register(Arc::new(HangingCapability {
+                metadata: RuntimeCapability::new(
+                    "sandbox-test",
+                    "sandbox timeout test",
+                    serde_json::json!({"type": "object"}),
+                ),
+            }))
+            .expect("register test capability");
+        let destroyed = Arc::new(AtomicUsize::new(0));
+        let mut registry = SandboxRegistry::new();
+        registry.register(Arc::new(HangingBackend {
+            destroyed: Arc::clone(&destroyed),
+        }));
+        system.set_sandbox_registry(Arc::new(registry));
+
+        let error = system
+            .invoke_with_timeout("sandbox-test", HashMap::new(), Duration::from_millis(10))
+            .await
+            .expect_err("hanging sandbox must time out");
+        assert!(matches!(error, RuntimeError::Timeout { .. }));
+
+        for _ in 0..100 {
+            if destroyed.load(Ordering::SeqCst) == 1 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        assert_eq!(destroyed.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[cfg(test)]
+mod canonical_request_tests {
+    use super::*;
+    use crate::executor::EchoCapability;
+    use crate::interceptor::CapabilityInterceptor;
+    use apxm_program::capability::CapabilityInvocationAuthority;
+    use serde_json::json;
+    use std::sync::Mutex;
+
+    struct AuthorityCapture(Arc<Mutex<Option<String>>>);
+
+    #[async_trait::async_trait]
+    impl CapabilityInterceptor for AuthorityCapture {
+        async fn pre_invoke_with_authority(
+            &self,
+            _name: &str,
+            _args: &HashMap<String, Value>,
+            authority: &CapabilityInvocationAuthority,
+        ) -> InterceptDecision {
+            *self.0.lock().expect("capture lock") =
+                Some(authority.capability_grant_ref().target.clone());
+            InterceptDecision::allow()
+        }
+    }
+
+    #[tokio::test]
+    async fn canonical_request_keeps_admitted_authority_at_interceptor_boundary() {
+        let system = CapabilitySystem::new();
+        system
+            .register(Arc::new(EchoCapability::new()))
+            .expect("register echo");
+        let captured = Arc::new(Mutex::new(None));
+        system.register_interceptor(Arc::new(AuthorityCapture(Arc::clone(&captured))));
+        let authority = CapabilityInvocationAuthority::new(
+            "principal.user.1",
+            "agent.identity.1",
+            "grant.echo.1",
+            Vec::new(),
+        )
+        .expect("valid authority");
+        let request = CapabilityRequest::prepare(
+            "echo",
+            "EchoArguments",
+            json!({"message": "authority-preserved"}),
+            "invocation.echo.1",
+            "node-execution.echo.1",
+            authority,
+        )
+        .expect("canonical request");
+
+        let result = system.invoke_request(request).await.expect("echo executes");
+        assert!(result.to_string().contains("authority-preserved"));
+        assert_eq!(
+            captured.lock().expect("capture lock").as_deref(),
+            Some("grant.echo.1")
+        );
     }
 }

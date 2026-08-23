@@ -21,14 +21,23 @@
 //!    the twenty.
 
 mod common;
+#[path = "common/files.rs"]
+mod files;
+#[path = "common/published.rs"]
+mod published;
+#[path = "common/schema.rs"]
+mod schema;
+#[path = "common/vectors.rs"]
+mod vectors;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use common::{
-    Vector, compile_schema_with, contract_file_digest, contract_file_exists, load_contract,
-    load_vectors, published_contract_files, published_vector_files,
-};
+use common::{Vector, load_contract, load_vectors};
+use files::{contract_file_digest, contract_file_exists};
+use published::published_contract_files;
+use schema::compile_schema_with;
 use serde_json::Value;
+use vectors::published_vector_files;
 
 /// The immutable external-owner snapshot every document schema that references
 /// shared identifier and digest primitives resolves against.

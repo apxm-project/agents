@@ -3,7 +3,8 @@
 use std::sync::Mutex;
 
 use apxm_kernel::{
-    ExecutionCommitPort, ExecutionCommitRequest, ExecutionCommitResult, ProgramInstanceRef,
+    CommittedContinuation, ExecutionCommitPort, ExecutionCommitRequest, ExecutionCommitResult,
+    ProgramInstanceRef,
 };
 use async_trait::async_trait;
 use serde_json::Value;
@@ -92,5 +93,15 @@ impl ExecutionCommitPort for InMemoryExecutionCommit {
             .lock()
             .expect("commit-local memory lock")
             .load_continuation(program_instance_ref)
+    }
+
+    async fn load_continuation_with_integrity(
+        &self,
+        program_instance_ref: &ProgramInstanceRef,
+    ) -> Option<CommittedContinuation> {
+        self.store
+            .lock()
+            .expect("commit-local memory lock")
+            .load_continuation_with_integrity(program_instance_ref)
     }
 }

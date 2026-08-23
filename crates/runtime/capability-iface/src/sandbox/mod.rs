@@ -17,6 +17,9 @@ pub use backend::{
     WrappedCommandGuard,
 };
 pub use error::SandboxError;
-pub use manifest::{NodeSandboxReq, SecurityManifest};
+pub use manifest::{
+    ManifestValidationError, NodeSandboxReq, SandboxRequirements, SecurityManifest,
+    classify_operation,
+};
 pub use registry::{SandboxRegistry, SandboxSelection};
 pub use types::{ExecRequest, ExecResult, IsolationLevel, SandboxCapabilities, SandboxContext};

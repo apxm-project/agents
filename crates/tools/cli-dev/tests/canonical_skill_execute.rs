@@ -11,7 +11,6 @@
 //! being demonstrated.
 
 use std::path::PathBuf;
-use std::process::Command;
 
 use serde_json::Value;
 
@@ -65,6 +64,25 @@ fn node_outcome<'a>(result: &'a Value, node_id: &str) -> &'a Value {
         .unwrap_or_else(|| panic!("no node outcome for {node_id}: {result}"))
 }
 
+fn envelope_content(value: &Value) -> String {
+    // The local execution projection may carry the capability Value as a
+    // JSON-encoded string; the capability contract itself is the envelope
+    // object. Accept both transport representations while asserting the same
+    // trust boundary.
+    let wire = match value {
+        Value::String(encoded) => {
+            serde_json::from_str(encoded).expect("decode untrusted skill envelope")
+        }
+        other => other.clone(),
+    };
+    assert_eq!(wire["kind"], "untrusted_content");
+    assert_eq!(wire["trust"], "untrusted");
+    wire["items"][0]["content"]
+        .as_str()
+        .expect("untrusted skill envelope content")
+        .to_owned()
+}
+
 #[test]
 fn an_authored_capability_invoke_lists_and_reads_a_real_skill() {
     let output = execute_skill_fixture();
@@ -83,9 +101,7 @@ fn an_authored_capability_invoke_lists_and_reads_a_real_skill() {
         listed["outcome"]["status"], "completed",
         "an admitted Tool(\"list_skills\") reaches ListSkillsCapability: {result}"
     );
-    let cards = listed["outcome"]["result"]
-        .as_str()
-        .expect("capability result text");
+    let cards = envelope_content(&listed["outcome"]["result"]);
     assert!(
         cards.contains("\"skill_id\": \"context\""),
         "the project root publishes a card per checked-in skill: {cards}"
@@ -103,9 +119,7 @@ fn an_authored_capability_invoke_lists_and_reads_a_real_skill() {
         searched["outcome"]["status"], "completed",
         "an admitted Tool(\"search_skills\") reaches SearchSkillsCapability: {result}"
     );
-    let search_cards = searched["outcome"]["result"]
-        .as_str()
-        .expect("capability result text");
+    let search_cards = envelope_content(&searched["outcome"]["result"]);
     assert!(
         search_cards.contains("\"skill_id\": \"context\""),
         "searching by metadata returns the matching skill card: {search_cards}"
@@ -120,9 +134,7 @@ fn an_authored_capability_invoke_lists_and_reads_a_real_skill() {
         body["outcome"]["status"], "completed",
         "an admitted Tool(\"read_skill\") reaches ReadSkillCapability: {result}"
     );
-    let body = body["outcome"]["result"]
-        .as_str()
-        .expect("capability result text");
+    let body = envelope_content(&body["outcome"]["result"]);
     assert!(
         body.contains("name: context"),
         "reading a skill returns its instruction document: {body}"

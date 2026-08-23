@@ -79,7 +79,8 @@ Thumbs.db
 slurm-*.out
 *.log
 
-# Keep examples source-only. Runtime outputs belong under /.apxm/.
+# Keep example runtime outputs outside Git. Their package manifests and npm
+# lockfiles remain tracked so dependency resolution is reproducible.
 examples/**/benchmarks/
 examples/**/results/
 examples/**/runs/

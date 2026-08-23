@@ -131,6 +131,8 @@ walkdir = "2.0"
 rusqlite = { version = "0.32", features = ["bundled"] }
 jsonschema = "0.18"
 sha2 = "0.10"
+libc = "0.2"
+rustix = { version = "1.1", features = ["fs"] }
 utoipa = { version = "5.5", features = ["axum_extras"] }
 serde_yaml = "0.9"
 progenitor = "0.14"

@@ -10,4 +10,13 @@ use async_trait::async_trait;
 #[async_trait]
 pub trait CapabilityPort: Send + Sync {
     async fn invoke(&self, request: CapabilityRequest) -> CapabilityOutcome;
+
+    /// Invoke through the authority-preserving canonical request seam.
+    ///
+    /// The default keeps existing injected ports source-compatible; concrete
+    /// service ports that execute real capabilities must override this method
+    /// so the request's typed authority reaches their capability system.
+    async fn invoke_authorized(&self, request: CapabilityRequest) -> CapabilityOutcome {
+        self.invoke(request).await
+    }
 }

@@ -6,7 +6,10 @@
 //! caller), never inlined by the compiler. Returns the response body as a
 //! string.
 
-use super::require_string_arg;
+use super::{
+    MAX_HEADER_COUNT, MAX_REQUEST_BODY_BYTES, MAX_URL_BYTES, collect_bounded_body,
+    provenance_source_uri, require_string_arg, typed_headers, untrusted_content_value,
+};
 use crate::{
     executor::{CapabilityExecutor, CapabilityResult},
     metadata::RuntimeCapability,
@@ -14,7 +17,7 @@ use crate::{
 use apxm_core::{constants::capabilities, error::RuntimeError, types::Value};
 use async_trait::async_trait;
 use reqwest::Client;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::json;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -22,6 +25,84 @@ use std::sync::OnceLock;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 const MAX_BODY_BYTES: usize = 1_000_000;
+
+fn validate_request_url(capability: &str, raw: &str) -> CapabilityResult<()> {
+    if raw.len() > MAX_URL_BYTES {
+        return Err(RuntimeError::Capability {
+            capability: capability.to_owned(),
+            message: format!("URL exceeds {MAX_URL_BYTES} bytes"),
+        });
+    }
+    let parsed = reqwest::Url::parse(raw).map_err(|error| RuntimeError::Capability {
+        capability: capability.to_owned(),
+        message: format!("invalid URL: {error}"),
+    })?;
+    if parsed.host_str().is_none()
+        || !matches!(parsed.scheme(), "http" | "https")
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err(RuntimeError::Capability {
+            capability: capability.to_owned(),
+            message: "URL must be an absolute HTTP(S) URL without credentials or a fragment"
+                .to_owned(),
+        });
+    }
+    Ok(())
+}
+
+/// Explicit destination policy for outbound HTTP capabilities.
+///
+/// SSRF filtering protects private network ranges, but it does not stop a
+/// caller from sending local data to an arbitrary public endpoint. Empty
+/// `allowed_hosts` is deny-by-default; hosts opt in exact names or a
+/// subdomain suffix beginning with `.`.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+pub struct HttpConfig {
+    #[serde(default = "super::default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub allowed_hosts: Vec<String>,
+}
+
+impl Default for HttpConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            allowed_hosts: Vec::new(),
+        }
+    }
+}
+
+fn host_allowed(capability: &str, config: &HttpConfig, raw: &str) -> CapabilityResult<()> {
+    let url = reqwest::Url::parse(raw).map_err(|error| RuntimeError::Capability {
+        capability: capability.to_owned(),
+        message: format!("invalid url: {error}"),
+    })?;
+    let host = url.host_str().ok_or_else(|| RuntimeError::Capability {
+        capability: capability.to_owned(),
+        message: "url has no host".to_owned(),
+    })?;
+    let host = host.to_ascii_lowercase();
+    let allowed = config.allowed_hosts.iter().any(|entry| {
+        let entry = entry.trim().trim_end_matches('.').to_ascii_lowercase();
+        if entry.is_empty() {
+            return false;
+        }
+        entry.strip_prefix('.').map_or(host == entry, |suffix| {
+            host.ends_with(&format!(".{suffix}"))
+        })
+    });
+    if allowed {
+        Ok(())
+    } else {
+        Err(RuntimeError::Capability {
+            capability: capability.to_owned(),
+            message: format!("HTTP destination '{host}' is not allowed by host policy"),
+        })
+    }
+}
 
 /// True if an address must not be reached from a tool HTTP call — loopback,
 /// private, link-local (incl. 169.254.169.254 cloud metadata), unspecified,
@@ -38,7 +119,8 @@ fn is_blocked_ip(ip: IpAddr) -> bool {
                 || v4.octets()[0] == 0
         }
         IpAddr::V6(v6) => {
-            v6.is_loopback()
+            v6.to_ipv4().is_some_and(|v4| is_blocked_ip(IpAddr::V4(v4)))
+                || v6.is_loopback()
                 || v6.is_unspecified()
                 || v6.is_multicast()
                 || (v6.segments()[0] & 0xfe00) == 0xfc00 // unique-local fc00::/7
@@ -98,22 +180,11 @@ pub async fn guard_url_ssrf_pinned(cap: &str, raw: &str) -> CapabilityResult<Vec
     Ok(pinned)
 }
 
-/// Redirect policy shared by every tool HTTP client: cap the redirect chain and
-/// refuse any hop whose host is a blocked IP literal (defence-in-depth against
-/// redirect-to-metadata SSRF).
+/// Redirect policy shared by every tool HTTP client. Redirect targets are not
+/// re-resolved and SSRF-vetted by this boundary, so redirects stop at the
+/// original response rather than creating a second unpinned request.
 fn hardened_redirect_policy() -> reqwest::redirect::Policy {
-    reqwest::redirect::Policy::custom(|attempt| {
-        if attempt.previous().len() >= 5 {
-            return attempt.error("too many redirects");
-        }
-        if let Some(host) = attempt.url().host_str()
-            && let Ok(ip) = host.parse::<IpAddr>()
-            && is_blocked_ip(ip)
-        {
-            return attempt.stop();
-        }
-        attempt.follow()
-    })
+    reqwest::redirect::Policy::custom(|attempt| attempt.stop())
 }
 
 /// Choose the client to issue a tool HTTP request on, pinning DNS resolution to
@@ -126,15 +197,18 @@ fn hardened_redirect_policy() -> reqwest::redirect::Policy {
 /// (`.resolve_to_addrs` overrides only the name→address mapping), so virtual
 /// hosting and certificate validation still work. An IP-literal URL (empty
 /// `addrs`) reuses the shared client — there is no name to rebind.
-pub fn client_for(url: &str, addrs: &[SocketAddr]) -> std::borrow::Cow<'static, Client> {
+pub fn client_for(
+    url: &str,
+    addrs: &[SocketAddr],
+) -> Result<std::borrow::Cow<'static, Client>, String> {
     if addrs.is_empty() {
-        return std::borrow::Cow::Borrowed(shared_client());
+        return Ok(std::borrow::Cow::Borrowed(shared_client()));
     }
     let Some(host) = reqwest::Url::parse(url)
         .ok()
         .and_then(|u| u.host_str().map(str::to_string))
     else {
-        return std::borrow::Cow::Borrowed(shared_client());
+        return Err("pinned request URL has no valid host".to_string());
     };
     match Client::builder()
         .timeout(std::time::Duration::from_secs(DEFAULT_TIMEOUT_SECS))
@@ -142,10 +216,8 @@ pub fn client_for(url: &str, addrs: &[SocketAddr]) -> std::borrow::Cow<'static, 
         .resolve_to_addrs(&host, addrs)
         .build()
     {
-        Ok(client) => std::borrow::Cow::Owned(client),
-        // Fall back to the shared client (still SSRF-guarded by the pre-flight
-        // resolve + the redirect policy) if the pinned client fails to build.
-        Err(_) => std::borrow::Cow::Borrowed(shared_client()),
+        Ok(client) => Ok(std::borrow::Cow::Owned(client)),
+        Err(error) => Err(format!("could not build DNS-pinned client: {error}")),
     }
 }
 
@@ -166,27 +238,34 @@ pub fn shared_client() -> &'static Client {
 /// Build request headers from an optional `headers` object arg. Uses a
 /// serde_json round-trip so we don't depend on the (build-generated) `Value`
 /// variant shape.
-fn header_map(args: &HashMap<String, Value>) -> HeaderMap {
+fn header_map(args: &HashMap<String, Value>, capability: &str) -> CapabilityResult<HeaderMap> {
     let mut map = HeaderMap::new();
-    if let Some(hv) = args.get("headers")
-        && let Ok(serde_json::Value::Object(obj)) = serde_json::to_value(hv)
+    for (name, value) in
+        typed_headers(args.get("headers")).map_err(|message| RuntimeError::Capability {
+            capability: capability.to_owned(),
+            message,
+        })?
     {
-        for (k, v) in obj {
-            if let Some(s) = v.as_str()
-                && let (Ok(name), Ok(val)) = (
-                    HeaderName::from_bytes(k.as_bytes()),
-                    HeaderValue::from_str(s),
-                )
-            {
-                map.insert(name, val);
+        let name = reqwest::header::HeaderName::from_bytes(name.as_bytes()).map_err(|error| {
+            RuntimeError::Capability {
+                capability: capability.to_owned(),
+                message: format!("invalid header name: {error}"),
             }
-        }
+        })?;
+        let value = reqwest::header::HeaderValue::from_str(&value).map_err(|error| {
+            RuntimeError::Capability {
+                capability: capability.to_owned(),
+                message: format!("invalid header value: {error}"),
+            }
+        })?;
+        map.insert(name, value);
     }
-    map
+    Ok(map)
 }
 
 async fn finish(
     cap: &str,
+    source_uri: &str,
     resp: Result<reqwest::Response, reqwest::Error>,
 ) -> CapabilityResult<Value> {
     let resp = resp.map_err(|e| RuntimeError::Capability {
@@ -194,22 +273,29 @@ async fn finish(
         message: format!("request failed: {e}"),
     })?;
     let status = resp.status();
-    let mut body = resp.text().await.unwrap_or_default();
-    if body.len() > MAX_BODY_BYTES {
-        body.truncate(MAX_BODY_BYTES);
-    }
     if !status.is_success() {
         return Err(RuntimeError::Capability {
             capability: cap.to_string(),
-            message: format!("HTTP {status}: {body}"),
+            message: format!("HTTP request returned status {status}"),
         });
     }
-    Ok(Value::String(body))
+    let body = collect_bounded_body(resp, MAX_BODY_BYTES)
+        .await
+        .map_err(|error| RuntimeError::Capability {
+            capability: cap.to_string(),
+            message: format!("HTTP response unavailable: {error}"),
+        })?;
+    untrusted_content_value(
+        cap,
+        provenance_source_uri(source_uri),
+        String::from_utf8_lossy(&body).into_owned(),
+    )
 }
 
 /// `http_get(url, headers?)` — fetch a URL, return the response body.
 pub struct HttpGetCapability {
     metadata: RuntimeCapability,
+    config: HttpConfig,
 }
 
 impl Default for HttpGetCapability {
@@ -220,6 +306,10 @@ impl Default for HttpGetCapability {
 
 impl HttpGetCapability {
     pub fn new() -> Self {
+        Self::with_config(HttpConfig::default())
+    }
+
+    pub fn with_config(config: HttpConfig) -> Self {
         Self {
             metadata: RuntimeCapability::new(
                 capabilities::HTTP_GET,
@@ -233,13 +323,14 @@ impl HttpGetCapability {
                     "required": ["url"]
                 }),
             )
-            .with_returns("string")
+            .with_returns("object (untrusted quoted HTTP response)")
             .with_read_only()
             .with_groups(vec![
                 capabilities::groups::HTTP.to_string(),
                 capabilities::groups::WEB.to_string(),
             ])
             .with_latency(300),
+            config,
         }
     }
 }
@@ -248,10 +339,16 @@ impl HttpGetCapability {
 impl CapabilityExecutor for HttpGetCapability {
     async fn execute(&self, args: HashMap<String, Value>) -> CapabilityResult<Value> {
         let url = require_string_arg(&args, "url", &self.metadata.name)?.to_string();
+        validate_request_url(&self.metadata.name, &url)?;
+        host_allowed(&self.metadata.name, &self.config, &url)?;
         let pinned = guard_url_ssrf_pinned(&self.metadata.name, &url).await?;
-        let client = client_for(&url, &pinned);
-        let resp = client.get(&url).headers(header_map(&args)).send().await;
-        finish(&self.metadata.name, resp).await
+        let client = client_for(&url, &pinned).map_err(|message| RuntimeError::Capability {
+            capability: self.metadata.name.clone(),
+            message,
+        })?;
+        let headers = header_map(&args, &self.metadata.name)?;
+        let resp = client.get(&url).headers(headers).send().await;
+        finish(&self.metadata.name, &url, resp).await
     }
 
     fn metadata(&self) -> &RuntimeCapability {
@@ -262,6 +359,7 @@ impl CapabilityExecutor for HttpGetCapability {
 /// `http_post(url, body?, headers?)` — POST a JSON/string body, return the body.
 pub struct HttpPostCapability {
     metadata: RuntimeCapability,
+    config: HttpConfig,
 }
 
 impl Default for HttpPostCapability {
@@ -272,6 +370,10 @@ impl Default for HttpPostCapability {
 
 impl HttpPostCapability {
     pub fn new() -> Self {
+        Self::with_config(HttpConfig::default())
+    }
+
+    pub fn with_config(config: HttpConfig) -> Self {
         Self {
             metadata: RuntimeCapability::new(
                 capabilities::HTTP_POST,
@@ -286,12 +388,13 @@ impl HttpPostCapability {
                     "required": ["url"]
                 }),
             )
-            .with_returns("string")
+            .with_returns("object (untrusted quoted HTTP response)")
             .with_groups(vec![
                 capabilities::groups::HTTP.to_string(),
                 capabilities::groups::WEB.to_string(),
             ])
             .with_latency(400),
+            config,
         }
     }
 }
@@ -300,21 +403,49 @@ impl HttpPostCapability {
 impl CapabilityExecutor for HttpPostCapability {
     async fn execute(&self, args: HashMap<String, Value>) -> CapabilityResult<Value> {
         let url = require_string_arg(&args, "url", &self.metadata.name)?.to_string();
+        validate_request_url(&self.metadata.name, &url)?;
+        host_allowed(&self.metadata.name, &self.config, &url)?;
         let pinned = guard_url_ssrf_pinned(&self.metadata.name, &url).await?;
-        let client = client_for(&url, &pinned);
-        let mut req = client.post(&url).headers(header_map(&args));
+        let client = client_for(&url, &pinned).map_err(|message| RuntimeError::Capability {
+            capability: self.metadata.name.clone(),
+            message,
+        })?;
+        let mut headers = header_map(&args, &self.metadata.name)?;
+        let mut request_body = None;
         if let Some(body) = args.get("body") {
-            match serde_json::to_value(body) {
-                Ok(serde_json::Value::String(s)) => req = req.body(s),
-                Ok(jv) => {
-                    req = req
-                        .header("content-type", "application/json")
-                        .body(jv.to_string());
-                }
-                Err(_) => {}
+            let bytes =
+                match serde_json::to_value(body).map_err(|error| RuntimeError::Capability {
+                    capability: self.metadata.name.clone(),
+                    message: format!("request body is not serializable: {error}"),
+                })? {
+                    serde_json::Value::String(s) => s.into_bytes(),
+                    jv => {
+                        if headers.len() >= MAX_HEADER_COUNT {
+                            return Err(RuntimeError::Capability {
+                                capability: self.metadata.name.clone(),
+                                message: format!("headers exceed {MAX_HEADER_COUNT} entries"),
+                            });
+                        }
+                        headers.insert(
+                            reqwest::header::CONTENT_TYPE,
+                            HeaderValue::from_static("application/json"),
+                        );
+                        jv.to_string().into_bytes()
+                    }
+                };
+            if bytes.len() > MAX_REQUEST_BODY_BYTES {
+                return Err(RuntimeError::Capability {
+                    capability: self.metadata.name.clone(),
+                    message: format!("request body exceeds {MAX_REQUEST_BODY_BYTES} bytes"),
+                });
             }
+            request_body = Some(bytes);
         }
-        finish(&self.metadata.name, req.send().await).await
+        let mut req = client.post(&url).headers(headers);
+        if let Some(body) = request_body {
+            req = req.body(body);
+        }
+        finish(&self.metadata.name, &url, req.send().await).await
     }
 
     fn metadata(&self) -> &RuntimeCapability {
@@ -334,6 +465,7 @@ mod ssrf_tests {
         assert!(is_blocked_ip("169.254.169.254".parse().unwrap())); // cloud metadata
         assert!(is_blocked_ip("10.0.0.5".parse().unwrap()));
         assert!(is_blocked_ip("::1".parse().unwrap()));
+        assert!(is_blocked_ip("::ffff:127.0.0.1".parse().unwrap()));
         assert!(!is_blocked_ip("8.8.8.8".parse().unwrap()));
     }
 
@@ -383,10 +515,9 @@ mod ssrf_tests {
         );
     }
 
-    /// Defence-in-depth: a public-looking endpoint that 302s to a blocked IP
-    /// literal (cloud metadata) must NOT be followed by the shared client.
-    /// `Policy::custom` calls `attempt.stop()` on the blocked hop, so the final
-    /// response is the 302 itself — the request never reaches 169.254.169.254.
+    /// Defence-in-depth: a public-looking endpoint that 302s to any target must
+    /// not be followed by the shared client. The final response remains the
+    /// 302, so a redirect hostname cannot bypass the initial SSRF guard.
     #[tokio::test]
     async fn redirect_to_blocked_ip_is_not_followed() {
         let server = MockServer::start().await;
@@ -408,5 +539,80 @@ mod ssrf_tests {
         // Redirect was stopped, not followed: we see the 302 status, not a 200
         // from the metadata endpoint (which is unreachable / would differ).
         assert_eq!(resp.status().as_u16(), 302);
+    }
+
+    #[tokio::test]
+    async fn response_errors_do_not_include_remote_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("secret-response-body"))
+            .mount(&server)
+            .await;
+
+        let response = shared_client()
+            .get(server.uri())
+            .send()
+            .await
+            .expect("mock response");
+        let error = finish("http_test", "https://example.test/", Ok(response))
+            .await
+            .expect_err("status failures are errors");
+        let rendered = format!("{error}");
+        assert!(rendered.contains("500"));
+        assert!(!rendered.contains("secret-response-body"));
+    }
+
+    #[tokio::test]
+    async fn oversized_multibyte_response_is_rejected_without_panicking() {
+        let server = MockServer::start().await;
+        let body = "é".repeat((MAX_BODY_BYTES / 2) + 1);
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body))
+            .mount(&server)
+            .await;
+
+        let response = shared_client()
+            .get(server.uri())
+            .send()
+            .await
+            .expect("mock response");
+        let error = finish("http_test", "https://example.test/", Ok(response))
+            .await
+            .expect_err("oversized responses are rejected");
+        assert!(format!("{error}").contains("exceeds 1000000 bytes"));
+    }
+
+    #[test]
+    fn malformed_pinned_url_fails_closed() {
+        let address: SocketAddr = "8.8.8.8:443".parse().expect("valid test address");
+        assert!(client_for("not a URL", &[address]).is_err());
+    }
+
+    #[test]
+    fn outbound_host_policy_is_explicit_and_boundary_aware() {
+        let denied = HttpConfig::default();
+        assert!(host_allowed("http_get", &denied, "https://example.com/").is_err());
+
+        let allowed = HttpConfig {
+            allowed_hosts: vec![".example.com".to_owned()],
+            ..HttpConfig::default()
+        };
+        assert!(host_allowed("http_get", &allowed, "https://api.example.com/").is_ok());
+        assert!(host_allowed("http_get", &allowed, "https://example.com.evil/").is_err());
+    }
+
+    #[tokio::test]
+    async fn http_get_rejects_unlisted_destination_before_network_access() {
+        let capability = HttpGetCapability::new();
+        let error = capability
+            .execute(HashMap::from([(
+                "url".to_owned(),
+                Value::String("https://example.com/exfil".to_owned()),
+            )]))
+            .await
+            .expect_err("default HTTP policy must deny arbitrary destinations");
+        assert!(format!("{error}").contains("not allowed by host policy"));
     }
 }

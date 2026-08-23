@@ -8,9 +8,46 @@ use apxm_kernel::event_api::{
     CanonicalEventRef, EventApplication, EventApplicationResult, InvocationBoundary,
 };
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 /// Only declared Runtime protocol version. Unknown versions fail closed.
 pub const RUNTIME_PROTOCOL_VERSION: &str = "apxm.runtime.protocol/1";
+
+/// Opaque possession claim minted by the Runtime Service.
+///
+/// This is a typed capability claim, not a claim that the transport
+/// authenticated the caller. A transport that has no caller-authentication
+/// field must not be described as authenticated; it can still require the
+/// exact unguessable claim returned at instance or Event reservation.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeOwnerClaim {
+    /// Opaque service-minted claim. Only exact equality authorizes a state
+    /// transition at this protocol boundary.
+    pub value: String,
+}
+
+impl RuntimeOwnerClaim {
+    /// Mint an unguessable claim using the operating system CSPRNG through
+    /// UUID v4.
+    #[must_use]
+    pub fn mint() -> Self {
+        Self {
+            value: format!("owner-{}", Uuid::new_v4()),
+        }
+    }
+
+    /// Validate the closed wire grammar without treating it as caller auth.
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        let Some(uuid) = self.value.strip_prefix("owner-") else {
+            return Err(ProtocolError::InvalidOwnerClaim);
+        };
+        let parsed = Uuid::parse_str(uuid).map_err(|_| ProtocolError::InvalidOwnerClaim)?;
+        (parsed.get_version_num() == 4)
+            .then_some(())
+            .ok_or(ProtocolError::InvalidOwnerClaim)
+    }
+}
 
 /// Client-to-service handshake.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,6 +85,8 @@ pub enum RuntimeRequest {
         request_id: String,
         /// Program Instance id.
         program_instance_id: String,
+        /// Exact claim returned when this instance was created.
+        owner_claim: RuntimeOwnerClaim,
         /// Typed Invocation input JSON.
         input: serde_json::Value,
     },
@@ -62,6 +101,8 @@ pub enum RuntimeRequest {
     EventFulfill {
         /// Caller correlation id.
         request_id: String,
+        /// Exact claim returned when this EventRef was reserved.
+        owner_claim: RuntimeOwnerClaim,
         /// Canonical application record.
         application: EventApplication<serde_json::Value>,
     },
@@ -69,6 +110,8 @@ pub enum RuntimeRequest {
     EventInspect {
         /// Caller correlation id.
         request_id: String,
+        /// Exact claim returned when this EventRef was reserved.
+        owner_claim: RuntimeOwnerClaim,
         /// Target EventRef.
         event_ref: CanonicalEventRef,
     },
@@ -76,6 +119,8 @@ pub enum RuntimeRequest {
     ProgramInvocationCancel {
         /// Caller correlation id.
         request_id: String,
+        /// Exact claim returned when this instance was created.
+        owner_claim: RuntimeOwnerClaim,
         /// Invocation to cancel.
         program_invocation_id: String,
     },
@@ -91,6 +136,8 @@ pub enum RuntimeResult {
         request_id: String,
         /// Instance id.
         program_instance_id: String,
+        /// Possession claim bound to this instance by the service.
+        owner_claim: RuntimeOwnerClaim,
         /// Artifact digest that was admitted.
         artifact_digest: String,
     },
@@ -105,6 +152,8 @@ pub enum RuntimeResult {
     EventReserved {
         /// Matching request id.
         request_id: String,
+        /// Possession claim bound to this reservation by the service.
+        owner_claim: RuntimeOwnerClaim,
         /// Runtime-minted EventRef.
         event_ref: CanonicalEventRef,
     },
@@ -134,6 +183,12 @@ pub enum RuntimeResult {
 pub enum ProtocolError {
     /// Undeclared protocol version.
     IncompatibleVersion,
+    /// Claim is absent or not the closed UUID-v4 wire form.
+    InvalidOwnerClaim,
+    /// A claim does not match the service-owned state.
+    OwnerMismatch,
+    /// An EventRef was not minted by this service or has a wrong generation.
+    UnknownReservation,
     /// Request tried to submit source or compiler inputs as truth.
     SourceAsExecutable,
     /// Public method named a forbidden internal Event operation.
@@ -153,8 +208,9 @@ pub fn public_event_method_forbidden(name: &str) -> bool {
 #[derive(Default)]
 pub struct InMemoryRuntimePeer {
     next_generation: u64,
-    instances: Vec<String>,
-    artifact_by_instance: Vec<(String, String)>,
+    instances: Vec<(String, RuntimeOwnerClaim, String)>,
+    invocations: Vec<(String, String, String, RuntimeResult)>,
+    reservations: Vec<(CanonicalEventRef, RuntimeOwnerClaim, String)>,
     applications: Vec<(String, serde_json::Value)>,
 }
 
@@ -171,34 +227,65 @@ impl InMemoryRuntimePeer {
                 request_id,
                 artifact_digest,
             } => {
-                if artifact_digest.trim().is_empty() {
+                if !is_strict_digest(&artifact_digest) {
                     return Err(ProtocolError::SourceAsExecutable);
                 }
-                let id = format!("pi-{}", self.instances.len() + 1);
-                self.instances.push(id.clone());
-                self.artifact_by_instance
-                    .push((id.clone(), artifact_digest.clone()));
+                let id = format!("pi-{}", Uuid::new_v4());
+                let owner_claim = RuntimeOwnerClaim::mint();
+                self.instances
+                    .push((id.clone(), owner_claim.clone(), artifact_digest.clone()));
                 Ok(RuntimeResult::ProgramInstanceCreated {
                     request_id,
                     program_instance_id: id,
+                    owner_claim,
                     artifact_digest,
                 })
             }
             RuntimeRequest::ProgramInvocationStart {
                 request_id,
                 program_instance_id,
+                owner_claim,
                 input: _,
             } => {
-                if !self.instances.iter().any(|id| id == &program_instance_id) {
+                owner_claim.validate()?;
+                let Some((_, expected_claim, _)) = self
+                    .instances
+                    .iter()
+                    .find(|(id, _, _)| id == &program_instance_id)
+                else {
                     return Ok(RuntimeResult::Failed {
                         request_id,
                         code: "unknown_instance".to_owned(),
                     });
+                };
+                if expected_claim != &owner_claim {
+                    return Err(ProtocolError::OwnerMismatch);
                 }
-                Ok(RuntimeResult::ProgramInvocationStarted {
+                if let Some((_, prior_request, _, prior_result)) = self
+                    .invocations
+                    .iter()
+                    .find(|(id, _, _, _)| id == &program_instance_id)
+                {
+                    if prior_request == &request_id {
+                        return Ok(prior_result.clone());
+                    }
+                    return Ok(RuntimeResult::Failed {
+                        request_id,
+                        code: "invocation_already_started".to_owned(),
+                    });
+                }
+                let invocation_id = format!("{program_instance_id}:inv-{}", Uuid::new_v4());
+                let result = RuntimeResult::ProgramInvocationStarted {
+                    request_id: request_id.clone(),
+                    program_invocation_id: invocation_id,
+                };
+                self.invocations.push((
+                    program_instance_id,
                     request_id,
-                    program_invocation_id: format!("{program_instance_id}:inv-1"),
-                })
+                    owner_claim.value,
+                    result.clone(),
+                ));
+                Ok(result)
             }
             RuntimeRequest::EventReserve {
                 request_id,
@@ -211,22 +298,44 @@ impl InMemoryRuntimePeer {
                     });
                 }
                 self.next_generation += 1;
+                let owner_claim = RuntimeOwnerClaim::mint();
+                let event_ref = CanonicalEventRef {
+                    event_id: format!("evt-{}", Uuid::new_v4()),
+                    generation: self.next_generation,
+                };
+                self.reservations
+                    .push((event_ref.clone(), owner_claim.clone(), type_id));
                 Ok(RuntimeResult::EventReserved {
                     request_id,
-                    event_ref: CanonicalEventRef {
-                        event_id: format!("evt-{}", self.next_generation),
-                        generation: self.next_generation,
-                    },
+                    owner_claim,
+                    event_ref,
                 })
             }
             RuntimeRequest::EventFulfill {
                 request_id,
+                owner_claim,
                 application,
             } => {
+                owner_claim.validate()?;
                 application
                     .validate_identities()
                     .map_err(|_| ProtocolError::ForbiddenEventMethod)?;
                 let key = application.idempotency_key.clone();
+                let Some((event_ref, reservation_claim, _)) = self
+                    .reservations
+                    .iter()
+                    .find(|(event_ref, _, _)| event_ref == &application.event_ref)
+                else {
+                    return Ok(RuntimeResult::EventApplied {
+                        request_id,
+                        result: EventApplicationResult::Rejected,
+                    });
+                };
+                if reservation_claim != &owner_claim
+                    || event_ref.generation != application.event_ref.generation
+                {
+                    return Err(ProtocolError::OwnerMismatch);
+                }
                 if let Some((_, prior)) = self.applications.iter().find(|(k, _)| k == &key) {
                     if prior != &application.occurrence.payload {
                         return Ok(RuntimeResult::EventApplied {
@@ -248,21 +357,66 @@ impl InMemoryRuntimePeer {
             }
             RuntimeRequest::EventInspect {
                 request_id,
+                owner_claim,
                 event_ref,
             } => {
+                owner_claim.validate()?;
                 event_ref
                     .validate()
                     .map_err(|_| ProtocolError::ForbiddenEventMethod)?;
+                let Some((_, expected_claim, _)) = self
+                    .reservations
+                    .iter()
+                    .find(|(reserved, _, _)| reserved == &event_ref)
+                else {
+                    return Ok(RuntimeResult::Failed {
+                        request_id,
+                        code: "unknown_reservation".to_owned(),
+                    });
+                };
+                if expected_claim != &owner_claim {
+                    return Err(ProtocolError::OwnerMismatch);
+                }
                 Ok(RuntimeResult::Failed {
                     request_id,
                     code: "inspect_ok".to_owned(),
                 })
             }
-            RuntimeRequest::ProgramInvocationCancel { request_id, .. } => {
+            RuntimeRequest::ProgramInvocationCancel {
+                request_id,
+                owner_claim,
+                program_invocation_id,
+            } => {
+                owner_claim.validate()?;
+                let Some((_, _, expected_claim, _)) = self
+                    .invocations
+                    .iter()
+                    .find(|(_, _, _, result)| {
+                        matches!(result, RuntimeResult::ProgramInvocationStarted { program_invocation_id: id, .. } if id == &program_invocation_id)
+                    })
+                else {
+                    return Ok(RuntimeResult::Failed {
+                        request_id,
+                        code: "unknown_invocation".to_owned(),
+                    });
+                };
+                if expected_claim != &owner_claim.value {
+                    return Err(ProtocolError::OwnerMismatch);
+                }
                 Ok(RuntimeResult::Cancelled { request_id })
             }
         }
     }
+}
+
+fn is_strict_digest(value: &str) -> bool {
+    let Some(hex) = value.strip_prefix("sha256:") else {
+        return false;
+    };
+    hex.len() == 64
+        && hex
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 /// Map structural yield versus Event wait for protocol projection tests.
@@ -317,7 +471,12 @@ mod tests {
                 },
             )
             .unwrap();
-        let RuntimeResult::EventReserved { event_ref, .. } = reserved else {
+        let RuntimeResult::EventReserved {
+            event_ref,
+            owner_claim,
+            ..
+        } = reserved
+        else {
             panic!("reserve");
         };
         let application = EventApplication {
@@ -337,6 +496,7 @@ mod tests {
                     &handshake(),
                     RuntimeRequest::EventFulfill {
                         request_id: "f".to_owned(),
+                        owner_claim: owner_claim.clone(),
                         application: application.clone(),
                     },
                 )
@@ -363,7 +523,12 @@ mod tests {
                 },
             )
             .unwrap();
-        let RuntimeResult::EventReserved { event_ref, .. } = reserved else {
+        let RuntimeResult::EventReserved {
+            event_ref,
+            owner_claim,
+            ..
+        } = reserved
+        else {
             panic!("reserve");
         };
         let mut application = EventApplication {
@@ -381,6 +546,7 @@ mod tests {
             &handshake(),
             RuntimeRequest::EventFulfill {
                 request_id: "f1".to_owned(),
+                owner_claim: owner_claim.clone(),
                 application: application.clone(),
             },
         )
@@ -391,6 +557,7 @@ mod tests {
                 &handshake(),
                 RuntimeRequest::EventFulfill {
                     request_id: "f2".to_owned(),
+                    owner_claim,
                     application,
                 },
             )
@@ -437,6 +604,7 @@ mod tests {
                 RuntimeRequest::ProgramInvocationStart {
                     request_id: "s".to_owned(),
                     program_instance_id: "missing".to_owned(),
+                    owner_claim: RuntimeOwnerClaim::mint(),
                     input: serde_json::json!({}),
                 },
             )
@@ -447,6 +615,80 @@ mod tests {
                 code,
                 ..
             } if code == "unknown_instance"
+        ));
+    }
+
+    #[test]
+    fn invocation_start_is_idempotent_and_owner_bound() {
+        let mut peer = InMemoryRuntimePeer::default();
+        let created = peer
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInstanceCreate {
+                    request_id: "c".to_owned(),
+                    artifact_digest: format!("sha256:{}", "a".repeat(64)),
+                },
+            )
+            .unwrap();
+        let RuntimeResult::ProgramInstanceCreated {
+            program_instance_id,
+            owner_claim,
+            ..
+        } = created
+        else {
+            panic!("create");
+        };
+        let start =
+            |peer: &mut InMemoryRuntimePeer, owner_claim: RuntimeOwnerClaim, request_id: &str| {
+                peer.handle(
+                    &handshake(),
+                    RuntimeRequest::ProgramInvocationStart {
+                        request_id: request_id.to_owned(),
+                        program_instance_id: program_instance_id.clone(),
+                        owner_claim,
+                        input: serde_json::json!({"same": true}),
+                    },
+                )
+            };
+        let first = start(&mut peer, owner_claim.clone(), "s").unwrap();
+        let retry = start(&mut peer, owner_claim.clone(), "s").unwrap();
+        assert_eq!(first, retry);
+        let other = start(&mut peer, RuntimeOwnerClaim::mint(), "other");
+        assert!(matches!(other, Err(ProtocolError::OwnerMismatch)));
+    }
+
+    #[test]
+    fn forged_event_ref_has_no_reservation_lineage() {
+        let mut peer = InMemoryRuntimePeer::default();
+        let result = peer
+            .handle(
+                &handshake(),
+                RuntimeRequest::EventFulfill {
+                    request_id: "f".to_owned(),
+                    owner_claim: RuntimeOwnerClaim::mint(),
+                    application: EventApplication {
+                        event_ref: CanonicalEventRef {
+                            event_id: "evt-forged".to_owned(),
+                            generation: 7,
+                        },
+                        occurrence: EventOccurrence {
+                            occurrence_id: "occ".to_owned(),
+                            source_kind: "human.terminal".to_owned(),
+                            mapping_digest: "m".to_owned(),
+                            source_record: "s".to_owned(),
+                            payload: serde_json::json!(null),
+                        },
+                        idempotency_key: "idem".to_owned(),
+                    },
+                },
+            )
+            .unwrap();
+        assert!(matches!(
+            result,
+            RuntimeResult::EventApplied {
+                result: EventApplicationResult::Rejected,
+                ..
+            }
         ));
     }
 }

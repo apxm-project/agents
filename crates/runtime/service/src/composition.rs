@@ -10,6 +10,7 @@ use crate::ports::capability::LocalCapabilityPort;
 use crate::ports::model::{LocalModelInferencePort, LocalModelRequestMetadata};
 
 use apxm_ais::permissions::{LayerDecisions, PermissionDecision, PermissionResolution};
+use apxm_capability_iface::sandbox::SandboxRegistry;
 use apxm_execution::{
     CapabilityGrantSet, CapabilityInvocationAdmission, CapturedHookBodyHandler, CompositionOutcome,
     CompositionPort, CompositionReceiver, CompositionRequest, EventAwait, EventOutcome, EventPort,
@@ -65,7 +66,11 @@ impl ArtifactStore {
     /// Commit bytes under a caller-supplied digest. Used when the admission
     /// already named the digest.
     pub fn commit_named(&mut self, digest: String, bytes: Vec<u8>) {
-        self.committed.insert(digest, bytes);
+        // Never let a caller create a second identity for bytes. Persisted
+        // loads and protocol inputs use the same closed digest grammar.
+        if apxm_core::grammar::is_digest(&digest) && artifact_digest(&bytes) == digest {
+            self.committed.insert(digest, bytes);
+        }
     }
 
     #[must_use]
@@ -284,6 +289,7 @@ impl ExecutionCommitPort for DevCommit {
 }
 
 /// Materials required to admit one invocation of a committed artifact.
+#[derive(Clone)]
 pub struct InvocationMaterials {
     pub admission: InvocationAdmission,
     pub release_bytes: Vec<u8>,
@@ -298,6 +304,9 @@ pub struct AdmittedPackageHandlers {
         std::collections::BTreeMap<apxm_core::types::HandlerLanguage, PackageHandlerWorkerCommand>,
     /// Validated manifest those workers may evaluate.
     pub manifest: apxm_core::types::HandlerManifest,
+    /// Host-issued read-only decisions. Values in the package manifest are
+    /// descriptive input and never grant this authority themselves.
+    pub trusted_read_only: BTreeSet<String>,
 }
 
 /// How one language's private worker is started.
@@ -316,6 +325,30 @@ pub async fn execute_admitted_artifact(
     materials: &InvocationMaterials,
     handlers: Option<&AdmittedPackageHandlers>,
     package_root: Option<&Path>,
+) -> Result<Value, String> {
+    execute_admitted_artifact_with_sandbox(
+        air,
+        artifact_bytes,
+        materials,
+        handlers,
+        package_root,
+        None,
+    )
+    .await
+}
+
+/// Execute one admitted artifact with an explicitly injected sandbox registry.
+///
+/// Package workers are untrusted implementation code. A missing registry is a
+/// valid composition state for artifacts that do not use package handlers, but
+/// package-handler execution fails closed at the worker boundary.
+pub async fn execute_admitted_artifact_with_sandbox(
+    air: AirModule,
+    artifact_bytes: &[u8],
+    materials: &InvocationMaterials,
+    handlers: Option<&AdmittedPackageHandlers>,
+    package_root: Option<&Path>,
+    sandbox_registry: Option<Arc<SandboxRegistry>>,
 ) -> Result<Value, String> {
     let admission = &materials.admission;
     let descriptor = canonical_runtime_descriptor();
@@ -338,8 +371,15 @@ pub async fn execute_admitted_artifact(
     )
     .map_err(|error| error.to_string())?;
     let capability = Arc::new(
-        LocalCapabilityPort::with_package_root(handlers, package_root)
-            .map_err(|error| error.to_string())?,
+        match sandbox_registry {
+            Some(registry) => LocalCapabilityPort::with_package_root_and_sandbox(
+                handlers,
+                package_root,
+                Some(registry),
+            ),
+            None => LocalCapabilityPort::with_package_root(handlers, package_root),
+        }
+        .map_err(|error| error.to_string())?,
     );
     let capability_permissions =
         local_capability_permissions(&air, &capability.admitted_names(), package_root)?;

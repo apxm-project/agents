@@ -98,9 +98,13 @@ impl PackageSnapshot {
             return Err(SnapshotError::Incomplete);
         }
         let mut saw_entrypoint = false;
+        let mut paths = std::collections::BTreeSet::new();
         for content in &self.contents {
             if !is_safe_relative_path(&content.path) {
                 return Err(SnapshotError::UnsafePath);
+            }
+            if !paths.insert(content.path.as_str()) {
+                return Err(SnapshotError::DuplicatePath);
             }
             if content.digest != content_digest(&content.bytes) {
                 return Err(SnapshotError::DigestMismatch);
@@ -215,6 +219,8 @@ pub enum SnapshotError {
     UnsafePath,
     /// A content or snapshot digest does not match the bound bytes.
     DigestMismatch,
+    /// A snapshot contains the same package-relative path more than once.
+    DuplicatePath,
     /// Declared lock digest and lock file bytes disagree, or one side is missing.
     LockDrift,
     /// The declared entrypoint is not a snapshot member.
@@ -230,6 +236,9 @@ impl std::fmt::Display for SnapshotError {
             Self::Incomplete => formatter.write_str("package snapshot is incomplete"),
             Self::UnsafePath => formatter.write_str("package snapshot path is unsafe"),
             Self::DigestMismatch => formatter.write_str("package snapshot digest does not match"),
+            Self::DuplicatePath => {
+                formatter.write_str("package snapshot contains a duplicate path")
+            }
             Self::LockDrift => formatter.write_str("package snapshot lock digest drifted"),
             Self::MissingEntrypoint => {
                 formatter.write_str("package snapshot is missing its entrypoint")
@@ -315,5 +324,21 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err, SnapshotError::UnsafePath);
+    }
+
+    #[test]
+    fn duplicate_paths_are_rejected_before_lookup_can_be_ambiguous() {
+        let err = PackageSnapshot::assemble(
+            Frontend::Python,
+            "src/agent.py",
+            vec![
+                SnapshotContent::from_bytes("src/agent.py", b"first"),
+                SnapshotContent::from_bytes("src/agent.py", b"second"),
+            ],
+            None,
+            "apxm.compatibility-set/test",
+        )
+        .unwrap_err();
+        assert_eq!(err, SnapshotError::DuplicatePath);
     }
 }

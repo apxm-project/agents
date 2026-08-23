@@ -3,10 +3,13 @@
 //! closed source-scope set does not drift from the owner schema snapshot.
 
 mod common;
+#[path = "common/snapshots.rs"]
+mod snapshots;
 
 use apxm_program::artifact::PortSourceScope;
 use apxm_program::{ExecutableArtifact, validate_artifact_json};
-use common::{Vector, load_contract, load_contract_snapshot, load_vectors};
+use common::{Vector, load_contract, load_vectors};
+use snapshots::load_contract_snapshot;
 
 #[test]
 fn artifact_vectors_match_validator() {

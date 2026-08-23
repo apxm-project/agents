@@ -6,9 +6,11 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use apxm_kernel::event_api::{CanonicalEventRef, EventApplication, EventOccurrence};
 use apxm_runtime_protocol::{
-    RUNTIME_PROTOCOL_VERSION, RuntimeHandshake, RuntimeRequest, RuntimeResult,
+    RUNTIME_PROTOCOL_VERSION, RuntimeHandshake, RuntimeOwnerClaim, RuntimeRequest, RuntimeResult,
 };
-use apxm_runtime_service::{RuntimeService, StdioFrame, decode_jsonl, encode_jsonl};
+use apxm_runtime_service::{
+    MAX_FRAME_BYTES, RuntimeService, StdioFrame, decode_jsonl, encode_jsonl,
+};
 use serde::{Deserialize, Serialize};
 
 /// Versioned client interaction record under `.apxm/client/`.
@@ -43,10 +45,12 @@ impl ClientInteractionRecord {
 /// Headless and TUI runtime client.
 pub struct InteractionClient {
     inner: RuntimeInner,
+    owner_claim: Option<RuntimeOwnerClaim>,
+    event_owner_claim: Option<RuntimeOwnerClaim>,
 }
 
 enum RuntimeInner {
-    InProcess(RuntimeService),
+    InProcess(Box<RuntimeService>),
     Stdio(StdioRuntime),
 }
 
@@ -61,7 +65,9 @@ struct StdioRuntime {
 impl Default for InteractionClient {
     fn default() -> Self {
         Self {
-            inner: RuntimeInner::InProcess(RuntimeService::default()),
+            inner: RuntimeInner::InProcess(Box::default()),
+            owner_claim: None,
+            event_owner_claim: None,
         }
     }
 }
@@ -120,6 +126,8 @@ impl InteractionClient {
                 artifact_dir,
                 last_output: None,
             }),
+            owner_claim: None,
+            event_owner_claim: None,
         })
     }
 
@@ -132,19 +140,44 @@ impl InteractionClient {
         }
     }
 
+    /// Bind the exact admission materials for an in-process runtime instance.
+    ///
+    /// Stdio runtimes currently expose no admission-binding protocol request;
+    /// callers must provision their admission through the runtime's owning
+    /// composition boundary before invoking.
+    pub fn bind_admission(
+        &mut self,
+        program_instance_id: &str,
+        materials: apxm_runtime_service::InvocationMaterials,
+    ) -> Result<(), String> {
+        match &mut self.inner {
+            RuntimeInner::InProcess(service) => {
+                service.bind_admission(program_instance_id, materials)
+            }
+            RuntimeInner::Stdio(_) => {
+                Err("stdio runtime admission binding is not supported".to_owned())
+            }
+        }
+    }
+
     /// Invoke an explicit artifact. Never contacts Compilation Service.
     pub fn run_artifact(&mut self, artifact_digest: &str) -> Result<String, String> {
         if artifact_digest.trim().is_empty() {
             return Err("empty artifact".to_owned());
         }
-        match self.request(RuntimeRequest::ProgramInstanceCreate {
+        let result = self.request(RuntimeRequest::ProgramInstanceCreate {
             request_id: "run".to_owned(),
             artifact_digest: artifact_digest.to_owned(),
-        })? {
+        })?;
+        match result {
             RuntimeResult::ProgramInstanceCreated {
                 program_instance_id,
+                owner_claim,
                 ..
-            } => Ok(program_instance_id),
+            } => {
+                self.owner_claim = Some(owner_claim);
+                Ok(program_instance_id)
+            }
             other => Err(format!("{other:?}")),
         }
     }
@@ -158,6 +191,10 @@ impl InteractionClient {
         let result = self.request(RuntimeRequest::ProgramInvocationStart {
             request_id: "invoke".to_owned(),
             program_instance_id: program_instance_id.to_owned(),
+            owner_claim: self
+                .owner_claim
+                .clone()
+                .ok_or_else(|| "missing runtime owner claim".to_owned())?,
             input,
         })?;
         if let RuntimeInner::Stdio(stdio) = &mut self.inner
@@ -194,6 +231,10 @@ impl InteractionClient {
     ) -> Result<RuntimeResult, String> {
         self.request(RuntimeRequest::EventInspect {
             request_id: "event.inspect".to_owned(),
+            owner_claim: self
+                .event_owner_claim
+                .clone()
+                .ok_or_else(|| "missing event owner claim".to_owned())?,
             event_ref: CanonicalEventRef {
                 event_id,
                 generation,
@@ -203,10 +244,14 @@ impl InteractionClient {
 
     /// Reserve one EventRef through the Runtime Service.
     pub fn reserve_event(&mut self, type_id: &str) -> Result<RuntimeResult, String> {
-        self.request(RuntimeRequest::EventReserve {
+        let result = self.request(RuntimeRequest::EventReserve {
             request_id: "event.reserve".to_owned(),
             type_id: type_id.to_owned(),
-        })
+        })?;
+        if let RuntimeResult::EventReserved { owner_claim, .. } = &result {
+            self.event_owner_claim = Some(owner_claim.clone());
+        }
+        Ok(result)
     }
 
     /// Classify a start result into the closed headless outcome set.
@@ -240,6 +285,10 @@ impl InteractionClient {
     ) -> Result<RuntimeResult, String> {
         self.request(RuntimeRequest::EventFulfill {
             request_id: "event.fulfill".to_owned(),
+            owner_claim: self
+                .event_owner_claim
+                .clone()
+                .ok_or_else(|| "missing event owner claim".to_owned())?,
             application: EventApplication {
                 event_ref: CanonicalEventRef {
                     event_id,
@@ -264,6 +313,10 @@ impl InteractionClient {
     ) -> Result<RuntimeResult, String> {
         self.request(RuntimeRequest::ProgramInvocationCancel {
             request_id: "cancel".to_owned(),
+            owner_claim: self
+                .owner_claim
+                .clone()
+                .ok_or_else(|| "missing runtime owner claim".to_owned())?,
             program_invocation_id: program_invocation_id.to_owned(),
         })
     }
@@ -301,14 +354,40 @@ impl InteractionClient {
                     .write_all(encode_jsonl(&frame).as_bytes())
                     .map_err(|error| error.to_string())?;
                 stdio.stdin.flush().map_err(|error| error.to_string())?;
-                let mut line = String::new();
-                stdio
-                    .stdout
-                    .read_line(&mut line)
-                    .map_err(|error| error.to_string())?;
+                let line = read_limited_line(&mut stdio.stdout)?;
                 let reply = decode_jsonl(&line)?;
                 serde_json::from_str(&reply.payload).map_err(|error| error.to_string())
             }
+        }
+    }
+}
+
+fn read_limited_line(reader: &mut BufReader<ChildStdout>) -> Result<String, String> {
+    let mut bytes = Vec::new();
+    loop {
+        let (take, newline) = {
+            let available = reader.fill_buf().map_err(|error| error.to_string())?;
+            if available.is_empty() {
+                return if bytes.is_empty() {
+                    Err("runtime service closed stdout before replying".to_owned())
+                } else {
+                    String::from_utf8(bytes)
+                        .map_err(|error| format!("runtime reply is not UTF-8: {error}"))
+                };
+            }
+            let newline = available.iter().position(|byte| *byte == b'\n');
+            let take = newline.map_or(available.len(), |index| index + 1);
+            if bytes.len().saturating_add(take) > MAX_FRAME_BYTES {
+                return Err(format!("JSONL frame exceeds {MAX_FRAME_BYTES} bytes"));
+            }
+            (take, newline.is_some())
+        };
+        let available = reader.fill_buf().map_err(|error| error.to_string())?;
+        bytes.extend_from_slice(&available[..take]);
+        reader.consume(take);
+        if newline {
+            return String::from_utf8(bytes)
+                .map_err(|error| format!("runtime reply is not UTF-8: {error}"));
         }
     }
 }

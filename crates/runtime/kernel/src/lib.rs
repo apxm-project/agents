@@ -31,7 +31,7 @@ pub use admission::{
     DURABLE_EVENT_PORT_SCHEMA, EXECUTION_ADMISSION_SCHEMA, EXECUTION_COMMIT_PORT_SCHEMA,
     EXTERNAL_AGENT_PORT_SCHEMA, ExecutionAdmission, INVOCATION_ADMISSION_SCHEMA,
     InvocationAdmission, InvocationAdmissionClaim, InvocationAdmissionError, IssuerKey,
-    IssuerKeyring, IssuerSigningKey, MODEL_INFERENCE_PORT_SCHEMA, NonceLedger,
+    IssuerKeyring, IssuerSigningKey, MAX_NONCE_BYTES, MODEL_INFERENCE_PORT_SCHEMA, NonceLedger,
     PROGRAM_COMPOSITION_PORT_SCHEMA, RequirementReconciliationError, ResourceCeilings,
     RuntimeAdmission, RuntimeAdmissionError, SignatureEnvelope, SignatureRejection,
     VerifiedExecutionAdmission, VerifiedInvocationAdmission, admitted_capability_permissions,
@@ -44,9 +44,10 @@ pub use bundle::{
 };
 pub use capability::{CapabilityOutcome, CapabilityPort, CapabilityRequest};
 pub use commit::{
-    ATOMIC_WRITE_SET, AtomicWriteSet, CommitRequestError, ExecutionCommitPort,
-    ExecutionCommitRequest, ExecutionCommitResult, ExecutionCommitTuple, ProgramInstanceRef,
-    ProgramInvocationRef,
+    ATOMIC_WRITE_SET, AtomicWriteSet, CommitRequestError, CommittedContinuation,
+    ExecutionCommitPort, ExecutionCommitRequest, ExecutionCommitResult, ExecutionCommitTuple,
+    ProgramInstanceRef, ProgramInvocationRef, canonical_json_bytes, canonical_json_value,
+    continuation_digest,
 };
 pub use confinement::{
     ConfinementAttestation, ConfinementError, ConfinementPort, ConfinementRequest, ConfinementType,

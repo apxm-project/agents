@@ -1,5 +1,6 @@
 //! Core types for the sandbox interface.
 
+use crate::sandbox::constants::limits as sandbox_limits;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -57,6 +58,10 @@ pub struct SandboxCapabilities {
     pub supports_network_restriction: bool,
     /// Whether the backend filters syscalls (seccomp, WASI caps, etc.).
     pub supports_syscall_filtering: bool,
+    /// Whether the backend can prevent the worker from spawning child
+    /// processes. A worker that can create an unconstrained child is not
+    /// confined by the process policy requested by the runtime.
+    pub supports_process_restriction: bool,
     /// Whether the backend enforces CPU/memory limits.
     pub supports_resource_limits: bool,
     /// Human-readable backend name (e.g. "codex-bwrap", "docker", "wasmtime").
@@ -111,8 +116,8 @@ impl Default for ExecRequest {
             working_dir: None,
             env: HashMap::new(),
             stdin_data: None,
-            timeout: Duration::from_secs(30),
-            max_output_bytes: 1024 * 1024, // 1 MB
+            timeout: sandbox_limits::DEFAULT_TIMEOUT,
+            max_output_bytes: sandbox_limits::DEFAULT_MAX_OUTPUT_BYTES,
             read_paths: Vec::new(),
             write_paths: Vec::new(),
             needs_network: false,

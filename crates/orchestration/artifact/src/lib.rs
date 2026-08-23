@@ -34,6 +34,10 @@ const OFFSET_PAYLOAD_LEN: usize = OFFSET_VERSION + SIZE_VERSION;
 const OFFSET_HASH: usize = OFFSET_PAYLOAD_LEN + SIZE_PAYLOAD_LEN;
 const OFFSET_FLAGS: usize = OFFSET_HASH + SIZE_HASH;
 
+/// Maximum payload accepted by the artifact wire boundary. The loader checks
+/// this before allocating or deserializing attacker-controlled bytes.
+pub const MAX_PAYLOAD_BYTES: usize = 64 * 1024 * 1024;
+
 #[derive(Debug, Error)]
 pub enum ArtifactError {
     #[error("I/O error: {0}")]
@@ -46,6 +50,8 @@ pub enum ArtifactError {
     VersionMismatch(u32),
     #[error("Artifact hash mismatch")]
     HashMismatch,
+    #[error("Artifact payload is {actual} bytes; maximum is {maximum}")]
+    PayloadTooLarge { actual: usize, maximum: usize },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -197,6 +203,7 @@ impl Artifact {
 
     pub fn to_bytes(&self) -> ArtifactResult<Vec<u8>> {
         let payload = self.payload()?;
+        ensure_payload_size(payload.len())?;
         let mut hasher = Hasher::new();
         hasher.update(&payload);
         let digest = hasher.finalize();
@@ -212,43 +219,15 @@ impl Artifact {
     }
 
     pub fn from_bytes(bytes: &[u8]) -> ArtifactResult<Self> {
-        if bytes.len() < HEADER_SIZE {
-            return Err(ArtifactError::InvalidHeader);
-        }
-
-        if &bytes[..SIZE_MAGIC] != MAGIC {
-            return Err(ArtifactError::InvalidHeader);
-        }
-
-        let version = u32::from_le_bytes(
-            bytes[OFFSET_VERSION..OFFSET_VERSION + SIZE_VERSION]
-                .try_into()
-                .map_err(|_| ArtifactError::InvalidHeader)?,
-        );
-        if version != VERSION {
-            return Err(ArtifactError::VersionMismatch(version));
-        }
-
-        let payload_len = u64::from_le_bytes(
-            bytes[OFFSET_PAYLOAD_LEN..OFFSET_PAYLOAD_LEN + SIZE_PAYLOAD_LEN]
-                .try_into()
-                .map_err(|_| ArtifactError::InvalidHeader)?,
-        ) as usize;
-        let hash = &bytes[OFFSET_HASH..OFFSET_HASH + SIZE_HASH];
-        let flags = u32::from_le_bytes(
-            bytes[OFFSET_FLAGS..OFFSET_FLAGS + SIZE_FLAGS]
-                .try_into()
-                .map_err(|_| ArtifactError::InvalidHeader)?,
-        );
-
-        if bytes.len() < HEADER_SIZE + payload_len {
+        let (payload_len, hash, flags) = parse_header(bytes)?;
+        if bytes.len() != HEADER_SIZE + payload_len {
             return Err(ArtifactError::InvalidHeader);
         }
 
         let payload = &bytes[HEADER_SIZE..HEADER_SIZE + payload_len];
         let mut hasher = Hasher::new();
         hasher.update(payload);
-        if hasher.finalize().as_bytes() != hash {
+        if hasher.finalize().as_bytes() != &hash {
             return Err(ArtifactError::HashMismatch);
         }
 
@@ -277,10 +256,108 @@ impl Artifact {
 
     pub fn read_from_path<P: AsRef<Path>>(path: P) -> ArtifactResult<Self> {
         let mut file = std::fs::File::open(path)?;
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)?;
+        let mut header = [0_u8; HEADER_SIZE];
+        file.read_exact(&mut header)?;
+        let (payload_len, _, _) = parse_header(&header)?;
+        let mut bytes = Vec::with_capacity(HEADER_SIZE + payload_len);
+        bytes.extend_from_slice(&header);
+        let payload_start = bytes.len();
+        (&mut file)
+            .take(payload_len as u64)
+            .read_to_end(&mut bytes)
+            .map_err(ArtifactError::Io)?;
+        if bytes.len() != payload_start + payload_len {
+            return Err(ArtifactError::InvalidHeader);
+        }
+        let mut trailing = [0_u8; 1];
+        if file.read(&mut trailing)? != 0 {
+            return Err(ArtifactError::InvalidHeader);
+        }
         Self::from_bytes(&bytes)
     }
 }
 
+fn ensure_payload_size(actual: usize) -> ArtifactResult<()> {
+    if actual > MAX_PAYLOAD_BYTES {
+        return Err(ArtifactError::PayloadTooLarge {
+            actual,
+            maximum: MAX_PAYLOAD_BYTES,
+        });
+    }
+    Ok(())
+}
+
+fn parse_header(bytes: &[u8]) -> ArtifactResult<(usize, [u8; SIZE_HASH], u32)> {
+    if bytes.len() < HEADER_SIZE || &bytes[..SIZE_MAGIC] != MAGIC {
+        return Err(ArtifactError::InvalidHeader);
+    }
+
+    let version = u32::from_le_bytes(
+        bytes[OFFSET_VERSION..OFFSET_VERSION + SIZE_VERSION]
+            .try_into()
+            .map_err(|_| ArtifactError::InvalidHeader)?,
+    );
+    if version != VERSION {
+        return Err(ArtifactError::VersionMismatch(version));
+    }
+
+    let payload_len = u64::from_le_bytes(
+        bytes[OFFSET_PAYLOAD_LEN..OFFSET_PAYLOAD_LEN + SIZE_PAYLOAD_LEN]
+            .try_into()
+            .map_err(|_| ArtifactError::InvalidHeader)?,
+    );
+    let payload_len = usize::try_from(payload_len).map_err(|_| ArtifactError::InvalidHeader)?;
+    ensure_payload_size(payload_len)?;
+
+    let hash = bytes[OFFSET_HASH..OFFSET_HASH + SIZE_HASH]
+        .try_into()
+        .map_err(|_| ArtifactError::InvalidHeader)?;
+    let flags = u32::from_le_bytes(
+        bytes[OFFSET_FLAGS..OFFSET_FLAGS + SIZE_FLAGS]
+            .try_into()
+            .map_err(|_| ArtifactError::InvalidHeader)?,
+    );
+    Ok((payload_len, hash, flags))
+}
+
 pub type ArtifactResult<T> = std::result::Result<T, ArtifactError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+
+    fn oversized_header() -> Vec<u8> {
+        let mut header = Vec::with_capacity(HEADER_SIZE);
+        header.extend_from_slice(MAGIC);
+        header.extend_from_slice(&VERSION.to_le_bytes());
+        header.extend_from_slice(&((MAX_PAYLOAD_BYTES as u64) + 1).to_le_bytes());
+        header.extend_from_slice(&[0_u8; SIZE_HASH]);
+        header.extend_from_slice(&0_u32.to_le_bytes());
+        header
+    }
+
+    #[test]
+    fn rejects_oversized_payload_before_hash_or_deserialization() {
+        assert!(matches!(
+            Artifact::from_bytes(&oversized_header()),
+            Err(ArtifactError::PayloadTooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn path_loader_checks_payload_ceiling_before_reading_body() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock after epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("apxm-artifact-limit-{suffix}.bin"));
+        File::create(&path)
+            .and_then(|mut file| file.write_all(&oversized_header()))
+            .expect("write oversized artifact header");
+
+        let result = Artifact::read_from_path(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(matches!(result, Err(ArtifactError::PayloadTooLarge { .. })));
+    }
+}

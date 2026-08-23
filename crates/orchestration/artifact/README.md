@@ -11,12 +11,12 @@ Binary artifact format for compiled APXM programs.
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
 | 0 | 4 | Magic | `b"APXM"` |
-| 4 | 4 | Version | `1` (little-endian u32) |
+| 4 | 4 | Version | `2` (little-endian u32) |
 | 8 | 8 | Payload length | Byte count of the payload section (little-endian u64) |
 | 16 | 32 | BLAKE3 hash | Digest of the payload bytes |
 | 48 | 4 | Flags | Reserved (little-endian u32, currently 0) |
 
-The payload is a bincode-serialized `ArtifactPayload` containing `ArtifactMetadata`, one or more `WireDag`s, and optional `ArtifactSection`s. On `from_bytes()`, BLAKE3 is recomputed to reject corruption/tampering.
+The payload is a bincode-serialized `ArtifactPayload` containing `ArtifactMetadata`, one or more `WireDag`s, and optional `ArtifactSection`s. On `from_bytes()`, BLAKE3 is recomputed to reject corruption/tampering. The loader rejects payloads larger than `apxm_artifact::MAX_PAYLOAD_BYTES` before allocation or deserialization.
 
 ## Multi-DAG Support
 

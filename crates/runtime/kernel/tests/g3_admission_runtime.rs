@@ -44,6 +44,25 @@ fn write_set(tag: char) -> AtomicWriteSet {
     }
 }
 
+#[test]
+fn nonce_ledger_refuses_replay_without_eviction_or_unbounded_growth() {
+    let ledger = NonceLedger::with_capacity(2);
+    ledger.observe("nonce.1").expect("first nonce");
+    ledger.observe("nonce.2").expect("second nonce");
+    assert!(matches!(
+        ledger.observe("nonce.3"),
+        Err(AdmissionError::NonceLedgerFull { capacity: 2 })
+    ));
+    assert!(matches!(
+        ledger.observe("nonce.1"),
+        Err(AdmissionError::NonceReuse(nonce)) if nonce == "nonce.1"
+    ));
+    assert!(matches!(
+        ledger.observe(&"x".repeat(apxm_kernel::MAX_NONCE_BYTES + 1)),
+        Err(AdmissionError::NonceTooLong { .. })
+    ));
+}
+
 fn identity(id: &str) -> ProgramIdentity {
     ProgramIdentity {
         artifact_digest: digest_char('a'),

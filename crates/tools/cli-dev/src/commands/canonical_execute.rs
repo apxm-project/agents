@@ -23,6 +23,8 @@ pub struct AdmittedPackageHandlers {
     pub workers: BTreeMap<HandlerLanguage, PackageHandlerWorkerCommand>,
     /// The validated manifest those workers may evaluate, and nothing else.
     pub manifest: HandlerManifest,
+    /// Host-issued read-only decisions; package metadata never supplies them.
+    pub trusted_read_only: std::collections::BTreeSet<String>,
 }
 
 /// How one language's private worker is started.
@@ -86,7 +88,11 @@ pub fn admitted_package_handlers(root: &Path) -> Result<Option<AdmittedPackageHa
             });
         }
     }
-    Ok(Some(AdmittedPackageHandlers { workers, manifest }))
+    Ok(Some(AdmittedPackageHandlers {
+        workers,
+        manifest,
+        trusted_read_only: std::collections::BTreeSet::new(),
+    }))
 }
 
 fn handler_worker_entry(language: HandlerLanguage) -> &'static str {
@@ -120,6 +126,7 @@ fn execute_via_runtime_service(
             })
             .collect(),
         manifest: handlers.manifest,
+        trusted_read_only: handlers.trusted_read_only,
     });
     service.bind_package(handlers, package_root);
     let digest = service.admit_artifact(artifact_bytes.to_vec());
@@ -143,6 +150,7 @@ fn execute_via_runtime_service(
         .map_err(|error| anyhow::anyhow!("Runtime Service refused the artifact: {error:?}"))?;
     let apxm_runtime_protocol::RuntimeResult::ProgramInstanceCreated {
         program_instance_id,
+        owner_claim,
         ..
     } = created
     else {
@@ -166,6 +174,7 @@ fn execute_via_runtime_service(
             apxm_runtime_protocol::RuntimeRequest::ProgramInvocationStart {
                 request_id: "execute-canonical".to_owned(),
                 program_instance_id,
+                owner_claim,
                 input: json!({}),
             },
         )
@@ -254,8 +263,6 @@ fn load_canonical_air(input: &Path) -> Result<(AirModule, Vec<u8>)> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     /// The grant set and the dispatchable set are the same set, or the
     /// composition root refuses to bind the package at all.
     #[test]

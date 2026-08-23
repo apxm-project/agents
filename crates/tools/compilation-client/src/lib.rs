@@ -1,16 +1,27 @@
 //! Compilation Client: snapshot, submit, render diagnostics, return artifact refs.
 
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use apxm_compilation_protocol::{
     COMPILATION_PROTOCOL_VERSION, CompilationHandshake, CompilationRequest, CompilationResult,
 };
-use apxm_compilation_service::{CompilationService, StdioFrame, decode_jsonl, encode_jsonl};
+use apxm_compilation_service::{
+    CompilationService, MAX_FRAME_BYTES, StdioFrame, decode_jsonl, encode_jsonl,
+};
 use apxm_source_port::{Frontend, PackageSnapshot, SnapshotContent};
 use serde::Deserialize;
+
+/// Maximum number of nested package directories below the package root.
+pub const MAX_PACKAGE_DEPTH: usize = 32;
+/// Maximum number of regular files in one package snapshot.
+pub const MAX_PACKAGE_FILES: usize = 4096;
+/// Maximum size of one regular package file.
+pub const MAX_PACKAGE_FILE_BYTES: usize = 8 * 1024 * 1024;
+/// Maximum aggregate bytes retained in one package snapshot.
+pub const MAX_PACKAGE_BYTES: usize = 64 * 1024 * 1024;
 
 /// Headless build client. Contains no frontend or compiler implementation.
 pub struct CompilationClient {
@@ -59,6 +70,7 @@ impl CompilationClient {
         fs::create_dir_all(&artifact_dir).map_err(|error| error.to_string())?;
         let mut child = Command::new(program.as_ref())
             .args(args)
+            .env_clear()
             .env("APXM_ARTIFACT_DIR", &artifact_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -144,11 +156,7 @@ impl CompilationClient {
                     .write_all(encode_jsonl(&frame).as_bytes())
                     .map_err(|error| error.to_string())?;
                 stdio.stdin.flush().map_err(|error| error.to_string())?;
-                let mut line = String::new();
-                stdio
-                    .stdout
-                    .read_line(&mut line)
-                    .map_err(|error| error.to_string())?;
+                let line = read_limited_line(&mut stdio.stdout)?;
                 let reply = decode_jsonl(&line)?;
                 let result: CompilationResult =
                     serde_json::from_str(&reply.payload).map_err(|error| error.to_string())?;
@@ -168,14 +176,63 @@ impl CompilationClient {
     }
 }
 
+fn read_limited_line(reader: &mut BufReader<ChildStdout>) -> Result<String, String> {
+    let mut bytes = Vec::new();
+    loop {
+        let (take, newline) = {
+            let available = reader.fill_buf().map_err(|error| error.to_string())?;
+            if available.is_empty() {
+                return if bytes.is_empty() {
+                    Err("compilation service closed stdout before replying".to_owned())
+                } else {
+                    String::from_utf8(bytes)
+                        .map_err(|error| format!("compilation reply is not UTF-8: {error}"))
+                };
+            }
+            let newline = available.iter().position(|byte| *byte == b'\n');
+            let take = newline.map_or(available.len(), |index| index + 1);
+            if bytes.len().saturating_add(take) > MAX_FRAME_BYTES {
+                return Err(format!("JSONL frame exceeds {MAX_FRAME_BYTES} bytes"));
+            }
+            (take, newline.is_some())
+        };
+        let available = reader.fill_buf().map_err(|error| error.to_string())?;
+        bytes.extend_from_slice(&available[..take]);
+        reader.consume(take);
+        if newline {
+            return String::from_utf8(bytes)
+                .map_err(|error| format!("compilation reply is not UTF-8: {error}"));
+        }
+    }
+}
+
 /// Walk a package root and bind every file's bytes into a validated snapshot.
 pub fn snapshot_package(package_root: &Path) -> Result<PackageSnapshot, String> {
-    if !package_root.is_dir() {
+    let root_metadata = fs::symlink_metadata(package_root)
+        .map_err(|error| format!("stat package root '{}': {error}", package_root.display()))?;
+    if root_metadata.file_type().is_symlink() {
+        return Err(format!(
+            "package snapshot refuses symlink root '{}'",
+            package_root.display()
+        ));
+    }
+    if !root_metadata.is_dir() {
         return Err(format!("'{}' is not a directory", package_root.display()));
     }
-    let manifest = read_manifest(package_root)?;
+
+    // Work from the resolved root so every emitted path is rooted in one
+    // directory, even when the caller supplied a relative path. Symlink
+    // entries are rejected below instead of being resolved into another root.
+    let root = fs::canonicalize(package_root).map_err(|error| {
+        format!(
+            "canonicalize package root '{}': {error}",
+            package_root.display()
+        )
+    })?;
+    let manifest = read_manifest(&root)?;
     let mut contents = Vec::new();
-    collect_files(package_root, package_root, &mut contents)?;
+    let mut state = SnapshotState::default();
+    collect_files(&root, &root, 0, &mut contents, &mut state)?;
     if contents.is_empty() {
         return Err("package snapshot is empty".to_owned());
     }
@@ -211,7 +268,11 @@ struct DeclaredCompile {
 
 fn read_manifest(package_root: &Path) -> Result<DeclaredCompile, String> {
     let path = package_root.join("agent.toml");
-    let text = fs::read_to_string(&path).map_err(|_| "missing_frontend".to_owned())?;
+    let text = read_regular_file(&path, MAX_PACKAGE_FILE_BYTES).map_err(|error| match error {
+        FileReadError::NotFound => "missing_frontend".to_owned(),
+        FileReadError::Message(message) => message,
+    })?;
+    let text = String::from_utf8(text).map_err(|error| error.to_string())?;
     let parsed: AgentToml = toml::from_str(&text).map_err(|error| error.to_string())?;
     let compile = parsed
         .compile
@@ -228,33 +289,160 @@ fn read_manifest(package_root: &Path) -> Result<DeclaredCompile, String> {
 fn collect_files(
     root: &Path,
     current: &Path,
+    depth: usize,
     contents: &mut Vec<SnapshotContent>,
+    state: &mut SnapshotState,
 ) -> Result<(), String> {
+    if depth > MAX_PACKAGE_DEPTH {
+        return Err(format!(
+            "package snapshot exceeds maximum depth of {MAX_PACKAGE_DEPTH}"
+        ));
+    }
     let entries = fs::read_dir(current).map_err(|error| error.to_string())?;
     for entry in entries {
         let entry = entry.map_err(|error| error.to_string())?;
         let path = entry.path();
         let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if should_skip(&name) {
+        let name = name
+            .to_str()
+            .ok_or_else(|| "package snapshot path is not UTF-8".to_owned())?;
+        if should_skip(name) {
             continue;
         }
-        if path.is_dir() {
-            collect_files(root, &path, contents)?;
+
+        let metadata = fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
+        let file_type = metadata.file_type();
+        if file_type.is_symlink() {
+            return Err(format!(
+                "package snapshot refuses symlink '{}'",
+                path.display()
+            ));
+        }
+        let rooted_path = fs::canonicalize(&path).map_err(|error| error.to_string())?;
+        if !rooted_path.starts_with(root) {
+            return Err(format!(
+                "package snapshot path '{}' escapes its root",
+                path.display()
+            ));
+        }
+        if file_type.is_dir() {
+            let next_depth = depth.saturating_add(1);
+            if next_depth > MAX_PACKAGE_DEPTH {
+                return Err(format!(
+                    "package snapshot exceeds maximum depth of {MAX_PACKAGE_DEPTH}"
+                ));
+            }
+            collect_files(root, &rooted_path, next_depth, contents, state)?;
             continue;
         }
-        if !path.is_file() {
-            continue;
+        if !file_type.is_file() {
+            return Err(format!(
+                "package snapshot refuses special file '{}'",
+                path.display()
+            ));
+        }
+        if state.file_count >= MAX_PACKAGE_FILES {
+            return Err(format!(
+                "package snapshot exceeds maximum file count of {MAX_PACKAGE_FILES}"
+            ));
         }
         let relative = path
             .strip_prefix(root)
             .map_err(|error| error.to_string())?
-            .to_string_lossy()
+            .to_str()
+            .ok_or_else(|| "package snapshot path is not UTF-8".to_owned())?
             .replace('\\', "/");
-        let bytes = fs::read(&path).map_err(|error| error.to_string())?;
+        let bytes =
+            read_regular_file(&rooted_path, MAX_PACKAGE_FILE_BYTES).map_err(
+                |error| match error {
+                    FileReadError::NotFound => {
+                        format!("package file '{}' disappeared", path.display())
+                    }
+                    FileReadError::Message(message) => message,
+                },
+            )?;
+        if state.total_bytes.saturating_add(bytes.len()) > MAX_PACKAGE_BYTES {
+            return Err(format!(
+                "package snapshot exceeds maximum size of {MAX_PACKAGE_BYTES} bytes"
+            ));
+        }
+        state.file_count += 1;
+        state.total_bytes += bytes.len();
         contents.push(SnapshotContent::from_bytes(relative, bytes));
     }
     Ok(())
+}
+
+#[derive(Default)]
+struct SnapshotState {
+    file_count: usize,
+    total_bytes: usize,
+}
+
+enum FileReadError {
+    NotFound,
+    Message(String),
+}
+
+fn read_regular_file(path: &Path, max_bytes: usize) -> Result<Vec<u8>, FileReadError> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            FileReadError::NotFound
+        } else {
+            FileReadError::Message(error.to_string())
+        }
+    })?;
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        return Err(FileReadError::Message(format!(
+            "package snapshot refuses symlink '{}'",
+            path.display()
+        )));
+    }
+    if !file_type.is_file() {
+        return Err(FileReadError::Message(format!(
+            "package snapshot refuses special file '{}'",
+            path.display()
+        )));
+    }
+    if metadata.len() > max_bytes as u64 {
+        return Err(FileReadError::Message(format!(
+            "package file '{}' exceeds maximum size of {max_bytes} bytes",
+            path.display()
+        )));
+    }
+
+    let file = open_regular_file(path)?;
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take(max_bytes as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| FileReadError::Message(error.to_string()))?;
+    if bytes.len() > max_bytes {
+        return Err(FileReadError::Message(format!(
+            "package file '{}' exceeds maximum size of {max_bytes} bytes",
+            path.display()
+        )));
+    }
+    Ok(bytes)
+}
+
+fn open_regular_file(path: &Path) -> Result<fs::File, FileReadError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let mut options = fs::OpenOptions::new();
+        options
+            .read(true)
+            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW);
+        options
+            .open(path)
+            .map_err(|error| FileReadError::Message(error.to_string()))
+    }
+    #[cfg(not(unix))]
+    {
+        fs::File::open(path).map_err(|error| FileReadError::Message(error.to_string()))
+    }
 }
 
 fn should_skip(name: &str) -> bool {
@@ -457,12 +645,30 @@ async def EchoAgent(agent, request):
 
         let mut runtime = apxm_interaction_client::InteractionClient::default();
         let admitted = runtime
-            .admit_artifact(air)
+            .admit_artifact(air.clone())
             .expect("Runtime Service admits compiled bytes");
         assert_eq!(admitted, artifact_digest);
         let instance = runtime
             .run_artifact(&admitted)
             .expect("--artifact creates a Program Instance without Compilation");
+        let release =
+            fs::read(workspace_root().join("tools/tests/fixtures/canonical-execute.release.json"))
+                .expect("canonical release bytes");
+        let provenance = fs::read(
+            workspace_root().join("tools/tests/fixtures/canonical-execute.provenance.json"),
+        )
+        .expect("canonical provenance bytes");
+        runtime
+            .bind_admission(
+                &instance,
+                apxm_runtime_service::materials_for_artifact(
+                    &air,
+                    format!("{instance}:inv-1"),
+                    release,
+                    provenance,
+                ),
+            )
+            .expect("bind exact canonical invocation admission");
         let started = runtime
             .start_invocation(&instance, serde_json::json!({"message": "hello"}))
             .expect("headless invoke");
@@ -493,16 +699,167 @@ async def EchoAgent(agent, request):
         assert_eq!(snapshot_package(&dir).unwrap_err(), "missing_frontend");
     }
 
+    #[test]
+    fn package_snapshot_rejects_a_symlinked_member() {
+        #[cfg(unix)]
+        {
+            let dir = tempfile_dir();
+            fs::write(
+                dir.join("agent.toml"),
+                "[compile]\nentry = \"agent.py\"\nfrontend = \"python\"\n",
+            )
+            .unwrap();
+            fs::write(dir.join("agent.py"), "print('ok')").unwrap();
+            std::os::unix::fs::symlink("/etc/passwd", dir.join("leak.py")).unwrap();
+
+            let error = snapshot_package(&dir).expect_err("symlink must not enter a snapshot");
+            assert!(error.contains("symlink"), "{error}");
+        }
+    }
+
+    #[test]
+    fn package_snapshot_rejects_special_files() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::net::UnixListener;
+
+            let dir = tempfile_dir();
+            fs::write(
+                dir.join("agent.toml"),
+                "[compile]\nentry = \"agent.py\"\nfrontend = \"python\"\n",
+            )
+            .unwrap();
+            fs::write(dir.join("agent.py"), "print('ok')").unwrap();
+            let socket_path = PathBuf::from(format!(
+                "/tmp/apxm-special-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .expect("time")
+                    .as_nanos()
+            ));
+            let _socket = UnixListener::bind(&socket_path).unwrap();
+            fs::create_dir_all(&dir).unwrap();
+            fs::rename(&socket_path, dir.join("special")).unwrap();
+
+            let error = snapshot_package(&dir).expect_err("socket must not enter a snapshot");
+            assert!(error.contains("special file"), "{error}");
+        }
+    }
+
+    #[test]
+    fn package_snapshot_enforces_file_size_and_total_size_bounds() {
+        let dir = tempfile_dir();
+        fs::write(
+            dir.join("agent.toml"),
+            "[compile]\nentry = \"agent.py\"\nfrontend = \"python\"\n",
+        )
+        .unwrap();
+        fs::write(dir.join("agent.py"), vec![b'x'; MAX_PACKAGE_FILE_BYTES + 1]).unwrap();
+        let error = snapshot_package(&dir).expect_err("oversized file must be rejected");
+        assert!(error.contains("maximum size"), "{error}");
+
+        let dir = tempfile_dir();
+        fs::write(
+            dir.join("agent.toml"),
+            "[compile]\nentry = \"one.py\"\nfrontend = \"python\"\n",
+        )
+        .unwrap();
+        let chunk_count = MAX_PACKAGE_BYTES / MAX_PACKAGE_FILE_BYTES + 1;
+        for index in 0..chunk_count {
+            fs::write(
+                dir.join(format!("chunk-{index}.py")),
+                vec![b'x'; MAX_PACKAGE_FILE_BYTES],
+            )
+            .unwrap();
+        }
+        let error = snapshot_package(&dir).expect_err("aggregate size must be bounded");
+        assert!(error.contains("maximum size"), "{error}");
+    }
+
+    #[test]
+    fn package_snapshot_enforces_depth_and_file_count_bounds() {
+        let dir = tempfile_dir();
+        fs::write(
+            dir.join("agent.toml"),
+            "[compile]\nentry = \"agent.py\"\nfrontend = \"python\"\n",
+        )
+        .unwrap();
+        let mut nested = dir.clone();
+        for index in 0..=MAX_PACKAGE_DEPTH {
+            nested = nested.join(format!("d{index}"));
+        }
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("agent.py"), "print('too deep')").unwrap();
+        let error = snapshot_package(&dir).expect_err("deep package must be rejected");
+        assert!(error.contains("maximum depth"), "{error}");
+
+        let dir = tempfile_dir();
+        fs::write(
+            dir.join("agent.toml"),
+            "[compile]\nentry = \"agent.py\"\nfrontend = \"python\"\n",
+        )
+        .unwrap();
+        fs::write(dir.join("agent.py"), "print('ok')").unwrap();
+        for index in 0..MAX_PACKAGE_FILES {
+            fs::write(dir.join(format!("extra-{index}.py")), "pass").unwrap();
+        }
+        let error = snapshot_package(&dir).expect_err("file count must be bounded");
+        assert!(error.contains("maximum file count"), "{error}");
+    }
+
+    #[test]
+    fn stdio_child_receives_only_the_artifact_directory() {
+        #[cfg(unix)]
+        {
+            let artifact_dir = tempfile_dir();
+            let dump = artifact_dir.join("environment");
+            let script = format!("/usr/bin/env > '{}'", dump.display());
+            let client =
+                CompilationClient::spawn_stdio("/bin/sh", &["-c", script.as_str()], &artifact_dir)
+                    .unwrap();
+            for _ in 0..100 {
+                if dump.metadata().is_ok_and(|metadata| metadata.len() > 0) {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            drop(client);
+
+            let environment = fs::read_to_string(dump).unwrap();
+            assert!(
+                environment.lines().any(|line| {
+                    line == format!("APXM_ARTIFACT_DIR={}", artifact_dir.display())
+                })
+            );
+            for line in environment.lines() {
+                assert!(
+                    line.starts_with("APXM_ARTIFACT_DIR=")
+                        || line.starts_with("PWD=")
+                        || line.starts_with("SHLVL=")
+                        || line.starts_with("_="),
+                    "unexpected sanitized-child environment entry: {line}"
+                );
+            }
+        }
+    }
+
     fn tempfile_dir() -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "apxm-compilation-client-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("time")
-                .as_nanos()
-        ));
-        fs::create_dir_all(&path).unwrap();
-        path
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        for attempt in 0..100 {
+            let path = std::env::temp_dir().join(format!(
+                "apxm-compilation-client-{}-{timestamp}-{attempt}",
+                std::process::id(),
+            ));
+            match fs::create_dir(&path) {
+                Ok(()) => return path,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("create temporary package directory: {error}"),
+            }
+        }
+        panic!("could not allocate a unique temporary package directory")
     }
 }

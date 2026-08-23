@@ -12,15 +12,16 @@
 //!    takes a named `HashMap<String, apxm_core::Value>`. The mapping is total
 //!    only for a JSON *object* root, so every other root is a definite failure
 //!    with a diagnostic that names why, never a silently-wrapped argument.
-//! 2. **Three outcomes from two.** [`apxm_capability::CapabilitySystem::invoke`]
+//! 2. **Three outcomes from two.** [`apxm_capability::CapabilitySystem::invoke_request`]
 //!    returns `Result<Value, RuntimeError>`. A timeout is the one error that
 //!    leaves the effect *unobserved*, so it maps to
 //!    [`CapabilityOutcome::OutcomeUnknown`]; collapsing it into `Failed` would
 //!    assert the effect did not happen when the runtime does not know that.
 //! 3. **What local execution may do at all.** The canonical composition root
 //!    has no admitted sandbox backend and no Auth/Server-issued grants, so it
-//!    admits only the capability surface whose own metadata declares it
-//!    read-only. Everything else is denied at the interceptor chokepoint,
+//!    admits only builtin capability surfaces with host-owned read-only
+//!    metadata. Package metadata is descriptive and cannot grant read-only
+//!    authority. Everything else is denied at the interceptor chokepoint,
 //!    before any argument reaches an implementation.
 //!
 //! A package-shipped Capability crosses exactly the same three boundaries.
@@ -36,11 +37,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use apxm_capability::CapabilitySystem;
 use apxm_capability::builtins::{
-    BashConfig, SkillRootConfig, SkillsConfig, ToolsConfig, register_standard_tools,
+    BashConfig, HttpConfig, ReadConfig, SkillRootConfig, SkillsConfig, ToolsConfig,
+    register_standard_tools, untrusted_content_value,
 };
 use apxm_capability::executor::CapabilityExecutor;
-use apxm_capability::interceptor::{CapabilityInterceptor, InterceptDecision};
+use apxm_capability::interceptor::{
+    CapabilityInterceptor, InterceptDecision, PermissionInterceptor, requires_auth_names,
+};
 use apxm_capability::metadata::RuntimeCapability;
+use apxm_capability_iface::sandbox::{
+    ExecRequest, IsolationLevel, SandboxRegistry, ValidationResult, WrappedChild,
+};
 use apxm_core::error::RuntimeError;
 use apxm_core::types::values::{Value as CapabilityValue, ValueError};
 use apxm_core::types::{HandlerDescriptor, HandlerManifest};
@@ -66,10 +73,27 @@ const PACKAGE_SKILL_ROOT_ID: &str = "package";
 /// unregistered instead of advertising it. A sandbox-backed local profile is the
 /// thing that turns it back on, not a config toggle here.
 fn local_tools_config(package_root: Option<&Path>) -> ToolsConfig {
+    // The local composition root must not turn an authored read into an
+    // ambient host-file primitive. Restrict it to the caller's project root;
+    // HTTP is disabled because SSRF filtering does not prevent exfiltration to
+    // an arbitrary public endpoint.
+    let project_root = package_root.map_or_else(
+        || std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        Path::to_path_buf,
+    );
     ToolsConfig {
         bash: BashConfig {
             enabled: false,
             ..BashConfig::default()
+        },
+        read: ReadConfig {
+            base_directory: Some(project_root.clone()),
+            allowed_paths: Some(vec![project_root]),
+            ..ReadConfig::default()
+        },
+        http: HttpConfig {
+            enabled: false,
+            ..HttpConfig::default()
         },
         skills: local_skills_config(package_root),
         ..ToolsConfig::default()
@@ -161,8 +185,8 @@ impl CapabilityInterceptor for LocalAdmissionPolicy {
 /// helper process a *private* adapter the Composition Root selects. This is
 /// that adapter, and its privacy is structural: the worker command and the
 /// manifest are both handed in, the process is spawned lazily on the first
-/// invocation so a run that never invokes a package Capability never starts
-/// one, and nothing outside this module can address it.
+/// invocation through the host's injected confinement backend, and nothing
+/// outside this module can address it. No backend means no worker.
 ///
 /// Every language's worker is this same type. The frame protocol is the
 /// contract, not the interpreter, so a Python worker and a Node worker are
@@ -178,22 +202,33 @@ struct PackageHandlerWorker {
     /// the bytes this root admitted rather than re-reading a package path
     /// that may have changed since verification.
     manifest_file: tempfile::TempPath,
+    package_root: Option<PathBuf>,
+    sandbox_registry: Option<Arc<SandboxRegistry>>,
     process: tokio::sync::Mutex<Option<WorkerProcess>>,
     next_request: AtomicU64,
 }
 
 /// One live worker process and the two halves of its frame transport.
 struct WorkerProcess {
-    child: tokio::process::Child,
+    child: WrappedChild,
     stdin: tokio::process::ChildStdin,
-    stdout: tokio::io::Lines<tokio::io::BufReader<tokio::process::ChildStdout>>,
+    stdout: tokio::io::BufReader<tokio::process::ChildStdout>,
 }
+
+const MAX_WORKER_FRAME_BYTES: usize = 8 * 1024 * 1024;
+// Keep a worker's own I/O deadline below the CapabilitySystem's default
+// invocation deadline. This ensures a cancelled outer invocation cannot leave
+// a wedged worker cached for the next call.
+const WORKER_IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+const WORKER_PASSTHROUGH_ENV: &[&str] = &["PATH", "LANG", "LC_ALL", "TERM"];
 
 impl PackageHandlerWorker {
     /// Materialize the admitted manifest beside the selected worker entry.
     fn new(
         command: &crate::PackageHandlerWorkerCommand,
         manifest: &HandlerManifest,
+        package_root: Option<&Path>,
+        sandbox_registry: Option<Arc<SandboxRegistry>>,
     ) -> Result<Self, RuntimeError> {
         let mut file = tempfile::NamedTempFile::new().map_err(|error| {
             RuntimeError::Executor(format!(
@@ -208,6 +243,8 @@ impl PackageHandlerWorker {
         Ok(Self {
             command: command.clone(),
             manifest_file: file.into_temp_path(),
+            package_root: package_root.map(Path::to_path_buf),
+            sandbox_registry,
             process: tokio::sync::Mutex::new(None),
             next_request: AtomicU64::new(1),
         })
@@ -239,6 +276,11 @@ impl PackageHandlerWorker {
         let mut line = serde_json::to_string(&frame)
             .map_err(|error| failure(format!("the invocation frame is not encodable: {error}")))?;
         line.push('\n');
+        if line.len() > MAX_WORKER_FRAME_BYTES {
+            return Err(failure(format!(
+                "the worker request frame exceeds {MAX_WORKER_FRAME_BYTES} bytes"
+            )));
+        }
 
         let mut guard = self.process.lock().await;
         if guard.is_none() {
@@ -260,36 +302,57 @@ impl PackageHandlerWorker {
                 .flush()
                 .await
                 .map_err(|error| format!("the worker did not accept the request: {error}"))?;
-            match worker.stdout.next_line().await {
+            match read_worker_line(&mut worker.stdout).await {
                 Ok(Some(reply)) => Ok(reply),
                 Ok(None) => Err("the worker closed its output before replying".to_string()),
                 Err(error) => Err(format!("the worker reply could not be read: {error}")),
             }
-        }
-        .await;
-        let reply = match exchange {
+        };
+        let reply = match tokio::time::timeout(WORKER_IO_TIMEOUT, exchange).await {
+            Err(_) => {
+                if let Some(mut worker) = guard.take() {
+                    let _ = worker.child.start_kill();
+                }
+                return Err(failure(format!(
+                    "the package handler worker did not reply within {WORKER_IO_TIMEOUT:?}"
+                )));
+            }
+            Ok(reply) => reply,
+        };
+        let reply = match reply {
             Ok(reply) => reply,
             Err(message) => {
                 if let Some(mut worker) = guard.take() {
                     let _ = worker.child.start_kill();
                 }
-                // Only a `read_only` handler is ever admitted by this root
-                // (see `admitted_capability_names`), so a lost reply leaves
+                // Only a host-authorized read-only handler is admitted by this
+                // root (see `admitted_capability_names`), so a lost reply leaves
                 // no external effect in doubt: reporting a definite failure
                 // is accurate here rather than optimistic.
                 return Err(failure(message));
             }
         };
-        drop(guard);
-
-        let reply: WorkerReply = serde_json::from_str(&reply)
-            .map_err(|error| failure(format!("the worker reply is not a result frame: {error}")))?;
+        let reply: WorkerReply = match serde_json::from_str(&reply) {
+            Ok(reply) => reply,
+            Err(error) => {
+                if let Some(mut worker) = guard.take() {
+                    let _ = worker.child.start_kill();
+                }
+                return Err(failure(format!(
+                    "the worker reply is not a result frame: {error}"
+                )));
+            }
+        };
         if reply.req_id != request_id {
+            if let Some(mut worker) = guard.take() {
+                let _ = worker.child.start_kill();
+            }
             return Err(failure(format!(
                 "the worker replied to request '{}' while '{request_id}' was outstanding",
                 reply.req_id
             )));
         }
+        drop(guard);
         match (reply.ok, reply.value, reply.error) {
             (true, Some(value), _) => Ok(value),
             (true, None, _) => Err(failure(
@@ -302,15 +365,90 @@ impl PackageHandlerWorker {
         }
     }
 
-    /// Start the selected worker over the admitted manifest.
+    /// Start the selected worker through the host-supplied confinement port.
     fn spawn(&self) -> Result<WorkerProcess, String> {
-        let mut child = tokio::process::Command::new(&self.command.interpreter)
-            .arg(&self.command.entry)
-            .arg(&self.manifest_file)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
+        let package_root = self.package_root.as_deref().ok_or_else(|| {
+            "package handler execution requires an explicit package root for filesystem policy"
+                .to_string()
+        })?;
+        let registry = self.sandbox_registry.as_ref().ok_or_else(|| {
+            "package handler execution requires a trusted sandbox registry".to_string()
+        })?;
+        if registry.is_empty() {
+            return Err(
+                "package handler execution requires an available sandbox backend".to_string(),
+            );
+        }
+
+        let mut env = HashMap::new();
+        for key in WORKER_PASSTHROUGH_ENV {
+            if let Ok(value) = std::env::var(key) {
+                env.insert((*key).to_string(), value);
+            }
+        }
+        let request = ExecRequest {
+            min_isolation: IsolationLevel::OsLevel,
+            program: self.command.interpreter.clone(),
+            args: vec![
+                self.command.entry.to_string_lossy().into_owned(),
+                self.manifest_file.to_string_lossy().into_owned(),
+            ],
+            working_dir: Some(package_root.to_path_buf()),
+            env,
+            stdin_data: None,
+            timeout: WORKER_IO_TIMEOUT,
+            max_output_bytes: MAX_WORKER_FRAME_BYTES,
+            read_paths: vec![
+                package_root.to_path_buf(),
+                self.command.entry.clone(),
+                self.manifest_file.to_path_buf(),
+            ],
+            write_paths: Vec::new(),
+            needs_network: false,
+            needs_process_spawn: false,
+            origin_op: Some("capability.invoke".to_string()),
+            origin_node_id: None,
+        };
+        let selection = registry
+            .select_for_request(&request)
+            .map_err(|error| format!("package worker sandbox selection failed: {error}"))?;
+        if !matches!(selection.validation, ValidationResult::Ok) {
+            return Err(
+                "package worker sandbox validation did not provide full confinement guarantees"
+                    .to_string(),
+            );
+        }
+        let capabilities = selection.backend.capabilities();
+        if capabilities.isolation_level < IsolationLevel::OsLevel
+            || !capabilities.supports_filesystem_restriction
+            || !capabilities.supports_network_restriction
+            || !capabilities.supports_process_restriction
+            || !capabilities.supports_syscall_filtering
+            || !capabilities.supports_resource_limits
+        {
+            return Err(format!(
+                "sandbox backend '{}' cannot enforce the package worker filesystem, network, process, syscall, and resource policy",
+                capabilities.name
+            ));
+        }
+        let wrapped = selection
+            .backend
+            .wrap_command_for_request(&request)
+            .map_err(|error| format!("package worker sandbox wrapping failed: {error}"))?;
+        if !wrapped.is_confined() {
+            return Err(
+                "package worker sandbox returned an unconfined command wrapper".to_string(),
+            );
+        }
+        let mut child = wrapped
+            .spawn(|command| {
+                command
+                    .current_dir(package_root)
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::null())
+                    .kill_on_drop(true);
+            })
             .map_err(|error| {
                 format!(
                     "the package handler worker {} could not be started with {}: {error}",
@@ -318,21 +456,58 @@ impl PackageHandlerWorker {
                     self.command.interpreter
                 )
             })?;
-        let stdin = child.stdin.take().ok_or("the worker has no input stream")?;
+        let stdin = child.take_stdin().ok_or("the worker has no input stream")?;
         let stdout = child
-            .stdout
-            .take()
+            .take_stdout()
             .ok_or("the worker has no output stream")?;
         Ok(WorkerProcess {
             child,
             stdin,
-            stdout: tokio::io::AsyncBufReadExt::lines(tokio::io::BufReader::new(stdout)),
+            stdout: tokio::io::BufReader::new(stdout),
         })
+    }
+}
+
+async fn read_worker_line(
+    reader: &mut tokio::io::BufReader<tokio::process::ChildStdout>,
+) -> Result<Option<String>, String> {
+    use tokio::io::AsyncBufReadExt;
+
+    let mut bytes = Vec::new();
+    loop {
+        let (take, newline) = {
+            let available = reader.fill_buf().await.map_err(|error| error.to_string())?;
+            if available.is_empty() {
+                if bytes.is_empty() {
+                    return Ok(None);
+                }
+                return String::from_utf8(bytes)
+                    .map(Some)
+                    .map_err(|error| format!("worker frame is not UTF-8: {error}"));
+            }
+            let newline = available.iter().position(|byte| *byte == b'\n');
+            let take = newline.map_or(available.len(), |index| index + 1);
+            if bytes.len().saturating_add(take) > MAX_WORKER_FRAME_BYTES {
+                return Err(format!(
+                    "worker frame exceeds {MAX_WORKER_FRAME_BYTES} bytes"
+                ));
+            }
+            (take, newline.is_some())
+        };
+        let available = reader.fill_buf().await.map_err(|error| error.to_string())?;
+        bytes.extend_from_slice(&available[..take]);
+        reader.consume(take);
+        if newline {
+            return String::from_utf8(bytes)
+                .map(Some)
+                .map_err(|error| format!("worker frame is not UTF-8: {error}"));
+        }
     }
 }
 
 /// The worker's result frame.
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct WorkerReply {
     req_id: String,
     ok: bool,
@@ -352,16 +527,14 @@ struct PackageHandlerCapability {
 impl PackageHandlerCapability {
     /// Project one manifest descriptor onto runtime capability metadata.
     ///
-    /// Both policy fields are read off the descriptor and neither is
-    /// invented here. `read_only` is what the handler declared about
-    /// itself; `requires_approval` is the permission decision `apxm agent
-    /// sync` resolved and wrote into the manifest. An absent decision is
-    /// not an allow — a manifest that never had one carried through is
-    /// gated, which fails closed at the approval interceptor rather than
-    /// running unapproved.
+    /// Read-only authority is supplied separately by the trusted composition
+    /// root. The descriptor's `read_only` bit is descriptive only.
+    /// `requires_approval` remains gated by the permission decision carried in
+    /// the manifest; an absent decision is not an allow.
     fn new(
         descriptor: &HandlerDescriptor,
         worker: Arc<PackageHandlerWorker>,
+        trusted_read_only: bool,
     ) -> Result<Self, RuntimeError> {
         let schema = descriptor
             .schema
@@ -379,7 +552,7 @@ impl PackageHandlerCapability {
             }),
             schema,
         );
-        if descriptor.read_only == Some(true) {
+        if trusted_read_only {
             metadata = metadata.with_read_only();
         }
         if descriptor.requires_approval != Some(false) {
@@ -415,10 +588,19 @@ impl CapabilityExecutor for PackageHandlerCapability {
                 &serde_json::Value::Object(encoded),
             )
             .await?;
-        CapabilityValue::try_from(value).map_err(|error| RuntimeError::Capability {
-            capability: self.metadata.name.clone(),
-            message: format!("the handler result has no runtime value mapping: {error}"),
-        })
+        // Package handlers are untrusted extension code. Their result is
+        // quoted as data with a stable handler-origin URI before it can enter
+        // the Agent Program value stream; a handler cannot smuggle a role,
+        // policy, or instruction field into the trusted result channel.
+        let result = untrusted_content_value(
+            &self.metadata.name,
+            format!("extension://{}", self.handler_id),
+            serde_json::to_string(&value).map_err(|error| RuntimeError::Capability {
+                capability: self.metadata.name.clone(),
+                message: format!("the handler result could not be serialized: {error}"),
+            })?,
+        )?;
+        Ok(result)
     }
 
     fn metadata(&self) -> &RuntimeCapability {
@@ -428,9 +610,10 @@ impl CapabilityExecutor for PackageHandlerCapability {
 
 /// Register every Capability the supplied package ships.
 ///
-/// Registration happens before the admission policy is captured, so a
-/// package Capability is in the admitted set on exactly the same terms a
-/// builtin is: because its own metadata declares it read-only.
+/// Registration happens before the admission policy is captured. A package
+/// Capability enters the admitted set only when the composition root supplies
+/// a host-issued read-only decision for its name; the package manifest's
+/// `read_only` field is never used as authority.
 ///
 /// A package handler may not take a builtin's name. `register` refuses a
 /// duplicate, and that refusal is kept rather than softened into a
@@ -445,6 +628,8 @@ impl CapabilityExecutor for PackageHandlerCapability {
 fn register_package_handlers(
     system: &CapabilitySystem,
     handlers: &crate::AdmittedPackageHandlers,
+    package_root: Option<&Path>,
+    sandbox_registry: Option<Arc<SandboxRegistry>>,
 ) -> Result<(), RuntimeError> {
     let mut workers: BTreeMap<_, Arc<PackageHandlerWorker>> = BTreeMap::new();
     for (language, command) in &handlers.workers {
@@ -462,7 +647,12 @@ fn register_package_handlers(
         );
         workers.insert(
             *language,
-            Arc::new(PackageHandlerWorker::new(command, &evaluable)?),
+            Arc::new(PackageHandlerWorker::new(
+                command,
+                &evaluable,
+                package_root,
+                sandbox_registry.clone(),
+            )?),
         );
     }
     for descriptor in &handlers.manifest.handlers {
@@ -478,13 +668,14 @@ fn register_package_handlers(
         system.register(Arc::new(PackageHandlerCapability::new(
             descriptor,
             Arc::clone(worker),
+            handlers.trusted_read_only.contains(&descriptor.name),
         )?))?;
     }
     Ok(())
 }
 
-/// The locally admitted capability names: those whose own metadata declares
-/// them read-only.
+/// The locally admitted capability names: builtin read-only metadata plus
+/// package metadata marked by a host-issued read-only decision.
 fn admitted_capability_names(system: &CapabilitySystem) -> BTreeSet<String> {
     system
         .list_capabilities()
@@ -502,7 +693,7 @@ pub struct LocalCapabilityPort {
 impl LocalCapabilityPort {
     /// Build the local capability surface: register the standard tools that can
     /// run without a sandbox and whatever Capabilities the supplied package
-    /// ships, then gate them all behind the read-only admission policy.
+    /// ships, then gate them behind host-owned read-only admission policy.
     ///
     /// `handlers` is the exact package-handler implementation this root was
     /// supplied with, or `None` when it was supplied with none. There is no
@@ -522,11 +713,27 @@ impl LocalCapabilityPort {
         handlers: Option<&crate::AdmittedPackageHandlers>,
         package_root: Option<&Path>,
     ) -> Result<Self, RuntimeError> {
+        Self::with_package_root_and_sandbox(handlers, package_root, None)
+    }
+
+    /// Build the local capability surface with an explicitly injected sandbox
+    /// registry for package workers. The registry is host authority; package
+    /// metadata cannot supply or select it.
+    pub fn with_package_root_and_sandbox(
+        handlers: Option<&crate::AdmittedPackageHandlers>,
+        package_root: Option<&Path>,
+        sandbox_registry: Option<Arc<SandboxRegistry>>,
+    ) -> Result<Self, RuntimeError> {
         let system = CapabilitySystem::new();
         register_standard_tools(&system, &local_tools_config(package_root))?;
         if let Some(handlers) = handlers {
-            register_package_handlers(&system, handlers)?;
+            register_package_handlers(&system, handlers, package_root, sandbox_registry)?;
         }
+        // Install auth policy after the complete registry is assembled. A
+        // requires_auth capability must never become callable merely because
+        // its registration happened after policy construction.
+        let requires_auth = requires_auth_names(&system.list_capabilities());
+        system.register_interceptor(Arc::new(PermissionInterceptor::new(requires_auth, true)));
         system.register_interceptor(Arc::new(LocalAdmissionPolicy {
             admitted: admitted_capability_names(&system),
         }));
@@ -558,15 +765,14 @@ impl LocalCapabilityPort {
     }
 }
 
-#[async_trait]
-impl CapabilityPort for LocalCapabilityPort {
-    async fn invoke(&self, request: CapabilityRequest) -> CapabilityOutcome {
-        let capability_ref = request.capability_ref();
-        let arguments = match named_arguments(&request) {
-            Ok(arguments) => arguments,
-            Err(message) => return CapabilityOutcome::Failed { message },
-        };
-        match self.system.invoke(capability_ref, arguments).await {
+impl LocalCapabilityPort {
+    /// Execute the immutable canonical request without projecting away its
+    /// authority. `CapabilitySystem::invoke_request` validates the request's
+    /// authority and digest binding before converting arguments for the
+    /// implementation.
+    async fn invoke_canonical(&self, request: CapabilityRequest) -> CapabilityOutcome {
+        let capability_ref = request.capability_ref().to_string();
+        match self.system.invoke_request(request).await {
             Ok(value) => match capability_result_text(value) {
                 Ok(result) => CapabilityOutcome::Completed { result },
                 Err(error) => CapabilityOutcome::Failed {
@@ -596,39 +802,15 @@ impl CapabilityPort for LocalCapabilityPort {
     }
 }
 
-/// Decode the canonical argument bytes into the capability system's named
-/// argument map.
-///
-/// The canonical bytes are produced by `serde_json`, so no non-finite float can
-/// survive round-tripping and the `serde_json::Value` → `apxm_core::Value`
-/// conversion is total for them. The one root that has no mapping is a
-/// non-object: capability arguments are named, and inventing a name for a bare
-/// scalar or array would fabricate an argument the author never wrote.
-fn named_arguments(
-    request: &CapabilityRequest,
-) -> Result<HashMap<String, CapabilityValue>, String> {
-    let capability_ref = request.capability_ref();
-    let decoded = request.arguments().value().map_err(|error| {
-        format!("canonical arguments for capability '{capability_ref}' are not decodable: {error}")
-    })?;
-    let serde_json::Value::Object(fields) = decoded else {
-        return Err(format!(
-            "canonical arguments for capability '{capability_ref}' must be a JSON object; the \
-             admitted argument contract is a named map and a non-object root has no named-argument \
-             mapping"
-        ));
-    };
-    let mut arguments = HashMap::with_capacity(fields.len());
-    for (name, value) in fields {
-        let value = CapabilityValue::try_from(value).map_err(|error| {
-            format!(
-                "argument '{name}' of capability '{capability_ref}' has no runtime value \
-                 mapping: {error}"
-            )
-        })?;
-        arguments.insert(name, value);
+#[async_trait]
+impl CapabilityPort for LocalCapabilityPort {
+    async fn invoke(&self, request: CapabilityRequest) -> CapabilityOutcome {
+        self.invoke_canonical(request).await
     }
-    Ok(arguments)
+
+    async fn invoke_authorized(&self, request: CapabilityRequest) -> CapabilityOutcome {
+        self.invoke_canonical(request).await
+    }
 }
 
 /// Project a capability result onto the port's `Completed { result: String }`.
@@ -688,6 +870,10 @@ mod tests {
             LocalCapabilityPort::with_package_root(None, None).expect("local capability port");
         assert!(port.admitted_names().contains("read"));
         assert!(
+            !port.admitted_names().contains("http_get"),
+            "canonical local execution must not expose arbitrary outbound HTTP"
+        );
+        assert!(
             port.registered_names().contains("write"),
             "write is registered so its denial is a policy decision, not a registry miss"
         );
@@ -703,8 +889,8 @@ mod tests {
         let file = directory.path().join("payload.txt");
         std::fs::write(&file, "canonical capability payload\n").expect("write payload");
 
-        let port =
-            LocalCapabilityPort::with_package_root(None, None).expect("local capability port");
+        let port = LocalCapabilityPort::with_package_root(None, Some(directory.path()))
+            .expect("local capability port");
         let outcome = port
             .invoke(request(
                 "read",
@@ -826,11 +1012,12 @@ mod tests {
             .into_iter()
             .collect(),
             manifest: HandlerManifest::new(descriptors),
+            trusted_read_only: BTreeSet::new(),
         }
     }
 
     #[test]
-    fn a_package_capability_is_admitted_on_the_same_read_only_terms_as_a_builtin() {
+    fn package_metadata_cannot_self_authorize_read_only_execution() {
         let handlers = supplied(vec![
             descriptor("proposal", Some(true), Some(false)),
             descriptor("apply", Some(false), Some(false)),
@@ -843,11 +1030,33 @@ mod tests {
             port.registered_names().contains("apply"),
             "a package Capability is registered so its denial is a decision, not a miss"
         );
-        assert!(port.admitted_names().contains("proposal"));
+        assert!(
+            !port.admitted_names().contains("proposal"),
+            "the package manifest's read_only bit is not trusted authority"
+        );
         assert!(
             !port.admitted_names().contains("apply"),
-            "a package handler that does not declare itself read-only is refused by the same \
-             rule that refuses the write builtin"
+            "a package handler without a host-issued read-only decision is refused"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_trusted_read_only_package_still_requires_confinement() {
+        let mut handlers = supplied(vec![descriptor("proposal", Some(true), Some(false))]);
+        handlers.trusted_read_only.insert("proposal".to_string());
+        let package = tempfile::tempdir().expect("package root");
+        let port = LocalCapabilityPort::with_package_root(Some(&handlers), Some(package.path()))
+            .expect("local capability port");
+
+        let outcome = port
+            .invoke(request("proposal", serde_json::json!({})))
+            .await;
+        let CapabilityOutcome::Failed { message } = outcome else {
+            panic!("a package worker without a sandbox must fail: {outcome:?}");
+        };
+        assert!(
+            message.contains("trusted sandbox registry"),
+            "the failure names the missing confinement boundary: {message}"
         );
     }
 
@@ -930,9 +1139,12 @@ mod tests {
         // had a resolved decision carried into it is gated, so an unsynced
         // package cannot run unapproved.
         for undecided in [None, Some(true)] {
-            let handlers = supplied(vec![descriptor("gated", Some(true), undecided)]);
-            let port = LocalCapabilityPort::with_package_root(Some(&handlers), None)
-                .expect("local capability port");
+            let mut handlers = supplied(vec![descriptor("gated", Some(true), undecided)]);
+            handlers.trusted_read_only.insert("gated".to_string());
+            let package = tempfile::tempdir().expect("package root");
+            let port =
+                LocalCapabilityPort::with_package_root(Some(&handlers), Some(package.path()))
+                    .expect("local capability port");
             assert!(
                 port.admitted_names().contains("gated"),
                 "the read-only surface still admits it; approval is the separate gate"
@@ -961,5 +1173,22 @@ mod tests {
             error.to_string().contains("already registered"),
             "shadowing is refused rather than silently replacing the builtin: {error}"
         );
+    }
+
+    #[test]
+    fn package_workers_do_not_inherit_authority_bearing_environment() {
+        for forbidden in [
+            "APXM_AUTH_BEARER",
+            "TAVILY_API_KEY",
+            "AWS_SECRET_ACCESS_KEY",
+            "DATABASE_URL",
+            "LD_LIBRARY_PATH",
+            "HOME",
+        ] {
+            assert!(
+                !WORKER_PASSTHROUGH_ENV.contains(&forbidden),
+                "worker environment must not pass through {forbidden}"
+            );
+        }
     }
 }

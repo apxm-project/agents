@@ -24,6 +24,13 @@ pub mod session_prefixes {
     pub const SCRIPT: &str = "script";
 }
 
+pub mod limits {
+    use std::time::Duration;
+
+    pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+    pub const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
+}
+
 pub mod env {
     use std::collections::BTreeMap;
     use std::fmt;

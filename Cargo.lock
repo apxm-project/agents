@@ -188,8 +188,10 @@ dependencies = [
  "blake3",
  "chrono",
  "dashmap",
+ "libc",
  "parking_lot",
  "reqwest",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",
@@ -278,6 +280,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -287,7 +290,9 @@ dependencies = [
  "apxm-compilation-protocol",
  "apxm-compilation-service",
  "apxm-interaction-client",
+ "apxm-runtime-service",
  "apxm-source-port",
+ "libc",
  "serde",
  "serde_json",
  "toml",
@@ -495,6 +500,7 @@ dependencies = [
  "apxm-kernel",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -506,6 +512,7 @@ dependencies = [
  "apxm-backend-registry",
  "apxm-backends",
  "apxm-capability",
+ "apxm-capability-iface",
  "apxm-core",
  "apxm-execution",
  "apxm-inference",
@@ -519,6 +526,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "toml",
+ "uuid",
 ]
 
 [[package]]

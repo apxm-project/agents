@@ -32,16 +32,17 @@ pub use diagnostics::{
 pub use dispatch::{
     CommittedInferenceDispatch, CommittedInferenceDispatchResult, ExactInferenceDispatch,
     InferenceDispatchError, InferenceDispatchResult, LeasedInferenceBackend,
-    dispatch_committed_inference, dispatch_exact_inference,
+    dispatch_committed_inference, dispatch_committed_inference_async, dispatch_exact_inference,
 };
 pub use driver::{
     DriverAvailability, DriverBindingError, INFERENCE_DRIVER_BINDING_SCHEMA, InferenceDriverBinding,
 };
 pub use effect::{
-    AttemptDisposition, ErrorCategory, IdempotencyKey, ModelCallPreparation, ModelCallRequest,
-    ModelCallRequestError, ModelCallRequestMetadata, ModelCallRequestMetadataPort,
-    ModelContextEnvelopeRef, ModelExecution, ModelInferencePort, ModelOutcome, ModelStreamMode,
-    NodeExecutionId, RetryPolicy, TypedError, Usage, execute, execute_with_attempt,
+    AttemptDisposition, ErrorCategory, IdempotencyKey, ModelAttemptFuture, ModelCallPreparation,
+    ModelCallRequest, ModelCallRequestError, ModelCallRequestMetadata,
+    ModelCallRequestMetadataPort, ModelContextEnvelopeRef, ModelExecution, ModelInferencePort,
+    ModelOutcome, ModelStreamMode, NodeExecutionId, RetryPolicy, TypedError, Usage, execute,
+    execute_async, execute_with_attempt, execute_with_attempt_async,
 };
 pub use identity::{
     BindingError, ExactModelTargetRef, ExactPortBindingRef, ModelBindingAdmission,

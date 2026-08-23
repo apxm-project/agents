@@ -6,8 +6,8 @@
 mod stdio;
 
 pub use stdio::{
-    StdioFrame, UnixEndpoint, decode_jsonl, encode_jsonl, handshake_cross_wired, serve_stdio,
-    serve_unix,
+    COMPILATION_CHANNEL, MAX_FRAME_BYTES, StdioFrame, UnixEndpoint, decode_jsonl, encode_jsonl,
+    handshake_cross_wired, serve_stdio, serve_unix,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -177,7 +177,59 @@ pub fn artifact_file_name(digest: &str) -> String {
 
 fn persist_artifact(dir: &Path, digest: &str, bytes: &[u8]) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
-    std::fs::write(dir.join(artifact_file_name(digest)), bytes).map_err(|error| error.to_string())
+    let path = dir.join(artifact_file_name(digest));
+    match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(format!(
+                    "artifact path '{}' is not a regular file",
+                    path.display()
+                ));
+            }
+            let existing = std::fs::read(&path).map_err(|error| error.to_string())?;
+            if existing == bytes {
+                return Ok(());
+            }
+            return Err(format!(
+                "artifact path '{}' already contains different bytes",
+                path.display()
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.to_string()),
+    }
+
+    use std::io::Write as _;
+    let mut file = match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            // Another compiler worker won the create race. Reconcile only
+            // against the digest-bound bytes; never truncate or follow a
+            // path that appeared after the initial check.
+            let metadata = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(format!(
+                    "artifact path '{}' is not a regular file",
+                    path.display()
+                ));
+            }
+            let existing = std::fs::read(&path).map_err(|e| e.to_string())?;
+            return if existing == bytes {
+                Ok(())
+            } else {
+                Err(format!(
+                    "artifact path '{}' already contains different bytes",
+                    path.display()
+                ))
+            };
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+    file.write_all(bytes).map_err(|error| error.to_string())
 }
 
 fn snapshot_error_code(error: SnapshotError) -> &'static str {
@@ -186,6 +238,7 @@ fn snapshot_error_code(error: SnapshotError) -> &'static str {
         SnapshotError::Incomplete => "incomplete_snapshot",
         SnapshotError::UnsafePath => "unsafe_path",
         SnapshotError::DigestMismatch => "digest_mismatch",
+        SnapshotError::DuplicatePath => "duplicate_path",
         SnapshotError::LockDrift => "lock_drift",
         SnapshotError::MissingEntrypoint => "missing_entrypoint",
     }
@@ -279,48 +332,199 @@ fn authored_program_name(frontend: Frontend, source: &str) -> Result<String, Str
     let mut found = None;
     match frontend {
         Frontend::Python => {
-            let lines: Vec<&str> = source.lines().collect();
-            for (index, line) in lines.iter().enumerate() {
-                if !line.contains("@Agent") {
+            // Keep the source scan linear. A package may contain many child
+            // Agents, and rescanning the suffix after every decorator makes
+            // authored-program discovery quadratic in source size.
+            let mut awaiting_agent = false;
+            let mut decorator_depth = 0usize;
+            let mut python_string = None;
+            for line in source.lines() {
+                let code = strip_python_non_code(line, &mut python_string);
+                let trimmed = code.trim_start();
+                // A source comment or string is data, not an Agent
+                // declaration. Only a decorator at the beginning of a Python
+                // logical line may arm discovery.
+                if trimmed.starts_with('#') {
                     continue;
                 }
-                for next in &lines[index + 1..] {
-                    let trimmed = next.trim_start();
-                    let rest = trimmed
-                        .strip_prefix("async def ")
-                        .or_else(|| trimmed.strip_prefix("def "));
-                    let Some(rest) = rest else {
-                        continue;
-                    };
-                    let name = rest.split('(').next().unwrap_or("").trim();
-                    if name.is_empty() {
-                        break;
-                    }
-                    // A composition root may declare child Agent Programs in
-                    // the same file. The last `@Agent` is the package entry.
-                    found = Some(name.to_owned());
-                    break;
+                if is_python_agent_decorator(trimmed) {
+                    awaiting_agent = true;
+                    decorator_depth = parenthesis_depth(trimmed);
+                    continue;
                 }
+                if !awaiting_agent {
+                    continue;
+                }
+                if decorator_depth > 0 {
+                    let closes = trimmed.bytes().filter(|byte| *byte == b')').count();
+                    let opens = trimmed.bytes().filter(|byte| *byte == b'(').count();
+                    decorator_depth = decorator_depth.saturating_add(opens).saturating_sub(closes);
+                    continue;
+                }
+                if trimmed.is_empty() || trimmed.starts_with('@') {
+                    continue;
+                }
+                let rest = trimmed
+                    .strip_prefix("async def ")
+                    .or_else(|| trimmed.strip_prefix("def "));
+                let Some(rest) = rest else {
+                    // Do not let an arbitrary statement after a decorator
+                    // bind a later function name.
+                    awaiting_agent = false;
+                    continue;
+                };
+                let name = rest.split('(').next().unwrap_or("").trim();
+                awaiting_agent = false;
+                if !is_identifier(name) {
+                    continue;
+                }
+                // A composition root may declare child Agent Programs in
+                // the same file. The last `@Agent` is the package entry.
+                found = Some(name.to_owned());
             }
         }
         Frontend::Typescript => {
+            let mut in_block_comment = false;
             for line in source.lines() {
-                let Some((before, _)) = line.split_once("= Agent") else {
+                let line = strip_typescript_comments(line, &mut in_block_comment);
+                let trimmed = line.trim_start();
+                let Some((before, after)) = trimmed.split_once('=') else {
                     continue;
                 };
-                let name = before
-                    .replace("export const", "")
-                    .replace("const", "")
-                    .trim()
-                    .to_owned();
-                if name.is_empty() {
+                let mut tokens = before.split_whitespace();
+                let Some(name) = tokens.next_back() else {
+                    continue;
+                };
+                if tokens.next_back() != Some("const")
+                    || !tokens.all(|token| token == "export" || token == "declare")
+                    || !is_identifier(name)
+                {
                     continue;
                 }
-                found = Some(name);
+                let after = after.trim_start();
+                if !after.starts_with("Agent")
+                    || !after["Agent".len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(|character| {
+                            character == '<' || character == '(' || character.is_whitespace()
+                        })
+                {
+                    continue;
+                }
+                found = Some(name.to_owned());
             }
         }
     }
     found.ok_or_else(|| "missing_program".to_owned())
+}
+
+fn is_python_agent_decorator(line: &str) -> bool {
+    let Some(rest) = line.strip_prefix("@Agent") else {
+        return false;
+    };
+    rest.is_empty() || rest.trim_start().starts_with('(')
+}
+
+fn parenthesis_depth(line: &str) -> usize {
+    line.bytes().fold(0usize, |depth, byte| match byte {
+        b'(' => depth.saturating_add(1),
+        b')' => depth.saturating_sub(1),
+        _ => depth,
+    })
+}
+
+/// Remove Python strings and comments before looking for decorators. The
+/// service only needs a tiny lexical view here; the frontend remains the
+/// authority for syntax and Agent semantics. Keeping quoted text out of this
+/// scan prevents prompt-like examples in docstrings from selecting a fake
+/// package root.
+fn strip_python_non_code(line: &str, string: &mut Option<(char, bool)>) -> String {
+    let mut output = String::with_capacity(line.len());
+    let bytes = line.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if let Some((quote, triple)) = *string {
+            if triple && bytes[index..].starts_with(&[quote as u8; 3]) {
+                *string = None;
+                index += 3;
+                continue;
+            }
+            if !triple && bytes[index] == quote as u8 {
+                *string = None;
+                index += 1;
+                continue;
+            }
+            if bytes[index] == b'\\' {
+                index = index.saturating_add(2);
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+
+        match bytes[index] {
+            b'#' => break,
+            b'\'' | b'"' => {
+                let quote = bytes[index] as char;
+                let triple = bytes[index..].starts_with(&[bytes[index]; 3]);
+                *string = Some((quote, triple));
+                index += if triple { 3 } else { 1 };
+            }
+            byte => {
+                output.push(byte as char);
+                index += 1;
+            }
+        }
+    }
+    output
+}
+
+fn is_identifier(value: &str) -> bool {
+    let mut characters = value.chars();
+    let Some(first) = characters.next() else {
+        return false;
+    };
+    (first == '_' || first.is_ascii_alphabetic())
+        && characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
+}
+
+fn strip_typescript_comments(line: &str, in_block_comment: &mut bool) -> String {
+    let mut output = String::with_capacity(line.len());
+    let mut cursor = 0;
+    while cursor < line.len() {
+        if *in_block_comment {
+            let Some(end) = line[cursor..].find("*/") else {
+                return output;
+            };
+            cursor += end + 2;
+            *in_block_comment = false;
+            continue;
+        }
+        let remainder = &line[cursor..];
+        let line_comment = remainder.find("//");
+        let block_comment = remainder.find("/*");
+        match (line_comment, block_comment) {
+            (Some(line_index), Some(block_index)) if line_index < block_index => {
+                output.push_str(&remainder[..line_index]);
+                break;
+            }
+            (Some(line_index), None) => {
+                output.push_str(&remainder[..line_index]);
+                break;
+            }
+            (_, Some(block_index)) => {
+                output.push_str(&remainder[..block_index]);
+                cursor += block_index + 2;
+                *in_block_comment = true;
+            }
+            (None, None) => {
+                output.push_str(remainder);
+                break;
+            }
+        }
+    }
+    output
 }
 
 fn verify_integrity(snapshot: &PackageSnapshot) -> Result<(), String> {
@@ -769,6 +973,88 @@ async def Harness(agent, request):
             .unwrap_err();
         assert_eq!(err, ProtocolError::IncompatibleVersion);
         assert!(service.store().get("artifact:x").is_none());
+    }
+
+    #[test]
+    fn authored_program_discovery_ignores_prompt_like_comments_strings_and_prefixes() {
+        let python = r#"
+# @Agent(input=Fake, output=Fake)
+# async def CommentOnly(agent, request): pass
+label = "@Agent"
+@Agent(input=In, output=Out)
+async def Real(agent, request):
+    return request
+@AgentFacade(input=In, output=Out)
+async def NotAnAgentFacade(agent, request):
+    return request
+"#;
+        assert_eq!(
+            authored_program_name(Frontend::Python, python).unwrap(),
+            "Real"
+        );
+
+        let typescript = r#"
+// export const CommentOnly = Agent<In, Out>({});
+const label = "= Agent";
+/*
+const BlockComment = Agent<In, Out>({});
+*/
+export const Real = Agent<In, Out>({});
+const AgentFacade = AgentFacade<In, Out>({});
+"#;
+        assert_eq!(
+            authored_program_name(Frontend::Typescript, typescript).unwrap(),
+            "Real"
+        );
+    }
+
+    #[test]
+    fn authored_program_discovery_accepts_multiline_python_agent_decorators() {
+        let source = r#"
+@Agent(
+    input=Input,
+    output=Output,
+    # A decorator may carry comments while it spans lines.
+    context=Context,
+)
+async def ConversationalExample(agent, request):
+    return request
+"#;
+        assert_eq!(
+            authored_program_name(Frontend::Python, source).unwrap(),
+            "ConversationalExample"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn artifact_persistence_refuses_to_follow_a_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let directory = std::env::temp_dir().join(format!(
+            "apxm-artifact-store-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir(&directory).expect("test directory");
+        let target = directory.join("target");
+        std::fs::write(&target, b"must survive").expect("target");
+        let artifact = directory.join(artifact_file_name("sha256:deadbeef"));
+        symlink(&target, &artifact).expect("artifact symlink");
+
+        let error = persist_artifact(&directory, "sha256:deadbeef", b"replacement")
+            .expect_err("artifact persistence must not follow a pre-existing symlink");
+        assert!(error.contains("not a regular file"));
+        assert_eq!(
+            std::fs::read(&target).expect("target survives"),
+            b"must survive"
+        );
+        std::fs::remove_file(&artifact).expect("symlink cleanup");
+        std::fs::remove_file(&target).expect("target cleanup");
+        std::fs::remove_dir(&directory).expect("directory cleanup");
     }
 
     #[test]

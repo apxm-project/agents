@@ -7,7 +7,7 @@
 use crate::driver::{DriverBindingError, InferenceDriverBinding};
 use crate::effect::{
     AttemptDisposition, ModelCallRequest, ModelExecution, ModelInferencePort, ModelOutcome,
-    RetryPolicy, TypedError, Usage, execute_with_attempt,
+    RetryPolicy, TypedError, Usage, execute_with_attempt, execute_with_attempt_async,
 };
 use crate::identity::ModelTargetRef;
 use crate::lease::{InferenceCredentialLease, LeaseError};
@@ -150,6 +150,41 @@ pub fn dispatch_committed_inference<P: ModelInferencePort + ?Sized>(
     } = dispatch;
     target_commitment.matches_resolved(authored_target, request.resolved_binding())?;
     let execution = execute_with_attempt(backend, request, policy);
+    let (usage, typed_error) = outcome_lineage_inputs(&execution.outcome);
+    let attempt_index = execution.committed_attempt.unwrap_or(0);
+    let lineage = InferenceUsageLineage::seal_with_target_commitment(
+        request.effect_id(),
+        attempt_index,
+        request.request_digest(),
+        target_commitment,
+        usage,
+        duration_ms,
+        typed_error,
+    )?;
+    Ok(CommittedInferenceDispatchResult {
+        execution,
+        lineage,
+        target_commitment: target_commitment.clone(),
+    })
+}
+
+/// Async production dispatch that keeps the model attempt future owned by the
+/// canonical runtime. Dropping the enclosing runtime invocation therefore
+/// cancels provider work instead of leaving a synchronous bridge parked on a
+/// detached adapter runtime.
+pub async fn dispatch_committed_inference_async<P: ModelInferencePort + Sync + ?Sized>(
+    dispatch: CommittedInferenceDispatch<'_, P>,
+) -> Result<CommittedInferenceDispatchResult, InferenceDispatchError> {
+    let CommittedInferenceDispatch {
+        target_commitment,
+        authored_target,
+        request,
+        backend,
+        duration_ms,
+        policy,
+    } = dispatch;
+    target_commitment.matches_resolved(authored_target, request.resolved_binding())?;
+    let execution = execute_with_attempt_async(backend, request, policy).await;
     let (usage, typed_error) = outcome_lineage_inputs(&execution.outcome);
     let attempt_index = execution.committed_attempt.unwrap_or(0);
     let lineage = InferenceUsageLineage::seal_with_target_commitment(

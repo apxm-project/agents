@@ -26,7 +26,7 @@
 //! when its inputs are ready, produces typed outputs, and composes into
 //! dependency graphs.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +41,22 @@ use crate::types::AISOperationType;
 
 /// Unique identifier for a task.
 pub type TaskId = u64;
+
+/// Multiplier used to derive a synthetic node id for a task with no explicit
+/// nodes. Keeping the derivation checked matters because task graphs can be
+/// deserialized from an external package or protocol request.
+const SYNTHETIC_NODE_ID_MULTIPLIER: TaskId = 1_000;
+
+fn synthetic_node_id(task: &Task) -> Result<NodeId, RuntimeError> {
+    task.id
+        .checked_mul(SYNTHETIC_NODE_ID_MULTIPLIER)
+        .ok_or_else(|| {
+            RuntimeError::State(format!(
+                "task '{}' (id={}) cannot derive a synthetic node id",
+                task.name, task.id
+            ))
+        })
+}
 
 // ---------------------------------------------------------------------------
 // TaskMetadata
@@ -187,6 +203,31 @@ impl TaskDag {
             ));
         }
 
+        // A node belongs to exactly one task. Reusing a node silently rewrites
+        // its task metadata during lowering and can turn two logical tasks
+        // into one executable node. Include synthetic nodes in this check so
+        // an explicit node cannot collide with the id derived for an empty
+        // task.
+        let mut node_ids = HashSet::new();
+        for task in &self.tasks {
+            if task.nodes.is_empty() {
+                let node_id = synthetic_node_id(task)?;
+                if !node_ids.insert(node_id) {
+                    return Err(RuntimeError::State(format!(
+                        "TaskDag reuses node id {node_id}"
+                    )));
+                }
+            } else {
+                for &node_id in &task.nodes {
+                    if !node_ids.insert(node_id) {
+                        return Err(RuntimeError::State(format!(
+                            "TaskDag reuses node id {node_id}"
+                        )));
+                    }
+                }
+            }
+        }
+
         // Check all dependency references exist
         for task in &self.tasks {
             for dep in &task.depends_on {
@@ -262,7 +303,7 @@ impl TaskDag {
         for task in &self.tasks {
             if task.nodes.is_empty() {
                 // Synthesize a node from the task description.
-                let node_id = task.id * 1000; // avoid collisions
+                let node_id = synthetic_node_id(task)?;
                 let mut node = Node::new(node_id, AISOperationType::ModelCall);
                 node.set_attribute(
                     graph_attrs::PROMPT.to_string(),
@@ -338,5 +379,52 @@ impl TaskDag {
         dag.exit_nodes = dag.find_exit_nodes();
 
         Ok(dag)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn synthetic_node_id_overflow_is_rejected() {
+        let dag = TaskDag::new("overflow").add_task(Task::new(
+            TaskId::MAX,
+            "overflow",
+            "untrusted task description",
+        ));
+
+        let error = dag
+            .to_execution_dag()
+            .expect_err("synthetic node id overflow must fail closed");
+        assert!(
+            matches!(error, RuntimeError::State(message) if message.contains("synthetic node id"))
+        );
+    }
+
+    #[test]
+    fn node_ids_cannot_be_shared_between_tasks() {
+        let dag = TaskDag::new("shared-node")
+            .add_task(Task::new(1, "one", "one").add_node(7))
+            .add_task(Task::new(2, "two", "two").add_node(7));
+        let error = dag
+            .to_execution_dag()
+            .expect_err("a node cannot implement two tasks");
+        assert!(
+            matches!(error, RuntimeError::State(message) if message.contains("reuses node id 7"))
+        );
+    }
+
+    #[test]
+    fn explicit_node_cannot_collide_with_an_empty_task_synthetic_node() {
+        let dag = TaskDag::new("synthetic-collision")
+            .add_task(Task::new(1, "empty", "empty"))
+            .add_task(Task::new(2, "explicit", "explicit").add_node(1_000));
+        let error = dag
+            .to_execution_dag()
+            .expect_err("an explicit node cannot shadow a synthetic node");
+        assert!(
+            matches!(error, RuntimeError::State(message) if message.contains("reuses node id 1000"))
+        );
     }
 }

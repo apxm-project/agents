@@ -42,6 +42,8 @@ reqwest.workspace = true
 base64 = "0.22"
 blake3 = { workspace = true }
 sha2.workspace = true
+libc.workspace = true
+rustix.workspace = true
 
 # Utilities
 uuid.workspace = true

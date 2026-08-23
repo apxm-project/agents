@@ -10,14 +10,17 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use apxm_kernel::{
-    ExecutionCommitPort, ExecutionCommitRequest, ExecutionCommitResult, ProgramInstanceRef,
+    CommittedContinuation, ExecutionCommitPort, ExecutionCommitRequest, ExecutionCommitResult,
+    ProgramInstanceRef, canonical_json_bytes,
 };
 use async_trait::async_trait;
 use fs2::FileExt;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 use crate::store::{
-    COMMIT_LOCAL_SCHEMA, CommitLocalError, CommitLocalStore, PreparedOutputRef,
+    COMMIT_LOCAL_SCHEMA, CommitLocalError, CommitLocalStore, MAX_STORE_BYTES, PreparedOutputRef,
     SessionOutputPreparation,
 };
 
@@ -25,6 +28,7 @@ use crate::store::{
 pub struct FilesystemExecutionCommit {
     root: PathBuf,
     _lock_file: File,
+    auth_key: [u8; 32],
     store: Mutex<CommitLocalStore>,
 }
 
@@ -34,10 +38,17 @@ impl FilesystemExecutionCommit {
         let root = root.into();
         fs::create_dir_all(&root).map_err(|e| CommitLocalError::Io(e.to_string()))?;
         let lock_file = acquire_lock(&root)?;
-        let store = load_or_init(&root)?;
+        if !auth_key_path(&root).exists() && legacy_store_path(&root).exists() {
+            return Err(CommitLocalError::SchemaMismatch {
+                found: "apxm.execution-commit-local.v1".to_string(),
+            });
+        }
+        let auth_key = load_or_create_auth_key(&root)?;
+        let store = load_or_init(&root, &auth_key)?;
         Ok(Self {
             root,
             _lock_file: lock_file,
+            auth_key,
             store: Mutex::new(store),
         })
     }
@@ -49,7 +60,7 @@ impl FilesystemExecutionCommit {
     ) -> Result<(), CommitLocalError> {
         let mut guard = self.store.lock().expect("commit-local filesystem lock");
         guard.inject_outcome_unknown(commit_id);
-        persist(&self.root, &guard)
+        persist(&self.root, &guard, &self.auth_key)
     }
 
     pub fn prepare_output(
@@ -59,7 +70,7 @@ impl FilesystemExecutionCommit {
         let mut guard = self.store.lock().expect("commit-local filesystem lock");
         let mut staged = guard.clone();
         let prepared = staged.prepare_output(preparation)?;
-        persist(&self.root, &staged)?;
+        persist(&self.root, &staged, &self.auth_key)?;
         *guard = staged;
         Ok(prepared)
     }
@@ -76,7 +87,7 @@ impl FilesystemExecutionCommit {
         let mut staged = guard.clone();
         let reclaimed = staged.reclaim_prepared_output(output_ref)?;
         if reclaimed {
-            persist(&self.root, &staged)?;
+            persist(&self.root, &staged, &self.auth_key)?;
             *guard = staged;
         }
         Ok(reclaimed)
@@ -103,7 +114,7 @@ impl ExecutionCommitPort for FilesystemExecutionCommit {
                 };
             }
         };
-        if let Err(err) = persist(&self.root, &staged) {
+        if let Err(err) = persist(&self.root, &staged, &self.auth_key) {
             return ExecutionCommitResult::OutcomeUnknown {
                 reconciliation_ref: format!("reconcile:persist:{err}"),
             };
@@ -125,6 +136,16 @@ impl ExecutionCommitPort for FilesystemExecutionCommit {
             .expect("commit-local filesystem lock")
             .load_continuation(program_instance_ref)
     }
+
+    async fn load_continuation_with_integrity(
+        &self,
+        program_instance_ref: &ProgramInstanceRef,
+    ) -> Option<CommittedContinuation> {
+        self.store
+            .lock()
+            .expect("commit-local filesystem lock")
+            .load_continuation_with_integrity(program_instance_ref)
+    }
 }
 
 fn store_path(root: &Path) -> PathBuf {
@@ -137,6 +158,10 @@ fn legacy_store_path(root: &Path) -> PathBuf {
 
 fn lock_path(root: &Path) -> PathBuf {
     root.join("execution-commit-local.v2.lock")
+}
+
+fn auth_key_path(root: &Path) -> PathBuf {
+    root.join("execution-commit-local.v2.key")
 }
 
 fn acquire_lock(root: &Path) -> Result<File, CommitLocalError> {
@@ -157,7 +182,55 @@ fn acquire_lock(root: &Path) -> Result<File, CommitLocalError> {
     Ok(lock_file)
 }
 
-fn load_or_init(root: &Path) -> Result<CommitLocalStore, CommitLocalError> {
+fn load_or_create_auth_key(root: &Path) -> Result<[u8; 32], CommitLocalError> {
+    let path = auth_key_path(root);
+    if path.exists() {
+        let bytes = fs::read(&path).map_err(|e| CommitLocalError::Io(e.to_string()))?;
+        let key = <[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| {
+            CommitLocalError::AuthenticationFailed("local auth key has the wrong length".into())
+        })?;
+        return Ok(key);
+    }
+    if store_path(root).exists() || legacy_store_path(root).exists() {
+        if let Ok(metadata) = fs::metadata(store_path(root)) {
+            let max_store_bytes_u64 = u64::try_from(MAX_STORE_BYTES).unwrap_or(u64::MAX);
+            if metadata.len() > max_store_bytes_u64 {
+                return Err(CommitLocalError::StoreTooLarge {
+                    bytes: metadata.len(),
+                });
+            }
+        }
+        return Err(CommitLocalError::AuthenticationFailed(
+            "local auth key is missing".into(),
+        ));
+    }
+    let mut key = [0_u8; 32];
+    key[..16].copy_from_slice(Uuid::new_v4().as_bytes());
+    key[16..].copy_from_slice(Uuid::new_v4().as_bytes());
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .map_err(|e| CommitLocalError::Io(e.to_string()))?;
+    file.write_all(&key)
+        .and_then(|_| file.sync_all())
+        .map_err(|e| CommitLocalError::Io(e.to_string()))?;
+    restrict_permissions(&file)?;
+    Ok(key)
+}
+
+fn restrict_permissions(file: &File) -> Result<(), CommitLocalError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|e| CommitLocalError::Io(e.to_string()))?;
+    }
+    Ok(())
+}
+
+fn load_or_init(root: &Path, auth_key: &[u8; 32]) -> Result<CommitLocalStore, CommitLocalError> {
     let path = store_path(root);
     if !path.exists() {
         if legacy_store_path(root).exists() {
@@ -166,20 +239,39 @@ fn load_or_init(root: &Path) -> Result<CommitLocalStore, CommitLocalError> {
             });
         }
         let store = CommitLocalStore::new();
-        persist(root, &store)?;
+        persist(root, &store, auth_key)?;
         return Ok(store);
     }
-    let mut file = File::open(&path).map_err(|e| CommitLocalError::Io(e.to_string()))?;
+    let file = File::open(&path).map_err(|e| CommitLocalError::Io(e.to_string()))?;
+    let file_size = file
+        .metadata()
+        .map_err(|e| CommitLocalError::Io(e.to_string()))?
+        .len();
+    let max_store_bytes_u64 = u64::try_from(MAX_STORE_BYTES).unwrap_or(u64::MAX);
+    if file_size > max_store_bytes_u64 {
+        return Err(CommitLocalError::StoreTooLarge { bytes: file_size });
+    }
     let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)
+    file.take(max_store_bytes_u64.saturating_add(1))
+        .read_to_end(&mut bytes)
         .map_err(|e| CommitLocalError::Io(e.to_string()))?;
+    if bytes.len() > MAX_STORE_BYTES {
+        return Err(CommitLocalError::StoreTooLarge {
+            bytes: bytes.len() as u64,
+        });
+    }
     let store: CommitLocalStore =
         serde_json::from_slice(&bytes).map_err(|e| CommitLocalError::Codec(e.to_string()))?;
     store.validate_schema()?;
+    verify_store_auth(&store, auth_key)?;
     Ok(store)
 }
 
-fn persist(root: &Path, store: &CommitLocalStore) -> Result<(), CommitLocalError> {
+fn persist(
+    root: &Path,
+    store: &CommitLocalStore,
+    auth_key: &[u8; 32],
+) -> Result<(), CommitLocalError> {
     store.validate_schema()?;
     if store.schema_version != COMMIT_LOCAL_SCHEMA {
         return Err(CommitLocalError::SchemaMismatch {
@@ -191,8 +283,18 @@ fn persist(root: &Path, store: &CommitLocalStore) -> Result<(), CommitLocalError
         "execution-commit-local.v2.{}.tmp",
         std::process::id()
     ));
-    let bytes =
-        serde_json::to_vec_pretty(store).map_err(|e| CommitLocalError::Codec(e.to_string()))?;
+    let mut authenticated = store.clone();
+    authenticated.integrity_tag.clear();
+    let body =
+        serde_json::to_value(&authenticated).map_err(|e| CommitLocalError::Codec(e.to_string()))?;
+    authenticated.integrity_tag = keyed_digest(auth_key, &canonical_json_bytes(&body));
+    let bytes = serde_json::to_vec_pretty(&authenticated)
+        .map_err(|e| CommitLocalError::Codec(e.to_string()))?;
+    if bytes.len() > MAX_STORE_BYTES {
+        return Err(CommitLocalError::StoreTooLarge {
+            bytes: bytes.len() as u64,
+        });
+    }
     {
         let mut file = File::create(&tmp).map_err(|e| CommitLocalError::Io(e.to_string()))?;
         file.write_all(&bytes)
@@ -206,4 +308,47 @@ fn persist(root: &Path, store: &CommitLocalStore) -> Result<(), CommitLocalError
         let _ = dir.sync_all();
     }
     Ok(())
+}
+
+fn verify_store_auth(
+    store: &CommitLocalStore,
+    auth_key: &[u8; 32],
+) -> Result<(), CommitLocalError> {
+    if store.integrity_tag.is_empty() {
+        return Err(CommitLocalError::AuthenticationFailed(
+            "local store has no integrity tag".into(),
+        ));
+    }
+    let mut unauthenticated = store.clone();
+    let actual = std::mem::take(&mut unauthenticated.integrity_tag);
+    let body = serde_json::to_value(&unauthenticated)
+        .map_err(|e| CommitLocalError::Codec(e.to_string()))?;
+    let expected = keyed_digest(auth_key, &canonical_json_bytes(&body));
+    if actual != expected {
+        return Err(CommitLocalError::AuthenticationFailed(
+            "local store integrity tag mismatch".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// HMAC-SHA-256 without adding another crypto dependency to the owner-local
+/// adapter. The key is generated once outside the JSON record and kept at
+/// owner-local permissions, so edits to the record alone fail verification.
+fn keyed_digest(key: &[u8; 32], bytes: &[u8]) -> String {
+    const BLOCK: usize = 64;
+    let mut inner = [0x36_u8; BLOCK];
+    let mut outer = [0x5c_u8; BLOCK];
+    for (index, value) in key.iter().enumerate() {
+        inner[index] ^= value;
+        outer[index] ^= value;
+    }
+    let mut inner_hash = Sha256::new();
+    inner_hash.update(inner);
+    inner_hash.update(bytes);
+    let inner_digest = inner_hash.finalize();
+    let mut outer_hash = Sha256::new();
+    outer_hash.update(outer);
+    outer_hash.update(inner_digest);
+    format!("hmac-sha256:{:x}", outer_hash.finalize())
 }

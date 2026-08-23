@@ -60,8 +60,8 @@ def typescript_source():
     if not (REPOSITORY_ROOT / "crates/compiler/frontend/typescript/dist/index.js").is_file():
         return None
     for command in (
-        ["npm", "--prefix", str(EXAMPLE_ROOT), "install", "--ignore-scripts",
-         "--no-audit", "--no-fund", "--no-package-lock"],
+        ["npm", "--prefix", str(EXAMPLE_ROOT), "ci", "--ignore-scripts",
+         "--no-audit", "--no-fund"],
         ["npm", "--prefix", str(EXAMPLE_ROOT), "run", "build"],
     ):
         subprocess.run(command, cwd=REPOSITORY_ROOT, check=True, capture_output=True)

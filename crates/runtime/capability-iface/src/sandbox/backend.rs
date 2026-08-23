@@ -5,6 +5,7 @@
 //! the registered backend.
 
 use super::error::SandboxError;
+use super::manifest::SandboxRequirements;
 use super::types::{ExecRequest, ExecResult, SandboxCapabilities, SandboxContext};
 use async_trait::async_trait;
 use std::ops::{Deref, DerefMut};
@@ -36,6 +37,7 @@ pub struct WrappedCommand {
     args: Vec<String>,
     environment: Vec<(String, String)>,
     guard: Option<Box<dyn WrappedCommandGuard>>,
+    confined: bool,
 }
 
 /// A spawned child that owns the isolation backend's lifecycle guard.
@@ -54,7 +56,7 @@ impl WrappedCommand {
         args: Vec<String>,
         environment: Vec<(String, String)>,
     ) -> Result<Self, SandboxError> {
-        Self::new(program, args, environment, None)
+        Self::new(program, args, environment, None, false)
     }
 
     /// Prepare a backend-managed command with an owned lifecycle guard.
@@ -64,7 +66,7 @@ impl WrappedCommand {
         environment: Vec<(String, String)>,
         guard: impl WrappedCommandGuard + 'static,
     ) -> Result<Self, SandboxError> {
-        Self::new(program, args, environment, Some(Box::new(guard)))
+        Self::new(program, args, environment, Some(Box::new(guard)), true)
     }
 
     fn new(
@@ -72,6 +74,7 @@ impl WrappedCommand {
         args: Vec<String>,
         environment: Vec<(String, String)>,
         guard: Option<Box<dyn WrappedCommandGuard>>,
+        confined: bool,
     ) -> Result<Self, SandboxError> {
         super::constants::env::validate_child_environment(&environment)
             .map_err(|error| SandboxError::ValidationFailed(error.to_string()))?;
@@ -80,7 +83,16 @@ impl WrappedCommand {
             args,
             environment,
             guard,
+            confined,
         })
+    }
+
+    /// Whether the backend supplied an isolation wrapper for this command.
+    ///
+    /// A direct command is useful for trusted host work, but is never an
+    /// acceptable implementation of an untrusted package worker.
+    pub fn is_confined(&self) -> bool {
+        self.confined
     }
 
     /// Spawn the command and transfer backend resource ownership to the child.
@@ -90,6 +102,7 @@ impl WrappedCommand {
             args,
             environment,
             guard,
+            confined: _,
         } = self;
         let mut command = Command::new(program);
         command.args(args).env_clear();
@@ -103,6 +116,16 @@ impl WrappedCommand {
 }
 
 impl WrappedChild {
+    /// Take the child's stdin while retaining the backend lifecycle guard.
+    pub fn take_stdin(&mut self) -> Option<tokio::process::ChildStdin> {
+        self.child.stdin.take()
+    }
+
+    /// Take the child's stdout while retaining the backend lifecycle guard.
+    pub fn take_stdout(&mut self) -> Option<tokio::process::ChildStdout> {
+        self.child.stdout.take()
+    }
+
     /// Wait for process completion while retaining the backend guard.
     pub async fn wait_with_output(self) -> std::io::Result<std::process::Output> {
         let Self { child, guard } = self;
@@ -173,6 +196,17 @@ pub trait SandboxBackend: Send + Sync {
     /// Called before `create_session()` to verify compatibility.
     fn validate(&self, request: &ExecRequest) -> ValidationResult;
 
+    /// Check the complete typed requirements emitted by the compiler.
+    ///
+    /// The default keeps existing backends source-compatible by projecting the
+    /// shared request fields into [`SandboxBackend::validate`]. Backends that
+    /// enforce manifest-only claims (filesystem intent, graph nodes, or tool
+    /// capability sets) should override this method and inspect the complete
+    /// [`SandboxRequirements`] value.
+    fn validate_manifest(&self, requirements: &SandboxRequirements) -> ValidationResult {
+        self.validate(&requirements.as_exec_request())
+    }
+
     /// Create an execution session for a graph run.
     ///
     /// Called once per `apxm execute` invocation. Backends may start
@@ -217,9 +251,10 @@ pub trait SandboxBackend: Send + Sync {
     /// `cwd` is the requested working directory, `needs_network` declares the
     /// network requirement, and `env` is the complete sanitized environment for
     /// the inner process. Each backend validates what it can enforce. The
-    /// complete environment is applied with inherited variables cleared. The
-    /// default implementation applies no isolation; isolating backends must
-    /// return an error rather than silently weakening an unsupported request.
+    /// complete environment is applied with inherited variables cleared. This
+    /// legacy seam is not sufficient for untrusted workers because it does not
+    /// receive filesystem or resource requirements; those callers must use
+    /// [`SandboxBackend::wrap_command_for_request`].
     fn wrap_command(
         &self,
         program: &str,
@@ -229,6 +264,21 @@ pub trait SandboxBackend: Send + Sync {
         env: &[(String, String)],
     ) -> Result<WrappedCommand, SandboxError> {
         WrappedCommand::direct(program, args.to_vec(), env.to_vec())
+    }
+
+    /// Rewrite a command using the complete request that was validated for
+    /// this execution. Long-lived untrusted workers must use this seam so the
+    /// wrapper can bind filesystem, network, process, and resource policy to
+    /// the command it starts. The default refuses the request: a backend that
+    /// only implements the legacy partial-argument wrapper cannot prove that
+    /// it enforced the complete policy.
+    fn wrap_command_for_request(
+        &self,
+        _request: &ExecRequest,
+    ) -> Result<WrappedCommand, SandboxError> {
+        Err(SandboxError::ValidationFailed(
+            "backend does not implement request-bound command confinement".to_string(),
+        ))
     }
 }
 
@@ -264,6 +314,50 @@ mod tests {
 
         drop(child);
         assert!(dropped.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn direct_wrappers_are_not_accepted_as_confined_commands() {
+        let environment =
+            super::super::constants::env::child_environment(std::iter::empty::<(&str, &str)>());
+        let direct = WrappedCommand::direct("true", Vec::new(), environment.clone())
+            .expect("direct command");
+        assert!(!direct.is_confined());
+
+        let guarded =
+            WrappedCommand::guarded("true", Vec::new(), environment, ()).expect("guarded command");
+        assert!(guarded.is_confined());
+    }
+
+    #[test]
+    fn legacy_wrappers_cannot_be_used_as_request_bound_confinement() {
+        let backend = super::DefaultBackend::new(
+            SandboxCapabilities {
+                isolation_level: super::super::types::IsolationLevel::OsLevel,
+                supports_filesystem_restriction: true,
+                supports_network_restriction: true,
+                supports_syscall_filtering: true,
+                supports_process_restriction: true,
+                supports_resource_limits: true,
+                name: "test".to_string(),
+                version: "test".to_string(),
+            },
+            |_request| async {
+                Ok(ExecResult {
+                    success: true,
+                    exit_code: Some(0),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    duration: std::time::Duration::ZERO,
+                    timed_out: false,
+                })
+            },
+        );
+        let error = match backend.wrap_command_for_request(&ExecRequest::default()) {
+            Ok(_) => panic!("legacy wrapper must not satisfy request-bound confinement"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("request-bound"));
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::sandbox::constants::env as sandbox_env;
+use crate::sandbox::constants::{env as sandbox_env, limits as sandbox_limits};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -23,8 +23,8 @@ pub struct SandboxPolicy {
 impl Default for SandboxPolicy {
     fn default() -> Self {
         Self {
-            timeout: Duration::from_secs(30),
-            max_output_bytes: 1024 * 1024, // 1 MB
+            timeout: sandbox_limits::DEFAULT_TIMEOUT,
+            max_output_bytes: sandbox_limits::DEFAULT_MAX_OUTPUT_BYTES,
             allowed_commands: None,
             blocked_env_vars: sandbox_env::BLOCKED_DEFAULTS
                 .iter()

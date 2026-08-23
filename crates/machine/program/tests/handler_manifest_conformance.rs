@@ -5,12 +5,15 @@
 //! a test failing.
 
 mod common;
+#[path = "common/schema_basic.rs"]
+mod schema;
 
 use apxm_core::types::{
     HANDLER_MANIFEST_HANDLER_ID_HEX_LENGTH, HANDLER_MANIFEST_HANDLER_ID_PREFIX,
     HANDLER_MANIFEST_VERSION, HandlerLanguage, HandlerManifest, HandlerManifestError,
 };
-use common::{Vector, compile_schema, load_contract, load_vectors};
+use common::{Vector, load_contract, load_vectors};
+use schema::compile_schema;
 use serde_json::Value;
 
 /// The published schema, compiled from its checked-in bytes. `Identifier` is

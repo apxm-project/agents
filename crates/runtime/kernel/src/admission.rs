@@ -11,7 +11,7 @@
 //! Construction roots may seal admissions. The runtime verifies them before any
 //! state mutation and never fabricates, rebinds, ranks, or falls back.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::sync::Mutex;
 
 use base64::Engine;
@@ -55,6 +55,11 @@ pub const EXTERNAL_AGENT_PORT_SCHEMA: &str = "apxm.external-agent";
 pub const DURABLE_EVENT_PORT_SCHEMA: &str = "apxm.durable-event";
 pub const PROGRAM_COMPOSITION_PORT_SCHEMA: &str = "apxm.program-composition";
 
+/// Maximum nonce retained by one in-memory verifier ledger.
+pub const DEFAULT_NONCE_LEDGER_CAPACITY: usize = 4096;
+/// Maximum encoded nonce accepted by the admission boundary.
+pub const MAX_NONCE_BYTES: usize = 256;
+
 /// Exact product-neutral authority supplied by an APXM host transport.
 ///
 /// The release, artifact, and provenance fields remain separate because each
@@ -97,6 +102,7 @@ pub enum InvocationAdmissionError {
         expected: String,
         actual: String,
     },
+    InvalidResourceCeiling(&'static str),
     ConfinementUnavailable,
     UnconfinedForbidden,
     InvalidRuntimeDescriptor(&'static str),
@@ -142,6 +148,9 @@ impl std::fmt::Display for InvocationAdmissionError {
                 f,
                 "resource ceiling digest mismatch: expected {expected}, got {actual}"
             ),
+            Self::InvalidResourceCeiling(field) => {
+                write!(f, "resource ceiling must be non-zero: {field}")
+            }
             Self::ConfinementUnavailable => f.write_str("confinement is not available"),
             Self::UnconfinedForbidden => f.write_str("unconfined execution is forbidden"),
             Self::InvalidRuntimeDescriptor(field) => {
@@ -419,6 +428,20 @@ pub struct ResourceCeilings {
     pub max_effect_bytes: u64,
 }
 
+impl ResourceCeilings {
+    /// Reject an admission that refuses a required resource class.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        [
+            ("max_wall_ms", self.max_wall_ms),
+            ("max_memory_bytes", self.max_memory_bytes),
+            ("max_effect_bytes", self.max_effect_bytes),
+        ]
+        .into_iter()
+        .find_map(|(field, value)| (value == 0).then_some(field))
+        .map_or(Ok(()), Err)
+    }
+}
+
 /// Product-neutral Execution Admission envelope.
 ///
 /// Synonym in owner docs: Invocation Admission. Contains no company, budget,
@@ -632,11 +655,18 @@ pub enum AdmissionError {
         now_ms: u64,
     },
     NonceReuse(String),
+    NonceTooLong {
+        max_bytes: usize,
+    },
+    NonceLedgerFull {
+        capacity: usize,
+    },
     AudienceMismatch {
         expected: String,
         actual: String,
     },
     IssuerEmpty,
+    InvalidResourceCeiling(&'static str),
     MalformedDigest(&'static str),
     MalformedKeyring(String),
     MissingRequiredSlot(PortSlot),
@@ -675,10 +705,19 @@ impl std::fmt::Display for AdmissionError {
                 now_ms,
             } => write!(f, "admission expired at {expires_at_ms} (now {now_ms})"),
             Self::NonceReuse(n) => write!(f, "nonce reuse: {n}"),
+            Self::NonceTooLong { max_bytes } => {
+                write!(f, "nonce exceeds the {max_bytes}-byte limit")
+            }
+            Self::NonceLedgerFull { capacity } => {
+                write!(f, "nonce replay ledger is full at {capacity} entries")
+            }
             Self::AudienceMismatch { expected, actual } => {
                 write!(f, "audience mismatch: expected {expected}, got {actual}")
             }
             Self::IssuerEmpty => write!(f, "issuer must be non-empty"),
+            Self::InvalidResourceCeiling(field) => {
+                write!(f, "resource ceiling must be non-zero: {field}")
+            }
             Self::MalformedDigest(field) => write!(f, "malformed digest: {field}"),
             Self::MalformedKeyring(m) => write!(f, "malformed keyring: {m}"),
             Self::MissingRequiredSlot(slot) => {
@@ -727,22 +766,57 @@ impl std::fmt::Display for AdmissionError {
 impl std::error::Error for AdmissionError {}
 
 /// In-memory nonce ledger for one runtime instance. A reused nonce fails closed.
-#[derive(Debug, Default)]
+/// New entries are refused when the fixed retention capacity is exhausted; an
+/// eviction would turn an old signed admission into a replayable one.
+#[derive(Debug)]
 pub struct NonceLedger {
     seen: Mutex<HashSet<String>>,
+    order: Mutex<VecDeque<String>>,
+    capacity: usize,
+}
+
+impl Default for NonceLedger {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl NonceLedger {
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        Self::with_capacity(DEFAULT_NONCE_LEDGER_CAPACITY)
+    }
+
+    /// Construct a replay ledger with an explicit fixed retention capacity.
+    #[must_use]
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            seen: Mutex::new(HashSet::new()),
+            order: Mutex::new(VecDeque::new()),
+            capacity,
+        }
     }
 
     pub fn observe(&self, nonce: &str) -> Result<(), AdmissionError> {
+        if nonce.len() > MAX_NONCE_BYTES {
+            return Err(AdmissionError::NonceTooLong {
+                max_bytes: MAX_NONCE_BYTES,
+            });
+        }
         let mut seen = self.seen.lock().expect("nonce ledger");
-        if !seen.insert(nonce.to_string()) {
+        if seen.contains(nonce) {
             return Err(AdmissionError::NonceReuse(nonce.to_string()));
         }
+        if seen.len() >= self.capacity {
+            return Err(AdmissionError::NonceLedgerFull {
+                capacity: self.capacity,
+            });
+        }
+        seen.insert(nonce.to_string());
+        self.order
+            .lock()
+            .expect("nonce ledger order")
+            .push_back(nonce.to_string());
         Ok(())
     }
 }
@@ -805,6 +879,9 @@ pub fn verify_invocation_admission(
         confinement,
     } = claimed;
     admission.validate()?;
+    resource_ceilings
+        .validate()
+        .map_err(InvocationAdmissionError::InvalidResourceCeiling)?;
     let artifact_actual = content_digest(artifact_bytes);
     if admission.artifact_digest != artifact_actual {
         return Err(InvocationAdmissionError::ArtifactMismatch {
@@ -1211,6 +1288,10 @@ pub fn verify_execution_admission(
             admission.schema_version.clone(),
         ));
     }
+    admission
+        .resource_ceilings
+        .validate()
+        .map_err(AdmissionError::InvalidResourceCeiling)?;
     if admission.issuer.trim().is_empty() {
         return Err(AdmissionError::IssuerEmpty);
     }

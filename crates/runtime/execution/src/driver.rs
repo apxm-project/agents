@@ -34,12 +34,12 @@ use apxm_inference::{
     BindingError, CommittedInferenceDispatch, InferenceTargetCommitment, InferenceUsageLineage,
     ModelBindingAdmission, ModelCallPreparation, ModelCallRequest, ModelCallRequestError,
     ModelCallRequestMetadataPort, ModelInferencePort, ModelOutcome, ModelTargetRef, RetryPolicy,
-    TargetCommitmentError, TypedError, Usage, dispatch_committed_inference,
+    TargetCommitmentError, TypedError, Usage, dispatch_committed_inference_async,
 };
 use apxm_kernel::{
-    AtomicWriteSet, EventApplicationResult, ExecutionCommitPort, ExecutionCommitRequest,
-    ExecutionCommitResult, ExecutionCommitTuple, PortSlot, ProgramInstanceRef,
-    ProgramInvocationRef,
+    AtomicWriteSet, CommittedContinuation, EventApplicationResult, ExecutionCommitPort,
+    ExecutionCommitRequest, ExecutionCommitResult, ExecutionCommitTuple, PortSlot,
+    ProgramInstanceRef, ProgramInvocationRef, ResourceCeilings, continuation_digest,
 };
 use apxm_program::air::{
     AirModule, ControlPredicate, PredicateComparator, PredicateLiteral, SemanticOp, SemanticOpKind,
@@ -70,6 +70,16 @@ use crate::resume::{
 };
 use crate::structural::{ScheduleStep, build_schedule};
 
+/// Structural limits protect schedule construction and recursive value
+/// materialization before an admitted artifact can consume runtime memory.
+pub const MAX_SEMANTIC_OPERATIONS: usize = 4096;
+pub const MAX_STRUCTURAL_REGIONS: usize = 1024;
+pub const MAX_VALUE_ASSEMBLIES: usize = 8192;
+pub const MAX_HOOK_BINDINGS: usize = 1024;
+pub const MAX_INITIAL_VALUES: usize = 4096;
+pub const MAX_SCHEDULE_STEPS: usize = 16_384;
+pub const MAX_EXPRESSION_DEPTH: usize = 64;
+
 /// The exact set of injected ports the driver drives. Every port is a single
 /// admitted implementation; the driver holds no registry and does no discovery.
 pub struct ExecutionPorts {
@@ -81,6 +91,7 @@ pub struct ExecutionPorts {
     execution_commit: Arc<dyn ExecutionCommitPort>,
     hook_handlers: Arc<dyn StaticHookHandlerPort>,
     operational_usage: Option<Arc<dyn CommittedNativeModelUsagePort>>,
+    resource_ceilings: Option<ResourceCeilings>,
 }
 
 /// Why the canonical driver cannot be constructed from a port bundle.
@@ -133,7 +144,15 @@ impl ExecutionPorts {
             execution_commit: kernel.execution_commit().clone(),
             hook_handlers,
             operational_usage: None,
+            resource_ceilings: None,
         })
+    }
+
+    /// Attach the immutable ceilings carried by the verified admission.
+    #[must_use]
+    pub fn with_resource_ceilings(mut self, resource_ceilings: ResourceCeilings) -> Self {
+        self.resource_ceilings = Some(resource_ceilings);
+        self
     }
 
     /// Attach the single committed-native-model-usage publisher admitted by
@@ -498,6 +517,11 @@ pub enum ExecutionError {
         message: String,
     },
     Commit(ExecutionCommitResult),
+    ResourceLimitExceeded {
+        resource: &'static str,
+        limit: u64,
+        observed: u64,
+    },
 }
 
 impl std::fmt::Display for ExecutionError {
@@ -599,6 +623,14 @@ impl std::fmt::Display for ExecutionError {
                 write!(f, "invalid atomic commit request: {message}")
             }
             Self::Commit(result) => write!(f, "atomic execution commit failed: {}", result.label()),
+            Self::ResourceLimitExceeded {
+                resource,
+                limit,
+                observed,
+            } => write!(
+                f,
+                "admitted {resource} ceiling exceeded: observed {observed}, limit {limit}"
+            ),
         }
     }
 }
@@ -924,6 +956,54 @@ impl DriveState {
     }
 }
 
+fn enforce_runtime_limits(
+    state: &DriveState,
+    resource_ceilings: Option<&ResourceCeilings>,
+) -> Result<(), ExecutionError> {
+    let Some(ceilings) = resource_ceilings else {
+        return Ok(());
+    };
+    let memory_bytes = serde_json::to_vec(&(
+        &state.context,
+        &state.last_result,
+        &state.values,
+        &state.active_loops,
+        &state.batch,
+    ))
+    .map_err(|error| ExecutionError::InvalidAir {
+        message: format!("runtime memory accounting failed: {error}"),
+    })?
+    .len() as u64;
+    let outcome_values = state
+        .node_outcomes
+        .iter()
+        .map(node_outcome_value)
+        .collect::<Vec<_>>();
+    let effect_bytes = serde_json::to_vec(&(
+        &state.batch,
+        &outcome_values,
+        &state.last_result,
+        &state.values,
+    ))
+    .map_err(|error| ExecutionError::InvalidAir {
+        message: format!("runtime effect accounting failed: {error}"),
+    })?
+    .len() as u64;
+    for (resource, observed, limit) in [
+        ("memory_bytes", memory_bytes, ceilings.max_memory_bytes),
+        ("effect_bytes", effect_bytes, ceilings.max_effect_bytes),
+    ] {
+        if limit == 0 || observed > limit {
+            return Err(ExecutionError::ResourceLimitExceeded {
+                resource,
+                limit,
+                observed,
+            });
+        }
+    }
+    Ok(())
+}
+
 struct JoinFactSpec<'a> {
     program_invocation_id: &'a str,
     seq: u64,
@@ -1008,10 +1088,10 @@ fn evaluate_value_expression(
     visiting: &mut BTreeSet<String>,
     depth: usize,
 ) -> Result<Value, ExecutionError> {
-    if depth > 64 {
+    if depth > MAX_EXPRESSION_DEPTH {
         return Err(ExecutionError::InvalidValueExpression {
             value_id: owner.to_string(),
-            message: "expression depth exceeds 64".to_string(),
+            message: format!("expression depth exceeds {MAX_EXPRESSION_DEPTH}"),
         });
     }
     let project = |mut value: Value, path: &[String]| -> Result<Value, ExecutionError> {
@@ -1246,6 +1326,7 @@ struct DriveInputs<'a> {
     hook_bindings: &'a [HookBinding],
     model_admission: &'a ModelBindingAdmission,
     capability_invocations: &'a BTreeMap<String, CapabilityInvocationAdmission>,
+    resource_ceilings: Option<&'a ResourceCeilings>,
 }
 
 /// Walk the structural execution schedule from `start_index`, dispatching semantic
@@ -1265,8 +1346,18 @@ async fn drive_from(
         hook_bindings,
         model_admission,
         capability_invocations,
+        resource_ceilings,
     } = inputs;
     let schedule = build_schedule(air, hook_bindings);
+    if schedule.len() > MAX_SCHEDULE_STEPS {
+        return Err(ExecutionError::InvalidAir {
+            message: format!(
+                "execution schedule has {} steps, limit is {MAX_SCHEDULE_STEPS}",
+                schedule.len()
+            ),
+        });
+    }
+    enforce_runtime_limits(&state, resource_ceilings)?;
     if start_schedule_position > schedule.len() {
         return Err(ExecutionError::Continuation(
             ContinuationError::InvalidCommittedState {
@@ -1280,6 +1371,7 @@ async fn drive_from(
 
     let mut schedule_position = start_schedule_position;
     while schedule_position < schedule.len() {
+        enforce_runtime_limits(&state, resource_ceilings)?;
         let step = &schedule[schedule_position];
         match step {
             ScheduleStep::HookBodyBegin { binding } => {
@@ -1585,7 +1677,7 @@ async fn drive_from(
                             InferenceTargetCommitment::from_resolved(call.resolved_binding())
                                 .map_err(ExecutionError::TargetCommitment)?;
                         let committed_dispatch =
-                            dispatch_committed_inference(CommittedInferenceDispatch {
+                            dispatch_committed_inference_async(CommittedInferenceDispatch {
                                 target_commitment: &target_commitment,
                                 authored_target: &authored_target,
                                 request: &call,
@@ -1593,6 +1685,7 @@ async fn drive_from(
                                 duration_ms: dispatch_started.elapsed().as_millis() as u64,
                                 policy: RetryPolicy::default(),
                             })
+                            .await
                             .map_err(|error| match error {
                                 apxm_inference::InferenceDispatchError::TargetCommitment(error) => {
                                     ExecutionError::TargetCommitment(error)
@@ -1776,7 +1869,7 @@ async fn drive_from(
                                     )?;
                                     ports
                                         .capability
-                                        .invoke(
+                                        .invoke_authorized(
                                             CapabilityRequest::prepare(
                                                 capability_ref,
                                                 arguments_type_ref,
@@ -2046,6 +2139,7 @@ async fn drive_from(
                 region_id,
                 resume_value_id,
             } => {
+                enforce_runtime_limits(&state, resource_ceilings)?;
                 if options.suspend_on_park && options.yield_at_loop {
                     return Ok(DriveEnd::Parked {
                         state,
@@ -2061,6 +2155,7 @@ async fn drive_from(
             }
             ScheduleStep::ProgramReturn { .. } => {
                 state.fail_active_loops();
+                enforce_runtime_limits(&state, resource_ceilings)?;
                 return Ok(DriveEnd::RanToEnd(state));
             }
             ScheduleStep::ProgramExit { region_id } => {
@@ -2072,6 +2167,7 @@ async fn drive_from(
         }
         schedule_position += 1;
     }
+    enforce_runtime_limits(&state, resource_ceilings)?;
     Ok(DriveEnd::RanToEnd(state))
 }
 
@@ -2477,6 +2573,33 @@ fn validate_execution_request(
     initial_values: &BTreeMap<String, Value>,
     hook_bindings: &[HookBinding],
 ) -> Result<(), ExecutionError> {
+    let structural_counts = [
+        (
+            "semantic_operations",
+            air.semantic_operations.len(),
+            MAX_SEMANTIC_OPERATIONS,
+        ),
+        (
+            "structural_regions",
+            air.structural_ir.len(),
+            MAX_STRUCTURAL_REGIONS,
+        ),
+        (
+            "value_assemblies",
+            air.value_assemblies.len(),
+            MAX_VALUE_ASSEMBLIES,
+        ),
+        ("hook_bindings", hook_bindings.len(), MAX_HOOK_BINDINGS),
+        ("initial_values", initial_values.len(), MAX_INITIAL_VALUES),
+    ];
+    if let Some((name, observed, limit)) = structural_counts
+        .into_iter()
+        .find(|(_, observed, limit)| *observed > *limit)
+    {
+        return Err(ExecutionError::InvalidAir {
+            message: format!("{name} has {observed} entries, limit is {limit}"),
+        });
+    }
     validate_hook_bindings(air, hook_bindings)?;
     let verdict = air.verify();
     if !verdict.is_accepted() {
@@ -2742,6 +2865,13 @@ async fn commit_suspension(
         .clone_from(&state.batch);
     let payload = serde_json::to_value(&committed_continuation)
         .expect("continuation contains only serializable canonical runtime values");
+    // The write-set digest is part of the continuation metadata. The canonical
+    // digest helper masks that one self-referential field while hashing every
+    // other continuation field, allowing the digest to be rebound here before
+    // the payload and digest cross the single commit boundary.
+    committed_continuation.write_set.continuation_digest = continuation_digest(Some(&payload));
+    let payload = serde_json::to_value(&committed_continuation)
+        .expect("continuation contains only serializable canonical runtime values");
     let event_wait = continuation.event_ref.as_ref().map(|event_ref| {
         serde_json::json!({
             "continuation_id": continuation.continuation_id,
@@ -2756,7 +2886,7 @@ async fn commit_suspension(
         program_invocation_ref: continuation.program_invocation_ref.clone(),
         idempotency_key: format!("idem.{}.yield", continuation.commit_id),
         expected_program_state_version: expected,
-        write_set: continuation.write_set.clone(),
+        write_set: committed_continuation.write_set.clone(),
         tuple: commit_tuple(&state, Some(payload), event_wait),
         evidence_batch: state.batch,
     };
@@ -2790,6 +2920,16 @@ pub async fn execute(
     request: ExecutionRequest,
     initial_context: Value,
 ) -> Result<RunReport, ExecutionError> {
+    execute_with_resource_ceilings(ports, request, initial_context, None).await
+}
+
+/// Execute with the exact resource ceilings carried by a verified admission.
+pub async fn execute_with_resource_ceilings(
+    ports: &ExecutionPorts,
+    request: ExecutionRequest,
+    initial_context: Value,
+    resource_ceilings: Option<&ResourceCeilings>,
+) -> Result<RunReport, ExecutionError> {
     validate_execution_request(
         &request.air,
         &request.initial_values,
@@ -2814,6 +2954,7 @@ pub async fn execute(
             hook_bindings: &request.hook_bindings,
             model_admission: &request.model_admission,
             capability_invocations: &request.capability_invocations,
+            resource_ceilings,
         },
         0,
         state,
@@ -2852,6 +2993,16 @@ pub async fn execute_resumable(
     request: ExecutionRequest,
     initial_context: Value,
 ) -> Result<RunOutcome, ExecutionError> {
+    execute_resumable_with_resource_ceilings(ports, request, initial_context, None).await
+}
+
+/// Execute resumably with the exact resource ceilings carried by admission.
+pub async fn execute_resumable_with_resource_ceilings(
+    ports: &ExecutionPorts,
+    request: ExecutionRequest,
+    initial_context: Value,
+    resource_ceilings: Option<&ResourceCeilings>,
+) -> Result<RunOutcome, ExecutionError> {
     validate_execution_request(
         &request.air,
         &request.initial_values,
@@ -2876,6 +3027,7 @@ pub async fn execute_resumable(
             hook_bindings: &request.hook_bindings,
             model_admission: &request.model_admission,
             capability_invocations: &request.capability_invocations,
+            resource_ceilings,
         },
         0,
         state,
@@ -2902,7 +3054,24 @@ pub async fn resume(
     program_instance_ref: &ProgramInstanceRef,
     delivered: Value,
 ) -> Result<RunOutcome, ExecutionError> {
-    resume_from_continuation(ports, program_instance_ref, None, delivered).await
+    resume_with_resource_ceilings(ports, program_instance_ref, delivered, None).await
+}
+
+/// Resume with the exact resource ceilings carried by admission.
+pub async fn resume_with_resource_ceilings(
+    ports: &ExecutionPorts,
+    program_instance_ref: &ProgramInstanceRef,
+    delivered: Value,
+    resource_ceilings: Option<&ResourceCeilings>,
+) -> Result<RunOutcome, ExecutionError> {
+    resume_from_continuation(
+        ports,
+        program_instance_ref,
+        None,
+        delivered,
+        resource_ceilings,
+    )
+    .await
 }
 
 /// Wake a parked Event wait after a fulfilled Event application.
@@ -2934,7 +3103,32 @@ pub(crate) async fn resume_event(
     event_ref: EventRef,
     delivered: Value,
 ) -> Result<RunOutcome, ExecutionError> {
-    resume_from_continuation(ports, program_instance_ref, Some(event_ref), delivered).await
+    resume_from_continuation(
+        ports,
+        program_instance_ref,
+        Some(event_ref),
+        delivered,
+        None,
+    )
+    .await
+}
+
+/// Wake an event continuation with the exact resource ceilings carried by admission.
+pub(crate) async fn resume_event_with_resource_ceilings(
+    ports: &ExecutionPorts,
+    program_instance_ref: &ProgramInstanceRef,
+    event_ref: EventRef,
+    delivered: Value,
+    resource_ceilings: Option<&ResourceCeilings>,
+) -> Result<RunOutcome, ExecutionError> {
+    resume_from_continuation(
+        ports,
+        program_instance_ref,
+        Some(event_ref),
+        delivered,
+        resource_ceilings,
+    )
+    .await
 }
 
 async fn resume_from_continuation(
@@ -2942,17 +3136,19 @@ async fn resume_from_continuation(
     program_instance_ref: &ProgramInstanceRef,
     delivered_event_ref: Option<EventRef>,
     delivered: Value,
+    resource_ceilings: Option<&ResourceCeilings>,
 ) -> Result<RunOutcome, ExecutionError> {
     let payload = ports
         .execution_commit
-        .load_continuation(program_instance_ref)
+        .load_continuation_with_integrity(program_instance_ref)
         .await
         .ok_or_else(|| {
             ExecutionError::Continuation(ContinuationError::NotCommitted {
                 program_instance_ref: program_instance_ref.clone(),
             })
         })?;
-    let parked: Continuation = serde_json::from_value(payload).map_err(|error| {
+    verify_continuation_integrity(&payload)?;
+    let parked: Continuation = serde_json::from_value(payload.payload).map_err(|error| {
         ExecutionError::Continuation(ContinuationError::InvalidCommittedState {
             message: error.to_string(),
         })
@@ -3104,6 +3300,7 @@ async fn resume_from_continuation(
             hook_bindings: &hook_bindings,
             model_admission: &model_admission,
             capability_invocations: &capability_invocations,
+            resource_ceilings,
         },
         next_schedule_position,
         state,
@@ -3124,6 +3321,21 @@ async fn resume_from_continuation(
         write_set,
     };
     finish(ports, parts, end).await
+}
+
+fn verify_continuation_integrity(committed: &CommittedContinuation) -> Result<(), ExecutionError> {
+    let expected = continuation_digest(Some(&committed.payload));
+    if committed.digest != expected {
+        return Err(ExecutionError::Continuation(
+            ContinuationError::InvalidCommittedState {
+                message: format!(
+                    "continuation integrity mismatch: expected {expected}, got {}",
+                    committed.digest
+                ),
+            },
+        ));
+    }
+    Ok(())
 }
 
 /// The commit-scope parts carried from a request or a resumed continuation,
@@ -3244,6 +3456,21 @@ mod loop_evidence_tests {
                 region_annotations: Vec::new(),
             },
         }
+    }
+
+    #[test]
+    fn continuation_integrity_rejects_tampering_before_typed_decode() {
+        let original = serde_json::json!({"context": {"counter": 1}});
+        let committed = CommittedContinuation {
+            payload: serde_json::json!({"context": {"counter": 2}}),
+            digest: continuation_digest(Some(&original)),
+        };
+        assert!(matches!(
+            verify_continuation_integrity(&committed),
+            Err(ExecutionError::Continuation(
+                ContinuationError::InvalidCommittedState { message }
+            )) if message.contains("integrity mismatch")
+        ));
     }
 
     fn assembled_predicate() -> ControlPredicate {
@@ -3456,6 +3683,52 @@ mod loop_evidence_tests {
         assert!(matches!(
             evaluate_predicate(&wrong_type, &state, "region.branch", &assembled_predicate()),
             Err(ExecutionError::InvalidControlPredicate { .. })
+        ));
+    }
+
+    #[test]
+    fn admitted_memory_and_effect_ceilings_fail_closed() {
+        let state = DriveState::new(
+            json!({"payload": "x".repeat(128)}),
+            BTreeMap::new(),
+            &predicate_air(ValueExpression::Null),
+            "invocation.1",
+        );
+        let ceilings = ResourceCeilings {
+            max_wall_ms: 1,
+            max_memory_bytes: 1,
+            max_effect_bytes: 1,
+        };
+        assert!(matches!(
+            enforce_runtime_limits(&state, Some(&ceilings)),
+            Err(ExecutionError::ResourceLimitExceeded {
+                resource: "memory_bytes",
+                ..
+            })
+        ));
+        let effect_only = ResourceCeilings {
+            max_wall_ms: 1,
+            max_memory_bytes: u64::MAX,
+            max_effect_bytes: 1,
+        };
+        assert!(matches!(
+            enforce_runtime_limits(&state, Some(&effect_only)),
+            Err(ExecutionError::ResourceLimitExceeded {
+                resource: "effect_bytes",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn structural_input_count_is_bounded_before_air_verification() {
+        let air = predicate_air(ValueExpression::Null);
+        let initial_values = (0..=MAX_INITIAL_VALUES)
+            .map(|index| (format!("value.{index}"), Value::Null))
+            .collect();
+        assert!(matches!(
+            validate_execution_request(&air, &initial_values, &[]),
+            Err(ExecutionError::InvalidAir { message }) if message.contains("initial_values")
         ));
     }
 }

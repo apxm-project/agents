@@ -11,7 +11,8 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 
 use apxm_program::grammar::is_digest;
 use apxm_program::runtime_evidence::Fact;
@@ -101,6 +102,79 @@ pub struct AtomicWriteSet {
     pub session_output_refs_digest: String,
 }
 
+/// A continuation payload read together with the digest committed beside it.
+///
+/// The pair is returned by one port operation so a caller cannot accidentally
+/// verify a digest fetched from a different commit record than the payload it
+/// is about to resume.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommittedContinuation {
+    pub payload: Value,
+    pub digest: String,
+}
+
+/// Canonicalize a JSON value for digesting and authenticated local records.
+/// Object keys are sorted recursively; arrays retain their authored order.
+#[must_use]
+pub fn canonical_json_value(value: &Value) -> Value {
+    match value {
+        Value::Array(values) => Value::Array(values.iter().map(canonical_json_value).collect()),
+        Value::Object(object) => {
+            let mut canonical = Map::new();
+            let mut entries = object.iter().collect::<Vec<_>>();
+            entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+            for (key, value) in entries {
+                canonical.insert(key.clone(), canonical_json_value(value));
+            }
+            Value::Object(canonical)
+        }
+        scalar => scalar.clone(),
+    }
+}
+
+/// Serialize one JSON value into its canonical, key-order-independent bytes.
+#[must_use]
+pub fn canonical_json_bytes(value: &Value) -> Vec<u8> {
+    serde_json::to_vec(&canonical_json_value(value))
+        .expect("serde_json::Value is always canonically serializable")
+}
+
+/// Canonical digest of the exact continuation state carried by a commit.
+///
+/// The continuation's nested `write_set.continuation_digest` is replaced with
+/// a fixed marker before hashing. That field carries this digest, so including
+/// it verbatim would create an impossible self-referential digest. Every other
+/// continuation field—including the remaining write-set members—is hashed.
+#[must_use]
+pub fn continuation_digest(payload: Option<&Value>) -> String {
+    let normalized = payload.map(normalize_continuation_payload);
+    let envelope = json!({
+        "schema_version": "apxm.continuation-integrity.v1",
+        "present": payload.is_some(),
+        "payload": normalized.unwrap_or(Value::Null),
+    });
+    format!(
+        "sha256:{:x}",
+        Sha256::digest(canonical_json_bytes(&envelope))
+    )
+}
+
+fn normalize_continuation_payload(payload: &Value) -> Value {
+    let Value::Object(object) = payload else {
+        return canonical_json_value(payload);
+    };
+    let mut normalized = object.clone();
+    if let Some(Value::Object(write_set)) = normalized.get_mut("write_set") {
+        if write_set.contains_key("continuation_digest") {
+            write_set.insert(
+                "continuation_digest".to_string(),
+                Value::String("<continuation-digest>".to_string()),
+            );
+        }
+    }
+    canonical_json_value(&Value::Object(normalized))
+}
+
 /// The exact runtime values represented by one atomic write set.
 ///
 /// The commit adapter publishes this tuple as one compare-and-commit unit. The
@@ -157,6 +231,7 @@ pub enum CommitRequestError {
     EmptyField(&'static str),
     InvalidDigest(&'static str),
     EvidenceBatchMismatch,
+    ContinuationDigestMismatch { expected: String, actual: String },
 }
 
 impl std::fmt::Display for CommitRequestError {
@@ -167,6 +242,10 @@ impl std::fmt::Display for CommitRequestError {
             Self::EvidenceBatchMismatch => {
                 f.write_str("tuple evidence and evidence_batch must be identical")
             }
+            Self::ContinuationDigestMismatch { expected, actual } => write!(
+                f,
+                "continuation payload digest mismatch: expected {expected}, got {actual}"
+            ),
         }
     }
 }
@@ -223,6 +302,15 @@ impl ExecutionCommitRequest {
         }
         if self.tuple.evidence != self.evidence_batch {
             return Err(CommitRequestError::EvidenceBatchMismatch);
+        }
+        if let Some(payload) = self.tuple.continuation.as_ref() {
+            let expected = continuation_digest(Some(payload));
+            if self.write_set.continuation_digest != expected {
+                return Err(CommitRequestError::ContinuationDigestMismatch {
+                    expected,
+                    actual: self.write_set.continuation_digest.clone(),
+                });
+            }
         }
         Ok(())
     }
@@ -338,4 +426,20 @@ pub trait ExecutionCommitPort: Send + Sync {
     /// second persistence authority. An implementation that genuinely holds no
     /// continuation states that explicitly.
     async fn load_continuation(&self, program_instance_ref: &ProgramInstanceRef) -> Option<Value>;
+
+    /// Read the current continuation and the digest bound to that same commit
+    /// record. Implementations with a richer durable record should override
+    /// this method atomically; the compatibility default protects older ports
+    /// by hashing the value they already expose.
+    async fn load_continuation_with_integrity(
+        &self,
+        program_instance_ref: &ProgramInstanceRef,
+    ) -> Option<CommittedContinuation> {
+        self.load_continuation(program_instance_ref)
+            .await
+            .map(|payload| CommittedContinuation {
+                digest: continuation_digest(Some(&payload)),
+                payload,
+            })
+    }
 }

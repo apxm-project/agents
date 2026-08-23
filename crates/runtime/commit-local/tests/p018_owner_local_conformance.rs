@@ -4,12 +4,12 @@
 //! on hosted durable checkpoint/output. Does not introduce a hosted service.
 
 use apxm_commit_local::{
-    FilesystemExecutionCommit, InMemoryExecutionCommit, MAX_COMMIT_RESULTS,
+    FilesystemExecutionCommit, InMemoryExecutionCommit, MAX_COMMIT_RESULTS, MAX_STORE_BYTES,
     SessionOutputPreparation,
 };
 use apxm_kernel::{
     AtomicWriteSet, ExecutionCommitPort, ExecutionCommitRequest, ExecutionCommitResult,
-    ExecutionCommitTuple, ProgramInstanceRef, ProgramInvocationRef,
+    ExecutionCommitTuple, ProgramInstanceRef, ProgramInvocationRef, continuation_digest,
 };
 use serde_json::json;
 
@@ -23,6 +23,7 @@ fn request(
     expected: u64,
     continuation: Option<serde_json::Value>,
 ) -> ExecutionCommitRequest {
+    let continuation_digest = continuation_digest(continuation.as_ref());
     ExecutionCommitRequest {
         commit_id: commit_id.into(),
         program_instance_ref: ProgramInstanceRef::new(instance),
@@ -31,7 +32,7 @@ fn request(
         expected_program_state_version: expected,
         write_set: AtomicWriteSet {
             next_program_state_digest: digest('1'),
-            continuation_digest: digest('2'),
+            continuation_digest,
             checkpoint_effect_outcomes_digest: digest('3'),
             runtime_evidence_batch_digest: digest('4'),
             usage_facts_digest: digest('5'),
@@ -365,6 +366,39 @@ async fn filesystem_owner_local_survives_reopen_and_is_portable() {
 }
 
 #[tokio::test]
+async fn filesystem_store_tampering_fails_authentication_before_resume() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let port = FilesystemExecutionCommit::open(dir.path()).expect("open");
+    assert!(matches!(
+        port.commit(request(
+            "commit.tamper",
+            "instance.tamper",
+            0,
+            Some(json!({"pc": 7}))
+        ))
+        .await,
+        ExecutionCommitResult::Committed { .. }
+    ));
+    let root = port.root().to_path_buf();
+    drop(port);
+
+    let path = root.join("execution-commit-local.v2.json");
+    let mut persisted: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("read store")).expect("store JSON");
+    persisted["instances"]["instance.tamper"]["continuation"]["pc"] = json!(99);
+    std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&persisted).expect("tampered JSON"),
+    )
+    .expect("write tampered store");
+
+    assert!(matches!(
+        FilesystemExecutionCommit::open(root),
+        Err(apxm_commit_local::CommitLocalError::AuthenticationFailed(_))
+    ));
+}
+
+#[tokio::test]
 async fn filesystem_prepared_output_survives_reopen_after_commit() {
     let dir = tempfile::tempdir().expect("tempdir");
     let port = FilesystemExecutionCommit::open(dir.path()).expect("open");
@@ -427,6 +461,24 @@ fn filesystem_legacy_store_is_not_silently_reinitialized() {
     assert!(matches!(
         error,
         apxm_commit_local::CommitLocalError::SchemaMismatch { .. }
+    ));
+}
+
+#[test]
+fn filesystem_store_size_is_bounded_before_json_decode() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("execution-commit-local.v2.json");
+    let file = std::fs::File::create(path).expect("create store");
+    file.set_len((MAX_STORE_BYTES as u64) + 1)
+        .expect("create sparse oversized store");
+
+    let error = match FilesystemExecutionCommit::open(dir.path()) {
+        Ok(_) => panic!("an oversized persisted store must fail closed"),
+        Err(error) => error,
+    };
+    assert!(matches!(
+        error,
+        apxm_commit_local::CommitLocalError::StoreTooLarge { .. }
     ));
 }
 
