@@ -8,6 +8,7 @@ use apxm_kernel::event_api::{
     CanonicalEventRef, EventApplication, EventApplicationResult, InvocationBoundary,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Only declared Runtime protocol version. Unknown versions fail closed.
@@ -193,6 +194,8 @@ pub enum ProtocolError {
     SourceAsExecutable,
     /// Public method named a forbidden internal Event operation.
     ForbiddenEventMethod,
+    /// The service-minted Event generation counter is exhausted.
+    GenerationExhausted,
 }
 
 /// Methods the public protocol must never expose.
@@ -208,10 +211,17 @@ pub fn public_event_method_forbidden(name: &str) -> bool {
 #[derive(Default)]
 pub struct InMemoryRuntimePeer {
     next_generation: u64,
-    instances: Vec<(String, RuntimeOwnerClaim, String)>,
-    invocations: Vec<(String, String, String, RuntimeResult)>,
-    reservations: Vec<(CanonicalEventRef, RuntimeOwnerClaim, String)>,
-    applications: Vec<(String, serde_json::Value)>,
+    instances: HashMap<String, (RuntimeOwnerClaim, String)>,
+    invocations: HashMap<String, InMemoryInvocation>,
+    invocation_for_instance: HashMap<String, String>,
+    reservations: HashMap<CanonicalEventRef, (RuntimeOwnerClaim, String)>,
+    applications: HashMap<String, serde_json::Value>,
+}
+
+struct InMemoryInvocation {
+    request_id: String,
+    owner_claim: RuntimeOwnerClaim,
+    result: RuntimeResult,
 }
 
 impl InMemoryRuntimePeer {
@@ -233,7 +243,7 @@ impl InMemoryRuntimePeer {
                 let id = format!("pi-{}", Uuid::new_v4());
                 let owner_claim = RuntimeOwnerClaim::mint();
                 self.instances
-                    .push((id.clone(), owner_claim.clone(), artifact_digest.clone()));
+                    .insert(id.clone(), (owner_claim.clone(), artifact_digest.clone()));
                 Ok(RuntimeResult::ProgramInstanceCreated {
                     request_id,
                     program_instance_id: id,
@@ -248,11 +258,7 @@ impl InMemoryRuntimePeer {
                 input: _,
             } => {
                 owner_claim.validate()?;
-                let Some((_, expected_claim, _)) = self
-                    .instances
-                    .iter()
-                    .find(|(id, _, _)| id == &program_instance_id)
-                else {
+                let Some((expected_claim, _)) = self.instances.get(&program_instance_id) else {
                     return Ok(RuntimeResult::Failed {
                         request_id,
                         code: "unknown_instance".to_owned(),
@@ -261,13 +267,14 @@ impl InMemoryRuntimePeer {
                 if expected_claim != &owner_claim {
                     return Err(ProtocolError::OwnerMismatch);
                 }
-                if let Some((_, prior_request, _, prior_result)) = self
-                    .invocations
-                    .iter()
-                    .find(|(id, _, _, _)| id == &program_instance_id)
+                if let Some(invocation_id) = self.invocation_for_instance.get(&program_instance_id)
                 {
-                    if prior_request == &request_id {
-                        return Ok(prior_result.clone());
+                    let prior = self
+                        .invocations
+                        .get(invocation_id)
+                        .expect("instance invocation index remains consistent");
+                    if prior.request_id == request_id {
+                        return Ok(prior.result.clone());
                     }
                     return Ok(RuntimeResult::Failed {
                         request_id,
@@ -277,14 +284,18 @@ impl InMemoryRuntimePeer {
                 let invocation_id = format!("{program_instance_id}:inv-{}", Uuid::new_v4());
                 let result = RuntimeResult::ProgramInvocationStarted {
                     request_id: request_id.clone(),
-                    program_invocation_id: invocation_id,
+                    program_invocation_id: invocation_id.clone(),
                 };
-                self.invocations.push((
-                    program_instance_id,
-                    request_id,
-                    owner_claim.value,
-                    result.clone(),
-                ));
+                self.invocation_for_instance
+                    .insert(program_instance_id, invocation_id.clone());
+                self.invocations.insert(
+                    invocation_id,
+                    InMemoryInvocation {
+                        request_id,
+                        owner_claim,
+                        result: result.clone(),
+                    },
+                );
                 Ok(result)
             }
             RuntimeRequest::EventReserve {
@@ -297,14 +308,17 @@ impl InMemoryRuntimePeer {
                         code: "empty_type".to_owned(),
                     });
                 }
-                self.next_generation += 1;
+                self.next_generation = self
+                    .next_generation
+                    .checked_add(1)
+                    .ok_or(ProtocolError::GenerationExhausted)?;
                 let owner_claim = RuntimeOwnerClaim::mint();
                 let event_ref = CanonicalEventRef {
                     event_id: format!("evt-{}", Uuid::new_v4()),
                     generation: self.next_generation,
                 };
                 self.reservations
-                    .push((event_ref.clone(), owner_claim.clone(), type_id));
+                    .insert(event_ref.clone(), (owner_claim.clone(), type_id));
                 Ok(RuntimeResult::EventReserved {
                     request_id,
                     owner_claim,
@@ -321,22 +335,17 @@ impl InMemoryRuntimePeer {
                     .validate_identities()
                     .map_err(|_| ProtocolError::ForbiddenEventMethod)?;
                 let key = application.idempotency_key.clone();
-                let Some((event_ref, reservation_claim, _)) = self
-                    .reservations
-                    .iter()
-                    .find(|(event_ref, _, _)| event_ref == &application.event_ref)
+                let Some((reservation_claim, _)) = self.reservations.get(&application.event_ref)
                 else {
                     return Ok(RuntimeResult::EventApplied {
                         request_id,
                         result: EventApplicationResult::Rejected,
                     });
                 };
-                if reservation_claim != &owner_claim
-                    || event_ref.generation != application.event_ref.generation
-                {
+                if reservation_claim != &owner_claim {
                     return Err(ProtocolError::OwnerMismatch);
                 }
-                if let Some((_, prior)) = self.applications.iter().find(|(k, _)| k == &key) {
+                if let Some(prior) = self.applications.get(&key) {
                     if prior != &application.occurrence.payload {
                         return Ok(RuntimeResult::EventApplied {
                             request_id,
@@ -349,7 +358,7 @@ impl InMemoryRuntimePeer {
                     });
                 }
                 self.applications
-                    .push((key, application.occurrence.payload.clone()));
+                    .insert(key, application.occurrence.payload.clone());
                 Ok(RuntimeResult::EventApplied {
                     request_id,
                     result: EventApplicationResult::Fulfilled,
@@ -364,11 +373,7 @@ impl InMemoryRuntimePeer {
                 event_ref
                     .validate()
                     .map_err(|_| ProtocolError::ForbiddenEventMethod)?;
-                let Some((_, expected_claim, _)) = self
-                    .reservations
-                    .iter()
-                    .find(|(reserved, _, _)| reserved == &event_ref)
-                else {
+                let Some((expected_claim, _)) = self.reservations.get(&event_ref) else {
                     return Ok(RuntimeResult::Failed {
                         request_id,
                         code: "unknown_reservation".to_owned(),
@@ -388,19 +393,13 @@ impl InMemoryRuntimePeer {
                 program_invocation_id,
             } => {
                 owner_claim.validate()?;
-                let Some((_, _, expected_claim, _)) = self
-                    .invocations
-                    .iter()
-                    .find(|(_, _, _, result)| {
-                        matches!(result, RuntimeResult::ProgramInvocationStarted { program_invocation_id: id, .. } if id == &program_invocation_id)
-                    })
-                else {
+                let Some(invocation) = self.invocations.get(&program_invocation_id) else {
                     return Ok(RuntimeResult::Failed {
                         request_id,
                         code: "unknown_invocation".to_owned(),
                     });
                 };
-                if expected_claim != &owner_claim.value {
+                if invocation.owner_claim != owner_claim {
                     return Err(ProtocolError::OwnerMismatch);
                 }
                 Ok(RuntimeResult::Cancelled { request_id })

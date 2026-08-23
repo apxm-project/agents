@@ -6,8 +6,9 @@
 mod stdio;
 
 pub use stdio::{
-    COMPILATION_CHANNEL, MAX_FRAME_BYTES, StdioFrame, UnixEndpoint, decode_jsonl, encode_jsonl,
-    handshake_cross_wired, serve_stdio, serve_unix,
+    COMPILATION_CHANNEL, MAX_FRAME_BYTES, MAX_FRAMES_PER_CONNECTION, StdioFrame,
+    UNIX_IO_TIMEOUT_MS, UnixEndpoint, decode_jsonl, encode_jsonl, handshake_cross_wired,
+    serve_stdio, serve_unix,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -53,7 +54,7 @@ impl ArtifactStore {
 /// Compilation Service handler over the native protocol.
 pub struct CompilationService {
     store: ArtifactStore,
-    last_idempotency: Option<(String, String)>,
+    idempotency: BTreeMap<String, String>,
     roots: FrontendRoots,
     drivers: FrontendDrivers,
     artifact_dir: Option<PathBuf>,
@@ -71,7 +72,7 @@ impl CompilationService {
     pub fn with_frontends(roots: FrontendRoots, drivers: FrontendDrivers) -> Self {
         Self {
             store: ArtifactStore::default(),
-            last_idempotency: None,
+            idempotency: BTreeMap::new(),
             roots,
             drivers,
             artifact_dir: None,
@@ -113,8 +114,13 @@ impl CompilationService {
             } => self.compile(request_id, idempotency_key, snapshot),
             CompilationRequest::Cancel {
                 request_id,
-                target_request_id: _,
-            } => Ok(CompilationResult::Cancelled { request_id }),
+                target_request_id,
+            } => {
+                if request_id.trim().is_empty() || target_request_id.trim().is_empty() {
+                    return Err(ProtocolError::InvalidRequest);
+                }
+                Ok(CompilationResult::Cancelled { request_id })
+            }
         }
     }
 
@@ -130,17 +136,19 @@ impl CompilationService {
         idempotency_key: String,
         snapshot: PackageSnapshot,
     ) -> Result<CompilationResult, ProtocolError> {
+        if request_id.trim().is_empty() || idempotency_key.trim().is_empty() {
+            return Err(ProtocolError::InvalidRequest);
+        }
         if let Err(error) = snapshot.validate() {
             return Ok(failed(&request_id, snapshot_error_code(error)));
         }
         let fingerprint = snapshot.snapshot_digest.clone();
-        if let Some((key, prior)) = &self.last_idempotency
-            && key == &idempotency_key
+        if let Some(prior) = self.idempotency.get(&idempotency_key)
             && prior != &fingerprint
         {
             return Err(ProtocolError::ConflictingIdempotency);
         }
-        self.last_idempotency = Some((idempotency_key, fingerprint));
+        self.idempotency.insert(idempotency_key, fingerprint);
 
         match compile_snapshot(&snapshot, &self.roots, &self.drivers) {
             Ok(air_json) => {
@@ -177,6 +185,13 @@ pub fn artifact_file_name(digest: &str) -> String {
 
 fn persist_artifact(dir: &Path, digest: &str, bytes: &[u8]) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
+    let directory = std::fs::symlink_metadata(dir).map_err(|error| error.to_string())?;
+    if directory.file_type().is_symlink() || !directory.is_dir() {
+        return Err(format!(
+            "artifact directory '{}' is not a real directory",
+            dir.display()
+        ));
+    }
     let path = dir.join(artifact_file_name(digest));
     match std::fs::symlink_metadata(&path) {
         Ok(metadata) => {
@@ -229,7 +244,14 @@ fn persist_artifact(dir: &Path, digest: &str, bytes: &[u8]) -> Result<(), String
         }
         Err(error) => return Err(error.to_string()),
     };
-    file.write_all(bytes).map_err(|error| error.to_string())
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(|error| error.to_string())?;
+    }
+    file.write_all(bytes).map_err(|error| error.to_string())?;
+    file.sync_all().map_err(|error| error.to_string())
 }
 
 fn snapshot_error_code(error: SnapshotError) -> &'static str {

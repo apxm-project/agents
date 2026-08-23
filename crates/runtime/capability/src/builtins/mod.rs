@@ -74,7 +74,17 @@ pub fn untrusted_content_value(
 ) -> Result<Value, RuntimeError> {
     let source_uri = source_uri.into();
     let content = content.into();
-    if content.len() > MAX_UNTRUSTED_CONTENT_BYTES {
+    let payload_bytes =
+        source_uri
+            .len()
+            .checked_add(content.len())
+            .ok_or_else(|| RuntimeError::Capability {
+                capability: capability.to_owned(),
+                message: format!(
+                    "untrusted result exceeds {MAX_UNTRUSTED_CONTENT_BYTES} byte limit"
+                ),
+            })?;
+    if payload_bytes > MAX_UNTRUSTED_CONTENT_BYTES {
         return Err(RuntimeError::Capability {
             capability: capability.to_owned(),
             message: format!("untrusted result exceeds {MAX_UNTRUSTED_CONTENT_BYTES} byte limit"),
@@ -95,20 +105,35 @@ pub fn untrusted_content_value(
         capability: capability.to_owned(),
         message: format!("untrusted result envelope serialization failed: {error}"),
     })?;
+    // The raw fields above are bounded, but JSON escaping and provenance
+    // metadata add bytes around them. Keep the actual value crossing the
+    // Agent Program boundary within the same hard ceiling too.
+    let wire_bytes = serde_json::to_vec(&wire).map_err(|error| RuntimeError::Capability {
+        capability: capability.to_owned(),
+        message: format!("untrusted result envelope serialization failed: {error}"),
+    })?;
+    if wire_bytes.len() > MAX_UNTRUSTED_CONTENT_BYTES {
+        return Err(RuntimeError::Capability {
+            capability: capability.to_owned(),
+            message: format!("untrusted result exceeds {MAX_UNTRUSTED_CONTENT_BYTES} byte limit"),
+        });
+    }
     Value::try_from(wire).map_err(|error| RuntimeError::Capability {
         capability: capability.to_owned(),
         message: format!("untrusted result envelope conversion failed: {error}"),
     })
 }
 
-/// Remove query/fragment material from a provenance URI before exposing it to
-/// an Agent Program. Request credentials and one-shot bearer values commonly
-/// appear in those components; provenance needs an origin, not a replayable
-/// request.
+/// Remove request credential, query, and fragment material from a provenance
+/// URI before exposing it to an Agent Program. Bearer values commonly appear
+/// in query/fragment components and basic credentials in URL userinfo;
+/// provenance needs an origin, not a replayable request.
 pub(crate) fn provenance_source_uri(raw: &str) -> String {
     reqwest::Url::parse(raw).map_or_else(
         |_| raw.to_owned(),
         |mut url| {
+            let _ = url.set_username("");
+            let _ = url.set_password(None);
             url.set_query(None);
             url.set_fragment(None);
             url.to_string()
@@ -369,6 +394,25 @@ mod tests {
                 "x".repeat(super::MAX_UNTRUSTED_CONTENT_BYTES + 1),
             )
             .is_err()
+        );
+        assert!(
+            super::untrusted_content_value(
+                "extension.test",
+                "x".repeat(super::MAX_UNTRUSTED_CONTENT_BYTES),
+                "content",
+            )
+            .is_err(),
+            "untrusted provenance must share the payload ceiling"
+        );
+    }
+
+    #[test]
+    fn provenance_strips_url_credentials_and_request_components() {
+        assert_eq!(
+            super::provenance_source_uri(
+                "https://user:secret@example.test/data?token=one#fragment"
+            ),
+            "https://example.test/data"
         );
     }
 

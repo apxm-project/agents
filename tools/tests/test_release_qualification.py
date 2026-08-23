@@ -486,6 +486,59 @@ class ReleaseQualificationTests(unittest.TestCase):
                     run_gates=False,
                 )
 
+    def test_package_release_defaults_to_new_cohort_without_replacing_current(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            revision, artifacts = make_clean_owner_checkout(root)
+            (root / ".gitignore").write_text("target/\n.apxm/\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "-C", str(root), "add", ".gitignore"],
+                check=True,
+                env=git_environment(),
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-qm", "ignore runtime artifacts"],
+                check=True,
+                env=git_environment(),
+            )
+            self.qualification.generate_descriptors(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                output_dir=root,
+                source_revision=revision,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "add", "deploy", "contracts"],
+                check=True,
+                env=git_environment(),
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-qm", "publish fixture"],
+                check=True,
+                env=git_environment(),
+            )
+            current = root / ".apxm" / "release-artifacts" / "current"
+            current.mkdir(parents=True)
+            marker = current / "legacy.marker"
+            marker.write_bytes(b"superseded cohort remains untouched")
+
+            output = self.qualification.package_release(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                run_gates=False,
+            )
+
+            self.assertTrue(output["qualified"], output["diagnostics"])
+            package_root = Path(output["package"]["root"])
+            self.assertEqual(package_root.name, f"cohort-{revision[:8]}")
+            self.assertNotEqual(package_root, current)
+            self.assertEqual(marker.read_bytes(), b"superseded cohort remains untouched")
+            self.assertTrue(
+                (package_root / self.qualification.LOCAL_ARTIFACT_MANIFEST_REL).is_file()
+            )
+
     def test_consumer_verification_accepts_exact_package_and_emits_neutral_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temporary, tempfile.TemporaryDirectory() as package_dir:
             root = Path(temporary)

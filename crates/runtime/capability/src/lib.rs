@@ -51,7 +51,11 @@ use interceptor::{
 use metadata::RuntimeCapability;
 use parking_lot::RwLock;
 use registry::CapabilityRegistry;
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Duration,
+};
 
 const SANDBOX_DEGRADED_GUARANTEES: &str = "sandbox backend selected with degraded guarantees";
 
@@ -574,10 +578,19 @@ impl CapabilitySystem {
             return Vec::new();
         }
 
+        // Group filters are often built from a caller's requested capability
+        // set. Materialize membership once so catalog projection is linear in
+        // the registered metadata instead of repeatedly scanning the filter
+        // slice for every group on every capability.
+        let requested: HashSet<&str> = groups.iter().map(String::as_str).collect();
         self.registry
             .list_metadata()
             .into_iter()
-            .filter(|meta| meta.groups.iter().any(|group| groups.contains(group)))
+            .filter(|meta| {
+                meta.groups
+                    .iter()
+                    .any(|group| requested.contains(group.as_str()))
+            })
             .collect()
     }
 

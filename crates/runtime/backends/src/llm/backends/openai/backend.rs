@@ -7,7 +7,9 @@
 //! explicitly registered models.
 
 use crate::llm::ProviderProtocol;
-use crate::llm::backends::http::llm_http_client;
+use crate::llm::backends::http::{
+    llm_http_client, read_provider_error_body, read_provider_json, require_provider_success,
+};
 use crate::llm::backends::traits::StreamChunk;
 use crate::llm::backends::{
     ConfiguredModelCapabilities, configured_model_capabilities, configured_model_info,
@@ -208,6 +210,10 @@ impl OpenAIBackend {
 
     fn request_model<'a>(&'a self, request: &'a LLMRequest) -> &'a str {
         request.model.as_deref().unwrap_or(&self.model)
+    }
+
+    pub(crate) fn api_key_for_redaction(&self) -> &str {
+        &self.api_key
     }
 
     /// Create a new OpenAI backend.
@@ -530,10 +536,7 @@ impl LLMBackend for OpenAIBackend {
 
         let status = response.status();
         if !status.is_success() {
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = read_provider_error_body(response, &[self.api_key.as_str()]).await;
             anyhow::bail!("OpenAI API error (status {}): {}", status, error_text);
         }
 
@@ -542,10 +545,12 @@ impl LLMBackend for OpenAIBackend {
         //   {"model": "...", "response": {"type": "text", "text": "..."}}
         // Standard OpenAI format:
         //   {"choices": [{"message": {"content": "..."}}]}
-        let raw: serde_json::Value = response
-            .json()
-            .await
-            .context("Failed to parse LLM response JSON")?;
+        let raw: serde_json::Value = read_provider_json(
+            response,
+            "Failed to parse LLM response JSON",
+            &[self.api_key.as_str()],
+        )
+        .await?;
 
         // Try to normalize OpenAI-compatible gateway Claude format to OpenAI format
         let api_response = if raw.get("choices").is_some() {
@@ -618,9 +623,12 @@ impl LLMBackend for OpenAIBackend {
             );
 
             let response = req_builder.json(&body).send().await
-                .context("Failed to send streaming request to OpenAI")?
-                .error_for_status()
-                .map_err(|e| anyhow::anyhow!("OpenAI API error: {}", e))?;
+                .context("Failed to send streaming request to OpenAI")?;
+            let response = require_provider_success(
+                response,
+                "OpenAI",
+                &[self.api_key.as_str()],
+            ).await?;
 
             let mut stream = response.bytes_stream();
             let mut buffer = String::new();

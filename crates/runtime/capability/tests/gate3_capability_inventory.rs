@@ -199,7 +199,7 @@ fn declared_builtin_groups_resolve_to_member_capabilities() {
     let unbound: BTreeSet<&str> = BUILTIN_GROUPS
         .iter()
         .copied()
-        .filter(|group| !members.get(*group).is_some_and(|ids| !ids.is_empty()))
+        .filter(|group| members.get(*group).is_none_or(|ids| ids.is_empty()))
         .collect();
     assert!(
         unbound.is_empty(),

@@ -20,7 +20,7 @@ use async_trait::async_trait;
 use base64::Engine;
 use reqwest::Client;
 use serde_json::{Value as JsonValue, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
@@ -47,31 +47,15 @@ fn shared_client() -> &'static Client {
     })
 }
 
-/// Percent-encode a path segment (the connection id).
-fn enc(seg: &str) -> String {
+/// Percent-encode one URL path or query component.
+///
+/// Named REST placeholders are components, not raw URL fragments. Keeping the
+/// encoder shared for connection ids, path parameters, and query parameters
+/// prevents untrusted values from injecting a path, query, or fragment.
+fn encode_component(seg: &str) -> String {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     let mut out = String::with_capacity(seg.len());
     for b in seg.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char);
-            }
-            _ => {
-                out.push('%');
-                out.push(HEX[(b >> 4) as usize] as char);
-                out.push(HEX[(b & 0x0f) as usize] as char);
-            }
-        }
-    }
-    out
-}
-
-/// Percent-encode a query component (key or value). Like [`enc`] but also
-/// escapes characters that are reserved inside a query string.
-fn enc_query(s: &str) -> String {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    let mut out = String::with_capacity(s.len());
-    for b in s.bytes() {
         match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
                 out.push(b as char);
@@ -104,9 +88,9 @@ fn append_query(url: &str, pairs: &[(&String, &Value)]) -> String {
     let mut sep = if url.contains('?') { '&' } else { '?' };
     for (k, v) in pairs {
         out.push(sep);
-        out.push_str(&enc_query(k));
+        out.push_str(&encode_component(k));
         out.push('=');
-        out.push_str(&enc_query(&value_to_str(v)));
+        out.push_str(&encode_component(&value_to_str(v)));
         sep = '&';
     }
     out
@@ -230,7 +214,7 @@ impl ProviderCallCapability {
     /// gates the block on a connection when this is set. Additive and chainable.
     pub fn with_requires_auth(mut self, requires_auth: bool) -> Self {
         if requires_auth {
-            self.metadata = self.take_metadata().with_auth();
+            self.metadata.requires_auth = true;
         }
         self
     }
@@ -239,18 +223,9 @@ impl ProviderCallCapability {
     /// Additive and chainable; used when a pack declares `read_only = true`.
     pub fn with_read_only(mut self, read_only: bool) -> Self {
         if read_only {
-            self.metadata = self.take_metadata().with_read_only();
+            self.metadata.read_only = true;
         }
         self
-    }
-
-    /// Move `metadata` out for a chained `with_*` rebuild, leaving a cheap
-    /// placeholder behind (immediately overwritten by the caller).
-    fn take_metadata(&mut self) -> RuntimeCapability {
-        std::mem::replace(
-            &mut self.metadata,
-            RuntimeCapability::new("", "", serde_json::Value::Null),
-        )
     }
 
     pub fn new() -> Self {
@@ -323,58 +298,73 @@ impl CapabilityExecutor for ProviderCallCapability {
         // Resolve method/url/body. Named REST mode fills the url template from
         // args and builds the body from loose (non-reserved) args; generic
         // provider.call takes url/method/body from args verbatim.
-        let (method, url, body): (String, String, Option<JsonValue>) = if let Some(rest) =
-            &self.rest
-        {
-            let mut url = rest.url.clone();
-            let mut path_params: Vec<String> = Vec::new();
-            for (k, v) in &args {
-                let placeholder = format!("{{{k}}}");
-                if url.contains(&placeholder) {
-                    url = url.replace(&placeholder, &value_to_str(v));
-                    path_params.push(k.clone());
+        let (method, url, body): (String, String, Option<JsonValue>) =
+            if let Some(rest) = &self.rest {
+                let mut url = rest.url.clone();
+                let mut path_params: HashSet<&str> = HashSet::new();
+                for (k, v) in &args {
+                    // Control-plane arguments are never template data. In
+                    // particular, a connector must not be able to place its
+                    // bound credential id in a provider URL by declaring a
+                    // `{credential}` placeholder.
+                    if RESERVED_ARGS.contains(&k.as_str()) {
+                        continue;
+                    }
+                    let placeholder = format!("{{{k}}}");
+                    if url.contains(&placeholder) {
+                        url = url.replace(&placeholder, &encode_component(&value_to_str(v)));
+                        path_params.insert(k.as_str());
+                    }
                 }
-            }
-            let method = as_json("method")
-                .and_then(|j| j.as_str().map(String::from))
-                .unwrap_or_else(|| rest.method.clone());
-            // The loose args that are neither reserved nor consumed as url path
-            // params. GET/DELETE have no body, so these become query parameters;
-            // POST/PUT/PATCH carry them as the JSON body.
-            let loose: Vec<(&String, &Value)> = args
-                .iter()
-                .filter(|(k, _)| !RESERVED_ARGS.contains(&k.as_str()) && !path_params.contains(k))
-                .collect();
-            if method_has_no_body(&method) {
-                // Append loose args to the query string (url-encoded). An
-                // explicit `body` is ignored for body-less methods.
-                let mut pairs: Vec<(&String, &Value)> = loose;
-                // Stable order so the url is deterministic (tests, caching).
-                pairs.sort_by(|a, b| a.0.cmp(b.0));
-                url = append_query(&url, &pairs);
-                (method, url, None)
+                if url.contains('{') || url.contains('}') {
+                    return Err(cap_err(
+                        "named provider URL contains an unresolved placeholder".to_owned(),
+                    ));
+                }
+                // A named REST block is an immutable connector declaration;
+                // callers can select arguments, never its HTTP method. The
+                // generic `provider.call` capability remains available when
+                // a fully dynamic method is explicitly required.
+                let method = rest.method.clone();
+                // The loose args that are neither reserved nor consumed as url path
+                // params. GET/DELETE have no body, so these become query parameters;
+                // POST/PUT/PATCH carry them as the JSON body.
+                let loose: Vec<(&String, &Value)> = args
+                    .iter()
+                    .filter(|(k, _)| {
+                        !RESERVED_ARGS.contains(&k.as_str()) && !path_params.contains(k.as_str())
+                    })
+                    .collect();
+                if method_has_no_body(&method) {
+                    // Append loose args to the query string (url-encoded). An
+                    // explicit `body` is ignored for body-less methods.
+                    let mut pairs: Vec<(&String, &Value)> = loose;
+                    // Stable order so the url is deterministic (tests, caching).
+                    pairs.sort_by(|a, b| a.0.cmp(b.0));
+                    url = append_query(&url, &pairs);
+                    (method, url, None)
+                } else {
+                    // Explicit `body` wins; else assemble it from the loose args.
+                    let body = as_json("body").or_else(|| {
+                        let obj: serde_json::Map<String, JsonValue> = loose
+                            .iter()
+                            .filter_map(|(k, v)| {
+                                serde_json::to_value(v).ok().map(|j| ((*k).clone(), j))
+                            })
+                            .collect();
+                        (!obj.is_empty()).then_some(JsonValue::Object(obj))
+                    });
+                    (method, url, body)
+                }
             } else {
-                // Explicit `body` wins; else assemble it from the loose args.
-                let body = as_json("body").or_else(|| {
-                    let obj: serde_json::Map<String, JsonValue> = loose
-                        .iter()
-                        .filter_map(|(k, v)| {
-                            serde_json::to_value(v).ok().map(|j| ((*k).clone(), j))
-                        })
-                        .collect();
-                    (!obj.is_empty()).then_some(JsonValue::Object(obj))
-                });
-                (method, url, body)
-            }
-        } else {
-            let url = as_json("url")
-                .and_then(|j| j.as_str().map(String::from))
-                .ok_or_else(|| cap_err("missing `url`".into()))?;
-            let method = as_json("method")
-                .and_then(|j| j.as_str().map(String::from))
-                .unwrap_or_else(|| "POST".into());
-            (method, url, as_json("body"))
-        };
+                let url = as_json("url")
+                    .and_then(|j| j.as_str().map(String::from))
+                    .ok_or_else(|| cap_err("missing `url`".into()))?;
+                let method = as_json("method")
+                    .and_then(|j| j.as_str().map(String::from))
+                    .unwrap_or_else(|| "POST".into());
+                (method, url, as_json("body"))
+            };
 
         let method = validate_method(&method).map_err(cap_err)?;
         validate_target_url(&url).map_err(cap_err)?;
@@ -428,8 +418,8 @@ impl CapabilityExecutor for ProviderCallCapability {
         let endpoint = format!(
             "{}/v1/connections/{}/proxy?owner={}",
             base,
-            enc(&credential),
-            enc(&auth_owner())
+            encode_component(&credential),
+            encode_component(&auth_owner())
         );
         let bearer = auth_bearer();
 
@@ -600,6 +590,7 @@ mod tests {
     /// provider method/url and (for body methods) a base64 body.
     #[derive(serde::Deserialize)]
     struct InnerReq {
+        method: String,
         url: String,
         #[serde(default)]
         headers: Vec<(String, String)>,
@@ -655,6 +646,37 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn rest_path_placeholders_are_component_encoded() {
+        let server = MockServer::start().await;
+        Mock::given(m_method("POST"))
+            .and(path("/v1/connections/conn1/proxy"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "status": 200,
+                "body_b64": STANDARD.encode(b"ok"),
+            })))
+            .mount(&server)
+            .await;
+
+        let cap = ProviderCallCapability::rest_with_base(
+            server.uri(),
+            "GET",
+            "https://api.example.com/repos/{owner}/issues",
+        );
+        let mut args = HashMap::new();
+        args.insert("credential".into(), arg("conn1"));
+        args.insert("owner".into(), arg("octo/../private?leak=true#fragment"));
+
+        cap.execute(args).await.expect("encoded path succeeds");
+
+        let reqs = server.received_requests().await.unwrap();
+        let inner = inner(&reqs[0]);
+        assert_eq!(
+            inner.url,
+            "https://api.example.com/repos/octo%2F..%2Fprivate%3Fleak%3Dtrue%23fragment/issues"
+        );
+    }
+
     // (A) POST: loose args become the JSON body, not the query string.
     #[tokio::test]
     async fn post_loose_args_go_to_body_not_query() {
@@ -702,6 +724,54 @@ mod tests {
             v.get("owner").is_none(),
             "url placeholder is not in the body"
         );
+    }
+
+    #[tokio::test]
+    async fn named_rest_method_is_declaration_bound() {
+        let server = MockServer::start().await;
+        Mock::given(m_method("POST"))
+            .and(path("/v1/connections/conn1/proxy"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "status": 200,
+                "body_b64": STANDARD.encode(b"ok"),
+            })))
+            .mount(&server)
+            .await;
+
+        let cap = ProviderCallCapability::rest_with_base(
+            server.uri(),
+            "POST",
+            "https://api.example.com/thing",
+        );
+        let mut args = HashMap::new();
+        args.insert("credential".into(), arg("conn1"));
+        args.insert("idempotency_key".into(), arg("fixed-method-1"));
+        args.insert("method".into(), arg("GET"));
+        cap.execute(args).await.expect("declared POST succeeds");
+
+        let reqs = server.received_requests().await.unwrap();
+        assert_eq!(inner(&reqs[0]).method, "POST");
+    }
+
+    #[tokio::test]
+    async fn named_rest_rejects_missing_or_reserved_url_placeholders() {
+        for template in [
+            "https://api.example.com/repos/{owner}/issues",
+            "https://api.example.com/connections/{credential}",
+        ] {
+            let server = MockServer::start().await;
+            let cap = ProviderCallCapability::rest_with_base(server.uri(), "GET", template);
+            let args = HashMap::from([(String::from("credential"), arg("conn1"))]);
+            let error = cap
+                .execute(args)
+                .await
+                .expect_err("unresolved control/template fields must fail closed");
+            assert!(format!("{error}").contains("unresolved placeholder"));
+            assert!(
+                server.received_requests().await.unwrap().is_empty(),
+                "validation must happen before the auth proxy"
+            );
+        }
     }
 
     #[tokio::test]

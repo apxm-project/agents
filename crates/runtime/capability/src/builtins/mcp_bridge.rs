@@ -14,8 +14,8 @@
 //! bridge consumes the resolved token.
 
 use super::{
-    MAX_REQUEST_BODY_BYTES, MAX_URL_BYTES, auth_base, auth_bearer, auth_owner,
-    collect_bounded_body, guard_url_ssrf_pinned, provenance_source_uri,
+    MAX_REQUEST_BODY_BYTES, MAX_UNTRUSTED_CONTENT_BYTES, MAX_URL_BYTES, auth_base, auth_bearer,
+    auth_owner, collect_bounded_body, guard_url_ssrf_pinned, provenance_source_uri,
 };
 use crate::{
     executor::{CapabilityExecutor, CapabilityResult},
@@ -36,6 +36,7 @@ const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 const MAX_BODY_BYTES: usize = 1_000_000;
 const MAX_MCP_TOOL_NAME_BYTES: usize = 256;
+const MAX_MCP_CONTENT_ITEMS: usize = 256;
 const MAX_CREDENTIAL_ID_BYTES: usize = 512;
 const MAX_ACCESS_TOKEN_BYTES: usize = 16 * 1024;
 
@@ -73,22 +74,48 @@ fn untrusted_mcp_result(
     source_uri: &str,
     result: &JsonValue,
 ) -> CapabilityResult<Value> {
+    let too_large = || RuntimeError::Capability {
+        capability: capability.to_owned(),
+        message: format!(
+            "MCP untrusted result exceeds {MAX_UNTRUSTED_CONTENT_BYTES} bytes or {MAX_MCP_CONTENT_ITEMS} items"
+        ),
+    };
     let mut items = Vec::new();
+    let mut content_bytes = 0usize;
     if let Some(content) = result.get("content").and_then(JsonValue::as_array) {
         for item in content {
+            if items.len() >= MAX_MCP_CONTENT_ITEMS {
+                return Err(too_large());
+            }
             let source = item
                 .get("uri")
                 .and_then(JsonValue::as_str)
-                .unwrap_or(source_uri);
+                .map_or_else(|| source_uri.to_owned(), provenance_source_uri);
             let text = item
                 .get("text")
                 .and_then(JsonValue::as_str)
                 .map_or_else(|| item.to_string(), str::to_owned);
-            items.push(untrusted_mcp_item(source, text));
+            content_bytes = content_bytes
+                .checked_add(source.len())
+                .and_then(|bytes| bytes.checked_add(text.len()))
+                .ok_or_else(too_large)?;
+            if content_bytes > MAX_UNTRUSTED_CONTENT_BYTES {
+                return Err(too_large());
+            }
+            items.push(untrusted_mcp_item(&source, text));
         }
     }
     if items.is_empty() {
-        items.push(untrusted_mcp_item(source_uri, result.to_string()));
+        let text = result.to_string();
+        let source = provenance_source_uri(source_uri);
+        if source
+            .len()
+            .checked_add(text.len())
+            .is_none_or(|bytes| bytes > MAX_UNTRUSTED_CONTENT_BYTES)
+        {
+            return Err(too_large());
+        }
+        items.push(untrusted_mcp_item(&source, text));
     }
     let envelope = serde_json::to_value(UntrustedMcpContentEnvelope {
         kind: "untrusted_content",
@@ -100,6 +127,14 @@ fn untrusted_mcp_result(
         capability: capability.to_owned(),
         message: format!("MCP result envelope serialization failed: {error}"),
     })?;
+    let envelope_bytes =
+        serde_json::to_vec(&envelope).map_err(|error| RuntimeError::Capability {
+            capability: capability.to_owned(),
+            message: format!("MCP result envelope serialization failed: {error}"),
+        })?;
+    if envelope_bytes.len() > MAX_UNTRUSTED_CONTENT_BYTES {
+        return Err(too_large());
+    }
     Value::try_from(envelope).map_err(|error| RuntimeError::Capability {
         capability: capability.to_owned(),
         message: format!("MCP result envelope conversion failed: {error}"),
@@ -667,6 +702,29 @@ mod tests {
         );
         assert!(wire.get("instruction").is_none());
         assert!(wire.get("policy").is_none());
+    }
+
+    #[test]
+    fn mcp_results_respect_the_shared_untrusted_content_ceiling() {
+        let oversized = json!({
+            "content": [{"type": "text", "text": "x".repeat(MAX_UNTRUSTED_CONTENT_BYTES + 1)}]
+        });
+        let error = untrusted_mcp_result("mcp.test", "https://tools.example.test/mcp", &oversized)
+            .expect_err("oversized MCP content must fail closed");
+        assert!(format!("{error}").contains("untrusted result exceeds"));
+
+        let too_many_items = json!({
+            "content": (0..=MAX_MCP_CONTENT_ITEMS)
+                .map(|index| json!({"type": "text", "text": index.to_string()}))
+                .collect::<Vec<_>>()
+        });
+        let error = untrusted_mcp_result(
+            "mcp.test",
+            "https://tools.example.test/mcp",
+            &too_many_items,
+        )
+        .expect_err("excessive MCP item counts must fail closed");
+        assert!(format!("{error}").contains("untrusted result exceeds"));
     }
 
     #[tokio::test]

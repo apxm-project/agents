@@ -97,9 +97,7 @@ pub fn serve_unix(path: &str, mut service: RuntimeService) -> Result<(), String>
             .map_err(|error| error.to_string())?;
         let reader =
             std::io::BufReader::new(stream.try_clone().map_err(|error| error.to_string())?);
-        if serve_frames(reader, stream, &mut service).is_err() {
-            continue;
-        }
+        let _ = serve_frames(reader, stream, &mut service);
     }
     Ok(())
 }

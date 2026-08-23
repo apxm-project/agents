@@ -308,11 +308,12 @@ fn isolation_for_tier(tier: u8) -> IsolationLevel {
 pub fn classify_operation(op: AISOperationType) -> (u8, IsolationLevel) {
     match op {
         AISOperationType::ModelCall => (tier::PURE, IsolationLevel::None),
-        AISOperationType::CapabilityInvoke => (tier::IO, IsolationLevel::OsLevel),
+        AISOperationType::CapabilityInvoke | AISOperationType::AwaitEvent => {
+            (tier::IO, IsolationLevel::OsLevel)
+        }
         AISOperationType::ProgramNew | AISOperationType::ProgramInvoke => {
             (tier::PRIVILEGED, IsolationLevel::Container)
         }
-        AISOperationType::AwaitEvent => (tier::IO, IsolationLevel::OsLevel),
     }
 }
 

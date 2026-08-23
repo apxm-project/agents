@@ -5,6 +5,10 @@ use apxm_backends::llm::{
     normalize_endpoint_for_protocol,
 };
 use std::collections::HashMap;
+use std::time::Duration;
+
+const VALIDATION_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const VALIDATION_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Validate a backend by making a minimal API call.
 ///
@@ -26,7 +30,8 @@ pub async fn validate_backend(backend: &BackendConfig) -> Result<String, Backend
     let normalized = normalize_endpoint_for_protocol(backend.protocol, base);
     let base = normalized.trim_end_matches('/');
 
-    let client = reqwest::Client::new();
+    validate_endpoint(&backend.name, base)?;
+    let client = validation_client()?;
 
     match backend.protocol {
         // llama.cpp's server speaks the OpenAI-compatible surface, so it
@@ -44,6 +49,49 @@ pub async fn validate_backend(backend: &BackendConfig) -> Result<String, Backend
             unreachable!("mock validation returns before endpoint resolution")
         }
     }
+}
+
+/// Build the client used by operator-requested backend probes.
+///
+/// A backend endpoint is configuration, but it is still an authority boundary:
+/// every probe carries a resolved credential or a custom auth header. Never
+/// follow a redirect here, since doing so could forward those headers to a
+/// different host, and keep a broken endpoint from occupying the caller
+/// indefinitely. Private/local endpoints remain supported for Ollama and
+/// self-hosted deployments; the operator chose the endpoint explicitly.
+fn validation_client() -> Result<reqwest::Client, BackendError> {
+    reqwest::Client::builder()
+        .connect_timeout(VALIDATION_CONNECT_TIMEOUT)
+        .timeout(VALIDATION_REQUEST_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| {
+            BackendError::Io(std::io::Error::other(format!(
+                "could not build backend validation client: {error}"
+            )))
+        })
+}
+
+/// Reject endpoint forms that could smuggle authority into a probe URL.
+/// `reqwest` only supports HTTP(S), but checking the typed URL here keeps the
+/// persisted backend contract explicit and prevents userinfo/fragments from
+/// entering diagnostics or being mistaken for provider scope.
+fn validate_endpoint(name: &str, raw: &str) -> Result<(), BackendError> {
+    let url = reqwest::Url::parse(raw)
+        .map_err(|error| validation_err(name, format!("endpoint is invalid: {error}")))?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err(validation_err(
+            name,
+            "endpoint must be an absolute HTTP(S) URL",
+        ));
+    }
+    if !url.username().is_empty() || url.password().is_some() || url.fragment().is_some() {
+        return Err(validation_err(
+            name,
+            "endpoint cannot contain credentials or a fragment",
+        ));
+    }
+    Ok(())
 }
 
 fn require_api_key<'a>(name: &str, backend: &'a BackendConfig) -> Result<&'a str, BackendError> {
@@ -266,12 +314,15 @@ async fn validate_google(
     base: &str,
 ) -> Result<String, BackendError> {
     let api_key = require_api_key(name, backend)?;
-    // Convention: `base` already includes the version prefix (e.g. `/v1`).
-    let url = format!("{base}/models?key={api_key}");
+    let request = google_models_request(client, base, api_key).map_err(|e| {
+        validation_err(
+            name,
+            format!("could not build Google validation request: {e}"),
+        )
+    })?;
 
     let resp = client
-        .get(&url)
-        .send()
+        .execute(request)
         .await
         .map_err(|e| validation_err(name, format!("Request failed: {e}")))?;
 
@@ -280,6 +331,20 @@ async fn validate_google(
     } else {
         Err(validation_err(name, format!("HTTP {}", resp.status())))
     }
+}
+
+fn google_models_request(
+    client: &reqwest::Client,
+    base: &str,
+    api_key: &str,
+) -> Result<reqwest::Request, reqwest::Error> {
+    // Convention: `base` already includes the version prefix (e.g. `/v1`).
+    // Keep the credential in a header. Query strings are routinely copied to
+    // proxy/access logs, traces, browser history, and error pages.
+    client
+        .get(format!("{base}/models"))
+        .header("x-goog-api-key", api_key)
+        .build()
 }
 
 async fn validate_ollama(
@@ -454,6 +519,42 @@ mod tests {
             err,
             BackendError::LiteralSecretReference { field, .. } if field == "api_key"
         ));
+    }
+
+    #[test]
+    fn google_validation_keeps_api_key_out_of_query_string() {
+        let client = reqwest::Client::new();
+        let request = google_models_request(
+            &client,
+            "https://generativelanguage.googleapis.com/v1beta",
+            "secret-google-key",
+        )
+        .expect("Google validation request should build");
+        assert_eq!(
+            request.url().as_str(),
+            "https://generativelanguage.googleapis.com/v1beta/models"
+        );
+        assert!(request.url().query().is_none());
+        assert_eq!(
+            request
+                .headers()
+                .get("x-goog-api-key")
+                .and_then(|value| value.to_str().ok()),
+            Some("secret-google-key")
+        );
+    }
+
+    #[test]
+    fn validation_endpoint_rejects_embedded_authority() {
+        let error = validate_endpoint("fixture", "https://user:secret@example.test/v1#redirect-me")
+            .expect_err("endpoint userinfo and fragments must not be accepted");
+        assert!(format!("{error}").contains("credentials or a fragment"));
+    }
+
+    #[test]
+    fn validation_endpoint_keeps_explicit_local_http_support() {
+        validate_endpoint("fixture", "http://127.0.0.1:11434/v1")
+            .expect("operator-selected local backends remain supported");
     }
 
     #[tokio::test]

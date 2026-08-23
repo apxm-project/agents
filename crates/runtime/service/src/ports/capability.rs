@@ -308,16 +308,13 @@ impl PackageHandlerWorker {
                 Err(error) => Err(format!("the worker reply could not be read: {error}")),
             }
         };
-        let reply = match tokio::time::timeout(WORKER_IO_TIMEOUT, exchange).await {
-            Err(_) => {
-                if let Some(mut worker) = guard.take() {
-                    let _ = worker.child.start_kill();
-                }
-                return Err(failure(format!(
-                    "the package handler worker did not reply within {WORKER_IO_TIMEOUT:?}"
-                )));
+        let Ok(reply) = tokio::time::timeout(WORKER_IO_TIMEOUT, exchange).await else {
+            if let Some(mut worker) = guard.take() {
+                let _ = worker.child.start_kill();
             }
-            Ok(reply) => reply,
+            return Err(failure(format!(
+                "the package handler worker did not reply within {WORKER_IO_TIMEOUT:?}"
+            )));
         };
         let reply = match reply {
             Ok(reply) => reply,

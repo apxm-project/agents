@@ -4,7 +4,9 @@
 //! registered models and endpoints.
 
 use crate::llm::ProviderProtocol;
-use crate::llm::backends::http::llm_http_client;
+use crate::llm::backends::http::{
+    llm_http_client, read_provider_error_body, read_provider_json, require_provider_success,
+};
 use crate::llm::backends::openai::backend::validate_provider_dispatch;
 use crate::llm::backends::traits::StreamChunk;
 use crate::llm::backends::{
@@ -328,17 +330,16 @@ impl LLMBackend for AnthropicBackend {
 
         let status = response.status();
         if !status.is_success() {
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = read_provider_error_body(response, &[self.api_key.as_str()]).await;
             anyhow::bail!("Anthropic API error (status {}): {}", status, error_text);
         }
 
-        let api_response: AnthropicResponse = response
-            .json()
-            .await
-            .context("Failed to parse Anthropic response")?;
+        let api_response: AnthropicResponse = read_provider_json(
+            response,
+            "Failed to parse Anthropic response",
+            &[self.api_key.as_str()],
+        )
+        .await?;
 
         Self::parse_response(api_response, &model)
     }
@@ -376,9 +377,13 @@ impl LLMBackend for AnthropicBackend {
                 .json(&body)
                 .send()
                 .await
-                .context("Failed to send streaming request to Anthropic")?
-                .error_for_status()
-                .map_err(|e| anyhow::anyhow!("Anthropic API error: {}", e))?;
+                .context("Failed to send streaming request to Anthropic")?;
+            let response = require_provider_success(
+                response,
+                "Anthropic",
+                &[self.api_key.as_str()],
+            )
+            .await?;
 
             let mut stream = response.bytes_stream();
             let mut buffer = String::new();

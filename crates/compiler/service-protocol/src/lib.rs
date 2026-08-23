@@ -5,6 +5,7 @@
 
 use apxm_source_port::{Frontend, PackageSnapshot};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Only declared protocol version. Unknown versions fail closed.
 pub const COMPILATION_PROTOCOL_VERSION: &str = "apxm.compilation.protocol/1";
@@ -86,12 +87,14 @@ pub enum ProtocolError {
     RuntimeMethod,
     /// Idempotency key reused with a conflicting snapshot.
     ConflictingIdempotency,
+    /// Request correlation or idempotency fields were empty.
+    InvalidRequest,
 }
 
 /// In-memory Compilation Service peer used by protocol vectors.
 #[derive(Default)]
 pub struct InMemoryCompilationPeer {
-    last_idempotency: Option<(String, String)>,
+    idempotency: HashMap<String, String>,
 }
 
 impl InMemoryCompilationPeer {
@@ -108,17 +111,20 @@ impl InMemoryCompilationPeer {
                 idempotency_key,
                 snapshot,
             } => {
+                if request_id.trim().is_empty() || idempotency_key.trim().is_empty() {
+                    return Err(ProtocolError::InvalidRequest);
+                }
                 snapshot
                     .validate()
                     .map_err(|_| ProtocolError::ConflictingIdempotency)?;
                 let fingerprint = snapshot.snapshot_digest.clone();
-                if let Some((key, prior)) = &self.last_idempotency
-                    && key == &idempotency_key
+                if let Some(prior) = self.idempotency.get(&idempotency_key)
                     && prior != &fingerprint
                 {
                     return Err(ProtocolError::ConflictingIdempotency);
                 }
-                self.last_idempotency = Some((idempotency_key, fingerprint.clone()));
+                self.idempotency
+                    .insert(idempotency_key, fingerprint.clone());
                 Ok(CompilationResult::ArtifactCommitted {
                     request_id,
                     artifact_digest: format!("artifact:{fingerprint}"),
@@ -127,8 +133,13 @@ impl InMemoryCompilationPeer {
             }
             CompilationRequest::Cancel {
                 request_id,
-                target_request_id: _,
-            } => Ok(CompilationResult::Cancelled { request_id }),
+                target_request_id,
+            } => {
+                if request_id.trim().is_empty() || target_request_id.trim().is_empty() {
+                    return Err(ProtocolError::InvalidRequest);
+                }
+                Ok(CompilationResult::Cancelled { request_id })
+            }
         }
     }
 }

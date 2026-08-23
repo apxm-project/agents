@@ -1,7 +1,9 @@
 //! Ollama backend implementation (local models).
 
 use crate::llm::ProviderProtocol;
-use crate::llm::backends::http::llm_http_client;
+use crate::llm::backends::http::{
+    llm_http_client, read_provider_error_body, read_provider_json, require_provider_success,
+};
 use crate::llm::backends::openai::backend::validate_provider_dispatch;
 use crate::llm::backends::traits::StreamChunk;
 use crate::llm::backends::{
@@ -252,17 +254,12 @@ impl LLMBackend for OllamaBackend {
 
         let status = response.status();
         if !status.is_success() {
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = read_provider_error_body(response, &[]).await;
             anyhow::bail!("Ollama API error (status {}): {}", status, error_text);
         }
 
-        let api_response: OllamaChatResponse = response
-            .json()
-            .await
-            .context("Failed to parse Ollama response")?;
+        let api_response: OllamaChatResponse =
+            read_provider_json(response, "Failed to parse Ollama response", &[]).await?;
 
         let usage = TokenUsage::new(
             api_response
@@ -332,9 +329,8 @@ impl LLMBackend for OllamaBackend {
                 .json(&body)
                 .send()
                 .await
-                .context("Failed to send streaming request to Ollama")?
-                .error_for_status()
-                .map_err(|e| anyhow::anyhow!("Ollama API error: {}", e))?;
+                .context("Failed to send streaming request to Ollama")?;
+            let response = require_provider_success(response, "Ollama", &[]).await?;
 
             let mut stream = response.bytes_stream();
             let mut buffer = String::new();
@@ -439,13 +435,13 @@ impl LLMBackend for OllamaBackend {
 
     async fn health_check(&self) -> Result<()> {
         let url = format!("{}{}", self.base_url, api_paths::API_TAGS);
-        self.client
+        let response = self
+            .client
             .get(&url)
             .send()
             .await
-            .context("Failed to connect to Ollama")?
-            .error_for_status()
-            .map_err(|e| anyhow::anyhow!("Ollama health check failed: {}", e))?;
+            .context("Failed to connect to Ollama")?;
+        require_provider_success(response, "Ollama health check", &[]).await?;
         Ok(())
     }
 
@@ -459,11 +455,9 @@ impl LLMBackend for OllamaBackend {
             .await
             .context("Failed to list Ollama models")?;
 
-        if !response.status().is_success() {
-            anyhow::bail!("Failed to list models: {}", response.status());
-        }
-
-        let tags: OllamaTags = response.json().await?;
+        let response = require_provider_success(response, "Ollama model listing", &[]).await?;
+        let tags: OllamaTags =
+            read_provider_json(response, "Failed to parse Ollama model listing", &[]).await?;
 
         let models = tags
             .models

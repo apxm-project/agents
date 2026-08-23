@@ -6,6 +6,7 @@ use std::io::{BufRead, Write};
 use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +17,10 @@ use apxm_compilation_protocol::{CompilationHandshake, CompilationRequest};
 pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 /// The only channel accepted by the Compilation Service framing boundary.
 pub const COMPILATION_CHANNEL: &str = "compilation";
+/// Per-connection I/O deadline for local Unix clients.
+pub const UNIX_IO_TIMEOUT_MS: u64 = 5_000;
+/// Maximum requests served on one local connection before it is drained.
+pub const MAX_FRAMES_PER_CONNECTION: usize = 256;
 const SOCKET_MODE: u32 = 0o600;
 
 /// One stdio JSONL frame. Unknown methods fail at handshake, not by coercion.
@@ -85,9 +90,17 @@ pub fn serve_unix(path: &str, mut service: CompilationService) -> Result<(), Str
     let listener = bind_secure_unix(&endpoint.path)?;
     for incoming in listener.incoming() {
         let stream = incoming.map_err(|error| error.to_string())?;
+        stream
+            .set_read_timeout(Some(Duration::from_millis(UNIX_IO_TIMEOUT_MS)))
+            .map_err(|error| error.to_string())?;
+        stream
+            .set_write_timeout(Some(Duration::from_millis(UNIX_IO_TIMEOUT_MS)))
+            .map_err(|error| error.to_string())?;
         let reader =
             std::io::BufReader::new(stream.try_clone().map_err(|error| error.to_string())?);
-        serve_frames(reader, stream, &mut service)?;
+        // A malformed or idle client owns only this connection. Drain it and
+        // keep the service available to the next local client.
+        let _ = serve_frames(reader, stream, &mut service);
     }
     Ok(())
 }
@@ -97,11 +110,18 @@ fn serve_frames<R: BufRead, W: Write>(
     mut writer: W,
     service: &mut CompilationService,
 ) -> Result<(), String> {
+    let mut frame_count = 0;
     while let Some(line) = read_limited_line(&mut reader)? {
         if line.trim().is_empty() {
             continue;
         }
         let frame = decode_jsonl(&line)?;
+        frame_count += 1;
+        if frame_count > MAX_FRAMES_PER_CONNECTION {
+            return Err(format!(
+                "Compilation connection exceeds {MAX_FRAMES_PER_CONNECTION} frames"
+            ));
+        }
         if handshake_cross_wired(&frame.channel) {
             return Err("cross-wired runtime handshake on compilation stdio".to_owned());
         }

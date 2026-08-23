@@ -3,7 +3,9 @@
 //! Implements the LLMBackend trait for Google's Gemini API.
 
 use crate::llm::ProviderProtocol;
-use crate::llm::backends::http::llm_http_client;
+use crate::llm::backends::http::{
+    llm_http_client, read_provider_error_body, read_provider_json, require_provider_success,
+};
 use crate::llm::backends::openai::backend::validate_provider_dispatch;
 use crate::llm::backends::traits::StreamChunk;
 use crate::llm::backends::{
@@ -181,10 +183,7 @@ impl LLMBackend for GoogleBackend {
 
         let status = response.status();
         if !status.is_success() {
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = read_provider_error_body(response, &[self.api_key.as_str()]).await;
             log_error!(
                 "models::google",
                 status = %status,
@@ -195,10 +194,12 @@ impl LLMBackend for GoogleBackend {
             anyhow::bail!("Google API error (status {}): {}", status, error_text);
         }
 
-        let api_response: GoogleResponse = response
-            .json()
-            .await
-            .context("Failed to parse Google response")?;
+        let api_response: GoogleResponse = read_provider_json(
+            response,
+            "Failed to parse Google response",
+            &[self.api_key.as_str()],
+        )
+        .await?;
 
         Self::parse_response(api_response, &model)
     }
@@ -230,17 +231,22 @@ impl LLMBackend for GoogleBackend {
                 .json(&body)
                 .send()
                 .await
-                .context("Failed to send streaming request to Google")?
-                .error_for_status()
-                .map_err(|e| {
-                    log_error!(
-                        "models::google",
-                        error = %e,
-                        model = %model,
-                        "Google streaming API request failed"
-                    );
-                    anyhow::anyhow!("Google API error: {}", e)
-                })?;
+                .context("Failed to send streaming request to Google")?;
+            let response = require_provider_success(
+                response,
+                "Google",
+                &[self.api_key.as_str()],
+            )
+            .await
+            .map_err(|error| {
+                log_error!(
+                    "models::google",
+                    error = %error,
+                    model = %model,
+                    "Google streaming API request failed"
+                );
+                error
+            })?;
 
             let mut stream = response.bytes_stream();
             let mut buffer = String::new();

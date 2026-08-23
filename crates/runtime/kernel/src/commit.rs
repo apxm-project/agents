@@ -164,13 +164,13 @@ fn normalize_continuation_payload(payload: &Value) -> Value {
         return canonical_json_value(payload);
     };
     let mut normalized = object.clone();
-    if let Some(Value::Object(write_set)) = normalized.get_mut("write_set") {
-        if write_set.contains_key("continuation_digest") {
-            write_set.insert(
-                "continuation_digest".to_string(),
-                Value::String("<continuation-digest>".to_string()),
-            );
-        }
+    if let Some(Value::Object(write_set)) = normalized.get_mut("write_set")
+        && write_set.contains_key("continuation_digest")
+    {
+        write_set.insert(
+            "continuation_digest".to_string(),
+            Value::String("<continuation-digest>".to_string()),
+        );
     }
     canonical_json_value(&Value::Object(normalized))
 }

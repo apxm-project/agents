@@ -37,6 +37,7 @@ impl FilesystemExecutionCommit {
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, CommitLocalError> {
         let root = root.into();
         fs::create_dir_all(&root).map_err(|e| CommitLocalError::Io(e.to_string()))?;
+        verify_store_root(&root)?;
         let lock_file = acquire_lock(&root)?;
         if !auth_key_path(&root).exists() && legacy_store_path(&root).exists() {
             return Err(CommitLocalError::SchemaMismatch {
@@ -165,6 +166,7 @@ fn auth_key_path(root: &Path) -> PathBuf {
 }
 
 fn acquire_lock(root: &Path) -> Result<File, CommitLocalError> {
+    reject_symlink(&lock_path(root), "lock file")?;
     let lock_file = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -184,6 +186,7 @@ fn acquire_lock(root: &Path) -> Result<File, CommitLocalError> {
 
 fn load_or_create_auth_key(root: &Path) -> Result<[u8; 32], CommitLocalError> {
     let path = auth_key_path(root);
+    reject_symlink(&path, "auth key")?;
     if path.exists() {
         let bytes = fs::read(&path).map_err(|e| CommitLocalError::Io(e.to_string()))?;
         let key = <[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| {
@@ -214,7 +217,7 @@ fn load_or_create_auth_key(root: &Path) -> Result<[u8; 32], CommitLocalError> {
         .open(&path)
         .map_err(|e| CommitLocalError::Io(e.to_string()))?;
     file.write_all(&key)
-        .and_then(|_| file.sync_all())
+        .and_then(|()| file.sync_all())
         .map_err(|e| CommitLocalError::Io(e.to_string()))?;
     restrict_permissions(&file)?;
     Ok(key)
@@ -232,6 +235,8 @@ fn restrict_permissions(file: &File) -> Result<(), CommitLocalError> {
 
 fn load_or_init(root: &Path, auth_key: &[u8; 32]) -> Result<CommitLocalStore, CommitLocalError> {
     let path = store_path(root);
+    reject_symlink(&path, "store")?;
+    reject_symlink(&legacy_store_path(root), "legacy store")?;
     if !path.exists() {
         if legacy_store_path(root).exists() {
             return Err(CommitLocalError::SchemaMismatch {
@@ -279,9 +284,14 @@ fn persist(
         });
     }
     let path = store_path(root);
+    // The temporary path is deliberately unpredictable and created with
+    // `create_new`. A predictable `File::create` would follow an attacker-
+    // planted symlink before the final atomic rename, turning a local store
+    // write into an arbitrary-file overwrite.
     let tmp = root.join(format!(
-        "execution-commit-local.v2.{}.tmp",
-        std::process::id()
+        "execution-commit-local.v2.{}.{}.tmp",
+        std::process::id(),
+        Uuid::new_v4()
     ));
     let mut authenticated = store.clone();
     authenticated.integrity_tag.clear();
@@ -296,7 +306,13 @@ fn persist(
         });
     }
     {
-        let mut file = File::create(&tmp).map_err(|e| CommitLocalError::Io(e.to_string()))?;
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .read(true)
+            .write(true)
+            .open(&tmp)
+            .map_err(|e| CommitLocalError::Io(e.to_string()))?;
+        restrict_permissions(&file)?;
         file.write_all(&bytes)
             .map_err(|e| CommitLocalError::Io(e.to_string()))?;
         file.sync_all()
@@ -306,6 +322,45 @@ fn persist(
     // Best-effort directory sync for crash durability on POSIX.
     if let Ok(dir) = File::open(root) {
         let _ = dir.sync_all();
+    }
+    Ok(())
+}
+
+fn reject_symlink(path: &Path, label: &str) -> Result<(), CommitLocalError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() {
+                Err(CommitLocalError::AuthenticationFailed(format!(
+                    "local {label} path '{}' must not be a symlink",
+                    path.display()
+                )))
+            } else {
+                Ok(())
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(CommitLocalError::Io(error.to_string())),
+    }
+}
+
+fn verify_store_root(root: &Path) -> Result<(), CommitLocalError> {
+    let metadata =
+        fs::symlink_metadata(root).map_err(|error| CommitLocalError::Io(error.to_string()))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(CommitLocalError::AuthenticationFailed(format!(
+            "local store root '{}' must be a real directory",
+            root.display()
+        )));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o022 != 0 {
+            return Err(CommitLocalError::AuthenticationFailed(format!(
+                "local store root '{}' is group/world writable",
+                root.display()
+            )));
+        }
     }
     Ok(())
 }

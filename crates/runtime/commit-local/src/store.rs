@@ -72,6 +72,8 @@ pub enum CommitLocalError {
     OutputScopeMismatch { output_ref: String },
     #[error("session output {output_ref} is already committed")]
     OutputAlreadyCommitted { output_ref: String },
+    #[error("commit-local program state version is exhausted")]
+    VersionExhausted,
 }
 
 /// One authoritative instance record after a successful atomic commit.
@@ -467,7 +469,9 @@ impl CommitLocalStore {
             return Ok(result);
         }
 
-        let new_version = current + 1;
+        let new_version = current
+            .checked_add(1)
+            .ok_or(CommitLocalError::VersionExhausted)?;
         let evidence_position_ref = format!(
             "evidence:{}:{new_version}",
             request.program_invocation_ref.as_str()

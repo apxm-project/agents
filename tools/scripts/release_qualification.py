@@ -44,6 +44,21 @@ LOCAL_ARTIFACT_SCHEMA = "apxm.agents.local-release-artifact.v1"
 LOCAL_ARTIFACT_MANIFEST_REL = Path("apxm.agents-local-release-artifact.v1.json")
 CONSUMER_VERIFICATION_SCHEMA = "apxm.agents.release-consumer-verification.v1"
 
+
+def default_release_package_dir(root: Path, source_revision: str) -> Path:
+    """Return the write-once package location for one source cohort.
+
+    ``current`` is intentionally not a mutable promotion slot: an existing
+    package there may be the evidence for an older cohort.  New releases are
+    therefore materialized under a source-derived cohort directory.  The
+    short directory name is only a filesystem label; the package manifest
+    still binds the complete revision and rejects a prefix collision.
+    """
+
+    if not HEX40.fullmatch(source_revision):
+        raise ValueError("cannot derive a release package path without a full lowercase source revision")
+    return root / ".apxm" / "release-artifacts" / f"cohort-{source_revision[:8]}"
+
 SOURCE_DESCRIPTOR_SCHEMA = "apxm.agents-source-revision.v1"
 OWNER_DESCRIPTOR_SCHEMA = "apxm.agents-owner-descriptor.v1"
 RELEASE_MANIFEST_SCHEMA = "apxm.agents-service-release-manifest.v1"
@@ -1103,7 +1118,7 @@ def _package_payload(result: Qualification, root: Path) -> dict[str, Any]:
 def package_release(
     root: Path,
     *,
-    output_dir: Path,
+    output_dir: Path | None = None,
     compilation_service_path: str | None = None,
     runtime_service_path: str | None = None,
     run_gates: bool = True,
@@ -1130,7 +1145,7 @@ def package_release(
     source_revision = payload["source_revision"]
     if not isinstance(source_revision, str) or not HEX40.fullmatch(source_revision):
         raise ValueError("qualified release has no immutable source revision to package")
-    package_root = output_dir.expanduser()
+    package_root = (output_dir or default_release_package_dir(root, source_revision)).expanduser()
     if not package_root.is_absolute():
         package_root = root / package_root
     package_root = package_root.resolve()
@@ -1139,6 +1154,21 @@ def package_release(
     if package_root.is_symlink() or (package_root.exists() and not package_root.is_dir()):
         raise ValueError(f"release package root is not a regular directory: {package_root}")
     package_root.mkdir(parents=True, exist_ok=True)
+    existing_manifest = _resolve_regular_file(
+        package_root, package_root / LOCAL_ARTIFACT_MANIFEST_REL
+    )
+    if existing_manifest is not None:
+        try:
+            existing_document = json.loads(existing_manifest.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError(
+                f"release package cohort already exists with an invalid immutable manifest: {package_root}"
+            ) from exc
+        if not isinstance(existing_document, dict) or existing_document.get("source_revision") != source_revision:
+            raise ValueError(
+                "release package cohort directory collides with a different source revision: "
+                f"{package_root}"
+            )
 
     manifest = _load_json(
         root, root / RELEASE_MANIFEST_REL, result.diagnostics, "release manifest"
@@ -1794,7 +1824,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     package_parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path(".apxm/release-artifacts/current"),
+        default=None,
     )
     package_parser.add_argument("--compilation-service")
     package_parser.add_argument("--runtime-service")
@@ -1859,6 +1889,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "APXM local release artifact qualification: "
                 + ("PASS" if payload.get("qualified") else "FAIL")
             )
+            package = payload.get("package")
+            if isinstance(package, dict):
+                print(f"package.root: {package.get('root', '')}")
+                print(f"package.manifest_digest: {package.get('manifest_digest', '')}")
             for diagnostic in payload.get("diagnostics", []):
                 print(
                     f"[{diagnostic.get('code')}] {diagnostic.get('message')}",

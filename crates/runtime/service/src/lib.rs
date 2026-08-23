@@ -19,11 +19,11 @@ pub use stdio::{
     UnixEndpoint, decode_jsonl, encode_jsonl, handshake_cross_wired, serve_stdio, serve_unix,
 };
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::io::Read;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use apxm_ais::permissions::PermissionDecision;
@@ -121,8 +121,9 @@ pub struct RuntimeService {
     admission_meta: BTreeMap<String, StateEntry>,
     admission_bytes: u64,
     instances: BTreeMap<String, InstanceState>,
+    invocation_index: BTreeMap<String, String>,
     instance_bytes: u64,
-    applications: Vec<ApplicationState>,
+    applications: BTreeMap<String, ApplicationState>,
     application_bytes: u64,
     reservations: BTreeMap<(String, u64), ReservationState>,
     reservation_bytes: u64,
@@ -134,6 +135,7 @@ pub struct RuntimeService {
     package_root: Option<PathBuf>,
     sandbox_registry: Option<Arc<SandboxRegistry>>,
     observer: RecordingObserver,
+    observation_bytes: Mutex<u64>,
     broker: Arc<dyn ApprovalBroker>,
     cancelled: BTreeMap<String, StateEntry>,
     cancellation_bytes: u64,
@@ -160,8 +162,9 @@ impl RuntimeService {
             admission_meta: BTreeMap::new(),
             admission_bytes: 0,
             instances: BTreeMap::new(),
+            invocation_index: BTreeMap::new(),
             instance_bytes: 0,
-            applications: Vec::new(),
+            applications: BTreeMap::new(),
             application_bytes: 0,
             reservations: BTreeMap::new(),
             reservation_bytes: 0,
@@ -173,6 +176,7 @@ impl RuntimeService {
             package_root: None,
             sandbox_registry: None,
             observer: RecordingObserver::default(),
+            observation_bytes: Mutex::new(0),
             broker: Arc::new(DenyBroker),
             cancelled: BTreeMap::new(),
             cancellation_bytes: 0,
@@ -244,23 +248,22 @@ struct ReservationState {
 }
 
 struct ApplicationState {
-    idempotency_key: String,
     event_ref: CanonicalEventRef,
     payload: Value,
     state_entry: StateEntry,
 }
 
 impl RuntimeService {
-    fn now(&self) -> Instant {
+    fn now() -> Instant {
         // Instant is monotonic, so expiry is not affected by wall-clock
         // adjustments or an operator changing the system time.
         Instant::now()
     }
 
-    fn entry(&self, bytes: u64, ttl: Duration) -> StateEntry {
+    fn entry(bytes: u64, ttl: Duration) -> StateEntry {
         StateEntry {
             bytes,
-            expires_at: self.now().checked_add(ttl).unwrap_or_else(|| self.now()),
+            expires_at: Self::now().checked_add(ttl).unwrap_or_else(Self::now),
         }
     }
 
@@ -302,7 +305,7 @@ impl RuntimeService {
     /// Remove only entries whose typed TTL has elapsed. No live owner claim,
     /// invocation idempotency record, or event application is evicted.
     pub fn cleanup_expired(&mut self) {
-        let now = self.now();
+        let now = Self::now();
 
         let expired_instances = self
             .instances
@@ -311,6 +314,10 @@ impl RuntimeService {
             .collect::<Vec<_>>();
         for id in expired_instances {
             if let Some(instance) = self.instances.remove(&id) {
+                if let Some(invocation) = instance.invocation.as_ref() {
+                    self.invocation_index
+                        .remove(&invocation.program_invocation_id);
+                }
                 self.instance_bytes = self
                     .instance_bytes
                     .saturating_sub(instance.state_entry.bytes);
@@ -331,16 +338,19 @@ impl RuntimeService {
             }
         }
 
+        // Build the active-artifact index once. Checking every instance for
+        // every expired artifact turns cleanup into an avoidable O(artifacts ×
+        // instances) scan under load.
+        let active_artifacts = self
+            .instances
+            .values()
+            .map(|instance| instance.artifact_digest.as_str())
+            .collect::<BTreeSet<_>>();
         let expired_artifacts = self
             .artifact_meta
             .iter()
             .filter_map(|(digest, entry)| {
-                if entry.expired(now)
-                    && !self
-                        .instances
-                        .values()
-                        .any(|instance| instance.artifact_digest == *digest)
-                {
+                if entry.expired(now) && !active_artifacts.contains(digest.as_str()) {
                     Some(digest.clone())
                 } else {
                     None
@@ -376,17 +386,19 @@ impl RuntimeService {
             }
         });
 
-        let mut remaining_applications = Vec::with_capacity(self.applications.len());
-        for application in self.applications.drain(..) {
+        let mut expired_application_bytes = 0_u64;
+        self.applications.retain(|_, application| {
             if application.state_entry.expired(now) {
-                self.application_bytes = self
-                    .application_bytes
-                    .saturating_sub(application.state_entry.bytes);
+                expired_application_bytes =
+                    expired_application_bytes.saturating_add(application.state_entry.bytes);
+                false
             } else {
-                remaining_applications.push(application);
+                true
             }
-        }
-        self.applications = remaining_applications;
+        });
+        self.application_bytes = self
+            .application_bytes
+            .saturating_sub(expired_application_bytes);
 
         self.cancelled.retain(|_, entry| {
             if entry.expired(now) {
@@ -400,7 +412,7 @@ impl RuntimeService {
         if self.last_output_at.is_some_and(|created| {
             created
                 .checked_add(self.state_policy.last_output.ttl)
-                .map_or(true, |expiry| now >= expiry)
+                .is_none_or(|expiry| now >= expiry)
         }) {
             self.last_output = None;
             self.last_output_at = None;
@@ -471,7 +483,7 @@ impl RuntimeService {
         self.artifacts.commit(bytes);
         self.artifact_meta.insert(
             digest.clone(),
-            self.entry(size, self.state_policy.artifacts.ttl),
+            Self::entry(size, self.state_policy.artifacts.ttl),
         );
         self.artifact_bytes = self.artifact_bytes.saturating_add(size);
         Ok(())
@@ -556,7 +568,7 @@ impl RuntimeService {
             .saturating_sub(prior_size)
             .checked_add(size)
             .ok_or_else(|| Self::quota_code("admission"))?;
-        if self.artifact_admissions.get(artifact_digest).is_none()
+        if !self.artifact_admissions.contains_key(artifact_digest)
             && !Self::quota_available(
                 self.state_policy.admissions,
                 self.artifact_admissions.len(),
@@ -570,7 +582,7 @@ impl RuntimeService {
             .insert(artifact_digest.to_owned(), materials);
         self.admission_meta.insert(
             artifact_digest.to_owned(),
-            self.entry(size, self.state_policy.admissions.ttl),
+            Self::entry(size, self.state_policy.admissions.ttl),
         );
         self.admission_bytes = next_bytes;
         Ok(())
@@ -582,7 +594,7 @@ impl RuntimeService {
         if self.last_output_at.is_some_and(|created| {
             created
                 .checked_add(self.state_policy.last_output.ttl)
-                .map_or(true, |expiry| Instant::now() >= expiry)
+                .is_none_or(|expiry| Instant::now() >= expiry)
         }) {
             return None;
         }
@@ -710,7 +722,7 @@ impl RuntimeService {
                 owner_claim: owner_claim.clone(),
                 invocation: None,
                 invocation_bytes: 0,
-                state_entry: self.entry(material_bytes, self.state_policy.instances.ttl),
+                state_entry: Self::entry(material_bytes, self.state_policy.instances.ttl),
             },
         );
         self.instance_bytes = self.instance_bytes.saturating_add(material_bytes);
@@ -794,8 +806,7 @@ impl RuntimeService {
         let aggregate_instance_bytes = self
             .instance_bytes
             .saturating_sub(instance_base_bytes)
-            .checked_add(instance_with_input)
-            .unwrap_or(u64::MAX);
+            .saturating_add(instance_with_input);
         if aggregate_instance_bytes > self.state_policy.instances.max_bytes {
             return RuntimeResult::Failed {
                 request_id,
@@ -839,7 +850,7 @@ impl RuntimeService {
         // The service owns the invocation identity. Keep the externally
         // supplied admission fields intact except for this runtime-minted
         // identity, which is not caller-authoritative.
-        materials.admission.invocation_id = invocation_id.clone();
+        materials.admission.invocation_id.clone_from(&invocation_id);
         let result = match block_on(execute_admitted_artifact_with_sandbox(
             air,
             &bytes,
@@ -884,7 +895,7 @@ impl RuntimeService {
                     );
                 }
                 self.last_output = Some(output);
-                self.last_output_at = Some(self.now());
+                self.last_output_at = Some(Self::now());
                 self.last_output_bytes = output_bytes;
                 RuntimeResult::ProgramInvocationStarted {
                     request_id: request_id.clone(),
@@ -906,9 +917,11 @@ impl RuntimeService {
             instance.invocation = Some(InvocationState {
                 request_id: request_id.clone(),
                 input_fingerprint,
-                program_invocation_id: invocation_id,
+                program_invocation_id: invocation_id.clone(),
                 result: result.clone(),
             });
+            self.invocation_index
+                .insert(invocation_id, program_instance_id.clone());
         }
         result
     }
@@ -925,12 +938,13 @@ impl RuntimeService {
                 code: "invalid_owner_claim".to_owned(),
             };
         }
-        let Some(instance) = self.instances.values().find(|instance| {
-            instance
-                .invocation
-                .as_ref()
-                .is_some_and(|invocation| invocation.program_invocation_id == program_invocation_id)
-        }) else {
+        let Some(instance_id) = self.invocation_index.get(&program_invocation_id).cloned() else {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "unknown_invocation".to_owned(),
+            };
+        };
+        let Some(instance) = self.instances.get(&instance_id) else {
             return RuntimeResult::Failed {
                 request_id,
                 code: "unknown_invocation".to_owned(),
@@ -957,7 +971,7 @@ impl RuntimeService {
                 code: Self::quota_code("cancellation"),
             };
         }
-        let mut marker = self.entry(marker_bytes, self.state_policy.cancellations.ttl);
+        let mut marker = Self::entry(marker_bytes, self.state_policy.cancellations.ttl);
         if let Some(invocation) = instance.invocation.as_ref() {
             if marker.expires_at < instance.state_entry.expires_at {
                 marker.expires_at = instance.state_entry.expires_at;
@@ -993,19 +1007,20 @@ impl RuntimeService {
             return false;
         };
         let mut observations = self.observer.observations.lock().expect("observer lock");
-        let current_bytes = observations
-            .iter()
-            .filter_map(Self::observation_size)
-            .sum::<u64>();
+        let mut current_bytes = self
+            .observation_bytes
+            .lock()
+            .expect("observation byte counter lock");
         if !Self::quota_available(
             self.state_policy.observations,
             observations.len(),
-            current_bytes,
+            *current_bytes,
             size,
         ) {
             return false;
         }
         observations.push(observation);
+        *current_bytes = (*current_bytes).saturating_add(size);
         true
     }
 
@@ -1049,12 +1064,12 @@ impl RuntimeService {
                 }
             }
         }
-        if output.get("content").is_some() {
-            if !self.record_observation(Observation::ProvisionalContent {
+        if output.get("content").is_some()
+            && !self.record_observation(Observation::ProvisionalContent {
                 content_ref: format!("content:{commit_id}"),
-            }) {
-                return false;
-            }
+            })
+        {
+            return false;
         }
         self.record_observation(Observation::TerminalCommit {
             commit_id: commit_id.to_owned(),
@@ -1101,7 +1116,7 @@ impl RuntimeService {
             ReservationState {
                 owner_claim: owner_claim.clone(),
                 _type_id: type_id,
-                state_entry: self.entry(type_bytes, self.state_policy.reservations.ttl),
+                state_entry: Self::entry(type_bytes, self.state_policy.reservations.ttl),
             },
         );
         self.reservation_bytes = self.reservation_bytes.saturating_add(type_bytes);
@@ -1135,11 +1150,7 @@ impl RuntimeService {
             return Err(ProtocolError::OwnerMismatch);
         }
         let key = application.idempotency_key.clone();
-        if let Some(prior) = self
-            .applications
-            .iter()
-            .find(|item| item.idempotency_key == key)
-        {
+        if let Some(prior) = self.applications.get(&key) {
             if prior.payload != application.occurrence.payload
                 || prior.event_ref != application.event_ref
             {
@@ -1175,12 +1186,14 @@ impl RuntimeService {
                 result: EventApplicationResult::Rejected,
             });
         }
-        self.applications.push(ApplicationState {
-            idempotency_key: key,
-            event_ref: application.event_ref.clone(),
-            payload: application.occurrence.payload.clone(),
-            state_entry: self.entry(application_bytes, self.state_policy.applications.ttl),
-        });
+        self.applications.insert(
+            key.clone(),
+            ApplicationState {
+                event_ref: application.event_ref.clone(),
+                payload: application.occurrence.payload.clone(),
+                state_entry: Self::entry(application_bytes, self.state_policy.applications.ttl),
+            },
+        );
         self.application_bytes = self.application_bytes.saturating_add(application_bytes);
         // Event application is the only wake authority. A fulfill with no
         // parked continuation still records the application; it does not

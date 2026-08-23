@@ -12,7 +12,7 @@ use super::graph_meta::mechanisms;
 use crate::llm::backends::graph_hint_dispatch::{
     merge_projected_provider_fields, record_graph_hint_evidence, stream_with_graph_hint_evidence,
 };
-use crate::llm::backends::http::llm_http_client;
+use crate::llm::backends::http::{llm_http_client, read_provider_error_body, read_provider_json};
 use crate::llm::backends::openai::OpenAIBackend;
 use crate::llm::backends::openai::backend::validate_provider_dispatch;
 use crate::llm::backends::required_config_string;
@@ -330,7 +330,12 @@ impl GraphAwareVllmBackend {
 
         match response {
             Ok(resp) if resp.status().is_success() => {
-                let info = resp.json::<SchedulerInfoResponse>().await;
+                let info = read_provider_json::<SchedulerInfoResponse>(
+                    resp,
+                    "Failed to parse vLLM scheduler response",
+                    &[self.inner.api_key_for_redaction()],
+                )
+                .await;
                 match info {
                     Ok(info) if info.policy == super::graph_meta::SCHEDULER_POLICY_PRIORITY => {
                         *self.scheduler_policy.write() = Some(info.policy);
@@ -368,9 +373,12 @@ impl GraphAwareVllmBackend {
                 }
             }
             Ok(resp) if resp.status() == reqwest::StatusCode::NOT_FOUND => {
+                let body =
+                    read_provider_error_body(resp, &[self.inner.api_key_for_redaction()]).await;
                 *self.scheduler_policy.write() = None;
                 if !self.scheduler_policy_warned.swap(true, Ordering::Relaxed) {
                     tracing::warn!(
+                        body = %body,
                         url = %url,
                         "vLLM fork is missing /v1/apxm/scheduler — likely an older fork \
                          build. Cannot verify scheduler policy; APXM priority hints may be \
@@ -380,9 +388,13 @@ impl GraphAwareVllmBackend {
                 }
             }
             Ok(resp) => {
+                let status = resp.status();
+                let body =
+                    read_provider_error_body(resp, &[self.inner.api_key_for_redaction()]).await;
                 if !self.scheduler_policy_warned.swap(true, Ordering::Relaxed) {
                     tracing::warn!(
-                        status = %resp.status(),
+                        status = %status,
+                        body = %body,
                         url = %url,
                         "vLLM scheduler-info probe returned an unexpected status; \
                          priority hint behavior is unverified."
@@ -449,14 +461,17 @@ impl GraphAwareVllmBackend {
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
+            let body =
+                read_provider_error_body(response, &[self.inner.api_key_for_redaction()]).await;
             anyhow::bail!("Graph registration failed: {} - {}", status, body);
         }
 
-        let registered = response
-            .json()
-            .await
-            .context("Failed to parse graph registration response")?;
+        let registered: GraphRegisterResponse = read_provider_json(
+            response,
+            "Failed to parse graph registration response",
+            &[self.inner.api_key_for_redaction()],
+        )
+        .await?;
         self.probe_scheduler_policy().await;
         Ok(registered)
     }
@@ -476,14 +491,17 @@ impl GraphAwareVllmBackend {
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
+            let body =
+                read_provider_error_body(response, &[self.inner.api_key_for_redaction()]).await;
             anyhow::bail!("Graph release failed: {} - {}", status, body);
         }
 
-        response
-            .json()
-            .await
-            .context("Failed to parse graph release response")
+        read_provider_json(
+            response,
+            "Failed to parse graph release response",
+            &[self.inner.api_key_for_redaction()],
+        )
+        .await
     }
 
     /// Get the current status for a registered graph (typed).
@@ -499,14 +517,17 @@ impl GraphAwareVllmBackend {
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
+            let body =
+                read_provider_error_body(response, &[self.inner.api_key_for_redaction()]).await;
             anyhow::bail!("Graph status request failed: {} - {}", status, body);
         }
 
-        response
-            .json()
-            .await
-            .context("Failed to parse graph status response")
+        read_provider_json(
+            response,
+            "Failed to parse graph status response",
+            &[self.inner.api_key_for_redaction()],
+        )
+        .await
     }
 
     /// Shape one provider request through the projector.
@@ -633,20 +654,29 @@ impl LLMBackend for GraphAwareVllmBackend {
         {
             Ok(response) if response.status().is_success() => {}
             Ok(response) if response.status() == reqwest::StatusCode::NOT_FOUND => {
+                let body =
+                    read_provider_error_body(response, &[self.inner.api_key_for_redaction()]).await;
                 anyhow::bail!(
                     "vLLM server at {} does not expose /v1/apxm/* endpoints. \
                      This is stock vLLM, which silently drops vllm_xargs.apxm \
                      scheduling hints. Install and run the graph-aware fork, \
-                     or register vanilla vLLM under the OpenAIBackend type instead.",
-                    url
+                     or register vanilla vLLM under the OpenAIBackend type instead. \
+                     Response body: {}",
+                    url,
+                    body,
                 );
             }
             Ok(response) => {
+                let status = response.status();
+                let body =
+                    read_provider_error_body(response, &[self.inner.api_key_for_redaction()]).await;
                 anyhow::bail!(
                     "vLLM server at {} exposes the APXM graph route but it is not ready \
-                     (status {}). Check the fork server logs and rerun the vLLM probe.",
+                     (status {}). Check the fork server logs and rerun the vLLM probe. \
+                     Response body: {}",
                     url,
-                    response.status(),
+                    status,
+                    body,
                 );
             }
             Err(err) => {
@@ -667,7 +697,13 @@ impl LLMBackend for GraphAwareVllmBackend {
             .await
         {
             Ok(response) if response.status().is_success() => {
-                if let Ok(body) = response.json::<SchedulerInfoResponse>().await {
+                if let Ok(body) = read_provider_json::<SchedulerInfoResponse>(
+                    response,
+                    "Failed to parse vLLM scheduler response",
+                    &[self.inner.api_key_for_redaction()],
+                )
+                .await
+                {
                     let policy = body.policy.clone();
                     *self.scheduler_policy.write() = Some(policy);
                     (*self.dispatch_ir_version.write()).clone_from(&body.dispatch_ir_version);
@@ -691,19 +727,27 @@ impl LLMBackend for GraphAwareVllmBackend {
                 }
             }
             Ok(response) if response.status() == reqwest::StatusCode::NOT_FOUND => {
+                let body =
+                    read_provider_error_body(response, &[self.inner.api_key_for_redaction()]).await;
                 anyhow::bail!(
                     "vLLM server at {} is missing /v1/apxm/scheduler. The APXM \
                      fork exposes this route to advertise scheduler policy; its \
-                     absence means this is stock vLLM. Install and run the fork.",
+                     absence means this is stock vLLM. Install and run the fork. \
+                     Response body: {}",
                     scheduler_url,
+                    body,
                 );
             }
             Ok(response) => {
+                let status = response.status();
+                let body =
+                    read_provider_error_body(response, &[self.inner.api_key_for_redaction()]).await;
                 anyhow::bail!(
                     "vLLM server at {} returned status {} for /v1/apxm/scheduler. \
-                     Check the fork server logs.",
+                     Check the fork server logs. Response body: {}",
                     scheduler_url,
-                    response.status(),
+                    status,
+                    body,
                 );
             }
             Err(err) => {
