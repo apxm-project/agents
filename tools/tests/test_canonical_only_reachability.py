@@ -150,6 +150,52 @@ RETIRED_OPERATION_MARKERS = (
     "get_all_legacy_operations",
     "get_legacy_operation_spec",
 )
+RETIRED_SESSION_PATHS = (
+    Path("crates/machine/contracts/src/types/session"),
+)
+RETIRED_SESSION_MARKERS = (
+    "SessionManifest",
+    "LiveSessionState",
+    "session_node_dir_name",
+    "sessions_dir",
+    "constants::session",
+    "SessionStartPayload",
+    "SessionEndPayload",
+    "SESSION_START",
+    "SESSION_END",
+    "WORKFLOW_STARTED",
+    "WORKFLOW_STEP_STARTED",
+    "WORKFLOW_STEP_COMPLETED",
+    "WORKFLOW_FINISHED",
+    "WorkflowStartedPayload",
+    "WorkflowStepStartedPayload",
+    "WorkflowStepCompletedPayload",
+    "WorkflowFinishedPayload",
+    "workflow_started",
+    "workflow_step_started",
+    "workflow_step_completed",
+    "workflow_finished",
+    "session_start",
+    "session_end",
+    "agents session",
+    "session list",
+    "session inspect",
+    "session diff",
+    "session clean",
+    "APXM_STATE_HOME",
+    "last_output",
+    "SessionLedger",
+    "session_ledger",
+    "ExecutionObserver",
+    "RecordingObserver",
+    "ProgramExecutionProvenance",
+    "inspect_ok",
+    "not HTTP-owned mutations",
+    '"unspecified"',
+    "classify_outcome",
+    "output_is_waiting_event",
+    "(no observations)",
+)
 
 
 def buildable_source(text: str) -> str:
@@ -175,6 +221,37 @@ class CanonicalOnlyReachabilityTests(unittest.TestCase):
                 (REPOSITORY_ROOT / path).exists(),
                 f"retired execution directory remains reachable: {path}",
             )
+
+    def test_legacy_session_surface_is_absent(self) -> None:
+        for path in RETIRED_SESSION_PATHS:
+            self.assertFalse(
+                (REPOSITORY_ROOT / path).exists(),
+                f"retired session path remains reachable: {path}",
+            )
+        roots = (
+            REPOSITORY_ROOT / "crates/machine/contracts/src",
+            REPOSITORY_ROOT / "crates/observability/src",
+            REPOSITORY_ROOT / "crates/tools/interaction-client/src",
+            REPOSITORY_ROOT / "crates/tools/cli/src",
+            REPOSITORY_ROOT / "crates/tools/cli/generated",
+            REPOSITORY_ROOT / "crates/runtime/execution/src",
+            REPOSITORY_ROOT / "crates/runtime/service/src",
+            REPOSITORY_ROOT / "crates/runtime/service-protocol/src",
+            REPOSITORY_ROOT / "crates/runtime/event-http/src",
+            REPOSITORY_ROOT / "crates/tools/cli-dev/src/commands",
+            REPOSITORY_ROOT / ".dekk.toml",
+        )
+        offenders: list[str] = []
+        for root in roots:
+            paths = [root] if root.is_file() else root.rglob("*")
+            for path in paths:
+                if not path.is_file() or path.suffix not in {".rs", ".toml", ".ts", ".py"}:
+                    continue
+                text = path.read_text(errors="ignore")
+                markers = [marker for marker in RETIRED_SESSION_MARKERS if marker in text]
+                if markers:
+                    offenders.append(f"{path.relative_to(REPOSITORY_ROOT)}: {', '.join(markers)}")
+        self.assertEqual(offenders, [], "\n".join(offenders))
 
     def test_retired_frontend_builder_files_are_absent(self) -> None:
         for path in RETIRED_FILES:

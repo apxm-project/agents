@@ -8,8 +8,7 @@ endpoint, or runtime object.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Optional, TypeVar
+from typing import Any, NamedTuple, Optional, TypeVar
 
 from ._generated.capabilities import BUILTIN_CAPABILITIES
 from ._generated.diagnostics import (
@@ -35,8 +34,6 @@ from ._generated.frontend_graph import (
     SKILL_INSTRUCTION_KIND_INLINE,
 )
 from ._generated.frontend_records import (
-    SkillEntrySource,
-    SkillInlineSource,
     SkillInstructionSource,
 )
 from ._generated.permissions import PERMISSION_DECISIONS, Permission
@@ -60,8 +57,7 @@ def _type_name(annotation: Any, fallback: str) -> str:
     return getattr(annotation, "__name__", str(annotation))
 
 
-@dataclass(frozen=True, slots=True)
-class ModelBinding:
+class ModelBinding(NamedTuple):
     """An exact typed model target. Calling it records a model invocation."""
 
     target_ref: str
@@ -72,8 +68,7 @@ class ModelBinding:
         raise RuntimeError("a Model is invoked inside a compiled Agent body")
 
 
-@dataclass(frozen=True, slots=True)
-class ToolBinding:
+class ToolBinding(NamedTuple):
     """A static model-callable capability reference."""
 
     target_ref: str
@@ -85,8 +80,7 @@ class ToolBinding:
         raise RuntimeError("a Tool is invoked inside a compiled Agent body")
 
 
-@dataclass(frozen=True, slots=True)
-class CapabilityBinding:
+class CapabilityBinding(NamedTuple):
     """A static executable capability reference that is not a Tool."""
 
     target_ref: str
@@ -98,8 +92,7 @@ class CapabilityBinding:
         raise RuntimeError("a Capability is invoked inside a compiled Agent body")
 
 
-@dataclass(frozen=True, slots=True)
-class EventType:
+class EventType(NamedTuple):
     """A typed durable event reference whose wait records an event wait."""
 
     type_ref: str
@@ -111,8 +104,21 @@ class EventType:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class SkillDecl:
+class _SkillEntrySource(NamedTuple):
+    """Immutable internal representation of a package-carried skill source."""
+
+    kind: str
+    path: str
+
+
+class _SkillInlineSource(NamedTuple):
+    """Immutable internal representation of an inline skill source."""
+
+    kind: str
+    text: str
+
+
+class SkillDecl(NamedTuple):
     """A declared Agent Skill: instructions plus where they live.
 
     Loading one is an ordinary Capability invocation, not a construct of its
@@ -130,15 +136,21 @@ class SkillDecl:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class ContextSchema:
+class ContextSchema(NamedTuple):
     """The typed initial and persistent Program Context schema."""
 
     type_ref: str
     default_present: bool
 
 
-class _TypedFactory:
+class _FrozenFactoryType(type):
+    """Keep marker factory methods immutable after the frontend loads."""
+
+    def __setattr__(cls, name: str, value: Any) -> None:
+        raise AttributeError("authoring marker factories are immutable after import")
+
+
+class _TypedFactory(metaclass=_FrozenFactoryType):
     """A marker whose type parameters are supplied by subscription.
 
     ``_type_parameters`` names them in order. It is the Python spelling of the
@@ -266,7 +278,7 @@ def Skill(
                 f"{SKILL_INSTRUCTIONS_OVERLONG}: Skill '{skill_id}' states an empty "
                 f"or oversized body; a loaded skill is at most {MAX_INSTRUCTION_BYTES} bytes"
             )
-        source = SkillInlineSource(kind=SKILL_INSTRUCTION_KIND_INLINE, text=text)
+        source = _SkillInlineSource(kind=SKILL_INSTRUCTION_KIND_INLINE, text=text)
     else:
         expected = _skill_entry_path(skill_id)
         if entry != expected:
@@ -274,7 +286,7 @@ def Skill(
                 f"{SKILL_ENTRY_PATH_NOT_CANONICAL}: Skill '{skill_id}' carries its "
                 f"instructions at '{expected}', not '{entry}'"
             )
-        source = SkillEntrySource(kind=SKILL_INSTRUCTION_KIND_ENTRY, path=expected)
+        source = _SkillEntrySource(kind=SKILL_INSTRUCTION_KIND_ENTRY, path=expected)
     return SkillDecl(skill_id=skill_id, instruction_source=source)
 
 

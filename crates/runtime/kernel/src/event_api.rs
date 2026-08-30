@@ -84,6 +84,8 @@ pub enum EventApplicationResult {
 /// Frozen Event HTTP route names. Framing lives in a later edge crate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EventHttpMethod {
+    /// GET authorized pending EventRefs.
+    List,
     /// POST reserve.
     Reserve,
     /// GET inspect.
@@ -101,6 +103,7 @@ impl EventHttpMethod {
     #[must_use]
     pub const fn path(self) -> &'static str {
         match self {
+            Self::List => "/v1/events",
             Self::Reserve => "/v1/events/reserve",
             Self::Inspect => "/v1/events/inspect",
             Self::Fulfill => "/v1/events/fulfill",

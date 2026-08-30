@@ -19,12 +19,11 @@ use apxm_ais::{SLOT_CAPABILITY_REF, SemanticOpKind};
 use apxm_compilation_protocol::{
     CompilationHandshake, CompilationRequest, CompilationResult, ProtocolError,
 };
-use apxm_program::air::AirModule;
+use apxm_program::{ExecutableArtifact, air::AirModule};
 use apxm_source_port::{
     Frontend, FrontendDrivers, FrontendRoots, PackageSnapshot, SnapshotError, SourceBundleRequest,
     compile_source_bundle, content_digest,
 };
-use sha2::{Digest, Sha256};
 
 /// In-memory artifact store used to prove commit versus crash reconciliation.
 #[derive(Default)]
@@ -92,7 +91,8 @@ impl CompilationService {
         service
     }
 
-    /// Persist committed AIR under `dir` so a Runtime child can load the digest.
+    /// Persist committed executable artifacts under `dir` so a Runtime child
+    /// can load and verify the exact canonical envelope.
     #[must_use]
     pub fn with_artifact_dir(mut self, dir: PathBuf) -> Self {
         self.artifact_dir = Some(dir);
@@ -151,17 +151,25 @@ impl CompilationService {
         self.idempotency.insert(idempotency_key, fingerprint);
 
         match compile_snapshot(&snapshot, &self.roots, &self.drivers) {
-            Ok(air_json) => {
-                let artifact_digest = format!("sha256:{:x}", Sha256::digest(air_json.as_bytes()));
+            Ok(artifact_json) => {
+                let artifact = ExecutableArtifact::decode(artifact_json.as_bytes())
+                    .map_err(|_| ProtocolError::InvalidRequest)?;
+                let artifact_digest = artifact.artifact_digest.clone();
+                let execution_lineage_ref = artifact
+                    .execution_lineage_ref
+                    .clone()
+                    .ok_or(ProtocolError::InvalidRequest)?;
                 if let Some(dir) = &self.artifact_dir
-                    && persist_artifact(dir, &artifact_digest, air_json.as_bytes()).is_err()
+                    && persist_artifact(dir, &artifact_digest, artifact_json.as_bytes()).is_err()
                 {
                     return Ok(failed(&request_id, "artifact_persist"));
                 }
-                self.store.commit(artifact_digest.clone(), air_json);
+                self.store.commit(artifact_digest.clone(), artifact_json);
                 Ok(CompilationResult::ArtifactCommitted {
                     request_id,
                     artifact_digest,
+                    artifact,
+                    execution_lineage_ref,
                     build_key: format!("{}:{}", snapshot.frontend.wire(), snapshot.snapshot_digest),
                 })
             }
@@ -305,7 +313,9 @@ fn compile_snapshot(
     })?;
     check_capability_references(snapshot, &compiled.air)?;
     check_package_permissions(snapshot, &compiled.air, &manifest)?;
-    serde_json::to_string(&compiled.air).map_err(|error| error.to_string())
+    let artifact = ExecutableArtifact::from_graph_and_air(&compiled.frontend_graph, &compiled.air)
+        .map_err(|error| error.to_string())?;
+    serde_json::to_string(&artifact).map_err(|error| error.to_string())
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -837,19 +847,29 @@ export const Reviewer = Agent<ReviewRequest, Review>({
                 )
                 .unwrap();
             let CompilationResult::ArtifactCommitted {
-                artifact_digest, ..
+                artifact_digest,
+                execution_lineage_ref,
+                ..
             } = result
             else {
                 panic!("commit for {}", frontend.wire());
             };
+            assert!(execution_lineage_ref.starts_with("sha256:"));
             let bytes = service
                 .store()
                 .get(&artifact_digest)
-                .expect("store holds committed AIR");
-            let air: AirModule = serde_json::from_str(bytes).expect("AIR JSON");
+                .expect("store holds committed artifact");
+            let artifact = ExecutableArtifact::decode(bytes.as_bytes()).expect("artifact JSON");
+            assert_eq!(
+                artifact.artifact_digest,
+                artifact.canonical_digest().unwrap()
+            );
+            assert!(artifact.execution_lineage_ref.is_some());
+            assert_eq!(artifact.source_map, artifact.air.source_map);
+            let air = artifact.air;
             assert!(
                 !air.semantic_operations.is_empty(),
-                "{} artifact must be compiled AIR",
+                "{} artifact must contain compiled AIR",
                 frontend.wire()
             );
         }
@@ -902,7 +922,10 @@ async def Harness(agent, request):
         else {
             panic!("composed package must commit: {result:?}");
         };
-        let air = service.store().get(&artifact_digest).expect("AIR");
+        let air = service
+            .store()
+            .get(&artifact_digest)
+            .expect("artifact envelope");
         assert!(air.contains("\"op\":\"program.new\""), "{air}");
         assert!(air.contains("\"op\":\"program.invoke\""), "{air}");
         assert!(air.contains("\"op\":\"await.event\""), "{air}");

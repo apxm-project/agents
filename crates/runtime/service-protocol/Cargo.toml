@@ -13,7 +13,11 @@ description = "Native Runtime Service protocol types and in-memory peer vectors"
 workspace = true
 
 [dependencies]
+apxm-core.workspace = true
 apxm-kernel.workspace = true
+jsonschema.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
 uuid.workspace = true

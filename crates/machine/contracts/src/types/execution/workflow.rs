@@ -116,14 +116,8 @@ pub struct WorkflowInvocation {
     pub args: HashMap<String, serde_json::Value>,
     #[serde(default = "default_await_result")]
     pub await_result: bool,
-    #[serde(default)]
-    pub session_root: Option<String>,
-    #[serde(default)]
-    pub session_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_execution_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parent_session_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_scope_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

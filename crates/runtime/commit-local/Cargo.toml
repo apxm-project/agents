@@ -15,6 +15,7 @@ workspace = true
 [dependencies]
 apxm-kernel.workspace = true
 apxm-program.workspace = true
+apxm-runtime-protocol.workspace = true
 async-trait.workspace = true
 fs2.workspace = true
 serde.workspace = true

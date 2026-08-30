@@ -77,6 +77,12 @@ SERVICE_COORDINATE_ENV = {
 LINUX_X86_64_ELF_CLASS = 2
 LINUX_X86_64_ELF_DATA = 1
 LINUX_X86_64_MACHINE = 62
+LINUX_AARCH64_MACHINE = 183
+LINUX_SERVICE_ARCHITECTURES = {
+    "x86_64": LINUX_X86_64_MACHINE,
+    "arm64": LINUX_AARCH64_MACHINE,
+    "aarch64": LINUX_AARCH64_MACHINE,
+}
 
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -983,8 +989,14 @@ def generate_descriptors(
         )
         service = _resolve_regular_file(root, _rooted_path(root, raw_path))
         if service is None:
+            # Cross-platform release builders may supply an immutable
+            # artifact coordinate outside this checkout.  Qualification
+            # already verifies that coordinate against the release manifest;
+            # descriptor generation must be able to bind the same bytes.
+            service = _external_service_binding(name)
+        if service is None:
             raise ValueError(
-                f"publishable {name} must be a regular file inside the owner checkout: {raw_path}; supply the real {binary} binary"
+                f"publishable {name} must be a regular file: {raw_path}; supply the real {binary} binary"
             )
         if not os.access(service, os.X_OK):
             raise ValueError(f"publishable {name} is not executable: {service}")
@@ -1024,10 +1036,14 @@ def generate_descriptors(
         "services": [
             {
                 "name": name,
-                "path": _git_relative(root, services[name]),
+                "path": (
+                    _git_relative(root, services[name])
+                    if services[name].is_relative_to(root)
+                    else f"target/release/{name_for_path}"
+                ),
                 "digest": _digest_file(services[name]),
             }
-            for name, _ in SERVICE_ARTIFACTS
+            for name, name_for_path in SERVICE_ARTIFACTS
         ],
         "owner_descriptor_digest": owner_digest,
         "integrity_algorithm": "sha256",
@@ -1206,11 +1222,13 @@ def package_release(
             raise ValueError(f"qualified release has no local {name} service path")
         try:
             source_relative = source.resolve().relative_to(root)
-        except ValueError as error:
-            raise ValueError(
-                f"cannot package externally bound {name}; local owner packaging requires source-local executable bytes"
-            ) from error
-        if source_relative != manifest_path:
+        except ValueError:
+            # A cross-platform release is qualified on the owner checkout but
+            # its Linux executable is materialized by a separate builder. The
+            # package still copies those exact bytes into the manifest path;
+            # no external path is retained in the package identity.
+            source_relative = None
+        if source_relative is not None and source_relative != manifest_path:
             raise ValueError(
                 f"manifest path for {name} does not select the qualified executable: {manifest_path} != {source_relative}"
             )
@@ -1726,11 +1744,30 @@ def verify_package(package_dir: Path) -> dict[str, Any]:
     return payload
 
 
-def verify_linux_package(package_dir: Path) -> dict[str, Any]:
-    """Verify that a consumer package contains Linux x86_64 service bytes."""
+def verify_linux_package(
+    package_dir: Path, *, architecture: str = "x86_64"
+) -> dict[str, Any]:
+    """Verify that a consumer package contains Linux service bytes.
+
+    The package manifest binds the exact service bytes, while this explicit
+    consumer check binds the deployment architecture.  Keeping architecture
+    outside the owner manifest lets one immutable source cohort publish
+    independently qualified Linux x86_64 and arm64 service packages.
+    """
+
+    normalized_architecture = architecture.casefold()
+    if normalized_architecture == "aarch64":
+        normalized_architecture = "arm64"
+    expected_machine = LINUX_SERVICE_ARCHITECTURES.get(normalized_architecture)
+    if expected_machine is None:
+        raise ValueError(
+            "unsupported Linux service architecture: "
+            f"{architecture!r}; expected one of x86_64 or arm64"
+        )
 
     payload = verify_package(package_dir)
     if payload.get("qualified") is not True:
+        payload["qualification_scope"] = f"consumer-linux-{normalized_architecture}"
         return payload
 
     root = package_dir.expanduser().resolve()
@@ -1774,16 +1811,16 @@ def verify_linux_package(package_dir: Path) -> dict[str, Any]:
             )
             continue
         machine = int.from_bytes(header[18:20], byteorder="little")
-        if machine != LINUX_X86_64_MACHINE:
+        if machine != expected_machine:
             diagnostics.append(
                 {
                     "code": "unsupported-linux-service-architecture",
-                    "message": f"consumer package {name!r} is Linux ELF but not x86_64 (e_machine={machine}): {relative}",
-                    "remediation": "obtain the exact APXM Linux x86_64 service package required by the runtime owner",
+                    "message": f"consumer package {name!r} is Linux ELF but not {normalized_architecture} (e_machine={machine}): {relative}",
+                    "remediation": f"obtain the exact APXM Linux {normalized_architecture} service package required by the runtime owner",
                 }
             )
 
-    payload["qualification_scope"] = "consumer-linux-x86_64"
+    payload["qualification_scope"] = f"consumer-linux-{normalized_architecture}"
     payload["qualified"] = not diagnostics
     payload["diagnostics"] = diagnostics
     return payload
@@ -1843,6 +1880,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     verify_linux_parser.add_argument(
         "--package-dir", type=Path, default=Path(".apxm/release-artifacts/current")
+    )
+    verify_linux_parser.add_argument(
+        "--architecture",
+        choices=("x86_64", "arm64"),
+        default="x86_64",
+        help="Linux service architecture to verify (default: x86_64)",
     )
     verify_linux_parser.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args(list(argv) if argv is not None else None)
@@ -1915,12 +1958,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
         return 0 if payload.get("qualified") else 1
     if mode == "verify-linux-package":
-        payload = verify_linux_package(args.package_dir)
+        payload = verify_linux_package(args.package_dir, architecture=args.architecture)
         if args.as_json:
             print(json.dumps(payload, indent=2, sort_keys=True))
         else:
             print(
-                "APXM Linux x86_64 release package verification: "
+                f"APXM Linux {args.architecture} release package verification: "
                 + ("PASS" if payload.get("qualified") else "FAIL")
             )
             for diagnostic in payload.get("diagnostics", []):

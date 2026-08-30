@@ -12,6 +12,15 @@ import { declaredSoFar, recordDeclaration } from "./declared.js";
 import type { ContextSchema } from "./markers.js";
 import { stableDigest } from "./markers.js";
 
+// Capture host intrinsics before evaluated source runs.  The public handle is
+// consumed after source evaluation, so calls through mutable global JSON/Object
+// properties would otherwise let source replace the clone/freeze operations.
+const jsonParse = JSON.parse.bind(JSON);
+const jsonStringify = JSON.stringify.bind(JSON);
+const objectFreeze = Object.freeze.bind(Object);
+const objectValues = Object.values.bind(Object);
+const WeakSetConstructor = WeakSet;
+
 type AgentCallback<Context, Input, Output> = {
   context: Context;
   yield_(output: Output): Promise<Input>;
@@ -31,7 +40,33 @@ type AgentConfig<Input, Output, Context> = {
   run(agent: AgentCallback<Context, Input, Output>, input: Input): Promise<Output> | Output;
 };
 
+/**
+ * Keep captured graph data immutable while it crosses the evaluated-source
+ * boundary.  A shallow `readonly` type is not a runtime security boundary:
+ * submitted code can cast the graph to `any` and rewrite nested declarations
+ * or requirements after capture.  The graph is JSON data, so recursively
+ * freezing objects and arrays is both sufficient and deterministic.
+ */
+function freezeJson(value: Json): Json {
+  const seen = new WeakSetConstructor<object>();
+
+  const freeze = (current: unknown): void => {
+    if (current === null || typeof current !== "object" || seen.has(current)) {
+      return;
+    }
+    seen.add(current);
+    for (const child of objectValues(current as Record<string, unknown>)) {
+      freeze(child);
+    }
+    objectFreeze(current);
+  };
+
+  freeze(value);
+  return value;
+}
+
 export class AgentHandle<Input, Output, Context> implements ProgramBinding {
+  #graph: Json;
   readonly kind = "agent_definition" as const;
   readonly artifactDigest: string;
   readonly entrypoint: string;
@@ -39,27 +74,33 @@ export class AgentHandle<Input, Output, Context> implements ProgramBinding {
 
   constructor(
     readonly programId: string,
-    private readonly graph: Json,
+    graph: Json,
   ) {
-    this.artifactDigest = stableDigest(JSON.stringify(graph));
+    this.#graph = freezeJson(graph);
+    this.artifactDigest = stableDigest(jsonStringify(this.#graph));
     this.entrypoint = programId;
     this.targetAgentIdentityRequirement = `${programId}.identity`;
+    // `readonly` and `private` disappear at runtime. Freeze the handle as
+    // well, so an `any` cast cannot replace its internal graph reference.
+    objectFreeze(this);
   }
 
   frontendGraph(): Json {
-    return this.graph;
+    // Return a fresh value so source that inspects the graph cannot mutate the
+    // value the capture harness requests after module evaluation.
+    return jsonParse(jsonStringify(this.#graph)) as Json;
   }
 
   diagnostics(): string | null {
-    return compilerService().verifyGraph(this.graph);
+    return compilerService().verifyGraph(this.#graph);
   }
 
   canonicalAir(): string {
-    return compilerService().canonicalAir(this.graph);
+    return compilerService().canonicalAir(this.#graph);
   }
 
   artifact(): Json {
-    return compilerService().artifact(this.graph);
+    return compilerService().artifact(this.#graph);
   }
 
   new(_options?: { context?: Context }): ProgramInstance<Input, Output, Context> {
@@ -70,6 +111,10 @@ export class AgentHandle<Input, Output, Context> implements ProgramBinding {
     throw new Error("Agent.invoke is called inside a compiled Agent body");
   }
 }
+
+// The evaluated source can otherwise replace a method on the shared
+// prototype after an instance is created, bypassing the frozen instance.
+objectFreeze(AgentHandle.prototype);
 
 export class ProgramInstance<Input, Output, Context> {
   constructor(

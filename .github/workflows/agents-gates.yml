@@ -131,7 +131,9 @@ jobs:
             cargo-registry-v2-rust-1.91.1-${{ runner.os }}-
 
       - name: Install the pinned public Dekk runner
-        run: python -m pip install --disable-pip-version-check "dekk==1.11.5"
+        run: >-
+          python -m pip install --disable-pip-version-check --only-binary=:all:
+          --index-url https://pypi.org/simple "dekk==1.11.5"
 
       # Creates {project}/.dekk/env from [environment.packages]: mlir=22,
       # libclang13=22, clang=22, gxx_linux-64, cmake, ninja, uv, nodejs=22.

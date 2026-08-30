@@ -204,3 +204,33 @@ fn generated_clients_publish_only_admitted_approval_risk_levels() {
     assert_vocabulary(TYPESCRIPT_CLIENT, "risk_level", &admitted);
     assert_vocabulary(PYTHON_CLIENT, "risk_level", &admitted);
 }
+
+/// Event envelope and payload fields are generated from the current Rust
+/// contract, not from the retired Program/Session execution DTOs. Keep this
+/// structural parity check alongside the closed-vocabulary checks because a
+/// stale field can compile while still advertising a wire shape the decoder
+/// rejects.
+#[test]
+fn generated_clients_match_current_event_envelope_and_completion_payload() {
+    let typescript = read_client(TYPESCRIPT_CLIENT);
+    assert!(typescript.contains("program_package?: ProgramPackageEventProvenance;"));
+    assert!(typescript.contains("export interface ProgramPackageEventProvenance"));
+    assert!(typescript.contains("program_package_id: string;"));
+    assert!(typescript.contains("program_package_digest: string;"));
+    assert!(typescript.contains("result: unknown;"));
+    assert!(!typescript.contains(concat!("ProgramExecution", "Provenance")));
+    assert!(!typescript.contains("session_id: string"));
+    assert!(!typescript.contains("session_dir: string"));
+    assert!(!typescript.contains("parked_session_id"));
+
+    let python = read_client(PYTHON_CLIENT);
+    assert!(python.contains("class ProgramPackageEventProvenance"));
+    assert!(python.contains("program_package_id: str"));
+    assert!(python.contains("program_package_digest: str"));
+    assert!(python.contains("program_package: ProgramPackageEventProvenance | None"));
+    assert!(python.contains("result: Any"));
+    assert!(!python.contains(concat!("ProgramExecution", "Provenance")));
+    assert!(!python.contains("session_id: str"));
+    assert!(!python.contains("session_dir: str"));
+    assert!(!python.contains("parked_session_id"));
+}

@@ -16,10 +16,12 @@ apxm-compilation-protocol.workspace = true
 apxm-compilation-service.workspace = true
 apxm-source-port.workspace = true
 libc.workspace = true
+rustix.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
 
 [dev-dependencies]
 apxm-interaction-client.workspace = true
+apxm-runtime-protocol.workspace = true
 apxm-runtime-service.workspace = true

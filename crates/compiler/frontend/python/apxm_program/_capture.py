@@ -15,7 +15,7 @@ import inspect
 import textwrap
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Callable, Optional, Union
 
 from ._bound_tree import (
     BoundCall,
@@ -1594,13 +1594,85 @@ def _handler_ast(declaration: HookDecl) -> Optional[ast.AsyncFunctionDef]:
     if handler is None:
         return None
     try:
-        source = textwrap.dedent(inspect.getsource(handler))
-    except (OSError, TypeError):
+        source = _source_for_function(handler)
+    except (OSError, TypeError, ValueError):
         return None
-    for node in ast.parse(source).body:
+    for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.AsyncFunctionDef):
             return node
     return None
+
+
+def _make_source_reader(
+    extract_source: Callable[[Any, str], str],
+) -> Callable[[Any], str]:
+    """Build a source reader whose bridge reference cannot be redirected.
+
+    The source-port evaluates an authored module in the same interpreter as the
+    Python frontend. A module can therefore replace ``_capture`` globals after
+    import. Keeping the native bridge and its callable in this closure means a
+    replacement such as ``apxm_program._capture._native_bridge = fake`` is not
+    consulted by capture. A replacement of the native callable itself is also
+    harmless: the original built-in function is the closure cell. The native
+    source slot remains the authority; the ordinary ``inspect`` path is kept
+    only for package users and lightweight test doubles outside the port.
+    """
+    try:
+        from . import _native as bridge
+    except ImportError:  # pragma: no cover - lightweight test doubles have no bridge
+        bridge = None
+
+    authored_source = getattr(bridge, "authored_source", None)
+
+    def read(func: Any) -> str:
+        if bridge is not None and callable(authored_source):
+            try:
+                source = authored_source()
+            except (ImportError, RuntimeError, TypeError):
+                source = None
+            if source is not None:
+                return extract_source(func, source)
+        return textwrap.dedent(inspect.getsource(func))
+
+    return read
+
+
+def _function_source_from_bundle(func: Any, source: str) -> str:
+    """Extract one function from the immutable full source bundle."""
+    try:
+        first_line = func.__code__.co_firstlineno
+        name = func.__name__
+    except AttributeError as error:
+        raise TypeError("Agent callback has no Python code object") from error
+    module = ast.parse(source)
+    candidates = [
+        node
+        for node in ast.walk(module)
+        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
+        and node.name == name
+        and min((decorator.lineno for decorator in node.decorator_list), default=node.lineno)
+        <= first_line
+        <= (node.end_lineno or node.lineno)
+    ]
+    if not candidates:
+        raise ValueError(
+            f"the sealed source does not contain callback {name!r} at line {first_line}"
+        )
+    node = min(candidates, key=lambda candidate: candidate.lineno)
+    start_line = min(
+        (decorator.lineno for decorator in node.decorator_list),
+        default=node.lineno,
+    )
+    lines = source.splitlines(keepends=True)
+    segment = "".join(lines[start_line - 1 : node.end_lineno])
+    return textwrap.dedent(segment)
+
+
+# Construct this once, before submitted source is evaluated. The returned
+# reader closes over the canonical native bridge, callable, and extractor
+# rather than looking any of them up through mutable module globals on capture.
+_source_for_function = _make_source_reader(_function_source_from_bundle)
+_SOURCE_READER = _source_for_function
 
 
 def capture_program(
@@ -1614,7 +1686,13 @@ def capture_program(
     bindings: dict[str, Any],
 ) -> BoundProgram:
     """Parse and fold one authored Agent callback into a bound program."""
-    source = textwrap.dedent(inspect.getsource(func))
+    # The source-port evaluates submitted code in this interpreter. A source
+    # module can otherwise replace this module attribute before the decorator
+    # runs and make capture parse a second, attacker-selected source bundle.
+    # Reject the mutation rather than silently falling back to that bundle.
+    if _source_for_function is not _SOURCE_READER:
+        raise RuntimeError("the Python capture source reader was modified")
+    source = _SOURCE_READER(func)
     module = ast.parse(source)
     func_ast: Optional[ast.AsyncFunctionDef] = None
     for node in module.body:

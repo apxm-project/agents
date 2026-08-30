@@ -1,0 +1,33 @@
+[
+  {
+    "name": "running-node-inspection",
+    "input": {
+      "contract": "apxm.node-execution-inspection.v1",
+      "program_invocation_id": "invocation.1",
+      "node_execution_id": "node-execution.1",
+      "air_node_id": "node.1",
+      "status": "running",
+      "commitment": "provisional",
+      "attempt_refs": [],
+      "evidence_refs": [],
+      "child_program_refs": []
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "unknown-node-inspection-field-rejected",
+    "input": {
+      "contract": "apxm.node-execution-inspection.v1",
+      "program_invocation_id": "invocation.1",
+      "node_execution_id": "node-execution.1",
+      "air_node_id": "node.1",
+      "status": "running",
+      "commitment": "provisional",
+      "attempt_refs": [],
+      "evidence_refs": [],
+      "child_program_refs": [],
+      "product_ref": "forbidden"
+    },
+    "expected_valid": false
+  }
+]

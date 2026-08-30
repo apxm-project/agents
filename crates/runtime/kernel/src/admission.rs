@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use apxm_program::artifact::SchemaDigestRef;
+use apxm_program::artifact::{ExecutableArtifact, SchemaDigestRef};
 use apxm_program::grammar::{is_digest, is_identifier};
 use apxm_program::runtime_evidence::{PermissionResolution, ResolvedPermission};
 
@@ -882,11 +882,23 @@ pub fn verify_invocation_admission(
     resource_ceilings
         .validate()
         .map_err(InvocationAdmissionError::InvalidResourceCeiling)?;
-    let artifact_actual = content_digest(artifact_bytes);
+    // Artifact identity is the canonical executable-artifact envelope digest,
+    // not a digest of raw AIR or transport formatting. Decode and verify the
+    // envelope before any runtime admission fields are accepted.
+    let artifact_actual = ExecutableArtifact::decode(artifact_bytes)
+        .and_then(|artifact| artifact.canonical_digest())
+        .unwrap_or_else(|_| "invalid_artifact".to_owned());
     if admission.artifact_digest != artifact_actual {
         return Err(InvocationAdmissionError::ArtifactMismatch {
             expected: artifact_actual,
             actual: admission.artifact_digest.clone(),
+        });
+    }
+    if ExecutableArtifact::decode_for_execution(artifact_bytes, &admission.artifact_digest).is_err()
+    {
+        return Err(InvocationAdmissionError::ArtifactMismatch {
+            expected: admission.artifact_digest.clone(),
+            actual: "invalid_artifact".to_owned(),
         });
     }
     let release_actual = content_digest(release_bytes);

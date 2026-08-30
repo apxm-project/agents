@@ -49,6 +49,13 @@ pub fn render_typescript_frontend_files() -> Vec<(&'static str, String)> {
 fn render_runtime_evidence_typescript() -> String {
     let runtime_kinds = apxm_program::FactKind::all()
         .iter()
+        .filter(|kind| {
+            !matches!(
+                kind,
+                apxm_program::FactKind::AttemptRecorded
+                    | apxm_program::FactKind::NodeExecutionRecorded
+            )
+        })
         .map(|kind| ts_string(kind.wire()))
         .collect::<Vec<_>>()
         .join(", ");
@@ -60,8 +67,10 @@ fn render_runtime_evidence_typescript() -> String {
     format!(
         r##"// AUTO-GENERATED from apxm.runtime-evidence; DO NOT EDIT.
 export const RUNTIME_FACT_KINDS = [{runtime_kinds}] as const;
-export const ALL_FACT_KINDS = [...RUNTIME_FACT_KINDS, "LoopIterationCompleted"] as const;
+export const SPECIALIZED_FACT_KINDS = ["attempt.recorded", "node_execution.recorded"] as const;
+export const ALL_FACT_KINDS = [...RUNTIME_FACT_KINDS, ...SPECIALIZED_FACT_KINDS, "LoopIterationCompleted"] as const;
 export type RuntimeFactKind = (typeof RUNTIME_FACT_KINDS)[number];
+export type SpecializedFactKind = (typeof SPECIALIZED_FACT_KINDS)[number];
 const runtimeSchema = JSON.parse({runtime_schema}) as Record<string, any>;
 const commonSchema = JSON.parse({common_schema}) as Record<string, any>;
 
@@ -82,6 +91,29 @@ export type NodeExecutionRecordedFact = {{
   readonly parent_node_execution_id?: string;
   readonly execution_scope: NodeExecutionScope;
 }};
+export type ModelAttemptRecordedFact = {{
+  readonly fact_id: string;
+  readonly event_sequence: number;
+  readonly fact_kind: "attempt.recorded";
+  readonly program_invocation_id: string;
+  readonly node_execution_id: string;
+  readonly air_node_id: string;
+  readonly attempt_id: string;
+  readonly attempt_index: number;
+  readonly model_effect_id: string;
+  readonly request_digest: string;
+  readonly model_target_ref: string;
+  readonly model_target_digest: string;
+  readonly model_deployment_ref: string;
+  readonly exact_port_binding_digest: string;
+  readonly target_commitment_digest: string;
+  readonly generation_cohort_digest: string;
+  readonly target_generation: number;
+  readonly target_port_contract_digest: string;
+  readonly target_composition_digest: string;
+  readonly native_input_tokens: number;
+  readonly native_output_tokens: number;
+}};
 export type LoopIterationCompletedFact = {{
   readonly fact_id: string;
   readonly event_sequence: number;
@@ -92,7 +124,7 @@ export type LoopIterationCompletedFact = {{
   readonly program_invocation_id: string;
   readonly causal_node_execution_ids: readonly [string, ...string[]];
 }};
-export type Fact = RuntimeFact | NodeExecutionRecordedFact | LoopIterationCompletedFact;
+export type Fact = RuntimeFact | NodeExecutionRecordedFact | ModelAttemptRecordedFact | LoopIterationCompletedFact;
 
 function resolveRef(ref: string, root: Record<string, any>): [Record<string, any>, Record<string, any>] {{
   if (ref.startsWith("#/$defs/")) return [root.$defs[ref.slice("#/$defs/".length)], root];
@@ -424,12 +456,23 @@ mod tests {
         for required in [
             "LoopIterationCompletedFact",
             "NodeExecutionRecordedFact",
+            "ModelAttemptRecordedFact",
+            "SPECIALIZED_FACT_KINDS",
             "decodeFact",
             "runtimeSchema",
             "unknown enum value",
         ] {
             assert!(evidence.contains(required), "{required}");
         }
+        let generic = evidence
+            .splitn(2, "RUNTIME_FACT_KINDS")
+            .nth(1)
+            .expect("runtime kinds")
+            .splitn(2, "SPECIALIZED_FACT_KINDS")
+            .next()
+            .expect("specialized kind boundary");
+        assert!(!generic.contains("attempt.recorded"));
+        assert!(!generic.contains("node_execution.recorded"));
     }
 
     /// The generated TypeScript surface publishes no selection vocabulary.

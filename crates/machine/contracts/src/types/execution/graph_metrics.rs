@@ -225,7 +225,7 @@ impl GraphMetricsSnapshot {
     }
 
     pub fn to_json(&self) -> serde_json::Value {
-        use crate::constants::session::metrics_keys as mk;
+        use crate::constants::metrics::metrics_keys as mk;
         use mk::graph_metric_keys as ak;
 
         serde_json::json!({

@@ -93,10 +93,17 @@ pub enum EventAction {
         /// Ownership generation.
         #[arg(long)]
         generation: u64,
+        /// Exact reservation claim returned by `event reserve`.
+        #[arg(long)]
+        owner_claim: String,
     },
     /// List authorized pending EventRefs.
-    List,
-    /// Fulfill one EventRef from JSON/file/stdin.
+    List {
+        /// Exact reservation claim returned by `event reserve`.
+        #[arg(long)]
+        owner_claim: Option<String>,
+    },
+    /// Fulfill one EventRef with an explicit source occurrence and JSON payload.
     Fulfill {
         /// Event id.
         event_id: String,
@@ -106,6 +113,24 @@ pub enum EventAction {
         /// Idempotency key.
         #[arg(long)]
         idempotency_key: String,
+        /// Source occurrence identity, distinct from the EventRef.
+        #[arg(long)]
+        occurrence_id: String,
+        /// Source contract kind that produced the occurrence.
+        #[arg(long)]
+        source_kind: String,
+        /// Digest of the admitted source-contract mapping.
+        #[arg(long)]
+        mapping_digest: String,
+        /// Source-stable record or sequence identity.
+        #[arg(long)]
+        source_record: String,
+        /// JSON payload reduced by the source contract.
+        #[arg(long)]
+        payload: String,
+        /// Exact reservation claim returned by `event reserve`.
+        #[arg(long)]
+        owner_claim: String,
     },
     /// Expire one EventRef.
     Expire {
@@ -114,6 +139,9 @@ pub enum EventAction {
         /// Ownership generation.
         #[arg(long)]
         generation: u64,
+        /// Exact reservation claim returned by `event reserve`.
+        #[arg(long)]
+        owner_claim: String,
     },
     /// Cancel one EventRef.
     Cancel {
@@ -122,6 +150,9 @@ pub enum EventAction {
         /// Ownership generation.
         #[arg(long)]
         generation: u64,
+        /// Exact reservation claim returned by `event reserve`.
+        #[arg(long)]
+        owner_claim: String,
     },
 }
 

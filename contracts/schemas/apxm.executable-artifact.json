@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "apxm.executable-artifact",
   "title": "ExecutableArtifact",
-  "description": "Digest-bound executable contract. It pins the AIR, source bundle, source map, and entrypoints, and emits only artifact_semantic Port Requirements. It carries no deployment implementation, Exact Port Binding, Runtime Profile, root-admission fact, authority grant, endpoint, credential, or executable placement.",
+  "description": "Digest-bound executable contract. It pins the AIR, source bundle, source map, entrypoints, and optional execution lineage commitment, and emits only artifact_semantic Port Requirements. It carries no deployment implementation, Exact Port Binding, Runtime Profile, root-admission fact, authority grant, endpoint, credential, or executable placement.",
   "type": "object",
   "required": [
     "schema_version",
@@ -29,6 +29,9 @@
       "$ref": "apxm.air"
     },
     "source_bundle_digest": {
+      "$ref": "apxm.contract-common.v1#/$defs/Digest"
+    },
+    "execution_lineage_ref": {
       "$ref": "apxm.contract-common.v1#/$defs/Digest"
     },
     "source_map": {

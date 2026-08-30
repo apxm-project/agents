@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.execution-observation.v1",
+  "title": "ExecutionObservation",
+  "description": "A redacted, ordered runtime observation. It is a non-authoritative projection of scheduler, effect, and commit decisions and never carries product or provider policy.",
+  "type": "object",
+  "required": [
+    "contract",
+    "observation_id",
+    "program_invocation_id",
+    "sequence",
+    "cursor",
+    "timing",
+    "observation_kind",
+    "commitment"
+  ],
+  "properties": {
+    "contract": { "const": "apxm.execution-observation.v1" },
+    "observation_id": { "$ref": "#/$defs/OpaqueRef" },
+    "program_invocation_id": { "$ref": "#/$defs/OpaqueRef" },
+    "node_execution_id": { "$ref": "#/$defs/OpaqueRef" },
+    "occurrence_id": { "$ref": "#/$defs/OpaqueRef" },
+    "event_ref": { "$ref": "#/$defs/EventObservationRef" },
+    "attempt_id": { "$ref": "#/$defs/OpaqueRef" },
+    "region_occurrence_id": { "$ref": "#/$defs/OpaqueRef" },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "cursor": { "$ref": "#/$defs/Cursor" },
+    "timing": { "$ref": "#/$defs/Timing" },
+    "observation_kind": {
+      "type": "string",
+      "enum": [
+        "invocation_started",
+        "node_started",
+        "operand_published",
+        "branch_transition",
+        "join_transition",
+        "loop_transition",
+        "model_attempt",
+        "capability_attempt",
+        "program_attempt",
+        "approval_requested",
+        "approval_resolved",
+        "event_waiting",
+        "event_resumed",
+        "content_published",
+        "content_committed",
+        "terminal_committed",
+        "invocation_failed",
+        "evidence_committed",
+        "invocation_cancelled",
+        "outcome_unknown"
+      ]
+    },
+    "commitment": {
+      "type": "string",
+      "enum": ["provisional", "committed"]
+    },
+    "content_ref": { "$ref": "#/$defs/OpaqueRef" },
+    "output_ref": { "$ref": "#/$defs/OpaqueRef" },
+    "evidence_ref": { "$ref": "#/$defs/OpaqueRef" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "observation_kind": {
+            "enum": ["event_waiting", "event_resumed"]
+          }
+        }
+      },
+      "then": { "required": ["event_ref"] },
+      "else": { "not": { "required": ["event_ref"] } }
+    },
+    {
+      "if": { "properties": { "observation_kind": { "const": "content_published" } } },
+      "then": {
+        "required": ["content_ref"],
+        "properties": { "commitment": { "const": "provisional" } }
+      }
+    },
+    {
+      "if": { "properties": { "observation_kind": { "const": "content_committed" } } },
+      "then": {
+        "properties": { "commitment": { "const": "committed" } },
+        "anyOf": [{ "required": ["content_ref"] }, { "required": ["output_ref"] }]
+      }
+    },
+    {
+      "if": { "properties": { "observation_kind": { "const": "terminal_committed" } } },
+      "then": {
+        "properties": { "commitment": { "const": "committed" } },
+        "anyOf": [{ "required": ["output_ref"] }, { "required": ["evidence_ref"] }]
+      }
+    },
+    {
+      "if": { "properties": { "observation_kind": { "const": "evidence_committed" } } },
+      "then": {
+        "properties": { "commitment": { "const": "committed" } },
+        "required": ["evidence_ref"]
+      }
+    },
+    {
+      "if": { "properties": { "observation_kind": { "const": "invocation_failed" } } },
+      "then": {
+        "properties": { "commitment": { "const": "committed" } },
+        "required": ["evidence_ref"]
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "OpaqueRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@-]*$"
+    },
+    "Cursor": {
+      "type": "object",
+      "required": ["position", "token"],
+      "properties": {
+        "position": { "type": "integer", "minimum": 0 },
+        "token": { "$ref": "#/$defs/OpaqueRef" }
+      },
+      "additionalProperties": false
+    },
+    "EventObservationRef": {
+      "type": "object",
+      "required": ["event_ref"],
+      "properties": {
+        "event_ref": { "$ref": "#/$defs/OpaqueRef" },
+        "generation": { "type": "integer", "minimum": 0 },
+        "occurrence_id": { "$ref": "#/$defs/OpaqueRef" }
+      },
+      "additionalProperties": false
+    },
+    "Timing": {
+      "type": "object",
+      "required": ["observed_at_unix_ms"],
+      "properties": {
+        "observed_at_unix_ms": { "type": "integer", "minimum": 0 },
+        "duration_ms": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    }
+  }
+}

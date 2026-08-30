@@ -11,8 +11,77 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
+pub mod execution_contracts;
+
+pub use execution_contracts::{
+    AttemptId, Commitment, ContentReadResult, ContentRef, ContractValidationError, CorrelationId,
+    EXECUTION_OBSERVATION_CONTRACT, EXECUTION_READ_CONTRACT, EventObservationRef, EvidenceFactKind,
+    EvidenceRecord, EvidenceRef, ExecutionCursor, ExecutionObservation, ExecutionPage,
+    ExecutionReadRequest, ExecutionReadResult, GrantRef, NODE_EXECUTION_INSPECTION_CONTRACT,
+    NodeExecutionId, NodeExecutionInspection, NodeExecutionStatus, ObservationId, ObservationKind,
+    ObservationTiming, OutputRef, OutputVisibility, PrincipalRef, ProgramInstanceId,
+    ProgramInvocationId, ProgramInvocationInspection, ProgramInvocationStatus, ProgramRef,
+    ReadContext, ReadPurpose, RegionOccurrenceId, RequestId, SESSION_OUTPUT_REF_CONTRACT, ScopeRef,
+    SessionOutputRef,
+};
+
+/// Authoritative lifecycle state for one reserved EventRef.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EventStatus {
+    Pending,
+    Fulfilled,
+    Expired,
+    Cancelled,
+}
+
+/// Authorized inspection of one EventRef reservation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EventInspection {
+    pub event_ref: CanonicalEventRef,
+    pub type_id: String,
+    pub status: EventStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub occurrence_id: Option<String>,
+}
+
 /// Only declared Runtime protocol version. Unknown versions fail closed.
 pub const RUNTIME_PROTOCOL_VERSION: &str = "apxm.runtime.protocol/1";
+
+/// Additive read/observation protocol. Protocol/1 remains frozen and is not
+/// silently widened; clients opt into this separately negotiated surface.
+pub const RUNTIME_PROTOCOL_V2_VERSION: &str = "apxm.runtime.protocol/2";
+pub const EXECUTION_READ_SCHEMA_DIGEST: &str =
+    "sha256:46f03b069c01cbb48cb80410097656cee14a03fc1dc6de50b6b2a084294b6a5c";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeFeature {
+    #[serde(rename = "observation.subscribe")]
+    ObservationSubscribe,
+    #[serde(rename = "program_invocation.inspect")]
+    ProgramInvocationInspect,
+    #[serde(rename = "content.read")]
+    ContentRead,
+    #[serde(rename = "output.read")]
+    OutputRead,
+    #[serde(rename = "evidence.read")]
+    EvidenceRead,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeFailureCode {
+    Unavailable,
+    InvalidRequest,
+    Unauthorized,
+    NotFound,
+    RetentionGap,
+    UnsupportedFeature,
+    ProtocolSkew,
+    InternalError,
+}
 
 /// Opaque possession claim minted by the Runtime Service.
 ///
@@ -69,6 +138,71 @@ impl RuntimeHandshake {
     }
 }
 
+/// Handshake for the additive observation/read surface. It is deliberately a
+/// separate type so a Protocol/1 peer cannot accidentally receive new methods.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeHandshakeV2 {
+    pub protocol_version: String,
+    pub contract: String,
+    pub schema_digest: String,
+    pub supported_features: Vec<RuntimeFeature>,
+}
+
+impl RuntimeHandshakeV2 {
+    #[must_use]
+    pub fn server() -> Self {
+        Self {
+            protocol_version: RUNTIME_PROTOCOL_V2_VERSION.to_owned(),
+            contract: EXECUTION_READ_CONTRACT.to_owned(),
+            schema_digest: EXECUTION_READ_SCHEMA_DIGEST.to_owned(),
+            supported_features: vec![
+                RuntimeFeature::ObservationSubscribe,
+                RuntimeFeature::ProgramInvocationInspect,
+                RuntimeFeature::ContentRead,
+                RuntimeFeature::OutputRead,
+                RuntimeFeature::EvidenceRead,
+            ],
+        }
+    }
+
+    pub fn admit(&self) -> Result<(), ProtocolError> {
+        if self.protocol_version != RUNTIME_PROTOCOL_V2_VERSION {
+            return Err(ProtocolError::IncompatibleVersion);
+        }
+        if self.contract != EXECUTION_READ_CONTRACT
+            || self.schema_digest != EXECUTION_READ_SCHEMA_DIGEST
+        {
+            return Err(ProtocolError::SchemaMismatch);
+        }
+        let mut seen = std::collections::HashSet::new();
+        if self
+            .supported_features
+            .iter()
+            .any(|feature| !seen.insert(feature))
+            || self.supported_features.is_empty()
+        {
+            return Err(ProtocolError::InvalidHandshake);
+        }
+        Ok(())
+    }
+
+    pub fn negotiate(&self, peer: &Self) -> Result<Vec<RuntimeFeature>, ProtocolError> {
+        self.admit()?;
+        peer.admit()?;
+        let negotiated = self
+            .supported_features
+            .iter()
+            .copied()
+            .filter(|feature| peer.supported_features.contains(feature))
+            .collect::<Vec<_>>();
+        if negotiated.is_empty() {
+            return Err(ProtocolError::UnsupportedFeature);
+        }
+        Ok(negotiated)
+    }
+}
+
 /// Closed client request set.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
@@ -107,6 +241,11 @@ pub enum RuntimeRequest {
         /// Canonical application record.
         application: EventApplication<serde_json::Value>,
     },
+    /// List pending EventRefs owned by an exact reservation claim.
+    EventList {
+        request_id: String,
+        owner_claim: RuntimeOwnerClaim,
+    },
     /// Inspect an EventRef.
     EventInspect {
         /// Caller correlation id.
@@ -114,6 +253,18 @@ pub enum RuntimeRequest {
         /// Exact claim returned when this EventRef was reserved.
         owner_claim: RuntimeOwnerClaim,
         /// Target EventRef.
+        event_ref: CanonicalEventRef,
+    },
+    /// Expire a pending EventRef through the root Event API.
+    EventExpire {
+        request_id: String,
+        owner_claim: RuntimeOwnerClaim,
+        event_ref: CanonicalEventRef,
+    },
+    /// Cancel a pending EventRef through the root Event API.
+    EventCancel {
+        request_id: String,
+        owner_claim: RuntimeOwnerClaim,
         event_ref: CanonicalEventRef,
     },
     /// Cancel a Program Invocation.
@@ -125,6 +276,124 @@ pub enum RuntimeRequest {
         /// Invocation to cancel.
         program_invocation_id: String,
     },
+}
+
+/// Additive Protocol/2 read and observation requests. Execution mutation and
+/// Event ingress remain Protocol/1 concerns; these methods cannot be decoded
+/// by a Protocol/1 peer.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RuntimeRequestV2 {
+    #[serde(rename = "program_invocation.inspect")]
+    ProgramInvocationInspect {
+        context: ReadContext,
+        program_invocation_id: ProgramInvocationId,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        node_execution_id: Option<NodeExecutionId>,
+    },
+    #[serde(rename = "observation.subscribe")]
+    ObservationSubscribe {
+        context: ReadContext,
+        program_invocation_id: ProgramInvocationId,
+        after_cursor: Option<ExecutionCursor>,
+        limit: u32,
+    },
+    #[serde(rename = "content.read")]
+    ContentRead {
+        context: ReadContext,
+        content_ref: ContentRef,
+    },
+    #[serde(rename = "output.read")]
+    OutputRead {
+        context: ReadContext,
+        output_ref: OutputRef,
+    },
+    #[serde(rename = "evidence.read")]
+    EvidenceRead {
+        context: ReadContext,
+        program_invocation_id: ProgramInvocationId,
+        after_cursor: Option<ExecutionCursor>,
+        limit: u32,
+    },
+}
+
+impl RuntimeRequestV2 {
+    pub fn validate(&self) -> Result<(), ContractValidationError> {
+        self.as_execution_read_request().validate()
+    }
+
+    #[must_use]
+    pub fn as_execution_read_request(&self) -> ExecutionReadRequest {
+        match self {
+            Self::ProgramInvocationInspect {
+                context,
+                program_invocation_id,
+                node_execution_id,
+            } => ExecutionReadRequest::ProgramInvocationInspect {
+                context: context.clone(),
+                program_invocation_id: program_invocation_id.clone(),
+                node_execution_id: node_execution_id.clone(),
+            },
+            Self::ObservationSubscribe {
+                context,
+                program_invocation_id,
+                after_cursor,
+                limit,
+            } => ExecutionReadRequest::ObservationSubscribe {
+                context: context.clone(),
+                program_invocation_id: program_invocation_id.clone(),
+                after_cursor: after_cursor.clone(),
+                limit: *limit,
+            },
+            Self::ContentRead {
+                context,
+                content_ref,
+            } => ExecutionReadRequest::ContentRead {
+                context: context.clone(),
+                content_ref: content_ref.clone(),
+            },
+            Self::OutputRead {
+                context,
+                output_ref,
+            } => ExecutionReadRequest::OutputRead {
+                context: context.clone(),
+                output_ref: output_ref.clone(),
+            },
+            Self::EvidenceRead {
+                context,
+                program_invocation_id,
+                after_cursor,
+                limit,
+            } => ExecutionReadRequest::EvidenceRead {
+                context: context.clone(),
+                program_invocation_id: program_invocation_id.clone(),
+                after_cursor: after_cursor.clone(),
+                limit: *limit,
+            },
+        }
+    }
+
+    #[must_use]
+    pub fn feature(&self) -> RuntimeFeature {
+        match self {
+            Self::ProgramInvocationInspect { .. } => RuntimeFeature::ProgramInvocationInspect,
+            Self::ObservationSubscribe { .. } => RuntimeFeature::ObservationSubscribe,
+            Self::ContentRead { .. } => RuntimeFeature::ContentRead,
+            Self::OutputRead { .. } => RuntimeFeature::OutputRead,
+            Self::EvidenceRead { .. } => RuntimeFeature::EvidenceRead,
+        }
+    }
+
+    #[must_use]
+    pub fn request_id(&self) -> RequestId {
+        match self {
+            Self::ProgramInvocationInspect { context, .. }
+            | Self::ObservationSubscribe { context, .. }
+            | Self::ContentRead { context, .. }
+            | Self::OutputRead { context, .. }
+            | Self::EvidenceRead { context, .. } => context.request_id.clone(),
+        }
+    }
 }
 
 /// Closed service result set.
@@ -165,6 +434,21 @@ pub enum RuntimeResult {
         /// Application result.
         result: EventApplicationResult,
     },
+    /// Authorized EventRef inspection.
+    EventInspected {
+        request_id: String,
+        inspection: EventInspection,
+    },
+    /// Authorized pending EventRef listing.
+    EventListed {
+        request_id: String,
+        events: Vec<EventInspection>,
+    },
+    /// Result of an explicit EventRef lifecycle mutation.
+    EventLifecycleChanged {
+        request_id: String,
+        inspection: EventInspection,
+    },
     /// Invocation cancelled.
     Cancelled {
         /// Matching request id.
@@ -176,6 +460,40 @@ pub enum RuntimeResult {
         request_id: String,
         /// Stable failure code.
         code: String,
+    },
+}
+
+/// Additive Protocol/2 result set for read and observation methods.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RuntimeResultV2 {
+    ObservationPage {
+        request_id: RequestId,
+        page: ExecutionPage<ExecutionObservation>,
+    },
+    ProgramInvocationInspection {
+        request_id: RequestId,
+        inspection: ProgramInvocationInspection,
+    },
+    NodeExecutionInspection {
+        request_id: RequestId,
+        inspection: NodeExecutionInspection,
+    },
+    Content {
+        request_id: RequestId,
+        content: ContentReadResult,
+    },
+    Output {
+        request_id: RequestId,
+        output: ContentReadResult,
+    },
+    EvidencePage {
+        request_id: RequestId,
+        page: ExecutionPage<EvidenceRecord>,
+    },
+    Failed {
+        request_id: RequestId,
+        code: RuntimeFailureCode,
     },
 }
 
@@ -196,6 +514,14 @@ pub enum ProtocolError {
     ForbiddenEventMethod,
     /// The service-minted Event generation counter is exhausted.
     GenerationExhausted,
+    /// Protocol/2 handshake schema identity does not match.
+    SchemaMismatch,
+    /// Protocol/2 handshake fields are internally inconsistent.
+    InvalidHandshake,
+    /// No common Protocol/2 read feature was negotiated.
+    UnsupportedFeature,
+    /// Protocol/2 request failed contract validation.
+    InvalidRequest,
 }
 
 /// Methods the public protocol must never expose.
@@ -215,6 +541,7 @@ pub struct InMemoryRuntimePeer {
     invocations: HashMap<String, InMemoryInvocation>,
     invocation_for_instance: HashMap<String, String>,
     reservations: HashMap<CanonicalEventRef, (RuntimeOwnerClaim, String)>,
+    event_inspections: HashMap<CanonicalEventRef, EventInspection>,
     applications: HashMap<String, serde_json::Value>,
 }
 
@@ -225,6 +552,68 @@ struct InMemoryInvocation {
 }
 
 impl InMemoryRuntimePeer {
+    #[must_use]
+    pub fn v2_handshake() -> RuntimeHandshakeV2 {
+        RuntimeHandshakeV2::server()
+    }
+
+    /// Decode and negotiate the additive read surface without pretending to
+    /// implement storage. Valid requests return a typed unavailable result
+    /// until the runtime observation/read handlers land.
+    pub fn handle_v2(
+        &mut self,
+        handshake: &RuntimeHandshakeV2,
+        request: RuntimeRequestV2,
+    ) -> Result<RuntimeResultV2, ProtocolError> {
+        let negotiated = handshake.negotiate(&Self::v2_handshake())?;
+        if !negotiated.contains(&request.feature()) {
+            return Ok(RuntimeResultV2::Failed {
+                request_id: request.request_id(),
+                code: RuntimeFailureCode::UnsupportedFeature,
+            });
+        }
+        request
+            .validate()
+            .map_err(|_| ProtocolError::InvalidRequest)?;
+        Ok(RuntimeResultV2::Failed {
+            request_id: request.request_id(),
+            code: RuntimeFailureCode::Unavailable,
+        })
+    }
+
+    fn change_event_status(
+        &mut self,
+        request_id: String,
+        owner_claim: RuntimeOwnerClaim,
+        event_ref: CanonicalEventRef,
+        status: EventStatus,
+    ) -> Result<RuntimeResult, ProtocolError> {
+        owner_claim.validate()?;
+        event_ref
+            .validate()
+            .map_err(|_| ProtocolError::ForbiddenEventMethod)?;
+        let Some((expected_claim, _)) = self.reservations.get(&event_ref) else {
+            return Ok(RuntimeResult::Failed {
+                request_id,
+                code: "unknown_reservation".to_owned(),
+            });
+        };
+        if expected_claim != &owner_claim {
+            return Err(ProtocolError::OwnerMismatch);
+        }
+        let inspection = self
+            .event_inspections
+            .get_mut(&event_ref)
+            .expect("inspection");
+        if inspection.status == EventStatus::Pending {
+            inspection.status = status;
+        }
+        Ok(RuntimeResult::EventLifecycleChanged {
+            request_id,
+            inspection: inspection.clone(),
+        })
+    }
+
     /// Handle one admitted request. Artifact digest is the only executable truth.
     pub fn handle(
         &mut self,
@@ -319,6 +708,19 @@ impl InMemoryRuntimePeer {
                 };
                 self.reservations
                     .insert(event_ref.clone(), (owner_claim.clone(), type_id));
+                self.event_inspections.insert(
+                    event_ref.clone(),
+                    EventInspection {
+                        event_ref: event_ref.clone(),
+                        type_id: self
+                            .reservations
+                            .get(&event_ref)
+                            .map(|(_, type_id)| type_id.clone())
+                            .expect("reservation just inserted"),
+                        status: EventStatus::Pending,
+                        occurrence_id: None,
+                    },
+                );
                 Ok(RuntimeResult::EventReserved {
                     request_id,
                     owner_claim,
@@ -357,12 +759,45 @@ impl InMemoryRuntimePeer {
                         result: EventApplicationResult::Fulfilled,
                     });
                 }
+                if let Some(inspection) = self.event_inspections.get(&application.event_ref)
+                    && inspection.status != EventStatus::Pending
+                {
+                    let result = match inspection.status {
+                        EventStatus::Fulfilled => EventApplicationResult::Fulfilled,
+                        EventStatus::Expired => EventApplicationResult::Expired,
+                        EventStatus::Cancelled => EventApplicationResult::Cancelled,
+                        EventStatus::Pending => unreachable!(),
+                    };
+                    return Ok(RuntimeResult::EventApplied { request_id, result });
+                }
                 self.applications
                     .insert(key, application.occurrence.payload.clone());
+                if let Some(inspection) = self.event_inspections.get_mut(&application.event_ref) {
+                    inspection.status = EventStatus::Fulfilled;
+                    inspection.occurrence_id = Some(application.occurrence.occurrence_id);
+                }
                 Ok(RuntimeResult::EventApplied {
                     request_id,
                     result: EventApplicationResult::Fulfilled,
                 })
+            }
+            RuntimeRequest::EventList {
+                request_id,
+                owner_claim,
+            } => {
+                owner_claim.validate()?;
+                let events = self
+                    .event_inspections
+                    .iter()
+                    .filter(|(event_ref, inspection)| {
+                        self.reservations
+                            .get(*event_ref)
+                            .is_some_and(|(claim, _)| claim == &owner_claim)
+                            && inspection.status == EventStatus::Pending
+                    })
+                    .map(|(_, inspection)| inspection.clone())
+                    .collect();
+                Ok(RuntimeResult::EventListed { request_id, events })
             }
             RuntimeRequest::EventInspect {
                 request_id,
@@ -382,10 +817,26 @@ impl InMemoryRuntimePeer {
                 if expected_claim != &owner_claim {
                     return Err(ProtocolError::OwnerMismatch);
                 }
-                Ok(RuntimeResult::Failed {
+                Ok(RuntimeResult::EventInspected {
                     request_id,
-                    code: "inspect_ok".to_owned(),
+                    inspection: self
+                        .event_inspections
+                        .get(&event_ref)
+                        .cloned()
+                        .expect("inspection follows reservation"),
                 })
+            }
+            RuntimeRequest::EventExpire {
+                request_id,
+                owner_claim,
+                event_ref,
+            } => self.change_event_status(request_id, owner_claim, event_ref, EventStatus::Expired),
+            RuntimeRequest::EventCancel {
+                request_id,
+                owner_claim,
+                event_ref,
+            } => {
+                self.change_event_status(request_id, owner_claim, event_ref, EventStatus::Cancelled)
             }
             RuntimeRequest::ProgramInvocationCancel {
                 request_id,
@@ -689,5 +1140,125 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    fn read_context(purpose: ReadPurpose) -> ReadContext {
+        ReadContext {
+            request_id: RequestId::new("request.1").expect("request id"),
+            scope_ref: ScopeRef::new("scope.1").expect("scope ref"),
+            principal_ref: PrincipalRef::new("principal.1").expect("principal ref"),
+            grant_ref: GrantRef::new("grant.1").expect("grant ref"),
+            correlation_id: Some(CorrelationId::new("correlation.1").expect("correlation id")),
+            purpose,
+        }
+    }
+
+    #[test]
+    fn protocol_v2_is_separate_and_protocol_v1_stays_frozen() {
+        assert_eq!(
+            RuntimeHandshake {
+                protocol_version: RUNTIME_PROTOCOL_VERSION.to_owned(),
+            }
+            .admit(),
+            Ok(())
+        );
+        assert_eq!(RuntimeHandshakeV2::server().admit(), Ok(()));
+        let mut skewed = RuntimeHandshakeV2::server();
+        skewed.schema_digest = "sha256:wrong".to_owned();
+        assert_eq!(skewed.admit(), Err(ProtocolError::SchemaMismatch));
+    }
+
+    #[test]
+    fn protocol_v2_read_wire_is_closed_and_validated() {
+        let request = RuntimeRequestV2::ObservationSubscribe {
+            context: read_context(ReadPurpose::Observation),
+            program_invocation_id: ProgramInvocationId::new("invocation.1").expect("invocation"),
+            after_cursor: Some(ExecutionCursor::new(4, "scope.cursor").expect("cursor")),
+            limit: 50,
+        };
+        request.validate().expect("valid protocol v2 request");
+        let value = serde_json::to_value(&request).expect("serialize request");
+        assert_eq!(value["method"], "observation.subscribe");
+        let decoded: RuntimeRequestV2 = serde_json::from_value(value).expect("decode request");
+        assert_eq!(decoded, request);
+
+        let mut unknown = serde_json::to_value(request).expect("serialize request");
+        unknown["method"] = serde_json::json!("retired_operation");
+        assert!(serde_json::from_value::<RuntimeRequestV2>(unknown).is_err());
+    }
+
+    #[test]
+    fn protocol_v2_rejects_mismatched_read_purpose_and_page_limit() {
+        let request = RuntimeRequestV2::EvidenceRead {
+            context: read_context(ReadPurpose::Content),
+            program_invocation_id: ProgramInvocationId::new("invocation.1").expect("invocation"),
+            after_cursor: None,
+            limit: 1001,
+        };
+        assert_eq!(
+            request.validate(),
+            Err(ContractValidationError::InvalidReadPurpose)
+        );
+    }
+
+    #[test]
+    fn protocol_v2_output_read_negotiates_as_its_own_feature() {
+        let request = RuntimeRequestV2::OutputRead {
+            context: read_context(ReadPurpose::Output),
+            output_ref: OutputRef::new("output.1").expect("output ref"),
+        };
+        request.validate().expect("valid output request");
+        assert_eq!(request.feature(), RuntimeFeature::OutputRead);
+        let value = serde_json::to_value(&request).expect("encode output request");
+        assert_eq!(value["method"], "output.read");
+        let decoded: RuntimeRequestV2 = serde_json::from_value(value).expect("decode");
+        assert_eq!(decoded, request);
+    }
+
+    #[test]
+    fn protocol_v2_peer_negotiates_and_fails_closed_until_storage_exists() {
+        let mut peer = InMemoryRuntimePeer::default();
+        let request = RuntimeRequestV2::ContentRead {
+            context: read_context(ReadPurpose::Content),
+            content_ref: ContentRef::new("content.1").expect("content"),
+        };
+        let result = peer
+            .handle_v2(&RuntimeHandshakeV2::server(), request)
+            .expect("negotiated request");
+        assert!(matches!(
+            result,
+            RuntimeResultV2::Failed {
+                code: RuntimeFailureCode::Unavailable,
+                ..
+            }
+        ));
+
+        let mut no_content = RuntimeHandshakeV2::server();
+        no_content
+            .supported_features
+            .retain(|feature| *feature != RuntimeFeature::ContentRead);
+        let request = RuntimeRequestV2::ContentRead {
+            context: read_context(ReadPurpose::Content),
+            content_ref: ContentRef::new("content.1").expect("content"),
+        };
+        assert!(matches!(
+            peer.handle_v2(&no_content, request),
+            Ok(RuntimeResultV2::Failed {
+                code: RuntimeFailureCode::UnsupportedFeature,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn protocol_v2_failure_codes_are_closed() {
+        let result = RuntimeResultV2::Failed {
+            request_id: RequestId::new("request.1").expect("request"),
+            code: RuntimeFailureCode::Unavailable,
+        };
+        let mut wire = serde_json::to_value(result).expect("encode failure");
+        assert_eq!(wire["code"], "unavailable");
+        wire["code"] = serde_json::json!("made_up");
+        assert!(serde_json::from_value::<RuntimeResultV2>(wire).is_err());
     }
 }

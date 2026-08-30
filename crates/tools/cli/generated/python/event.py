@@ -47,8 +47,6 @@ EVENT_KIND_REGISTRY: Final[dict[str, dict[str, object]]] = {'agent_message': {'c
  'provider_event': {'category': 'observability', 'terminal': False, 'terminal_sense': 'n/a'},
  'retry': {'category': 'error', 'terminal': False, 'terminal_sense': 'n/a'},
  'scheduler_decision': {'category': 'observability', 'terminal': False, 'terminal_sense': 'n/a'},
- 'session_end': {'category': 'lifecycle', 'terminal': True, 'terminal_sense': 'run_end'},
- 'session_start': {'category': 'lifecycle', 'terminal': False, 'terminal_sense': 'n/a'},
  'subagent_done': {'category': 'agent', 'terminal': True, 'terminal_sense': 'run_end'},
  'subagent_failed': {'category': 'agent', 'terminal': True, 'terminal_sense': 'run_end'},
  'subagent_llm_call_begin': {'category': 'agent', 'terminal': False, 'terminal_sense': 'n/a'},
@@ -65,10 +63,7 @@ EVENT_KIND_REGISTRY: Final[dict[str, dict[str, object]]] = {'agent_message': {'c
  'tool_start': {'category': 'lifecycle', 'terminal': False, 'terminal_sense': 'n/a'},
  'usage': {'category': 'observability', 'terminal': False, 'terminal_sense': 'n/a'},
  'warning': {'category': 'error', 'terminal': False, 'terminal_sense': 'n/a'},
- 'workflow_finished': {'category': 'lifecycle', 'terminal': False, 'terminal_sense': 'n/a'},
- 'workflow_started': {'category': 'lifecycle', 'terminal': False, 'terminal_sense': 'n/a'},
- 'workflow_step_completed': {'category': 'lifecycle', 'terminal': False, 'terminal_sense': 'n/a'},
- 'workflow_step_started': {'category': 'lifecycle', 'terminal': False, 'terminal_sense': 'n/a'}}
+}
 
 class TokenEventPayloadGeneration(TypedDict):
     call_id: str
@@ -344,43 +339,6 @@ class PlanWorkflowEmittedEventPayload(TypedDict):
     task_ids: list[int]
     parallel_fanout_max: int
 
-class WorkflowStartedEventPayload(TypedDict):
-    kind: Literal['workflow_started']
-    workflow_name: str
-    session_dir: str
-    step_count: int
-
-class WorkflowStepStartedEventPayload(TypedDict):
-    kind: Literal['workflow_step_started']
-    workflow_name: str
-    workflow_session_dir: str
-    step_id: str
-    step_index: int
-    step_count: int
-
-class _WorkflowStepCompletedEventPayloadOptional(TypedDict, total=False):
-    session_dir: str
-    error: str
-
-class WorkflowStepCompletedEventPayload(_WorkflowStepCompletedEventPayloadOptional):
-    kind: Literal['workflow_step_completed']
-    workflow_name: str
-    workflow_session_dir: str
-    step_id: str
-    step_index: int
-    status: Literal['success', 'failed', 'skipped']
-    success: bool
-    duration_ms: int
-
-class WorkflowFinishedEventPayload(TypedDict):
-    kind: Literal['workflow_finished']
-    workflow_name: str
-    session_dir: str
-    status: Literal['success', 'partial_failure', 'failed']
-    success: bool
-    duration_ms: int
-    step_count: int
-
 class _ExecutionStartedEventPayloadOptional(TypedDict, total=False):
     args: list[str]
     user_text: str
@@ -389,59 +347,9 @@ class ExecutionStartedEventPayload(_ExecutionStartedEventPayloadOptional):
     kind: Literal['execution_started']
     execution_id: str
 
-class ExecuteCompleteEventPayloadResultVariant1OutcomeVariant1(TypedDict):
-    status: Literal['success']
-
-class ExecuteCompleteEventPayloadResultVariant1OutcomeVariant2(TypedDict):
-    status: Literal['domain_failure']
-    error: dict[str, Any]
-
-class ExecuteCompleteEventPayloadResultVariant1OutcomeVariant3(TypedDict):
-    status: Literal['cancellation']
-
-class ExecuteCompleteEventPayloadResultVariant1OutcomeVariant4Failure(TypedDict):
-    task: Literal['scheduler_worker', 'scheduler_finalizer', 'runtime_finalizer']
-    message: str
-    cancelled: bool
-    panicked: bool
-
-class ExecuteCompleteEventPayloadResultVariant1OutcomeVariant4(TypedDict):
-    status: Literal['join_failure']
-    failure: ExecuteCompleteEventPayloadResultVariant1OutcomeVariant4Failure
-
-class ExecuteCompleteEventPayloadResultVariant1(TypedDict):
-    execution_id: str
-    session_id: str
-    outcome: ExecuteCompleteEventPayloadResultVariant1OutcomeVariant1 | ExecuteCompleteEventPayloadResultVariant1OutcomeVariant2 | ExecuteCompleteEventPayloadResultVariant1OutcomeVariant3 | ExecuteCompleteEventPayloadResultVariant1OutcomeVariant4
-
-class ExecuteCompleteEventPayloadResultVariant2Stats(TypedDict):
-    executed_nodes: int
-    failed_nodes: int
-    duration_ms: int
-
-class ExecuteCompleteEventPayloadResultVariant2LlmUsage(TypedDict):
-    input_tokens: int
-    output_tokens: int
-    total_requests: int
-
-class _ExecuteCompleteEventPayloadResultVariant2Optional(TypedDict, total=False):
-    execution_id: str
-    workflow_id: str
-    run_root: str
-    trace_id: str
-    parked_session_id: str
-
-class ExecuteCompleteEventPayloadResultVariant2(_ExecuteCompleteEventPayloadResultVariant2Optional):
-    results: dict[str, Any]
-    content: str | None
-    session_dir: str | None
-    stats: ExecuteCompleteEventPayloadResultVariant2Stats
-    llm_usage: ExecuteCompleteEventPayloadResultVariant2LlmUsage
-    tool_call_counts: dict[str, int]
-
 class ExecuteCompleteEventPayload(TypedDict):
     kind: Literal['execute_complete']
-    result: ExecuteCompleteEventPayloadResultVariant1 | ExecuteCompleteEventPayloadResultVariant2
+    result: Any
 
 class MemoryReadEventPayload(TypedDict):
     kind: Literal['memory_read']
@@ -616,15 +524,6 @@ class ContextWindowWarningEventPayload(TypedDict):
     current_tokens: int
     max_tokens: int
     utilization_pct: int | float
-
-class SessionStartEventPayload(TypedDict):
-    kind: Literal['session_start']
-    session_id: str
-
-class SessionEndEventPayload(TypedDict):
-    kind: Literal['session_end']
-    session_id: str
-    total_turns: int
 
 class _SubagentSpawnBeginEventPayloadOptional(TypedDict, total=False):
     agent_name: str
@@ -806,10 +705,6 @@ KnownEventPayload: TypeAlias = (
     PlanStepStartedEventPayload |
     PlanStepCompletedEventPayload |
     PlanWorkflowEmittedEventPayload |
-    WorkflowStartedEventPayload |
-    WorkflowStepStartedEventPayload |
-    WorkflowStepCompletedEventPayload |
-    WorkflowFinishedEventPayload |
     ExecutionStartedEventPayload |
     ExecuteCompleteEventPayload |
     MemoryReadEventPayload |
@@ -832,8 +727,6 @@ KnownEventPayload: TypeAlias = (
     CancelledEventPayload |
     LoopDetectedEventPayload |
     ContextWindowWarningEventPayload |
-    SessionStartEventPayload |
-    SessionEndEventPayload |
     SubagentSpawnBeginEventPayload |
     SubagentSpawnEndEventPayload |
     SubagentLlmCallBeginEventPayload |
@@ -848,6 +741,13 @@ KnownEventPayload: TypeAlias = (
 )
 EventPayloadValue: TypeAlias = KnownEventPayload | UnknownEventPayload
 
+class ProgramPackageEventProvenance(TypedDict, total=False):
+    program_package_id: str
+    program_package_digest: str
+    parent_program_package_id: str
+    parent_execution_id: str
+    flow_name: str
+
 @dataclass(frozen=True)
 class EventMeta:
     seq: int
@@ -857,7 +757,7 @@ class EventMeta:
     span_id: str
     parent_span_id: str | None
     scope_id: str | None = None
-    skill: dict[str, object] | None = None
+    program_package: ProgramPackageEventProvenance | None = None
 
 @dataclass(frozen=True)
 class ApxmEvent:
@@ -886,10 +786,6 @@ CORE_EVENT_KINDS: Final[tuple[str, ...]] = (
     'plan_step_started',
     'plan_step_completed',
     'plan_workflow_emitted',
-    'workflow_started',
-    'workflow_step_started',
-    'workflow_step_completed',
-    'workflow_finished',
     'execution_started',
     'execute_complete',
     'memory_read',
@@ -912,8 +808,6 @@ CORE_EVENT_KINDS: Final[tuple[str, ...]] = (
     'cancelled',
     'loop_detected',
     'context_window_warning',
-    'session_start',
-    'session_end',
     'subagent_spawn_begin',
     'subagent_spawn_end',
     'subagent_llm_call_begin',

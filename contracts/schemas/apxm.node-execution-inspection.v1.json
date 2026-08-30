@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "apxm.node-execution-inspection.v1",
+  "title": "NodeExecutionInspection",
+  "description": "Exact inspection metadata for one runtime NodeExecution, with opaque references to content, attempts, policy, trace, and evidence.",
+  "type": "object",
+  "required": [
+    "contract",
+    "program_invocation_id",
+    "node_execution_id",
+    "air_node_id",
+    "status",
+    "commitment",
+    "attempt_refs",
+    "evidence_refs"
+  ],
+  "properties": {
+    "contract": { "const": "apxm.node-execution-inspection.v1" },
+    "program_invocation_id": { "$ref": "#/$defs/OpaqueRef" },
+    "node_execution_id": { "$ref": "#/$defs/OpaqueRef" },
+    "air_node_id": { "$ref": "#/$defs/OpaqueRef" },
+    "parent_node_execution_id": { "$ref": "#/$defs/OpaqueRef" },
+    "occurrence_id": { "$ref": "#/$defs/OpaqueRef" },
+    "region_occurrence_id": { "$ref": "#/$defs/OpaqueRef" },
+    "status": {
+      "type": "string",
+      "enum": ["running", "waiting", "succeeded", "failed", "cancelled", "unknown"]
+    },
+    "commitment": {
+      "type": "string",
+      "enum": ["provisional", "committed"]
+    },
+    "input_ref": { "$ref": "#/$defs/OpaqueRef" },
+    "prompt_or_request_ref": { "$ref": "#/$defs/OpaqueRef" },
+    "provisional_response_ref": { "$ref": "#/$defs/OpaqueRef" },
+    "final_response_ref": { "$ref": "#/$defs/OpaqueRef" },
+    "output_ref": { "$ref": "#/$defs/OpaqueRef" },
+    "attempt_refs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/OpaqueRef" },
+      "uniqueItems": true
+    },
+    "metrics_ref": { "$ref": "#/$defs/OpaqueRef" },
+    "usage_ref": { "$ref": "#/$defs/OpaqueRef" },
+    "policy_ref": { "$ref": "#/$defs/OpaqueRef" },
+    "approval_ref": { "$ref": "#/$defs/OpaqueRef" },
+    "error_ref": { "$ref": "#/$defs/OpaqueRef" },
+    "trace_ref": { "$ref": "#/$defs/OpaqueRef" },
+    "evidence_refs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/OpaqueRef" },
+      "uniqueItems": true
+    },
+    "child_program_refs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/OpaqueRef" },
+      "uniqueItems": true
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "OpaqueRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@-]*$"
+    }
+  }
+}

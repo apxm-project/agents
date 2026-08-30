@@ -1,0 +1,36 @@
+[
+  {
+    "name": "committed-session-output",
+    "input": {
+      "contract": "apxm.session-output-ref.v1",
+      "ref_type": "SessionOutputRef",
+      "ref": "output.1",
+      "program_instance_id": "instance.1",
+      "program_invocation_id": "invocation.1",
+      "content_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "byte_length": 3,
+      "media_type": "text/plain",
+      "commitment": "committed",
+      "access_scope_ref": "scope.1",
+      "disclosure_ref": "disclosure.1"
+    },
+    "expected_valid": true
+  },
+  {
+    "name": "uppercase-digest-rejected",
+    "input": {
+      "contract": "apxm.session-output-ref.v1",
+      "ref_type": "SessionOutputRef",
+      "ref": "output.1",
+      "program_instance_id": "instance.1",
+      "program_invocation_id": "invocation.1",
+      "content_digest": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "byte_length": 3,
+      "media_type": "text/plain",
+      "commitment": "committed",
+      "access_scope_ref": "scope.1",
+      "disclosure_ref": "disclosure.1"
+    },
+    "expected_valid": false
+  }
+]

@@ -38,6 +38,11 @@ import {
 import type { CapabilityId as BuiltinCapabilityId } from "./generated/capabilities.js";
 import { BUILTIN_CAPABILITIES } from "./generated/capabilities.js";
 
+// Capture the intrinsic before authored code can replace the global method.
+// Marker records are inputs to static capture, so their fields must remain
+// stable after the declaration factory returns.
+const objectFreeze = Object.freeze.bind(Object);
+
 /**
  * The ceiling the skill-reading capability enforces on a body it loads. An
  * inline skill is the same trusted context landing in the same model window, so
@@ -252,15 +257,32 @@ function uncallable(marker: string): never {
   throw new Error(`a ${marker} is invoked inside a compiled Agent body`);
 }
 
+/** Keep one declaration record immutable after it enters the module registry. */
+function freezeDeclaration<T extends object>(declaration: T): T {
+  return objectFreeze(declaration);
+}
+
+/** Copy a permission into an immutable plain record before capture can read it. */
+function freezePermission(permission: Permission | undefined): Permission | undefined {
+  if (permission === undefined) {
+    return undefined;
+  }
+  const snapshot: Permission = {
+    decision: permission.decision,
+    ...(permission.reason === undefined ? {} : { reason: permission.reason }),
+  };
+  return freezeDeclaration(snapshot);
+}
+
 export function Model<Input, Output>(ref: string): ModelBinding<Input, Output> {
   rejectDisplayName(ref, "Model", MODEL_DISPLAY_NAME_REJECTED);
   const binding = () => uncallable("Model");
-  return recordDeclaration(Object.assign(binding, {
+  return recordDeclaration(freezeDeclaration(Object.assign(binding, {
     kind: "model_binding" as const,
     targetRef: ref,
     inputTypeRef: "ModelRequest",
     outputTypeRef: "ModelResponse",
-  }));
+  })));
 }
 
 export function Tool<Input, Output>(
@@ -272,13 +294,13 @@ export function Tool<Input, Output>(
   rejectDisplayName(targetRef, "Tool", TOOL_DISPLAY_NAME_REJECTED);
   rejectUnmintedCapability(capabilityRef, "Tool", TOOL_REF_NOT_CAPABILITY);
   rejectInvalidPermission(options.permission, "Tool");
-  return recordDeclaration(Object.assign(binding, {
+  return recordDeclaration(freezeDeclaration(Object.assign(binding, {
     kind: "tool_binding" as const,
     targetRef,
     inputTypeRef: "ToolInput",
     outputTypeRef: "ToolOutput",
-    permission: options.permission,
-  }));
+    permission: freezePermission(options.permission),
+  })));
 }
 
 export function Capability<Input, Output>(
@@ -290,13 +312,13 @@ export function Capability<Input, Output>(
   rejectDisplayName(targetRef, "Capability", CAPABILITY_DISPLAY_NAME_REJECTED);
   rejectUnmintedCapability(ref, "Capability", CAPABILITY_REF_NOT_EXACT);
   rejectInvalidPermission(options.permission, "Capability");
-  return recordDeclaration(Object.assign(binding, {
+  return recordDeclaration(freezeDeclaration(Object.assign(binding, {
     kind: "capability_binding" as const,
     targetRef,
     inputTypeRef: "CapabilityInput",
     outputTypeRef: "CapabilityOutput",
-    permission: options.permission,
-  }));
+    permission: freezePermission(options.permission),
+  })));
 }
 
 /** Keep JavaScript callers on the generated closed permission vocabulary. */
@@ -332,7 +354,7 @@ function rejectInvalidPermission(
 
 export function Event<Payload>(ref: string): EventTypeBinding<Payload> {
   rejectDisplayName(ref, "Event", EVENT_NOT_TYPED);
-  return recordDeclaration({
+  return recordDeclaration(freezeDeclaration({
     kind: "event_type" as const,
     typeRef: "Event",
     targetRef: ref,
@@ -341,7 +363,7 @@ export function Event<Payload>(ref: string): EventTypeBinding<Payload> {
         `${EVENT_WAIT_OUTSIDE_BODY}: an Event is awaited inside a compiled Agent body`,
       );
     },
-  });
+  }));
 }
 
 /**
@@ -376,7 +398,7 @@ export function Skill(skillId: string, source: SkillSource): SkillBinding {
         `${SKILL_INSTRUCTIONS_OVERLONG}: Skill '${skillId}' states an empty or oversized body; a loaded skill is at most ${MAX_INSTRUCTION_BYTES} bytes`,
       );
     }
-    instructionSource = { kind: SKILL_INSTRUCTION_KIND_INLINE, text };
+    instructionSource = freezeDeclaration({ kind: SKILL_INSTRUCTION_KIND_INLINE, text });
   } else {
     const expected = skillEntryPath(skillId);
     if (entry !== expected) {
@@ -384,9 +406,9 @@ export function Skill(skillId: string, source: SkillSource): SkillBinding {
         `${SKILL_ENTRY_PATH_NOT_CANONICAL}: Skill '${skillId}' carries its instructions at '${expected}', not '${entry}'`,
       );
     }
-    instructionSource = { kind: SKILL_INSTRUCTION_KIND_ENTRY, path: expected };
+    instructionSource = freezeDeclaration({ kind: SKILL_INSTRUCTION_KIND_ENTRY, path: expected });
   }
-  return recordDeclaration({
+  return recordDeclaration(freezeDeclaration({
     kind: "skill" as const,
     skillId,
     instructionSource,
@@ -395,15 +417,15 @@ export function Skill(skillId: string, source: SkillSource): SkillBinding {
         `${SKILL_LOAD_OUTSIDE_BODY}: a Skill is loaded inside a compiled Agent body`,
       );
     },
-  });
+  }));
 }
 
 export function Context<Schema>(initial?: Schema): ContextSchema {
-  return recordDeclaration({
+  return recordDeclaration(freezeDeclaration({
     kind: "context" as const,
     // The Context type identity is read off `Context<Schema>` in the authored
     // source, exactly as Python reads it off the decorated class.
     typeRef: "Context",
     defaultPresent: initial !== undefined,
-  });
+  }));
 }

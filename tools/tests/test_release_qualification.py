@@ -386,6 +386,45 @@ class ReleaseQualificationTests(unittest.TestCase):
         self.assertTrue(verified["qualified"], verified["diagnostics"])
         self.assertEqual(verified["qualification_scope"], "consumer-linux-x86_64")
 
+    def test_linux_package_verification_accepts_linux_arm64_elf_headers(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, tempfile.TemporaryDirectory() as package_dir:
+            root = Path(temporary)
+            revision, artifacts = make_clean_owner_checkout(root)
+            for artifact in artifacts.values():
+                header = bytearray(64)
+                header[:7] = b"\x7fELF\x02\x01\x01"
+                header[18:20] = self.qualification.LINUX_AARCH64_MACHINE.to_bytes(2, "little")
+                artifact.write_bytes(header)
+            self.qualification.generate_descriptors(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                output_dir=root,
+                source_revision=revision,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "add", "deploy", "contracts"],
+                check=True,
+                env=git_environment(),
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-qm", "publish fixture"],
+                check=True,
+                env=git_environment(),
+            )
+            self.qualification.package_release(
+                root,
+                output_dir=Path(package_dir),
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                run_gates=False,
+            )
+            verified = self.qualification.verify_linux_package(
+                Path(package_dir), architecture="arm64"
+            )
+        self.assertTrue(verified["qualified"], verified["diagnostics"])
+        self.assertEqual(verified["qualification_scope"], "consumer-linux-arm64")
+
     def test_protocol_descriptor_drift_is_rejected_against_source_revision(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -1,11 +1,22 @@
-FROM debian:bookworm-slim
+ARG APXM_BASE_IMAGE
+FROM ${APXM_BASE_IMAGE}
 
+ARG APXM_BASE_IMAGE
 ARG APXM_SOURCE_REVISION
 ARG APXM_RUNTIME_SERVICE_DIGEST
+
+# Require the release builder to provide a content-addressed base image.  No
+# package installation or service files are processed for a tag-only input.
+RUN set -eu; \
+    case "$APXM_BASE_IMAGE" in *@sha256:*) ;; *) echo "APXM_BASE_IMAGE must be an immutable digest reference" >&2; exit 1;; esac; \
+    base_digest="${APXM_BASE_IMAGE##*@sha256:}"; \
+    case "$base_digest" in *[!0123456789abcdef]*|"") exit 1;; esac; \
+    [ "${#base_digest}" -eq 64 ]
 
 LABEL org.opencontainers.image.title="APXM Runtime Service" \
       org.opencontainers.image.source="https://github.com/apxm-project/agents.git" \
       org.opencontainers.image.revision="${APXM_SOURCE_REVISION}" \
+      io.apxm.base-image="${APXM_BASE_IMAGE}" \
       io.apxm.service="runtime-service" \
       io.apxm.service-digest="${APXM_RUNTIME_SERVICE_DIGEST}"
 
@@ -18,6 +29,24 @@ RUN apt-get update \
     && chown -R 65532:65532 /run/apxm /var/lib/apxm
 
 COPY target/release/apxm-runtime-service /usr/local/bin/apxm-runtime-service
+COPY deploy/services/source-revision.v1.json /tmp/apxm-source-revision.json
+COPY contracts/services/manifests/apxm.agents-service-release-manifest.v1.json /tmp/apxm-service-release-manifest.json
+
+# Bind the image to the exact source cohort and executable digest qualified by
+# the owner release manifest.  Missing or malformed build arguments fail
+# closed, so image labels cannot be used as unverifiable claims.
+RUN set -eu; \
+    case "$APXM_SOURCE_REVISION" in *[!0123456789abcdef]*|"") exit 1;; esac; \
+    [ "${#APXM_SOURCE_REVISION}" -eq 40 ]; \
+    case "$APXM_RUNTIME_SERVICE_DIGEST" in sha256:*) ;; *) exit 1;; esac; \
+    digest="${APXM_RUNTIME_SERVICE_DIGEST#sha256:}"; \
+    case "$digest" in *[!0123456789abcdef]*|"") exit 1;; esac; \
+    [ "${#digest}" -eq 64 ]; \
+    source_revision="$(sed -n 's/.*"source_revision":"\([0-9a-f]\{40\}\)".*/\1/p' /tmp/apxm-source-revision.json)"; \
+    [ "$source_revision" = "$APXM_SOURCE_REVISION" ]; \
+    manifest_digest="$(sed -n 's/.*"digest":"\(sha256:[0-9a-f]\{64\}\)","name":"runtime-service".*/\1/p' /tmp/apxm-service-release-manifest.json)"; \
+    [ "$manifest_digest" = "$APXM_RUNTIME_SERVICE_DIGEST" ]; \
+    [ "sha256:$(sha256sum /usr/local/bin/apxm-runtime-service | cut -d' ' -f1)" = "$APXM_RUNTIME_SERVICE_DIGEST" ]
 
 ENV APXM_ARTIFACT_DIR=/var/lib/apxm/artifacts
 USER 65532:65532

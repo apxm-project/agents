@@ -138,6 +138,23 @@ ports and do not require an external provider.
 - Generated frontend modules remain private implementation modules; public
   author imports come from the documented frontend roots.
 
+## Open security blocker
+
+`Status: blocked for hostile same-isolate source capture.` The Python source
+port evaluates submitted text in the same interpreter as its capture helpers
+and invokes the capture result after evaluation
+(`crates/compiler/source-port/harness/capture_python.py`). A hostile submission
+can reach `sys.modules["__main__"]` and mutate a helper function's `__code__`
+while the in-progress bind is evaluating; a read-only review reproduced this
+by replacing `_capture` and `_validate_graph_provenance`, after which the
+harness emitted a forged graph. The native Python graph registry and the
+TypeScript frozen handle prototype close the handle-level mutation cases
+(`crates/compiler/frontend/native/python/src/lib.rs`,
+`crates/compiler/frontend/typescript/src/agent.ts`), but they do not isolate
+the Python harness helpers. This capture path must not be described as fully
+confined until trusted helper state is isolated or moved behind a stronger
+process/native boundary; no implementation fix is recorded in this note.
+
 ## Reproduction
 
 From the repository root, provision the local environment once, then run:

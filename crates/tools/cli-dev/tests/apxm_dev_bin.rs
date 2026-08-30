@@ -3,7 +3,7 @@ use std::process::Command;
 
 /// Locate the `apxm-dev` fixture binary.
 ///
-/// Cargo normally injects `CARGO_BIN_EXE_apxm_dev` as a compile-time env for
+/// Cargo normally injects `CARGO_BIN_EXE_apxm-dev` as a compile-time env for
 /// integration tests. Some host cargo/rustc combinations only export it at
 /// run time, so this helper accepts either and finally falls back to the
 /// machine-local target directory.
@@ -12,10 +12,10 @@ pub fn command() -> Command {
 }
 
 fn apxm_dev_path() -> PathBuf {
-    if let Some(path) = option_env!("CARGO_BIN_EXE_apxm_dev") {
+    if let Some(path) = option_env!("CARGO_BIN_EXE_apxm-dev") {
         return PathBuf::from(path);
     }
-    if let Some(path) = std::env::var_os("CARGO_BIN_EXE_apxm_dev") {
+    if let Some(path) = std::env::var_os("CARGO_BIN_EXE_apxm-dev") {
         return PathBuf::from(path);
     }
     let mut path = std::env::var_os("CARGO_TARGET_DIR")

@@ -18,8 +18,9 @@ mod store;
 pub use filesystem::FilesystemExecutionCommit;
 pub use memory::InMemoryExecutionCommit;
 pub use store::{
-    COMMIT_LOCAL_SCHEMA, CommitLocalError, CommitLocalRecord, CommitLocalStore, CommitLocalTuple,
-    CommitRequestIdentity, MAX_COMMIT_RESULTS, MAX_OUTPUT_BYTES, MAX_OUTPUT_RECORDS,
-    MAX_STORE_BYTES, MAX_TUPLE_BYTES, PreparedOutputRef, SessionOutputPreparation, StoredCommit,
-    StoredOutput,
+    AllowReadAccess, COMMIT_LOCAL_SCHEMA, CommitLocalError, CommitLocalRecord, CommitLocalStore,
+    CommitLocalTuple, CommitRequestIdentity, DenyReadAccess, MAX_COMMIT_RESULTS, MAX_OUTPUT_BYTES,
+    MAX_OUTPUT_RECORDS, MAX_READ_RECORDS, MAX_STORE_BYTES, MAX_TUPLE_BYTES, PreparedOutputRef,
+    ReadAccessHook, ReadAudit, ReadAuthorization, ReadAuthorizationBinding, ReadOperation,
+    ReadTarget, SessionOutputPreparation, StoredCommit, StoredInvocation, StoredOutput,
 };

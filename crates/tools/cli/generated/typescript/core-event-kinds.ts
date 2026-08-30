@@ -55,10 +55,6 @@ export enum CoreEventKind {
   PLAN_STEP_STARTED = "plan_step_started",
   PLAN_STEP_COMPLETED = "plan_step_completed",
   PLAN_WORKFLOW_EMITTED = "plan_workflow_emitted",
-  WORKFLOW_STARTED = "workflow_started",
-  WORKFLOW_STEP_STARTED = "workflow_step_started",
-  WORKFLOW_STEP_COMPLETED = "workflow_step_completed",
-  WORKFLOW_FINISHED = "workflow_finished",
   EXECUTION_STARTED = "execution_started",
   EXECUTE_COMPLETE = "execute_complete",
   MEMORY_READ = "memory_read",
@@ -81,8 +77,6 @@ export enum CoreEventKind {
   CANCELLED = "cancelled",
   LOOP_DETECTED = "loop_detected",
   CONTEXT_WINDOW_WARNING = "context_window_warning",
-  SESSION_START = "session_start",
-  SESSION_END = "session_end",
   SUBAGENT_SPAWN_BEGIN = "subagent_spawn_begin",
   SUBAGENT_SPAWN_END = "subagent_spawn_end",
   SUBAGENT_LLM_CALL_BEGIN = "subagent_llm_call_begin",
@@ -117,10 +111,6 @@ export const PLAN_CREATED = kind(CoreEventKind.PLAN_CREATED, EventCategoryKind.L
 export const PLAN_STEP_STARTED = kind(CoreEventKind.PLAN_STEP_STARTED, EventCategoryKind.LIFECYCLE);
 export const PLAN_STEP_COMPLETED = kind(CoreEventKind.PLAN_STEP_COMPLETED, EventCategoryKind.LIFECYCLE);
 export const PLAN_WORKFLOW_EMITTED = kind(CoreEventKind.PLAN_WORKFLOW_EMITTED, EventCategoryKind.LIFECYCLE);
-export const WORKFLOW_STARTED = kind(CoreEventKind.WORKFLOW_STARTED, EventCategoryKind.LIFECYCLE);
-export const WORKFLOW_STEP_STARTED = kind(CoreEventKind.WORKFLOW_STEP_STARTED, EventCategoryKind.LIFECYCLE);
-export const WORKFLOW_STEP_COMPLETED = kind(CoreEventKind.WORKFLOW_STEP_COMPLETED, EventCategoryKind.LIFECYCLE);
-export const WORKFLOW_FINISHED = kind(CoreEventKind.WORKFLOW_FINISHED, EventCategoryKind.LIFECYCLE);
 export const EXECUTION_STARTED = kind(CoreEventKind.EXECUTION_STARTED, EventCategoryKind.LIFECYCLE);
 export const EXECUTE_COMPLETE = kind(CoreEventKind.EXECUTE_COMPLETE, EventCategoryKind.LIFECYCLE, true);
 export const MEMORY_READ = kind(CoreEventKind.MEMORY_READ, EventCategoryKind.OBSERVABILITY);
@@ -143,8 +133,6 @@ export const CAPABILITY_EFFECT_RECEIPT = kind(CoreEventKind.CAPABILITY_EFFECT_RE
 export const CANCELLED = kind(CoreEventKind.CANCELLED, EventCategoryKind.ERROR);
 export const LOOP_DETECTED = kind(CoreEventKind.LOOP_DETECTED, EventCategoryKind.ERROR);
 export const CONTEXT_WINDOW_WARNING = kind(CoreEventKind.CONTEXT_WINDOW_WARNING, EventCategoryKind.ERROR);
-export const SESSION_START = kind(CoreEventKind.SESSION_START, EventCategoryKind.LIFECYCLE);
-export const SESSION_END = kind(CoreEventKind.SESSION_END, EventCategoryKind.LIFECYCLE, true);
 export const SUBAGENT_SPAWN_BEGIN = kind(CoreEventKind.SUBAGENT_SPAWN_BEGIN, EventCategoryKind.AGENT);
 export const SUBAGENT_SPAWN_END = kind(CoreEventKind.SUBAGENT_SPAWN_END, EventCategoryKind.AGENT);
 export const SUBAGENT_LLM_CALL_BEGIN = kind(CoreEventKind.SUBAGENT_LLM_CALL_BEGIN, EventCategoryKind.AGENT);
@@ -179,10 +167,6 @@ export const CORE_EVENT_KINDS = [
   PLAN_STEP_STARTED,
   PLAN_STEP_COMPLETED,
   PLAN_WORKFLOW_EMITTED,
-  WORKFLOW_STARTED,
-  WORKFLOW_STEP_STARTED,
-  WORKFLOW_STEP_COMPLETED,
-  WORKFLOW_FINISHED,
   EXECUTION_STARTED,
   EXECUTE_COMPLETE,
   MEMORY_READ,
@@ -205,8 +189,6 @@ export const CORE_EVENT_KINDS = [
   CANCELLED,
   LOOP_DETECTED,
   CONTEXT_WINDOW_WARNING,
-  SESSION_START,
-  SESSION_END,
   SUBAGENT_SPAWN_BEGIN,
   SUBAGENT_SPAWN_END,
   SUBAGENT_LLM_CALL_BEGIN,

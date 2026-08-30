@@ -1,0 +1,69 @@
+{
+  "schema_version": "apxm.air",
+  "value_assemblies": [
+    {
+      "value_id": "fixture.read.arguments",
+      "expression": {
+        "kind": "object",
+        "fields": [
+          {
+            "name": "file_path",
+            "value": {
+              "kind": "string",
+              "value": "tools/tests/fixtures/canonical-capability-read-target.txt"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "value_id": "fixture.count.arguments",
+      "expression": {
+        "kind": "object",
+        "fields": [
+          {
+            "name": "text",
+            "value": {
+              "kind": "string",
+              "value": "canonical typed output"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "semantic_operations": [
+    {
+      "node_id": "fixture.capability.read",
+      "op": "capability.invoke",
+      "parent_region_id": "fixture.root",
+      "execution_order": 0,
+      "operands": [
+        { "slot": "capability_ref", "value_id": "read", "type_ref": "CapabilityRef" },
+        { "slot": "arguments", "value_id": "fixture.read.arguments", "type_ref": "ArgumentValue" }
+      ],
+      "result": { "value_id": "fixture.read.output", "type_ref": "ToolOutput" }
+    },
+    {
+      "node_id": "fixture.capability.count",
+      "op": "capability.invoke",
+      "parent_region_id": "fixture.root",
+      "execution_order": 1,
+      "operands": [
+        { "slot": "capability_ref", "value_id": "count_tokens", "type_ref": "CapabilityRef" },
+        { "slot": "arguments", "value_id": "fixture.count.arguments", "type_ref": "ArgumentValue" }
+      ],
+      "result": { "value_id": "fixture.count.output", "type_ref": "ToolOutput" }
+    }
+  ],
+  "structural_ir": [
+    { "region_id": "fixture.root", "kind": "function", "execution_order": 0 }
+  ],
+  "context_flow": [],
+  "source_map": {
+    "schema_version": "apxm.source-map",
+    "source_language": "python",
+    "node_spans": [],
+    "region_annotations": []
+  }
+}
