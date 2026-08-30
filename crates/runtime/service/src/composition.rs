@@ -443,15 +443,14 @@ pub fn verify_invocation_materials(
     artifact_bytes: &[u8],
     materials: &InvocationMaterials,
 ) -> Result<VerifiedInvocationAdmission, String> {
-    let artifact_digest = canonical_artifact_digest(artifact_bytes)
-        .map_err(|_| "invalid_invocation_admission".to_owned())?;
+    let artifact_digest = canonical_artifact_digest(artifact_bytes)?;
     let artifact = ExecutableArtifact::decode_for_execution(artifact_bytes, &artifact_digest)
-        .map_err(|_| "invalid_invocation_admission".to_owned())?;
+        .map_err(|error| error.to_string())?;
     let descriptor = canonical_runtime_descriptor();
     if materials.admission.port_bindings_digest != canonical_port_bindings_digest()
         || materials.admission.resource_ceiling_digest != canonical_resource_ceiling_digest()
     {
-        return Err("invalid_invocation_admission".to_owned());
+        return Err("admission_profile_mismatch".to_owned());
     }
     verify_invocation_admission(
         &materials.admission,
@@ -465,7 +464,7 @@ pub fn verify_invocation_materials(
             confinement: &descriptor.confinement,
         },
     )
-    .map_err(|_| "invalid_invocation_admission".to_owned())
+    .map_err(|error| error.to_string())
 }
 
 /// Package-handler implementations supplied to one Runtime Service instance.

@@ -3632,9 +3632,12 @@ mod tests {
         let mut materials =
             materials_for_artifact(&bytes, "tamper.invocation", release, provenance);
         materials.release_bytes.push(b'x');
-        assert_eq!(
-            service.bind_admission(&instance, materials),
-            Err("invalid_invocation_admission".to_owned())
+        let error = service
+            .bind_admission(&instance, materials)
+            .expect_err("tampered admission must fail before binding");
+        assert!(
+            error.starts_with("release digest mismatch:"),
+            "unexpected admission error: {error}"
         );
         let started = service
             .handle(
