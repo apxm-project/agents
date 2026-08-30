@@ -32,7 +32,7 @@ use apxm_kernel::{
     digest_serializable, verify_invocation_admission,
 };
 use apxm_program::CapabilityInvocationAuthority;
-use apxm_program::air::{AirModule, SemanticOpKind};
+use apxm_program::air::{AirModule, SemanticOpKind, StructuralOpKind};
 use apxm_program::artifact::ExecutableArtifact;
 use apxm_program::external_agent::{AttributedEvent, AttributedEventKind, PeerUsage};
 use async_trait::async_trait;
@@ -587,6 +587,39 @@ pub async fn execute_admitted_artifact_with_runtime_ports_and_cancellation(
         cancellation,
         ProgramInstanceRef::new("canonical.instance"),
         false,
+        Value::Null,
+    )
+    .await
+}
+
+/// Runtime-service start path carrying the caller's exact entrypoint input.
+/// The input is bound to the AIR parameter by the composition root; it is not
+/// inferred from artifact metadata or injected into the driver as context.
+pub(crate) async fn execute_admitted_artifact_with_runtime_ports_and_cancellation_with_input(
+    air: AirModule,
+    artifact_bytes: &[u8],
+    materials: &InvocationMaterials,
+    handlers: Option<&AdmittedPackageHandlers>,
+    package_root: Option<&Path>,
+    sandbox_registry: Option<Arc<SandboxRegistry>>,
+    commit: Arc<dyn ExecutionCommitPort>,
+    observation_sink: Option<Arc<dyn ObservationSink>>,
+    cancellation: Option<CancellationToken>,
+    input: Value,
+) -> Result<Value, String> {
+    execute_admitted_artifact_with_runtime_ports_mode(
+        air,
+        artifact_bytes,
+        materials,
+        handlers,
+        package_root,
+        sandbox_registry,
+        commit,
+        observation_sink,
+        cancellation,
+        ProgramInstanceRef::new("canonical.instance"),
+        false,
+        input,
     )
     .await
 }
@@ -646,6 +679,38 @@ pub async fn execute_admitted_artifact_resumable_for_instance(
         cancellation,
         program_instance_ref,
         true,
+        Value::Null,
+    )
+    .await
+}
+
+/// Resumable Runtime-service start path carrying the exact entrypoint input.
+pub(crate) async fn execute_admitted_artifact_resumable_for_instance_with_input(
+    air: AirModule,
+    artifact_bytes: &[u8],
+    materials: &InvocationMaterials,
+    handlers: Option<&AdmittedPackageHandlers>,
+    package_root: Option<&Path>,
+    sandbox_registry: Option<Arc<SandboxRegistry>>,
+    commit: Arc<dyn ExecutionCommitPort>,
+    observation_sink: Option<Arc<dyn ObservationSink>>,
+    cancellation: Option<CancellationToken>,
+    program_instance_ref: ProgramInstanceRef,
+    input: Value,
+) -> Result<Value, String> {
+    execute_admitted_artifact_with_runtime_ports_mode(
+        air,
+        artifact_bytes,
+        materials,
+        handlers,
+        package_root,
+        sandbox_registry,
+        commit,
+        observation_sink,
+        cancellation,
+        program_instance_ref,
+        true,
+        input,
     )
     .await
 }
@@ -742,6 +807,7 @@ async fn execute_admitted_artifact_with_runtime_ports_mode(
     cancellation: Option<CancellationToken>,
     program_instance_ref: ProgramInstanceRef,
     resumable: bool,
+    input: Value,
 ) -> Result<Value, String> {
     let admission = &materials.admission;
     let descriptor = canonical_runtime_descriptor();
@@ -788,9 +854,13 @@ async fn execute_admitted_artifact_with_runtime_ports_mode(
         .map(|binding| binding.binding_digest.clone())
         .ok_or_else(|| "reference runtime model binding is absent".to_owned())?;
     let hook_bindings = apxm_program::air_hook_bindings(&air);
+    let mut initial_values = initial_model_request_values(&air);
+    if let Some(input_value_id) = entrypoint_input_value_id(&air) {
+        initial_values.insert(input_value_id, input);
+    }
     let request = ExecutionRequest {
         model_admission: model_admission(&air, &model_binding_digest),
-        initial_values: initial_model_request_values(&air),
+        initial_values,
         air,
         hook_bindings,
         capability_invocations,
@@ -990,6 +1060,19 @@ fn initial_model_request_values(air: &AirModule) -> BTreeMap<String, Value> {
             .then(|| (value_id.clone(), json!({"value_id": value_id})))
         })
         .collect()
+}
+
+/// Locate the canonical entrypoint input parameter in AIR.  Frontends encode
+/// this parameter as `<program>.param.input`; unlike an arbitrary initial SSA
+/// value it is an explicit entrypoint binding and may safely receive the
+/// invocation input supplied by Runtime/1.
+fn entrypoint_input_value_id(air: &AirModule) -> Option<String> {
+    air.structural_ir
+        .iter()
+        .filter(|region| region.kind == StructuralOpKind::Function)
+        .flat_map(|region| &region.block_arguments)
+        .find(|argument| argument.value_id.ends_with(".param.input"))
+        .map(|argument| argument.value_id.clone())
 }
 
 fn local_capability_invocation_admissions(

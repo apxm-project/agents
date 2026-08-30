@@ -683,6 +683,9 @@ pub(crate) struct PreparedInvocation {
     request_id: String,
     program_instance_id: String,
     invocation_id: String,
+    /// The caller-supplied invocation input, bound to the artifact's exact
+    /// entrypoint parameter by the composition root before the driver starts.
+    input: Value,
     air: AirModule,
     artifact_bytes: Vec<u8>,
     materials: InvocationMaterials,
@@ -710,7 +713,7 @@ impl PreparedInvocation {
                 }
             }
             if self.resumable {
-                execute_admitted_artifact_resumable_for_instance(
+                composition::execute_admitted_artifact_resumable_for_instance_with_input(
                     self.air.clone(),
                     &self.artifact_bytes,
                     &self.materials,
@@ -721,10 +724,11 @@ impl PreparedInvocation {
                     Some(self.observation_sink.clone()),
                     Some(self.cancellation.clone()),
                     ProgramInstanceRef::new(self.program_instance_id.clone()),
+                    self.input.clone(),
                 )
                 .await
             } else {
-                execute_admitted_artifact_with_runtime_ports_and_cancellation(
+                composition::execute_admitted_artifact_with_runtime_ports_and_cancellation_with_input(
                     self.air.clone(),
                     &self.artifact_bytes,
                     &self.materials,
@@ -734,6 +738,7 @@ impl PreparedInvocation {
                     self.execution_backend.clone(),
                     Some(self.observation_sink.clone()),
                     Some(self.cancellation.clone()),
+                    self.input.clone(),
                 )
                 .await
             }
@@ -2177,6 +2182,7 @@ impl RuntimeService {
             request_id: request_id.clone(),
             program_instance_id: program_instance_id.clone(),
             invocation_id: invocation_id.clone(),
+            input: input.clone(),
             air,
             artifact_bytes: bytes,
             materials,

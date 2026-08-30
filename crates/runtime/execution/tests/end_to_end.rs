@@ -1499,6 +1499,57 @@ async fn structural_return_assembles_invocation_output_without_node_coordinates(
 }
 
 #[tokio::test]
+async fn structural_return_forwards_entrypoint_input_without_node_coordinates() {
+    let mut execution = request();
+    execution.air = serde_json::from_value(json!({
+        "schema_version": "apxm.air",
+        "value_assemblies": [],
+        "semantic_operations": [],
+        "structural_ir": [
+            {"region_id": "r.fn", "kind": "function", "execution_order": 0,
+             "block_arguments": [{"value_id": "EchoAgent.param.input", "type_ref": "Input"}]},
+            {"region_id": "r.return", "kind": "return", "parent_region_id": "r.fn",
+             "execution_order": 1, "operands": [
+                {"slot": "output", "value_id": "EchoAgent.param.input", "type_ref": "Output"}
+            ]}
+        ],
+        "context_flow": [],
+        "source_map": {"schema_version": "apxm.source-map", "source_language": "typescript",
+                        "node_spans": [], "region_annotations": []}
+    }))
+    .expect("entrypoint passthrough AIR");
+    execution.hook_bindings.clear();
+    execution.capability_invocations.clear();
+    execution.initial_values = BTreeMap::from([(
+        "EchoAgent.param.input".to_owned(),
+        json!({"text": "from invocation input"}),
+    )]);
+    assert!(execution.air.verify().is_accepted());
+
+    let commit = Arc::new(FakeCommit::new());
+    execute(&ports(commit.clone()), execution, Value::Null)
+        .await
+        .expect("entrypoint input is an available return value");
+
+    let output_refs = commit.output_refs();
+    assert_eq!(output_refs.len(), 1);
+    assert!(output_refs[0].get("node_execution_id").is_none());
+    assert!(output_refs[0].get("occurrence_id").is_none());
+    let terminal = commit
+        .observations()
+        .into_iter()
+        .find(|observation| {
+            observation.get("observation_kind").and_then(Value::as_str)
+                == Some("terminal_committed")
+        })
+        .expect("terminal observation");
+    assert_eq!(
+        terminal.get("output_ref").and_then(Value::as_str),
+        output_refs[0].get("ref").and_then(Value::as_str)
+    );
+}
+
+#[tokio::test]
 async fn control_predicate_refuses_unmaterialized_future_value() {
     let mut execution = request();
     execution.air = serde_json::from_value(json!({
