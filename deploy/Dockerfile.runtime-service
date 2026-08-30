@@ -25,8 +25,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 65532 apxm \
     && useradd --system --uid 65532 --gid 65532 --home-dir /nonexistent --shell /usr/sbin/nologin apxm \
-    && mkdir -p /run/apxm /var/lib/apxm/artifacts \
-    && chown -R 65532:65532 /run/apxm /var/lib/apxm
+    && mkdir -p /run/apxm /var/lib/apxm/artifacts /var/lib/apxm/runtime-state \
+    && chown -R 65532:65532 /run/apxm /var/lib/apxm/artifacts /var/lib/apxm/runtime-state
 
 COPY target/release/apxm-runtime-service /usr/local/bin/apxm-runtime-service
 COPY deploy/services/source-revision.v1.json /tmp/apxm-source-revision.json
@@ -48,7 +48,8 @@ RUN set -eu; \
     [ "$manifest_digest" = "$APXM_RUNTIME_SERVICE_DIGEST" ]; \
     [ "sha256:$(sha256sum /usr/local/bin/apxm-runtime-service | cut -d' ' -f1)" = "$APXM_RUNTIME_SERVICE_DIGEST" ]
 
-ENV APXM_ARTIFACT_DIR=/var/lib/apxm/artifacts
+ENV APXM_ARTIFACT_DIR=/var/lib/apxm/artifacts \
+    APXM_RUNTIME_STATE_DIR=/var/lib/apxm/runtime-state
 USER 65532:65532
-VOLUME ["/run/apxm", "/var/lib/apxm/artifacts"]
+VOLUME ["/run/apxm", "/var/lib/apxm/artifacts", "/var/lib/apxm/runtime-state"]
 ENTRYPOINT ["/usr/local/bin/apxm-runtime-service"]
