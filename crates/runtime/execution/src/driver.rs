@@ -3077,6 +3077,38 @@ async fn drive_from(
                 return Ok(DriveEnd::RanToEnd(state));
             }
             ScheduleStep::ProgramReturn { .. } => {
+                // A structural return owns the program's final value.  The
+                // value may be a pure AIR assembly (for example an authored
+                // `{ text: "ready" }` return) and therefore has no semantic
+                // node execution to publish it.  Resolve the exact `output`
+                // operand here, at the scheduler boundary, so the commit
+                // path can stage the value and mint its SessionOutputRef.
+                let return_region_id = match step {
+                    ScheduleStep::ProgramReturn { region_id } => region_id,
+                    _ => unreachable!("matched ProgramReturn above"),
+                };
+                let return_value_id = air
+                    .structural_ir
+                    .iter()
+                    .find(|region| region.region_id == *return_region_id)
+                    .and_then(|region| {
+                        region
+                            .operands
+                            .iter()
+                            .find(|operand| operand.slot == "output")
+                            .map(|operand| operand.value_id.clone())
+                    });
+                if let Some(value_id) = return_value_id {
+                    state.last_result = materialize_ssa_value(
+                        air,
+                        &state,
+                        return_region_id,
+                        &value_id,
+                        &mut BTreeSet::new(),
+                    )?;
+                    state.last_result_value_id = Some(value_id);
+                    state.last_operation_succeeded = true;
+                }
                 state.fail_active_loops();
                 enforce_runtime_limits(&state, resource_ceilings)?;
                 return Ok(DriveEnd::RanToEnd(state));
@@ -4073,9 +4105,15 @@ async fn prepare_final_output(
     program_invocation_ref: &ProgramInvocationRef,
     commit_id: &str,
 ) -> Result<Option<PreparedSessionOutputRef>, ExecutionError> {
-    let Some(node_execution_id) = state.committed_output_node_execution_id.as_ref() else {
+    // Most outputs are produced by a semantic node, but a structural return
+    // may return an assembled value directly and consequently has no dynamic
+    // node/occurrence coordinates.  The return value was resolved by the
+    // scheduler and is still authoritative; only omit output when the run had
+    // neither a producing node nor an explicit return value.
+    if state.committed_output_node_execution_id.is_none() && state.last_result_value_id.is_none() {
         return Ok(None);
-    };
+    }
+    let node_execution_id = state.committed_output_node_execution_id.as_ref();
     let content = serde_json::to_vec(&state.last_result).map_err(|error| {
         ExecutionError::OutputPreparation(format!("encode final output: {error}"))
     })?;
@@ -4089,7 +4127,7 @@ async fn prepare_final_output(
             content,
             media_type: "application/json".to_owned(),
             visibility: SessionOutputVisibility::Provisional,
-            node_execution_id: Some(node_execution_id.clone()),
+            node_execution_id: node_execution_id.cloned(),
             occurrence_id: state.committed_output_occurrence_id.clone(),
             access_scope_ref: program_invocation_ref.as_str().to_owned(),
             disclosure_ref: None,
@@ -4101,7 +4139,7 @@ async fn prepare_final_output(
         .map_err(|error| ExecutionError::OutputPreparation(error.to_owned()))?;
     if prepared.program_instance_id != program_instance_ref.as_str()
         || prepared.program_invocation_id != program_invocation_ref.as_str()
-        || prepared.node_execution_id.as_deref() != Some(node_execution_id.as_str())
+        || prepared.node_execution_id.as_deref() != node_execution_id.map(String::as_str)
         || prepared.occurrence_id != state.committed_output_occurrence_id
     {
         return Err(ExecutionError::OutputPreparation(
