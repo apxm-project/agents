@@ -11,8 +11,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::RuntimeService;
 use apxm_runtime_protocol::{
-    RUNTIME_PROTOCOL_V2_VERSION, RuntimeHandshake, RuntimeHandshakeV2, RuntimeRequest,
-    RuntimeRequestV2,
+    RUNTIME_EXECUTION_ADMISSION_VERSION, RUNTIME_PROTOCOL_V2_VERSION,
+    RuntimeExecutionAdmissionHandshake, RuntimeExecutionAdmissionRequest, RuntimeHandshake,
+    RuntimeHandshakeV2, RuntimeRequest, RuntimeRequestV2,
 };
 
 /// Maximum encoded JSONL frame, including its line terminator.
@@ -48,6 +49,13 @@ struct Envelope {
 struct EnvelopeV2 {
     handshake: RuntimeHandshakeV2,
     request: RuntimeRequestV2,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExecutionAdmissionEnvelope {
+    handshake: RuntimeExecutionAdmissionHandshake,
+    request: RuntimeExecutionAdmissionRequest,
 }
 
 /// Local Unix socket endpoint identity.
@@ -171,6 +179,13 @@ fn process_payload(
                 .map_err(|error| format!("{error:?}"))?,
         )
         .map_err(|error| error.to_string())
+    } else if protocol_version == Some(RUNTIME_EXECUTION_ADMISSION_VERSION) {
+        let envelope: ExecutionAdmissionEnvelope =
+            serde_json::from_value(payload).map_err(|error| error.to_string())?;
+        serde_json::to_value(
+            service.handle_execution_admission(&envelope.handshake, envelope.request),
+        )
+        .map_err(|error| error.to_string())
     } else {
         let envelope: Envelope =
             serde_json::from_value(payload).map_err(|error| error.to_string())?;
@@ -261,6 +276,18 @@ fn process_shared_payload(
             .lock()
             .map_err(|_| "runtime service lock poisoned")?;
         return process_payload(payload, &mut guard);
+    }
+
+    if protocol_version == Some(RUNTIME_EXECUTION_ADMISSION_VERSION) {
+        let envelope: ExecutionAdmissionEnvelope =
+            serde_json::from_value(payload).map_err(|error| error.to_string())?;
+        let mut guard = service
+            .lock()
+            .map_err(|_| "runtime service lock poisoned")?;
+        return serde_json::to_value(
+            guard.handle_execution_admission(&envelope.handshake, envelope.request),
+        )
+        .map_err(|error| error.to_string());
     }
 
     let envelope: Envelope = serde_json::from_value(payload).map_err(|error| error.to_string())?;

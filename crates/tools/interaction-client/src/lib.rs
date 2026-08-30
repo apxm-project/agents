@@ -10,7 +10,8 @@ pub use apxm_runtime_protocol::{
     ContentReadResult, CorrelationId, EvidenceRecord, ExecutionCursor, ExecutionObservation,
     ExecutionPage, GrantRef, OutputRef, PrincipalRef, ProgramInvocationId,
     ProgramInvocationInspection, ProgramInvocationStatus, RUNTIME_PROTOCOL_VERSION, ReadContext,
-    ReadPurpose, RequestId, RuntimeHandshake, RuntimeHandshakeV2, RuntimeOwnerClaim,
+    ReadPurpose, RequestId, RuntimeAdmissionProfileDescriptor, RuntimeExecutionAdmissionHandshake,
+    RuntimeExecutionAdmissionRequest, RuntimeHandshake, RuntimeHandshakeV2, RuntimeOwnerClaim,
     RuntimeRequest, RuntimeRequestV2, RuntimeResult, RuntimeResultV2, ScopeRef,
 };
 use apxm_runtime_service::{
@@ -106,6 +107,7 @@ pub struct InteractionClient {
     inner: RuntimeInner,
     owner_claim: Option<RuntimeOwnerClaim>,
     event_owner_claim: Option<RuntimeOwnerClaim>,
+    admission_profile: Option<RuntimeAdmissionProfileDescriptor>,
 }
 
 enum RuntimeInner {
@@ -125,6 +127,7 @@ impl Default for InteractionClient {
             inner: RuntimeInner::InProcess(Box::new(RuntimeService::in_memory())),
             owner_claim: None,
             event_owner_claim: None,
+            admission_profile: None,
         }
     }
 }
@@ -214,6 +217,7 @@ impl InteractionClient {
             }),
             owner_claim: None,
             event_owner_claim: None,
+            admission_profile: None,
         })
     }
 
@@ -226,11 +230,9 @@ impl InteractionClient {
         }
     }
 
-    /// Bind the exact admission materials for an in-process runtime instance.
-    ///
-    /// Stdio runtimes currently expose no admission-binding protocol request;
-    /// callers must provision their admission through the runtime's owning
-    /// composition boundary before invoking.
+    /// Bind the exact admission materials for a runtime instance. The same
+    /// typed handoff is used for in-process and stdio runtimes; omitting it
+    /// keeps the Runtime Service fail-closed at invocation start.
     pub fn bind_admission(
         &mut self,
         program_instance_id: &str,
@@ -241,9 +243,49 @@ impl InteractionClient {
                 service.bind_admission(program_instance_id, materials)
             }
             RuntimeInner::Stdio(_) => {
-                Err("stdio runtime admission binding is not supported".to_owned())
+                let _ = (program_instance_id, materials);
+                Err("standalone Runtime requires bind_admission_profile with its image-owned profile_ref".to_owned())
             }
         }
+    }
+
+    /// Bind the image-owned admission profile through the standalone Runtime
+    /// protocol. Release/provenance carriers never cross this boundary.
+    pub fn bind_admission_profile(
+        &mut self,
+        program_instance_id: &str,
+        admission_profile_ref: &str,
+    ) -> Result<(), String> {
+        let result = self.request_execution_admission(
+            RuntimeExecutionAdmissionRequest::ProgramInstanceBindAdmission {
+                request_id: "bind".to_owned(),
+                program_instance_id: program_instance_id.to_owned(),
+                owner_claim: self
+                    .owner_claim
+                    .clone()
+                    .ok_or_else(|| "missing runtime owner claim".to_owned())?,
+                admission_profile_ref: admission_profile_ref.to_owned(),
+            },
+        )?;
+        match result {
+            RuntimeResult::ProgramInstanceAdmissionBound { .. } => Ok(()),
+            other => Err(format!("{other:?}")),
+        }
+    }
+
+    /// Bind the exact profile advertised by the most recent instance
+    /// creation. This keeps callers from hardcoding Runtime descriptor
+    /// digests or profile references.
+    pub fn bind_admission_profile_from_creation(
+        &mut self,
+        program_instance_id: &str,
+    ) -> Result<(), String> {
+        let profile_ref = self
+            .admission_profile
+            .as_ref()
+            .map(|profile| profile.profile_ref.clone())
+            .ok_or_else(|| "runtime did not advertise an admission profile".to_owned())?;
+        self.bind_admission_profile(program_instance_id, &profile_ref)
     }
 
     /// Invoke an explicit artifact. Never contacts Compilation Service.
@@ -259,13 +301,22 @@ impl InteractionClient {
             RuntimeResult::ProgramInstanceCreated {
                 program_instance_id,
                 owner_claim,
+                admission_profile,
                 ..
             } => {
                 self.owner_claim = Some(owner_claim);
+                self.admission_profile = admission_profile;
                 Ok(program_instance_id)
             }
             other => Err(format!("{other:?}")),
         }
+    }
+
+    /// Profile descriptor returned by the last successful instance creation.
+    /// The carrier bytes remain a host/image composition responsibility.
+    #[must_use]
+    pub fn admission_profile(&self) -> Option<&RuntimeAdmissionProfileDescriptor> {
+        self.admission_profile.as_ref()
     }
 
     /// Start one invocation on an admitted instance.
@@ -585,6 +636,36 @@ impl InteractionClient {
                     "handshake": {
                         "protocol_version": RUNTIME_PROTOCOL_VERSION,
                     },
+                    "request": request,
+                });
+                let frame = StdioFrame {
+                    channel: "runtime".to_owned(),
+                    payload: envelope.to_string(),
+                };
+                stdio
+                    .stdin
+                    .write_all(encode_jsonl(&frame).as_bytes())
+                    .map_err(|error| error.to_string())?;
+                stdio.stdin.flush().map_err(|error| error.to_string())?;
+                let line = read_limited_line(&mut stdio.stdout)?;
+                let reply = decode_jsonl(&line)?;
+                serde_json::from_str(&reply.payload).map_err(|error| error.to_string())
+            }
+        }
+    }
+
+    fn request_execution_admission(
+        &mut self,
+        request: RuntimeExecutionAdmissionRequest,
+    ) -> Result<RuntimeResult, String> {
+        match &mut self.inner {
+            RuntimeInner::InProcess(service) => Ok(service.handle_execution_admission(
+                &RuntimeExecutionAdmissionHandshake::server(),
+                request,
+            )),
+            RuntimeInner::Stdio(stdio) => {
+                let envelope = serde_json::json!({
+                    "handshake": RuntimeExecutionAdmissionHandshake::server(),
                     "request": request,
                 });
                 let frame = StdioFrame {

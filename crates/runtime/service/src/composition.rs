@@ -183,6 +183,113 @@ pub fn canonical_resource_ceiling_digest() -> String {
         .expect("canonical ceilings are serializable")
 }
 
+/// Immutable Runtime-owned admission profile loaded by the service image.
+///
+/// The profile deliberately contains only the small release and provenance
+/// carriers used by the admission verifier. It never contains an executable
+/// artifact, caller identity, or product authorization decision. Callers
+/// refer to it by `profile_ref`; the Runtime remains the only authority that
+/// can read these bytes and construct an invocation admission.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuntimeAdmissionProfile {
+    profile_ref: String,
+    release_bytes: Vec<u8>,
+    provenance_bytes: Vec<u8>,
+}
+
+impl RuntimeAdmissionProfile {
+    const MAX_CARRIER_BYTES: u64 = 1024 * 1024;
+    const DEFAULT_RELEASE_PATH: &'static str = "/tmp/apxm-service-release-manifest.json";
+    const DEFAULT_PROVENANCE_PATH: &'static str = "/tmp/apxm-source-revision.json";
+
+    /// Build an image-owned profile from exact carrier bytes. The opaque
+    /// profile reference is digest-bound to the carriers and canonical
+    /// Runtime descriptor, so a caller cannot substitute a self-consistent
+    /// profile from another Runtime composition.
+    pub fn from_carriers(
+        release_bytes: Vec<u8>,
+        provenance_bytes: Vec<u8>,
+    ) -> Result<Self, String> {
+        validate_carrier(&release_bytes)?;
+        validate_carrier(&provenance_bytes)?;
+        let profile_ref = digest_serializable(&(
+            artifact_digest(&release_bytes),
+            artifact_digest(&provenance_bytes),
+            canonical_port_bindings_digest(),
+            canonical_resource_ceiling_digest(),
+        ))
+        .map(|digest| format!("apxm.admission-profile.{digest}"))
+        .map_err(|error| error.to_string())?;
+        Ok(Self {
+            profile_ref,
+            release_bytes,
+            provenance_bytes,
+        })
+    }
+
+    /// Load the exact carriers packaged in the standalone Runtime image.
+    /// Explicit absolute paths may override the image defaults. If neither
+    /// carrier exists, no profile is configured and invocation admission stays
+    /// fail-closed.
+    pub fn from_env() -> Result<Option<Self>, String> {
+        let release_path = std::env::var("APXM_RUNTIME_RELEASE_MANIFEST_PATH")
+            .unwrap_or_else(|_| Self::DEFAULT_RELEASE_PATH.to_owned());
+        let provenance_path = std::env::var("APXM_RUNTIME_PROVENANCE_PATH")
+            .unwrap_or_else(|_| Self::DEFAULT_PROVENANCE_PATH.to_owned());
+        let release_exists = std::path::Path::new(&release_path).exists();
+        let provenance_exists = std::path::Path::new(&provenance_path).exists();
+        if !release_exists && !provenance_exists {
+            return Ok(None);
+        }
+        if release_path.trim().is_empty() || provenance_path.trim().is_empty() {
+            return Err("admission profile carrier paths must not be empty".to_owned());
+        }
+        let release_bytes = read_carrier(&release_path)?;
+        let provenance_bytes = read_carrier(&provenance_path)?;
+        Self::from_carriers(release_bytes, provenance_bytes).map(Some)
+    }
+
+    #[must_use]
+    pub fn profile_ref(&self) -> &str {
+        &self.profile_ref
+    }
+
+    /// Construct materials with a Runtime-owned template identity. The
+    /// service replaces this template with its final minted invocation id
+    /// during `prepare_invocation`.
+    pub fn materials_for_artifact(&self, artifact_bytes: &[u8]) -> InvocationMaterials {
+        materials_for_artifact(
+            artifact_bytes,
+            format!("template.{}", self.profile_ref),
+            self.release_bytes.clone(),
+            self.provenance_bytes.clone(),
+        )
+    }
+}
+
+fn validate_carrier(bytes: &[u8]) -> Result<(), String> {
+    if bytes.is_empty() || bytes.len() as u64 > RuntimeAdmissionProfile::MAX_CARRIER_BYTES {
+        return Err("admission profile carrier exceeds bounded size".to_owned());
+    }
+    serde_json::from_slice::<serde_json::Value>(bytes)
+        .map_err(|error| format!("invalid admission profile carrier: {error}"))?;
+    Ok(())
+}
+
+fn read_carrier(path: &str) -> Result<Vec<u8>, String> {
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|error| format!("read profile carrier: {error}"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err("admission profile carrier must be a regular file".to_owned());
+    }
+    if metadata.len() == 0 || metadata.len() > RuntimeAdmissionProfile::MAX_CARRIER_BYTES {
+        return Err("admission profile carrier exceeds bounded size".to_owned());
+    }
+    let bytes = std::fs::read(path).map_err(|error| format!("read profile carrier: {error}"))?;
+    validate_carrier(&bytes)?;
+    Ok(bytes)
+}
+
 fn digest_text(value: &str) -> String {
     format!("sha256:{:x}", Sha256::digest(value.as_bytes()))
 }
@@ -322,11 +429,43 @@ impl ExecutionCommitPort for DevCommit {
 }
 
 /// Materials required to admit one invocation of a committed artifact.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct InvocationMaterials {
     pub admission: InvocationAdmission,
     pub release_bytes: Vec<u8>,
     pub provenance_bytes: Vec<u8>,
+}
+
+/// Verify the complete host-supplied invocation handoff before any Runtime
+/// state is changed. Artifact bytes, release/provenance carriers, canonical
+/// descriptors, and semantic requirements all participate in this check.
+pub fn verify_invocation_materials(
+    artifact_bytes: &[u8],
+    materials: &InvocationMaterials,
+) -> Result<VerifiedInvocationAdmission, String> {
+    let artifact_digest = canonical_artifact_digest(artifact_bytes)
+        .map_err(|_| "invalid_invocation_admission".to_owned())?;
+    let artifact = ExecutableArtifact::decode_for_execution(artifact_bytes, &artifact_digest)
+        .map_err(|_| "invalid_invocation_admission".to_owned())?;
+    let descriptor = canonical_runtime_descriptor();
+    if materials.admission.port_bindings_digest != canonical_port_bindings_digest()
+        || materials.admission.resource_ceiling_digest != canonical_resource_ceiling_digest()
+    {
+        return Err("invalid_invocation_admission".to_owned());
+    }
+    verify_invocation_admission(
+        &materials.admission,
+        InvocationAdmissionClaim {
+            artifact_bytes,
+            release_bytes: &materials.release_bytes,
+            provenance_bytes: &materials.provenance_bytes,
+            artifact_semantic_requirements: &apxm_program::air_semantic_requirements(&artifact.air),
+            admitted_port_bindings: &descriptor.port_bindings,
+            resource_ceilings: &descriptor.resource_ceilings,
+            confinement: &descriptor.confinement,
+        },
+    )
+    .map_err(|_| "invalid_invocation_admission".to_owned())
 }
 
 /// Package-handler implementations supplied to one Runtime Service instance.

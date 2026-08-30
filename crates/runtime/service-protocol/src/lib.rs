@@ -3,6 +3,10 @@
 //! Program Instance, Invocation, Event ingress, approval, cancellation, and
 //! observations live here. Source, FrontendGraph, AIR text, and compiler
 //! options are not representable as executable truth.
+//!
+//! Protocol/1's request union is frozen. Admission binding is a separately
+//! negotiated execution-admission envelope; it is not smuggled through the
+//! read-only Runtime/2 handshake.
 
 use apxm_kernel::event_api::{
     CanonicalEventRef, EventApplication, EventApplicationResult, InvocationBoundary,
@@ -48,6 +52,11 @@ pub struct EventInspection {
 
 /// Only declared Runtime protocol version. Unknown versions fail closed.
 pub const RUNTIME_PROTOCOL_VERSION: &str = "apxm.runtime.protocol/1";
+
+/// Separately negotiated mutation envelope for Runtime-owned admission.
+/// This is intentionally not the read-only Protocol/2 surface below.
+pub const RUNTIME_EXECUTION_ADMISSION_VERSION: &str = "apxm.runtime.execution-admission/1";
+pub const EXECUTION_ADMISSION_CONTRACT: &str = "apxm.runtime.execution-admission";
 
 /// Additive read/observation protocol. Protocol/1 remains frozen and is not
 /// silently widened; clients opt into this separately negotiated surface.
@@ -125,6 +134,17 @@ impl RuntimeOwnerClaim {
 pub struct RuntimeHandshake {
     /// Exact protocol version the client speaks.
     pub protocol_version: String,
+}
+
+/// Runtime-owned admission inputs advertised after instance creation. The
+/// carrier bytes remain image/host composition data; these fields let a
+/// caller construct a matching template without copying APXM constants.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeAdmissionProfileDescriptor {
+    pub profile_ref: String,
+    pub port_bindings_digest: String,
+    pub resource_ceiling_digest: String,
 }
 
 impl RuntimeHandshake {
@@ -278,6 +298,47 @@ pub enum RuntimeRequest {
     },
 }
 
+/// Handshake for the separately negotiated execution-admission mutation
+/// envelope. A Protocol/1 peer cannot decode or receive this method.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeExecutionAdmissionHandshake {
+    pub protocol_version: String,
+    pub contract: String,
+}
+
+impl RuntimeExecutionAdmissionHandshake {
+    #[must_use]
+    pub fn server() -> Self {
+        Self {
+            protocol_version: RUNTIME_EXECUTION_ADMISSION_VERSION.to_owned(),
+            contract: EXECUTION_ADMISSION_CONTRACT.to_owned(),
+        }
+    }
+
+    pub fn admit(&self) -> Result<(), ProtocolError> {
+        if self.protocol_version != RUNTIME_EXECUTION_ADMISSION_VERSION {
+            return Err(ProtocolError::IncompatibleVersion);
+        }
+        if self.contract != EXECUTION_ADMISSION_CONTRACT {
+            return Err(ProtocolError::SchemaMismatch);
+        }
+        Ok(())
+    }
+}
+
+/// Mutation request that requires the execution-admission handshake.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RuntimeExecutionAdmissionRequest {
+    ProgramInstanceBindAdmission {
+        request_id: String,
+        program_instance_id: String,
+        owner_claim: RuntimeOwnerClaim,
+        admission_profile_ref: String,
+    },
+}
+
 /// Additive Protocol/2 read and observation requests. Execution mutation and
 /// Event ingress remain Protocol/1 concerns; these methods cannot be decoded
 /// by a Protocol/1 peer.
@@ -410,6 +471,15 @@ pub enum RuntimeResult {
         owner_claim: RuntimeOwnerClaim,
         /// Artifact digest that was admitted.
         artifact_digest: String,
+        /// Runtime-owned profile available for the explicit bind step.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        admission_profile: Option<RuntimeAdmissionProfileDescriptor>,
+    },
+    /// Exact Invocation Admission is now bound to the instance.
+    ProgramInstanceAdmissionBound {
+        request_id: String,
+        program_instance_id: String,
+        artifact_digest: String,
     },
     /// Invocation started or already waiting.
     ProgramInvocationStarted {
@@ -540,6 +610,7 @@ pub struct InMemoryRuntimePeer {
     instances: HashMap<String, (RuntimeOwnerClaim, String)>,
     invocations: HashMap<String, InMemoryInvocation>,
     invocation_for_instance: HashMap<String, String>,
+    admissions: HashMap<String, String>,
     reservations: HashMap<CanonicalEventRef, (RuntimeOwnerClaim, String)>,
     event_inspections: HashMap<CanonicalEventRef, EventInspection>,
     applications: HashMap<String, serde_json::Value>,
@@ -638,6 +709,7 @@ impl InMemoryRuntimePeer {
                     program_instance_id: id,
                     owner_claim,
                     artifact_digest,
+                    admission_profile: None,
                 })
             }
             RuntimeRequest::ProgramInvocationStart {
@@ -655,6 +727,12 @@ impl InMemoryRuntimePeer {
                 };
                 if expected_claim != &owner_claim {
                     return Err(ProtocolError::OwnerMismatch);
+                }
+                if !self.admissions.contains_key(&program_instance_id) {
+                    return Ok(RuntimeResult::Failed {
+                        request_id,
+                        code: "missing_invocation_admission".to_owned(),
+                    });
                 }
                 if let Some(invocation_id) = self.invocation_for_instance.get(&program_instance_id)
                 {
@@ -854,6 +932,57 @@ impl InMemoryRuntimePeer {
                     return Err(ProtocolError::OwnerMismatch);
                 }
                 Ok(RuntimeResult::Cancelled { request_id })
+            }
+        }
+    }
+
+    /// Handle the separately negotiated execution-admission envelope.
+    pub fn handle_execution_admission(
+        &mut self,
+        handshake: &RuntimeExecutionAdmissionHandshake,
+        request: RuntimeExecutionAdmissionRequest,
+    ) -> Result<RuntimeResult, ProtocolError> {
+        handshake.admit()?;
+        match request {
+            RuntimeExecutionAdmissionRequest::ProgramInstanceBindAdmission {
+                request_id,
+                program_instance_id,
+                owner_claim,
+                admission_profile_ref,
+            } => {
+                owner_claim.validate()?;
+                let Some((expected_claim, artifact_digest)) =
+                    self.instances.get(&program_instance_id)
+                else {
+                    return Ok(RuntimeResult::Failed {
+                        request_id,
+                        code: "unknown_instance".to_owned(),
+                    });
+                };
+                if expected_claim != &owner_claim {
+                    return Err(ProtocolError::OwnerMismatch);
+                }
+                if !apxm_core::grammar::is_identifier(&admission_profile_ref) {
+                    return Ok(RuntimeResult::Failed {
+                        request_id,
+                        code: "invalid_invocation_admission".to_owned(),
+                    });
+                }
+                if let Some(existing) = self.admissions.get(&program_instance_id)
+                    && existing != &admission_profile_ref
+                {
+                    return Ok(RuntimeResult::Failed {
+                        request_id,
+                        code: "admission_conflict".to_owned(),
+                    });
+                }
+                self.admissions
+                    .insert(program_instance_id.clone(), admission_profile_ref);
+                Ok(RuntimeResult::ProgramInstanceAdmissionBound {
+                    request_id,
+                    program_instance_id,
+                    artifact_digest: artifact_digest.clone(),
+                })
             }
         }
     }
@@ -1108,6 +1237,66 @@ mod tests {
     }
 
     #[test]
+    fn instance_admission_handoff_is_typed_owner_and_artifact_bound() {
+        let mut peer = InMemoryRuntimePeer::default();
+        let artifact_digest = format!("sha256:{}", "a".repeat(64));
+        let created = peer
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInstanceCreate {
+                    request_id: "c".to_owned(),
+                    artifact_digest: artifact_digest.clone(),
+                },
+            )
+            .unwrap();
+        let RuntimeResult::ProgramInstanceCreated {
+            program_instance_id,
+            owner_claim,
+            ..
+        } = created
+        else {
+            panic!("create");
+        };
+        let bind = RuntimeExecutionAdmissionRequest::ProgramInstanceBindAdmission {
+            request_id: "bind".to_owned(),
+            program_instance_id: program_instance_id.clone(),
+            owner_claim: owner_claim.clone(),
+            admission_profile_ref: "apxm.admission-profile.test".to_owned(),
+        };
+        assert!(matches!(
+            peer.handle_execution_admission(&RuntimeExecutionAdmissionHandshake::server(), bind)
+                .unwrap(),
+            RuntimeResult::ProgramInstanceAdmissionBound { .. }
+        ));
+        assert!(matches!(
+            peer.handle_execution_admission(
+                &RuntimeExecutionAdmissionHandshake::server(),
+                RuntimeExecutionAdmissionRequest::ProgramInstanceBindAdmission {
+                    request_id: "bind-retry".to_owned(),
+                    program_instance_id: program_instance_id.clone(),
+                    owner_claim: owner_claim.clone(),
+                    admission_profile_ref: "apxm.admission-profile.test".to_owned(),
+                },
+            )
+            .unwrap(),
+            RuntimeResult::ProgramInstanceAdmissionBound { .. }
+        ));
+        assert!(matches!(
+            peer.handle_execution_admission(
+                &RuntimeExecutionAdmissionHandshake::server(),
+                RuntimeExecutionAdmissionRequest::ProgramInstanceBindAdmission {
+                    request_id: "bind-conflict".to_owned(),
+                    program_instance_id,
+                    owner_claim,
+                    admission_profile_ref: "apxm.admission-profile.other".to_owned(),
+                },
+            )
+            .unwrap(),
+            RuntimeResult::Failed { code, .. } if code == "admission_conflict"
+        ));
+    }
+
+    #[test]
     fn forged_event_ref_has_no_reservation_lineage() {
         let mut peer = InMemoryRuntimePeer::default();
         let result = peer
@@ -1166,6 +1355,20 @@ mod tests {
         let mut skewed = RuntimeHandshakeV2::server();
         skewed.schema_digest = "sha256:wrong".to_owned();
         assert_eq!(skewed.admit(), Err(ProtocolError::SchemaMismatch));
+    }
+
+    #[test]
+    fn execution_admission_is_not_decodable_as_protocol_v1_or_read_v2() {
+        let request = RuntimeExecutionAdmissionRequest::ProgramInstanceBindAdmission {
+            request_id: "bind".to_owned(),
+            program_instance_id: "pi-1".to_owned(),
+            owner_claim: RuntimeOwnerClaim::mint(),
+            admission_profile_ref: "apxm.admission-profile.test".to_owned(),
+        };
+        let wire = serde_json::to_value(&request).expect("execution admission wire");
+        assert!(serde_json::from_value::<RuntimeRequest>(wire.clone()).is_err());
+        assert!(serde_json::from_value::<RuntimeRequestV2>(wire).is_err());
+        assert_eq!(RuntimeExecutionAdmissionHandshake::server().admit(), Ok(()));
     }
 
     #[test]

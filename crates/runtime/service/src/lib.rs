@@ -9,8 +9,8 @@ mod stdio;
 
 pub use composition::{
     AdmittedPackageHandlers, ArtifactStore, CanonicalRuntimeDescriptor, InvocationMaterials,
-    PackageHandlerWorkerCommand, artifact_digest, canonical_artifact_digest,
-    canonical_port_bindings_digest, canonical_resource_ceiling_digest,
+    PackageHandlerWorkerCommand, RuntimeAdmissionProfile, artifact_digest,
+    canonical_artifact_digest, canonical_port_bindings_digest, canonical_resource_ceiling_digest,
     canonical_runtime_descriptor, execute_admitted_artifact,
     execute_admitted_artifact_resumable_for_instance,
     execute_admitted_artifact_resumable_with_runtime_ports_and_cancellation,
@@ -18,6 +18,7 @@ pub use composition::{
     execute_admitted_artifact_with_runtime_ports_and_cancellation,
     execute_admitted_artifact_with_sandbox, materials_for_artifact,
     resume_admitted_artifact_with_runtime_ports, validate_package_permission_resolution,
+    verify_invocation_materials,
 };
 pub use stdio::{
     MAX_FRAME_BYTES, MAX_FRAMES_PER_CONNECTION, RUNTIME_CHANNEL, StdioFrame, UNIX_IO_TIMEOUT_MS,
@@ -47,9 +48,10 @@ use apxm_kernel::{
 use apxm_program::air::AirModule;
 use apxm_program::artifact::ExecutableArtifact;
 use apxm_runtime_protocol::{
-    EventInspection, EventStatus, ExecutionObservation, ProtocolError, RuntimeFailureCode,
-    RuntimeHandshake, RuntimeHandshakeV2, RuntimeOwnerClaim, RuntimeRequest, RuntimeRequestV2,
-    RuntimeResult, RuntimeResultV2,
+    EventInspection, EventStatus, ExecutionObservation, ProtocolError,
+    RuntimeAdmissionProfileDescriptor, RuntimeExecutionAdmissionHandshake,
+    RuntimeExecutionAdmissionRequest, RuntimeFailureCode, RuntimeHandshake, RuntimeHandshakeV2,
+    RuntimeOwnerClaim, RuntimeRequest, RuntimeRequestV2, RuntimeResult, RuntimeResultV2,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -167,6 +169,9 @@ pub struct RuntimeService {
     resumable_invocations: bool,
     startup_error: Option<RuntimeServiceStartupError>,
     observation_signal: ObservationSignal,
+    /// Runtime-owned immutable admission carriers. When absent, invocation
+    /// admission remains fail-closed.
+    admission_profile: Option<RuntimeAdmissionProfile>,
 }
 
 /// Process-local wakeup for owner-side observation subscribers.  The durable
@@ -208,6 +213,7 @@ pub enum RuntimeServiceStartupError {
     RelativeRuntimeStateDir(PathBuf),
     UnsafeRuntimeStateDir(PathBuf),
     OpenRuntimeStateDir(String),
+    InvalidAdmissionProfile(String),
 }
 
 impl std::fmt::Display for RuntimeServiceStartupError {
@@ -234,6 +240,9 @@ impl std::fmt::Display for RuntimeServiceStartupError {
                     formatter,
                     "cannot open APXM runtime state directory: {error}"
                 )
+            }
+            Self::InvalidAdmissionProfile(error) => {
+                write!(formatter, "invalid APXM runtime admission profile: {error}")
             }
         }
     }
@@ -288,6 +297,7 @@ impl RuntimeService {
             resumable_invocations: true,
             startup_error: None,
             observation_signal,
+            admission_profile: None,
         }
     }
 
@@ -326,6 +336,13 @@ impl RuntimeService {
         {
             service.artifact_dir = Some(PathBuf::from(dir));
         }
+        match RuntimeAdmissionProfile::from_env() {
+            Ok(profile) => service.admission_profile = profile,
+            Err(error) => {
+                service.startup_error =
+                    Some(RuntimeServiceStartupError::InvalidAdmissionProfile(error));
+            }
+        }
         service
     }
 
@@ -351,6 +368,14 @@ impl RuntimeService {
     #[must_use]
     pub fn with_artifact_dir(mut self, dir: PathBuf) -> Self {
         self.artifact_dir = Some(dir);
+        self
+    }
+
+    /// Compose one explicit Runtime-owned admission profile. Production
+    /// standalone composition normally loads this from the image carriers.
+    #[must_use]
+    pub fn with_admission_profile(mut self, profile: RuntimeAdmissionProfile) -> Self {
+        self.admission_profile = Some(profile);
         self
     }
 
@@ -862,6 +887,14 @@ fn invocation_result_from_execution_output(
             request_id,
             code: "outcome_unknown".to_owned(),
         },
+    }
+}
+
+fn execution_admission_request_id(request: &RuntimeExecutionAdmissionRequest) -> String {
+    match request {
+        RuntimeExecutionAdmissionRequest::ProgramInstanceBindAdmission { request_id, .. } => {
+            request_id.clone()
+        }
     }
 }
 
@@ -1523,6 +1556,11 @@ impl RuntimeService {
         if materials.admission.artifact_digest != artifact_digest {
             return Err("artifact_digest_mismatch".to_owned());
         }
+        let artifact_bytes = self
+            .artifacts
+            .get(&artifact_digest)
+            .ok_or_else(|| "unknown_artifact".to_owned())?;
+        verify_invocation_materials(artifact_bytes, &materials)?;
         let invocation_bytes = self
             .instances
             .get(program_instance_id)
@@ -1567,6 +1605,11 @@ impl RuntimeService {
         if materials.admission.artifact_digest != artifact_digest {
             return Err("artifact_digest_mismatch".to_owned());
         }
+        let artifact_bytes = self
+            .artifacts
+            .get(artifact_digest)
+            .ok_or_else(|| "unknown_artifact".to_owned())?;
+        verify_invocation_materials(artifact_bytes, &materials)?;
         let size =
             Self::materials_size(&materials).ok_or_else(|| "admission_too_large".to_owned())?;
         if size > self.state_policy.admissions.max_bytes {
@@ -1779,6 +1822,117 @@ impl RuntimeService {
             } => Ok(self.cancel_invocation(request_id, owner_claim, program_invocation_id)),
         }
     }
+
+    /// Handle the separately negotiated execution-admission mutation
+    /// envelope. It is deliberately not accepted by the frozen Protocol/1
+    /// request union or by the read-only Runtime/2 handshake.
+    pub fn handle_execution_admission(
+        &mut self,
+        handshake: &RuntimeExecutionAdmissionHandshake,
+        request: RuntimeExecutionAdmissionRequest,
+    ) -> RuntimeResult {
+        self.cleanup_expired();
+        if let Err(error) = handshake.admit() {
+            return RuntimeResult::Failed {
+                request_id: execution_admission_request_id(&request),
+                code: format!("{error:?}"),
+            };
+        }
+        match request {
+            RuntimeExecutionAdmissionRequest::ProgramInstanceBindAdmission {
+                request_id,
+                program_instance_id,
+                owner_claim,
+                admission_profile_ref,
+            } => self.bind_invocation_admission(
+                request_id,
+                program_instance_id,
+                owner_claim,
+                admission_profile_ref,
+            ),
+        }
+    }
+
+    fn bind_invocation_admission(
+        &mut self,
+        request_id: String,
+        program_instance_id: String,
+        owner_claim: RuntimeOwnerClaim,
+        admission_profile_ref: String,
+    ) -> RuntimeResult {
+        if request_id.trim().is_empty() {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "invalid_request".to_owned(),
+            };
+        }
+        if owner_claim.validate().is_err() {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "invalid_owner_claim".to_owned(),
+            };
+        }
+        let Some(instance) = self.instances.get(&program_instance_id) else {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "unknown_instance".to_owned(),
+            };
+        };
+        if instance.owner_claim != owner_claim {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "owner_mismatch".to_owned(),
+            };
+        }
+        let Some(profile) = self.admission_profile.as_ref() else {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "missing_invocation_admission_profile".to_owned(),
+            };
+        };
+        if profile.profile_ref() != admission_profile_ref {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "unknown_invocation_admission_profile".to_owned(),
+            };
+        }
+        let Some(artifact_bytes) = self.artifacts.get(&instance.artifact_digest) else {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "unknown_artifact".to_owned(),
+            };
+        };
+        let local_materials = profile.materials_for_artifact(artifact_bytes);
+        if verify_invocation_materials(artifact_bytes, &local_materials).is_err() {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "invalid_invocation_admission".to_owned(),
+            };
+        }
+        if let Some(existing) = instance.materials.as_ref()
+            && existing != &local_materials
+        {
+            return RuntimeResult::Failed {
+                request_id,
+                code: "admission_conflict".to_owned(),
+            };
+        }
+        match self.bind_admission(&program_instance_id, local_materials) {
+            Ok(()) => {
+                let artifact_digest = self
+                    .instances
+                    .get(&program_instance_id)
+                    .map(|instance| instance.artifact_digest.clone())
+                    .unwrap_or_default();
+                RuntimeResult::ProgramInstanceAdmissionBound {
+                    request_id,
+                    program_instance_id,
+                    artifact_digest,
+                }
+            }
+            Err(code) => RuntimeResult::Failed { request_id, code },
+        }
+    }
 }
 
 impl RuntimeService {
@@ -1845,6 +1999,13 @@ impl RuntimeService {
             program_instance_id: id,
             owner_claim,
             artifact_digest,
+            admission_profile: self.admission_profile.as_ref().map(|profile| {
+                RuntimeAdmissionProfileDescriptor {
+                    profile_ref: profile.profile_ref().to_owned(),
+                    port_bindings_digest: canonical_port_bindings_digest(),
+                    resource_ceiling_digest: canonical_resource_ceiling_digest(),
+                }
+            }),
         })
     }
 
@@ -3442,6 +3603,124 @@ mod tests {
             result,
             RuntimeResult::Failed { code, .. } if code == "missing_invocation_admission"
         ));
+    }
+
+    #[test]
+    fn tampered_admission_is_rejected_before_state_mutation() {
+        let mut service = RuntimeService::default();
+        let bytes = fixture_air_bytes();
+        let digest = service.admit_artifact(bytes.clone());
+        let created = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInstanceCreate {
+                    request_id: "tamper.create".to_owned(),
+                    artifact_digest: digest,
+                },
+            )
+            .expect("create instance");
+        let (instance, claim) = match created {
+            RuntimeResult::ProgramInstanceCreated {
+                program_instance_id,
+                owner_claim,
+                ..
+            } => (program_instance_id, owner_claim),
+            other => panic!("instance creation failed: {other:?}"),
+        };
+        let release = fs::read(fixture_dir().join("canonical-execute.release.json")).unwrap();
+        let provenance = fs::read(fixture_dir().join("canonical-execute.provenance.json")).unwrap();
+        let mut materials =
+            materials_for_artifact(&bytes, "tamper.invocation", release, provenance);
+        materials.release_bytes.push(b'x');
+        assert_eq!(
+            service.bind_admission(&instance, materials),
+            Err("invalid_invocation_admission".to_owned())
+        );
+        let started = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "tamper.start".to_owned(),
+                    program_instance_id: instance,
+                    owner_claim: claim,
+                    input: serde_json::json!({}),
+                },
+            )
+            .expect("start request");
+        assert!(matches!(
+            started,
+            RuntimeResult::Failed { code, .. } if code == "missing_invocation_admission"
+        ));
+    }
+
+    #[test]
+    fn persisted_artifact_create_bind_and_start_uses_the_wire_admission_seam() {
+        let artifact_directory = tempfile::tempdir().expect("artifact directory");
+        let bytes = fixture_air_bytes();
+        let digest = canonical_artifact_digest(&bytes).expect("canonical artifact digest");
+        fs::write(
+            artifact_directory.path().join(digest.replace(':', "-")),
+            &bytes,
+        )
+        .expect("persist artifact");
+
+        // This is the same composition used by the standalone binary: the
+        // executable is loaded from the shared artifact directory, while
+        // admission arrives explicitly over the Runtime protocol.
+        let profile = RuntimeAdmissionProfile::from_carriers(
+            br#"{"schema_version":"apxm.test.release.v1"}"#.to_vec(),
+            br#"{"schema_version":"apxm.test.provenance.v1"}"#.to_vec(),
+        )
+        .expect("admission profile");
+        let profile_ref = profile.profile_ref().to_owned();
+        let mut service = RuntimeService::default()
+            .with_artifact_dir(artifact_directory.path().to_path_buf())
+            .with_admission_profile(profile);
+        let created = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInstanceCreate {
+                    request_id: "create.persisted".to_owned(),
+                    artifact_digest: digest.clone(),
+                },
+            )
+            .expect("create persisted artifact instance");
+        let RuntimeResult::ProgramInstanceCreated {
+            program_instance_id,
+            owner_claim,
+            ..
+        } = created
+        else {
+            panic!("expected instance creation");
+        };
+        let bound = service.handle_execution_admission(
+            &RuntimeExecutionAdmissionHandshake::server(),
+            RuntimeExecutionAdmissionRequest::ProgramInstanceBindAdmission {
+                request_id: "bind.persisted".to_owned(),
+                program_instance_id: program_instance_id.clone(),
+                owner_claim: owner_claim.clone(),
+                admission_profile_ref: profile_ref,
+            },
+        );
+        assert!(matches!(
+            bound,
+            RuntimeResult::ProgramInstanceAdmissionBound { .. }
+        ));
+        let started = service
+            .handle(
+                &handshake(),
+                RuntimeRequest::ProgramInvocationStart {
+                    request_id: "start.persisted".to_owned(),
+                    program_instance_id,
+                    owner_claim,
+                    input: serde_json::json!({}),
+                },
+            )
+            .expect("start admitted persisted artifact");
+        assert!(
+            matches!(started, RuntimeResult::ProgramInvocationStarted { .. }),
+            "admitted persisted artifact did not start: {started:?}"
+        );
     }
 
     #[test]
