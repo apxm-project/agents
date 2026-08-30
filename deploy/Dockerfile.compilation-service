@@ -35,6 +35,7 @@ RUN apt-get update \
 
 COPY target/release/apxm-compilation-service /workspace/target/release/apxm-compilation-service
 COPY crates/compiler/frontend/python /workspace/crates/compiler/frontend/python
+COPY target/release/lib_native.so /workspace/crates/compiler/frontend/python/apxm_program/_native.so
 COPY crates/compiler/frontend/typescript /workspace/crates/compiler/frontend/typescript
 COPY deploy/services/source-revision.v1.json /tmp/apxm-source-revision.json
 COPY contracts/services/manifests/apxm.agents-service-release-manifest.v1.json /tmp/apxm-service-release-manifest.json
@@ -55,6 +56,8 @@ RUN set -eu; \
     manifest_digest="$(sed -n 's/.*"digest":"\(sha256:[0-9a-f]\{64\}\)","name":"compilation-service".*/\1/p' /tmp/apxm-service-release-manifest.json)"; \
     [ "$manifest_digest" = "$APXM_COMPILATION_SERVICE_DIGEST" ]; \
     [ "sha256:$(sha256sum /workspace/target/release/apxm-compilation-service | cut -d' ' -f1)" = "$APXM_COMPILATION_SERVICE_DIGEST" ]
+
+RUN test -s /workspace/crates/compiler/frontend/python/apxm_program/_native.so
 
 RUN chown -R 65532:65532 /workspace /var/lib/apxm
 
