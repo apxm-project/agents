@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "apxm.source-map",
   "title": "SourceMap",
-  "description": "Non-executable mapping from AIR semantic operations, structural regions, and region occurrences back to authored Python or TypeScript source spans. Consumed by evidence and Studio projections; it carries no runtime placement, endpoint, credential, or executable behavior.",
+  "description": "Non-executable mapping from AIR semantic operations, typed data/context edges, and structural regions back to authored Python or TypeScript source spans. Consumed by evidence and inspection projections; it carries no runtime placement, endpoint, credential, or executable behavior.",
   "allOf": [
     {
       "$ref": "#/$defs/SourceMapBody"
@@ -38,6 +38,18 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/RegionAnnotation"
+          }
+        },
+        "region_spans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RegionSpan"
+          }
+        },
+        "edge_spans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EdgeSpan"
           }
         }
       },
@@ -83,6 +95,60 @@
             "none",
             "structural_loop"
           ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "RegionSpan": {
+      "type": "object",
+      "required": [
+        "region_id",
+        "source_file",
+        "span",
+        "structural_kind"
+      ],
+      "properties": {
+        "region_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "source_file": {
+          "$ref": "apxm.contract-common.v1#/$defs/NonEmptyReference"
+        },
+        "span": {
+          "$ref": "#/$defs/Span"
+        },
+        "structural_kind": {
+          "type": "string",
+          "enum": [
+            "branch",
+            "loop",
+            "join",
+            "switch",
+            "try",
+            "throw",
+            "yield",
+            "return"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "EdgeSpan": {
+      "type": "object",
+      "required": [
+        "edge_id",
+        "source_file",
+        "span"
+      ],
+      "properties": {
+        "edge_id": {
+          "$ref": "apxm.contract-common.v1#/$defs/Identifier"
+        },
+        "source_file": {
+          "$ref": "apxm.contract-common.v1#/$defs/NonEmptyReference"
+        },
+        "span": {
+          "$ref": "#/$defs/Span"
         }
       },
       "additionalProperties": false

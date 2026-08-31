@@ -18,7 +18,8 @@ use apxm_program::runtime_evidence::{
 use crate::bundle::PortBundle;
 use crate::commit::{
     AtomicWriteSet, ExecutionCommitRequest, ExecutionCommitResult, ExecutionCommitTuple,
-    ProgramInstanceRef, ProgramInvocationRef,
+    ProgramInstanceRef, ProgramInvocationRef, runtime_evidence_and_observation_digest,
+    session_output_refs_digest,
 };
 
 /// One invocation request against an instance.
@@ -233,14 +234,19 @@ impl ProgramInstance {
             Some(target_version),
         ));
 
+        let tuple = ExecutionCommitTuple::empty(batch.clone());
+        let mut write_set = invocation.write_set;
+        write_set.runtime_evidence_batch_digest =
+            runtime_evidence_and_observation_digest(&tuple.evidence, &tuple.observations);
+        write_set.session_output_refs_digest = session_output_refs_digest(&tuple.output_refs);
         let request = ExecutionCommitRequest {
             commit_id: invocation.commit_id.clone(),
             program_instance_ref: self.instance_ref.clone(),
             program_invocation_ref: invocation.program_invocation_ref,
             idempotency_key: format!("idem.{}", invocation.commit_id),
             expected_program_state_version: expected,
-            write_set: invocation.write_set,
-            tuple: ExecutionCommitTuple::empty(batch.clone()),
+            write_set,
+            tuple,
             evidence_batch: batch.clone(),
         };
         request
@@ -310,6 +316,11 @@ impl ProgramInstance {
             None,
         )];
 
+        let tuple = ExecutionCommitTuple::empty(batch.clone());
+        let mut write_set = write_set;
+        write_set.runtime_evidence_batch_digest =
+            runtime_evidence_and_observation_digest(&tuple.evidence, &tuple.observations);
+        write_set.session_output_refs_digest = session_output_refs_digest(&tuple.output_refs);
         let request = ExecutionCommitRequest {
             commit_id: commit_id.clone(),
             program_instance_ref: self.instance_ref.clone(),
@@ -317,7 +328,7 @@ impl ProgramInstance {
             idempotency_key: format!("idem.{commit_id}"),
             expected_program_state_version: expected,
             write_set,
-            tuple: ExecutionCommitTuple::empty(batch.clone()),
+            tuple,
             evidence_batch: batch.clone(),
         };
         request
@@ -453,14 +464,19 @@ impl ProgramInstance {
             target_version,
         ));
 
+        let tuple = ExecutionCommitTuple::empty(batch.clone());
+        let mut write_set = invocation.write_set;
+        write_set.runtime_evidence_batch_digest =
+            runtime_evidence_and_observation_digest(&tuple.evidence, &tuple.observations);
+        write_set.session_output_refs_digest = session_output_refs_digest(&tuple.output_refs);
         let request = ExecutionCommitRequest {
             commit_id: invocation.commit_id.clone(),
             program_instance_ref: self.instance_ref.clone(),
             program_invocation_ref: invocation.program_invocation_ref,
             idempotency_key: format!("idem.{}", invocation.commit_id),
             expected_program_state_version: expected,
-            write_set: invocation.write_set,
-            tuple: ExecutionCommitTuple::empty(batch.clone()),
+            write_set,
+            tuple,
             evidence_batch: batch.clone(),
         };
 

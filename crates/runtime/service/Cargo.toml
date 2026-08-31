@@ -19,6 +19,7 @@ apxm-backends.workspace = true
 apxm-backend-registry.workspace = true
 apxm-capability.workspace = true
 apxm-capability-iface.workspace = true
+apxm-commit-local.workspace = true
 apxm-core.workspace = true
 apxm-execution.workspace = true
 apxm-inference.workspace = true

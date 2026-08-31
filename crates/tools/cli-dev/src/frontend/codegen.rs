@@ -67,6 +67,13 @@ pub fn render_generated_package_python() -> String {
 pub fn render_runtime_evidence_python() -> String {
     let runtime_kinds = apxm_program::FactKind::all()
         .iter()
+        .filter(|kind| {
+            !matches!(
+                kind,
+                apxm_program::FactKind::AttemptRecorded
+                    | apxm_program::FactKind::NodeExecutionRecorded
+            )
+        })
         .map(|kind| py_string(kind.wire()))
         .collect::<Vec<_>>()
         .join(", ");
@@ -84,8 +91,10 @@ from typing import Any, Final, TypeAlias
 
 RUNTIME_FACT_KINDS: Final[frozenset[str]] = frozenset(({runtime_kinds}))
 LOOP_ITERATION_COMPLETED: Final[str] = "LoopIterationCompleted"
+MODEL_ATTEMPT_RECORDED: Final[str] = "attempt.recorded"
 NODE_EXECUTION_RECORDED: Final[str] = "node_execution.recorded"
-ALL_FACT_KINDS: Final[frozenset[str]] = RUNTIME_FACT_KINDS | frozenset((LOOP_ITERATION_COMPLETED,))
+SPECIALIZED_FACT_KINDS: Final[frozenset[str]] = frozenset((MODEL_ATTEMPT_RECORDED, NODE_EXECUTION_RECORDED))
+ALL_FACT_KINDS: Final[frozenset[str]] = RUNTIME_FACT_KINDS | SPECIALIZED_FACT_KINDS | frozenset((LOOP_ITERATION_COMPLETED,))
 _SCHEMA: Final[dict[str, Any]] = json.loads({runtime_schema})
 _COMMON: Final[dict[str, Any]] = json.loads({common_schema})
 
@@ -109,6 +118,29 @@ class NodeExecutionRecordedFact:
     parent_node_execution_id: str | None = None
 
 @dataclass(frozen=True)
+class ModelAttemptRecordedFact:
+    fact_id: str
+    event_sequence: int
+    program_invocation_id: str
+    node_execution_id: str
+    air_node_id: str
+    attempt_id: str
+    attempt_index: int
+    model_effect_id: str
+    request_digest: str
+    model_target_ref: str
+    model_target_digest: str
+    model_deployment_ref: str
+    exact_port_binding_digest: str
+    target_commitment_digest: str
+    generation_cohort_digest: str
+    target_generation: int
+    target_port_contract_digest: str
+    target_composition_digest: str
+    native_input_tokens: int
+    native_output_tokens: int
+
+@dataclass(frozen=True)
 class LoopIterationCompletedFact:
     fact_id: str
     event_sequence: int
@@ -118,7 +150,7 @@ class LoopIterationCompletedFact:
     program_invocation_id: str
     causal_node_execution_ids: tuple[str, ...]
 
-Fact: TypeAlias = RuntimeFact | NodeExecutionRecordedFact | LoopIterationCompletedFact
+Fact: TypeAlias = RuntimeFact | NodeExecutionRecordedFact | ModelAttemptRecordedFact | LoopIterationCompletedFact
 
 def _resolve(ref: str, root: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     if ref.startswith("#/$defs/"):
@@ -186,6 +218,8 @@ def decode_fact(value: dict[str, Any]) -> Fact:
         return LoopIterationCompletedFact(value["fact_id"], value["event_sequence"], value["static_loop_id"], value["loop_occurrence_id"], value["iteration_index"], value["program_invocation_id"], tuple(value["causal_node_execution_ids"]))
     if kind == NODE_EXECUTION_RECORDED:
         return NodeExecutionRecordedFact(value["fact_id"], value["event_sequence"], value["node_execution_id"], value["air_node_id"], value["execution_scope"], value.get("parent_node_execution_id"))
+    if kind == MODEL_ATTEMPT_RECORDED:
+        return ModelAttemptRecordedFact(value["fact_id"], value["event_sequence"], value["program_invocation_id"], value["node_execution_id"], value["air_node_id"], value["attempt_id"], value["attempt_index"], value["model_effect_id"], value["request_digest"], value["model_target_ref"], value["model_target_digest"], value["model_deployment_ref"], value["exact_port_binding_digest"], value["target_commitment_digest"], value["generation_cohort_digest"], value["target_generation"], value["target_port_contract_digest"], value["target_composition_digest"], value["native_input_tokens"], value["native_output_tokens"])
     optional_fields = {{key: item for key, item in value.items() if key not in {{"fact_id", "event_sequence", "fact_kind"}}}}
     return RuntimeFact(value["fact_id"], value["event_sequence"], kind, optional_fields)
 "##
@@ -206,11 +240,22 @@ mod evidence_tests {
         for required in [
             "LoopIterationCompletedFact",
             "NodeExecutionRecordedFact",
+            "ModelAttemptRecordedFact",
+            "SPECIALIZED_FACT_KINDS",
             "decode_fact",
             "_SCHEMA",
             "unknown enum value",
         ] {
             assert!(evidence.contains(required), "{required}");
         }
+        let generic = evidence
+            .splitn(2, "RUNTIME_FACT_KINDS")
+            .nth(1)
+            .expect("runtime kinds")
+            .splitn(2, "LOOP_ITERATION_COMPLETED")
+            .next()
+            .expect("runtime kind boundary");
+        assert!(!generic.contains("attempt.recorded"));
+        assert!(!generic.contains("node_execution.recorded"));
     }
 }

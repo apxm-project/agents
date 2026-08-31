@@ -5,6 +5,9 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
+#[cfg(unix)]
+use std::ffi::{CStr, CString};
+
 use apxm_compilation_protocol::{
     COMPILATION_PROTOCOL_VERSION, CompilationHandshake, CompilationRequest, CompilationResult,
 };
@@ -13,6 +16,11 @@ use apxm_compilation_service::{
 };
 use apxm_source_port::{Frontend, PackageSnapshot, SnapshotContent};
 use serde::Deserialize;
+
+#[cfg(unix)]
+use rustix::fd::OwnedFd;
+#[cfg(unix)]
+use rustix::fs::{Dir, Mode, OFlags, open, openat};
 
 /// Maximum number of nested package directories below the package root.
 pub const MAX_PACKAGE_DEPTH: usize = 32;
@@ -104,11 +112,7 @@ impl CompilationClient {
 
     /// Submit one exact snapshot. Failed or uncertain compiles return no digest.
     pub fn build(&mut self, snapshot: PackageSnapshot) -> Result<String, String> {
-        let result = self.request(CompilationRequest::Compile {
-            request_id: "build".to_owned(),
-            idempotency_key: snapshot.snapshot_digest.clone(),
-            snapshot,
-        })?;
+        let result = self.build_result(snapshot)?;
         match result {
             CompilationResult::ArtifactCommitted {
                 artifact_digest, ..
@@ -116,6 +120,16 @@ impl CompilationClient {
             CompilationResult::Failed { code, .. } => Err(code),
             CompilationResult::Cancelled { .. } => Err("cancelled".to_owned()),
         }
+    }
+
+    /// Submit one exact snapshot and retain the compiler's complete typed
+    /// result, including its opaque execution lineage commitment.
+    pub fn build_result(&mut self, snapshot: PackageSnapshot) -> Result<CompilationResult, String> {
+        self.request(CompilationRequest::Compile {
+            request_id: "build".to_owned(),
+            idempotency_key: snapshot.snapshot_digest.clone(),
+            snapshot,
+        })
     }
 
     /// Committed artifact bytes for a digest this client produced.
@@ -208,6 +222,65 @@ fn read_limited_line(reader: &mut BufReader<ChildStdout>) -> Result<String, Stri
 
 /// Walk a package root and bind every file's bytes into a validated snapshot.
 pub fn snapshot_package(package_root: &Path) -> Result<PackageSnapshot, String> {
+    #[cfg(unix)]
+    {
+        snapshot_package_descriptor_relative(package_root)
+    }
+    #[cfg(not(unix))]
+    {
+        snapshot_package_path_based(package_root)
+    }
+}
+
+/// Snapshot package contents through directory descriptors. Every directory
+/// and regular file is opened relative to a previously opened parent, so a
+/// concurrent rename or symlink replacement cannot redirect a read outside
+/// the package root between validation and use.
+#[cfg(unix)]
+fn snapshot_package_descriptor_relative(package_root: &Path) -> Result<PackageSnapshot, String> {
+    let root_metadata = fs::symlink_metadata(package_root)
+        .map_err(|error| format!("stat package root '{}': {error}", package_root.display()))?;
+    if root_metadata.file_type().is_symlink() {
+        return Err(format!(
+            "package snapshot refuses symlink root '{}'",
+            package_root.display()
+        ));
+    }
+    if !root_metadata.is_dir() {
+        return Err(format!("'{}' is not a directory", package_root.display()));
+    }
+
+    let (root, display_root) = open_package_root(package_root)?;
+    let manifest = read_manifest_at(&root)?;
+    let mut contents = Vec::new();
+    let mut state = SnapshotState::default();
+    collect_files_at(
+        &root,
+        &display_root,
+        &display_root,
+        0,
+        &mut contents,
+        &mut state,
+    )?;
+    if contents.is_empty() {
+        return Err("package snapshot is empty".to_owned());
+    }
+    let lock_digest = contents
+        .iter()
+        .find(|content| is_lock_name(&content.path))
+        .map(|content| content.digest.clone());
+    PackageSnapshot::assemble(
+        manifest.frontend,
+        manifest.entry,
+        contents,
+        lock_digest,
+        "apxm.compatibility-set/local",
+    )
+    .map_err(|error| error.to_string())
+}
+
+#[cfg(not(unix))]
+fn snapshot_package_path_based(package_root: &Path) -> Result<PackageSnapshot, String> {
     let root_metadata = fs::symlink_metadata(package_root)
         .map_err(|error| format!("stat package root '{}': {error}", package_root.display()))?;
     if root_metadata.file_type().is_symlink() {
@@ -266,6 +339,7 @@ struct DeclaredCompile {
     entry: String,
 }
 
+#[cfg(not(unix))]
 fn read_manifest(package_root: &Path) -> Result<DeclaredCompile, String> {
     let path = package_root.join("agent.toml");
     let text = read_regular_file(&path, MAX_PACKAGE_FILE_BYTES).map_err(|error| match error {
@@ -286,6 +360,29 @@ fn read_manifest(package_root: &Path) -> Result<DeclaredCompile, String> {
     Ok(DeclaredCompile { frontend, entry })
 }
 
+#[cfg(unix)]
+fn read_manifest_at(root: &OwnedFd) -> Result<DeclaredCompile, String> {
+    let name = CString::new("agent.toml").expect("static manifest name has no NUL");
+    let text =
+        read_regular_file_at(root, &name, MAX_PACKAGE_FILE_BYTES).map_err(|error| match error {
+            FileReadError::NotFound => "missing_frontend".to_owned(),
+            FileReadError::Message(message) => message,
+        })?;
+    let text = String::from_utf8(text).map_err(|error| error.to_string())?;
+    let parsed: AgentToml = toml::from_str(&text).map_err(|error| error.to_string())?;
+    let compile = parsed
+        .compile
+        .ok_or_else(|| "missing_frontend".to_owned())?;
+    let frontend = compile
+        .frontend
+        .ok_or_else(|| "missing_frontend".to_owned())?;
+    let entry = compile
+        .entry
+        .ok_or_else(|| "missing_entrypoint".to_owned())?;
+    Ok(DeclaredCompile { frontend, entry })
+}
+
+#[cfg(not(unix))]
 fn collect_files(
     root: &Path,
     current: &Path,
@@ -373,6 +470,86 @@ fn collect_files(
     Ok(())
 }
 
+#[cfg(unix)]
+fn collect_files_at(
+    parent: &OwnedFd,
+    root_display: &Path,
+    display_dir: &Path,
+    depth: usize,
+    contents: &mut Vec<SnapshotContent>,
+    state: &mut SnapshotState,
+) -> Result<(), String> {
+    if depth > MAX_PACKAGE_DEPTH {
+        return Err(format!(
+            "package snapshot exceeds maximum depth of {MAX_PACKAGE_DEPTH}"
+        ));
+    }
+    let entries = Dir::read_from(parent).map_err(|error| error.to_string())?;
+    for entry in entries {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let name = entry.file_name();
+        if name.to_bytes() == b"." || name.to_bytes() == b".." {
+            continue;
+        }
+        let name_text = name
+            .to_str()
+            .map_err(|_| "package snapshot path is not UTF-8".to_owned())?;
+        if should_skip(name_text) {
+            continue;
+        }
+        let display_path = display_dir.join(name_text);
+
+        match open_directory_at(parent, name, &display_path)? {
+            Some(directory) => {
+                let next_depth = depth.saturating_add(1);
+                if next_depth > MAX_PACKAGE_DEPTH {
+                    return Err(format!(
+                        "package snapshot exceeds maximum depth of {MAX_PACKAGE_DEPTH}"
+                    ));
+                }
+                collect_files_at(
+                    &directory,
+                    root_display,
+                    &display_path,
+                    next_depth,
+                    contents,
+                    state,
+                )?;
+            }
+            None => {
+                if state.file_count >= MAX_PACKAGE_FILES {
+                    return Err(format!(
+                        "package snapshot exceeds maximum file count of {MAX_PACKAGE_FILES}"
+                    ));
+                }
+                let bytes = read_regular_file_at(parent, name, MAX_PACKAGE_FILE_BYTES).map_err(
+                    |error| match error {
+                        FileReadError::NotFound => {
+                            format!("package file '{}' disappeared", display_path.display())
+                        }
+                        FileReadError::Message(message) => message,
+                    },
+                )?;
+                if state.total_bytes.saturating_add(bytes.len()) > MAX_PACKAGE_BYTES {
+                    return Err(format!(
+                        "package snapshot exceeds maximum size of {MAX_PACKAGE_BYTES} bytes"
+                    ));
+                }
+                let relative = display_path
+                    .strip_prefix(root_display)
+                    .map_err(|error| error.to_string())?
+                    .to_str()
+                    .ok_or_else(|| "package snapshot path is not UTF-8".to_owned())?
+                    .replace('\\', "/");
+                state.file_count += 1;
+                state.total_bytes += bytes.len();
+                contents.push(SnapshotContent::from_bytes(relative, bytes));
+            }
+        }
+    }
+    Ok(())
+}
+
 #[derive(Default)]
 struct SnapshotState {
     file_count: usize,
@@ -384,6 +561,7 @@ enum FileReadError {
     Message(String),
 }
 
+#[cfg(not(unix))]
 fn read_regular_file(path: &Path, max_bytes: usize) -> Result<Vec<u8>, FileReadError> {
     let metadata = fs::symlink_metadata(path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
@@ -426,6 +604,160 @@ fn read_regular_file(path: &Path, max_bytes: usize) -> Result<Vec<u8>, FileReadE
     Ok(bytes)
 }
 
+#[cfg(unix)]
+fn read_regular_file_at(
+    parent: &OwnedFd,
+    name: &CStr,
+    max_bytes: usize,
+) -> Result<Vec<u8>, FileReadError> {
+    let fd = openat(
+        parent,
+        name,
+        // O_NONBLOCK prevents a FIFO supplied as a package member from
+        // stalling the snapshot before its non-regular type is rejected.
+        OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(map_open_error)?;
+    let file: fs::File = fd.into();
+    let metadata = file
+        .metadata()
+        .map_err(|error| FileReadError::Message(error.to_string()))?;
+    if !metadata.is_file() {
+        return Err(FileReadError::Message(
+            "package snapshot refuses special file".to_owned(),
+        ));
+    }
+    if metadata.len() > max_bytes as u64 {
+        return Err(FileReadError::Message(format!(
+            "package file exceeds maximum size of {max_bytes} bytes"
+        )));
+    }
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take(max_bytes as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| FileReadError::Message(error.to_string()))?;
+    if bytes.len() > max_bytes {
+        return Err(FileReadError::Message(format!(
+            "package file exceeds maximum size of {max_bytes} bytes"
+        )));
+    }
+    Ok(bytes)
+}
+
+#[cfg(unix)]
+fn open_canonical_directory(path: &Path) -> Result<OwnedFd, String> {
+    let mut directory = open(
+        Path::new("/"),
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|error| error.to_string())?;
+    for component in path.components() {
+        match component {
+            std::path::Component::RootDir => {}
+            std::path::Component::Normal(name) => {
+                directory = openat(
+                    &directory,
+                    name,
+                    OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                    Mode::empty(),
+                )
+                .map_err(|error| error.to_string())?;
+            }
+            _ => return Err("canonical package root contains an invalid path".to_owned()),
+        }
+    }
+    Ok(directory)
+}
+
+#[cfg(unix)]
+fn open_package_root(package_root: &Path) -> Result<(OwnedFd, PathBuf), String> {
+    // Resolve only the parent path, then open the caller-supplied final name
+    // with O_NOFOLLOW. Resolving the complete path first would allow a final
+    // directory replacement to turn a previously checked package root into a
+    // symlink to an unrelated directory.
+    if let (Some(parent), Some(name)) = (package_root.parent(), package_root.file_name()) {
+        let canonical_parent = fs::canonicalize(parent).map_err(|error| {
+            format!(
+                "canonicalize package root parent '{}': {error}",
+                parent.display()
+            )
+        })?;
+        let parent_fd = open_canonical_directory(&canonical_parent)?;
+        let root = openat(
+            &parent_fd,
+            name,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|error| {
+            if error == rustix::io::Errno::LOOP {
+                format!(
+                    "package snapshot refuses symlink root '{}'",
+                    package_root.display()
+                )
+            } else {
+                error.to_string()
+            }
+        })?;
+        return Ok((root, canonical_parent.join(name)));
+    }
+
+    let canonical = fs::canonicalize(package_root).map_err(|error| {
+        format!(
+            "canonicalize package root '{}': {error}",
+            package_root.display()
+        )
+    })?;
+    let root = open_canonical_directory(&canonical)?;
+    Ok((root, canonical))
+}
+
+#[cfg(unix)]
+fn open_directory_at(
+    parent: &OwnedFd,
+    name: &CStr,
+    display_path: &Path,
+) -> Result<Option<OwnedFd>, String> {
+    match openat(
+        parent,
+        name,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    ) {
+        Ok(directory) => Ok(Some(directory)),
+        Err(error) => {
+            if error == rustix::io::Errno::NOTDIR {
+                return Ok(None);
+            }
+            if error == rustix::io::Errno::LOOP {
+                return Err(format!(
+                    "package snapshot refuses symlink '{}'",
+                    display_path.display()
+                ));
+            }
+            let error = std::io::Error::from_raw_os_error(error.raw_os_error());
+            Err(error.to_string())
+        }
+    }
+}
+
+#[cfg(unix)]
+fn map_open_error(error: rustix::io::Errno) -> FileReadError {
+    let error = std::io::Error::from_raw_os_error(error.raw_os_error());
+    if error.kind() == std::io::ErrorKind::NotFound {
+        FileReadError::NotFound
+    } else if error.raw_os_error() == Some(rustix::io::Errno::LOOP.raw_os_error()) {
+        FileReadError::Message("package snapshot refuses symlink".to_owned())
+    } else if error.kind() == std::io::ErrorKind::Unsupported {
+        FileReadError::Message("package snapshot refuses special file".to_owned())
+    } else {
+        FileReadError::Message(error.to_string())
+    }
+}
+
+#[cfg(not(unix))]
 fn open_regular_file(path: &Path) -> Result<fs::File, FileReadError> {
     #[cfg(unix)]
     {
@@ -536,8 +868,20 @@ async def Reviewer(agent, request):
         assert!(snapshot.file("src/agent.py").unwrap().digest != "local");
 
         let mut client = CompilationClient::default();
-        let digest = client.build_package(&dir).unwrap();
-        assert!(digest.starts_with("sha256:"));
+        let result = client
+            .build_result(snapshot)
+            .expect("client exposes the complete compilation result");
+        let CompilationResult::ArtifactCommitted {
+            artifact_digest,
+            execution_lineage_ref,
+            ..
+        } = result
+        else {
+            panic!("expected a committed artifact");
+        };
+        assert!(artifact_digest.starts_with("sha256:"));
+        assert!(execution_lineage_ref.starts_with("sha256:"));
+        let digest = artifact_digest;
         let air = client.artifact_bytes(&digest).expect("committed bytes");
         assert!(air.contains("apxm.air"));
     }
@@ -672,22 +1016,12 @@ async def EchoAgent(agent, request):
         let started = runtime
             .start_invocation(&instance, serde_json::json!({"message": "hello"}))
             .expect("headless invoke");
-        let outcome = apxm_interaction_client::InteractionClient::classify_outcome(
-            &started,
-            runtime.last_output(),
-        );
-        assert_ne!(
-            outcome,
-            apxm_interaction_client::HeadlessOutcome::Failed,
-            "echo Program must return or wait, not fail: {started:?}"
-        );
         assert!(
             matches!(
-                outcome,
-                apxm_interaction_client::HeadlessOutcome::Returned
-                    | apxm_interaction_client::HeadlessOutcome::WaitingEvent
+                started,
+                apxm_runtime_protocol::RuntimeResult::ProgramInvocationStarted { .. }
             ),
-            "{outcome:?}"
+            "echo Program must start successfully: {started:?}"
         );
     }
 
@@ -713,6 +1047,28 @@ async def EchoAgent(agent, request):
             std::os::unix::fs::symlink("/etc/passwd", dir.join("leak.py")).unwrap();
 
             let error = snapshot_package(&dir).expect_err("symlink must not enter a snapshot");
+            assert!(error.contains("symlink"), "{error}");
+        }
+    }
+
+    #[test]
+    fn package_snapshot_rejects_a_symlinked_directory_member() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+
+            let dir = tempfile_dir();
+            fs::write(
+                dir.join("agent.toml"),
+                "[compile]\nentry = \"agent.py\"\nfrontend = \"python\"\n",
+            )
+            .unwrap();
+            fs::write(dir.join("agent.py"), "print('ok')").unwrap();
+            let target = tempfile_dir();
+            fs::write(target.join("escape.py"), "print('outside')").unwrap();
+            symlink(&target, dir.join("outside")).unwrap();
+
+            let error = snapshot_package(&dir).expect_err("directory symlink must be rejected");
             assert!(error.contains("symlink"), "{error}");
         }
     }

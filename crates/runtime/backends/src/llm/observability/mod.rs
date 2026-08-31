@@ -2,7 +2,7 @@
 //!
 //! Provides request tracing, metrics collection, and performance monitoring.
 
-use apxm_core::constants::session::metrics_keys;
+use apxm_core::constants::metrics::metrics_keys;
 use apxm_core::types::TokenUsage;
 use dashmap::DashMap;
 use parking_lot::Mutex;

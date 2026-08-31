@@ -5,10 +5,22 @@
 
 use apxm_source_port::{Frontend, PackageSnapshot};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::collections::HashMap;
 
 /// Only declared protocol version. Unknown versions fail closed.
 pub const COMPILATION_PROTOCOL_VERSION: &str = "apxm.compilation.protocol/1";
+pub use apxm_program::EXECUTION_LINEAGE_COMPILER_IDENTITY;
+
+/// Derive the opaque lineage reference returned by Compilation Service.
+#[must_use]
+pub fn execution_lineage_ref(
+    source_digest: &str,
+    canonical_artifact_digest: &str,
+    compiler_identity: &str,
+) -> String {
+    apxm_program::execution_lineage_ref(source_digest, canonical_artifact_digest, compiler_identity)
+}
 
 /// Client-to-service handshake.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,6 +73,11 @@ pub enum CompilationResult {
         request_id: String,
         /// Artifact content digest.
         artifact_digest: String,
+        /// Complete canonical executable-artifact envelope. Its encoded bytes
+        /// are admissible by Runtime under `artifact_digest`.
+        artifact: apxm_program::ExecutableArtifact,
+        /// Opaque source/AIR/compiler lineage commitment.
+        execution_lineage_ref: String,
         /// Complete build key used for cache identity.
         build_key: String,
     },
@@ -95,9 +112,22 @@ pub enum ProtocolError {
 #[derive(Default)]
 pub struct InMemoryCompilationPeer {
     idempotency: HashMap<String, String>,
+    artifacts: HashMap<String, apxm_program::ExecutableArtifact>,
 }
 
 impl InMemoryCompilationPeer {
+    /// Return the canonical envelope committed by this peer.
+    #[must_use]
+    pub fn artifact(&self, digest: &str) -> Option<&apxm_program::ExecutableArtifact> {
+        self.artifacts.get(digest)
+    }
+
+    /// Return canonical bytes suitable for Runtime artifact admission.
+    pub fn artifact_bytes(&self, digest: &str) -> Option<Vec<u8>> {
+        self.artifact(digest)
+            .and_then(|artifact| artifact.encode().ok())
+    }
+
     /// Handle one admitted request. Never contacts a runtime.
     pub fn handle(
         &mut self,
@@ -125,9 +155,25 @@ impl InMemoryCompilationPeer {
                 }
                 self.idempotency
                     .insert(idempotency_key, fingerprint.clone());
+                let mut artifact = protocol_artifact(&fingerprint)?;
+                let artifact_digest = artifact
+                    .canonical_digest()
+                    .map_err(|_| ProtocolError::InvalidRequest)?;
+                artifact.artifact_digest.clone_from(&artifact_digest);
+                if !artifact.validate().is_accepted() {
+                    return Err(ProtocolError::InvalidRequest);
+                }
+                let execution_lineage_ref = artifact
+                    .execution_lineage_ref
+                    .clone()
+                    .ok_or(ProtocolError::InvalidRequest)?;
+                self.artifacts
+                    .insert(artifact_digest.clone(), artifact.clone());
                 Ok(CompilationResult::ArtifactCommitted {
                     request_id,
-                    artifact_digest: format!("artifact:{fingerprint}"),
+                    artifact_digest,
+                    artifact,
+                    execution_lineage_ref,
                     build_key: format!("{:?}:{fingerprint}", snapshot.frontend),
                 })
             }
@@ -142,6 +188,46 @@ impl InMemoryCompilationPeer {
             }
         }
     }
+}
+
+/// Build a deterministic valid envelope for protocol-only fixtures. The
+/// snapshot digest is carried as the source-bundle commitment; the peer does
+/// not pretend to implement a frontend compiler.
+fn protocol_artifact(
+    source_digest: &str,
+) -> Result<apxm_program::ExecutableArtifact, ProtocolError> {
+    let air: apxm_program::air::AirModule = serde_json::from_value(json!({
+        "schema_version": "apxm.air",
+        "semantic_operations": [{
+            "node_id": "node.await",
+            "op": "await.event",
+            "parent_region_id": "region.body",
+            "execution_order": 0,
+            "operands": [{"slot": "event_ref", "value_id": "session-input", "type_ref": "EventRef"}]
+        }],
+        "structural_ir": [
+            {"region_id": "region.body", "kind": "region", "execution_order": 0},
+            {"region_id": "region.return", "kind": "return", "parent_region_id": "region.body", "execution_order": 1}
+        ],
+        "context_flow": [],
+        "source_map": {
+            "schema_version": "apxm.source-map",
+            "source_language": "python",
+            "node_spans": [],
+            "region_annotations": []
+        }
+    }))
+    .map_err(|_| ProtocolError::InvalidRequest)?;
+    let mut artifact = apxm_program::ExecutableArtifact::from_air(&air)
+        .map_err(|_| ProtocolError::InvalidRequest)?;
+    let source_digest = format!("sha256:{source_digest}");
+    artifact.source_bundle_digest = source_digest.clone();
+    artifact.execution_lineage_ref = Some(apxm_program::execution_lineage_ref(
+        &source_digest,
+        &artifact.air_digest,
+        EXECUTION_LINEAGE_COMPILER_IDENTITY,
+    ));
+    Ok(artifact)
 }
 
 /// Reject a rust frontend selector at the protocol boundary.
@@ -195,9 +281,22 @@ mod tests {
             .unwrap();
         match result {
             CompilationResult::ArtifactCommitted {
-                artifact_digest, ..
+                artifact_digest,
+                artifact,
+                execution_lineage_ref,
+                ..
             } => {
-                assert!(artifact_digest.starts_with("artifact:"));
+                assert!(artifact_digest.starts_with("sha256:"));
+                assert!(execution_lineage_ref.starts_with("sha256:"));
+                let bytes = artifact.encode().expect("canonical artifact bytes");
+                assert_eq!(artifact.artifact_digest, artifact_digest);
+                assert!(
+                    apxm_program::ExecutableArtifact::decode_for_execution(
+                        &bytes,
+                        &artifact_digest
+                    )
+                    .is_ok()
+                );
             }
             other => panic!("expected commit, got {other:?}"),
         }

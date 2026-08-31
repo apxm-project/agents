@@ -25,8 +25,8 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use super::agent::{
-    HierarchyToml, copy_dir_recursive, package_file_patterns, resolve_installed_agent,
-    unrecognized_files_under,
+    HierarchyToml, digest_files_under, package_file_patterns, resolve_installed_agent,
+    unrecognized_files_under, validate_storage_identifier,
 };
 use super::implementations::{Status, print_section_header, print_status_line};
 
@@ -201,9 +201,7 @@ pub(crate) fn org_new(
     display_name: Option<String>,
     json_output: bool,
 ) -> Result<()> {
-    if id.trim().is_empty() {
-        bail!("org id must not be empty");
-    }
+    validate_storage_identifier(id, "org")?;
     let root = path.unwrap_or_else(|| default_org_root(id));
     if root.exists() && fs::read_dir(&root)?.next().is_some() {
         bail!(
@@ -328,6 +326,196 @@ fn version_satisfies(requirement: &str, actual: &str) -> bool {
         (Some(req), Some(act)) => req == act,
         _ => requirement == actual,
     }
+}
+
+fn version_requirement_is_valid(requirement: &str) -> bool {
+    let requirement = requirement.trim();
+    let core = requirement
+        .strip_prefix('^')
+        .or_else(|| requirement.strip_prefix('~'))
+        .unwrap_or(requirement);
+    !core.is_empty() && parse_semver_core(core).is_some()
+}
+
+/// Validate the in-memory org manifest against the executable parts of the
+/// published `apxm.org` contract. Serde handles required fields and closed
+/// enum values; these checks cover the constraints that TOML's generic values
+/// and arrays cannot express on their own.
+fn check_org_schema_shape(org: &OrgToml) -> Vec<String> {
+    let mut errors = Vec::new();
+
+    if let Err(error) = validate_storage_identifier(&org.org_id, "org.toml") {
+        errors.push(error.to_string());
+    }
+    if org.display_name.trim().is_empty() {
+        errors.push("org.toml: display_name must not be empty".to_string());
+    }
+    match org.schema_version.as_deref() {
+        Some(ORG_SCHEMA) => {}
+        Some(other) => errors.push(format!(
+            "org.toml: schema_version '{other}' must be '{ORG_SCHEMA}'"
+        )),
+        None => errors.push(format!(
+            "org.toml: schema_version is required and must be '{ORG_SCHEMA}'"
+        )),
+    }
+
+    for (name, value) in [
+        ("policy", org.policy.as_ref()),
+        ("environment", org.environment.as_ref()),
+        ("models", org.models.as_ref()),
+    ] {
+        if let Some(value) = value
+            && !value.is_table()
+        {
+            errors.push(format!("org.toml: [{name}] must be a table"));
+        }
+    }
+
+    let member_ids: BTreeSet<&str> = org
+        .members
+        .iter()
+        .map(|member| member.id.as_str())
+        .collect();
+    for member in &org.members {
+        if !apxm_core::grammar::is_identifier(&member.id) {
+            errors.push(format!(
+                "org.toml: member id '{}' is not a contract identifier",
+                member.id
+            ));
+        }
+        if let Err(error) = validate_storage_identifier(&member.package, "org.toml member package")
+        {
+            errors.push(error.to_string());
+        }
+        if !version_requirement_is_valid(&member.version) {
+            errors.push(format!(
+                "org.toml: member '{}' version requirement '{}' is not a supported SemVer, ^SemVer, or ~SemVer requirement",
+                member.id, member.version
+            ));
+        }
+        if member.instances == 0 {
+            errors.push(format!(
+                "org.toml: member '{}' instances must be at least 1",
+                member.id
+            ));
+        }
+        if let Some(mask) = &member.capability_mask {
+            for capability in mask.grant.iter().chain(mask.deny.iter()) {
+                if !apxm_core::grammar::is_identifier(capability) {
+                    errors.push(format!(
+                        "org.toml: member '{}' capability_mask entry '{}' is not a contract identifier",
+                        member.id, capability
+                    ));
+                }
+            }
+        }
+        if let Some(hierarchy) = &member.hierarchy {
+            if let Some(parent) = &hierarchy.parent
+                && !apxm_core::grammar::is_identifier(parent)
+            {
+                errors.push(format!(
+                    "org.toml: member '{}' hierarchy.parent '{}' is not a contract identifier",
+                    member.id, parent
+                ));
+            }
+            for child in &hierarchy.permitted_children {
+                if !apxm_core::grammar::is_identifier(child) {
+                    errors.push(format!(
+                        "org.toml: member '{}' hierarchy.permitted_children entry '{}' is not a contract identifier",
+                        member.id, child
+                    ));
+                }
+            }
+        }
+    }
+
+    for capability in org.permissions.keys() {
+        if !apxm_core::grammar::is_identifier(capability) {
+            errors.push(format!(
+                "org.toml: [permissions] key '{}' is not a contract identifier",
+                capability
+            ));
+        }
+    }
+
+    if let Some(topology) = &org.topology {
+        let tree = &topology.tree;
+        if !apxm_core::grammar::is_identifier(&tree.root) {
+            errors.push(format!(
+                "org.toml: topology.tree.root '{}' is not a contract identifier",
+                tree.root
+            ));
+        }
+        if !org.members.is_empty() && !member_ids.contains(tree.root.as_str()) {
+            errors.push(format!(
+                "org.toml: topology.tree.root '{}' is not a declared member",
+                tree.root
+            ));
+        }
+        let mut seen_edges = BTreeSet::new();
+        for edge in &tree.edges {
+            if !apxm_core::grammar::is_identifier(&edge.parent) {
+                errors.push(format!(
+                    "org.toml: topology.tree edge parent '{}' is not a contract identifier",
+                    edge.parent
+                ));
+            }
+            if !apxm_core::grammar::is_identifier(&edge.child) {
+                errors.push(format!(
+                    "org.toml: topology.tree edge child '{}' is not a contract identifier",
+                    edge.child
+                ));
+            }
+            if !org.members.is_empty() {
+                if !member_ids.contains(edge.parent.as_str()) {
+                    errors.push(format!(
+                        "org.toml: topology.tree edge parent '{}' is not a declared member",
+                        edge.parent
+                    ));
+                }
+                if !member_ids.contains(edge.child.as_str()) {
+                    errors.push(format!(
+                        "org.toml: topology.tree edge child '{}' is not a declared member",
+                        edge.child
+                    ));
+                }
+            }
+            if !seen_edges.insert((&edge.parent, &edge.child)) {
+                errors.push(format!(
+                    "org.toml: topology.tree contains duplicate edge '{} -> {}'",
+                    edge.parent, edge.child
+                ));
+            }
+        }
+        for relation in &topology.relations {
+            for (field, value) in [("from", &relation.from), ("to", &relation.to)] {
+                if !apxm_core::grammar::is_identifier(value) {
+                    errors.push(format!(
+                        "org.toml: topology relation {field} '{}' is not a contract identifier",
+                        value
+                    ));
+                } else if !org.members.is_empty() && !member_ids.contains(value.as_str()) {
+                    errors.push(format!(
+                        "org.toml: topology relation {field} '{}' is not a declared member",
+                        value
+                    ));
+                }
+            }
+            if relation.r#type.trim().is_empty() {
+                errors.push("org.toml: topology relation type must not be empty".to_string());
+            }
+            if relation
+                .reach
+                .as_deref()
+                .is_some_and(|reach| reach.trim().is_empty())
+            {
+                errors.push("org.toml: topology relation reach must not be empty".to_string());
+            }
+        }
+    }
+
+    errors
 }
 
 fn check_member_resolution(members: &[MemberEntry], apxm_home: &Path) -> Vec<String> {
@@ -558,22 +746,7 @@ pub(crate) fn org_lint(path: &Path, json_output: bool) -> Result<()> {
 fn org_lint_at(path: &Path, apxm_home: &Path, json_output: bool) -> Result<()> {
     let org = load_org(path)?;
 
-    let mut errors = Vec::new();
-    if org.org.org_id.trim().is_empty() {
-        errors.push("org.toml: org_id must not be empty".to_string());
-    }
-    if org.org.display_name.trim().is_empty() {
-        errors.push("org.toml: display_name must not be empty".to_string());
-    }
-    match org.org.schema_version.as_deref() {
-        Some(ORG_SCHEMA) => {}
-        Some(other) => errors.push(format!(
-            "org.toml: schema_version '{other}' must be '{ORG_SCHEMA}'"
-        )),
-        None => errors.push(format!(
-            "org.toml: schema_version is required and must be '{ORG_SCHEMA}'"
-        )),
-    }
+    let mut errors = check_org_schema_shape(&org.org);
     {
         let mut seen: BTreeMap<&str, usize> = BTreeMap::new();
         for member in &org.org.members {
@@ -644,27 +817,58 @@ fn orgs_dir(apxm_home: &Path) -> PathBuf {
     apxm_home.join("orgs")
 }
 
+/// Validate the package that is about to be published. Install validates the
+/// authored source for an early, useful error and validates the private staged
+/// copy again immediately before rename. `expected_id` binds that copy to the
+/// destination selected from the first manifest read if the source changes
+/// while it is being copied.
+fn validate_org_package(root: &Path, expected_id: Option<&str>) -> Result<()> {
+    let org = load_org(root)?;
+    let mut shape_errors = check_org_schema_shape(&org.org);
+    shape_errors.extend(find_unrecognized_files(root)?.into_iter().map(|file| {
+        format!("unrecognized file '{file}' is not part of the {ORG_SCHEMA} folder contract")
+    }));
+    if let Some(expected_id) = expected_id
+        && org.org.org_id != expected_id
+    {
+        bail!(
+            "staged org package id '{}' does not match install destination '{}'",
+            org.org.org_id,
+            expected_id
+        );
+    }
+    if !shape_errors.is_empty() {
+        bail!(
+            "{} package-shape error{} in {}: {}",
+            shape_errors.len(),
+            if shape_errors.len() == 1 { "" } else { "s" },
+            root.display(),
+            shape_errors.join("; ")
+        );
+    }
+    Ok(())
+}
+
 pub(crate) fn org_install(path: &Path, force: bool, json_output: bool) -> Result<()> {
     org_install_to(path, &apxm_core::env::apxm_home(), force, json_output)
 }
 
 fn org_install_to(path: &Path, apxm_home: &Path, force: bool, json_output: bool) -> Result<()> {
     let org = load_org(path)?;
-    let dest = orgs_dir(apxm_home).join(&org.org.org_id);
-
-    if dest.exists() {
-        if !force {
-            bail!(
-                "'{}' already exists; pass --force to overwrite",
-                dest.display()
-            );
+    validate_org_package(path, None)?;
+    let admitted_files = digest_files_under(path, recognized_relpath_patterns(), None)?;
+    validate_storage_identifier(&org.org.org_id, "org")?;
+    let root = orgs_dir(apxm_home);
+    fs::create_dir_all(&root).with_context(|| format!("Failed to create {}", root.display()))?;
+    let org_id = org.org.org_id.clone();
+    let dest = super::agent::stage_and_install(path, &root, &org_id, "org", force, |staging| {
+        validate_org_package(staging, Some(&org_id))?;
+        let staged_files = digest_files_under(staging, recognized_relpath_patterns(), None)?;
+        if staged_files != admitted_files {
+            bail!("staged org package contents differ from the package admitted before copying");
         }
-        fs::remove_dir_all(&dest)
-            .with_context(|| format!("Failed to remove existing {}", dest.display()))?;
-    }
-    fs::create_dir_all(dest.parent().expect("dest has a parent"))
-        .with_context(|| format!("Failed to create {}", orgs_dir(apxm_home).display()))?;
-    copy_dir_recursive(path, &dest)?;
+        Ok(())
+    })?;
 
     if json_output {
         println!(
@@ -1040,6 +1244,62 @@ mod tests {
     }
 
     #[test]
+    fn lint_checks_member_shape_and_topology_references() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("invalid-org");
+        let fake_home = tempdir().unwrap();
+        build_valid_org(&root, fake_home.path());
+
+        let mut manifest: OrgToml = read_toml(&root.join("org.toml")).unwrap();
+        manifest
+            .permissions
+            .insert("not a capability".to_string(), PermissionDecision::allow());
+        manifest.members[0].id = "bad member".to_string();
+        manifest.members[0].package = "../escape".to_string();
+        manifest.members[0].version = "latest".to_string();
+        manifest.members[0].instances = 0;
+        manifest.topology.as_mut().unwrap().tree.edges[0].child = "missing-member".to_string();
+        fs::write(
+            root.join("org.toml"),
+            toml::to_string_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+
+        let errors = check_org_schema_shape(&load_org(&root).unwrap().org);
+        for expected in [
+            "not a contract identifier",
+            "filesystem-safe",
+            "version requirement",
+            "instances must be at least 1",
+            "not a declared member",
+        ] {
+            assert!(
+                errors.iter().any(|error| error.contains(expected)),
+                "expected '{expected}' in shape errors: {errors:?}"
+            );
+        }
+        org_lint_at(&root, fake_home.path(), true)
+            .expect_err("invalid member and topology shape must fail lint");
+    }
+
+    #[test]
+    fn lint_rejects_a_tampered_installed_member_package() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("tampered-member-org");
+        let fake_home = tempdir().unwrap();
+        build_valid_org(&root, fake_home.path());
+
+        let installed_manifest = fake_home.path().join("agents/child-pkg/agent.toml");
+        let mut contents = fs::read_to_string(&installed_manifest).unwrap();
+        contents.push_str("\n# changed after install\n");
+        fs::write(installed_manifest, contents).unwrap();
+
+        let error = org_lint_at(&root, fake_home.path(), true)
+            .expect_err("tampered installed member must fail lint");
+        assert!(error.to_string().contains("lint error"));
+    }
+
+    #[test]
     fn install_places_files_under_apxm_home() {
         let tmp = tempdir().unwrap();
         let root = tmp.path().join("installable-org");
@@ -1069,6 +1329,73 @@ mod tests {
         let second = org_install_to(&root, fake_home.path(), false, true);
         let err = second.expect_err("second install without --force must fail");
         assert!(err.to_string().contains("already exists"));
+    }
+
+    #[test]
+    fn install_rejects_unrecognized_package_files_before_copying() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("invalid-org");
+        scaffold(&root, "invalid-org");
+        fs::write(root.join("notes.txt"), "not part of the package contract").unwrap();
+        let fake_home = tempdir().unwrap();
+
+        let error = org_install_to(&root, fake_home.path(), false, true)
+            .expect_err("unrecognized package files must fail admission");
+        assert!(error.to_string().contains("notes.txt"));
+        assert!(!fake_home.path().join("orgs/invalid-org").exists());
+    }
+
+    #[test]
+    fn install_rejects_unsafe_ids_before_force_delete() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("safe-org");
+        scaffold(&root, "safe-org");
+        let fake_home = tempdir().unwrap();
+        let outside = fake_home.path().join("escape-target");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("marker"), "keep").unwrap();
+
+        for id in [
+            "../escape-target",
+            "/tmp/escape",
+            "safe/child",
+            "C:\\escape",
+            "a:b",
+        ] {
+            let mut manifest: OrgToml = read_toml(&root.join("org.toml")).unwrap();
+            manifest.org_id = id.to_string();
+            fs::write(
+                root.join("org.toml"),
+                toml::to_string_pretty(&manifest).unwrap(),
+            )
+            .unwrap();
+
+            for force in [false, true] {
+                let error = org_install_to(&root, fake_home.path(), force, true)
+                    .expect_err("unsafe org id must be rejected");
+                assert!(error.to_string().contains("filesystem-safe"), "{error}");
+            }
+        }
+
+        assert!(outside.join("marker").is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn install_rejects_a_symlinked_orgs_root() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("safe-org");
+        scaffold(&root, "safe-org");
+        let fake_home = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        symlink(outside.path(), fake_home.path().join("orgs")).unwrap();
+
+        let error = org_install_to(&root, fake_home.path(), true, true)
+            .expect_err("symlinked install root must be rejected");
+        assert!(error.to_string().contains("symlinked root"));
+        assert!(!outside.path().join("safe-org").exists());
     }
 
     #[test]

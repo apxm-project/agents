@@ -585,7 +585,7 @@ The current-code anchors for this inventory are the
 [canonical CLI Composition Root](../../crates/tools/cli/src/commands/canonical_execute.rs),
 [execution driver](../../crates/runtime/execution/src/driver.rs),
 [kernel runtime ports](../../crates/runtime/kernel/src/runtime_ports.rs),
-[execution session ledger](../../crates/runtime/execution/src/session_ledger.rs),
+[typed Runtime Service execution/read surface](../../crates/runtime/service/src/lib.rs),
 [inference stream contract](../../crates/runtime/inference/src/stream.rs),
 [Python Event capture](../../crates/compiler/frontend/python/apxm_program/_capture.py),
 [TypeScript Event capture](../../crates/compiler/frontend/typescript/src/capture.ts),
@@ -2585,8 +2585,7 @@ Program Instance and evidence truth.
 Likely affected:
 
 - `crates/tools/cli/src/commands/session.rs`;
-- `crates/runtime/execution/src/session_ledger.rs` documentation and names if
-the audit finds ambiguity;
+- Runtime Service Event lifecycle and typed execution/read contracts;
 - new client record storage plus unsupported-version/deletion reachability
   tests;
 - CLI documentation.

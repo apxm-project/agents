@@ -66,7 +66,8 @@ describe("packed @apxm/frontend", () => {
       genericScript,
       [
         'import * as frontend from "@apxm/frontend";',
-        'import { source } from "@apxm/frontend/node";',
+        'import * as nodeFrontend from "@apxm/frontend/node";',
+        'const { source } = nodeFrontend;',
         "source(import.meta.url);",
         'const removed = ["AgentProgram", "AgentFacade", "FIVE_OPS", "OP_MODEL_CALL",',
         '  "OP_CAPABILITY_INVOKE", "canonicalAirJson", "lower", "verify",',
@@ -74,6 +75,7 @@ describe("packed @apxm/frontend", () => {
         '  "AgentDefinition", "ProgramInstance", "decodeFact", "RuntimeFact"];',
         "if (typeof frontend.Agent !== 'function') process.exit(2);",
         "if (removed.some((name) => name in frontend)) process.exit(3);",
+        "if ('submitAuthoredSource' in nodeFrontend) process.exit(8);",
         'const expected = ["Agent", "Capability", "Context", "Event", "Hook", "Model", "Skill", "TaskGroup", "Tool"];',
         "if (JSON.stringify(Object.keys(frontend).sort()) !== JSON.stringify(expected)) process.exit(7);",
         "const { Agent, Context, Model, Tool } = frontend;",

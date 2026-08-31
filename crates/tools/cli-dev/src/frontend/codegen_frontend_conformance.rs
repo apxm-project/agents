@@ -39,7 +39,8 @@
 //! reads an `async def` back through `inspect.getsource`, so the Python harness
 //! carries its fixtures as real generated module code. TypeScript's capture
 //! reads authored text, which the harness supplies through the package's own
-//! `submitAuthoredSource` before calling the public `Agent(...)`. Both paths run
+//! the private host bridge's `submitAuthoredSource` before calling the public
+//! `Agent(...)`. Both paths run
 //! entirely through the surface an installed package publishes.
 
 use std::collections::BTreeSet;
@@ -941,7 +942,7 @@ pub fn render_conformance_typescript() -> String {
         String::new(),
         "import { Agent, Capability, Context, Event, Model, Skill, Tool } from \"../index.js\";"
             .to_string(),
-        "import { submitAuthoredSource } from \"../node.js\";".to_string(),
+        "import { submitAuthoredSource } from \"../host.js\";".to_string(),
         "import { Allow, Ask } from \"../permissions.js\";".to_string(),
         String::new(),
     ];
@@ -1231,7 +1232,8 @@ const TYPESCRIPT_MODULE_DOC: &str = r"// The shared frontend-conformance corpus,
 // harness runs the same from the repository and from an installed package.
 //
 // Each vector supplies its authored text through the package's own
-// `submitAuthoredSource` and then calls the public `Agent(...)`, because
+// the private host bridge's `submitAuthoredSource` and then calls the public
+// `Agent(...)`, because
 // TypeScript capture reads authored source rather than a live closure and `tsc`
 // has already erased the typed interface from the module that runs. That import
 // makes this module Node-only; nothing in the browser authoring entrypoint

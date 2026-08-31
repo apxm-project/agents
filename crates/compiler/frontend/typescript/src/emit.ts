@@ -16,6 +16,7 @@ import type {
   BoundControl,
   BoundOperand,
   BoundProgram,
+  Span,
 } from "./bound-tree.js";
 import {
   FRONTEND_GRAPH_VERSION,
@@ -112,6 +113,58 @@ export function emitFrontendGraph(
       region_id: (control.contract.body_region_ids as readonly string[])[0],
       annotation: STRUCTURAL_LOOP,
     }));
+  const regionSpans = program.controls
+    .filter((control) => control.span !== undefined)
+    .map((control) => ({
+      region_id:
+        control.contract.control_kind === CONTROL_KIND_LOOP &&
+        (control.contract.body_region_ids?.length ?? 0) > 0
+          ? (control.contract.body_region_ids as readonly string[])[0]
+          : control.contract.node_id,
+      source_file: (control.span as Span).source_file,
+      span: {
+        start_line: (control.span as Span).start_line,
+        start_column: (control.span as Span).start_column,
+        end_line: (control.span as Span).end_line,
+        end_column: (control.span as Span).end_column,
+      },
+      structural_kind: structuralRegionKind(control.contract.control_kind),
+    }));
+  const spanByNode = new Map<string, Span>(
+    program.spans.map(([nodeId, span]) => [nodeId, span]),
+  );
+  const edgeSpans: Json[] = dataEdges.flatMap((edge) => {
+    const consumer = edge["to_consumer"];
+    const span = typeof consumer === "string" ? spanByNode.get(consumer) : undefined;
+    if (span === undefined) {
+      return [];
+    }
+    return [{
+      edge_id: `edge.data.${String(edge["from_value"])}.${consumer}.${String(edge["consumer_slot"])}`,
+      source_file: span.source_file,
+      span: {
+        start_line: span.start_line,
+        start_column: span.start_column,
+        end_line: span.end_line,
+        end_column: span.end_column,
+      },
+    }];
+  });
+  for (const edge of program.context_edges) {
+    const span = spanByNode.get(edge.to_node) ?? spanByNode.get(edge.from_node);
+    if (span !== undefined) {
+      edgeSpans.push({
+        edge_id: `edge.context.${edge.from_node}.${edge.to_node}.${edge.value_id}`,
+        source_file: span.source_file,
+        span: {
+          start_line: span.start_line,
+          start_column: span.start_column,
+          end_line: span.end_line,
+          end_column: span.end_column,
+        },
+      });
+    }
+  }
 
   return {
     schema_version: FRONTEND_GRAPH_VERSION,
@@ -169,8 +222,29 @@ export function emitFrontendGraph(
       source_language: sourceLanguage,
       node_spans: nodeSpans,
       region_annotations: regionAnnotations,
+      region_spans: regionSpans,
+      edge_spans: edgeSpans,
     },
   };
+}
+
+/** Map source control vocabulary to source-map structural lineage. */
+function structuralRegionKind(controlKind: string): string {
+  const kinds: Record<string, string> = {
+    conditional: "branch",
+    switch: "switch",
+    loop: "loop",
+    task_group: "join",
+    try_catch: "try",
+    throw: "throw",
+    yield: "yield",
+    return: "return",
+  };
+  const kind = kinds[controlKind];
+  if (kind === undefined) {
+    throw new Error(`unknown control kind ${controlKind}`);
+  }
+  return kind;
 }
 
 /** The operand value ids an intent carries, or `undefined` when it takes none. */

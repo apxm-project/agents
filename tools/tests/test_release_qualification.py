@@ -85,10 +85,17 @@ def make_clean_owner_checkout(root: Path) -> tuple[str, dict[str, Path]]:
     artifacts = {
         "compilation-service": root / "target" / "release" / "apxm-compilation-service",
         "runtime-service": root / "target" / "release" / "apxm-runtime-service",
+        "python-frontend-native": root / "target" / "release" / "lib_native.so",
     }
     for index, artifact in enumerate(artifacts.values()):
         artifact.parent.mkdir(parents=True, exist_ok=True)
-        artifact.write_bytes(f"real service bytes {index}\n".encode())
+        if artifact.name == "lib_native.so":
+            native = bytearray(64)
+            native[:7] = b"\x7fELF\x02\x01\x01"
+            native[18:20] = (62).to_bytes(2, "little")
+            artifact.write_bytes(native)
+        else:
+            artifact.write_bytes(f"real service bytes {index}\n".encode())
         artifact.chmod(0o755)
     return revision, artifacts
 
@@ -149,12 +156,17 @@ class ReleaseQualificationTests(unittest.TestCase):
             expected = {
                 name: "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
                 for name, path in artifacts.items()
+                if name in {"compilation-service", "runtime-service"}
             }
             self.assertEqual(
                 {item["name"]: item["digest"] for item in payload["services"]}, expected
             )
             self.assertNotIn("placeholder", sidecar.read_text(encoding="utf-8").lower())
             self.assertEqual(payload["source_revision"], revision)
+            self.assertEqual(
+                payload["frontend_native"]["digest"],
+                "sha256:" + hashlib.sha256(artifacts["python-frontend-native"].read_bytes()).hexdigest(),
+            )
             self.assertTrue(source.is_file())
             self.assertTrue(owner.is_file())
 
@@ -386,6 +398,45 @@ class ReleaseQualificationTests(unittest.TestCase):
         self.assertTrue(verified["qualified"], verified["diagnostics"])
         self.assertEqual(verified["qualification_scope"], "consumer-linux-x86_64")
 
+    def test_linux_package_verification_accepts_linux_arm64_elf_headers(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, tempfile.TemporaryDirectory() as package_dir:
+            root = Path(temporary)
+            revision, artifacts = make_clean_owner_checkout(root)
+            for artifact in artifacts.values():
+                header = bytearray(64)
+                header[:7] = b"\x7fELF\x02\x01\x01"
+                header[18:20] = self.qualification.LINUX_AARCH64_MACHINE.to_bytes(2, "little")
+                artifact.write_bytes(header)
+            self.qualification.generate_descriptors(
+                root,
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                output_dir=root,
+                source_revision=revision,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "add", "deploy", "contracts"],
+                check=True,
+                env=git_environment(),
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-qm", "publish fixture"],
+                check=True,
+                env=git_environment(),
+            )
+            self.qualification.package_release(
+                root,
+                output_dir=Path(package_dir),
+                compilation_service_path=str(artifacts["compilation-service"]),
+                runtime_service_path=str(artifacts["runtime-service"]),
+                run_gates=False,
+            )
+            verified = self.qualification.verify_linux_package(
+                Path(package_dir), architecture="arm64"
+            )
+        self.assertTrue(verified["qualified"], verified["diagnostics"])
+        self.assertEqual(verified["qualification_scope"], "consumer-linux-arm64")
+
     def test_protocol_descriptor_drift_is_rejected_against_source_revision(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -463,6 +514,7 @@ class ReleaseQualificationTests(unittest.TestCase):
                     "runtime-protocol",
                     "compilation-service",
                     "runtime-service",
+                    "python-frontend-native",
                 },
             )
             package_manifest = Path(package["root"]) / package["manifest"]
@@ -574,7 +626,7 @@ class ReleaseQualificationTests(unittest.TestCase):
         self.assertEqual(
             verified["package_manifest_digest"], packaged["package"]["manifest_digest"]
         )
-        self.assertEqual(len(verified["verified_files"]), 8)
+        self.assertEqual(len(verified["verified_files"]), 9)
 
     def test_consumer_verification_rejects_tampered_bytes_and_extra_files(self) -> None:
         with tempfile.TemporaryDirectory() as temporary, tempfile.TemporaryDirectory() as package_dir:

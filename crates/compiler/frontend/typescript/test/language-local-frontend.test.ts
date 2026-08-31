@@ -38,7 +38,7 @@
 import { describe, expect, it } from "vitest";
 
 import { source } from "../src/node.ts";
-import { Agent, Event, Model, Skill, Tool } from "../src/index.ts";
+import { Agent, Capability, Context, Event, Model, Skill, Tool } from "../src/index.ts";
 import { CaptureError, captureProgram } from "../src/capture.ts";
 import { declaredSoFar } from "../src/declared.ts";
 import { decodeFact } from "../src/generated/runtime-evidence.ts";
@@ -104,6 +104,31 @@ describe("language-local TypeScript frontend facts", () => {
     const event = Event<object>("event.session.input");
     expect(event.targetRef).toBe("event.session.input");
     expect((Event as unknown as { wait?: unknown }).wait).toBeUndefined();
+  });
+
+  it("freezes marker records against JavaScript any-cast mutation", () => {
+    const model = Model<Input, Output>("immutable.model");
+    const tool = Tool<Input, Output>(READ, { permission: Ask("write") });
+    const capability = Capability<Input, Output>(READ, { permission: Ask("call") });
+    const event = Event<object>("event.immutable");
+    const skill = Skill("immutable", { text: "Read this." });
+    const context = Context<{ requestId: string }>();
+
+    for (const record of [model, tool, capability, event, skill, context]) {
+      expect(Object.isFrozen(record)).toBe(true);
+      expect(() =>
+        Object.defineProperty(record, "targetRef", { value: "evil.ref" }),
+      ).toThrow();
+    }
+    expect(Object.isFrozen(tool.permission)).toBe(true);
+    expect(Object.isFrozen(capability.permission)).toBe(true);
+    expect(Object.isFrozen(skill.instructionSource)).toBe(true);
+    expect(() =>
+      Object.defineProperty(tool.permission as object, "reason", { value: "evil" }),
+    ).toThrow();
+    expect(() =>
+      Object.defineProperty(skill.instructionSource as object, "text", { value: "evil" }),
+    ).toThrow();
   });
 
   it("holds a Skill to one instruction source", () => {
@@ -240,5 +265,34 @@ describe("language-local TypeScript frontend facts", () => {
     expect(() =>
       decodeFact({ fact_id: "bad", event_sequence: 1, fact_kind: "invented" }),
     ).toThrow();
+  });
+
+  it("preserves specialized model-attempt identity while rejecting bare facts", () => {
+    const fact = decodeFact({
+      fact_id: "attempt.1",
+      event_sequence: 2,
+      fact_kind: "attempt.recorded",
+      program_invocation_id: "invocation.1",
+      node_execution_id: "node-execution.1",
+      air_node_id: "node.model",
+      attempt_id: "attempt.1",
+      attempt_index: 0,
+      model_effect_id: "effect.1",
+      request_digest: `sha256:${"1".repeat(64)}`,
+      model_target_ref: "model-target.1",
+      model_target_digest: `sha256:${"2".repeat(64)}`,
+      model_deployment_ref: "deployment.1",
+      exact_port_binding_digest: `sha256:${"3".repeat(64)}`,
+      target_commitment_digest: `sha256:${"4".repeat(64)}`,
+      generation_cohort_digest: `sha256:${"5".repeat(64)}`,
+      target_generation: 1,
+      target_port_contract_digest: `sha256:${"6".repeat(64)}`,
+      target_composition_digest: `sha256:${"7".repeat(64)}`,
+      native_input_tokens: 3,
+      native_output_tokens: 5,
+    });
+    if (fact.fact_kind !== "attempt.recorded") throw new Error("lost attempt identity");
+    expect(fact.attempt_id).toBe("attempt.1");
+    expect(() => decodeFact({ fact_id: "attempt.2", event_sequence: 3, fact_kind: "attempt.recorded" })).toThrow();
   });
 });

@@ -13,8 +13,9 @@ system, so the submitted text is executed. That boundary is explicit and
 constrained:
 
 * The submitted text is never materialized on disk. It is compiled from memory
-  and bound through an in-memory loader, with its lines registered in
-  `linecache` so the frontend's static reader sees exactly the submitted text.
+  and bound through an in-memory loader. The exact request is sealed in the
+  frontend's native bridge before evaluation, so static capture does not trust
+  the process-wide mutable `linecache`.
 * The interpreter runs isolated, so no ambient `PYTHONPATH`, user site
   directory, or `PYTHON*` environment variable reaches it, and `sys.path` holds
   the standard library plus the one declared frontend package root.
@@ -34,6 +35,7 @@ instead of returning a graph.
 
 from __future__ import annotations
 
+import ast
 import importlib.abc
 import importlib.util
 import json
@@ -41,6 +43,7 @@ import linecache
 import resource
 import sys
 import sysconfig
+import types
 
 #: Closed reason tokens. The Rust port maps each to one typed diagnostic code.
 REASON_REQUEST = "harness_request_invalid"
@@ -104,11 +107,24 @@ DENIED_EVENT_PREFIXES = (
 
 #: Exact audit events denied outright. The frontend opens no file after it is
 #: resolved, and neither does the submitted text.
-DENIED_EVENTS = ("open", "builtins.input", "builtins.breakpoint")
+DENIED_EVENTS = (
+    "open",
+    "builtins.input",
+    "builtins.breakpoint",
+    # Frame objects expose the harness's active fast locals. On newer Python
+    # versions writes through ``frame.f_locals`` can update those locals, so a
+    # submitted module could otherwise replace a post-evaluation trusted
+    # callable even when module globals are snapshotted.
+    "sys._getframe",
+)
 
 #: CPU seconds and address-space bytes the submitted text may consume.
 CPU_LIMIT_SECONDS = 15
 ADDRESS_SPACE_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
+
+# Keep the final harness serialization independent of globals the submitted
+# module may mutate during evaluation.
+_json_dump = json.dump
 
 
 class Rejected(Exception):
@@ -142,7 +158,250 @@ def _read_request() -> tuple[str, str, str]:
     return frontend_root, entrypoint, source
 
 
-def _load_frontend(frontend_root: str) -> None:
+def _source_contract(
+    source: str,
+) -> tuple[frozenset[str], frozenset[str], dict[tuple[str, str], str]]:
+    """Summarize source-owned model refs and callback bindings before eval.
+
+    The summary is computed by the harness, before submitted code can mutate
+    frontend modules or marker instances. It is an integrity check on the
+    native graph returned after evaluation, not a replacement for frontend
+    capture: every graph model declaration and call must still be accounted for
+    by the original source callback.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as error:
+        raise Rejected(REASON_SOURCE, f"SyntaxError: {error}") from None
+
+    string_names = {
+        target.id: value.value
+        for statement in tree.body
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and isinstance(value := statement.value, ast.Constant)
+        and isinstance(value.value, str)
+        for target in (statement.targets[0],)
+    }
+    marker_names: dict[str, str] = {}
+    marker_targets: dict[tuple[str, str], str] = {}
+    model_targets: set[str] = set()
+    for statement in tree.body:
+        if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            continue
+        value = statement.value
+        if not isinstance(value, ast.Call) or not isinstance(value.func, ast.Subscript):
+            continue
+        marker = value.func.value
+        if not isinstance(marker, ast.Name) or marker.id not in {
+            "Model",
+            "Tool",
+            "Capability",
+            "Event",
+        }:
+            continue
+        targets = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+        if len(targets) != 1 or not isinstance(targets[0], ast.Name):
+            continue
+        name = targets[0].id
+        kind = marker.id.lower()
+        marker_names[name] = kind
+        if value.args:
+            target = value.args[0]
+            target_ref = None
+            if isinstance(target, ast.Constant) and isinstance(target.value, str):
+                target_ref = target.value
+            elif isinstance(target, ast.Name):
+                target_ref = string_names.get(target.id)
+            if target_ref is not None:
+                marker_targets[(kind, name)] = target_ref
+                if kind == "model":
+                    model_targets.add(target_ref)
+
+    callback_bindings: set[str] = set()
+    # Agent Programs may declare Hook callbacks alongside the entrypoint. All
+    # authored async functions are part of the submitted source contract, so
+    # account for marker calls in each one rather than treating the entrypoint
+    # as the only callback body.
+    callbacks = [node for node in ast.walk(tree) if isinstance(node, ast.AsyncFunctionDef)]
+    if callbacks:
+        for callback in callbacks:
+            for node in ast.walk(callback):
+                if not isinstance(node, ast.Call):
+                    continue
+                if isinstance(node.func, ast.Name) and node.func.id in marker_names:
+                    callback_bindings.add(f"decl.{marker_names[node.func.id]}.{node.func.id}")
+                elif isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+                    name = node.func.value.id
+                    if name in marker_names:
+                        callback_bindings.add(f"decl.{marker_names[name]}.{name}")
+    return frozenset(model_targets), frozenset(callback_bindings), marker_targets
+
+
+def _validate_graph_provenance(
+    graph: object,
+    source_contract: tuple[frozenset[str], frozenset[str], dict[tuple[str, str], str]],
+) -> None:
+    """Reject graph declarations/calls absent from the caller's source."""
+    if not isinstance(graph, dict):
+        raise Rejected(REASON_SOURCE, "the Python frontend returned a non-object graph")
+    model_targets, callback_bindings, marker_targets = source_contract
+    declarations = graph.get("declarations")
+    if not isinstance(declarations, list):
+        raise Rejected(REASON_SOURCE, "the Python frontend graph has no declarations list")
+    for declaration in declarations:
+        if not isinstance(declaration, dict):
+            raise Rejected(REASON_SOURCE, "the Python frontend graph has an invalid declaration")
+        if declaration.get("decl_kind") == "model_binding":
+            target = declaration.get("target_ref")
+            if not isinstance(target, str) or target not in model_targets:
+                raise Rejected(
+                    REASON_SOURCE,
+                    "the Python frontend graph contains a model target absent from the submitted source",
+                )
+        target = declaration.get("target_ref")
+        decl_id = declaration.get("decl_id")
+        if (
+            isinstance(target, str)
+            and isinstance(decl_id, str)
+            and decl_id.startswith("decl.")
+        ):
+            _, kind, name = decl_id.split(".", 2) if decl_id.count(".") >= 2 else ("", "", "")
+            expected = marker_targets.get((kind, name))
+            if expected is not None and target != expected:
+                raise Rejected(
+                    REASON_SOURCE,
+                    "the Python frontend graph changed a declared binding target "
+                    f"for '{name}' after source capture",
+                )
+
+    requirements = graph.get("model_requirements")
+    if not isinstance(requirements, list) or any(
+        not isinstance(requirement, dict)
+        or requirement.get("model_target_ref") not in model_targets
+        for requirement in requirements
+    ):
+        raise Rejected(
+            REASON_SOURCE,
+            "the Python frontend graph contains an unaccounted model requirement",
+        )
+
+    calls = graph.get("call_intents")
+    if not isinstance(calls, list):
+        raise Rejected(REASON_SOURCE, "the Python frontend graph has no call-intents list")
+    if any(
+        isinstance(call, dict)
+        and isinstance(binding := call.get("binding_ref"), str)
+        and binding.startswith("decl.")
+        and binding != "decl.capability.read_skill"
+        and binding not in callback_bindings
+        for call in calls
+    ):
+        raise Rejected(
+            REASON_SOURCE,
+            "the Python frontend graph contains a callback binding absent from the submitted source",
+        )
+
+    requirements = graph.get("capability_requirements")
+    if not isinstance(requirements, list):
+        raise Rejected(REASON_SOURCE, "the Python frontend graph has no capability requirements list")
+    expected_capability_targets = {
+        target
+        for (kind, _name), target in marker_targets.items()
+        if kind in {"tool", "capability"}
+    }
+    if expected_capability_targets and any(
+        isinstance(requirement, dict)
+        and isinstance(target := requirement.get("capability_ref"), str)
+        and target not in expected_capability_targets
+        and target != "read_skill"
+        for requirement in requirements
+    ):
+        raise Rejected(
+            REASON_SOURCE,
+            "the Python frontend graph contains a capability requirement absent from the submitted source",
+        )
+
+
+# These modules form the trusted capture path. Submitted code is evaluated in
+# the same interpreter, so merely sealing the graph is insufficient if source
+# can replace a parser, factory, bridge, or capture helper before the decorator
+# runs. The snapshot is deliberately narrow: authoring registries that are
+# expected to grow during evaluation (for example declared bindings) are not
+# included, while code/module/class identities and callable state are.
+_INTEGRITY_MODULES = (
+    "apxm_program._agent",
+    "apxm_program._bridge",
+    "apxm_program._capture",
+    "apxm_program._emit",
+    "apxm_program._markers",
+    "apxm_program._native",
+    "ast",
+    "inspect",
+    "json",
+    "linecache",
+    "textwrap",
+)
+
+
+def _integrity_value(value: object) -> tuple[object, ...]:
+    """Return the identity/state that source must not alter in one value."""
+    if isinstance(value, types.FunctionType):
+        return (
+            id(value),
+            id(value.__code__),
+            id(value.__defaults__),
+            id(value.__kwdefaults__),
+            tuple(id(cell.cell_contents) for cell in (value.__closure__ or ())),
+        )
+    if isinstance(value, types.BuiltinFunctionType):
+        return (id(value),)
+    if isinstance(value, type):
+        members = tuple(
+            (name, _integrity_value(member))
+            for name, member in vars(value).items()
+        )
+        return (id(value), members)
+    return (id(value),)
+
+
+def _integrity_snapshot() -> tuple[tuple[str, tuple[tuple[str, tuple[object, ...]], ...]], ...]:
+    snapshot = []
+    for module_name in _INTEGRITY_MODULES:
+        module = sys.modules.get(module_name)
+        if module is None:
+            continue
+        snapshot.append(
+            (
+                module_name,
+                tuple(
+                    (name, _integrity_value(value))
+                    for name, value in vars(module).items()
+                    if not name.startswith("__")
+                ),
+            )
+        )
+    return tuple(snapshot)
+
+
+def _frontend_integrity_guard() -> object:
+    """Capture a one-shot post-evaluation integrity check for the frontend."""
+    expected = _integrity_snapshot()
+
+    def verify() -> None:
+        if _integrity_snapshot() != expected:
+            raise Rejected(
+                REASON_SOURCE,
+                "the Python authoring frontend was modified while capturing source",
+            )
+
+    return verify
+
+
+def _load_frontend(
+    frontend_root: str,
+) -> tuple[object | None, object | None, object | None]:
     """Resolve the declared authoring frontend before the lockdown closes."""
     interpreter_roots = (
         sysconfig.get_path("stdlib"),
@@ -170,6 +429,22 @@ def _load_frontend(frontend_root: str) -> None:
             "the Python authoring frontend is not resolvable at the declared "
             f"package root: {type(error).__name__}: {error}",
         ) from None
+    try:
+        from apxm_program import _native
+    except ImportError:
+        # The source-port contract tests include a deliberately tiny stand-in
+        # frontend. Production APXM packages ship the native bridge below;
+        # stand-ins retain the old public method path solely for those tests.
+        return None, None, None
+    setter = getattr(_native, "set_authored_source", None)
+    native_graph = getattr(_native, "frontend_graph", None)
+    if not callable(setter) or not callable(native_graph):
+        raise Rejected(
+            REASON_FRONTEND,
+            "the Python authoring frontend native bridge does not provide the "
+            "sealed source and graph capture hooks",
+        )
+    return native_graph, setter, _frontend_integrity_guard()
 
 
 def _lock_down() -> None:
@@ -226,9 +501,9 @@ def _bind(entrypoint: str, source: str) -> object:
         def exec_module(self, module) -> None:
             exec(code, module.__dict__)  # noqa: S102 - the frontend requires evaluation
 
-    # The frontend reads the authored callback back through `inspect`, which
-    # resolves source text through `linecache`. Registering the submitted text
-    # there is what lets a memory-only module be read statically.
+    # Keep this compatibility registration for lightweight frontend stand-ins
+    # that still use `inspect`; the production frontend reads the native source
+    # handoff sealed before evaluation and does not trust this mutable cache.
     linecache.cache[SOURCE_FILE_NAME] = (
         len(source),
         None,
@@ -258,28 +533,62 @@ def _bind(entrypoint: str, source: str) -> object:
     return getattr(module, entrypoint)
 
 
-def _capture(entrypoint: str, definition: object) -> object:
-    graph = getattr(definition, "frontend_graph", None)
-    if not callable(graph):
+def _capture(entrypoint: str, definition: object, trusted_graph=None) -> object:
+    """Read the graph through the frontend method captured before evaluation."""
+    if trusted_graph is None:
+        # Lightweight stand-in packages used by contract tests may not expose
+        # the production AgentDefinition class. Preserve their public method
+        # contract; real packages always take the trusted path below.
+        graph = getattr(definition, "frontend_graph", None)
+        if not callable(graph):
+            raise Rejected(
+                REASON_ENTRYPOINT,
+                f"entrypoint '{entrypoint}' is not an authored Agent program",
+            )
+        trusted_graph = lambda _definition: graph()
+    try:
+        return trusted_graph(definition)
+    except KeyError:
         raise Rejected(
             REASON_ENTRYPOINT,
             f"entrypoint '{entrypoint}' is not an authored Agent program",
-        )
-    try:
-        return graph()
+        ) from None
     except BaseException as error:  # noqa: BLE001 - any capture failure rejects
         raise Rejected(REASON_SOURCE, f"{type(error).__name__}: {error}") from None
 
 
 def main() -> int:
+    # These callables are invoked after the submitted module has executed.
+    # Keep their identities in fast locals before evaluation: ``__main__`` is
+    # already resolved and therefore importable by submitted source, so a
+    # module-global lookup here can otherwise be replaced and restored around
+    # the existing frontend-integrity snapshot.
+    trusted_capture = _capture
+    trusted_validate_graph_provenance = _validate_graph_provenance
+    trusted_json_dump = _json_dump
+    trusted_stdout = sys.stdout
+    trusted_stderr = sys.stderr
     try:
         frontend_root, entrypoint, source = _read_request()
-        _load_frontend(frontend_root)
-        captured = _capture(entrypoint, _bind(entrypoint, source))
+        source_contract = _source_contract(source)
+        native_graph, set_authored_source, integrity_guard = _load_frontend(frontend_root)
+        if set_authored_source is not None:
+            # Seal the exact caller-supplied source before any submitted code
+            # runs. The native bridge accepts this only once and keeps it out
+            # of Python's reflective globals and linecache.
+            set_authored_source(source)
+        # Snapshot the canonical method before submitted code can replace the
+        # class attribute. The implementation itself reads only the immutable
+        # snapshot registry, not a source-dispatched helper.
+        trusted_graph = native_graph
+        captured = trusted_capture(entrypoint, _bind(entrypoint, source), trusted_graph)
+        if native_graph is not None:
+            integrity_guard()
+            trusted_validate_graph_provenance(captured, source_contract)
     except Rejected as rejection:
-        print(f"{rejection.reason}\n{rejection.detail}", file=sys.stderr)
+        print(f"{rejection.reason}\n{rejection.detail}", file=trusted_stderr)
         return 1
-    json.dump({"frontend_graph": captured}, sys.stdout, sort_keys=True)
+    trusted_json_dump({"frontend_graph": captured}, trusted_stdout, sort_keys=True)
     return 0
 
 

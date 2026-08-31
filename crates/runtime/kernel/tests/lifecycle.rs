@@ -32,9 +32,12 @@ fn write_set() -> AtomicWriteSet {
         next_program_state_digest: digest('1'),
         continuation_digest: digest('2'),
         checkpoint_effect_outcomes_digest: digest('3'),
-        runtime_evidence_batch_digest: digest('4'),
+        runtime_evidence_batch_digest: apxm_kernel::runtime_evidence_and_observation_digest(
+            &[],
+            &[],
+        ),
         usage_facts_digest: digest('5'),
-        session_output_refs_digest: digest('6'),
+        session_output_refs_digest: apxm_kernel::session_output_refs_digest(&[]),
     }
 }
 
@@ -426,6 +429,7 @@ async fn committed_continuation_recovers_but_failure_paths_publish_nothing() {
             evidence: Vec::new(),
             usage: serde_json::Value::Null,
             output_refs: Vec::new(),
+            observations: Vec::new(),
         },
         evidence_batch: Vec::new(),
     };
@@ -565,6 +569,7 @@ async fn cancel_commits_cancellation() {
             evidence: Vec::new(),
             usage: serde_json::Value::Null,
             output_refs: Vec::new(),
+            observations: Vec::new(),
         },
         evidence_batch: Vec::new(),
     })

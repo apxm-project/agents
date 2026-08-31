@@ -140,6 +140,46 @@ FOREIGN_IDENTIFIERS = frozenset(
     }
 )
 
+# Canonical APXM wire/schema identities deliberately carry their generation.
+# These are compatibility identities, not Agents source identifiers to sweep:
+# changing them would change the contract vocabulary (and the v2 runtime
+# request/handler dispatch names) while leaving existing peers on the old
+# wire shape. Keep this list exact so the de-version gate remains strict for
+# any new versioned identifier or filename.
+CANONICAL_VERSIONED_IDS = frozenset(
+    {
+        "apxm.agents-local-release-artifact.v1",
+        "apxm.agents-owner-descriptor.v1",
+        "apxm.agents-service-release-manifest.v1",
+        "apxm.agents-source-revision.v1",
+        "apxm.agents.local-release-artifact.v1",
+        "apxm.agents.owner-command-evidence.v1",
+        "apxm.agents.owner-command-execution.v1",
+        "apxm.agents.owner-handoff.v1",
+        "apxm.agents.owner-phase-result.v1",
+        "apxm.agents.owner-qualification-failure.v1",
+        "apxm.agents.owner-qualification.v1",
+        "apxm.owner-command-output.v1",
+        "apxm.agents.release-consumer-verification.v1",
+        "apxm.agents.release-qualification.v1",
+        "apxm.continuation-integrity.v1",
+        "apxm.execution-lineage.v1",
+        "apxm.execution-observation.v1",
+        "apxm.execution-read.v1",
+        "apxm.node-execution-inspection.v1",
+        "apxm.session-output-ref.v1",
+        "apxm.runtime-service.metadata.v1",
+        "handle_v2",
+        "request_v2",
+    }
+)
+
+# The source-revision manifest filename is a published release input, while
+# its basename does not repeat the full schema id. Preserve this exact path so
+# the gate cannot infer a rename that would make the container build consume a
+# different release manifest.
+CANONICAL_VERSIONED_PATHS = frozenset({"deploy/services/source-revision.v1.json"})
+
 FOREIGN_IDS = (
     CONTRACTS_OWNER_IDS
     | VLLM_OWNER_IDS
@@ -270,7 +310,11 @@ def scan() -> dict[str, dict[str, int]]:
 
 def owned_ids(found: dict[str, dict[str, int]] | None = None) -> set[str]:
     found = scan() if found is None else found
-    return {schema_id for schema_id in found if schema_id not in FOREIGN_IDS}
+    return {
+        schema_id
+        for schema_id in found
+        if schema_id not in FOREIGN_IDS and schema_id not in CANONICAL_VERSIONED_IDS
+    }
 
 
 def renames() -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
@@ -285,8 +329,18 @@ def renames() -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
             continue
         if rel in REJECTION_FIXTURE_PATHS:
             keep.append((rel, "rejection fixture — the suffix is under test"))
-        elif any(schema_id in name for schema_id in FOREIGN_IDS):
-            keep.append((rel, "foreign owner"))
+        elif rel in CANONICAL_VERSIONED_PATHS:
+            keep.append((rel, "canonical wire/schema filename"))
+        elif any(
+            schema_id in name
+            for schema_id in FOREIGN_IDS | CANONICAL_VERSIONED_IDS
+        ):
+            reason = (
+                "canonical wire/schema identity"
+                if any(schema_id in name for schema_id in CANONICAL_VERSIONED_IDS)
+                else "foreign owner"
+            )
+            keep.append((rel, reason))
         else:
             move.append((rel, str(Path(rel).parent / deversion_filename(name))))
     return move, keep
@@ -368,6 +422,9 @@ def report() -> int:
     found = scan()
     owned = sorted(owned_ids(found))
     foreign = sorted(schema_id for schema_id in found if schema_id in FOREIGN_IDS)
+    canonical = sorted(
+        schema_id for schema_id in found if schema_id in CANONICAL_VERSIONED_IDS
+    )
 
     def total(schema_id: str) -> int:
         return sum(found[schema_id].values())
@@ -378,6 +435,10 @@ def report() -> int:
     print()
     print("FOREIGN (never renamed):")
     for schema_id in foreign:
+        print(f"  {total(schema_id):5d}  {schema_id}")
+    print()
+    print("CANONICAL VERSIONED (wire/schema compatibility identities):")
+    for schema_id in canonical:
         print(f"  {total(schema_id):5d}  {schema_id}")
     print()
     print("REJECTION FIXTURES (suffix is the thing under test, keep suffixed):")

@@ -15,11 +15,12 @@ workspace = true
 apxm-program.workspace = true
 apxm-inference.workspace = true
 apxm-kernel.workspace = true
+apxm-runtime-protocol.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
 sha2.workspace = true
-tokio = { workspace = true, features = ["rt", "time"] }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
 
 [build-dependencies]
 sha2.workspace = true

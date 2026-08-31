@@ -227,6 +227,10 @@ pub struct CompiledSource {
     pub air: AirModule,
     /// The source map carried by the lowered AIR.
     pub source_map: SourceMap,
+    /// Digest of the canonical AIR bytes used as the artifact identity input.
+    pub air_digest: String,
+    /// Opaque lineage commitment for this source/AIR/compiler combination.
+    pub execution_lineage_ref: String,
 }
 
 /// Compile one submitted source bundle into a typed FrontendGraph, canonical
@@ -260,12 +264,14 @@ pub fn compile_source_bundle(
     )
     .map_err(|diagnostic| vec![diagnostic])?;
 
-    compile_captured_graph(request.frontend, captured)
+    let source_digest = content_digest(request.source.as_bytes());
+    compile_captured_graph(request.frontend, captured, &source_digest)
 }
 
 fn compile_captured_graph(
     frontend: Frontend,
     captured: serde_json::Value,
+    source_digest: &str,
 ) -> Result<CompiledSource, Vec<SourceDiagnostic>> {
     let frontend_graph: FrontendGraph = serde_json::from_value(captured).map_err(|error| {
         vec![SourceDiagnostic::new(
@@ -311,10 +317,30 @@ fn compile_captured_graph(
     })?;
 
     let source_map = air.source_map.clone();
+    let air_bytes = serde_json::to_vec(&air).map_err(|error| {
+        vec![SourceDiagnostic::new(
+            SourceDiagnosticCode::FrontendOutputInvalid,
+            format!("canonical AIR cannot be serialized: {error}"),
+        )]
+    })?;
+    let air_digest = format!("sha256:{}", content_digest(&air_bytes));
+    let execution_lineage_ref = apxm_program::execution_lineage_ref(
+        source_digest,
+        &air_digest,
+        apxm_program::EXECUTION_LINEAGE_COMPILER_IDENTITY,
+    );
+    if execution_lineage_ref.trim().is_empty() {
+        return Err(vec![SourceDiagnostic::new(
+            SourceDiagnosticCode::FrontendOutputInvalid,
+            "canonical compilation did not produce an execution lineage reference",
+        )]);
+    }
     Ok(CompiledSource {
         frontend_graph,
         air,
         source_map,
+        air_digest,
+        execution_lineage_ref,
     })
 }
 
@@ -377,7 +403,7 @@ mod tests {
         );
         let frontend = requested_frontend(&vector);
 
-        let compiled = compile_captured_graph(frontend, vector.input)
+        let compiled = compile_captured_graph(frontend, vector.input, "vector-source")
             .expect("the checked-in positive vector compiles through source-port lowering");
 
         assert_eq!(
@@ -402,8 +428,9 @@ mod tests {
             !vector.expected_valid,
             "the checked-in negative vector stays negative"
         );
-        let diagnostics = compile_captured_graph(requested_frontend(&vector), vector.input)
-            .expect_err("an incompatible frontend-graph version is rejected");
+        let diagnostics =
+            compile_captured_graph(requested_frontend(&vector), vector.input, "vector-source")
+                .expect_err("an incompatible frontend-graph version is rejected");
 
         assert_eq!(
             diagnostics
@@ -421,8 +448,9 @@ mod tests {
             !vector.expected_valid,
             "the checked-in negative vector stays negative"
         );
-        let diagnostics = compile_captured_graph(requested_frontend(&vector), vector.input)
-            .expect_err("a captured graph with an unknown field is rejected");
+        let diagnostics =
+            compile_captured_graph(requested_frontend(&vector), vector.input, "vector-source")
+                .expect_err("a captured graph with an unknown field is rejected");
 
         assert_eq!(
             diagnostics
@@ -440,8 +468,11 @@ mod tests {
             !vector.expected_valid,
             "the checked-in negative vector stays negative"
         );
-        let diagnostics = compile_captured_graph(requested_frontend(&vector), vector.input)
-            .expect_err("a captured graph with an AIS discriminant in source intent is rejected");
+        let diagnostics =
+            compile_captured_graph(requested_frontend(&vector), vector.input, "vector-source")
+                .expect_err(
+                    "a captured graph with an AIS discriminant in source intent is rejected",
+                );
 
         assert_eq!(
             diagnostics

@@ -1,13 +1,28 @@
-FROM debian:bookworm-slim
+ARG APXM_BASE_IMAGE
+FROM ${APXM_BASE_IMAGE}
 
+ARG APXM_BASE_IMAGE
 ARG APXM_SOURCE_REVISION
 ARG APXM_COMPILATION_SERVICE_DIGEST
+ARG APXM_PYTHON_FRONTEND_NATIVE_DIGEST
+
+# A mutable tag is not an acceptable release input.  The check lives before
+# any package installation so an omitted/tag-only base fails closed at the
+# start of the stage.  The release builder supplies the reviewed
+# `repository@sha256:<manifest>` coordinate.
+RUN set -eu; \
+    case "$APXM_BASE_IMAGE" in *@sha256:*) ;; *) echo "APXM_BASE_IMAGE must be an immutable digest reference" >&2; exit 1;; esac; \
+    base_digest="${APXM_BASE_IMAGE##*@sha256:}"; \
+    case "$base_digest" in *[!0123456789abcdef]*|"") exit 1;; esac; \
+    [ "${#base_digest}" -eq 64 ]
 
 LABEL org.opencontainers.image.title="APXM Compilation Service" \
       org.opencontainers.image.source="https://github.com/apxm-project/agents.git" \
       org.opencontainers.image.revision="${APXM_SOURCE_REVISION}" \
+      io.apxm.base-image="${APXM_BASE_IMAGE}" \
       io.apxm.service="compilation-service" \
-      io.apxm.service-digest="${APXM_COMPILATION_SERVICE_DIGEST}"
+      io.apxm.service-digest="${APXM_COMPILATION_SERVICE_DIGEST}" \
+      io.apxm.python-frontend-native-digest="${APXM_PYTHON_FRONTEND_NATIVE_DIGEST}"
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates libstdc++6 nodejs python3 \
@@ -16,12 +31,41 @@ RUN apt-get update \
     && useradd --system --uid 65532 --gid 65532 --home-dir /nonexistent --shell /usr/sbin/nologin apxm \
     && mkdir -p /workspace/.dekk/env/bin /run/apxm /var/lib/apxm/artifacts \
     && ln -s /usr/bin/python3 /workspace/.dekk/env/bin/python \
+    && test -x /usr/bin/node \
     && ln -s /usr/bin/node /workspace/.dekk/env/bin/node \
     && chown -R 65532:65532 /run/apxm /var/lib/apxm
 
 COPY target/release/apxm-compilation-service /workspace/target/release/apxm-compilation-service
 COPY crates/compiler/frontend/python /workspace/crates/compiler/frontend/python
 COPY crates/compiler/frontend/typescript /workspace/crates/compiler/frontend/typescript
+# The release builder must provide the Linux PyO3 artifact produced by
+# `apxm-frontend-python`; the service's Python frontend probe loads this exact
+# stable package path.  Keep this as a separate COPY so an omitted artifact
+# fails the image build instead of producing a frontend-unavailable image.
+COPY target/release/lib_native.so /workspace/crates/compiler/frontend/python/apxm_program/_native.so
+COPY deploy/services/source-revision.v1.json /tmp/apxm-source-revision.json
+COPY contracts/services/manifests/apxm.agents-service-release-manifest.v1.json /tmp/apxm-service-release-manifest.json
+
+# A service image is publishable only when it is bound to the immutable source
+# cohort and the exact executable qualified by the release manifest.  Docker
+# build args are intentionally required; an omitted or malformed digest must
+# fail the build instead of producing an image with unverifiable metadata.
+RUN set -eu; \
+    case "$APXM_SOURCE_REVISION" in *[!0123456789abcdef]*|"") exit 1;; esac; \
+    [ "${#APXM_SOURCE_REVISION}" -eq 40 ]; \
+    case "$APXM_COMPILATION_SERVICE_DIGEST" in sha256:*) ;; *) exit 1;; esac; \
+    digest="${APXM_COMPILATION_SERVICE_DIGEST#sha256:}"; \
+    case "$digest" in *[!0123456789abcdef]*|"") exit 1;; esac; \
+    [ "${#digest}" -eq 64 ]; \
+    source_revision="$(sed -n 's/.*"source_revision":"\([0-9a-f]\{40\}\)".*/\1/p' /tmp/apxm-source-revision.json)"; \
+    [ "$source_revision" = "$APXM_SOURCE_REVISION" ]; \
+    manifest_digest="$(sed -n 's/.*"digest":"\(sha256:[0-9a-f]\{64\}\)","name":"compilation-service".*/\1/p' /tmp/apxm-service-release-manifest.json)"; \
+    [ "$manifest_digest" = "$APXM_COMPILATION_SERVICE_DIGEST" ]; \
+    [ "sha256:$(sha256sum /workspace/target/release/apxm-compilation-service | cut -d' ' -f1)" = "$APXM_COMPILATION_SERVICE_DIGEST" ]; \
+    native_digest="$(sed -n 's/.*"frontend_native":{[^}]*"digest":"\(sha256:[0-9a-f]\{64\}\)".*/\1/p' /tmp/apxm-service-release-manifest.json)"; \
+    [ "$native_digest" = "$APXM_PYTHON_FRONTEND_NATIVE_DIGEST" ]; \
+    [ "sha256:$(sha256sum /workspace/crates/compiler/frontend/python/apxm_program/_native.so | cut -d' ' -f1)" = "$APXM_PYTHON_FRONTEND_NATIVE_DIGEST" ]; \
+    test -s /workspace/crates/compiler/frontend/python/apxm_program/_native.so
 
 RUN chown -R 65532:65532 /workspace /var/lib/apxm
 

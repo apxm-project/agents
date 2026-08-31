@@ -4,10 +4,11 @@
 
 use apxm_kernel::{
     AtomicWriteSet, ExecutionCommitRequest, ExecutionCommitResult, ExecutionCommitTuple,
-    ProgramInstanceRef, ProgramInvocationRef,
+    PrecommitEvidenceRef, ProgramInstanceRef, ProgramInvocationRef,
 };
 use apxm_program::runtime_evidence::{Fact, FactKind, RuntimeFact};
 use apxm_program::verify_execution_commit_json;
+use serde_json::json;
 
 fn digest(c: char) -> String {
     format!("sha256:{}", c.to_string().repeat(64))
@@ -24,9 +25,12 @@ fn request() -> ExecutionCommitRequest {
             next_program_state_digest: digest('1'),
             continuation_digest: digest('2'),
             checkpoint_effect_outcomes_digest: digest('3'),
-            runtime_evidence_batch_digest: digest('4'),
+            runtime_evidence_batch_digest: apxm_kernel::runtime_evidence_and_observation_digest(
+                &[],
+                &[],
+            ),
             usage_facts_digest: digest('5'),
-            session_output_refs_digest: digest('6'),
+            session_output_refs_digest: apxm_kernel::session_output_refs_digest(&[]),
         },
         tuple: ExecutionCommitTuple::empty(vec![]),
         evidence_batch: vec![],
@@ -92,4 +96,80 @@ fn atomic_request_rejects_split_evidence_and_malformed_write_members() {
             "usage_facts_digest"
         ))
     ));
+}
+
+#[test]
+fn atomic_request_binds_driver_observations_to_the_evidence_digest() {
+    let mut observation_request = request();
+    observation_request.tuple.observations = vec![json!({
+        "contract": "apxm.execution-observation.v1",
+        "observation_id": "observation.invoke.1.1",
+        "program_invocation_id": "invoke.1",
+        "sequence": 1,
+        "cursor": {"position": 1, "token": "cursor.1"},
+        "timing": {"observed_at_unix_ms": 1},
+        "observation_kind": "invocation_started",
+        "commitment": "provisional"
+    })];
+    observation_request.write_set.runtime_evidence_batch_digest =
+        apxm_kernel::runtime_evidence_and_observation_digest(
+            &observation_request.tuple.evidence,
+            &observation_request.tuple.observations,
+        );
+    assert!(observation_request.validate().is_ok());
+
+    observation_request.tuple.observations[0]["sequence"] = json!(2);
+    assert!(matches!(
+        observation_request.validate(),
+        Err(apxm_kernel::CommitRequestError::EvidenceObservationDigestMismatch { .. })
+    ));
+
+    let mut output_tampered = request();
+    assert!(output_tampered.validate().is_ok());
+    output_tampered
+        .tuple
+        .output_refs
+        .push(json!({"ref": "out.1"}));
+    assert!(matches!(
+        output_tampered.validate(),
+        Err(apxm_kernel::CommitRequestError::SessionOutputRefsDigestMismatch { .. })
+    ));
+}
+
+#[test]
+fn atomic_request_rejects_malformed_typed_observations_before_adapter() {
+    let mut malformed = request();
+    malformed.tuple.observations = vec![json!({
+        "contract": "apxm.execution-observation.v1",
+        "observation_id": "observation.invoke.1.1",
+        "program_invocation_id": "invoke.1",
+        "sequence": 1,
+        "cursor": {"position": 1, "token": "cursor.1"},
+        "timing": {"observed_at_unix_ms": 1},
+        "observation_kind": "not_a_kind",
+        "commitment": "provisional"
+    })];
+    malformed.write_set.runtime_evidence_batch_digest =
+        apxm_kernel::runtime_evidence_and_observation_digest(
+            &malformed.tuple.evidence,
+            &malformed.tuple.observations,
+        );
+    assert!(matches!(
+        malformed.validate(),
+        Err(apxm_kernel::CommitRequestError::InvalidObservation(_))
+    ));
+}
+
+#[test]
+fn precommit_evidence_refs_are_deterministic_and_tamper_evident() {
+    let first = PrecommitEvidenceRef::new("commit.1", "invoke.1", 0).expect("first ref");
+    assert_eq!(first.as_str(), "evidence.invoke.1.commit.1.1");
+    first.validate().expect("valid first ref");
+    let second = PrecommitEvidenceRef::new("commit.1", "invoke.1", 1).expect("second ref");
+    assert_eq!(second.as_str(), "evidence.invoke.1.commit.1.2");
+    assert_ne!(first, second);
+
+    let mut forged = first;
+    forged.evidence_ref = "evidence.invoke.1.commit.other.1".into();
+    assert!(forged.validate().is_err());
 }

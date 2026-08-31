@@ -13,6 +13,7 @@ description = "Native Compilation Service protocol types and in-memory peer vect
 workspace = true
 
 [dependencies]
+apxm-program.workspace = true
 apxm-source-port.workspace = true
 serde.workspace = true
 serde_json.workspace = true

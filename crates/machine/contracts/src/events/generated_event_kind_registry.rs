@@ -283,18 +283,6 @@ pub const SCHEMA_EVENT_KIND_REGISTRY: &[SchemaEventKindEntry] = &[
         terminal_sense: SchemaTerminalSense::NA,
     },
     SchemaEventKindEntry {
-        name: "session_end",
-        category: SchemaEventCategory::Lifecycle,
-        terminal: true,
-        terminal_sense: SchemaTerminalSense::RunEnd,
-    },
-    SchemaEventKindEntry {
-        name: "session_start",
-        category: SchemaEventCategory::Lifecycle,
-        terminal: false,
-        terminal_sense: SchemaTerminalSense::NA,
-    },
-    SchemaEventKindEntry {
         name: "subagent_done",
         category: SchemaEventCategory::Agent,
         terminal: true,
@@ -387,30 +375,6 @@ pub const SCHEMA_EVENT_KIND_REGISTRY: &[SchemaEventKindEntry] = &[
     SchemaEventKindEntry {
         name: "warning",
         category: SchemaEventCategory::Error,
-        terminal: false,
-        terminal_sense: SchemaTerminalSense::NA,
-    },
-    SchemaEventKindEntry {
-        name: "workflow_finished",
-        category: SchemaEventCategory::Lifecycle,
-        terminal: false,
-        terminal_sense: SchemaTerminalSense::NA,
-    },
-    SchemaEventKindEntry {
-        name: "workflow_started",
-        category: SchemaEventCategory::Lifecycle,
-        terminal: false,
-        terminal_sense: SchemaTerminalSense::NA,
-    },
-    SchemaEventKindEntry {
-        name: "workflow_step_completed",
-        category: SchemaEventCategory::Lifecycle,
-        terminal: false,
-        terminal_sense: SchemaTerminalSense::NA,
-    },
-    SchemaEventKindEntry {
-        name: "workflow_step_started",
-        category: SchemaEventCategory::Lifecycle,
         terminal: false,
         terminal_sense: SchemaTerminalSense::NA,
     },

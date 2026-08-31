@@ -50,7 +50,6 @@ Command groups (see `dekk agents --help` for the live list):
 - **Configuration**: `doctor`, `backend`, `cache`, `process`, `mcp`,
   `commit-lint`
 - **Discovery**: `ops`, `template`, `tokenize`
-- **Observability**: `session`
 
 `dekk agents --help` is the only live list; this one drifts.
 
@@ -253,9 +252,7 @@ keep code, schemas, and evidence aligned.
   missing, check `APXM_HOME`, not the project directory.
   (`crates/runtime/backend-registry/src/backend.rs`,
   `crates/machine/contracts/src/env.rs`.)
-- **Read vs write roots**: `APXM_HOME` resolves config; `APXM_STATE_HOME`
-  resolves what the process writes (sessions, memory, checkpoints) and falls
-  back to `apxm_home()` when unset.
+- **Read root**: `APXM_HOME` resolves backend configuration.
 
 ## 12. Boundaries (read before any potentially destructive action)
 

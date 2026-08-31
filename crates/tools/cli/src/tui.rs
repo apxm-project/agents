@@ -3,13 +3,7 @@
 use std::io::{self, BufRead, IsTerminal, Write};
 
 use anyhow::Result;
-use apxm_interaction_client::{HeadlessOutcome, render_outcome};
-
-/// Render the TUI agreement with headless outcome labels.
-#[must_use]
-pub fn tui_outcome_label(outcome: HeadlessOutcome) -> &'static str {
-    render_outcome(outcome)
-}
+use apxm_interaction_client::ProgramInvocationStatus;
 
 /// One decoded Interaction Client fixture shared with headless JSON.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -18,8 +12,8 @@ pub struct TuiFrame {
     pub program_instance_id: String,
     /// Admitted artifact digest.
     pub artifact_digest: String,
-    /// Closed outcome label.
-    pub outcome: HeadlessOutcome,
+    /// Runtime-owned invocation status.
+    pub status: ProgramInvocationStatus,
     /// Observation lines projected by content-ref / lifecycle, never payloads.
     pub observations: Vec<String>,
     /// Prompt routed from runtime state.
@@ -27,25 +21,27 @@ pub struct TuiFrame {
 }
 
 impl TuiFrame {
-    /// Build a frame from the same outcome the headless client classified.
+    /// Build a frame from the runtime-owned invocation status.
     #[must_use]
     pub fn from_protocol(
         program_instance_id: impl Into<String>,
         artifact_digest: impl Into<String>,
-        outcome: HeadlessOutcome,
+        status: ProgramInvocationStatus,
         observations: Vec<String>,
     ) -> Self {
-        let prompt = match outcome {
-            HeadlessOutcome::WaitingEvent => {
+        let prompt = match status {
+            ProgramInvocationStatus::WaitingEvent => {
                 "event> fulfill <event_id> <generation> | cancel | detach".to_owned()
             }
-            HeadlessOutcome::Returned => "invoke> start | cancel | detach".to_owned(),
-            HeadlessOutcome::Failed => "failed> detach".to_owned(),
+            ProgramInvocationStatus::CommittedReturn | ProgramInvocationStatus::CommittedYield => {
+                "invoke> start | cancel | detach".to_owned()
+            }
+            _ => "runtime> inspect | cancel | detach".to_owned(),
         };
         Self {
             program_instance_id: program_instance_id.into(),
             artifact_digest: artifact_digest.into(),
-            outcome,
+            status,
             observations,
             prompt,
         }
@@ -54,11 +50,10 @@ impl TuiFrame {
     /// Decode a headless protocol JSON fixture.
     #[cfg(test)]
     pub fn decode_protocol(value: &serde_json::Value) -> Result<Self, String> {
-        let outcome = match value.get("outcome").and_then(|item| item.as_str()) {
-            Some("returned") => HeadlessOutcome::Returned,
-            Some("waiting_event") => HeadlessOutcome::WaitingEvent,
-            Some("failed") => HeadlessOutcome::Failed,
-            _ => return Err("unknown outcome".to_owned()),
+        let status = match value.get("status").and_then(|item| item.as_str()) {
+            Some(status) => serde_json::from_value(serde_json::Value::String(status.to_owned()))
+                .map_err(|_| "unknown invocation status".to_owned())?,
+            None => return Err("missing invocation status".to_owned()),
         };
         let observations = value
             .get("observations")
@@ -79,7 +74,7 @@ impl TuiFrame {
                 .get("artifact_digest")
                 .and_then(|item| item.as_str())
                 .unwrap_or(""),
-            outcome,
+            status,
             observations,
         ))
     }
@@ -87,25 +82,29 @@ impl TuiFrame {
     /// Render the full TUI, not a three-line stub.
     #[must_use]
     pub fn render(&self) -> String {
-        let outcome = tui_outcome_label(self.outcome);
-        let mut observations = self.observations.join("\n");
-        if observations.is_empty() {
-            observations = "(no observations)".to_owned();
-        }
+        let status =
+            serde_json::to_string(&self.status).unwrap_or_else(|_| "\"unknown\"".to_owned());
+        let observations = self.observations.join("\n");
+        let observation_section = if observations.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "             ├─ observations ─────────────────────────────────────────────┤\n             {observations}\n"
+            )
+        };
         format!(
             "┌─ apxm interact ─────────────────────────────────────────────┐\n\
              │ instance {instance:<20} digest {digest}\n\
-             │ outcome  {outcome:<20} protocol apxm.client-interaction/1\n\
-             ├─ observations ─────────────────────────────────────────────┤\n\
-             {observations}\n\
+             │ status   {status:<20} protocol apxm.client-interaction/1\n\
+             {observation_section}\
              ├─ input ────────────────────────────────────────────────────┤\n\
              │ {prompt}\n\
              │ allow | deny | timeout   cancel   detach\n\
              └────────────────────────────────────────────────────────────┘\n",
             instance = self.program_instance_id,
             digest = self.artifact_digest,
-            outcome = outcome,
-            observations = observations,
+            status = status.trim_matches('"'),
+            observation_section = observation_section,
             prompt = self.prompt,
         )
     }
@@ -113,7 +112,7 @@ impl TuiFrame {
 
 /// Route one TTY line from runtime state. Approvals never execute on deny/timeout.
 #[must_use]
-pub fn route_input(outcome: HeadlessOutcome, line: &str) -> TuiAction {
+pub fn route_input(status: ProgramInvocationStatus, line: &str) -> TuiAction {
     let line = line.trim();
     if line.is_empty() {
         return TuiAction::Ignore;
@@ -124,14 +123,16 @@ pub fn route_input(outcome: HeadlessOutcome, line: &str) -> TuiAction {
     if line == "cancel" {
         return TuiAction::Cancel;
     }
-    match (outcome, line) {
+    match (status, line) {
         (_, "deny" | "timeout") => TuiAction::DenyAsk,
         (_, "allow") => TuiAction::AllowAsk,
-        (HeadlessOutcome::WaitingEvent, rest) if rest.starts_with("fulfill ") => {
+        (ProgramInvocationStatus::WaitingEvent, rest) if rest.starts_with("fulfill ") => {
             TuiAction::FulfillEvent
         }
-        (HeadlessOutcome::Returned, "start") => TuiAction::StartInvocation,
-        (HeadlessOutcome::Failed, _) => TuiAction::Detach,
+        (
+            ProgramInvocationStatus::CommittedReturn | ProgramInvocationStatus::CommittedYield,
+            "start",
+        ) => TuiAction::StartInvocation,
         _ => TuiAction::Ignore,
     }
 }
@@ -155,9 +156,8 @@ pub enum TuiAction {
     Ignore,
 }
 
-/// Draw the Interaction Client over the same outcome labels as headless mode.
-pub fn run_session(instance: &str, artifact_digest: &str, outcome: HeadlessOutcome) -> Result<()> {
-    let frame = TuiFrame::from_protocol(instance, artifact_digest, outcome, Vec::new());
+/// Draw the Interaction Client over canonical runtime state.
+pub fn run_session(frame: TuiFrame) -> Result<()> {
     if io::stdout().is_terminal() {
         let mut out = io::stdout();
         write!(out, "\u{1b}[?1049h\u{1b}[2J\u{1b}[H{}", frame.render())?;
@@ -165,7 +165,7 @@ pub fn run_session(instance: &str, artifact_digest: &str, outcome: HeadlessOutco
         let stdin = io::stdin();
         for line in stdin.lock().lines() {
             let line = line?;
-            match route_input(outcome, &line) {
+            match route_input(frame.status, &line) {
                 TuiAction::Detach | TuiAction::Cancel | TuiAction::DenyAsk => break,
                 TuiAction::Ignore
                 | TuiAction::AllowAsk
@@ -189,41 +189,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tui_and_headless_agree_on_waiting_event() {
-        assert_eq!(
-            tui_outcome_label(HeadlessOutcome::WaitingEvent),
-            "waiting_event"
-        );
-        assert_eq!(tui_outcome_label(HeadlessOutcome::Returned), "returned");
-    }
-
-    #[test]
     fn tui_decodes_the_same_protocol_fixtures_as_headless() {
         let returned = serde_json::json!({
-            "outcome": "returned",
+            "status": "committed_return",
             "program_instance_id": "pi-1",
             "artifact_digest": "sha256:abc",
             "observations": ["content:pi-1:inv-1", "commit:pi-1:inv-1"]
         });
         let waiting = serde_json::json!({
-            "outcome": "waiting_event",
+            "status": "waiting_event",
             "program_instance_id": "pi-2",
             "artifact_digest": "sha256:def",
             "observations": ["event:evt-1 fulfilled"]
         });
         let returned_frame = TuiFrame::decode_protocol(&returned).unwrap();
         let waiting_frame = TuiFrame::decode_protocol(&waiting).unwrap();
-        assert_eq!(returned_frame.outcome, HeadlessOutcome::Returned);
-        assert_eq!(waiting_frame.outcome, HeadlessOutcome::WaitingEvent);
-        assert!(returned_frame.render().contains("outcome  returned"));
-        assert!(waiting_frame.render().contains("outcome  waiting_event"));
+        assert_eq!(
+            returned_frame.status,
+            ProgramInvocationStatus::CommittedReturn
+        );
+        assert_eq!(waiting_frame.status, ProgramInvocationStatus::WaitingEvent);
+        assert!(
+            returned_frame
+                .render()
+                .contains("status   committed_return")
+        );
+        assert!(waiting_frame.render().contains("status   waiting_event"));
         assert!(waiting_frame.prompt.contains("event>"));
         assert_eq!(
-            route_input(HeadlessOutcome::WaitingEvent, "cancel"),
+            route_input(ProgramInvocationStatus::WaitingEvent, "cancel"),
             TuiAction::Cancel
         );
         assert_eq!(
-            route_input(HeadlessOutcome::Returned, "deny"),
+            route_input(ProgramInvocationStatus::CommittedReturn, "deny"),
             TuiAction::DenyAsk
         );
     }

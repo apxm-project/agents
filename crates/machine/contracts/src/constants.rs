@@ -81,9 +81,6 @@ pub mod env {
     /// Server rollout payload spill threshold, in bytes.
     pub const APXM_ROLLOUT_SPILL_THRESHOLD_BYTES: &str = "APXM_ROLLOUT_SPILL_THRESHOLD_BYTES";
     /// Retention: rollout max age (days) before compaction archives its content.
-    /// See the `sessions/rollouts` entry of `AGENTS_STATE_LAYOUT` in
-    /// `crates/machine/contracts/src/paths.rs`, which is the source of truth
-    /// for the state layout; no contract under `contracts/` describes it.
     pub const APXM_RETENTION_ROLLOUT_MAX_AGE_DAYS: &str = "APXM_RETENTION_ROLLOUT_MAX_AGE_DAYS";
     /// Retention: grace period (hours) an unreferenced blob must sit idle
     /// before GC deletes it, to avoid racing an in-flight spill write.
@@ -546,27 +543,8 @@ pub mod dspy {
     pub const ATTR_OPTIMIZED: &str = "ais.dspy_optimized";
 }
 
-pub mod session {
-    pub mod files {
-        pub const MANIFEST: &str = "manifest.json";
-        pub const INPUT_GRAPH: &str = "input.air";
-        pub const RESULTS: &str = "results.json";
-        pub const METRICS: &str = "metrics.json";
-        pub const NODE_STATUSES: &str = "node_statuses.json";
-        pub const TRACE: &str = "trace.ndjson";
-        pub const LIVE: &str = "live.json";
-        pub const NODES_DIR: &str = "nodes";
-    }
-
-    /// JSON keys serialized into `results.json`.
-    pub mod results_keys {
-        pub const NODE_OUTPUTS: &str = "node_outputs";
-        pub const TOKEN_VALUES: &str = "token_values";
-        pub const EXIT_VALUES: &str = "exit_values";
-        pub const FINAL_NODE_ID: &str = "final_node_id";
-        pub const FINAL_OUTPUT: &str = "final_output";
-    }
-
+/// Shared wire keys for runtime metrics reports.
+pub mod metrics {
     /// JSON keys serialized into `metrics.json` by the runtime's
     /// `TokenAccountingSnapshot::to_json`. Python-side `MetricsKeys` uses the
     /// same contract; tier-3 budget enforcement relies on these.
@@ -658,39 +636,6 @@ pub mod session {
             pub const INPUT: &str = "input";
             pub const OPTIMIZATION_LEVEL: &str = "optimization_level";
         }
-
-        /// CLI execution-response wire keys (the JSON returned to the caller of
-        /// `apxm execute`/`apxm run`). Distinct from `execution_keys` because
-        /// the response uses `executed_nodes`/`failed_nodes` while the metrics
-        /// report uses `nodes_executed`/`nodes_failed`.
-        pub mod cli_response_keys {
-            pub const CONTENT: &str = "content";
-            pub const EXECUTION_ID: &str = "execution_id";
-            pub const SESSION_DIR: &str = "session_dir";
-            pub const METRICS_PATH: &str = "metrics_path";
-            pub const PROFILE_PATH: &str = "profile_path";
-            pub const RESULTS: &str = "results";
-            pub const STATS: &str = "stats";
-            pub const STATS_EXECUTED_NODES: &str = "executed_nodes";
-            pub const STATS_FAILED_NODES: &str = "failed_nodes";
-            pub const LLM_USAGE: &str = "llm_usage";
-        }
-    }
-
-    pub mod node {
-        pub const NODE_JSON: &str = "node.json";
-        pub const LIVE_JSON: &str = "live.json";
-        pub const OUTPUT_JSON: &str = "output.json";
-        pub const STATUS_JSON: &str = "status.json";
-        pub const METRICS_JSON: &str = "metrics.json";
-        pub const TRACE_NDJSON: &str = "trace.ndjson";
-        pub const SCOPE_ID: &str = "scope_id";
-        pub const PARENT_EXECUTION_ID: &str = "parent_execution_id";
-        pub const PARENT_SESSION_DIR: &str = "parent_session_dir";
-        pub const PARENT_SCOPE_ID: &str = "parent_scope_id";
-        pub const SPAWN_NODE_ID: &str = "spawn_node_id";
-        pub const PROMPT_TXT: &str = "prompt.txt";
-        pub const RESPONSE_TXT: &str = "response.txt";
     }
 }
 

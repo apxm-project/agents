@@ -14,7 +14,6 @@ Shared graph contract, types, error definitions, event system, and constants use
 | `types/values/` | `Value`, `Token`, `Number` runtime value types |
 | `types/compiler/` | `PassInfo`, `PassCategory`, `OptimizationLevel`, `CodegenOptions`, `Stages` |
 | `types/operations/` | `AISOperationType`, `OperationCategory`, generated operation metadata |
-| `types/session/` | Session management types |
 | `types/identifiers/` | Typed IDs (`NodeId`, `TokenId`) |
 | `types/intents/` | Intent types for goal-directed execution |
 | `types/models/` | `ModelInfo`, `ModelCapabilities`, `ModelResponse` |
@@ -31,7 +30,7 @@ Shared graph contract, types, error definitions, event system, and constants use
 | `handler_manifest` | `HandlerManifest`, `HandlerLanguage` (Python + TypeScript) |
 | `plan` | `Plan`, `PlanStep`, `InnerPlanPayload` for dynamic sub-workflows |
 | `paths` | Path utilities for `~/.apxm/` directory layout |
-| `env` | `APXM_HOME` / `APXM_STATE_HOME` resolution |
+| `env` | `APXM_HOME` resolution |
 | `logging` | Logging macros and configuration |
 | `observability` | Observability surfaces |
 | `utils/build` | Build-script helpers for native toolchain detection |
@@ -45,16 +44,14 @@ explicit extension registry for the rest.
 
 The named kinds are generated, not hand-listed:
 `SCHEMA_EVENT_KIND_REGISTRY` in `events/generated_event_kind_registry.rs` holds
-60 entries, each carrying its category, whether it is terminal, and its terminal
-sense. Read that file for the live set — do not maintain a count here.
+the live entries, each carrying its category, whether it is terminal, and its
+terminal sense. Read that file for the live set — do not maintain a count here.
 
 ### Consumers
 
 | Consumer | Format | How |
 |----------|--------|-----|
-| Session inspection | Session directory | `apxm session list` / `inspect` / `diff` |
-| Rollout replay | Monospace tree | `apxm replay <thread-id>` |
-| Rollout archive | `.tar.gz` (JSONL + blobs) | `apxm archive <thread-id>` |
+| Execution inspection | Runtime Service read protocol | `program_invocation.inspect`, `observation.subscribe`, `content.read`, `evidence.read` |
 
 ## Key Exports
 

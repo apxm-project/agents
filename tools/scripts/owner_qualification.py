@@ -166,10 +166,11 @@ def _strict_qualification(value: object, *, root: Path) -> dict[str, Any]:
     services = value.get("service_digests")
     if (
         not isinstance(services, dict)
-        or set(services) != {"compilation-service", "runtime-service"}
+        or set(services)
+        != {"compilation-service", "runtime-service", "python-frontend-native"}
         or any(not isinstance(item, str) or not DIGEST.fullmatch(item) for item in services.values())
     ):
-        raise ValueError("owner release qualification did not bind both service digests")
+        raise ValueError("owner release qualification did not bind all release artifact digests")
     for field in (
         "source_descriptor_digest",
         "owner_descriptor_digest",

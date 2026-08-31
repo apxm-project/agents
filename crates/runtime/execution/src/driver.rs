@@ -22,13 +22,17 @@
 //! commit are identical.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::Instant;
 
 use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use tokio::sync::Notify;
 
 use apxm_inference::{
     BindingError, CommittedInferenceDispatch, InferenceTargetCommitment, InferenceUsageLineage,
@@ -39,16 +43,20 @@ use apxm_inference::{
 use apxm_kernel::{
     AtomicWriteSet, CommittedContinuation, EventApplicationResult, ExecutionCommitPort,
     ExecutionCommitRequest, ExecutionCommitResult, ExecutionCommitTuple, PortSlot,
-    ProgramInstanceRef, ProgramInvocationRef, ResourceCeilings, continuation_digest,
+    PrecommitEvidenceRef, PreparedSessionOutputRef, ProgramInstanceRef, ProgramInvocationRef,
+    ResourceCeilings, SESSION_OUTPUT_REF_CONTRACT, SessionOutputPreparation,
+    SessionOutputVisibility, canonical_json_bytes, continuation_digest,
+    runtime_evidence_and_observation_digest,
 };
 use apxm_program::air::{
     AirModule, ControlPredicate, PredicateComparator, PredicateLiteral, SemanticOp, SemanticOpKind,
 };
 use apxm_program::capability::{CapabilityInvocationAuthority, CapabilityRequestError};
-use apxm_program::common::TypedRef;
+use apxm_program::common::{ErrorCategory as EvidenceErrorCategory, TypedErrorEnvelope, TypedRef};
 use apxm_program::external_agent::ExternalAgentEvidence;
 use apxm_program::frontend_graph::ValueExpression;
 use apxm_program::frontend_graph::{HookBinding, HookReturnMode};
+use apxm_program::grammar::is_digest;
 use apxm_program::runtime_evidence::{
     Fact, FactKind, HookPhase as EvidenceHookPhase, HookScope as EvidenceHookScope, InstanceState,
     InvocationState, LoopIterationCompletedFact, LoopMembership, ModelAttemptRecordedFact,
@@ -56,6 +64,9 @@ use apxm_program::runtime_evidence::{
 };
 
 use crate::ExecutionPortBundle;
+use crate::observe::{
+    ObservationFailurePolicy, ObservationSink, ObservationSinkError, make_observation, unix_time_ms,
+};
 use crate::operational_usage::{
     CommittedNativeModelUsage, CommittedNativeModelUsageError, CommittedNativeModelUsageOutcome,
     CommittedNativeModelUsagePort, EvidencePositionRef, EvidencePositionRefType,
@@ -92,6 +103,46 @@ pub struct ExecutionPorts {
     hook_handlers: Arc<dyn StaticHookHandlerPort>,
     operational_usage: Option<Arc<dyn CommittedNativeModelUsagePort>>,
     resource_ceilings: Option<ResourceCeilings>,
+    observation_sink: Option<Arc<dyn ObservationSink>>,
+    observation_failure_policy: ObservationFailurePolicy,
+    cancellation: CancellationToken,
+}
+
+/// Cooperative cancellation shared by a profile and its active driver.
+#[derive(Default)]
+struct CancellationState {
+    cancelled: AtomicBool,
+    notify: Notify,
+}
+
+#[derive(Clone, Default)]
+pub struct CancellationToken(Arc<CancellationState>);
+
+impl CancellationToken {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn cancel(&self) {
+        self.0.cancelled.store(true, Ordering::Release);
+        self.0.notify.notify_waiters();
+    }
+
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.0.cancelled.load(Ordering::Acquire)
+    }
+
+    /// Wait until cancellation is requested. The check around registration
+    /// closes the race where cancellation arrives between the initial check
+    /// and parking on the notification.
+    pub async fn cancelled(&self) {
+        let notified = self.0.notify.notified();
+        if !self.is_cancelled() {
+            notified.await;
+        }
+    }
 }
 
 /// Why the canonical driver cannot be constructed from a port bundle.
@@ -145,6 +196,9 @@ impl ExecutionPorts {
             hook_handlers,
             operational_usage: None,
             resource_ceilings: None,
+            observation_sink: None,
+            observation_failure_policy: ObservationFailurePolicy::FailOpen,
+            cancellation: CancellationToken::new(),
         })
     }
 
@@ -163,6 +217,28 @@ impl ExecutionPorts {
         operational_usage: Arc<dyn CommittedNativeModelUsagePort>,
     ) -> Self {
         self.operational_usage = Some(operational_usage);
+        self
+    }
+
+    /// Attach a bounded/non-authoritative live observation sink.
+    #[must_use]
+    pub fn with_observation_sink(mut self, sink: Arc<dyn ObservationSink>) -> Self {
+        self.observation_sink = Some(sink);
+        self
+    }
+
+    /// Choose what a sink failure means for this execution. The default is
+    /// fail-open because live observations cannot establish execution truth.
+    #[must_use]
+    pub fn with_observation_failure_policy(mut self, policy: ObservationFailurePolicy) -> Self {
+        self.observation_failure_policy = policy;
+        self
+    }
+
+    /// Attach the caller-owned cancellation signal for this active invocation.
+    #[must_use]
+    pub fn with_cancellation_token(mut self, cancellation: CancellationToken) -> Self {
+        self.cancellation = cancellation;
         self
     }
 }
@@ -450,9 +526,22 @@ pub struct RunReport {
     pub external_agent_evidence: Vec<ExternalAgentEvidence>,
     pub final_context: Value,
     pub commit: ExecutionCommitResult,
+    /// Terminal truth derived from the same evidence batch sent to the
+    /// commit port. A successful commit therefore cannot be mistaken for a
+    /// successful invocation when the batch records failure, cancellation, or
+    /// uncertain effect outcome.
+    pub terminal_status: RunTerminalStatus,
     /// The outcome of publishing the exact committed native model attempts.
     /// External-agent/ACP usage never enters this Agents-owned contract.
     pub operational_usage: CommittedNativeModelUsageOutcome,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunTerminalStatus {
+    CommittedReturn,
+    Failed,
+    Cancelled,
+    OutcomeUnknown,
 }
 
 /// Why a canonical run could not be driven.
@@ -522,6 +611,8 @@ pub enum ExecutionError {
         limit: u64,
         observed: u64,
     },
+    Observation(ObservationSinkError),
+    OutputPreparation(String),
 }
 
 impl std::fmt::Display for ExecutionError {
@@ -631,6 +722,10 @@ impl std::fmt::Display for ExecutionError {
                 f,
                 "admitted {resource} ceiling exceeded: observed {observed}, limit {limit}"
             ),
+            Self::Observation(error) => write!(f, "execution observation failed: {error}"),
+            Self::OutputPreparation(error) => {
+                write!(f, "session output preparation failed: {error}")
+            }
         }
     }
 }
@@ -724,6 +819,43 @@ fn runtime_fact_mut(fact: &mut Fact) -> &mut RuntimeFact {
         .expect("runtime helper constructed a non-loop fact")
 }
 
+fn evidence_error_category(category: apxm_inference::ErrorCategory) -> EvidenceErrorCategory {
+    match category {
+        apxm_inference::ErrorCategory::Validation => EvidenceErrorCategory::Validation,
+        apxm_inference::ErrorCategory::Admission => EvidenceErrorCategory::Admission,
+        apxm_inference::ErrorCategory::Authority => EvidenceErrorCategory::Authority,
+        apxm_inference::ErrorCategory::Configuration => EvidenceErrorCategory::Configuration,
+        apxm_inference::ErrorCategory::Unavailable => EvidenceErrorCategory::Unavailable,
+        apxm_inference::ErrorCategory::Conflict => EvidenceErrorCategory::Conflict,
+        apxm_inference::ErrorCategory::OutcomeUnknown => EvidenceErrorCategory::OutcomeUnknown,
+        apxm_inference::ErrorCategory::Internal => EvidenceErrorCategory::Internal,
+    }
+}
+
+fn model_failure_envelope(node_execution_id: &str, error: &TypedError) -> TypedErrorEnvelope {
+    TypedErrorEnvelope {
+        error_id: format!("model-failure.{node_execution_id}"),
+        category: evidence_error_category(error.category),
+        code_ref: error.code.clone(),
+        message: error.message.clone(),
+        details_digest: None,
+    }
+}
+
+fn unavailable_failure_envelope(
+    kind: &str,
+    node_execution_id: &str,
+    message: &str,
+) -> TypedErrorEnvelope {
+    TypedErrorEnvelope {
+        error_id: format!("{kind}-failure.{node_execution_id}"),
+        category: EvidenceErrorCategory::Unavailable,
+        code_ref: format!("{kind}.failed"),
+        message: message.to_owned(),
+        details_digest: None,
+    }
+}
+
 /// The mutable run accumulators threaded through op dispatch. Shared by the
 /// single-shot and resumable paths so both build identical evidence.
 struct DriveState {
@@ -740,11 +872,276 @@ struct DriveState {
     branch_decisions: BTreeMap<String, usize>,
     last_operation_succeeded: bool,
     batch: Vec<Fact>,
+    /// Scheduler-owned observations retained for the atomic commit tuple.
+    /// This is authoritative only once the surrounding Execution Commit
+    /// succeeds; the live sink remains a bounded, non-authoritative view.
+    durable_observations: Vec<apxm_runtime_protocol::ExecutionObservation>,
+    /// Exact event identity for the next wait/resume observation.
+    pending_event_ref: Option<String>,
+    /// Observation position is independent from the evidence/fact sequence;
+    /// publishing a live observation must never perturb scheduler identities.
+    observation_seq: u64,
     seq: u64,
     program_invocation_id: String,
     active_loops: Vec<DurableLoopFrame>,
     last_model_node_execution_id: Option<String>,
     last_program_new_node_execution_id: Option<String>,
+    committed_output_node_execution_id: Option<String>,
+    committed_output_occurrence_id: Option<String>,
+    committed_output_region_occurrence_id: Option<String>,
+    current_node_execution_id: Option<String>,
+    current_occurrence_id: Option<String>,
+    current_region_occurrence_id: Option<String>,
+    terminal_node_execution_id: Option<String>,
+    terminal_occurrence_id: Option<String>,
+    terminal_region_occurrence_id: Option<String>,
+}
+
+impl DriveState {
+    fn note_terminal_coordinates(&mut self, node_execution_id: Option<&str>) {
+        let Some(node_execution_id) = node_execution_id else {
+            return;
+        };
+        self.terminal_node_execution_id = Some(node_execution_id.to_owned());
+        if self.current_node_execution_id.as_deref() == Some(node_execution_id) {
+            self.terminal_occurrence_id = self.current_occurrence_id.clone();
+            self.terminal_region_occurrence_id = self.current_region_occurrence_id.clone();
+        }
+    }
+
+    fn append_invocation_failure(&mut self, node_execution_id: &str, error: TypedErrorEnvelope) {
+        self.note_terminal_coordinates(Some(node_execution_id));
+        self.seq += 1;
+        let mut failure = fact(
+            &self.program_invocation_id,
+            self.seq,
+            FactKind::InvocationFailed,
+            None,
+            Some(InvocationState::Failed),
+            Some(node_execution_id.to_owned()),
+            None,
+        );
+        runtime_fact_mut(&mut failure).typed_error = Some(error);
+        self.batch.push(failure);
+    }
+
+    fn append_invocation_cancelled(&mut self, node_execution_id: Option<&str>) {
+        self.note_terminal_coordinates(node_execution_id);
+        self.seq += 1;
+        self.batch.push(fact(
+            &self.program_invocation_id,
+            self.seq,
+            FactKind::InvocationCancelled,
+            None,
+            Some(InvocationState::Cancelled),
+            node_execution_id.map(str::to_owned),
+            None,
+        ));
+    }
+
+    fn append_effect_outcome_unknown(&mut self, node_execution_id: &str, effect_id: &str) {
+        self.note_terminal_coordinates(Some(node_execution_id));
+        self.seq += 1;
+        let mut unknown = fact(
+            &self.program_invocation_id,
+            self.seq,
+            FactKind::EffectOutcomeUnknown,
+            None,
+            None,
+            Some(node_execution_id.to_owned()),
+            None,
+        );
+        runtime_fact_mut(&mut unknown).effect_outcome_ref = Some(TypedRef {
+            ref_type: "EffectOutcomeRef".to_owned(),
+            target: effect_id.to_owned(),
+            digest: None,
+        });
+        self.batch.push(unknown);
+    }
+
+    fn has_terminal_non_success(&self) -> bool {
+        self.batch.iter().any(|fact| {
+            fact.is_kind(FactKind::InvocationFailed)
+                || fact.is_kind(FactKind::InvocationCancelled)
+                || fact.is_kind(FactKind::EffectOutcomeUnknown)
+                || matches!(
+                    fact.runtime().and_then(|runtime| runtime.invocation_state),
+                    Some(InvocationState::Failed | InvocationState::Cancelled)
+                )
+        }) || self
+            .node_outcomes
+            .iter()
+            .any(|outcome| node_outcome_terminal_status(outcome).is_some())
+    }
+
+    fn has_unknown_outcome(&self) -> bool {
+        self.durable_observations.iter().any(|observation| {
+            observation.observation_kind == apxm_runtime_protocol::ObservationKind::OutcomeUnknown
+        }) || self.node_outcomes.iter().any(|outcome| match outcome {
+            NodeOutcome::Model { outcome, .. } => {
+                matches!(outcome, ModelOutcome::ModelOutcomeUnknown { .. })
+            }
+            NodeOutcome::Capability { outcome, .. } => {
+                matches!(outcome, CapabilityOutcome::OutcomeUnknown { .. })
+            }
+            NodeOutcome::ExternalAgent { .. }
+            | NodeOutcome::ProgramNew { .. }
+            | NodeOutcome::ProgramInvoke { .. }
+            | NodeOutcome::AwaitEvent { .. } => false,
+        })
+    }
+
+    /// Publish one redacted live observation using the same monotonic sequence
+    /// that is carried through a parked continuation. A sink cannot mutate
+    /// state; fail-closed is an explicit composition choice.
+    fn observe(
+        &mut self,
+        ports: &ExecutionPorts,
+        kind: apxm_runtime_protocol::ObservationKind,
+        commitment: apxm_runtime_protocol::Commitment,
+        node_execution_id: Option<&str>,
+        occurrence_id: Option<&str>,
+        attempt_id: Option<&str>,
+        region_occurrence_id: Option<&str>,
+        content_ref: Option<&str>,
+        output_ref: Option<&str>,
+        evidence_ref: Option<&str>,
+        started_at: Option<Instant>,
+    ) -> Result<(), ExecutionError> {
+        let observation = self.stage_observation(
+            ports,
+            kind,
+            commitment,
+            node_execution_id,
+            occurrence_id,
+            attempt_id,
+            region_occurrence_id,
+            content_ref,
+            output_ref,
+            evidence_ref,
+            started_at,
+        )?;
+        let Some(sink) = ports.observation_sink.as_ref() else {
+            return Ok(());
+        };
+        match sink.publish(observation) {
+            Ok(()) => Ok(()),
+            Err(_error)
+                if ports.observation_failure_policy == ObservationFailurePolicy::FailOpen =>
+            {
+                Ok(())
+            }
+            Err(error) => Err(ExecutionError::Observation(error)),
+        }
+    }
+
+    fn stage_observation(
+        &mut self,
+        _ports: &ExecutionPorts,
+        kind: apxm_runtime_protocol::ObservationKind,
+        commitment: apxm_runtime_protocol::Commitment,
+        node_execution_id: Option<&str>,
+        occurrence_id: Option<&str>,
+        attempt_id: Option<&str>,
+        region_occurrence_id: Option<&str>,
+        content_ref: Option<&str>,
+        output_ref: Option<&str>,
+        evidence_ref: Option<&str>,
+        started_at: Option<Instant>,
+    ) -> Result<apxm_runtime_protocol::ExecutionObservation, ExecutionError> {
+        self.observation_seq = self.observation_seq.saturating_add(1);
+        let duration_ms = started_at.map(|started| started.elapsed().as_millis() as u64);
+        let event_ref = if matches!(
+            kind,
+            apxm_runtime_protocol::ObservationKind::EventWaiting
+                | apxm_runtime_protocol::ObservationKind::EventResumed
+        ) {
+            self.pending_event_ref.take()
+        } else {
+            None
+        };
+        let observation = make_observation(
+            &self.program_invocation_id,
+            self.observation_seq,
+            apxm_runtime_protocol::ObservationTiming {
+                observed_at_unix_ms: unix_time_ms(),
+                duration_ms,
+            },
+            kind,
+            commitment,
+            node_execution_id,
+            occurrence_id,
+            attempt_id,
+            region_occurrence_id,
+            content_ref,
+            output_ref,
+            evidence_ref,
+            event_ref.as_deref(),
+        );
+        let observation = match observation {
+            Ok(observation) => observation,
+            Err(error) => return Err(ExecutionError::Observation(error)),
+        };
+        self.durable_observations.push(observation.clone());
+        Ok(observation)
+    }
+
+    /// Deliver observations after the atomic commit on a best-effort basis.
+    /// The commit has already established execution truth, so a fail-closed
+    /// live sink policy must not turn a successful commit into an error result.
+    fn deliver_post_commit(
+        &self,
+        ports: &ExecutionPorts,
+        observation: &apxm_runtime_protocol::ExecutionObservation,
+    ) {
+        let Some(sink) = ports.observation_sink.as_ref() else {
+            return;
+        };
+        let _ = sink.publish(observation.clone());
+    }
+
+    fn deliver_precommit(
+        &self,
+        ports: &ExecutionPorts,
+        observation: &apxm_runtime_protocol::ExecutionObservation,
+    ) -> Result<(), ExecutionError> {
+        let Some(sink) = ports.observation_sink.as_ref() else {
+            return Ok(());
+        };
+        match sink.publish(observation.clone()) {
+            Ok(()) => Ok(()),
+            Err(_error)
+                if ports.observation_failure_policy == ObservationFailurePolicy::FailOpen =>
+            {
+                Ok(())
+            }
+            Err(error) => Err(ExecutionError::Observation(error)),
+        }
+    }
+}
+
+fn node_outcome_terminal_status(outcome: &NodeOutcome) -> Option<RunTerminalStatus> {
+    match outcome {
+        NodeOutcome::Model { outcome, .. } => match outcome {
+            ModelOutcome::CommittedSuccess { .. } => None,
+            ModelOutcome::TypedFailure { .. } => Some(RunTerminalStatus::Failed),
+            ModelOutcome::Cancelled => Some(RunTerminalStatus::Cancelled),
+            ModelOutcome::ModelOutcomeUnknown { .. } => Some(RunTerminalStatus::OutcomeUnknown),
+        },
+        NodeOutcome::Capability { outcome, .. } => match outcome {
+            CapabilityOutcome::Completed { .. } => None,
+            CapabilityOutcome::Failed { .. } => Some(RunTerminalStatus::Failed),
+            CapabilityOutcome::OutcomeUnknown { .. } => Some(RunTerminalStatus::OutcomeUnknown),
+        },
+        NodeOutcome::ProgramNew { outcome, .. } | NodeOutcome::ProgramInvoke { outcome, .. } => {
+            matches!(outcome, CompositionOutcome::Failed { .. })
+                .then_some(RunTerminalStatus::Failed)
+        }
+        NodeOutcome::AwaitEvent { outcome, .. } => {
+            matches!(outcome, EventOutcome::Cancelled).then_some(RunTerminalStatus::Cancelled)
+        }
+        NodeOutcome::ExternalAgent { .. } => None,
+    }
 }
 
 /// Canonical dynamic request identity at the native model boundary. Sensitive
@@ -839,11 +1236,23 @@ impl DriveState {
             branch_decisions: BTreeMap::new(),
             last_operation_succeeded: true,
             batch,
+            durable_observations: Vec::new(),
+            pending_event_ref: None,
+            observation_seq: 0,
             seq,
             program_invocation_id: program_invocation_id.to_string(),
             active_loops: Vec::new(),
             last_model_node_execution_id: None,
             last_program_new_node_execution_id: None,
+            committed_output_node_execution_id: None,
+            committed_output_occurrence_id: None,
+            committed_output_region_occurrence_id: None,
+            current_node_execution_id: None,
+            current_occurrence_id: None,
+            current_region_occurrence_id: None,
+            terminal_node_execution_id: None,
+            terminal_occurrence_id: None,
+            terminal_region_occurrence_id: None,
         }
     }
 
@@ -1371,6 +1780,25 @@ async fn drive_from(
 
     let mut schedule_position = start_schedule_position;
     while schedule_position < schedule.len() {
+        if ports.cancellation.is_cancelled() {
+            if !state.has_terminal_non_success() {
+                state.observe(
+                    ports,
+                    apxm_runtime_protocol::ObservationKind::InvocationCancelled,
+                    apxm_runtime_protocol::Commitment::Provisional,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )?;
+                state.append_invocation_cancelled(None);
+            }
+            return Ok(DriveEnd::RanToEnd(state));
+        }
         enforce_runtime_limits(&state, resource_ceilings)?;
         let step = &schedule[schedule_position];
         match step {
@@ -1514,12 +1942,43 @@ async fn drive_from(
                 if let Some(predicate) = predicate
                     && !evaluate_predicate(air, &state, static_loop_id, predicate)?
                 {
+                    state.observe(
+                        ports,
+                        apxm_runtime_protocol::ObservationKind::LoopTransition,
+                        apxm_runtime_protocol::Commitment::Provisional,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )?;
                     state.exit_loop(static_loop_id);
                     schedule_position =
                         matching_loop_back_edge(&schedule, schedule_position, static_loop_id)? + 1;
                     continue;
                 }
                 state.enter_loop(static_loop_id);
+                let region_occurrence_id = state
+                    .active_loops
+                    .iter()
+                    .find(|frame| frame.static_loop_id == *static_loop_id)
+                    .map(|frame| frame.dynamic_occurrence_id.clone());
+                state.observe(
+                    ports,
+                    apxm_runtime_protocol::ObservationKind::LoopTransition,
+                    apxm_runtime_protocol::Commitment::Provisional,
+                    None,
+                    None,
+                    None,
+                    region_occurrence_id.as_deref(),
+                    None,
+                    None,
+                    None,
+                    None,
+                )?;
             }
             ScheduleStep::BranchDecision {
                 static_branch_id,
@@ -1541,6 +2000,39 @@ async fn drive_from(
                 state
                     .branch_decisions
                     .insert(static_branch_id.clone(), selected);
+                // A static branch id is not a dynamic occurrence. Bind the
+                // selected arm to this invocation and active loop region so
+                // repeated/nested branch joins cannot alias one another.
+                let region_occurrence_id = state
+                    .active_loops
+                    .last()
+                    .map(|frame| frame.dynamic_occurrence_id.clone());
+                let iteration_occurrence_id = state.active_loops.last().map(|frame| {
+                    format!(
+                        "{}.iteration.{}",
+                        frame.dynamic_occurrence_id, frame.iteration_index
+                    )
+                });
+                let occurrence_id = format!(
+                    "branch-occurrence.{}.{}.{}.{}",
+                    state.program_invocation_id,
+                    iteration_occurrence_id.as_deref().unwrap_or("root"),
+                    static_branch_id,
+                    selected
+                );
+                state.observe(
+                    ports,
+                    apxm_runtime_protocol::ObservationKind::BranchTransition,
+                    apxm_runtime_protocol::Commitment::Provisional,
+                    None,
+                    Some(&occurrence_id),
+                    None,
+                    region_occurrence_id.as_deref(),
+                    None,
+                    None,
+                    None,
+                    None,
+                )?;
             }
             ScheduleStep::BranchArm {
                 static_branch_id,
@@ -1568,6 +2060,41 @@ async fn drive_from(
             }
             ScheduleStep::BranchArmEnd { .. } => {}
             ScheduleStep::BranchEnd { static_branch_id } => {
+                let region_occurrence_id = state
+                    .active_loops
+                    .last()
+                    .map(|frame| frame.dynamic_occurrence_id.clone());
+                let iteration_occurrence_id = state.active_loops.last().map(|frame| {
+                    format!(
+                        "{}.iteration.{}",
+                        frame.dynamic_occurrence_id, frame.iteration_index
+                    )
+                });
+                let occurrence_id = state
+                    .branch_decisions
+                    .get(static_branch_id)
+                    .map(|selected| {
+                        format!(
+                            "branch-occurrence.{}.{}.{}.{}",
+                            state.program_invocation_id,
+                            iteration_occurrence_id.as_deref().unwrap_or("root"),
+                            static_branch_id,
+                            selected
+                        )
+                    });
+                state.observe(
+                    ports,
+                    apxm_runtime_protocol::ObservationKind::JoinTransition,
+                    apxm_runtime_protocol::Commitment::Provisional,
+                    None,
+                    occurrence_id.as_deref(),
+                    None,
+                    region_occurrence_id.as_deref(),
+                    None,
+                    None,
+                    None,
+                    None,
+                )?;
                 state.branch_decisions.remove(static_branch_id);
             }
             ScheduleStep::Semantic { index, loop_path } => {
@@ -1605,6 +2132,26 @@ async fn drive_from(
                     (None, None) => NodeExecutionScope::NonLoop,
                     _ => unreachable!("typed schedule loop path and active frames agree"),
                 };
+                let region_occurrence_id =
+                    innermost_loop.map(|active| active.dynamic_occurrence_id.clone());
+                let occurrence_id = format!("occurrence.{node_execution_id}");
+                let node_started_at = Instant::now();
+                state.current_node_execution_id = Some(node_execution_id.clone());
+                state.current_occurrence_id = Some(occurrence_id.clone());
+                state.current_region_occurrence_id = region_occurrence_id.clone();
+                state.observe(
+                    ports,
+                    apxm_runtime_protocol::ObservationKind::NodeStarted,
+                    apxm_runtime_protocol::Commitment::Provisional,
+                    Some(&node_execution_id),
+                    Some(&occurrence_id),
+                    None,
+                    region_occurrence_id.as_deref(),
+                    None,
+                    None,
+                    None,
+                    None,
+                )?;
                 let node_fact = Fact::NodeExecutionRecorded(NodeExecutionRecordedFact {
                     fact_id: format!("fact.{}.{}", state.program_invocation_id, state.seq),
                     event_sequence: state.seq,
@@ -1623,6 +2170,12 @@ async fn drive_from(
                     execution_scope,
                 });
                 state.batch.push(node_fact);
+                // Final output provenance is one atomic state value. A later
+                // node, including a failed/unknown effect, must not inherit
+                // the previous node's readable bytes or coordinates.
+                state.committed_output_node_execution_id = None;
+                state.committed_output_occurrence_id = None;
+                state.committed_output_region_occurrence_id = None;
 
                 match op.op {
                     SemanticOpKind::ModelCall => {
@@ -1676,34 +2229,80 @@ async fn drive_from(
                         let target_commitment =
                             InferenceTargetCommitment::from_resolved(call.resolved_binding())
                                 .map_err(ExecutionError::TargetCommitment)?;
-                        let committed_dispatch =
-                            dispatch_committed_inference_async(CommittedInferenceDispatch {
+                        let dispatch = tokio::select! {
+                            result = dispatch_committed_inference_async(CommittedInferenceDispatch {
                                 target_commitment: &target_commitment,
                                 authored_target: &authored_target,
                                 request: &call,
                                 backend: &*ports.model_inference,
                                 duration_ms: dispatch_started.elapsed().as_millis() as u64,
                                 policy: RetryPolicy::default(),
-                            })
-                            .await
-                            .map_err(|error| match error {
-                                apxm_inference::InferenceDispatchError::TargetCommitment(error) => {
-                                    ExecutionError::TargetCommitment(error)
-                                }
-                                apxm_inference::InferenceDispatchError::Lineage(error) => {
-                                    ExecutionError::Lineage(error)
-                                }
-                                apxm_inference::InferenceDispatchError::Driver(error) => {
-                                    unreachable!(
-                                        "production dispatch does not use a driver wrapper: {error}"
-                                    )
-                                }
-                                apxm_inference::InferenceDispatchError::Lease(error) => {
-                                    unreachable!(
-                                        "production dispatch does not use a lease: {error}"
-                                    )
-                                }
-                            })?;
+                            }) => Some(result),
+                            _ = ports.cancellation.cancelled() => None,
+                        };
+                        let Some(dispatch) = dispatch else {
+                            // The effect future was cancelled before it
+                            // reported an outcome. Commit uncertainty, never
+                            // a guessed return or a fabricated attempt.
+                            state.observe(
+                                ports,
+                                apxm_runtime_protocol::ObservationKind::OutcomeUnknown,
+                                apxm_runtime_protocol::Commitment::Provisional,
+                                Some(&node_execution_id),
+                                Some(&occurrence_id),
+                                None,
+                                region_occurrence_id.as_deref(),
+                                None,
+                                None,
+                                None,
+                                Some(node_started_at),
+                            )?;
+                            state.append_effect_outcome_unknown(
+                                &node_execution_id,
+                                call.effect_id(),
+                            );
+                            state.node_outcomes.push(NodeOutcome::Model {
+                                node_id: op.node_id.clone(),
+                                outcome: ModelOutcome::ModelOutcomeUnknown {
+                                    uncertain_usage: None,
+                                },
+                                result: Value::Null,
+                                replaced: false,
+                            });
+                            state.last_operation_succeeded = false;
+                            state.last_result = Value::Null;
+                            state.last_model_node_execution_id = Some(node_execution_id.clone());
+                            return Ok(DriveEnd::RanToEnd(state));
+                        };
+                        let committed_dispatch = match dispatch {
+                            Ok(dispatch) => dispatch,
+                            Err(error) => {
+                                // A dispatch rejection is an invocation
+                                // failure, not a reason to drop the evidence
+                                // batch. The exact error is retained in the
+                                // typed envelope and no output is staged.
+                                let typed_error = TypedError {
+                                    category: apxm_inference::ErrorCategory::Unavailable,
+                                    code: "model_dispatch_failed".to_owned(),
+                                    message: error.to_string(),
+                                };
+                                state.append_invocation_failure(
+                                    &node_execution_id,
+                                    model_failure_envelope(&node_execution_id, &typed_error),
+                                );
+                                state.node_outcomes.push(NodeOutcome::Model {
+                                    node_id: op.node_id.clone(),
+                                    outcome: ModelOutcome::TypedFailure { error: typed_error },
+                                    result: Value::Null,
+                                    replaced: false,
+                                });
+                                state.last_operation_succeeded = false;
+                                state.last_result = Value::Null;
+                                state.last_model_node_execution_id =
+                                    Some(node_execution_id.clone());
+                                return Ok(DriveEnd::RanToEnd(state));
+                            }
+                        };
                         let execution = committed_dispatch.execution;
                         let outcome = execution.outcome;
                         state.last_operation_succeeded =
@@ -1770,7 +2369,78 @@ async fn drive_from(
                                 .committed_model_lineages
                                 .push(committed_dispatch.lineage);
                         }
+                        // The inference dispatch owns retry numbering. Only
+                        // attach an attempt identity when it reports the
+                        // actual committed attempt; an unknown/cancelled
+                        // dispatch must not be fabricated as attempt `.0`.
+                        let attempt_id = execution.committed_attempt.map(|attempt_index| {
+                            format!("model-attempt.{node_execution_id}.{attempt_index}")
+                        });
+                        state.observe(
+                            ports,
+                            apxm_runtime_protocol::ObservationKind::ModelAttempt,
+                            apxm_runtime_protocol::Commitment::Provisional,
+                            Some(&node_execution_id),
+                            Some(&occurrence_id),
+                            attempt_id.as_deref(),
+                            region_occurrence_id.as_deref(),
+                            None,
+                            None,
+                            None,
+                            Some(node_started_at),
+                        )?;
+                        match &outcome {
+                            ModelOutcome::CommittedSuccess { .. } => {}
+                            ModelOutcome::Cancelled => {
+                                state.observe(
+                                    ports,
+                                    apxm_runtime_protocol::ObservationKind::InvocationCancelled,
+                                    apxm_runtime_protocol::Commitment::Provisional,
+                                    Some(&node_execution_id),
+                                    Some(&occurrence_id),
+                                    attempt_id.as_deref(),
+                                    region_occurrence_id.as_deref(),
+                                    None,
+                                    None,
+                                    None,
+                                    Some(node_started_at),
+                                )?;
+                                state.append_invocation_cancelled(Some(&node_execution_id));
+                            }
+                            ModelOutcome::ModelOutcomeUnknown { .. } => {
+                                state.observe(
+                                    ports,
+                                    apxm_runtime_protocol::ObservationKind::OutcomeUnknown,
+                                    apxm_runtime_protocol::Commitment::Provisional,
+                                    Some(&node_execution_id),
+                                    Some(&occurrence_id),
+                                    attempt_id.as_deref(),
+                                    region_occurrence_id.as_deref(),
+                                    None,
+                                    None,
+                                    None,
+                                    Some(node_started_at),
+                                )?;
+                                state.append_effect_outcome_unknown(
+                                    &node_execution_id,
+                                    call.effect_id(),
+                                );
+                            }
+                            ModelOutcome::TypedFailure { error } => {
+                                state.append_invocation_failure(
+                                    &node_execution_id,
+                                    model_failure_envelope(&node_execution_id, error),
+                                );
+                            }
+                        }
                         state.last_result = result.clone();
+                        if state.last_operation_succeeded {
+                            state.committed_output_node_execution_id =
+                                Some(node_execution_id.clone());
+                            state.committed_output_occurrence_id = Some(occurrence_id.clone());
+                            state.committed_output_region_occurrence_id =
+                                region_occurrence_id.clone();
+                        }
                         state.node_outcomes.push(NodeOutcome::Model {
                             node_id: op.node_id.clone(),
                             outcome,
@@ -1835,6 +2505,34 @@ async fn drive_from(
                             // line. There is no undecided attempt to skip:
                             // the admission type has no "no decision" state.
                             let resolved = &admission.permission;
+                            if !resolved.decision.is_allow() {
+                                state.observe(
+                                    ports,
+                                    apxm_runtime_protocol::ObservationKind::ApprovalRequested,
+                                    apxm_runtime_protocol::Commitment::Provisional,
+                                    Some(&node_execution_id),
+                                    Some(&occurrence_id),
+                                    None,
+                                    region_occurrence_id.as_deref(),
+                                    None,
+                                    None,
+                                    None,
+                                    Some(node_started_at),
+                                )?;
+                            }
+                            state.observe(
+                                ports,
+                                apxm_runtime_protocol::ObservationKind::ApprovalResolved,
+                                apxm_runtime_protocol::Commitment::Provisional,
+                                Some(&node_execution_id),
+                                Some(&occurrence_id),
+                                None,
+                                region_occurrence_id.as_deref(),
+                                None,
+                                None,
+                                None,
+                                Some(node_started_at),
+                            )?;
                             state.seq += 1;
                             let mut decided = fact(
                                 &state.program_invocation_id,
@@ -1853,42 +2551,54 @@ async fn drive_from(
                             // Anything the layer stack did not resolve to an
                             // outright allow refuses here: this driver has no
                             // approval broker, so `Ask` has nothing to ask.
-                            let outcome =
-                                if resolved.decision.is_allow() {
-                                    let arguments_value_id = operand_str(op, "arguments")
-                                        .ok_or_else(|| ExecutionError::MissingOperand {
+                            let mut attempt_id = None;
+                            let mut effect_id = None;
+                            let outcome = if resolved.decision.is_allow() {
+                                let arguments_value_id =
+                                    operand_str(op, "arguments").ok_or_else(|| {
+                                        ExecutionError::MissingOperand {
                                             node_id: op.node_id.clone(),
                                             operand: "arguments",
-                                        })?;
-                                    let authored_arguments = materialize_ssa_value(
-                                        air,
-                                        &state,
-                                        &op.node_id,
-                                        &arguments_value_id,
-                                        &mut BTreeSet::new(),
-                                    )?;
-                                    ports
-                                        .capability
-                                        .invoke_authorized(
-                                            CapabilityRequest::prepare(
-                                                capability_ref,
-                                                arguments_type_ref,
-                                                authored_arguments,
-                                                &state.program_invocation_id,
-                                                &node_execution_id,
-                                                admission.authority.clone(),
-                                            )
-                                            .map_err(ExecutionError::CapabilityRequest)?,
-                                        )
-                                        .await
-                                } else {
-                                    CapabilityOutcome::Failed {
-                                        message: format!(
-                                            "capability '{capability_ref}' is {} by the {} layer",
-                                            resolved.decision, resolved.layer
-                                        ),
+                                        }
+                                    })?;
+                                let authored_arguments = materialize_ssa_value(
+                                    air,
+                                    &state,
+                                    &op.node_id,
+                                    &arguments_value_id,
+                                    &mut BTreeSet::new(),
+                                )?;
+                                let request = CapabilityRequest::prepare(
+                                    capability_ref,
+                                    arguments_type_ref,
+                                    authored_arguments,
+                                    &state.program_invocation_id,
+                                    &node_execution_id,
+                                    admission.authority.clone(),
+                                )
+                                .map_err(ExecutionError::CapabilityRequest)?;
+                                // The effect identity is minted by the
+                                // canonical request constructor. It is an
+                                // exact capability-attempt coordinate; do
+                                // not synthesize a retry index here.
+                                attempt_id = Some(request.effect().effect_id.clone());
+                                effect_id = attempt_id.clone();
+                                tokio::select! {
+                                    outcome = ports.capability.invoke_authorized(request) => outcome,
+                                    _ = ports.cancellation.cancelled() => {
+                                        CapabilityOutcome::OutcomeUnknown {
+                                            message: "capability effect outcome is unknown after cancellation".to_owned(),
+                                        }
                                     }
-                                };
+                                }
+                            } else {
+                                CapabilityOutcome::Failed {
+                                    message: format!(
+                                        "capability '{capability_ref}' is {} by the {} layer",
+                                        resolved.decision, resolved.layer
+                                    ),
+                                }
+                            };
                             state.last_operation_succeeded =
                                 matches!(&outcome, CapabilityOutcome::Completed { .. });
                             state.last_result = match &outcome {
@@ -1900,6 +2610,65 @@ async fn drive_from(
                                     Value::String(message.clone())
                                 }
                             };
+                            if matches!(&outcome, CapabilityOutcome::Completed { .. }) {
+                                state.committed_output_node_execution_id =
+                                    Some(node_execution_id.clone());
+                                state.committed_output_occurrence_id = Some(occurrence_id.clone());
+                                state.committed_output_region_occurrence_id =
+                                    region_occurrence_id.clone();
+                            }
+                            // The request constructor supplied the exact
+                            // effect identity when dispatch was authorized;
+                            // denied work intentionally has no attempt id.
+                            if attempt_id.is_some() {
+                                state.observe(
+                                    ports,
+                                    apxm_runtime_protocol::ObservationKind::CapabilityAttempt,
+                                    apxm_runtime_protocol::Commitment::Provisional,
+                                    Some(&node_execution_id),
+                                    Some(&occurrence_id),
+                                    attempt_id.as_deref(),
+                                    region_occurrence_id.as_deref(),
+                                    None,
+                                    None,
+                                    None,
+                                    Some(node_started_at),
+                                )?;
+                            }
+                            match &outcome {
+                                CapabilityOutcome::Completed { .. } => {}
+                                CapabilityOutcome::OutcomeUnknown { .. } => {
+                                    state.observe(
+                                        ports,
+                                        apxm_runtime_protocol::ObservationKind::OutcomeUnknown,
+                                        apxm_runtime_protocol::Commitment::Provisional,
+                                        Some(&node_execution_id),
+                                        Some(&occurrence_id),
+                                        attempt_id.as_deref(),
+                                        region_occurrence_id.as_deref(),
+                                        None,
+                                        None,
+                                        None,
+                                        Some(node_started_at),
+                                    )?;
+                                    if let Some(effect_id) = effect_id.as_deref() {
+                                        state.append_effect_outcome_unknown(
+                                            &node_execution_id,
+                                            effect_id,
+                                        );
+                                    }
+                                }
+                                CapabilityOutcome::Failed { message } => {
+                                    state.append_invocation_failure(
+                                        &node_execution_id,
+                                        unavailable_failure_envelope(
+                                            "capability",
+                                            &node_execution_id,
+                                            message,
+                                        ),
+                                    );
+                                }
+                            }
                             state.node_outcomes.push(NodeOutcome::Capability {
                                 node_id: op.node_id.clone(),
                                 outcome,
@@ -1923,6 +2692,22 @@ async fn drive_from(
                             .await;
                         state.last_operation_succeeded =
                             matches!(&outcome, CompositionOutcome::Created { .. });
+                        state.observe(
+                            ports,
+                            apxm_runtime_protocol::ObservationKind::ProgramAttempt,
+                            apxm_runtime_protocol::Commitment::Provisional,
+                            Some(&node_execution_id),
+                            Some(&occurrence_id),
+                            // Composition has no retry field in its neutral
+                            // outcome; the scheduler's node execution id is
+                            // the exact attempt coordinate it does provide.
+                            Some(&node_execution_id),
+                            region_occurrence_id.as_deref(),
+                            None,
+                            None,
+                            None,
+                            Some(node_started_at),
+                        )?;
                         state.last_result = Value::String(match &outcome {
                             CompositionOutcome::Created { child_instance_ref }
                             | CompositionOutcome::Invoked { child_instance_ref } => {
@@ -1930,6 +2715,16 @@ async fn drive_from(
                             }
                             CompositionOutcome::Failed { message } => message.clone(),
                         });
+                        if let CompositionOutcome::Failed { message } = &outcome {
+                            state.append_invocation_failure(
+                                &node_execution_id,
+                                unavailable_failure_envelope(
+                                    "program",
+                                    &node_execution_id,
+                                    message,
+                                ),
+                            );
+                        }
                         if state.last_operation_succeeded {
                             state.seq += 1;
                             let mut attached = fact(
@@ -1961,6 +2756,19 @@ async fn drive_from(
                             .await;
                         state.last_operation_succeeded =
                             matches!(&outcome, CompositionOutcome::Invoked { .. });
+                        state.observe(
+                            ports,
+                            apxm_runtime_protocol::ObservationKind::ProgramAttempt,
+                            apxm_runtime_protocol::Commitment::Provisional,
+                            Some(&node_execution_id),
+                            Some(&occurrence_id),
+                            Some(&node_execution_id),
+                            region_occurrence_id.as_deref(),
+                            None,
+                            None,
+                            None,
+                            Some(node_started_at),
+                        )?;
                         state.last_result = Value::String(match &outcome {
                             CompositionOutcome::Created { child_instance_ref }
                             | CompositionOutcome::Invoked { child_instance_ref } => {
@@ -1968,6 +2776,16 @@ async fn drive_from(
                             }
                             CompositionOutcome::Failed { message } => message.clone(),
                         });
+                        if let CompositionOutcome::Failed { message } = &outcome {
+                            state.append_invocation_failure(
+                                &node_execution_id,
+                                unavailable_failure_envelope(
+                                    "program",
+                                    &node_execution_id,
+                                    message,
+                                ),
+                            );
+                        }
                         if state.last_operation_succeeded {
                             state.seq += 1;
                             let mut attached = fact(
@@ -2005,13 +2823,27 @@ async fn drive_from(
                                     }
                                 })
                             })?;
-                        let outcome = ports
-                            .events
-                            .await_event(EventAwait {
+                        state.pending_event_ref = Some(event_ref.as_str().to_owned());
+                        state.observe(
+                            ports,
+                            apxm_runtime_protocol::ObservationKind::EventWaiting,
+                            apxm_runtime_protocol::Commitment::Provisional,
+                            Some(&node_execution_id),
+                            Some(&occurrence_id),
+                            None,
+                            region_occurrence_id.as_deref(),
+                            None,
+                            None,
+                            None,
+                            Some(node_started_at),
+                        )?;
+                        let outcome = tokio::select! {
+                            outcome = ports.events.await_event(EventAwait {
                                 node_id: op.node_id.clone(),
                                 event_ref: event_ref.clone(),
-                            })
-                            .await;
+                            }) => outcome,
+                            _ = ports.cancellation.cancelled() => EventOutcome::Cancelled,
+                        };
                         if let EventOutcome::Fulfilled {
                             event_ref: fulfilled_event_ref,
                             ..
@@ -2034,6 +2866,47 @@ async fn drive_from(
                         }
                         state.last_operation_succeeded =
                             matches!(&outcome, EventOutcome::Fulfilled { .. });
+                        match &outcome {
+                            EventOutcome::Fulfilled {
+                                event_ref: fulfilled_event_ref,
+                                ..
+                            } => {
+                                state.pending_event_ref =
+                                    Some(fulfilled_event_ref.as_str().to_owned());
+                                state.observe(
+                                    ports,
+                                    apxm_runtime_protocol::ObservationKind::EventResumed,
+                                    apxm_runtime_protocol::Commitment::Provisional,
+                                    Some(&node_execution_id),
+                                    Some(&occurrence_id),
+                                    None,
+                                    region_occurrence_id.as_deref(),
+                                    None,
+                                    None,
+                                    None,
+                                    Some(node_started_at),
+                                )?
+                            }
+                            EventOutcome::Cancelled => {
+                                state.observe(
+                                    ports,
+                                    apxm_runtime_protocol::ObservationKind::InvocationCancelled,
+                                    apxm_runtime_protocol::Commitment::Provisional,
+                                    Some(&node_execution_id),
+                                    Some(&occurrence_id),
+                                    None,
+                                    region_occurrence_id.as_deref(),
+                                    None,
+                                    None,
+                                    None,
+                                    Some(node_started_at),
+                                )?;
+                                state.append_invocation_cancelled(Some(&node_execution_id));
+                            }
+                            EventOutcome::Parked
+                            | EventOutcome::Expired
+                            | EventOutcome::Mismatched { .. } => {}
+                        }
                         if options.suspend_on_park && matches!(&outcome, EventOutcome::Parked) {
                             state.park_active_loops();
                             state.seq += 1;
@@ -2080,6 +2953,24 @@ async fn drive_from(
                         .values
                         .insert(result.value_id.clone(), state.last_result.clone());
                     state.last_result_value_id = Some(result.value_id.clone());
+                    state.observe(
+                        ports,
+                        apxm_runtime_protocol::ObservationKind::OperandPublished,
+                        apxm_runtime_protocol::Commitment::Provisional,
+                        Some(&node_execution_id),
+                        Some(&occurrence_id),
+                        None,
+                        region_occurrence_id.as_deref(),
+                        None,
+                        None,
+                        None,
+                        Some(node_started_at),
+                    )?;
+                    if state.last_operation_succeeded {
+                        state.committed_output_node_execution_id = Some(node_execution_id.clone());
+                        state.committed_output_occurrence_id = Some(occurrence_id.clone());
+                        state.committed_output_region_occurrence_id = region_occurrence_id.clone();
+                    }
                 }
                 state.record_node_outcome(
                     loop_path,
@@ -2104,7 +2995,39 @@ async fn drive_from(
                         })?;
                     state.values.insert(argument.value_id.clone(), value);
                 }
+                // Capture the dynamic loop occurrence before completion may
+                // retire a failed frame. A static loop id is never sufficient
+                // to identify a back-edge inside repeated/nested iterations.
+                let (region_occurrence_id, iteration_occurrence_id) = state
+                    .active_loops
+                    .iter()
+                    .find(|frame| frame.static_loop_id == *static_loop_id)
+                    .map(|frame| {
+                        (
+                            frame.dynamic_occurrence_id.clone(),
+                            format!(
+                                "{}.iteration.{}",
+                                frame.dynamic_occurrence_id, frame.iteration_index
+                            ),
+                        )
+                    })
+                    .map_or((None, None), |(region, iteration)| {
+                        (Some(region), Some(iteration))
+                    });
                 state.complete_loop_iteration(static_loop_id);
+                state.observe(
+                    ports,
+                    apxm_runtime_protocol::ObservationKind::JoinTransition,
+                    apxm_runtime_protocol::Commitment::Provisional,
+                    None,
+                    iteration_occurrence_id.as_deref(),
+                    None,
+                    region_occurrence_id.as_deref(),
+                    None,
+                    None,
+                    None,
+                    None,
+                )?;
                 let loop_entry = schedule[..schedule_position]
                     .iter()
                     .rposition(|step| {
@@ -2154,6 +3077,38 @@ async fn drive_from(
                 return Ok(DriveEnd::RanToEnd(state));
             }
             ScheduleStep::ProgramReturn { .. } => {
+                // A structural return owns the program's final value.  The
+                // value may be a pure AIR assembly (for example an authored
+                // `{ text: "ready" }` return) and therefore has no semantic
+                // node execution to publish it.  Resolve the exact `output`
+                // operand here, at the scheduler boundary, so the commit
+                // path can stage the value and mint its SessionOutputRef.
+                let return_region_id = match step {
+                    ScheduleStep::ProgramReturn { region_id } => region_id,
+                    _ => unreachable!("matched ProgramReturn above"),
+                };
+                let return_value_id = air
+                    .structural_ir
+                    .iter()
+                    .find(|region| region.region_id == *return_region_id)
+                    .and_then(|region| {
+                        region
+                            .operands
+                            .iter()
+                            .find(|operand| operand.slot == "output")
+                            .map(|operand| operand.value_id.clone())
+                    });
+                if let Some(value_id) = return_value_id {
+                    state.last_result = materialize_ssa_value(
+                        air,
+                        &state,
+                        return_region_id,
+                        &value_id,
+                        &mut BTreeSet::new(),
+                    )?;
+                    state.last_result_value_id = Some(value_id);
+                    state.last_operation_succeeded = true;
+                }
                 state.fail_active_loops();
                 enforce_runtime_limits(&state, resource_ceilings)?;
                 return Ok(DriveEnd::RanToEnd(state));
@@ -2358,24 +3313,249 @@ async fn commit_and_report(
     program_instance_ref: &ProgramInstanceRef,
     program_invocation_ref: &ProgramInvocationRef,
     commit_id: &str,
-    write_set: AtomicWriteSet,
+    mut write_set: AtomicWriteSet,
     mut state: DriveState,
 ) -> Result<RunReport, ExecutionError> {
     let expected = ports
         .execution_commit
         .current_version(program_instance_ref)
         .await;
-    state.seq += 1;
-    state.batch.push(fact(
-        &state.program_invocation_id,
-        state.seq,
-        FactKind::InvocationCommitted,
-        None,
-        Some(InvocationState::CommittedReturn),
-        None,
-        Some(expected + 1),
-    ));
+    if ports.cancellation.is_cancelled() && !state.has_terminal_non_success() {
+        state.observe(
+            ports,
+            apxm_runtime_protocol::ObservationKind::InvocationCancelled,
+            apxm_runtime_protocol::Commitment::Provisional,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )?;
+        state.append_invocation_cancelled(None);
+    }
+    let unknown_outcome = state.has_unknown_outcome();
+    let terminal_non_success = state.has_terminal_non_success() || unknown_outcome;
+    if !terminal_non_success {
+        state.seq += 1;
+        state.batch.push(fact(
+            &state.program_invocation_id,
+            state.seq,
+            FactKind::InvocationCommitted,
+            None,
+            Some(InvocationState::CommittedReturn),
+            None,
+            Some(expected + 1),
+        ));
+    }
 
+    let prepared_output = if terminal_non_success {
+        None
+    } else {
+        prepare_final_output(
+            ports,
+            &state,
+            program_instance_ref,
+            program_invocation_ref,
+            commit_id,
+        )
+        .await?
+    };
+    let mut tuple = commit_tuple(&state, None, None);
+    if let Some(prepared_output) = prepared_output {
+        tuple.output_refs.push(
+            serde_json::to_value(prepared_output)
+                .map_err(|error| ExecutionError::OutputPreparation(error.to_string()))?,
+        );
+    }
+    // Only the exact ref returned by the pre-commit staging port may cross the
+    // commit boundary. The driver never invents a readable ref after commit.
+    let output_ref = tuple
+        .output_refs
+        .iter()
+        .find_map(|value| {
+            (value.get("ref_type").and_then(Value::as_str) == Some("SessionOutputRef"))
+                .then(|| value.get("ref").and_then(Value::as_str))
+                .flatten()
+        })
+        .map(str::to_owned);
+    let output_node_execution_id = state.committed_output_node_execution_id.clone();
+    let output_occurrence_id = state.committed_output_occurrence_id.clone();
+    let output_region_occurrence_id = state.committed_output_region_occurrence_id.clone();
+    // Terminal coordinates are captured when the scheduler observes the
+    // terminal node/effect. They must not be reconstructed from an output
+    // path after the fact (and failures have no output path at all).
+    let terminal_node_execution_id = if terminal_non_success {
+        state.terminal_node_execution_id.clone()
+    } else {
+        output_node_execution_id
+            .clone()
+            .or_else(|| state.current_node_execution_id.clone())
+    };
+    let terminal_occurrence_id = if terminal_non_success {
+        state.terminal_occurrence_id.clone()
+    } else {
+        output_occurrence_id
+            .clone()
+            .or_else(|| state.current_occurrence_id.clone())
+    };
+    let terminal_region_occurrence_id = if terminal_non_success {
+        state.terminal_region_occurrence_id.clone()
+    } else {
+        output_region_occurrence_id
+            .clone()
+            .or_else(|| state.current_region_occurrence_id.clone())
+    };
+    if !terminal_non_success {
+        if let Some(output_ref) = output_ref.as_deref() {
+            let observation = state.stage_observation(
+                ports,
+                apxm_runtime_protocol::ObservationKind::ContentPublished,
+                apxm_runtime_protocol::Commitment::Provisional,
+                output_node_execution_id.as_deref(),
+                output_occurrence_id.as_deref(),
+                None,
+                output_region_occurrence_id.as_deref(),
+                Some(output_ref),
+                Some(output_ref),
+                None,
+                None,
+            )?;
+            state.deliver_precommit(ports, &observation)?;
+        }
+    }
+    let mut committed_observations = Vec::new();
+    let evidence_index =
+        state
+            .batch
+            .len()
+            .checked_sub(1)
+            .ok_or_else(|| ExecutionError::InvalidCommitRequest {
+                message: "completed execution has no evidence fact for terminal markers".into(),
+            })?;
+    let precommit_evidence_ref = PrecommitEvidenceRef::new(
+        commit_id,
+        program_invocation_ref.as_str(),
+        evidence_index as u64,
+    )
+    .map_err(|error| ExecutionError::InvalidCommitRequest {
+        message: error.to_owned(),
+    })?;
+    precommit_evidence_ref
+        .validate()
+        .map_err(|error| ExecutionError::InvalidCommitRequest {
+            message: error.to_owned(),
+        })?;
+    if !terminal_non_success {
+        if let Some(output_ref) = output_ref.as_deref() {
+            committed_observations.push(state.stage_observation(
+                ports,
+                apxm_runtime_protocol::ObservationKind::ContentCommitted,
+                apxm_runtime_protocol::Commitment::Committed,
+                output_node_execution_id.as_deref(),
+                output_occurrence_id.as_deref(),
+                None,
+                output_region_occurrence_id.as_deref(),
+                None,
+                Some(output_ref),
+                None,
+                None,
+            )?);
+        }
+    }
+    let has_failure = state
+        .batch
+        .iter()
+        .any(|fact| fact.is_kind(FactKind::InvocationFailed))
+        || state.node_outcomes.iter().any(|outcome| {
+            node_outcome_terminal_status(outcome) == Some(RunTerminalStatus::Failed)
+        });
+    if terminal_non_success && has_failure {
+        // Failure is a terminal committed observation, not merely a
+        // provisional log. Its evidence ref is minted before this observation
+        // enters the tuple digest, and its coordinates come from the node
+        // where the scheduler recorded the failure.
+        committed_observations.push(state.stage_observation(
+            ports,
+            apxm_runtime_protocol::ObservationKind::InvocationFailed,
+            apxm_runtime_protocol::Commitment::Committed,
+            terminal_node_execution_id.as_deref(),
+            terminal_occurrence_id.as_deref(),
+            None,
+            terminal_region_occurrence_id.as_deref(),
+            None,
+            None,
+            Some(precommit_evidence_ref.as_str()),
+            None,
+        )?);
+    }
+    if terminal_non_success && !has_failure {
+        let terminal_kind = if unknown_outcome {
+            apxm_runtime_protocol::ObservationKind::OutcomeUnknown
+        } else {
+            apxm_runtime_protocol::ObservationKind::InvocationCancelled
+        };
+        // Cancellation and unknown effect outcomes are also owner facts. If
+        // the scheduler has a terminal node coordinate, retain that exact
+        // coordinate and the same precommit evidence identity in the durable
+        // observation. An invocation cancelled before any node exists keeps
+        // its earlier invocation-level observation without inventing a node.
+        committed_observations.push(state.stage_observation(
+            ports,
+            terminal_kind,
+            apxm_runtime_protocol::Commitment::Committed,
+            terminal_node_execution_id.as_deref(),
+            terminal_occurrence_id.as_deref(),
+            None,
+            terminal_region_occurrence_id.as_deref(),
+            None,
+            None,
+            Some(precommit_evidence_ref.as_str()),
+            None,
+        )?);
+    }
+    if !terminal_non_success {
+        // Both terminal markers carry the kernel-minted canonical evidence
+        // reference for the final evidence record in this commit. It is
+        // validated before entering the atomic observation digest.
+        committed_observations.push(state.stage_observation(
+            ports,
+            apxm_runtime_protocol::ObservationKind::TerminalCommitted,
+            apxm_runtime_protocol::Commitment::Committed,
+            terminal_node_execution_id.as_deref(),
+            terminal_occurrence_id.as_deref(),
+            None,
+            terminal_region_occurrence_id.as_deref(),
+            None,
+            output_ref.as_deref(),
+            Some(precommit_evidence_ref.as_str()),
+            None,
+        )?);
+        committed_observations.push(state.stage_observation(
+            ports,
+            apxm_runtime_protocol::ObservationKind::EvidenceCommitted,
+            apxm_runtime_protocol::Commitment::Committed,
+            terminal_node_execution_id.as_deref(),
+            terminal_occurrence_id.as_deref(),
+            None,
+            terminal_region_occurrence_id.as_deref(),
+            None,
+            None,
+            Some(precommit_evidence_ref.as_str()),
+            None,
+        )?);
+    }
+    tuple.observations = state
+        .durable_observations
+        .iter()
+        .map(|observation| {
+            serde_json::to_value(observation)
+                .expect("typed execution observation serializes deterministically")
+        })
+        .collect();
+    bind_tuple_digests(&mut write_set, &tuple);
     let request = ExecutionCommitRequest {
         commit_id: commit_id.to_string(),
         program_instance_ref: program_instance_ref.clone(),
@@ -2383,7 +3563,7 @@ async fn commit_and_report(
         idempotency_key: format!("idem.{commit_id}"),
         expected_program_state_version: expected,
         write_set,
-        tuple: commit_tuple(&state, None, None),
+        tuple,
         evidence_batch: state.batch.clone(),
     };
     request
@@ -2392,6 +3572,20 @@ async fn commit_and_report(
             message: error.to_string(),
         })?;
     let commit = ports.execution_commit.commit(request).await;
+
+    match &commit {
+        ExecutionCommitResult::Committed { .. } => {
+            for observation in &committed_observations {
+                state.deliver_post_commit(ports, observation);
+            }
+        }
+        ExecutionCommitResult::OutcomeUnknown { .. } => {
+            // A commit result is not an execution observation. Any effect or
+            // invocation uncertainty must already have been staged in the
+            // atomic tuple; do not publish a live-only record here.
+        }
+        ExecutionCommitResult::CompareConflict { .. } => {}
+    }
 
     let operational_usage = publish_committed_native_model_usage(
         ports,
@@ -2402,12 +3596,45 @@ async fn commit_and_report(
     )
     .await;
 
+    let terminal_status = if unknown_outcome
+        || state.node_outcomes.iter().any(|outcome| {
+            node_outcome_terminal_status(outcome) == Some(RunTerminalStatus::OutcomeUnknown)
+        }) {
+        RunTerminalStatus::OutcomeUnknown
+    } else if state.batch.iter().any(|fact| {
+        fact.is_kind(FactKind::InvocationCancelled)
+            || matches!(
+                fact.runtime().and_then(|runtime| runtime.invocation_state),
+                Some(InvocationState::Cancelled)
+            )
+    }) || state
+        .node_outcomes
+        .iter()
+        .any(|outcome| node_outcome_terminal_status(outcome) == Some(RunTerminalStatus::Cancelled))
+    {
+        RunTerminalStatus::Cancelled
+    } else if state.batch.iter().any(|fact| {
+        fact.is_kind(FactKind::InvocationFailed)
+            || matches!(
+                fact.runtime().and_then(|runtime| runtime.invocation_state),
+                Some(InvocationState::Failed)
+            )
+    }) || state
+        .node_outcomes
+        .iter()
+        .any(|outcome| node_outcome_terminal_status(outcome) == Some(RunTerminalStatus::Failed))
+    {
+        RunTerminalStatus::Failed
+    } else {
+        RunTerminalStatus::CommittedReturn
+    };
     Ok(RunReport {
         node_outcomes: state.node_outcomes,
         native_usage: state.native_usage,
         external_agent_evidence: state.external_agent_evidence,
         final_context: state.context,
         commit,
+        terminal_status,
         operational_usage,
     })
 }
@@ -2472,13 +3699,48 @@ fn validate_commit_inputs(
     commit_id: &str,
     write_set: &AtomicWriteSet,
 ) -> Result<(), ExecutionError> {
+    for (field, value) in [
+        (
+            "next_program_state_digest",
+            &write_set.next_program_state_digest,
+        ),
+        ("continuation_digest", &write_set.continuation_digest),
+        (
+            "checkpoint_effect_outcomes_digest",
+            &write_set.checkpoint_effect_outcomes_digest,
+        ),
+        (
+            "runtime_evidence_batch_digest",
+            &write_set.runtime_evidence_batch_digest,
+        ),
+        ("usage_facts_digest", &write_set.usage_facts_digest),
+        (
+            "session_output_refs_digest",
+            &write_set.session_output_refs_digest,
+        ),
+    ] {
+        if !is_digest(value) {
+            return Err(ExecutionError::InvalidCommitRequest {
+                message: format!("commit field {field} is not a sha256 digest"),
+            });
+        }
+    }
+    // The request write-set supplied at admission contains placeholders for
+    // the scheduler-owned evidence/output digests.  Those two members are
+    // rebound from the actual tuple immediately before commit; validating
+    // them against an empty pre-drive tuple here would reject every otherwise
+    // valid execution before it can produce its authoritative observations.
+    let mut write_set_for_validation = write_set.clone();
+    write_set_for_validation.runtime_evidence_batch_digest =
+        runtime_evidence_and_observation_digest(&[], &[]);
+    write_set_for_validation.session_output_refs_digest = output_refs_digest(&[]);
     let request = ExecutionCommitRequest {
         commit_id: commit_id.to_string(),
         program_instance_ref: program_instance_ref.clone(),
         program_invocation_ref: program_invocation_ref.clone(),
         idempotency_key: format!("idem.{commit_id}"),
         expected_program_state_version: 0,
-        write_set: write_set.clone(),
+        write_set: write_set_for_validation,
         tuple: ExecutionCommitTuple::empty(Vec::new()),
         evidence_batch: Vec::new(),
     };
@@ -2822,7 +4084,82 @@ fn commit_tuple(
             "output_tokens": state.native_usage.output_tokens,
         }),
         output_refs: Vec::new(),
+        observations: state
+            .durable_observations
+            .iter()
+            .map(|observation| {
+                serde_json::to_value(observation)
+                    .expect("typed execution observation serializes deterministically")
+            })
+            .collect(),
     }
+}
+
+/// Stage the final redacted output before the atomic commit. The commit-local
+/// adapter owns the bytes and returns the only readable reference the driver
+/// may place in the tuple.
+async fn prepare_final_output(
+    ports: &ExecutionPorts,
+    state: &DriveState,
+    program_instance_ref: &ProgramInstanceRef,
+    program_invocation_ref: &ProgramInvocationRef,
+    commit_id: &str,
+) -> Result<Option<PreparedSessionOutputRef>, ExecutionError> {
+    // Most outputs are produced by a semantic node, but a structural return
+    // may return an assembled value directly and consequently has no dynamic
+    // node/occurrence coordinates.  The return value was resolved by the
+    // scheduler and is still authoritative; only omit output when the run had
+    // neither a producing node nor an explicit return value.
+    if state.committed_output_node_execution_id.is_none() && state.last_result_value_id.is_none() {
+        return Ok(None);
+    }
+    let node_execution_id = state.committed_output_node_execution_id.as_ref();
+    let content = serde_json::to_vec(&state.last_result).map_err(|error| {
+        ExecutionError::OutputPreparation(format!("encode final output: {error}"))
+    })?;
+    let prepared = ports
+        .execution_commit
+        .prepare_output(SessionOutputPreparation {
+            contract: SESSION_OUTPUT_REF_CONTRACT.to_owned(),
+            commit_id: commit_id.to_owned(),
+            program_instance_ref: program_instance_ref.as_str().to_owned(),
+            program_invocation_ref: program_invocation_ref.as_str().to_owned(),
+            content,
+            media_type: "application/json".to_owned(),
+            visibility: SessionOutputVisibility::Provisional,
+            node_execution_id: node_execution_id.cloned(),
+            occurrence_id: state.committed_output_occurrence_id.clone(),
+            access_scope_ref: program_invocation_ref.as_str().to_owned(),
+            disclosure_ref: None,
+        })
+        .await
+        .map_err(ExecutionError::OutputPreparation)?;
+    prepared
+        .validate()
+        .map_err(|error| ExecutionError::OutputPreparation(error.to_owned()))?;
+    if prepared.program_instance_id != program_instance_ref.as_str()
+        || prepared.program_invocation_id != program_invocation_ref.as_str()
+        || prepared.node_execution_id.as_deref() != node_execution_id.map(String::as_str)
+        || prepared.occurrence_id != state.committed_output_occurrence_id
+    {
+        return Err(ExecutionError::OutputPreparation(
+            "prepared output scope does not match its producing node".into(),
+        ));
+    }
+    Ok(Some(prepared))
+}
+
+fn output_refs_digest(output_refs: &[Value]) -> String {
+    format!(
+        "sha256:{:x}",
+        Sha256::digest(canonical_json_bytes(&Value::Array(output_refs.to_vec(),)))
+    )
+}
+
+fn bind_tuple_digests(write_set: &mut AtomicWriteSet, tuple: &ExecutionCommitTuple) {
+    write_set.session_output_refs_digest = output_refs_digest(&tuple.output_refs);
+    write_set.runtime_evidence_batch_digest =
+        runtime_evidence_and_observation_digest(&tuple.evidence, &tuple.observations);
 }
 
 fn node_outcome_value(outcome: &NodeOutcome) -> Value {
@@ -2846,7 +4183,8 @@ async fn commit_suspension(
         .execution_commit
         .current_version(&continuation.program_instance_ref)
         .await;
-    if continuation.event_ref.is_none() {
+    let terminal_non_success = state.has_terminal_non_success();
+    if continuation.event_ref.is_none() && !terminal_non_success {
         state.seq += 1;
         state.batch.push(fact(
             &state.program_invocation_id,
@@ -2859,7 +4197,12 @@ async fn commit_suspension(
         ));
     }
     let mut committed_continuation = continuation.clone();
-    committed_continuation.event_sequence = state.seq;
+    // Persist the observation high-water mark alongside the scheduler's
+    // sequence lower bound. The continuation schema has one monotonic event
+    // cursor; carrying the maximum prevents a resumed invocation from
+    // reusing an observation position when the live stream had more boundary
+    // records than evidence facts.
+    committed_continuation.event_sequence = state.seq.max(state.observation_seq);
     committed_continuation
         .evidence_batch
         .clone_from(&state.batch);
@@ -2870,8 +4213,6 @@ async fn commit_suspension(
     // other continuation field, allowing the digest to be rebound here before
     // the payload and digest cross the single commit boundary.
     committed_continuation.write_set.continuation_digest = continuation_digest(Some(&payload));
-    let payload = serde_json::to_value(&committed_continuation)
-        .expect("continuation contains only serializable canonical runtime values");
     let event_wait = continuation.event_ref.as_ref().map(|event_ref| {
         serde_json::json!({
             "continuation_id": continuation.continuation_id,
@@ -2880,6 +4221,14 @@ async fn commit_suspension(
     });
     let attempts = state.committed_model_attempts.clone();
     let lineages = state.committed_model_lineages.clone();
+    let mut tuple = commit_tuple(&state, Some(payload), event_wait);
+    bind_tuple_digests(&mut committed_continuation.write_set, &tuple);
+    let payload = serde_json::to_value(&committed_continuation)
+        .expect("continuation contains only serializable canonical runtime values");
+    committed_continuation.write_set.continuation_digest = continuation_digest(Some(&payload));
+    let payload = serde_json::to_value(&committed_continuation)
+        .expect("continuation contains only serializable canonical runtime values");
+    tuple.continuation = Some(payload);
     let request = ExecutionCommitRequest {
         commit_id: format!("{}.yield", continuation.commit_id),
         program_instance_ref: continuation.program_instance_ref.clone(),
@@ -2887,7 +4236,7 @@ async fn commit_suspension(
         idempotency_key: format!("idem.{}.yield", continuation.commit_id),
         expected_program_state_version: expected,
         write_set: committed_continuation.write_set.clone(),
-        tuple: commit_tuple(&state, Some(payload), event_wait),
+        tuple,
         evidence_batch: state.batch,
     };
     request
@@ -2947,6 +4296,20 @@ pub async fn execute_with_resource_ceilings(
         &request.air,
         request.program_invocation_ref.as_str(),
     );
+    let mut state = state;
+    state.observe(
+        ports,
+        apxm_runtime_protocol::ObservationKind::InvocationStarted,
+        apxm_runtime_protocol::Commitment::Provisional,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )?;
     let end = drive_from(
         DriveInputs {
             ports,
@@ -3020,6 +4383,20 @@ pub async fn execute_resumable_with_resource_ceilings(
         &request.air,
         request.program_invocation_ref.as_str(),
     );
+    let mut state = state;
+    state.observe(
+        ports,
+        apxm_runtime_protocol::ObservationKind::InvocationStarted,
+        apxm_runtime_protocol::Commitment::Provisional,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )?;
     let end = drive_from(
         DriveInputs {
             ports,
@@ -3238,11 +4615,27 @@ async fn resume_from_continuation(
         branch_decisions,
         last_operation_succeeded: true,
         batch: Vec::new(),
+        durable_observations: Vec::new(),
+        pending_event_ref: None,
+        // A resumed invocation may already have durable observations from an
+        // earlier commit. The committed event sequence is a safe lower bound;
+        // the next live position remains strictly increasing without changing
+        // fact/node identities.
+        observation_seq: event_sequence,
         seq: event_sequence,
         program_invocation_id: program_invocation_ref.as_str().to_string(),
         active_loops: loop_frames,
         last_model_node_execution_id: None,
         last_program_new_node_execution_id: None,
+        committed_output_node_execution_id: None,
+        committed_output_occurrence_id: None,
+        committed_output_region_occurrence_id: None,
+        current_node_execution_id: None,
+        current_occurrence_id: None,
+        current_region_occurrence_id: None,
+        terminal_node_execution_id: None,
+        terminal_occurrence_id: None,
+        terminal_region_occurrence_id: None,
     };
 
     let resume_value_id = resume_value_id.ok_or_else(|| {
@@ -3254,7 +4647,36 @@ async fn resume_from_continuation(
     state.last_result_value_id = Some(resume_value_id.clone());
     state.last_operation_succeeded = true;
 
+    let resumed_occurrence = format!("occurrence.{continuation_id}");
+    let resumed_region_occurrence = parked_loop_path.last().and_then(|loop_id| {
+        state
+            .active_loops
+            .iter()
+            .find(|frame| frame.static_loop_id == *loop_id)
+            .map(|frame| frame.dynamic_occurrence_id.clone())
+    });
+
     if event_ref.is_some() {
+        // A continuation without an event ref is a structural yield (for
+        // example a loop-yield), not an event delivery. Do not mislabel its
+        // resume as EventResumed; that observation requires a real event
+        // identity.
+        state.pending_event_ref = event_ref
+            .as_ref()
+            .map(|reference| reference.as_str().to_owned());
+        state.observe(
+            ports,
+            apxm_runtime_protocol::ObservationKind::EventResumed,
+            apxm_runtime_protocol::Commitment::Provisional,
+            parked_node_execution_id.as_deref(),
+            Some(&resumed_occurrence),
+            None,
+            resumed_region_occurrence.as_deref(),
+            None,
+            None,
+            None,
+            None,
+        )?;
         let event_ref =
             event_ref
                 .clone()
@@ -3454,6 +4876,8 @@ mod loop_evidence_tests {
                 source_language: apxm_program::source_map::SourceLanguage::Python,
                 node_spans: Vec::new(),
                 region_annotations: Vec::new(),
+                region_spans: Vec::new(),
+                edge_spans: Vec::new(),
             },
         }
     }

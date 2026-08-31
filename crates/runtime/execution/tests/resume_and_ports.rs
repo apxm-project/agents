@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
+use sha2::Digest;
 
 use apxm_execution::{
     CapabilityInvocationAdmission, CapabilityOutcome, CapabilityPort, CapabilityRequest,
@@ -23,7 +24,8 @@ use apxm_kernel::{
     AcpPromptOutcome, AcpPromptRequest, AtomicWriteSet, EventApplicationResult, ExactPortBinding,
     ExecutionCommitPort, ExecutionCommitRequest, ExecutionCommitResult,
     ExternalAgentCapabilityPort, PortBundle, PortBundleSpec, PortImplementation, PortSlot,
-    ProgramInstanceRef, ProgramInvocationRef, PromptEffectState,
+    PreparedSessionOutputRef, ProgramInstanceRef, ProgramInvocationRef, PromptEffectState,
+    SESSION_OUTPUT_REF_CONTRACT, SessionOutputPreparation, SessionOutputVisibility,
 };
 use apxm_program::air::AirModule;
 use apxm_program::artifact::SchemaDigestRef;
@@ -207,6 +209,28 @@ struct Commit {
 
 #[async_trait]
 impl ExecutionCommitPort for Commit {
+    async fn prepare_output(
+        &self,
+        preparation: SessionOutputPreparation,
+    ) -> Result<PreparedSessionOutputRef, String> {
+        let content_digest = format!("sha256:{:x}", sha2::Sha256::digest(&preparation.content));
+        Ok(PreparedSessionOutputRef {
+            contract: SESSION_OUTPUT_REF_CONTRACT.to_owned(),
+            ref_type: "SessionOutputRef".to_owned(),
+            output_ref: format!("output.prepared.{content_digest}"),
+            program_instance_id: preparation.program_instance_ref,
+            program_invocation_id: preparation.program_invocation_ref,
+            node_execution_id: preparation.node_execution_id,
+            occurrence_id: preparation.occurrence_id,
+            content_digest,
+            byte_length: preparation.content.len() as u64,
+            media_type: preparation.media_type,
+            visibility: SessionOutputVisibility::Committed,
+            access_scope_ref: preparation.access_scope_ref,
+            disclosure_ref: preparation.disclosure_ref,
+        })
+    }
+
     async fn commit(&self, request: ExecutionCommitRequest) -> ExecutionCommitResult {
         if self.fail {
             return ExecutionCommitResult::OutcomeUnknown {

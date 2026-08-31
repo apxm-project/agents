@@ -22,10 +22,10 @@
 // * The typecheck runs first and rejects before any evaluation, so a source that
 //   does not typecheck never executes.
 // * The process runs under Node's permission model with read access to the
-//   declared frontend package alone and write access to nothing. That wall is
-//   enforced below the module system, so it also holds against the filesystem
-//   reachable through the running process itself, which names no module and
-//   therefore passes both the typecheck and the resolve table above.
+//   declared frontend package alone and write access to nothing. The harness
+//   also removes process and network globals before evaluating submitted code;
+//   a submission therefore cannot use ambient fetch or process bindings as an
+//   alternate path around the closed module table.
 //
 // The submitted text shares this process's standard output. It cannot forge a
 // result by writing to it: the port decodes the entire standard output as
@@ -33,7 +33,7 @@
 // unparseable and the port rejects with a diagnostic instead of returning a
 // graph.
 
-import { register } from "node:module";
+import { registerHooks } from "node:module";
 import path from "node:path";
 
 /** Closed reason tokens. The Rust port maps each to one typed diagnostic code. */
@@ -49,20 +49,76 @@ const ENTRY_URL = "apxm-submitted:///submitted_source.js";
 const FRONTEND_SPECIFIER = "@apxm/frontend";
 const FRONTEND_NODE_SPECIFIER = "@apxm/frontend/node";
 
+// Keep the harness's own I/O handles before process is hidden from submitted
+// code. The submitted module never needs process, and exposing it would make
+// Node's internal bindings an ambient filesystem/network escape hatch.
+const runtimeProcess = process;
+const readStdin = runtimeProcess.stdin;
+const writeStdout = runtimeProcess.stdout.write.bind(runtimeProcess.stdout);
+const writeStderr = runtimeProcess.stderr.write.bind(runtimeProcess.stderr);
+const exitProcess = runtimeProcess.exit.bind(runtimeProcess);
+// The submitted module can replace the mutable global JSON.stringify. Keep
+// output serialization on the harness-owned intrinsic so a forged serializer
+// cannot replace the graph after the trusted handle has returned it.
+const serializeOutput = JSON.stringify.bind(JSON);
+// Capture code and graph emission execute in this child, after the submitted
+// module has been typechecked. Freeze the standard intrinsic objects before
+// evaluation so source cannot poison Array#map, Object#values, or another
+// collection primitive that the trusted frontend uses while it is emitting the
+// graph. The source still has its normal language surface; only process-wide
+// mutable prototype state is closed. Bind the global names as well, otherwise
+// source could replace a constructor property on globalThis and use the forged
+// constructor for later calls.
+const freezeIntrinsic = Object.freeze.bind(Object);
+const intrinsicGlobals = [
+  ["Object", Object],
+  ["Function", Function],
+  ["Array", Array],
+  ["Map", Map],
+  ["Set", Set],
+  ["WeakMap", WeakMap],
+  ["WeakSet", WeakSet],
+  ["Promise", Promise],
+  ["String", String],
+  ["Number", Number],
+  ["Boolean", Boolean],
+  ["RegExp", RegExp],
+  ["Date", Date],
+  ["Error", Error],
+  ["TypeError", TypeError],
+  ["Uint8Array", Uint8Array],
+  ["Uint16Array", Uint16Array],
+  ["Uint32Array", Uint32Array],
+  ["Int8Array", Int8Array],
+  ["Int16Array", Int16Array],
+  ["Int32Array", Int32Array],
+  ["Float32Array", Float32Array],
+  ["Float64Array", Float64Array],
+];
+for (const [name, intrinsic] of intrinsicGlobals) {
+  freezeIntrinsic(intrinsic.prototype);
+  freezeIntrinsic(intrinsic);
+  Object.defineProperty(globalThis, name, {
+    value: intrinsic,
+    writable: false,
+    configurable: false,
+  });
+}
+
 function reject(reason, detail) {
-  process.stderr.write(`${reason}\n${detail}\n`);
-  process.exit(1);
+  writeStderr(`${reason}\n${detail}\n`);
+  exitProcess(1);
 }
 
 function readRequest() {
   return new Promise((resolve, fail) => {
     let buffer = "";
-    process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (chunk) => {
+    readStdin.setEncoding("utf8");
+    readStdin.on("data", (chunk) => {
       buffer += chunk;
     });
-    process.stdin.on("end", () => resolve(buffer));
-    process.stdin.on("error", fail);
+    readStdin.on("end", () => resolve(buffer));
+    readStdin.on("error", fail);
   });
 }
 
@@ -108,6 +164,10 @@ const frontendModule = new URL(
 ).href;
 const frontendNodeModule = new URL(
   path.join(frontendPackage, "dist", "node.js"),
+  "file:///",
+).href;
+const frontendHostModule = new URL(
+  path.join(frontendPackage, "dist", "host.js"),
   "file:///",
 ).href;
 
@@ -184,46 +244,41 @@ try {
 
 // The submitted module resolves through this closed table only. Any other
 // specifier — a Node builtin, an installed package, a relative path — is not
-// reachable, so the evaluated text has no ambient module surface. The
-// `register` API is available on the repository's Node toolchain; newer
-// `registerHooks` is not, so the hooks are carried by a data URL loader.
-const loader = `
-const ENTRY_URL = ${JSON.stringify(ENTRY_URL)};
-const FRONTEND_SPECIFIER = ${JSON.stringify(FRONTEND_SPECIFIER)};
-const FRONTEND_NODE_SPECIFIER = ${JSON.stringify(FRONTEND_NODE_SPECIFIER)};
-const frontendModule = ${JSON.stringify(frontendModule)};
-const frontendNodeModule = ${JSON.stringify(frontendNodeModule)};
-const transpiled = ${JSON.stringify(transpiled)};
-
-export function resolve(specifier, context, next) {
-  if (context.parentURL === ENTRY_URL) {
-    if (specifier === FRONTEND_SPECIFIER) {
-      return { url: frontendModule, shortCircuit: true };
+// reachable, so the evaluated text has no ambient module surface. Synchronous
+// `registerHooks` is intentional: the asynchronous `register`
+// API starts a loader worker, which would require granting submitted code
+// worker authority under Node's permission model.
+registerHooks({
+  resolve(specifier, context, next) {
+    if (context.parentURL === ENTRY_URL) {
+      if (specifier === FRONTEND_SPECIFIER) {
+        return { url: frontendModule, shortCircuit: true };
+      }
+      if (specifier === FRONTEND_NODE_SPECIFIER) {
+        return { url: frontendNodeModule, shortCircuit: true };
+      }
+      throw new Error(
+        "the submitted source may not import '" +
+          specifier +
+          "'; only the authoring frontend and its Node host bridge are reachable",
+      );
     }
-    if (specifier === FRONTEND_NODE_SPECIFIER) {
-      return { url: frontendNodeModule, shortCircuit: true };
-    }
-    throw new Error(
-      \`the submitted source may not import '\${specifier}'; only the authoring frontend and its Node host bridge are reachable\`,
-    );
-  }
-  return next(specifier, context);
-}
+    return next(specifier, context);
+  },
 
-export function load(url, context, next) {
-  if (url === ENTRY_URL) {
-    return { format: "module", source: transpiled, shortCircuit: true };
-  }
-  return next(url, context);
-}
-`;
-register(`data:text/javascript,${encodeURIComponent(loader)}`, import.meta.url);
+  load(url, context, next) {
+    if (url === ENTRY_URL) {
+      return { format: "module", source: transpiled, shortCircuit: true };
+    }
+    return next(url, context);
+  },
+});
 
 // The frontend reads the authored callback back from the module's own source
 // text. The harness supplies that text from the submission it already holds, so
 // the evaluated module never reads a file to recover its own source.
 try {
-  const bridge = await import(frontendNodeModule);
+  const bridge = await import(frontendHostModule);
   bridge.submitAuthoredSource({ fileName: path.basename(ENTRY_FILE), text: source });
 } catch (error) {
   reject(
@@ -234,6 +289,15 @@ try {
 
 let captured;
 try {
+  // These globals are not part of the authoring API. Remove them immediately
+  // before evaluation, after the trusted frontend bridge has loaded.
+  for (const name of ["process", "fetch", "WebSocket", "EventSource", "XMLHttpRequest"]) {
+    Object.defineProperty(globalThis, name, {
+      value: undefined,
+      writable: false,
+      configurable: false,
+    });
+  }
   const module = await import(ENTRY_URL);
   const definition = module[entrypoint];
   if (definition === undefined) {
@@ -253,4 +317,4 @@ try {
   reject(REASON_SOURCE, `${error.name}: ${error.message}`);
 }
 
-process.stdout.write(JSON.stringify({ frontend_graph: captured }));
+writeStdout(serializeOutput({ frontend_graph: captured }));

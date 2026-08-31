@@ -3,7 +3,7 @@
 //!
 //! - **`types`** -- Execution graph primitives (`Node`, `Edge`, `ExecutionDag`),
 //!   value representations (`Value`, `Token`, `Number`), compiler options,
-//!   session/message models, and provider specifications.
+//!   execution models, and provider specifications.
 //! - **`error`** -- Structured error types (`RuntimeError`, `CompilerError`,
 //!   `CompileError`, `CliError`, `SecurityError`) with error codes, source
 //!   locations, and diagnostic suggestions.

@@ -265,6 +265,201 @@ fn default_agent_root(id: &str) -> PathBuf {
     PathBuf::from("agents").join(id)
 }
 
+/// Validate identifiers before they are used as APXM_HOME path components.
+/// Protocol identifiers may contain separators, but package roots must remain
+/// one direct child of their install directory on every supported platform.
+pub(crate) fn validate_storage_identifier(id: &str, kind: &str) -> Result<()> {
+    let mut chars = id.chars();
+    let Some(first) = chars.next() else {
+        bail!("{kind} id must not be empty");
+    };
+    if id.len() > 256
+        || !first.is_ascii_alphanumeric()
+        || !chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '@'))
+    {
+        bail!(
+            "{kind} id '{id}' must be a filesystem-safe identifier (letters, numbers, '.', '_', '-', or '@')"
+        );
+    }
+    Ok(())
+}
+
+/// Return a destination that is a direct child of the canonical install root.
+/// Existing symlinked destinations are rejected before force-overwrite can
+/// remove them or a recursive copy can follow them.
+pub(crate) fn storage_destination(root: &Path, id: &str, kind: &str) -> Result<PathBuf> {
+    validate_storage_identifier(id, kind)?;
+    let metadata = fs::symlink_metadata(root)
+        .with_context(|| format!("Failed to inspect install root {}", root.display()))?;
+    if metadata.file_type().is_symlink() {
+        bail!(
+            "refusing to install {kind} under symlinked root {}",
+            root.display()
+        );
+    }
+    if !metadata.is_dir() {
+        bail!("install root {} is not a directory", root.display());
+    }
+    let canonical_root = fs::canonicalize(root)
+        .with_context(|| format!("Failed to resolve install root {}", root.display()))?;
+    let destination = canonical_root.join(id);
+    if destination.parent() != Some(canonical_root.as_path()) {
+        bail!(
+            "{kind} install destination escapes {}",
+            canonical_root.display()
+        );
+    }
+    match fs::symlink_metadata(&destination) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            bail!(
+                "refusing to install {kind} over symlink {}",
+                destination.display()
+            );
+        }
+        Ok(_) => {
+            let resolved = fs::canonicalize(&destination).with_context(|| {
+                format!(
+                    "Failed to resolve existing destination {}",
+                    destination.display()
+                )
+            })?;
+            if resolved.parent() != Some(canonical_root.as_path()) {
+                bail!(
+                    "{kind} install destination escapes {}",
+                    canonical_root.display()
+                );
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!("Failed to inspect destination {}", destination.display())
+            });
+        }
+    }
+    Ok(destination)
+}
+
+/// Copy a package into a private staging directory and publish it with a
+/// directory rename. This avoids exposing a partially copied destination;
+/// forced replacement briefly moves the previous package aside first.
+pub(crate) fn stage_and_install<F>(
+    source: &Path,
+    root: &Path,
+    id: &str,
+    kind: &str,
+    force: bool,
+    validate_staged: F,
+) -> Result<PathBuf>
+where
+    F: FnOnce(&Path) -> Result<()>,
+{
+    let destination = storage_destination(root, id, kind)?;
+    // Continue from the canonical parent returned by the containment check;
+    // using the caller's alias here would reopen an ancestor-symlink race.
+    let install_root = destination
+        .parent()
+        .expect("storage destination always has an install root")
+        .to_path_buf();
+    if path_exists(&destination)? && !force {
+        bail!(
+            "'{}' already exists; pass --force to overwrite",
+            destination.display()
+        );
+    }
+
+    let staging = tempfile::Builder::new()
+        .prefix(".install-")
+        .tempdir_in(&install_root)
+        .with_context(|| {
+            format!(
+                "Failed to create staging directory under {}",
+                install_root.display()
+            )
+        })?;
+    copy_dir_recursive(source, staging.path())?;
+    // Admission must inspect the bytes that will actually be published. The
+    // source tree may be edited while it is being copied, so validating only
+    // before copy leaves a check-then-use gap (and can expose a partial or
+    // otherwise different package at the destination).
+    validate_staged(staging.path())?;
+
+    // Revalidate immediately before publication. The old destination is
+    // moved out of the way with rename rather than recursively deleting its
+    // pathname. That makes replacement atomic and, if a concurrent actor
+    // swaps in a symlink, moves the symlink itself instead of following it.
+    let destination = storage_destination(root, id, kind)?;
+    let mut backup = None;
+    if path_exists(&destination)? {
+        if !force {
+            bail!(
+                "'{}' already exists; pass --force to overwrite",
+                destination.display()
+            );
+        }
+        let backup_dir = tempfile::Builder::new()
+            .prefix(".backup-")
+            .tempdir_in(&install_root)
+            .with_context(|| {
+                format!(
+                    "Failed to create backup directory under {}",
+                    install_root.display()
+                )
+            })?;
+        let backup_path = backup_dir.keep();
+        fs::remove_dir(&backup_path)
+            .with_context(|| format!("Failed to reserve backup path {}", backup_path.display()))?;
+        fs::rename(&destination, &backup_path).with_context(|| {
+            format!(
+                "Failed to move existing {} out of the way",
+                destination.display()
+            )
+        })?;
+        backup = Some(backup_path);
+    }
+    let staging_path = staging.keep();
+    if let Err(error) = fs::rename(&staging_path, &destination) {
+        if let Some(backup_path) = backup.as_ref() {
+            let _ = fs::rename(backup_path, &destination);
+        }
+        let _ = fs::remove_dir_all(&staging_path);
+        return Err(error).with_context(|| {
+            format!(
+                "Failed to publish staged {kind} package to {}",
+                destination.display()
+            )
+        });
+    }
+    if let Some(backup_path) = backup {
+        remove_path(&backup_path).with_context(|| {
+            format!(
+                "Failed to remove replaced package {}",
+                backup_path.display()
+            )
+        })?;
+    }
+    Ok(destination)
+}
+
+fn path_exists(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error).with_context(|| format!("Failed to inspect {}", path.display())),
+    }
+}
+
+fn remove_path(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("Failed to inspect {}", path.display()))?;
+    if metadata.is_dir() && !metadata.file_type().is_symlink() {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
+    }
+    .with_context(|| format!("Failed to remove {}", path.display()))
+}
+
 fn titleize(id: &str) -> String {
     id.split(['-', '_'])
         .filter(|s| !s.is_empty())
@@ -286,9 +481,7 @@ pub(crate) fn agent_new(
     template: &str,
     json_output: bool,
 ) -> Result<()> {
-    if id.trim().is_empty() {
-        bail!("agent id must not be empty");
-    }
+    validate_storage_identifier(id, "agent")?;
     let root = path.unwrap_or_else(|| default_agent_root(id));
     if root.exists() && fs::read_dir(&root)?.next().is_some() {
         bail!(
@@ -752,7 +945,12 @@ struct LoadedAgent {
 }
 
 fn load_agent(root: &Path) -> Result<LoadedAgent> {
-    if !root.is_dir() {
+    let metadata = fs::symlink_metadata(root)
+        .with_context(|| format!("Failed to inspect '{}'", root.display()))?;
+    if metadata.file_type().is_symlink() {
+        bail!("'{}' must not be a symlink", root.display());
+    }
+    if !metadata.is_dir() {
         bail!("'{}' is not a directory", root.display());
     }
     let agent_path = root.join("agent.toml");
@@ -801,17 +999,26 @@ fn recognized_relpath_patterns() -> &'static [Regex] {
 
 /// Is `rel` a package-relative path the published folder contract recognizes?
 /// Anything else fails validation ("no agent-private layout").
+#[cfg(test)]
 fn recognized_relpath(rel: &str) -> bool {
     recognized_relpath_patterns()
         .iter()
         .any(|pattern| pattern.is_match(rel))
 }
 
-/// Walk the agent root and return every recognized file as a
-/// (relative-path, absolute-path) pair, sorted by relative path.
-fn walk_recognized_files(root: &Path) -> Result<Vec<(String, PathBuf)>> {
-    let mut out = Vec::new();
-    for entry in walkdir::WalkDir::new(root) {
+/// Digest the regular files recognized by a package contract. Installers use
+/// this as a small in-memory snapshot: the staged copy must contain the same
+/// paths and bytes that were admitted before the copy began.
+pub(super) fn digest_files_under(
+    root: &Path,
+    patterns: &[Regex],
+    excluded: Option<&str>,
+) -> Result<BTreeMap<String, String>> {
+    let mut files = BTreeMap::new();
+    for entry in walkdir::WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|entry| !is_local_build_sidecar(entry.file_name().to_string_lossy().as_ref()))
+    {
         let entry = entry.with_context(|| format!("Failed to walk {}", root.display()))?;
         if !entry.file_type().is_file() {
             continue;
@@ -821,12 +1028,14 @@ fn walk_recognized_files(root: &Path) -> Result<Vec<(String, PathBuf)>> {
             .strip_prefix(root)
             .expect("walkdir yields paths under root");
         let rel_str = rel.to_string_lossy().replace('\\', "/");
-        if rel_str != "integrity.toml" && recognized_relpath(&rel_str) {
-            out.push((rel_str, entry.path().to_path_buf()));
+        if excluded == Some(rel_str.as_str()) || !patterns.iter().any(|p| p.is_match(&rel_str)) {
+            continue;
         }
+        let bytes = fs::read(entry.path())
+            .with_context(|| format!("Failed to read {}", entry.path().display()))?;
+        files.insert(rel_str, sha256_hex(&bytes));
     }
-    out.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(out)
+    Ok(files)
 }
 
 /// Walk `root` and return every file whose relative path matches none of
@@ -840,15 +1049,7 @@ pub(super) fn unrecognized_files_under(root: &Path, patterns: &[Regex]) -> Resul
         // Every name here is gitignored, so none can ever be in the integrity
         // chain; scanning them would fail verification on the ordinary result
         // of running a package's own build.
-        !matches!(
-            name.as_ref(),
-            ".git"
-                | "__pycache__"
-                | ".pytest_cache"
-                | "node_modules"
-                | "dist"
-                | "package-lock.json"
-        )
+        !is_local_build_sidecar(name.as_ref())
     }) {
         let entry = entry.with_context(|| format!("Failed to walk {}", root.display()))?;
         if !entry.file_type().is_file() {
@@ -865,6 +1066,17 @@ pub(super) fn unrecognized_files_under(root: &Path, patterns: &[Regex]) -> Resul
     }
     out.sort();
     Ok(out)
+}
+
+/// Files that are useful while developing a package but are not package
+/// content. Keep this predicate shared by validation and installation so a
+/// successful install cannot unexpectedly copy a checkout or dependency tree
+/// into APXM_HOME.
+fn is_local_build_sidecar(name: &str) -> bool {
+    matches!(
+        name,
+        ".git" | "__pycache__" | ".pytest_cache" | "node_modules" | "dist" | "package-lock.json"
+    )
 }
 
 /// Find any file under the agent root that is *not* recognized by the
@@ -895,8 +1107,8 @@ fn check_permission_resolution(pkg: &LoadedAgent, org_globals: &BTreeSet<String>
 fn check_schema_shape(pkg: &LoadedAgent) -> Vec<String> {
     let mut errors = Vec::new();
 
-    if pkg.agent.id.trim().is_empty() {
-        errors.push("agent.toml: id must not be empty".to_string());
+    if let Err(error) = validate_storage_identifier(&pkg.agent.id, "agent.toml") {
+        errors.push(error.to_string());
     }
     if !semver_like(&pkg.agent.version) {
         errors.push(format!(
@@ -1000,7 +1212,6 @@ fn semver_like(version: &str) -> bool {
 /// Parsing only a minimal `[compile]` projection would let a retired manifest
 /// key survive that path even though `agent lint` rejects it; this function is
 /// the shared admission-facing shape check.
-#[allow(dead_code)]
 pub(crate) fn validate_agent_package(root: &Path) -> Result<()> {
     let pkg = load_agent(root)?;
     let mut errors = check_schema_shape(&pkg);
@@ -1123,12 +1334,7 @@ fn compute_integrity(files: &BTreeMap<String, String>) -> IntegrityToml {
 /// (used both to build and to independently verify a hash chain). `agent.toml`
 /// is hashed as raw authored bytes; generated `integrity.toml` is excluded.
 fn digest_recognized_files(root: &Path) -> Result<BTreeMap<String, String>> {
-    let mut files = BTreeMap::new();
-    for (rel, abs) in walk_recognized_files(root)? {
-        let bytes = fs::read(&abs).with_context(|| format!("Failed to read {}", abs.display()))?;
-        files.insert(rel, sha256_hex(&bytes));
-    }
-    Ok(files)
+    digest_files_under(root, recognized_relpath_patterns(), Some("integrity.toml"))
 }
 
 fn write_integrity_toml(path: &Path, integrity: &IntegrityToml) -> Result<()> {
@@ -1152,6 +1358,16 @@ pub(crate) fn verify_agent_integrity(root: &Path) -> Result<()> {
     }
 
     let recorded: IntegrityToml = read_toml(&integrity_path)?;
+    verify_agent_integrity_against(root, &recorded)
+}
+
+/// Verify a package against an integrity record captured by the caller.
+///
+/// Install uses this after copying into private staging. Keeping the record
+/// from the pre-copy admission pass means a concurrent source edit cannot
+/// replace both the package bytes and `integrity.toml` with a self-consistent
+/// but different package before publication.
+fn verify_agent_integrity_against(root: &Path, recorded: &IntegrityToml) -> Result<()> {
     if recorded.algorithm != "sha256" {
         bail!(
             "agent package '{}' uses unsupported integrity algorithm '{}'; expected 'sha256'",
@@ -1171,7 +1387,7 @@ pub(crate) fn verify_agent_integrity(root: &Path) -> Result<()> {
     }
 
     let expected = compute_integrity(&digest_recognized_files(root)?);
-    if recorded != expected {
+    if *recorded != expected {
         bail!(
             "agent package '{}' failed integrity verification; package contents changed after the last build, so run 'apxm build {}' again",
             root.display(),
@@ -1358,14 +1574,35 @@ pub(crate) fn agents_dir(apxm_home: &Path) -> PathBuf {
 /// against the same install layout `agent install` created,
 /// rather than a second hand-rolled resolution path.
 pub(crate) fn resolve_installed_agent(apxm_home: &Path, id: &str) -> Result<AgentToml> {
-    let pack_path = agents_dir(apxm_home).join(id).join("agent.toml");
-    if !pack_path.is_file() {
+    let root = agents_dir(apxm_home);
+    if !root.is_dir() {
         bail!(
             "agent agent '{id}' is not installed under {} (run 'apxm agent install' first)",
-            agents_dir(apxm_home).display()
+            root.display()
         );
     }
-    read_toml(&pack_path)
+    let pack_path = storage_destination(&root, id, "agent")?;
+    if !pack_path.is_dir() {
+        bail!(
+            "agent agent '{id}' is not installed under {} (run 'apxm agent install' first)",
+            root.display()
+        );
+    }
+    // An installed member is an admission input, not merely a manifest lookup.
+    // Reuse the same shape and integrity checks used by `agent install` so org
+    // lint cannot resolve a package whose files were changed after install or
+    // whose directory carries a retired/unrecognized path.
+    validate_agent_package(&pack_path)?;
+    verify_agent_integrity(&pack_path)?;
+    let package = load_agent(&pack_path)?.agent;
+    if package.id != id {
+        bail!(
+            "installed agent directory '{}' contains package id '{}'; reinstall it under its declared id",
+            id,
+            package.id
+        );
+    }
+    Ok(package)
 }
 
 /// Recursively copy a directory tree. Shared by `agent install` and
@@ -1376,8 +1613,18 @@ pub(crate) fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     for entry in fs::read_dir(src).with_context(|| format!("Failed to read {}", src.display()))? {
         let entry = entry?;
         let file_type = entry.file_type()?;
+        let name = entry.file_name();
+        if is_local_build_sidecar(&name.to_string_lossy()) {
+            continue;
+        }
+        if file_type.is_symlink() {
+            bail!(
+                "refusing to copy symlinked package entry {}",
+                entry.path().display()
+            );
+        }
         let src_path = entry.path();
-        let dst_path = dst.join(entry.file_name());
+        let dst_path = dst.join(name);
         if file_type.is_dir() {
             copy_dir_recursive(&src_path, &dst_path)?;
         } else if file_type.is_file() {
@@ -1407,25 +1654,28 @@ pub(crate) fn agent_install_to(
     force: bool,
     json_output: bool,
 ) -> Result<()> {
+    let pkg = load_agent(path)?;
+    validate_storage_identifier(&pkg.agent.id, "agent")?;
     if !path.join("integrity.toml").is_file() {
         agent_build(path, false)?;
     }
-    let pkg = load_agent(path)?;
-    let dest = agents_dir(apxm_home).join(&pkg.agent.id);
-
-    if dest.exists() {
-        if !force {
-            bail!(
-                "'{}' already exists; pass --force to overwrite",
-                dest.display()
-            );
-        }
-        fs::remove_dir_all(&dest)
-            .with_context(|| format!("Failed to remove existing {}", dest.display()))?;
-    }
-    fs::create_dir_all(dest.parent().expect("dest has a parent"))
-        .with_context(|| format!("Failed to create {}", agents_dir(apxm_home).display()))?;
-    copy_dir_recursive(path, &dest)?;
+    // Install is a trust boundary: an authored package may carry a stale or
+    // forged integrity file, and build only regenerates the file when it is
+    // absent. Validate the complete published shape and the existing chain
+    // before copying anything under APXM_HOME.
+    validate_agent_package(path)?;
+    // Hold on to the record that was admitted from the source tree. The
+    // staged copy must match this record, rather than merely validating its
+    // own copied `integrity.toml`, which could otherwise be raced alongside
+    // the package contents.
+    let admitted_integrity: IntegrityToml = read_toml(&path.join("integrity.toml"))?;
+    verify_agent_integrity(path)?;
+    let root = agents_dir(apxm_home);
+    fs::create_dir_all(&root).with_context(|| format!("Failed to create {}", root.display()))?;
+    let dest = stage_and_install(path, &root, &pkg.agent.id, "agent", force, |staging| {
+        validate_agent_package(staging)?;
+        verify_agent_integrity_against(staging, &admitted_integrity)
+    })?;
 
     if json_output {
         println!(
@@ -2087,7 +2337,7 @@ mod tests {
     ///
     /// It was closed while nothing could author such a skill: `agent lint`
     /// would have accepted a directory the machine could do nothing with, and
-    /// `walk_recognized_files` would have hashed it into every package's
+    /// the recognized-file digest pass would have hashed it into every package's
     /// integrity chain on behalf of a producer that did not exist. The
     /// ordering is the one the built-in capability allowlist follows — the
     /// thing that consumes the path lands first, then the path is recognized.
@@ -2257,6 +2507,148 @@ mod tests {
         let second = agent_install_to(&root, fake_home.path(), false, true);
         let err = second.expect_err("second install without --force must fail");
         assert!(err.to_string().contains("already exists"));
+    }
+
+    #[test]
+    fn install_rejects_a_tampered_existing_integrity_chain() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("tampered");
+        scaffold(&root, "tampered");
+        agent_build(&root, true).expect("build ok");
+        let mut manifest: AgentToml = read_toml(&root.join("agent.toml")).unwrap();
+        manifest.version = "9.9.9".to_string();
+        fs::write(
+            root.join("agent.toml"),
+            toml::to_string_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+        let fake_home = tempdir().unwrap();
+
+        let error = agent_install_to(&root, fake_home.path(), false, true)
+            .expect_err("install must verify an existing integrity chain");
+        assert!(error.to_string().contains("failed integrity verification"));
+        assert!(!fake_home.path().join("agents/tampered").exists());
+    }
+
+    #[test]
+    fn staged_copy_must_match_the_admitted_integrity_record() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("staged-drift");
+        scaffold(&root, "staged-drift");
+        agent_build(&root, true).expect("build ok");
+        let admitted: IntegrityToml = read_toml(&root.join("integrity.toml")).unwrap();
+        let fake_home = tempdir().unwrap();
+        fs::create_dir_all(fake_home.path().join("agents")).unwrap();
+        let error = stage_and_install(
+            &root,
+            &fake_home.path().join("agents"),
+            "staged-drift",
+            "agent",
+            false,
+            |staging| {
+                // Model a source edit racing the copy: the staged package is
+                // still structurally valid, but no longer the bytes admitted
+                // by the pre-copy integrity pass.
+                let manifest = staging.join("agent.toml");
+                let mut bytes = fs::read(&manifest).unwrap();
+                bytes.extend_from_slice(b"\n# changed during copy\n");
+                fs::write(manifest, bytes).unwrap();
+                validate_agent_package(staging)?;
+                verify_agent_integrity_against(staging, &admitted)
+            },
+        )
+        .expect_err("a staged package that drifted after admission must not publish");
+        assert!(error.to_string().contains("failed integrity verification"));
+        assert!(!fake_home.path().join("agents/staged-drift").exists());
+    }
+
+    #[test]
+    fn install_rejects_unsafe_ids_before_force_delete() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("safe");
+        scaffold(&root, "safe");
+        let fake_home = tempdir().unwrap();
+        let outside = fake_home.path().join("escape-target");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("marker"), "keep").unwrap();
+
+        for id in [
+            "../escape-target",
+            "/tmp/escape",
+            "safe/child",
+            "C:\\escape",
+            "a:b",
+        ] {
+            let mut manifest: AgentToml = read_toml(&root.join("agent.toml")).unwrap();
+            manifest.id = id.to_string();
+            fs::write(
+                root.join("agent.toml"),
+                toml::to_string_pretty(&manifest).unwrap(),
+            )
+            .unwrap();
+
+            for force in [false, true] {
+                let error = agent_install_to(&root, fake_home.path(), force, true)
+                    .expect_err("unsafe package id must be rejected");
+                assert!(error.to_string().contains("filesystem-safe"), "{error}");
+            }
+        }
+
+        assert!(outside.join("marker").is_file());
+        assert!(resolve_installed_agent(fake_home.path(), "../escape-target").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn install_rejects_a_symlinked_agents_root() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("safe");
+        scaffold(&root, "safe");
+        let fake_home = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        symlink(outside.path(), fake_home.path().join("agents")).unwrap();
+
+        let error = agent_install_to(&root, fake_home.path(), true, true)
+            .expect_err("symlinked install root must be rejected");
+        assert!(error.to_string().contains("symlinked root"));
+        assert!(!outside.path().join("safe").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn package_source_root_must_not_be_a_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempdir().unwrap();
+        let real = tmp.path().join("real");
+        scaffold(&real, "real");
+        let alias = tmp.path().join("alias");
+        symlink(&real, &alias).unwrap();
+
+        let error = agent_lint(&alias, None, true).expect_err("symlink source roots are ambiguous");
+        assert!(error.to_string().contains("must not be a symlink"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn install_rejects_symlinked_package_entries() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("symlink-entry");
+        scaffold(&root, "symlink-entry");
+        let outside = tmp.path().join("outside.md");
+        fs::write(&outside, "must never be copied").unwrap();
+        fs::create_dir_all(root.join("prompts")).unwrap();
+        symlink(&outside, root.join("prompts/external.md")).unwrap();
+
+        let fake_home = tempdir().unwrap();
+        let error = agent_install_to(&root, fake_home.path(), false, true)
+            .expect_err("package symlinks must not cross the install boundary");
+        assert!(error.to_string().contains("symlinked package entry"));
+        assert!(!fake_home.path().join("agents/symlink-entry").exists());
     }
 
     #[test]

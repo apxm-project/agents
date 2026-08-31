@@ -17,3 +17,6 @@ apxm-runtime-service.workspace = true
 apxm-kernel.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+apxm-program.workspace = true

@@ -12,9 +12,10 @@ use crate::ports::model::{LocalModelInferencePort, LocalModelRequestMetadata};
 use apxm_ais::permissions::{LayerDecisions, PermissionDecision, PermissionResolution};
 use apxm_capability_iface::sandbox::SandboxRegistry;
 use apxm_execution::{
-    CapabilityGrantSet, CapabilityInvocationAdmission, CapturedHookBodyHandler, CompositionOutcome,
-    CompositionPort, CompositionReceiver, CompositionRequest, EventAwait, EventOutcome, EventPort,
-    ExecutionRequest, NodeOutcome, RuntimeProfile,
+    CancellationToken, CapabilityGrantSet, CapabilityInvocationAdmission, CapturedHookBodyHandler,
+    CompositionOutcome, CompositionPort, CompositionReceiver, CompositionRequest, EventAwait,
+    EventOutcome, EventPort, ExecutionRequest, NodeOutcome, ObservationFailurePolicy,
+    ObservationSink, RunOutcome, RuntimeProfile,
 };
 use apxm_inference::{
     InferenceTargetCommitment, ModelBindingAdmission, ModelCallRequestMetadataPort, ModelOutcome,
@@ -31,7 +32,8 @@ use apxm_kernel::{
     digest_serializable, verify_invocation_admission,
 };
 use apxm_program::CapabilityInvocationAuthority;
-use apxm_program::air::{AirModule, SemanticOpKind};
+use apxm_program::air::{AirModule, SemanticOpKind, StructuralOpKind};
+use apxm_program::artifact::ExecutableArtifact;
 use apxm_program::external_agent::{AttributedEvent, AttributedEventKind, PeerUsage};
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -56,9 +58,18 @@ pub struct ArtifactStore {
 }
 
 impl ArtifactStore {
-    /// Commit exact artifact bytes under their content digest.
+    /// Commit exact canonical executable-artifact bytes under their envelope
+    /// digest. Raw AIR is deliberately not representable at this boundary.
     pub fn commit(&mut self, bytes: Vec<u8>) -> String {
-        let digest = artifact_digest(&bytes);
+        let Ok(artifact) = ExecutableArtifact::decode(&bytes) else {
+            return String::new();
+        };
+        let Ok(digest) = artifact.canonical_digest() else {
+            return String::new();
+        };
+        if ExecutableArtifact::decode_for_execution(&bytes, &digest).is_err() {
+            return String::new();
+        }
         self.committed.insert(digest.clone(), bytes);
         digest
     }
@@ -68,7 +79,9 @@ impl ArtifactStore {
     pub fn commit_named(&mut self, digest: String, bytes: Vec<u8>) {
         // Never let a caller create a second identity for bytes. Persisted
         // loads and protocol inputs use the same closed digest grammar.
-        if apxm_core::grammar::is_digest(&digest) && artifact_digest(&bytes) == digest {
+        if apxm_core::grammar::is_digest(&digest)
+            && ExecutableArtifact::decode_for_execution(&bytes, &digest).is_ok()
+        {
             self.committed.insert(digest, bytes);
         }
     }
@@ -83,6 +96,14 @@ impl ArtifactStore {
 #[must_use]
 pub fn artifact_digest(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
+}
+
+/// Compute the digest of a canonical executable-artifact envelope.
+pub fn canonical_artifact_digest(bytes: &[u8]) -> Result<String, String> {
+    let artifact = ExecutableArtifact::decode(bytes).map_err(|error| error.to_string())?;
+    artifact
+        .canonical_digest()
+        .map_err(|error| error.to_string())
 }
 
 /// Exact reference runtime descriptor. The transport digest must hash these
@@ -162,6 +183,113 @@ pub fn canonical_resource_ceiling_digest() -> String {
         .expect("canonical ceilings are serializable")
 }
 
+/// Immutable Runtime-owned admission profile loaded by the service image.
+///
+/// The profile deliberately contains only the small release and provenance
+/// carriers used by the admission verifier. It never contains an executable
+/// artifact, caller identity, or product authorization decision. Callers
+/// refer to it by `profile_ref`; the Runtime remains the only authority that
+/// can read these bytes and construct an invocation admission.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuntimeAdmissionProfile {
+    profile_ref: String,
+    release_bytes: Vec<u8>,
+    provenance_bytes: Vec<u8>,
+}
+
+impl RuntimeAdmissionProfile {
+    const MAX_CARRIER_BYTES: u64 = 1024 * 1024;
+    const DEFAULT_RELEASE_PATH: &'static str = "/tmp/apxm-service-release-manifest.json";
+    const DEFAULT_PROVENANCE_PATH: &'static str = "/tmp/apxm-source-revision.json";
+
+    /// Build an image-owned profile from exact carrier bytes. The opaque
+    /// profile reference is digest-bound to the carriers and canonical
+    /// Runtime descriptor, so a caller cannot substitute a self-consistent
+    /// profile from another Runtime composition.
+    pub fn from_carriers(
+        release_bytes: Vec<u8>,
+        provenance_bytes: Vec<u8>,
+    ) -> Result<Self, String> {
+        validate_carrier(&release_bytes)?;
+        validate_carrier(&provenance_bytes)?;
+        let profile_ref = digest_serializable(&(
+            artifact_digest(&release_bytes),
+            artifact_digest(&provenance_bytes),
+            canonical_port_bindings_digest(),
+            canonical_resource_ceiling_digest(),
+        ))
+        .map(|digest| format!("apxm.admission-profile.{digest}"))
+        .map_err(|error| error.to_string())?;
+        Ok(Self {
+            profile_ref,
+            release_bytes,
+            provenance_bytes,
+        })
+    }
+
+    /// Load the exact carriers packaged in the standalone Runtime image.
+    /// Explicit absolute paths may override the image defaults. If neither
+    /// carrier exists, no profile is configured and invocation admission stays
+    /// fail-closed.
+    pub fn from_env() -> Result<Option<Self>, String> {
+        let release_path = std::env::var("APXM_RUNTIME_RELEASE_MANIFEST_PATH")
+            .unwrap_or_else(|_| Self::DEFAULT_RELEASE_PATH.to_owned());
+        let provenance_path = std::env::var("APXM_RUNTIME_PROVENANCE_PATH")
+            .unwrap_or_else(|_| Self::DEFAULT_PROVENANCE_PATH.to_owned());
+        let release_exists = std::path::Path::new(&release_path).exists();
+        let provenance_exists = std::path::Path::new(&provenance_path).exists();
+        if !release_exists && !provenance_exists {
+            return Ok(None);
+        }
+        if release_path.trim().is_empty() || provenance_path.trim().is_empty() {
+            return Err("admission profile carrier paths must not be empty".to_owned());
+        }
+        let release_bytes = read_carrier(&release_path)?;
+        let provenance_bytes = read_carrier(&provenance_path)?;
+        Self::from_carriers(release_bytes, provenance_bytes).map(Some)
+    }
+
+    #[must_use]
+    pub fn profile_ref(&self) -> &str {
+        &self.profile_ref
+    }
+
+    /// Construct materials with a Runtime-owned template identity. The
+    /// service replaces this template with its final minted invocation id
+    /// during `prepare_invocation`.
+    pub fn materials_for_artifact(&self, artifact_bytes: &[u8]) -> InvocationMaterials {
+        materials_for_artifact(
+            artifact_bytes,
+            format!("template.{}", self.profile_ref),
+            self.release_bytes.clone(),
+            self.provenance_bytes.clone(),
+        )
+    }
+}
+
+fn validate_carrier(bytes: &[u8]) -> Result<(), String> {
+    if bytes.is_empty() || bytes.len() as u64 > RuntimeAdmissionProfile::MAX_CARRIER_BYTES {
+        return Err("admission profile carrier exceeds bounded size".to_owned());
+    }
+    serde_json::from_slice::<serde_json::Value>(bytes)
+        .map_err(|error| format!("invalid admission profile carrier: {error}"))?;
+    Ok(())
+}
+
+fn read_carrier(path: &str) -> Result<Vec<u8>, String> {
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|error| format!("read profile carrier: {error}"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err("admission profile carrier must be a regular file".to_owned());
+    }
+    if metadata.len() == 0 || metadata.len() > RuntimeAdmissionProfile::MAX_CARRIER_BYTES {
+        return Err("admission profile carrier exceeds bounded size".to_owned());
+    }
+    let bytes = std::fs::read(path).map_err(|error| format!("read profile carrier: {error}"))?;
+    validate_carrier(&bytes)?;
+    Ok(bytes)
+}
+
 fn digest_text(value: &str) -> String {
     format!("sha256:{:x}", Sha256::digest(value.as_bytes()))
 }
@@ -231,6 +359,18 @@ impl EventPort for DevEvents {
     }
 }
 
+/// Event port used by the service's resumable entrypoint. A durable event is
+/// resumed only by the owner-facing EventFulfill path after the application is
+/// committed; never auto-fulfill an external wait from inside the driver.
+struct ParkedEvents;
+
+#[async_trait]
+impl EventPort for ParkedEvents {
+    async fn await_event(&self, _request: EventAwait) -> EventOutcome {
+        EventOutcome::Parked
+    }
+}
+
 struct DevComposition;
 
 #[async_trait]
@@ -289,11 +429,42 @@ impl ExecutionCommitPort for DevCommit {
 }
 
 /// Materials required to admit one invocation of a committed artifact.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct InvocationMaterials {
     pub admission: InvocationAdmission,
     pub release_bytes: Vec<u8>,
     pub provenance_bytes: Vec<u8>,
+}
+
+/// Verify the complete host-supplied invocation handoff before any Runtime
+/// state is changed. Artifact bytes, release/provenance carriers, canonical
+/// descriptors, and semantic requirements all participate in this check.
+pub fn verify_invocation_materials(
+    artifact_bytes: &[u8],
+    materials: &InvocationMaterials,
+) -> Result<VerifiedInvocationAdmission, String> {
+    let artifact_digest = canonical_artifact_digest(artifact_bytes)?;
+    let artifact = ExecutableArtifact::decode_for_execution(artifact_bytes, &artifact_digest)
+        .map_err(|error| error.to_string())?;
+    let descriptor = canonical_runtime_descriptor();
+    if materials.admission.port_bindings_digest != canonical_port_bindings_digest()
+        || materials.admission.resource_ceiling_digest != canonical_resource_ceiling_digest()
+    {
+        return Err("admission_profile_mismatch".to_owned());
+    }
+    verify_invocation_admission(
+        &materials.admission,
+        InvocationAdmissionClaim {
+            artifact_bytes,
+            release_bytes: &materials.release_bytes,
+            provenance_bytes: &materials.provenance_bytes,
+            artifact_semantic_requirements: &apxm_program::air_semantic_requirements(&artifact.air),
+            admitted_port_bindings: &descriptor.port_bindings,
+            resource_ceilings: &descriptor.resource_ceilings,
+            confinement: &descriptor.confinement,
+        },
+    )
+    .map_err(|error| error.to_string())
 }
 
 /// Package-handler implementations supplied to one Runtime Service instance.
@@ -350,6 +521,294 @@ pub async fn execute_admitted_artifact_with_sandbox(
     package_root: Option<&Path>,
     sandbox_registry: Option<Arc<SandboxRegistry>>,
 ) -> Result<Value, String> {
+    execute_admitted_artifact_with_runtime_ports(
+        air,
+        artifact_bytes,
+        materials,
+        handlers,
+        package_root,
+        sandbox_registry,
+        Arc::new(DevCommit::default()),
+        None,
+    )
+    .await
+}
+
+/// Execute one admitted artifact against caller-owned commit/read ports.
+/// Observations remain a bounded, non-authoritative sink; committed execution
+/// truth is read back from the injected Execution Commit port.
+pub async fn execute_admitted_artifact_with_runtime_ports(
+    air: AirModule,
+    artifact_bytes: &[u8],
+    materials: &InvocationMaterials,
+    handlers: Option<&AdmittedPackageHandlers>,
+    package_root: Option<&Path>,
+    sandbox_registry: Option<Arc<SandboxRegistry>>,
+    commit: Arc<dyn ExecutionCommitPort>,
+    observation_sink: Option<Arc<dyn ObservationSink>>,
+) -> Result<Value, String> {
+    execute_admitted_artifact_with_runtime_ports_and_cancellation(
+        air,
+        artifact_bytes,
+        materials,
+        handlers,
+        package_root,
+        sandbox_registry,
+        commit,
+        observation_sink,
+        None,
+    )
+    .await
+}
+
+/// Execute one admitted artifact with a caller-owned cooperative cancellation
+/// signal. The signal is attached before the profile starts so service cancel
+/// and wall-clock expiry both reach the driver's atomic terminal commit path.
+pub async fn execute_admitted_artifact_with_runtime_ports_and_cancellation(
+    air: AirModule,
+    artifact_bytes: &[u8],
+    materials: &InvocationMaterials,
+    handlers: Option<&AdmittedPackageHandlers>,
+    package_root: Option<&Path>,
+    sandbox_registry: Option<Arc<SandboxRegistry>>,
+    commit: Arc<dyn ExecutionCommitPort>,
+    observation_sink: Option<Arc<dyn ObservationSink>>,
+    cancellation: Option<CancellationToken>,
+) -> Result<Value, String> {
+    execute_admitted_artifact_with_runtime_ports_mode(
+        air,
+        artifact_bytes,
+        materials,
+        handlers,
+        package_root,
+        sandbox_registry,
+        commit,
+        observation_sink,
+        cancellation,
+        ProgramInstanceRef::new("canonical.instance"),
+        false,
+        Value::Null,
+    )
+    .await
+}
+
+/// Runtime-service start path carrying the caller's exact entrypoint input.
+/// The input is bound to the AIR parameter by the composition root; it is not
+/// inferred from artifact metadata or injected into the driver as context.
+pub(crate) async fn execute_admitted_artifact_with_runtime_ports_and_cancellation_with_input(
+    air: AirModule,
+    artifact_bytes: &[u8],
+    materials: &InvocationMaterials,
+    handlers: Option<&AdmittedPackageHandlers>,
+    package_root: Option<&Path>,
+    sandbox_registry: Option<Arc<SandboxRegistry>>,
+    commit: Arc<dyn ExecutionCommitPort>,
+    observation_sink: Option<Arc<dyn ObservationSink>>,
+    cancellation: Option<CancellationToken>,
+    input: Value,
+) -> Result<Value, String> {
+    execute_admitted_artifact_with_runtime_ports_mode(
+        air,
+        artifact_bytes,
+        materials,
+        handlers,
+        package_root,
+        sandbox_registry,
+        commit,
+        observation_sink,
+        cancellation,
+        ProgramInstanceRef::new("canonical.instance"),
+        false,
+        input,
+    )
+    .await
+}
+
+/// Execute one admitted artifact with durable park/resume semantics. The
+/// returned JSON is a transport-neutral projection of either a suspended
+/// continuation or a committed terminal report; the continuation itself is
+/// owned by the execution commit port.
+pub async fn execute_admitted_artifact_resumable_with_runtime_ports_and_cancellation(
+    air: AirModule,
+    artifact_bytes: &[u8],
+    materials: &InvocationMaterials,
+    handlers: Option<&AdmittedPackageHandlers>,
+    package_root: Option<&Path>,
+    sandbox_registry: Option<Arc<SandboxRegistry>>,
+    commit: Arc<dyn ExecutionCommitPort>,
+    observation_sink: Option<Arc<dyn ObservationSink>>,
+    cancellation: Option<CancellationToken>,
+) -> Result<Value, String> {
+    execute_admitted_artifact_resumable_for_instance(
+        air,
+        artifact_bytes,
+        materials,
+        handlers,
+        package_root,
+        sandbox_registry,
+        commit,
+        observation_sink,
+        cancellation,
+        ProgramInstanceRef::new("canonical.instance"),
+    )
+    .await
+}
+
+/// Resumable service entrypoint bound to the concrete Program Instance key.
+pub async fn execute_admitted_artifact_resumable_for_instance(
+    air: AirModule,
+    artifact_bytes: &[u8],
+    materials: &InvocationMaterials,
+    handlers: Option<&AdmittedPackageHandlers>,
+    package_root: Option<&Path>,
+    sandbox_registry: Option<Arc<SandboxRegistry>>,
+    commit: Arc<dyn ExecutionCommitPort>,
+    observation_sink: Option<Arc<dyn ObservationSink>>,
+    cancellation: Option<CancellationToken>,
+    program_instance_ref: ProgramInstanceRef,
+) -> Result<Value, String> {
+    execute_admitted_artifact_with_runtime_ports_mode(
+        air,
+        artifact_bytes,
+        materials,
+        handlers,
+        package_root,
+        sandbox_registry,
+        commit,
+        observation_sink,
+        cancellation,
+        program_instance_ref,
+        true,
+        Value::Null,
+    )
+    .await
+}
+
+/// Resumable Runtime-service start path carrying the exact entrypoint input.
+pub(crate) async fn execute_admitted_artifact_resumable_for_instance_with_input(
+    air: AirModule,
+    artifact_bytes: &[u8],
+    materials: &InvocationMaterials,
+    handlers: Option<&AdmittedPackageHandlers>,
+    package_root: Option<&Path>,
+    sandbox_registry: Option<Arc<SandboxRegistry>>,
+    commit: Arc<dyn ExecutionCommitPort>,
+    observation_sink: Option<Arc<dyn ObservationSink>>,
+    cancellation: Option<CancellationToken>,
+    program_instance_ref: ProgramInstanceRef,
+    input: Value,
+) -> Result<Value, String> {
+    execute_admitted_artifact_with_runtime_ports_mode(
+        air,
+        artifact_bytes,
+        materials,
+        handlers,
+        package_root,
+        sandbox_registry,
+        commit,
+        observation_sink,
+        cancellation,
+        program_instance_ref,
+        true,
+        input,
+    )
+    .await
+}
+
+/// Resume one event continuation through the same admitted RuntimeProfile and
+/// driver path used by resumable starts. The caller must have already
+/// durably applied the matching EventApplication; this function only drives
+/// the continuation and returns its committed/suspended projection.
+pub async fn resume_admitted_artifact_with_runtime_ports(
+    air: AirModule,
+    artifact_bytes: &[u8],
+    materials: &InvocationMaterials,
+    handlers: Option<&AdmittedPackageHandlers>,
+    package_root: Option<&Path>,
+    sandbox_registry: Option<Arc<SandboxRegistry>>,
+    commit: Arc<dyn ExecutionCommitPort>,
+    observation_sink: Option<Arc<dyn ObservationSink>>,
+    program_instance_ref: ProgramInstanceRef,
+    event_ref: apxm_kernel::EventRef,
+    delivered: Value,
+) -> Result<Value, String> {
+    let admission = &materials.admission;
+    let descriptor = canonical_runtime_descriptor();
+    if admission.port_bindings_digest != canonical_port_bindings_digest()
+        || admission.resource_ceiling_digest != canonical_resource_ceiling_digest()
+    {
+        return Err("admission_profile_mismatch".to_owned());
+    }
+    let verified = verify_invocation_admission(
+        admission,
+        InvocationAdmissionClaim {
+            artifact_bytes,
+            release_bytes: &materials.release_bytes,
+            provenance_bytes: &materials.provenance_bytes,
+            artifact_semantic_requirements: &apxm_program::air_semantic_requirements(&air),
+            admitted_port_bindings: &descriptor.port_bindings,
+            resource_ceilings: &descriptor.resource_ceilings,
+            confinement: &descriptor.confinement,
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    let capability = Arc::new(
+        LocalCapabilityPort::with_package_root_and_sandbox(
+            handlers,
+            package_root,
+            sandbox_registry,
+        )
+        .map_err(|error| error.to_string())?,
+    );
+    let model = Arc::new(
+        LocalModelInferencePort::from_backend_roster().map_err(|error| error.to_string())?,
+    );
+    let profile = runtime_profile_from_invocation(
+        commit,
+        observation_sink,
+        capability,
+        model.clone(),
+        Arc::new(LocalModelRequestMetadata),
+        verified,
+        "runtime.service.resume",
+        true,
+    )
+    .await?;
+    let outcome = profile
+        .resume_event(&program_instance_ref, event_ref, delivered)
+        .await
+        .map_err(|error| error.to_string())?;
+    match outcome {
+        RunOutcome::Completed(report) => Ok(run_report_json(&report, &model)),
+        RunOutcome::Suspended {
+            continuation_id,
+            event_ref,
+            operational_usage: _,
+        } => Ok(json!({
+            "schema_version": "apxm.local-execute-result",
+            "runtime": "apxm_execution",
+            "status": "suspended",
+            "continuation_id": continuation_id,
+            "event_ref": event_ref,
+            "commit": {"status": "suspended"},
+        })),
+    }
+}
+
+async fn execute_admitted_artifact_with_runtime_ports_mode(
+    air: AirModule,
+    artifact_bytes: &[u8],
+    materials: &InvocationMaterials,
+    handlers: Option<&AdmittedPackageHandlers>,
+    package_root: Option<&Path>,
+    sandbox_registry: Option<Arc<SandboxRegistry>>,
+    commit: Arc<dyn ExecutionCommitPort>,
+    observation_sink: Option<Arc<dyn ObservationSink>>,
+    cancellation: Option<CancellationToken>,
+    program_instance_ref: ProgramInstanceRef,
+    resumable: bool,
+    input: Value,
+) -> Result<Value, String> {
     let admission = &materials.admission;
     let descriptor = canonical_runtime_descriptor();
     if admission.port_bindings_digest != canonical_port_bindings_digest()
@@ -395,38 +854,74 @@ pub async fn execute_admitted_artifact_with_sandbox(
         .map(|binding| binding.binding_digest.clone())
         .ok_or_else(|| "reference runtime model binding is absent".to_owned())?;
     let hook_bindings = apxm_program::air_hook_bindings(&air);
+    let mut initial_values = initial_model_request_values(&air);
+    if let Some(input_value_id) = entrypoint_input_value_id(&air) {
+        initial_values.insert(input_value_id, input);
+    }
     let request = ExecutionRequest {
         model_admission: model_admission(&air, &model_binding_digest),
-        initial_values: initial_model_request_values(&air),
+        initial_values,
         air,
         hook_bindings,
         capability_invocations,
-        program_instance_ref: ProgramInstanceRef::new("canonical.instance"),
+        program_instance_ref,
         program_invocation_ref: ProgramInvocationRef::new(admission.invocation_id.clone()),
         commit_id: format!("canonical.commit.{}", admission.invocation_id),
         write_set: reference_write_set(&admission.invocation_id),
     };
-    let commit = Arc::new(DevCommit::default());
     let model = Arc::new(
         LocalModelInferencePort::from_backend_roster().map_err(|error| error.to_string())?,
     );
     let profile = runtime_profile_from_invocation(
         commit,
+        observation_sink,
         capability,
         model.clone(),
         Arc::new(LocalModelRequestMetadata),
         verified,
         "runtime.service.execution",
+        resumable,
     )
     .await?;
-    let report = profile
-        .execute(request, Value::Null)
-        .await
-        .map_err(|error| error.to_string())?;
-    Ok(json!({
+    let profile = match cancellation {
+        Some(token) => profile.with_cancellation_token(token),
+        None => profile,
+    };
+    let outcome = if resumable {
+        match profile.execute_resumable(request, Value::Null).await {
+            Ok(apxm_execution::RunOutcome::Completed(report)) => {
+                return Ok(run_report_json(&report, &model));
+            }
+            Ok(apxm_execution::RunOutcome::Suspended {
+                continuation_id,
+                event_ref,
+                operational_usage: _,
+            }) => {
+                return Ok(json!({
+                    "schema_version": "apxm.local-execute-result",
+                    "runtime": "apxm_execution",
+                    "status": "suspended",
+                    "continuation_id": continuation_id,
+                    "event_ref": event_ref,
+                    "commit": {"status": "suspended"},
+                }));
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    } else {
+        profile
+            .execute(request, Value::Null)
+            .await
+            .map_err(|error| error.to_string())?
+    };
+    Ok(run_report_json(&outcome, &model))
+}
+
+fn run_report_json(report: &apxm_execution::RunReport, model: &LocalModelInferencePort) -> Value {
+    json!({
         "schema_version": "apxm.local-execute-result",
         "runtime": "apxm_execution",
-        "status": "completed",
+        "status": runtime_status(&report),
         "content": report.final_context,
         "results": {
             "node_outcomes": report.node_outcomes.iter().map(node_outcome_json).collect::<Vec<_>>(),
@@ -448,7 +943,7 @@ pub async fn execute_admitted_artifact_with_sandbox(
                 .count(),
         },
         "commit": commit_result_json(&report.commit),
-    }))
+    })
 }
 
 /// Build admission materials that match the reference profile for these bytes.
@@ -461,7 +956,7 @@ pub fn materials_for_artifact(
     let admission = InvocationAdmission {
         schema_version: INVOCATION_ADMISSION_SCHEMA.to_owned(),
         invocation_id: invocation_id.into(),
-        artifact_digest: artifact_digest(artifact_bytes),
+        artifact_digest: canonical_artifact_digest(artifact_bytes).unwrap_or_default(),
         release_digest: artifact_digest(&release_bytes),
         port_bindings_digest: canonical_port_bindings_digest(),
         resource_ceiling_digest: canonical_resource_ceiling_digest(),
@@ -475,12 +970,14 @@ pub fn materials_for_artifact(
 }
 
 async fn runtime_profile_from_invocation(
-    commit: Arc<DevCommit>,
+    commit: Arc<dyn ExecutionCommitPort>,
+    observation_sink: Option<Arc<dyn ObservationSink>>,
     capability: Arc<LocalCapabilityPort>,
     model: Arc<LocalModelInferencePort>,
     model_call_request_metadata: Arc<dyn ModelCallRequestMetadataPort>,
     verified: VerifiedInvocationAdmission,
     execution_id: &str,
+    resumable: bool,
 ) -> Result<RuntimeProfile, String> {
     let entries = verified
         .port_bindings
@@ -494,7 +991,13 @@ async fn runtime_profile_from_invocation(
                 PortSlot::ExternalAgentCapability => {
                     PortImplementation::ExternalAgentCapability(Arc::new(DevExternalAgent))
                 }
-                PortSlot::DurableEvent => PortImplementation::DurableEvent(Arc::new(DevEvents)),
+                PortSlot::DurableEvent => {
+                    if resumable {
+                        PortImplementation::DurableEvent(Arc::new(ParkedEvents))
+                    } else {
+                        PortImplementation::DurableEvent(Arc::new(DevEvents))
+                    }
+                }
                 PortSlot::ProgramComposition => {
                     PortImplementation::ProgramComposition(Arc::new(DevComposition))
                 }
@@ -506,12 +1009,16 @@ async fn runtime_profile_from_invocation(
         RuntimeAdmission::admit_invocation(verified, entries, "apxm-runtime-service", execution_id)
             .await
             .map_err(|error| error.to_string())?;
-    RuntimeProfile::from_fully_admitted(
+    let profile = RuntimeProfile::from_fully_admitted(
         runtime_admission,
         model_call_request_metadata,
         Arc::new(CapturedHookBodyHandler),
     )
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?;
+    Ok(match observation_sink {
+        Some(sink) => profile.with_observation_sink(sink, ObservationFailurePolicy::FailOpen),
+        None => profile,
+    })
 }
 
 fn model_targets(air: &AirModule) -> Vec<String> {
@@ -553,6 +1060,19 @@ fn initial_model_request_values(air: &AirModule) -> BTreeMap<String, Value> {
             .then(|| (value_id.clone(), json!({"value_id": value_id})))
         })
         .collect()
+}
+
+/// Locate the canonical entrypoint input parameter in AIR.  Frontends encode
+/// this parameter as `<program>.param.input`; unlike an arbitrary initial SSA
+/// value it is an explicit entrypoint binding and may safely receive the
+/// invocation input supplied by Runtime/1.
+fn entrypoint_input_value_id(air: &AirModule) -> Option<String> {
+    air.structural_ir
+        .iter()
+        .filter(|region| region.kind == StructuralOpKind::Function)
+        .flat_map(|region| &region.block_arguments)
+        .find(|argument| argument.value_id.ends_with(".param.input"))
+        .map(|argument| argument.value_id.clone())
 }
 
 fn local_capability_invocation_admissions(
@@ -942,5 +1462,26 @@ fn commit_result_json(result: &ExecutionCommitResult) -> Value {
             "status": "outcome_unknown",
             "reconciliation_ref": reconciliation_ref,
         }),
+    }
+}
+
+fn runtime_status(report: &apxm_execution::RunReport) -> &'static str {
+    match (&report.commit, report.terminal_status) {
+        (
+            ExecutionCommitResult::Committed { .. },
+            apxm_execution::RunTerminalStatus::CommittedReturn,
+        ) => "completed",
+        (ExecutionCommitResult::Committed { .. }, apxm_execution::RunTerminalStatus::Failed) => {
+            "failed"
+        }
+        (ExecutionCommitResult::Committed { .. }, apxm_execution::RunTerminalStatus::Cancelled) => {
+            "cancelled"
+        }
+        (
+            ExecutionCommitResult::Committed { .. },
+            apxm_execution::RunTerminalStatus::OutcomeUnknown,
+        ) => "outcome_unknown",
+        (ExecutionCommitResult::CompareConflict { .. }, _) => "compare_conflict",
+        (ExecutionCommitResult::OutcomeUnknown { .. }, _) => "outcome_unknown",
     }
 }

@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
-use apxm_program::grammar::is_digest;
+use apxm_program::grammar::{is_digest, is_identifier};
 use apxm_program::runtime_evidence::Fact;
 
 /// The durable Program Instance identity that scopes compare-and-commit state
@@ -92,6 +92,8 @@ pub const ATOMIC_WRITE_SET: [&str; 5] = [
 
 /// The six digest members published by one atomic commit. Every member is
 /// required at the type level, so a partial/split write set cannot be built.
+/// `runtime_evidence_batch_digest` canonically covers both the evidence facts
+/// and the driver-owned observation batch carried by the tuple.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AtomicWriteSet {
     pub next_program_state_digest: String,
@@ -159,6 +161,200 @@ pub fn continuation_digest(payload: Option<&Value>) -> String {
     )
 }
 
+/// Canonical digest for the runtime evidence batch and its driver-owned
+/// observation records. Observations are an atomic companion to evidence;
+/// binding both here prevents an adapter from accepting an unsigned
+/// observation side channel.
+#[must_use]
+pub fn runtime_evidence_and_observation_digest(
+    evidence: &[Fact],
+    observations: &[Value],
+) -> String {
+    let envelope = json!({
+        "evidence": evidence,
+        "observations": observations,
+    });
+    format!(
+        "sha256:{:x}",
+        Sha256::digest(canonical_json_bytes(&envelope))
+    )
+}
+
+/// Canonical digest for the complete ordered Session Output reference member.
+/// This is checked even when the tuple contains no output refs, so an empty
+/// output set cannot silently carry a stale digest from another request.
+#[must_use]
+pub fn session_output_refs_digest(output_refs: &[Value]) -> String {
+    format!(
+        "sha256:{:x}",
+        Sha256::digest(canonical_json_bytes(&Value::Array(output_refs.to_vec())))
+    )
+}
+
+/// A deterministic evidence reference that can be prepared before the commit
+/// is attempted. `index` is zero-based at this boundary; the encoded suffix is
+/// one-based. The commit id makes references unique across multiple commits
+/// of one invocation while the invocation keeps them scope-bound.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrecommitEvidenceRef {
+    pub commit_id: String,
+    pub program_invocation_ref: String,
+    pub index: u64,
+    pub evidence_ref: String,
+}
+
+impl PrecommitEvidenceRef {
+    pub fn new(
+        commit_id: impl Into<String>,
+        program_invocation_ref: impl Into<String>,
+        index: u64,
+    ) -> Result<Self, &'static str> {
+        let commit_id = commit_id.into();
+        let program_invocation_ref = program_invocation_ref.into();
+        if !is_identifier(&commit_id) || !is_identifier(&program_invocation_ref) {
+            return Err("invalid evidence reference scope");
+        }
+        let ordinal = index
+            .checked_add(1)
+            .ok_or("evidence reference index is exhausted")?;
+        let evidence_ref = format!("evidence.{program_invocation_ref}.{commit_id}.{ordinal}");
+        if !is_identifier(&evidence_ref) {
+            return Err("invalid evidence reference");
+        }
+        Ok(Self {
+            commit_id,
+            program_invocation_ref,
+            index,
+            evidence_ref,
+        })
+    }
+
+    pub fn validate(&self) -> Result<(), &'static str> {
+        let expected = Self::new(
+            self.commit_id.clone(),
+            self.program_invocation_ref.clone(),
+            self.index,
+        )?;
+        if self.evidence_ref != expected.evidence_ref {
+            return Err("evidence reference does not match its commit scope and index");
+        }
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.evidence_ref
+    }
+}
+
+/// Contract identity for the product-neutral Session Output staging boundary.
+pub const SESSION_OUTPUT_REF_CONTRACT: &str = "apxm.session-output-ref.v1";
+
+/// Visibility supplied while staging Session Output bytes. Staged bytes are
+/// never readable; the returned reference is marked committed only after the
+/// enclosing Execution Commit wins.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionOutputVisibility {
+    Provisional,
+    Committed,
+}
+
+/// Product-neutral input to the pre-commit Session Output staging port.
+/// Dynamic node and occurrence references remain opaque strings here so the
+/// kernel does not depend on the service-protocol crate.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionOutputPreparation {
+    pub contract: String,
+    pub commit_id: String,
+    pub program_instance_ref: String,
+    pub program_invocation_ref: String,
+    pub content: Vec<u8>,
+    pub media_type: String,
+    pub visibility: SessionOutputVisibility,
+    pub node_execution_id: Option<String>,
+    pub occurrence_id: Option<String>,
+    /// Opaque caller/composition-supplied disclosure scope. APXM persists it
+    /// and never interprets product authorization policy.
+    pub access_scope_ref: String,
+    pub disclosure_ref: Option<String>,
+}
+
+impl SessionOutputPreparation {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.contract != SESSION_OUTPUT_REF_CONTRACT
+            || self.commit_id.trim().is_empty()
+            || self.program_instance_ref.trim().is_empty()
+            || self.program_invocation_ref.trim().is_empty()
+            || self.media_type.trim().is_empty()
+            || self.media_type.len() > 255
+            || self.media_type.contains(['\n', '\r'])
+            || self.visibility != SessionOutputVisibility::Provisional
+            || self.access_scope_ref.len() > 256
+            || !is_identifier(&self.access_scope_ref)
+            || self
+                .disclosure_ref
+                .as_ref()
+                .is_some_and(|reference| reference.len() > 256 || !is_identifier(reference))
+            || (self.occurrence_id.is_some() && self.node_execution_id.is_none())
+        {
+            return Err("invalid Session Output preparation");
+        }
+        Ok(())
+    }
+}
+
+/// Opaque validated Session Output reference returned by staging. The adapter
+/// must bind this exact value into `ExecutionCommitTuple.output_refs`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreparedSessionOutputRef {
+    pub contract: String,
+    pub ref_type: String,
+    #[serde(rename = "ref")]
+    pub output_ref: String,
+    pub program_instance_id: String,
+    pub program_invocation_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_execution_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub occurrence_id: Option<String>,
+    pub access_scope_ref: String,
+    pub disclosure_ref: Option<String>,
+    pub content_digest: String,
+    pub byte_length: u64,
+    pub media_type: String,
+    #[serde(rename = "commitment")]
+    pub visibility: SessionOutputVisibility,
+}
+
+impl PreparedSessionOutputRef {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.contract != SESSION_OUTPUT_REF_CONTRACT
+            || self.ref_type != "SessionOutputRef"
+            || self.output_ref.trim().is_empty()
+            || self.program_instance_id.trim().is_empty()
+            || self.program_invocation_id.trim().is_empty()
+            || self.content_digest.trim().is_empty()
+            || self.media_type.trim().is_empty()
+            || self.media_type.contains(['\n', '\r'])
+            || self.visibility != SessionOutputVisibility::Committed
+            || self.access_scope_ref.len() > 256
+            || !is_identifier(&self.access_scope_ref)
+            || self
+                .disclosure_ref
+                .as_ref()
+                .is_some_and(|reference| reference.len() > 256 || !is_identifier(reference))
+            || (self.occurrence_id.is_some() && self.node_execution_id.is_none())
+        {
+            return Err("invalid committed Session Output reference");
+        }
+        if !is_digest(&self.content_digest) {
+            return Err("invalid committed Session Output digest");
+        }
+        Ok(())
+    }
+}
+
 fn normalize_continuation_payload(payload: &Value) -> Value {
     let Value::Object(object) = payload else {
         return canonical_json_value(payload);
@@ -189,6 +385,10 @@ pub struct ExecutionCommitTuple {
     pub evidence: Vec<Fact>,
     pub usage: Value,
     pub output_refs: Vec<Value>,
+    /// Driver-owned durable observation records.  The kernel keeps these
+    /// backend-neutral; an owner-local adapter validates and stores their
+    /// typed execution-observation representation in the same atomic write.
+    pub observations: Vec<Value>,
 }
 
 impl ExecutionCommitTuple {
@@ -203,6 +403,7 @@ impl ExecutionCommitTuple {
             evidence,
             usage: Value::Null,
             output_refs: Vec::new(),
+            observations: Vec::new(),
         }
     }
 }
@@ -220,8 +421,9 @@ pub struct ExecutionCommitRequest {
     pub write_set: AtomicWriteSet,
     /// The full state/effect/evidence tuple whose digests appear in `write_set`.
     pub tuple: ExecutionCommitTuple,
-    /// The runtime-evidence facts published atomically with this commit; their
-    /// content is summarized by `write_set.runtime_evidence_batch_digest`.
+    /// Runtime-evidence facts published atomically with this commit. Their
+    /// content, together with `tuple.observations`, is summarized by
+    /// `write_set.runtime_evidence_batch_digest`.
     pub evidence_batch: Vec<Fact>,
 }
 
@@ -230,7 +432,10 @@ pub struct ExecutionCommitRequest {
 pub enum CommitRequestError {
     EmptyField(&'static str),
     InvalidDigest(&'static str),
+    InvalidObservation(String),
     EvidenceBatchMismatch,
+    EvidenceObservationDigestMismatch { expected: String, actual: String },
+    SessionOutputRefsDigestMismatch { expected: String, actual: String },
     ContinuationDigestMismatch { expected: String, actual: String },
 }
 
@@ -239,9 +444,20 @@ impl std::fmt::Display for CommitRequestError {
         match self {
             Self::EmptyField(field) => write!(f, "commit field {field} must be non-empty"),
             Self::InvalidDigest(field) => write!(f, "commit field {field} is not a sha256 digest"),
+            Self::InvalidObservation(message) => {
+                write!(f, "invalid execution observation: {message}")
+            }
             Self::EvidenceBatchMismatch => {
                 f.write_str("tuple evidence and evidence_batch must be identical")
             }
+            Self::EvidenceObservationDigestMismatch { expected, actual } => write!(
+                f,
+                "runtime evidence/observation digest mismatch: expected {expected}, got {actual}"
+            ),
+            Self::SessionOutputRefsDigestMismatch { expected, actual } => write!(
+                f,
+                "session output refs digest mismatch: expected {expected}, got {actual}"
+            ),
             Self::ContinuationDigestMismatch { expected, actual } => write!(
                 f,
                 "continuation payload digest mismatch: expected {expected}, got {actual}"
@@ -251,6 +467,210 @@ impl std::fmt::Display for CommitRequestError {
 }
 
 impl std::error::Error for CommitRequestError {}
+
+fn validate_execution_observation(value: &Value) -> Result<(), String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| "observation must be an object".to_owned())?;
+    const FIELDS: &[&str] = &[
+        "contract",
+        "observation_id",
+        "program_invocation_id",
+        "node_execution_id",
+        "occurrence_id",
+        "event_ref",
+        "attempt_id",
+        "region_occurrence_id",
+        "sequence",
+        "cursor",
+        "timing",
+        "observation_kind",
+        "commitment",
+        "content_ref",
+        "output_ref",
+        "evidence_ref",
+    ];
+    if let Some(field) = object
+        .keys()
+        .find(|field| !FIELDS.contains(&field.as_str()))
+    {
+        return Err(format!("unknown field {field}"));
+    }
+    for field in [
+        "contract",
+        "observation_id",
+        "program_invocation_id",
+        "sequence",
+        "cursor",
+        "timing",
+        "observation_kind",
+        "commitment",
+    ] {
+        if !object.contains_key(field) {
+            return Err(format!("missing field {field}"));
+        }
+    }
+    if object.get("contract").and_then(Value::as_str) != Some("apxm.execution-observation.v1") {
+        return Err("unsupported observation contract".to_owned());
+    }
+    for field in ["observation_id", "program_invocation_id"] {
+        let Some(reference) = object.get(field).and_then(Value::as_str) else {
+            return Err(format!("{field} must be an opaque reference"));
+        };
+        if !is_identifier(reference) {
+            return Err(format!("{field} is not an opaque reference"));
+        }
+    }
+    let sequence = object
+        .get("sequence")
+        .and_then(Value::as_u64)
+        .filter(|sequence| *sequence > 0)
+        .ok_or_else(|| "sequence must be a positive integer".to_owned())?;
+    let cursor = object
+        .get("cursor")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "cursor must be an object".to_owned())?;
+    if cursor.get("position").and_then(Value::as_u64) != Some(sequence)
+        || cursor
+            .get("token")
+            .and_then(Value::as_str)
+            .is_none_or(|token| !is_identifier(token))
+        || cursor
+            .keys()
+            .any(|field| !matches!(field.as_str(), "position" | "token"))
+    {
+        return Err("cursor must match the observation sequence".to_owned());
+    }
+    let timing = object
+        .get("timing")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "timing must be an object".to_owned())?;
+    if timing
+        .get("observed_at_unix_ms")
+        .and_then(Value::as_u64)
+        .is_none()
+        || timing
+            .keys()
+            .any(|field| !matches!(field.as_str(), "observed_at_unix_ms" | "duration_ms"))
+    {
+        return Err("timing must contain observed_at_unix_ms".to_owned());
+    }
+    let kind = object
+        .get("observation_kind")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "observation_kind must be a string".to_owned())?;
+    const KINDS: &[&str] = &[
+        "invocation_started",
+        "node_started",
+        "operand_published",
+        "branch_transition",
+        "join_transition",
+        "loop_transition",
+        "model_attempt",
+        "capability_attempt",
+        "program_attempt",
+        "approval_requested",
+        "approval_resolved",
+        "event_waiting",
+        "event_resumed",
+        "content_published",
+        "content_committed",
+        "terminal_committed",
+        "invocation_failed",
+        "evidence_committed",
+        "invocation_cancelled",
+        "outcome_unknown",
+    ];
+    if !KINDS.contains(&kind) {
+        return Err("unknown observation kind".to_owned());
+    }
+    let commitment = object
+        .get("commitment")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "commitment must be a string".to_owned())?;
+    if !matches!(commitment, "provisional" | "committed") {
+        return Err("unknown observation commitment".to_owned());
+    }
+    let event_kind = matches!(kind, "event_waiting" | "event_resumed");
+    if event_kind != object.contains_key("event_ref") {
+        return Err("event_ref does not match observation kind".to_owned());
+    }
+    for field in [
+        "node_execution_id",
+        "occurrence_id",
+        "attempt_id",
+        "region_occurrence_id",
+        "content_ref",
+        "output_ref",
+        "evidence_ref",
+    ] {
+        if let Some(reference) = object.get(field) {
+            let reference = reference
+                .as_str()
+                .ok_or_else(|| format!("{field} must be an opaque reference"))?;
+            if !is_identifier(reference) {
+                return Err(format!("{field} is not an opaque reference"));
+            }
+        }
+    }
+    if let Some(event_ref) = object.get("event_ref") {
+        let event_ref = event_ref
+            .as_object()
+            .ok_or_else(|| "event_ref must be an object".to_owned())?;
+        if event_ref
+            .keys()
+            .any(|field| !matches!(field.as_str(), "event_ref" | "generation" | "occurrence_id"))
+        {
+            return Err("event_ref contains an unknown field".to_owned());
+        }
+        if event_ref
+            .get("event_ref")
+            .and_then(Value::as_str)
+            .is_none_or(|reference| !is_identifier(reference))
+        {
+            return Err("event_ref must contain an opaque event reference".to_owned());
+        }
+        if event_ref
+            .get("generation")
+            .is_some_and(|generation| !generation.is_u64())
+            || event_ref.get("occurrence_id").is_some_and(|occurrence| {
+                occurrence
+                    .as_str()
+                    .is_none_or(|reference| !is_identifier(reference))
+            })
+        {
+            return Err("event_ref contains an invalid generation or occurrence".to_owned());
+        }
+    }
+    if kind == "content_published"
+        && (commitment != "provisional" || !object.contains_key("content_ref"))
+    {
+        return Err("content_published requires provisional content_ref".to_owned());
+    }
+    if kind == "content_committed"
+        && (commitment != "committed"
+            || (!object.contains_key("content_ref") && !object.contains_key("output_ref")))
+    {
+        return Err("content_committed requires committed content/output ref".to_owned());
+    }
+    if kind == "terminal_committed"
+        && (commitment != "committed"
+            || (!object.contains_key("output_ref") && !object.contains_key("evidence_ref")))
+    {
+        return Err("terminal_committed requires committed output/evidence ref".to_owned());
+    }
+    if kind == "evidence_committed"
+        && (commitment != "committed" || !object.contains_key("evidence_ref"))
+    {
+        return Err("evidence_committed requires committed evidence_ref".to_owned());
+    }
+    if kind == "invocation_failed"
+        && (commitment != "committed" || !object.contains_key("evidence_ref"))
+    {
+        return Err("invocation_failed requires committed evidence_ref".to_owned());
+    }
+    Ok(())
+}
 
 impl ExecutionCommitRequest {
     /// Validate the complete request before an adapter is called. The tuple and
@@ -302,6 +722,25 @@ impl ExecutionCommitRequest {
         }
         if self.tuple.evidence != self.evidence_batch {
             return Err(CommitRequestError::EvidenceBatchMismatch);
+        }
+        let expected =
+            runtime_evidence_and_observation_digest(&self.tuple.evidence, &self.tuple.observations);
+        if self.write_set.runtime_evidence_batch_digest != expected {
+            return Err(CommitRequestError::EvidenceObservationDigestMismatch {
+                expected,
+                actual: self.write_set.runtime_evidence_batch_digest.clone(),
+            });
+        }
+        let expected = session_output_refs_digest(&self.tuple.output_refs);
+        if self.write_set.session_output_refs_digest != expected {
+            return Err(CommitRequestError::SessionOutputRefsDigestMismatch {
+                expected,
+                actual: self.write_set.session_output_refs_digest.clone(),
+            });
+        }
+        for observation in &self.tuple.observations {
+            validate_execution_observation(observation)
+                .map_err(CommitRequestError::InvalidObservation)?;
         }
         if let Some(payload) = self.tuple.continuation.as_ref() {
             let expected = continuation_digest(Some(payload));
@@ -406,6 +845,16 @@ impl ExecutionCommitRequest {
 /// state; there is no split commit surface.
 #[async_trait]
 pub trait ExecutionCommitPort: Send + Sync {
+    /// Stage Session Output bytes before compare-and-commit. The returned
+    /// reference is provisional storage and becomes readable only when the
+    /// exact reference is included in a winning commit tuple.
+    async fn prepare_output(
+        &self,
+        _preparation: SessionOutputPreparation,
+    ) -> Result<PreparedSessionOutputRef, String> {
+        Err("Session Output staging is not supported by this commit port".into())
+    }
+
     /// Compare `expected_program_state_version` against the Program Instance's
     /// current version and, only on an exact match, atomically publish the
     /// whole write set and its evidence batch. Idempotency remains scoped to

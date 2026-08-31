@@ -7,11 +7,15 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use apxm_kernel::{
     CommittedContinuation, ExecutionCommitPort, ExecutionCommitRequest, ExecutionCommitResult,
-    ProgramInstanceRef, canonical_json_bytes,
+    PreparedSessionOutputRef, ProgramInstanceRef, canonical_json_bytes,
+};
+use apxm_runtime_protocol::{
+    ContentReadResult, ContentRef, ExecutionObservation, ExecutionReadRequest, ExecutionReadResult,
+    ReadContext,
 };
 use async_trait::async_trait;
 use fs2::FileExt;
@@ -19,8 +23,9 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use crate::store::ReadAccessHook;
 use crate::store::{
-    COMMIT_LOCAL_SCHEMA, CommitLocalError, CommitLocalStore, MAX_STORE_BYTES, PreparedOutputRef,
+    CommitLocalError, CommitLocalStore, MAX_STORE_BYTES, PreparedOutputRef,
     SessionOutputPreparation,
 };
 
@@ -30,11 +35,20 @@ pub struct FilesystemExecutionCommit {
     _lock_file: File,
     auth_key: [u8; 32],
     store: Mutex<CommitLocalStore>,
+    read_hook: Arc<dyn ReadAccessHook>,
 }
 
 impl FilesystemExecutionCommit {
     /// Open or create an owner-local store under `root`.
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, CommitLocalError> {
+        Self::open_with_read_access_hook(root, Arc::new(crate::store::DenyReadAccess))
+    }
+
+    /// Open a store with the Composition Root's reauthorization/audit hook.
+    pub fn open_with_read_access_hook(
+        root: impl Into<PathBuf>,
+        read_hook: Arc<dyn ReadAccessHook>,
+    ) -> Result<Self, CommitLocalError> {
         let root = root.into();
         fs::create_dir_all(&root).map_err(|e| CommitLocalError::Io(e.to_string()))?;
         verify_store_root(&root)?;
@@ -51,6 +65,7 @@ impl FilesystemExecutionCommit {
             _lock_file: lock_file,
             auth_key,
             store: Mutex::new(store),
+            read_hook,
         })
     }
 
@@ -62,6 +77,34 @@ impl FilesystemExecutionCommit {
         let mut guard = self.store.lock().expect("commit-local filesystem lock");
         guard.inject_outcome_unknown(commit_id);
         persist(&self.root, &guard, &self.auth_key)
+    }
+
+    /// Bind the composition-owned scope to outputs staged by this adapter.
+    pub fn set_default_access_scope_ref(&self, reference: String) {
+        self.store
+            .lock()
+            .expect("commit-local filesystem lock")
+            .set_default_access_scope_ref(reference);
+    }
+
+    /// Read opaque composition metadata from the authenticated store.
+    #[must_use]
+    pub fn runtime_metadata(&self) -> Option<Value> {
+        self.store
+            .lock()
+            .expect("commit-local filesystem lock")
+            .runtime_metadata()
+    }
+
+    /// Atomically replace opaque composition metadata in the authenticated
+    /// store. The adapter does not inspect or interpret the JSON value.
+    pub fn set_runtime_metadata(&self, metadata: Option<Value>) -> Result<(), CommitLocalError> {
+        let mut guard = self.store.lock().expect("commit-local filesystem lock");
+        let mut staged = guard.clone();
+        staged.set_runtime_metadata(metadata);
+        persist(&self.root, &staged, &self.auth_key)?;
+        *guard = staged;
+        Ok(())
     }
 
     pub fn prepare_output(
@@ -76,11 +119,64 @@ impl FilesystemExecutionCommit {
         Ok(prepared)
     }
 
-    pub fn read_output(&self, output_ref: &str) -> Option<Vec<u8>> {
+    /// Read observations, inspection, committed content, or evidence through
+    /// the typed scope-bound contract.
+    pub fn read_execution(
+        &self,
+        request: ExecutionReadRequest,
+    ) -> Result<ExecutionReadResult, CommitLocalError> {
+        self.read_execution_with_live(request, &[])
+    }
+
+    /// Read with a bounded process-local live observation overlay.
+    pub fn read_execution_with_live(
+        &self,
+        request: ExecutionReadRequest,
+        live_observations: &[ExecutionObservation],
+    ) -> Result<ExecutionReadResult, CommitLocalError> {
         self.store
             .lock()
             .expect("commit-local filesystem lock")
-            .read_output(output_ref)
+            .read_execution_with_live(
+                request,
+                &self.auth_key,
+                self.read_hook.as_ref(),
+                live_observations,
+            )
+    }
+
+    /// Read one committed output with a scope-bound typed context.
+    pub fn read_committed_output(
+        &self,
+        context: ReadContext,
+        content_ref: ContentRef,
+    ) -> Result<ContentReadResult, CommitLocalError> {
+        match self.read_execution(ExecutionReadRequest::ContentRead {
+            context,
+            content_ref,
+        })? {
+            ExecutionReadResult::Content { content } => Ok(content),
+            _ => Err(CommitLocalError::InvalidRead(
+                "content read returned the wrong result kind".into(),
+            )),
+        }
+    }
+
+    /// Read one committed output through the distinct output.read operation.
+    pub fn read_output(
+        &self,
+        context: ReadContext,
+        output_ref: apxm_runtime_protocol::OutputRef,
+    ) -> Result<ContentReadResult, CommitLocalError> {
+        match self.read_execution(ExecutionReadRequest::OutputRead {
+            context,
+            output_ref,
+        })? {
+            ExecutionReadResult::Output { output } => Ok(output),
+            _ => Err(CommitLocalError::InvalidRead(
+                "output read returned the wrong result kind".into(),
+            )),
+        }
     }
 
     pub fn reclaim_prepared_output(&self, output_ref: &str) -> Result<bool, CommitLocalError> {
@@ -102,6 +198,20 @@ impl FilesystemExecutionCommit {
 
 #[async_trait]
 impl ExecutionCommitPort for FilesystemExecutionCommit {
+    async fn prepare_output(
+        &self,
+        preparation: apxm_kernel::SessionOutputPreparation,
+    ) -> Result<PreparedSessionOutputRef, String> {
+        let preparation = SessionOutputPreparation::from_kernel(preparation)
+            .map_err(|error| error.to_string())?;
+        let prepared = self
+            .prepare_output(preparation)
+            .map_err(|error| error.to_string())?
+            .to_kernel();
+        prepared.validate().map_err(str::to_owned)?;
+        Ok(prepared)
+    }
+
     async fn commit(&self, request: ExecutionCommitRequest) -> ExecutionCommitResult {
         let mut guard = self.store.lock().expect("commit-local filesystem lock");
         // Mutate a staged copy so a failed persist cannot leave a partial
@@ -278,11 +388,6 @@ fn persist(
     auth_key: &[u8; 32],
 ) -> Result<(), CommitLocalError> {
     store.validate_schema()?;
-    if store.schema_version != COMMIT_LOCAL_SCHEMA {
-        return Err(CommitLocalError::SchemaMismatch {
-            found: store.schema_version.clone(),
-        });
-    }
     let path = store_path(root);
     // The temporary path is deliberately unpredictable and created with
     // `create_new`. A predictable `File::create` would follow an attacker-
