@@ -17,6 +17,7 @@ from tools.scripts.owner_qualification import (
     _classify_failure,
     _command_evidence,
     _handoff,
+    _strict_qualification,
     _write_immutable,
 )
 
@@ -37,6 +38,7 @@ def qualification(root: Path) -> dict[str, object]:
         "service_digests": {
             "compilation-service": "sha256:" + "e" * 64,
             "runtime-service": "sha256:" + "f" * 64,
+            "python-frontend-native": "sha256:" + "1" * 64,
         },
         "gates": [
             {"command": command, "returncode": 0}
@@ -53,6 +55,15 @@ def qualification(root: Path) -> dict[str, object]:
 
 
 class OwnerQualificationTests(unittest.TestCase):
+    def test_strict_qualification_binds_native_frontend_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            value = qualification(root)
+            self.assertEqual(_strict_qualification(value, root=root), value)
+            del value["service_digests"]["python-frontend-native"]
+            with self.assertRaisesRegex(ValueError, "all release artifact digests"):
+                _strict_qualification(value, root=root)
+
     def test_declared_commands_are_neutral_and_cover_failure_restart(self) -> None:
         manifest = tomllib.loads((ROOT / ".dekk.toml").read_text(encoding="utf-8"))
         commands = manifest["commands"]
